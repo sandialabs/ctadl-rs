@@ -83,12 +83,7 @@ pub fn parse(data: &[u8]) -> ClassFileResult<ClassFile> {
 
     let source_file = attributes
         .iter()
-        .find(|a| {
-            get_utf8_from_pool(&constant_pool, a.name_index)
-                .ok()
-                .as_deref()
-                == Some("SourceFile")
-        })
+        .find(|a| get_utf8_from_pool(&constant_pool, a.name_index).ok() == Some("SourceFile"))
         .and_then(|a| {
             if a.info.len() >= 2 {
                 read_u16_be(&a.info, 0).ok()
@@ -471,13 +466,13 @@ impl ClassFileParser {
     /// Human-readable method name.
     pub fn method_name(&self, method: &MethodInfo) -> ClassFileResult<String> {
         let name = self.class_file.get_utf8(method.name_index)?;
-        Ok(format!("{}", name))
+        Ok(name.to_string())
     }
 
     /// Human-readable method descriptor.
     pub fn method_proto(&self, method: &MethodInfo) -> ClassFileResult<String> {
         let descriptor = self.class_file.get_utf8(method.descriptor_index)?;
-        Ok(format!("{}", descriptor))
+        Ok(descriptor.to_string())
     }
 
     /// Human-readable field signature (name : descriptor).

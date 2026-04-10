@@ -230,9 +230,7 @@ pub fn compute_basic_blocks_for_method<'a>(
         let next_pc_u32 = next_pc as u32;
 
         let mut branch_targets = Vec::new();
-        let falls_through;
-
-        match opcode {
+        let falls_through = match opcode {
             // Conditional branches (including ifnull/ifnonnull).
             0x99..=0x9e | 0x9f..=0xa4 | 0xa5..=0xa6 | 0xc6..=0xc7 => {
                 if pc + 2 <= code_len {
@@ -240,7 +238,7 @@ pub fn compute_basic_blocks_for_method<'a>(
                     let target = (pc as i32 + offset) as u32;
                     branch_targets.push(target);
                 }
-                falls_through = next_pc < code_len;
+                next_pc < code_len
             }
             // Unconditional branches (short).
             0xa7 | 0xa8 => {
@@ -249,7 +247,7 @@ pub fn compute_basic_blocks_for_method<'a>(
                     let target = (pc as i32 + offset) as u32;
                     branch_targets.push(target);
                 }
-                falls_through = false;
+                false
             }
             // Unconditional branches (wide).
             0xc8 | 0xc9 => {
@@ -258,7 +256,7 @@ pub fn compute_basic_blocks_for_method<'a>(
                     let target = (pc as i32 + offset) as u32;
                     branch_targets.push(target);
                 }
-                falls_through = false;
+                false
             }
             // tableswitch
             0xaa => {
@@ -279,7 +277,7 @@ pub fn compute_basic_blocks_for_method<'a>(
                 }
                 branch_targets.sort_unstable();
                 branch_targets.dedup();
-                falls_through = false;
+                false
             }
             // lookupswitch
             0xab => {
@@ -298,17 +296,13 @@ pub fn compute_basic_blocks_for_method<'a>(
                 }
                 branch_targets.sort_unstable();
                 branch_targets.dedup();
-                falls_through = false;
+                false
             }
             // Returns, athrow, ret: terminate block.
-            0xac..=0xb1 | 0xbf | 0xa9 => {
-                falls_through = false;
-            }
+            0xac..=0xb1 | 0xbf | 0xa9 => false,
             // All other opcodes fall through if there is another instruction.
-            _ => {
-                falls_through = next_pc < code_len;
-            }
-        }
+            _ => next_pc < code_len,
+        };
 
         let instr_index = instructions.len();
         pc_to_instr_index.insert(this_pc_u32, instr_index);
@@ -381,15 +375,9 @@ pub fn compute_basic_blocks_for_method<'a>(
     }
 
     // Compute successors for each block.
-    for b in 0..blocks.len() {
-        let (_start, end) = {
-            let blk = &blocks[b];
-            (blk.start_pc, blk.end_pc)
-        };
-        let range = {
-            let blk = &blocks[b];
-            blk.instr_range.clone()
-        };
+    for block in blocks.iter_mut() {
+        let end = block.end_pc;
+        let range = block.instr_range.clone();
         if range.is_empty() {
             continue;
         }
@@ -399,8 +387,8 @@ pub fn compute_basic_blocks_for_method<'a>(
         // Branch successors.
         for &t in &meta.branch_targets {
             if let Some(&succ_idx) = pc_to_block_index.get(&t) {
-                if !blocks[b].successors.contains(&succ_idx) {
-                    blocks[b].successors.push(succ_idx);
+                if !block.successors.contains(&succ_idx) {
+                    block.successors.push(succ_idx);
                 }
             }
         }
@@ -408,8 +396,8 @@ pub fn compute_basic_blocks_for_method<'a>(
         // Fall-through successor.
         if meta.falls_through && end < code_len_u32 {
             if let Some(&succ_idx) = pc_to_block_index.get(&end) {
-                if !blocks[b].successors.contains(&succ_idx) {
-                    blocks[b].successors.push(succ_idx);
+                if !block.successors.contains(&succ_idx) {
+                    block.successors.push(succ_idx);
                 }
             }
         }
@@ -467,6 +455,15 @@ fn returns_value(descriptor: &str) -> bool {
     match descriptor.rsplit_once(')') {
         Some((_params, ret)) => ret != "V",
         None => false,
+    }
+}
+
+fn descriptor_return_slot_count(descriptor: &str) -> usize {
+    match descriptor.rsplit_once(')') {
+        Some((_params, "V")) => 0,
+        Some((_params, ret)) if ret.starts_with('J') || ret.starts_with('D') => 2,
+        Some((_params, _)) => 1,
+        None => 0,
     }
 }
 
@@ -547,6 +544,18 @@ fn simulate_block<'a>(
 
     for idx in range {
         let inst = &mut cfg.instructions[idx];
+        let method_name = inst
+            .class_file
+            .get_utf8(inst.method.name_index)
+            .unwrap_or("<method-utf8-error>");
+        let method_desc = inst
+            .class_file
+            .get_utf8(inst.method.descriptor_index)
+            .unwrap_or("<descriptor-utf8-error>");
+        let class_name = inst
+            .class_file
+            .this_class_name()
+            .unwrap_or("<class-name-error>");
 
         // Determine stack effect from dataflow and calls.
         let mut max_stack_input_depth: usize = 0;
@@ -558,9 +567,17 @@ fn simulate_block<'a>(
                     let depth_usize = *depth as usize;
                     let len = state.slots.len();
                     if depth_usize >= len {
-                        return Err(ClassFileError::InvalidClassFile(
-                            "stack underflow while rewriting StackInput",
-                        ));
+                        return Err(ClassFileError::InvalidClassFileMessage(format!(
+                            "stack underflow while rewriting StackInput: class={} method={}{} pc={} opcode=0x{:02x} mnem={} depth={} stack_len={}",
+                            class_name,
+                            method_name,
+                            method_desc,
+                            inst.pc,
+                            inst.opcode,
+                            inst.mnemonic,
+                            depth_usize,
+                            len
+                        )));
                     }
                     let slot_index = len - 1 - depth_usize;
                     *src = Location::StackSlot(slot_index as StackSlotId);
@@ -583,24 +600,22 @@ fn simulate_block<'a>(
         if inst.kind == InstructionKind::Call {
             if let Some(call) = &inst.call {
                 call_consume = call.stack_slots_consumed as usize;
-                let mut ret_val = false;
+                let mut ret_slots = 0usize;
                 match call.call_kind {
                     CallKind::Dynamic => {
                         if let Some(name_type) = &call.dynamic_name_and_type {
                             if let Some((_name, desc)) = name_type.rsplit_once(':') {
-                                ret_val = returns_value(desc);
+                                ret_slots = descriptor_return_slot_count(desc);
                             }
                         }
                     }
                     _ => {
                         if let Some(target) = &call.target {
-                            ret_val = returns_value(&target.descriptor);
+                            ret_slots = descriptor_return_slot_count(&target.descriptor);
                         }
                     }
                 }
-                if ret_val {
-                    call_produce = 1;
-                }
+                call_produce = ret_slots;
             }
 
             // Rewrite receiver/arguments stack locations from StackInput(depth)
@@ -611,9 +626,18 @@ fn simulate_block<'a>(
                     if let Location::StackInput(depth) = receiver {
                         let depth_usize = *depth as usize;
                         if depth_usize >= len {
-                            return Err(ClassFileError::InvalidClassFile(
-                                "stack underflow while rewriting call receiver StackInput",
-                            ));
+                            return Err(ClassFileError::InvalidClassFileMessage(format!(
+                                "stack underflow while rewriting receiver StackInput: class={} method={}{} pc={} opcode=0x{:02x} mnem={} depth={} stack_len={} consumed={}",
+                                class_name,
+                                method_name,
+                                method_desc,
+                                inst.pc,
+                                inst.opcode,
+                                inst.mnemonic,
+                                depth_usize,
+                                len,
+                                call.stack_slots_consumed
+                            )));
                         }
                         let slot_index = len - 1 - depth_usize;
                         *receiver = Location::StackSlot(slot_index as StackSlotId);
@@ -623,9 +647,18 @@ fn simulate_block<'a>(
                     if let Location::StackInput(depth) = arg {
                         let depth_usize = *depth as usize;
                         if depth_usize >= len {
-                            return Err(ClassFileError::InvalidClassFile(
-                                "stack underflow while rewriting call argument StackInput",
-                            ));
+                            return Err(ClassFileError::InvalidClassFileMessage(format!(
+                                "stack underflow while rewriting call argument StackInput: class={} method={}{} pc={} opcode=0x{:02x} mnem={} depth={} stack_len={} consumed={}",
+                                class_name,
+                                method_name,
+                                method_desc,
+                                inst.pc,
+                                inst.opcode,
+                                inst.mnemonic,
+                                depth_usize,
+                                len,
+                                call.stack_slots_consumed
+                            )));
                         }
                         let slot_index = len - 1 - depth_usize;
                         *arg = Location::StackSlot(slot_index as StackSlotId);
@@ -634,8 +667,16 @@ fn simulate_block<'a>(
             }
         }
 
-        let consume = std::cmp::max(max_stack_input_depth, call_consume);
-        let produce = stack_outputs.max(call_produce);
+        // Stack effects for non-Dataflow/non-Call opcodes that still mutate stack depth.
+        let (misc_consume, misc_produce) =
+            if inst.dataflow.is_none() && inst.kind != InstructionKind::Call {
+                misc_stack_effect(inst.opcode)
+            } else {
+                (0, 0)
+            };
+
+        let consume = max_stack_input_depth.max(call_consume).max(misc_consume);
+        let produce = stack_outputs.max(call_produce).max(misc_produce);
 
         if state.slots.len() < consume {
             return Err(ClassFileError::InvalidClassFile(
@@ -661,7 +702,7 @@ fn simulate_block<'a>(
         }
 
         // Rewrite call return value location.
-        if call_produce == 1 {
+        if call_produce > 0 {
             if let Some(call) = inst.call.as_mut() {
                 if let Some(ret_loc) = call.return_value.as_mut() {
                     if matches!(ret_loc, Location::StackOutput) {
@@ -1197,7 +1238,12 @@ fn decode_dataflow(
         }
         0x02..=0x0f => {
             sources.push(Location::Constant(const_for_const_op(opcode)?));
-            destinations.push(Location::StackOutput);
+            if matches!(opcode, 0x09 | 0x0a | 0x0e | 0x0f) {
+                destinations.push(Location::StackOutput);
+                destinations.push(Location::StackOutput);
+            } else {
+                destinations.push(Location::StackOutput);
+            }
         }
         0x10 => {
             let b = read_u8(code, pc + 1)?;
@@ -1224,6 +1270,7 @@ fn decode_dataflow(
             let c = resolve_constant(cf, idx)?;
             sources.push(Location::Constant(c));
             destinations.push(Location::StackOutput);
+            destinations.push(Location::StackOutput);
         }
         0x15..=0x19 => {
             let slot = if wide {
@@ -1233,6 +1280,9 @@ fn decode_dataflow(
             };
             sources.push(local_slot_to_location(slot, param_slot_count));
             destinations.push(Location::StackOutput);
+            if matches!(opcode, 0x16 | 0x18) {
+                destinations.push(Location::StackOutput);
+            }
         }
         0x1a..=0x2d => {
             let slot = match opcode {
@@ -1245,6 +1295,9 @@ fn decode_dataflow(
             };
             sources.push(local_slot_to_location(slot, param_slot_count));
             destinations.push(Location::StackOutput);
+            if matches!(opcode, 0x1e..=0x21 | 0x26..=0x29) {
+                destinations.push(Location::StackOutput);
+            }
         }
         0x2e..=0x35 => {
             sources.push(Location::StackInput(0));
@@ -1258,6 +1311,9 @@ fn decode_dataflow(
                 read_u8(code, operand_start)? as u16
             };
             sources.push(Location::StackInput(0));
+            if matches!(opcode, 0x37 | 0x39) {
+                sources.push(Location::StackInput(1));
+            }
             destinations.push(local_slot_to_location(slot, param_slot_count));
         }
         0x3b..=0x4e => {
@@ -1270,6 +1326,9 @@ fn decode_dataflow(
                 _ => 0,
             };
             sources.push(Location::StackInput(0));
+            if matches!(opcode, 0x3f..=0x42 | 0x47..=0x4a) {
+                sources.push(Location::StackInput(1));
+            }
             destinations.push(local_slot_to_location(slot, param_slot_count));
         }
         0x4f..=0x55 => {
@@ -1278,12 +1337,14 @@ fn decode_dataflow(
             sources.push(Location::StackInput(2));
             destinations.push(Location::ArrayElement);
         }
-        0x60..=0x77 | 0x78..=0x83 => {
-            let (consume, _) = stack_effect(opcode);
+        0x60..=0x83 => {
+            let (consume, produce) = stack_effect(opcode);
             for i in 0..consume {
                 sources.push(Location::StackInput(i));
             }
-            destinations.push(Location::StackOutput);
+            for _ in 0..produce {
+                destinations.push(Location::StackOutput);
+            }
         }
         0x84 => {
             let (idx, _const_val) = if wide {
@@ -1301,11 +1362,55 @@ fn decode_dataflow(
             destinations.push(local_slot_to_location(idx, param_slot_count));
         }
         0x85..=0x98 => {
-            sources.push(Location::StackInput(0));
-            if opcode >= 0x94 && opcode <= 0x98 {
-                sources.push(Location::StackInput(1));
+            match opcode {
+                // i2l, i2d, f2l, f2d => 1 -> 2
+                0x85 | 0x87 | 0x8c | 0x8d => {
+                    sources.push(Location::StackInput(0));
+                    destinations.push(Location::StackOutput);
+                    destinations.push(Location::StackOutput);
+                }
+                // l2i, l2f, d2i, d2f => 2 -> 1
+                0x88 | 0x89 | 0x8e | 0x90 => {
+                    sources.push(Location::StackInput(0));
+                    sources.push(Location::StackInput(1));
+                    destinations.push(Location::StackOutput);
+                }
+                // l2d, d2l => 2 -> 2
+                0x8a | 0x8f => {
+                    sources.push(Location::StackInput(0));
+                    sources.push(Location::StackInput(1));
+                    destinations.push(Location::StackOutput);
+                    destinations.push(Location::StackOutput);
+                }
+                // i2f, i2b, i2c, i2s, f2i => 1 -> 1
+                0x86 | 0x8b | 0x91 | 0x92 | 0x93 => {
+                    sources.push(Location::StackInput(0));
+                    destinations.push(Location::StackOutput);
+                }
+                // lcmp => 4 -> 1 (long,long)
+                0x94 => {
+                    sources.push(Location::StackInput(0));
+                    sources.push(Location::StackInput(1));
+                    sources.push(Location::StackInput(2));
+                    sources.push(Location::StackInput(3));
+                    destinations.push(Location::StackOutput);
+                }
+                // fcmpl/fcmpg => 2 -> 1 (float,float)
+                0x95 | 0x96 => {
+                    sources.push(Location::StackInput(0));
+                    sources.push(Location::StackInput(1));
+                    destinations.push(Location::StackOutput);
+                }
+                // dcmpl/dcmpg => 4 -> 1 (double,double)
+                0x97 | 0x98 => {
+                    sources.push(Location::StackInput(0));
+                    sources.push(Location::StackInput(1));
+                    sources.push(Location::StackInput(2));
+                    sources.push(Location::StackInput(3));
+                    destinations.push(Location::StackOutput);
+                }
+                _ => {}
             }
-            destinations.push(Location::StackOutput);
         }
         0xb2 => {
             let idx = read_u16_be(code, pc + 1)?;
@@ -1352,11 +1457,62 @@ fn const_for_const_op(opcode: u8) -> ClassFileResult<ConstantValue> {
 
 fn stack_effect(opcode: u8) -> (u8, u8) {
     match opcode {
-        0x60..=0x67 | 0x78..=0x83 => (2, 1),
-        0x74..=0x77 => (1, 1),
-        0x68..=0x73 => (2, 1),
-        0x94..=0x98 => (2, 1),
-        _ => (0, 1),
+        // add/sub/mul/div/rem: int/float are 2->1, long/double are 4->2
+        0x60 | 0x64 | 0x68 | 0x6c | 0x70 => (2, 1), // i*
+        0x61 | 0x65 | 0x69 | 0x6d | 0x71 => (4, 2), // l*
+        0x62 | 0x66 | 0x6a | 0x6e | 0x72 => (2, 1), // f*
+        0x63 | 0x67 | 0x6b | 0x6f | 0x73 => (4, 2), // d*
+        // neg
+        0x74 | 0x76 => (1, 1), // ineg, fneg
+        0x75 | 0x77 => (2, 2), // lneg, dneg
+        // shifts
+        0x78..=0x7a => (2, 1), // ishl, ishr, iushr
+        0x7b..=0x7d => (3, 2), // lshl, lshr, lushr
+        // and/or/xor
+        0x7e | 0x80 | 0x82 => (2, 1), // iand, ior, ixor
+        0x7f | 0x81 | 0x83 => (4, 2), // land, lor, lxor
+        // comparisons
+        0x94 => (4, 1),        // lcmp
+        0x95 | 0x96 => (2, 1), // fcmpl/fcmpg
+        0x97 | 0x98 => (4, 1), // dcmpl/dcmpg
+        _ => (0, 0),
+    }
+}
+
+/// Approximate stack effect for opcodes that are not currently modeled via Dataflow/Call.
+/// Values are in stack slots as used by this simulator.
+fn misc_stack_effect(opcode: u8) -> (usize, usize) {
+    match opcode {
+        // Stack-manipulation
+        0x57 => (1, 0), // pop
+        0x58 => (2, 0), // pop2
+        0x59 => (1, 2), // dup
+        0x5a => (2, 3), // dup_x1
+        0x5b => (3, 4), // dup_x2
+        0x5c => (2, 4), // dup2
+        0x5d => (3, 5), // dup2_x1
+        0x5e => (4, 6), // dup2_x2
+        0x5f => (2, 2), // swap
+
+        // Conditional branches consume stack values.
+        0x99..=0x9e | 0xc6..=0xc7 => (1, 0), // if<cond>, ifnull, ifnonnull
+        0x9f..=0xa6 => (2, 0),               // if_icmp*, if_acmp*
+
+        // Returns
+        0xac..=0xb0 => (1, 0), // i/l/f/d/a return (slot-approx)
+        0xb1 => (0, 0),        // return
+
+        // Object/array and type ops not covered by decode_dataflow.
+        0xbb => (0, 1), // new
+        0xbe => (1, 1), // arraylength
+        0xbf => (1, 0), // athrow
+        0xc0 => (1, 1), // checkcast
+        0xc1 => (1, 1), // instanceof
+
+        // Monitor ops.
+        0xc2 | 0xc3 => (1, 0),
+
+        _ => (0, 0),
     }
 }
 
@@ -1366,7 +1522,7 @@ fn decode_call(code: &[u8], pc: usize, cf: &ClassFile, opcode: u8) -> ClassFileR
         // StackInput depth is 0 at top-of-stack, so bottom-most arg is at depth param_slots-1.
         let mut args = Vec::with_capacity(param_slots as usize);
         for j in 0..param_slots {
-            let depth = (param_slots - 1 - j) as u8;
+            let depth = param_slots - 1 - j;
             args.push(Location::StackInput(depth));
         }
         args
@@ -1458,8 +1614,9 @@ fn decode_call(code: &[u8], pc: usize, cf: &ClassFile, opcode: u8) -> ClassFileR
             let idx = read_u16_be(code, pc + 1)?;
             let count = read_u8(code, pc + 3)?;
             let target = resolve_method_target(cf, idx).ok();
-            let param_slots = count; // count is argument slots excluding receiver
-            let stack_slots_consumed = param_slots + 1;
+            // JVMS: invokeinterface `count` includes receiver + argument slots.
+            let stack_slots_consumed = count;
+            let param_slots = count.saturating_sub(1);
             let receiver = Some(Location::StackInput(param_slots));
             let arguments = build_args(param_slots);
             let return_value = target.as_ref().and_then(|t| {
@@ -1579,9 +1736,9 @@ impl<'a> InstructionFlowIter<'a> {
         InstructionFlowIter {
             class_parsers,
             current_methods,
-            current_code: current_code,
-            current_cf: current_cf,
-            current_method: current_method,
+            current_code,
+            current_cf,
+            current_method,
             method_pc: 0,
             method_done: current_code.is_none(),
             _phantom: std::marker::PhantomData,

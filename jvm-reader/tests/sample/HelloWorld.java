@@ -12,6 +12,10 @@ public class HelloWorld {
         int d = c * 3;
     }
 
+    public static String intermediate(String in) {
+        return "Hello, " + in;
+    } 
+
     /** A couple of call types: instance method (length) and static/instance (println). */
     public static void calls() {
         String s = "hello";
@@ -22,5 +26,9 @@ public class HelloWorld {
     public static void main(String[] args) {
         dataflow();
         calls();
+        int x = 7;
+        int y = x + 5;
+        int z = y * 2;
+        System.out.println(intermediate("world " + z));
     }
 }

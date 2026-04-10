@@ -1,6 +1,3 @@
-// This crate is vendored, and we do not maintain it in this repo, so we don't want to alert when
-// running clippy.
-#![allow(clippy::all)]
 pub mod error;
 pub mod flow;
 pub mod instructions;

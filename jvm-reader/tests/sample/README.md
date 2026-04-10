@@ -2,7 +2,9 @@
 
 Minimal Java sample for instruction-flow tests.
 
-- **HelloWorld.java** – One method with simple dataflow (locals, constants, arithmetic), another with a couple of call kinds (instance `length()`, `System.out.println`).
+- **HelloWorld.java** – Small baseline sample.
+- **ControlFlowMaze.java** – Branch joins, loop/switch control flow, and try/catch/finally.
+- **InvokeShapes.java** – Interface/default/virtual/static calls and long/double slot behavior.
 
 ## Rebuild the JAR
 
@@ -12,6 +14,17 @@ From the repo root:
 javac -d tests/sample/out tests/sample/HelloWorld.java
 jar cf tests/jar/HelloWorld.jar -C tests/sample/out .
 ```
+
+Build all samples (`*.java`) at once with the helper script:
+
+```bash
+bash tests/sample/build_samples.sh
+```
+
+This creates/updates matching files in both:
+
+- `tests/jar/<Sample>.jar`
+- `tests/class/<Sample>.class`
 
 On Windows (PowerShell):
 

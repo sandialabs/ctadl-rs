@@ -2,17 +2,18 @@ use crate::error::*;
 
 #[inline]
 pub fn check_range(data: &[u8], offset: usize, size: usize) -> ClassFileResult<()> {
-    if offset
-        .checked_add(size)
-        .map_or(true, |end| end > data.len())
-    {
-        Err(ClassFileError::OutOfBounds {
+    match offset.checked_add(size) {
+        None => Err(ClassFileError::OutOfBounds {
             offset,
             size,
             len: data.len(),
-        })
-    } else {
-        Ok(())
+        }),
+        Some(end) if end > data.len() => Err(ClassFileError::OutOfBounds {
+            offset,
+            size,
+            len: data.len(),
+        }),
+        Some(_) => Ok(()),
     }
 }
 
@@ -45,7 +46,7 @@ pub fn read_i32_be(data: &[u8], offset: usize) -> ClassFileResult<i32> {
 }
 
 #[inline]
-pub fn read_slice<'a>(data: &'a [u8], offset: usize, size: usize) -> ClassFileResult<&'a [u8]> {
+pub fn read_slice(data: &[u8], offset: usize, size: usize) -> ClassFileResult<&[u8]> {
     check_range(data, offset, size)?;
     Ok(&data[offset..offset + size])
 }
