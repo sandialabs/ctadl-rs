@@ -258,7 +258,21 @@ impl Context {
         // TODO: some of these are probably direct calls, right? We should use a direct call style instead?
         // Get call target
         let style = match &call.receiver {
-            None => CallStyle::Unknown,
+            None => {
+                match call.call_kind {
+                    CallKind::Dynamic => CallStyle::Unknown,
+                    CallKind::Interface => CallStyle::Unknown,
+                    CallKind::Special => CallStyle::Unknown,
+                    CallKind::Virtual | CallKind::Static => CallStyle::DirectCall {
+                        call_edges: CallEdges::Explicit(
+                        [call.target.as_ref().unwrap().class_name.clone() + "." + 
+                        &call.target.as_ref().unwrap().method_name.clone() + 
+                        &call.target.as_ref().unwrap().descriptor.clone()].into_iter().collect())
+                    },
+                    
+                    /*_ => CallStyle::Unknown,*/
+                }
+            }
             Some(recv) => {
                 match call.call_kind {
                     // Java invokedynamic calls have a bootstrap method index and dynamic name/type
@@ -335,6 +349,9 @@ impl Context {
             ),
             Location::Constant(ConstantValue::Integer(n)) => {
                 Exp::new_bytes(n.to_be_bytes().to_vec())
+            }
+            Location::Constant(ConstantValue::String(s)) => {
+                Exp::new_str(s)
             }
             /*Location::FieldRef(f) => {
                 Exp::new_access_path(AccessPath::new(, f.field_name))
