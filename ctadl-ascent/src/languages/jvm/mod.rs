@@ -153,6 +153,24 @@ impl Context {
                 // pretty‑signature, e.g. "(I)I". Use the parser's `proto_signature` helper.
                 let java_sig = parser.method_proto(enc)?;
 
+
+                let params = jvm_reader::descriptor_parameter_info(&java_sig);
+                for p in params {
+                    match p.kind {
+                        jvm_reader::MethodParameterKind::Primitive => fdat.params.push(ParameterType::ByVal),
+                        jvm_reader::MethodParameterKind::Reference => fdat.params.push(ParameterType::ByRef)
+                    };
+                }
+
+                // TODO: might need this to be always arity 2 (ret val + exception)
+                // regardless of whether void or not; this won't mess up our stack accounting
+                // because we already finished that phase
+                let return_arity = match jvm_reader::descriptor_returns_value(&java_sig) {
+                    true => 1,
+                    false => 0
+                };
+                fdat.return_type = ReturnType{arity: return_arity};
+
                 if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
                     methods.push((
                         JavaClass(class_name.to_string().into()),
@@ -161,6 +179,8 @@ impl Context {
                         JavaMethod(sig.clone().into()),
                     ));
                 }
+
+                
 
                 // ---------------------------------------------------------------------
                 match enc.code {
@@ -211,8 +231,11 @@ impl Context {
                             // return? successors? no successors?
                             let term = match bb.successors.is_empty() {
                                 // returns are treated as empty successors, no fallthrough / no branch targets
-                                true => TerminatorKind::Return {
-                                    args: SmallVec::new(),
+                                true => TerminatorKind::Return { args:
+                                    match return_arity {
+                                        1 => smallvec![self.convert_location_to_exp(&Location::StackSlot(0))],
+                                        _ => SmallVec::new()
+                                    }
                                 },
                                 // any other control flows will be present here
                                 false => TerminatorKind::Goto {
@@ -263,7 +286,8 @@ impl Context {
                     CallKind::Dynamic => CallStyle::Unknown,
                     CallKind::Interface => CallStyle::Unknown,
                     CallKind::Special => CallStyle::Unknown,
-                    CallKind::Virtual | CallKind::Static => CallStyle::DirectCall {
+                    CallKind::Virtual => CallStyle::Unknown,
+                    CallKind::Static => CallStyle::DirectCall {
                         call_edges: CallEdges::Explicit(
                         [call.target.as_ref().unwrap().class_name.clone() + "." + 
                         &call.target.as_ref().unwrap().method_name.clone() + 

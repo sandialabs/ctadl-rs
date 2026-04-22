@@ -452,10 +452,7 @@ pub fn compute_basic_blocks_for_method<'a>(
 }
 
 fn returns_value(descriptor: &str) -> bool {
-    match descriptor.rsplit_once(')') {
-        Some((_params, ret)) => ret != "V",
-        None => false,
-    }
+    descriptor_returns_value(descriptor)
 }
 
 fn descriptor_return_slot_count(descriptor: &str) -> usize {
@@ -725,32 +722,67 @@ fn simulate_block<'a>(
 
 // ============== Descriptor helpers ==============
 
-/// Returns the number of local variable slots used by the method parameters (JVM convention:
-/// long/double use 2 slots, rest use 1).
-pub fn descriptor_param_slot_count(descriptor: &str) -> usize {
+/// Per-parameter classification derived from a JVM method descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MethodParameterKind {
+    Primitive,
+    Reference,
+}
+
+/// Descriptor-derived metadata for one method parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MethodParameterInfo {
+    pub kind: MethodParameterKind,
+    /// JVM local-slot width for this parameter (long/double => 2, otherwise 1).
+    pub slot_width: u8,
+}
+
+/// Returns one entry per descriptor parameter in declaration order.
+///
+/// Java passes all parameters by value. `kind` distinguishes whether that value
+/// is a primitive value or an object/array reference value.
+pub fn descriptor_parameter_info(descriptor: &str) -> Vec<MethodParameterInfo> {
     let s = match descriptor.strip_prefix('(') {
         Some(x) => x,
-        None => return 0,
+        None => return Vec::new(),
     };
-    let mut slots = 0usize;
-    let mut i = 0;
+    let mut params = Vec::new();
+    let mut i = 0usize;
     let b = s.as_bytes();
     while i < b.len() && b[i] != b')' {
         match b[i] {
             b'J' | b'D' => {
-                slots += 2;
+                params.push(MethodParameterInfo {
+                    kind: MethodParameterKind::Primitive,
+                    slot_width: 2,
+                });
+                i += 1;
+            }
+            b'B' | b'C' | b'F' | b'I' | b'S' | b'Z' => {
+                params.push(MethodParameterInfo {
+                    kind: MethodParameterKind::Primitive,
+                    slot_width: 1,
+                });
                 i += 1;
             }
             b'L' => {
-                slots += 1;
+                params.push(MethodParameterInfo {
+                    kind: MethodParameterKind::Reference,
+                    slot_width: 1,
+                });
                 i += 1;
                 while i < b.len() && b[i] != b';' {
                     i += 1;
                 }
-                i += 1;
+                if i < b.len() && b[i] == b';' {
+                    i += 1;
+                }
             }
             b'[' => {
-                slots += 1;
+                params.push(MethodParameterInfo {
+                    kind: MethodParameterKind::Reference,
+                    slot_width: 1,
+                });
                 i += 1;
                 while i < b.len() && b[i] == b'[' {
                     i += 1;
@@ -759,18 +791,41 @@ pub fn descriptor_param_slot_count(descriptor: &str) -> usize {
                     while i < b.len() && b[i] != b';' {
                         i += 1;
                     }
-                    i += 1;
+                    if i < b.len() && b[i] == b';' {
+                        i += 1;
+                    }
                 } else if i < b.len() {
                     i += 1;
                 }
             }
             _ => {
-                slots += 1;
+                // Malformed descriptor token; keep scanning without infinite loop.
                 i += 1;
             }
         }
     }
-    slots
+    params
+}
+
+/// Returns true when a JVM method descriptor has a non-void return type.
+///
+/// Examples:
+/// - `(I)V` => false
+/// - `(Ljava/lang/String;)I` => true
+pub fn descriptor_returns_value(descriptor: &str) -> bool {
+    match descriptor.rsplit_once(')') {
+        Some((_params, ret)) => ret != "V",
+        None => false,
+    }
+}
+
+/// Returns the number of local variable slots used by the method parameters (JVM convention:
+/// long/double use 2 slots, rest use 1).
+pub fn descriptor_param_slot_count(descriptor: &str) -> usize {
+    descriptor_parameter_info(descriptor)
+        .into_iter()
+        .map(|p| p.slot_width as usize)
+        .sum()
 }
 
 /// Returns true if the given local slot index is a parameter (slot < param_slot_count).
@@ -1513,6 +1568,46 @@ fn misc_stack_effect(opcode: u8) -> (usize, usize) {
         0xc2 | 0xc3 => (1, 0),
 
         _ => (0, 0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        descriptor_param_slot_count, descriptor_parameter_info, descriptor_returns_value,
+        MethodParameterInfo, MethodParameterKind,
+    };
+
+    #[test]
+    fn test_descriptor_parameter_info_mixed_types() {
+        let got = descriptor_parameter_info("(Ljava/lang/String;ID[J)V");
+        let want = vec![
+            MethodParameterInfo {
+                kind: MethodParameterKind::Reference,
+                slot_width: 1,
+            },
+            MethodParameterInfo {
+                kind: MethodParameterKind::Primitive,
+                slot_width: 1,
+            },
+            MethodParameterInfo {
+                kind: MethodParameterKind::Primitive,
+                slot_width: 2,
+            },
+            MethodParameterInfo {
+                kind: MethodParameterKind::Reference,
+                slot_width: 1,
+            },
+        ];
+        assert_eq!(got, want);
+        assert_eq!(descriptor_param_slot_count("(Ljava/lang/String;ID[J)V"), 5);
+    }
+
+    #[test]
+    fn test_descriptor_returns_value() {
+        assert!(!descriptor_returns_value("(I)V"));
+        assert!(descriptor_returns_value("(I)I"));
+        assert!(descriptor_returns_value("()Ljava/lang/String;"));
     }
 }
 
