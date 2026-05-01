@@ -20,7 +20,9 @@ public class HelloWorld {
     public static void calls() {
         String s = "hello";
         int n = s.length();
+        String userName = System.getProperty("user.name");
         System.out.println(n);
+        System.out.println(userName);
     }
 
     public static void main(String[] args) {

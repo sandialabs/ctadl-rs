@@ -5,6 +5,7 @@ Minimal Java sample for instruction-flow tests.
 - **HelloWorld.java** – Small baseline sample.
 - **ControlFlowMaze.java** – Branch joins, loop/switch control flow, and try/catch/finally.
 - **InvokeShapes.java** – Interface/default/virtual/static calls and long/double slot behavior.
+- **ArrayFlow.java** – Simple array load/store for `ArrayElement` stack-slot normalization tests (`include_bytes!(../tests/sample/out/ArrayFlow.class)` in `flow.rs` tests).
 
 ## Rebuild the JAR
 

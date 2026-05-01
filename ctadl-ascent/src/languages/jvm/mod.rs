@@ -142,7 +142,6 @@ impl Context {
                 let fidx = builders.program.new_function();
                 // Reset temporaries per function.
                 let fdat = &mut builders.program[fidx];
-                fdat.name = sig.clone();
                 //self.ext.remove(&sig);
 
                 // ---------------------------------------------------------------------
@@ -152,6 +151,8 @@ impl Context {
                 // The full method signature (`sig`) includes the enclosing class; we want the proto
                 // pretty‑signature, e.g. "(I)I". Use the parser's `proto_signature` helper.
                 let java_sig = parser.method_proto(enc)?;
+                let full_name: String = "L".to_owned() + &class_name + ";." + &sig;
+                fdat.name = full_name.clone();
 
 
                 let params = jvm_reader::descriptor_parameter_info(&java_sig);
@@ -176,7 +177,7 @@ impl Context {
                         JavaClass(class_name.to_string().into()),
                         JavaSimpleName(method_name.clone().into()),
                         JavaSignature(java_sig.clone().into()),
-                        JavaMethod(sig.clone().into()),
+                        JavaMethod(full_name.clone().into()),
                     ));
                 }
 
@@ -215,17 +216,14 @@ impl Context {
                                         bb_data.push_back(stmt);
                                     }
                                 }
-                                match &instr.dataflow {
-                                    None => {}
-                                    Some(data_info) => {
+                                for df in &instr.dataflow {
                                         let mut stmt = self
-                                            .dataflow_to_assign(parser, data_info)
+                                            .dataflow_to_assign(parser, df)
                                             .expect("Dataflow should be there");
                                         stmt.source_info = source_info;
                                         bb_data.push_back(stmt);
-                                    }
                                 }
-                            }
+                            } 
 
                             // TODO: Add correct terminator (successors) to the basic block
                             // return? successors? no successors?
@@ -278,18 +276,21 @@ impl Context {
     }
 
     fn decode_call(&mut self, _parser: &ClassFileParser, call: &CallInfo) -> Option<Statement> {
-        // TODO: some of these are probably direct calls, right? We should use a direct call style instead?
         // Get call target
         let style = match &call.receiver {
             None => {
                 match call.call_kind {
-                    CallKind::Dynamic => CallStyle::Unknown,
+                    CallKind::Dynamic => CallStyle::DirectCall { 
+                        call_edges: CallEdges::Explicit(
+                            [call.dynamic_name.as_ref().unwrap().clone() + &call.dynamic_type.as_ref().unwrap().clone()
+                            ]
+                            .into_iter().collect())},
                     CallKind::Interface => CallStyle::Unknown,
                     CallKind::Special => CallStyle::Unknown,
-                    CallKind::Virtual => CallStyle::Unknown,
+                    CallKind::Virtual => CallStyle::Unknown, 
                     CallKind::Static => CallStyle::DirectCall {
                         call_edges: CallEdges::Explicit(
-                        [call.target.as_ref().unwrap().class_name.clone() + "." + 
+                        ["L".to_owned() + &call.target.as_ref().unwrap().class_name.clone() + ";." + 
                         &call.target.as_ref().unwrap().method_name.clone() + 
                         &call.target.as_ref().unwrap().descriptor.clone()].into_iter().collect())
                     },
@@ -303,10 +304,10 @@ impl Context {
                     // I'm not entirely sure what these are supposed to look like
                     CallKind::Dynamic => CallStyle::JavaCall {
                         receiver: self.convert_location_to_var_ref(recv),
-                        cls: call.target.as_ref().unwrap().class_name.clone().into(),
+                        cls: ("L".to_owned() + &call.target.as_ref().unwrap().class_name.clone() + ";").into(),
                         simple_name: call.target.as_ref().unwrap().method_name.clone().into(),
                         descriptor: call
-                            .dynamic_name_and_type
+                            .dynamic_type
                             .as_ref()
                             .unwrap()
                             .to_string()
@@ -316,7 +317,7 @@ impl Context {
                     // other calls have a class name, method name, and descriptor
                     _ => CallStyle::JavaCall {
                         receiver: self.convert_location_to_var_ref(recv),
-                        cls: call.target.as_ref().unwrap().class_name.clone().into(),
+                        cls: ("L".to_owned() + &call.target.as_ref().unwrap().class_name.clone() + ";").into(),
                         simple_name: call.target.as_ref().unwrap().method_name.clone().into(),
                         descriptor: call.target.as_ref().unwrap().descriptor.clone().into(),
                     },
@@ -352,18 +353,11 @@ impl Context {
         let mut sources = SmallVec::new();
         for source_loc in data.sources.iter() {
             sources.push(self.convert_location_to_exp(source_loc));
-        }
-        match data.destinations.as_slice() {
-            [] => None,
-            [x] => Some(Statement::new_kind(StatementKind::Assign {
-                dest: self.convert_location_to_var_ref(x),
+        }        
+        Some(Statement::new_kind(StatementKind::Assign {
+                dest: self.convert_location_to_var_ref(&data.destination),
                 sources,
-            })),
-            [_x, _y, ..] => {
-                log::trace!("Multiple destinations in dataflow, skipping");
-                None
-            }
-        }
+            }))
     }
 
     fn convert_location_to_exp(&mut self, loc: &Location) -> Exp {
@@ -377,9 +371,9 @@ impl Context {
             Location::Constant(ConstantValue::String(s)) => {
                 Exp::new_str(s)
             }
-            /*Location::FieldRef(f) => {
-                Exp::new_access_path(AccessPath::new(, f.field_name))
-            },*/
+            Location::FieldRef(f) => {
+                Exp::new_access_path(AccessPath::new(self.convert_location_to_var_ref(loc), [&f.field_name]))
+            },
             _ => Exp::new_access_path(AccessPath::without_fields(
                 self.convert_location_to_var_ref(loc),
             )),
@@ -394,13 +388,18 @@ impl Context {
             }
             Location::Register(n) => VariableRef::new_local(format!("reg{}", n)),
             Location::Parameter(n) => VariableRef::new_local(format!("param{}", n)),
-            // TODO: this needs to become an acess path
+            // Just the var ref part - field will be put in later
             Location::FieldRef(f) => {
-                VariableRef::new_local(format!("field{}.{}", f.class_name, f.field_name))
+                VariableRef::new_local(format!("{}", f.class_name))
             }
             // TODO: not sure what is going on with this one, why is there no base/index?
-            Location::ArrayElement => VariableRef::new_local("arrayElement".to_string()),
-            _ => VariableRef::new_local("Unknown".to_string()),
+            Location::ArrayElement{base, offset} => {
+                match (base.as_ref(), offset.as_ref()) {
+                    (Location::StackSlot(n), Location::StackSlot(m)) => VariableRef::new_local(format!("stack{}[stack{}]", n, m)),
+                    _ => VariableRef::new_local("unknownArrayOp".to_string()) 
+                }
+            }
+            _ => VariableRef::new_local("unknownLocationType".to_string()),
         }
     }
 }

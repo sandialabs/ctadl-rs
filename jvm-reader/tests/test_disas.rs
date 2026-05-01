@@ -501,8 +501,24 @@ fn test_stack_slots_samples() {
                 let mut seen_dest_slots: std::collections::HashSet<u32> =
                     std::collections::HashSet::new();
                 for inst in cfg.instructions() {
-                    if let Some(df) = &inst.dataflow {
-                        for loc in df.sources.iter().chain(df.destinations.iter()) {
+                    for df in &inst.dataflow {
+                        fn assert_normalized_flow_loc(loc: &jvm_reader::Location) {
+                            match loc {
+                                jvm_reader::Location::StackSlot(id) => {
+                                    assert!(*id < 64, "unexpectedly large stack-slot id {}", id);
+                                }
+                                jvm_reader::Location::StackInput(_)
+                                | jvm_reader::Location::StackOutput => {
+                                    panic!("found unnormalized stack location ({:?})", loc);
+                                }
+                                jvm_reader::Location::ArrayElement { base, offset } => {
+                                    assert_normalized_flow_loc(base);
+                                    assert_normalized_flow_loc(offset);
+                                }
+                                _ => {}
+                            }
+                        }
+                        for loc in df.sources.iter().chain(std::iter::once(&df.destination)) {
                             match loc {
                                 jvm_reader::Location::StackSlot(id) => {
                                     saw_any_stackslot = true;
@@ -512,14 +528,16 @@ fn test_stack_slots_samples() {
                                 | jvm_reader::Location::StackOutput => {
                                     panic!("found unnormalized stack location ({:?})", loc);
                                 }
+                                jvm_reader::Location::ArrayElement { .. } => {
+                                    assert_normalized_flow_loc(loc);
+                                    saw_any_stackslot = true;
+                                }
                                 _ => {}
                             }
                         }
-                        for dst in &df.destinations {
-                            if let jvm_reader::Location::StackSlot(id) = dst {
-                                if !seen_dest_slots.insert(*id) {
-                                    saw_duplicate_dest_slot_anywhere = true;
-                                }
+                        if let jvm_reader::Location::StackSlot(id) = &df.destination {
+                            if !seen_dest_slots.insert(*id) {
+                                saw_duplicate_dest_slot_anywhere = true;
                             }
                         }
                     }
