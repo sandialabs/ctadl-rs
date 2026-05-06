@@ -142,7 +142,6 @@ impl Context {
                 let fidx = builders.program.new_function();
                 // Reset temporaries per function.
                 let fdat = &mut builders.program[fidx];
-                //self.ext.remove(&sig);
 
                 // ---------------------------------------------------------------------
                 // Collect Java virtual method information for the VMT.
@@ -262,7 +261,12 @@ impl Context {
         program.verify()?;
         for (_sig, entry) in self.ext.drain() {
             if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
-                methods.push(entry);
+                if !methods.iter().any(|(_class, _simple_name, _signature, defined_method)| {&entry.3 == defined_method}) {
+                    log::trace!("adding external method: {}", &entry.3);
+                    methods.push(entry);
+                } else {
+                    log::trace!("skipping defined method: {}", &entry.3);
+                }
             }
         }
         let source_info = builders.source_info_builder.finish();
@@ -280,46 +284,97 @@ impl Context {
         let style = match &call.receiver {
             None => {
                 match call.call_kind {
-                    CallKind::Dynamic => CallStyle::DirectCall { 
-                        call_edges: CallEdges::Explicit(
-                            [call.dynamic_name.as_ref().unwrap().clone() + &call.dynamic_type.as_ref().unwrap().clone()
-                            ]
-                            .into_iter().collect())},
+                    CallKind::Dynamic => {
+                        // I don't know why dynamic calls with no reciever exist, but apparently makeConcatWithContants does this
+                        let class_name = "?unknown";
+                        let method_name = call.dynamic_name.as_ref().unwrap();
+                        let descr = call.dynamic_type.as_ref().unwrap();
+                        let java_sig = method_name.clone() + &descr.clone();
+                        self.ext.insert(
+                            java_sig.clone(),
+                            (
+                                JavaClass(class_name.into()),
+                                JavaSimpleName(method_name.clone().into()),
+                                JavaSignature(descr.clone().into()),
+                                JavaMethod(java_sig.clone().into()),
+                            ),
+                        );
+                        CallStyle::DirectCall { 
+                                call_edges: CallEdges::Explicit(
+                                    [java_sig
+                                    ]
+                                    .into_iter().collect())}
+                                },
                     CallKind::Interface => CallStyle::Unknown,
                     CallKind::Special => CallStyle::Unknown,
                     CallKind::Virtual => CallStyle::Unknown, 
-                    CallKind::Static => CallStyle::DirectCall {
-                        call_edges: CallEdges::Explicit(
-                        ["L".to_owned() + &call.target.as_ref().unwrap().class_name.clone() + ";." + 
-                        &call.target.as_ref().unwrap().method_name.clone() + 
-                        &call.target.as_ref().unwrap().descriptor.clone()].into_iter().collect())
+                    CallKind::Static => {
+                        let class_name = &call.target.as_ref().unwrap().class_name;
+                        let method_name = &call.target.as_ref().unwrap().method_name;
+                        let descr = &call.target.as_ref().unwrap().descriptor;
+                        let java_sig = "L".to_owned() + &class_name + ";." + &method_name + &descr;
+                        self.ext.insert(
+                            java_sig.clone(),
+                            (
+                                JavaClass(class_name.clone().into()),
+                                JavaSimpleName(method_name.clone().into()),
+                                JavaSignature(descr.clone().into()),
+                                JavaMethod(java_sig.clone().into()),
+                            ),
+                        );
+                        CallStyle::DirectCall {
+                            call_edges: CallEdges::Explicit(
+                            [java_sig].into_iter().collect())
+                        }
                     },
-                    
-                    /*_ => CallStyle::Unknown,*/
                 }
             }
             Some(recv) => {
                 match call.call_kind {
                     // Java invokedynamic calls have a bootstrap method index and dynamic name/type
                     // I'm not entirely sure what these are supposed to look like
-                    CallKind::Dynamic => CallStyle::JavaCall {
+                    CallKind::Dynamic => {
+                        let class_name = &call.target.as_ref().unwrap().class_name;
+                        let method_name = &call.target.as_ref().unwrap().method_name;
+                        let descr = call.dynamic_type.as_ref().unwrap();
+                        let java_sig = "L".to_owned() + &class_name + ";." + &method_name + &descr;
+                        self.ext.insert(
+                            java_sig.clone(),
+                            (
+                                JavaClass(class_name.clone().into()),
+                                JavaSimpleName(method_name.clone().into()),
+                                JavaSignature(descr.clone().into()),
+                                JavaMethod(java_sig.clone().into()),
+                            ),
+                        );
+                        CallStyle::JavaCall {
                         receiver: self.convert_location_to_var_ref(recv),
-                        cls: ("L".to_owned() + &call.target.as_ref().unwrap().class_name.clone() + ";").into(),
-                        simple_name: call.target.as_ref().unwrap().method_name.clone().into(),
-                        descriptor: call
-                            .dynamic_type
-                            .as_ref()
-                            .unwrap()
-                            .to_string()
-                            .clone()
-                            .into(),
+                        cls: ("L".to_owned() + class_name + ";").into(),
+                        simple_name: method_name.clone().into(),
+                        descriptor: descr.clone().into()
+                        }
                     },
                     // other calls have a class name, method name, and descriptor
-                    _ => CallStyle::JavaCall {
-                        receiver: self.convert_location_to_var_ref(recv),
-                        cls: ("L".to_owned() + &call.target.as_ref().unwrap().class_name.clone() + ";").into(),
-                        simple_name: call.target.as_ref().unwrap().method_name.clone().into(),
-                        descriptor: call.target.as_ref().unwrap().descriptor.clone().into(),
+                    _ => {
+                        let class_name = &call.target.as_ref().unwrap().class_name;
+                        let method_name = &call.target.as_ref().unwrap().method_name;
+                        let descr = &call.target.as_ref().unwrap().descriptor;
+                        let java_sig = "L".to_owned() + &class_name + ";." + &method_name + &descr;
+                        self.ext.insert(
+                            java_sig.clone(),
+                            (
+                                JavaClass(class_name.clone().into()),
+                                JavaSimpleName(method_name.clone().into()),
+                                JavaSignature(descr.clone().into()),
+                                JavaMethod(java_sig.clone().into()),
+                            ),
+                        );
+                        CallStyle::JavaCall {
+                            receiver: self.convert_location_to_var_ref(recv),
+                            cls: ("L".to_owned() + class_name + ";").into(),
+                            simple_name: method_name.clone().into(),
+                            descriptor: descr.clone().into(),
+                        }
                     },
                 }
             }
