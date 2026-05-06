@@ -76,7 +76,7 @@ impl Builders {
 #[derive(Debug)]
 struct Context {
     // vmt entries for externs so far
-    ext: HashMap<String, (JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
+    ext: HashMap<String, (JavaClass, JavaSimpleName, JavaSignature, JavaMethod, Vec<ParameterType>, ReturnType)>,
 }
 
 impl Context {
@@ -255,20 +255,32 @@ impl Context {
     }
 
     fn finish(&mut self, mut builders: Builders) -> Result<ProgramInfo, Error> {
-        let program = builders.program;
-        log::trace!("program: {program}");
-        // Verify the generated program.
-        program.verify()?;
+        let mut program = builders.program;
         for (_sig, entry) in self.ext.drain() {
             if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
-                if !methods.iter().any(|(_class, _simple_name, _signature, defined_method)| {&entry.3 == defined_method}) {
+                if !methods.iter().any(|(_class_name, _simple_name, _signature, defined_method)| {&entry.3 == defined_method}) {
                     log::trace!("adding external method: {}", &entry.3);
-                    methods.push(entry);
+                    methods.push((entry.0.clone(), entry.1.clone(), entry.2.clone(), entry.3.clone()));
+
+                    // Add empty definition
+                    let fidx = program.new_function();
+                    let fdat = &mut program.functions[fidx];
+                    let JavaMethod(name) = entry.3.clone();
+                    fdat.name = name.to_string();
+                    for p in entry.4 {
+                        fdat.params.push(p);
+                    }
+                    fdat.return_type = entry.5;   
                 } else {
                     log::trace!("skipping defined method: {}", &entry.3);
                 }
             }
         }
+
+        log::trace!("program: {program}");
+        // Verify the generated program.
+        program.verify()?;
+
         let source_info = builders.source_info_builder.finish();
         log::trace!("source_info: {source_info}");
         let vmt = builders.vmt;
@@ -290,6 +302,19 @@ impl Context {
                         let method_name = call.dynamic_name.as_ref().unwrap();
                         let descr = call.dynamic_type.as_ref().unwrap();
                         let java_sig = method_name.clone() + &descr.clone();
+                        let in_params = jvm_reader::descriptor_parameter_info(&descr);
+                        let mut out_params = Vec::new();
+                        for p in in_params {
+                            match p.kind {
+                                jvm_reader::MethodParameterKind::Primitive => out_params.push(ParameterType::ByVal),
+                                jvm_reader::MethodParameterKind::Reference => out_params.push(ParameterType::ByRef)
+                            };
+                        }
+                        // All functions return 2 values: (normal_return, exception_return)
+                        let return_arity = match jvm_reader::descriptor_returns_value(&descr) {
+                            true => 1,
+                            false => 0
+                        };
                         self.ext.insert(
                             java_sig.clone(),
                             (
@@ -297,6 +322,8 @@ impl Context {
                                 JavaSimpleName(method_name.clone().into()),
                                 JavaSignature(descr.clone().into()),
                                 JavaMethod(java_sig.clone().into()),
+                                out_params,
+                                ReturnType{arity:return_arity}
                             ),
                         );
                         CallStyle::DirectCall { 
@@ -313,6 +340,19 @@ impl Context {
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
                         let java_sig = "L".to_owned() + &class_name + ";." + &method_name + &descr;
+                        let in_params = jvm_reader::descriptor_parameter_info(&descr);
+                        let mut out_params = Vec::new();
+                        for p in in_params {
+                            match p.kind {
+                                jvm_reader::MethodParameterKind::Primitive => out_params.push(ParameterType::ByVal),
+                                jvm_reader::MethodParameterKind::Reference => out_params.push(ParameterType::ByRef)
+                            };
+                        }
+                        // All functions return 2 values: (normal_return, exception_return)
+                        let return_arity = match jvm_reader::descriptor_returns_value(&descr) {
+                            true => 1,
+                            false => 0
+                        };
                         self.ext.insert(
                             java_sig.clone(),
                             (
@@ -320,6 +360,9 @@ impl Context {
                                 JavaSimpleName(method_name.clone().into()),
                                 JavaSignature(descr.clone().into()),
                                 JavaMethod(java_sig.clone().into()),
+                                out_params,
+                                ReturnType{arity:return_arity}
+
                             ),
                         );
                         CallStyle::DirectCall {
@@ -338,6 +381,19 @@ impl Context {
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = call.dynamic_type.as_ref().unwrap();
                         let java_sig = "L".to_owned() + &class_name + ";." + &method_name + &descr;
+                        let in_params = jvm_reader::descriptor_parameter_info(&descr);
+                        let mut out_params = Vec::new();
+                        for p in in_params {
+                            match p.kind {
+                                jvm_reader::MethodParameterKind::Primitive => out_params.push(ParameterType::ByVal),
+                                jvm_reader::MethodParameterKind::Reference => out_params.push(ParameterType::ByRef)
+                            };
+                        }
+                        // All functions return 2 values: (normal_return, exception_return)
+                        let return_arity = match jvm_reader::descriptor_returns_value(&descr) {
+                            true => 1,
+                            false => 0
+                        };
                         self.ext.insert(
                             java_sig.clone(),
                             (
@@ -345,6 +401,9 @@ impl Context {
                                 JavaSimpleName(method_name.clone().into()),
                                 JavaSignature(descr.clone().into()),
                                 JavaMethod(java_sig.clone().into()),
+                                out_params,
+                                ReturnType{arity:return_arity}
+
                             ),
                         );
                         CallStyle::JavaCall {
@@ -360,6 +419,19 @@ impl Context {
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
                         let java_sig = "L".to_owned() + &class_name + ";." + &method_name + &descr;
+                        let in_params = jvm_reader::descriptor_parameter_info(&descr);
+                        let mut out_params = Vec::new();
+                        for p in in_params {
+                            match p.kind {
+                                jvm_reader::MethodParameterKind::Primitive => out_params.push(ParameterType::ByVal),
+                                jvm_reader::MethodParameterKind::Reference => out_params.push(ParameterType::ByRef)
+                            };
+                        }
+                        // All functions return 2 values: (normal_return, exception_return)
+                        let return_arity = match jvm_reader::descriptor_returns_value(&descr) {
+                            true => 1,
+                            false => 0
+                        };
                         self.ext.insert(
                             java_sig.clone(),
                             (
@@ -367,6 +439,9 @@ impl Context {
                                 JavaSimpleName(method_name.clone().into()),
                                 JavaSignature(descr.clone().into()),
                                 JavaMethod(java_sig.clone().into()),
+                                out_params,
+                                ReturnType{arity:return_arity}
+
                             ),
                         );
                         CallStyle::JavaCall {
@@ -427,7 +502,7 @@ impl Context {
                 Exp::new_str(s)
             }
             Location::FieldRef(f) => {
-                Exp::new_access_path(AccessPath::new(self.convert_location_to_var_ref(loc), [&f.field_name]))
+                Exp::new_access_path(AccessPath::new(self.convert_location_to_var_ref(loc), [mir::FieldAccess::Symbol(f.field_name.clone().into())]))
             },
             _ => Exp::new_access_path(AccessPath::without_fields(
                 self.convert_location_to_var_ref(loc),
