@@ -1,0 +1,138 @@
+workflow:
+  rules:
+    # Run for merge requests
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+
+    # Run for all actions on main
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: always
+
+    # Manually triggered from web interface
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: always
+
+    # Otherwise, don't create a pipeline
+    - when: never
+
+variables:
+  FF_USE_FASTZIP: "true"
+  CACHE_COMPRESSION_LEVEL: "fastest"
+
+stages:
+  - format
+  - lint
+  - build
+  - test
+  - trigger
+
+# Template for stable jobs
+.rust_stable:
+  image: rust:1.94.1
+  variables:
+    CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+    CARGO_TARGET_DIR: "$CI_PROJECT_DIR/target"
+    # Optional:
+    # CARGO_INCREMENTAL: "0"
+  cache:
+    # 1) Cargo downloads: shared broadly (safe to share)
+    - key:
+        files: [Cargo.lock]
+        prefix: "cargo-stable"
+      paths:
+        - .cargo/registry/
+        - .cargo/git/
+      policy: pull-push
+
+    # 2) Build artifacts: scoped to branch (safer than global)
+    - key: "target-stable-${CI_COMMIT_REF_SLUG}"
+      paths:
+        - target/
+      policy: pull-push
+
+# Template for nightly job (separate cache)
+.rust_nightly:
+  image: rustlang/rust:nightly
+  variables:
+    CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+    CARGO_TARGET_DIR: "$CI_PROJECT_DIR/target"
+  cache:
+    - key:
+        files: [Cargo.lock]
+        prefix: "cargo-nightly"
+      paths:
+        - .cargo/registry/
+        - .cargo/git/
+      policy: pull-push
+
+    - key: "target-nightly-${CI_COMMIT_REF_SLUG}"
+      paths:
+        - target/
+      policy: pull-push
+
+format:
+  extends: .rust_stable
+  stage: format
+  script:
+    - rustup component add rustfmt
+    - cargo fmt --all --check
+
+clippy:
+  extends: .rust_stable
+  stage: lint
+  script:
+    - rustup component add clippy
+    - cargo clippy -- -Dwarnings
+
+rust-latest-build:
+  extends: .rust_stable
+  stage: build
+  script:
+    - cargo build --verbose
+    - cargo doc --no-deps
+
+rust-nightly-build:
+  extends: .rust_nightly
+  stage: build
+  script:
+    - cargo build --verbose
+    - cargo doc --no-deps
+  allow_failure: true
+
+test:
+  extends: .rust_stable
+  stage: test
+  script:
+    - cargo test --verbose
+
+ctadl-ascent-ci:
+  stage: trigger
+  trigger:
+    project: $DOWNSTREAM_CI
+    branch: main
+    strategy: depend
+  variables:
+    CTADL_RS_URL: "$CI_PROJECT_URL"
+    CTADL_RS_REF: "$CI_COMMIT_SHA"
+    CTADL_RS_PROJECT_PATH: "$CI_PROJECT_PATH"
+  allow_failure: true
+
+windows-test:
+  tags:
+    - windows
+    - ctadl
+    - executor:shell
+  stage: test
+  # set this a bit longer in case we have to do a full clone / build for some reason
+  timeout: 2h
+  variables:
+    # fetch from existing repo (clone if empty), disable git clean at the start of each job
+    # this is so we can reuse library build artifacts to speed up the build process
+    GIT_CLEAN_FLAGS: none
+    GIT_STRATEGY: fetch
+  script:
+    - >
+      'for pkg in $(cargo metadata --no-deps --format-version=1 | jq -r ".packages[] | .name"); do cargo clean -p $pkg; done' | wsl bash -i
+    - cargo test
+    - >
+      'cargo test' | wsl bash -i

@@ -1,0 +1,60 @@
+// Abstract procedure `poly`. This example is adapted from the hybrid inlining
+// paper. It just uses function pointers without the object-oriented framing.
+
+// Identical to `id`.
+def polyY(obj):1 {
+start:
+  return obj;
+}
+
+// Not the same data flow as id.
+def polyZ(obj):1 {
+start:
+  obj.a = obj.b;
+  return obj.a;
+}
+
+def id(x):1 {
+start:
+  return x;
+}
+
+def foo(poly, obj):1 {
+start:
+  // Direct call that returns `poly`.
+  tpoly = id(poly);
+  // Indirect call.
+  // When called from bar1, calls polyY
+  // When called from bar2, calls polyZ
+  tmp = tpoly(obj);
+  return tmp;
+}
+
+def mid(poly, obj):1 {
+start:
+  tmp = foo(poly, obj);
+  return tmp;
+}
+
+def bar1(obj):1 {
+start:
+  tmp = mid(ptr<polyY>, obj);
+  return tmp;
+}
+
+def bar2(obj):1 {
+start:
+  tmp = mid(ptr<polyZ>, obj);
+  return tmp;
+}
+
+def service() {
+start:
+  first = source(Obj);
+  second = bar1(first);
+  third = bar2(first);
+  sink(second, Obj);
+  errsink(third, Obj);
+  return;
+}
+

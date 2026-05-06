@@ -1,0 +1,9 @@
+def F(p1, p2, p3)
+where summaries [p1.foo <- p3.bar]
+{
+start:
+    z = p1;
+    w = p3;
+    z.foo = w.bar;
+    return;
+}

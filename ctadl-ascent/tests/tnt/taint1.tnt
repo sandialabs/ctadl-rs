@@ -1,0 +1,19 @@
+def F(y):1 {
+start:
+  y = source(Source);
+  x = y;
+  z = x;
+  return z;
+}
+def H(c) {
+start:
+  // c is restricted
+  sink(c, Source);
+  return;
+}
+def G() {
+start:
+  b = F(a);
+  H(b);
+  return;
+}

@@ -1,0 +1,11 @@
+[package]
+name = "jvm-reader"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+zip = ">=2.2"
+
+[dev-dependencies]
+walkdir = ">=2"
+

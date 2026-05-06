@@ -1,0 +1,33 @@
+def Main() {
+start:
+  x.bar = source(Network);
+  r = A(x, y);
+  sink(y.foo, Network);
+  return;
+}
+
+def A(ain, aout)
+where summaries [aout.foo <- ain.bar]
+{
+start:
+  B(ain, tmp);
+  C(tmp, aout);
+  return;
+}
+
+def B(bin, bout)
+where summaries [bout.baz <- bin.bar]
+{
+start:
+  bout.baz = bin.bar;
+  return;
+}
+
+def C(cin, cout)
+where summaries [cout.foo <- cin.baz]
+{
+start:
+  cout.foo = cin.baz;
+  return;
+}
+

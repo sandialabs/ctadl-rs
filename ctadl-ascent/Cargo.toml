@@ -1,0 +1,73 @@
+[package]
+name = "ctadl-ascent"
+version = "0.1.0"
+edition = "2024"
+default-run = "ctadl"
+
+[[bin]]
+name = "ctadl"
+path = "src/main.rs"
+
+[[bin]]
+name = "tree-sitter-compile"
+path = "src/languages/tree_sitter/bin/tree-sitter-compile.rs"
+
+[[bin]]
+name = "analyze-ir"
+path = "src/index_engine/bin/analyze-ir.rs"
+
+[[bin]]
+name = "flowy"
+path = "src/bin/flowy.rs"
+
+[dependencies]
+anyhow = "1.0"
+arrow = "57"
+ascent = "0.8.0"
+ascent-byods-rels = "0.8.0"
+ascent_base = "0.8.0"
+ascent_macro = "0.8.0"
+bitcode = { version = "0.6", features = ["serde"] }
+clap = { version = "4.5", features = ["cargo", "derive", "wrap_help", "env"] }
+csv = "1.3.*"
+ctadl-flowy = { path = "../ctadl-flowy", features = ["serde"] }
+ctadl-ir = { path = "../ctadl-ir", features = ["serde"] }
+datafusion = "52"
+derive_builder = "0.20"
+dex-reader = { path = "../dex-reader" }
+env_logger = "0.11"
+hashbrown = "0.16"
+internment = { version = "0.8", features = ["arc", "serde"] }
+itertools = "0.14"
+json5 = "1.3"
+jvm-reader = { path = "../jvm-reader" }
+lazy_static = "1"
+log = "0.4"
+log-once = "0.4"
+memmap = "0.7"
+packed_struct = "0.10"
+parquet = "57"
+paste = "1.0"
+pcode-reader = { path = "../pcode-reader" }
+pest = "2.8"
+pest_derive = "2.8"
+rayon = "1.10"
+regex = "1.12"
+serde = { version = "1.0", features = ["derive"] }
+serde-sarif = "0.8"
+rustc_graphviz = { path = "../rustc_graphviz" }
+serde_json = { version = "1", features = ["preserve_order"] }
+smallvec = "1"
+source-info = { path = "../source-info", features = ["serde"] }
+streaming-iterator = { version = "0.1", features = ["alloc"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+tree-sitter = "0.26"
+tree-sitter-c = "0.24"
+
+[dev-dependencies]
+tempfile = "3.20"
+test-log = "0.2.19"
+
+[lints]
+workspace = true

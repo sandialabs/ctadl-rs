@@ -1,0 +1,14 @@
+def F(a): 1 {
+start:
+  a.src = source(Test);
+  b.f = a.src;
+  c = b;
+  return c;
+}
+
+def G() {
+start:
+  d.g = F(z);
+  sink(d.g.f, Test);
+  return;
+}

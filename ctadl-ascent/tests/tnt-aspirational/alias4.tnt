@@ -1,0 +1,66 @@
+def engn_init(r2v0)
+where summaries [r2v0.runnable.this0 <- r2v0]
+{
+start:
+  runnable_init(r0v7, r2v0);
+  // r0v7.this0 = r2v0
+  r2v0.runnable = r0v7;
+  return;
+}
+
+def engn_init_ia(r0v0, r1v0)
+where summaries [r0v0.runnable.this0 <- r0v0]
+{
+s:
+  engn_init(r0v0);
+  return;
+}
+
+def engn_del(r0v0, u0, str2) {
+s:
+  r0v0.eName = str2;
+  sink(r0v0.eName, Taint);
+  // dies here
+  r0v1 = r0v0.runnable;
+  runnable_run(r0v1);
+  return;
+}
+
+def runnable_init(this, outer) {
+s:
+  this.this0 = outer;
+  return;
+}
+
+def runnable_run(this) {
+s:
+  r = this.this0.eName;
+  // Eventual goal:
+  //sink(r, Taint);
+  return;
+}
+
+def recv_init(r3v0)
+//where summaries [r3v0.mEng.runnable.this0 <- r3v0.mEng]
+{
+s:
+  engn_init_ia(r2v0, constvar_0);
+  r3v0.mEng = r2v0;
+  // For the summary that doesn't hold
+  // r3v0.mEng.runnable.this0 = r3v0.mEng;
+  return;
+}
+
+def recv_entry() {
+  recv_init(r8v0);
+  r8v0.mName = source(Taint);
+  r2v2 = r8v0.mEng;
+  r4v0 = r8v0.mName;
+  engn_del(r2v2, u0, r4v0);
+}
+
+// This is just here to add to the access path set
+def Paths() {
+  x.mEng.runnable.this0 = y;
+  x.runnable.this0 = y;
+}

@@ -1,0 +1,24 @@
+// Test to verify numeric field access syntax parsing works
+var x;
+
+def TestSyntaxOnly() {
+start:
+    // Test various numeric field access patterns
+    
+    // Basic numeric field access
+    y = x.[0];
+    z = x.[42];
+    
+    // Numeric field updates
+    x.[10] = y;
+    x.[100] = z;
+    
+    // Mixed symbolic and numeric
+    w = x.field.[5];
+    x.[7].nested = w;
+    
+    // Chained numeric accesses
+    a = x.[1].[2].[3];
+    
+    return;
+}

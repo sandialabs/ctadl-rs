@@ -1,0 +1,23 @@
+def F(y): 1 {
+s:
+  y = source(Outer);
+  y.foo = source(Inner);
+  return y;
+}
+
+def H(c) {
+s:
+  // c is restricted
+  sink(c, Outer);
+  errsink(c, Inner);
+  sink(c.foo, Inner);
+  errsink(c.foo, Outer);
+  return;
+}
+
+def G() {
+s:
+  b = F(a);
+  H(b);
+  return;
+}

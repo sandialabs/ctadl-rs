@@ -1,0 +1,22 @@
+def F(x): 1
+where
+summaries [return <- x]
+{
+s:
+   r = G(x, y);
+   return r;
+}
+
+def G(a, b): 1
+where
+summaries [return <- a, return <- b]
+{
+s:
+  r = F(b);
+  goto a, b;
+a:
+  return r;
+b:
+  return a;
+}
+

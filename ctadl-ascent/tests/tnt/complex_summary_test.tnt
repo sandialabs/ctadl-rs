@@ -1,0 +1,15 @@
+// Test complex numeric field access in summary requirements
+
+def ComplexSummaryTest(input, output): 1
+where summaries [
+    return <- input.[0].field.[1],
+    output.[10].nested <- input.[20].[30]
+]
+{
+start:
+    // Function that should satisfy complex summary requirements
+    temp1 = input.[0].field.[1];
+    temp2 = input.[20].[30];
+    output.[10].nested = temp2;
+    return temp1;
+}

@@ -1,0 +1,8 @@
+def main() {
+entry:
+  x = 42;
+  // undefined_func is not defined, so it should be treated as an indirect call
+  y = undefined_func(x);
+  undefined_func(y);
+  return;
+}

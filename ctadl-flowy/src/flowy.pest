@@ -1,0 +1,64 @@
+top = { SOI ~ def* ~ EOI }
+def = { var_def | function_def }
+
+var_def = { "var" ~ ident ~ ";" }
+
+function_def = { "def" ~ ident ~ params ~ return_arity? ~ where_clause? ~ block_list }
+block_list = { "{" ~ block* ~ "}" }
+params = {
+  "(" ~ ")" |
+  "(" ~ param ~ ("," ~ param)* ~ ")"
+}
+// The second ident is 'byref', but it needs to parse as ident or else it's not
+// in the parse tree.
+param = { ident ~ param_passing_style? }
+param_passing_style = { "byref" | "byval" }
+return_arity = { ":" ~ int }
+where_clause = { "where" ~ "summaries" ~ summaries }
+
+block = { ident ~ ":" ~ stmt* ~ terminator }
+
+terminator = { goto_stmt | return_stmt }
+stmt = { assign_stmt | assign_call_stmt | call_stmt }
+
+assign_stmt = { ap ~ "=" ~ ap_comma_list ~ ";" }
+ap_comma_list = { ap ~ ("," ~ ap)* }
+assign_call_stmt = { ap ~ "=" ~ ap ~ actuals ~ ";" }
+call_stmt = { ap ~ actuals ~ ";" }
+goto_stmt = { "goto" ~ ident ~ ("," ~ ident)* ~ ";" }
+return_stmt = { "return" ~ ap? ~ ";" }
+
+p = { star_p | field_p | offset_p }
+star_p = { "." ~ "*" }
+field_p = { "." ~ ident }
+offset_p = { "." ~ "[" ~ int ~ "]" }
+
+ap = { function_ptr | ident ~ p* | int | string }
+function_ptr = { "ptr" ~ "<" ~ ident ~ ">" }
+
+actuals = {
+  "(" ~ ")" |
+  "(" ~ ap ~ ("," ~ ap)* ~ ")"
+}
+
+// 'ap' in summary_ap handles the case of the special "return" port.
+summary_ap = { ap }
+summary_entry = { summary_ap ~ summary_op ~ summary_ap }
+summary_op = { "<-" | "</-" }
+summaries = {
+  "[" ~ "]" |
+  "[" ~ summary_entry ~ ("," ~ summary_entry)* ~ "]"
+}
+
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }
+int = { ("+" | "-")? ~ ASCII_DIGIT+ }
+ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+string = ${ "\"" ~ inner ~ "\"" }
+inner = @{ char* }
+char = {
+    !("\"" | "\\") ~ ANY
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
+}

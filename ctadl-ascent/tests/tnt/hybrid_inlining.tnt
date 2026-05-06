@@ -1,0 +1,62 @@
+def polyY(obj): 1 
+where summaries [return <- obj]
+{
+start:
+  return obj;
+}
+
+def polyZ(obj): 1
+where summaries [return </- obj]
+{
+start:
+  obj.dst = obj.src;
+  return "hi";
+}
+
+def id(x): 1
+where summaries [return <- x]
+{
+start:
+  return x;
+}
+
+def foo(poly, obj): 1
+{
+start:
+  tpoly = id(poly);
+  tmp = tpoly(obj);
+  return tmp;
+}
+
+def mid(poly, obj): 1
+{
+start:
+  tmp = foo(poly, obj);
+  return tmp;
+}
+
+def bar1(obj): 1
+where summaries [return <- obj]
+{
+start:
+  tmp = mid(ptr<polyY>, obj);
+  return tmp;
+}
+
+def bar2(obj): 1
+where summaries [return </- obj]
+{
+start:
+  tmp = mid(ptr<polyZ>, obj);
+  return tmp;
+}
+
+def service() {
+start:
+  first = source(Obj);
+  second = bar1(first);
+  third = bar2(first);
+  sink(second, Obj);
+  errsink(third, Obj);
+  return;
+}

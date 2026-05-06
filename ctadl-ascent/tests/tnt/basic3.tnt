@@ -1,0 +1,18 @@
+// Requires a summary due to assignments. Tests that value assignments don't
+// induce summaries because pass-by-value is assumed.
+def F(p, q): 1
+where summaries [return <- q, return </- p, p </- q]
+{
+start:
+  a = q;
+  p = a;
+  return p;
+}
+
+def G(b): 1
+where summaries [return <- b]
+{
+start:
+  c = F(a, b);
+  return c;
+}

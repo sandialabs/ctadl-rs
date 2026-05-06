@@ -1,0 +1,30 @@
+[package]
+name = "ctadl-flowy"
+edition = "2024"
+version = "0.1.0"
+
+[lib]
+
+[dependencies]
+serde-sarif = "0.8"
+anyhow = "1.0"
+ctadl-ir = { path = "../ctadl-ir" }
+datafusion = "52"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+env_logger = "0.11"
+hashbrown = "0.16"
+internment = { version = "0.8", features = ["arc", "serde"] }
+log = "0.4"
+pest = "2.8"
+pest_derive = "2.8"
+smallvec = "1"
+source-info = { path = "../source-info" }
+thiserror = "2"
+serde_json  = "1"
+serde       = { version = "1", features = ["derive"], optional = true }
+
+[features]
+serde = ["dep:serde", "ctadl-ir/serde", "source-info/serde", "internment/serde"]
+
+[lints]
+workspace = true

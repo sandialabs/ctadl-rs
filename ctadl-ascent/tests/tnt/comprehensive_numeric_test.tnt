@@ -1,0 +1,32 @@
+// Comprehensive test for numeric field access syntax
+var global_var;
+
+def TestAllNumericPatterns(a, b) {
+start:
+    // Test 1: Basic numeric field access
+    c = a.[0];
+    
+    // Test 2: Numeric field update
+    a.[1] = b;
+    
+    // Test 3: Global variable with numeric field access
+    d = global_var.[2];
+    
+    // Test 4: Mixed symbolic and numeric field access
+    e = a.field.[3].another.[4];
+    
+    // Test 5: Numeric field access in function parameters
+    f = b.[5];
+    
+    // Test 6: Multiple numeric field accesses in one statement
+    g = a.[6], b.[7];
+    
+    // Test 7: Chained numeric field accesses
+    h = a.[8].[9].[10];
+    
+    // Test 8: Large numeric offsets
+    i = a.[1000];
+    a.[9999] = i;
+    
+    return;
+}

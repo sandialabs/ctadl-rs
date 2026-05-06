@@ -1,0 +1,24 @@
+// Test edge cases for numeric field access
+
+def TestEdgeCases(a) {
+start:
+    // Test 1: Zero offset
+    b = a.[0];
+    
+    // Test 2: Single digit offset
+    c = a.[5];
+    
+    // Test 3: Multi-digit offset
+    d = a.[42];
+    
+    // Test 4: Large offset
+    e = a.[999999];
+    
+    // Test 5: Mixed with symbolic fields
+    f = a.[1].field.[2].another.[3];
+    
+    // Test 6: Numeric field update with same variable
+    a.[10] = a.[20];
+    
+    return;
+}

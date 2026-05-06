@@ -1,0 +1,8 @@
+var x;
+
+def F(): 1
+where summaries [return <- x]
+{
+start:
+  return x;
+}

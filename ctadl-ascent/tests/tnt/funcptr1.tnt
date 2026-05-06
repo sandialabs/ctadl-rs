@@ -1,0 +1,16 @@
+def my_target(a) : 1 {
+entry:
+  return a;
+}
+
+def main() {
+entry:
+  // Test function pointer syntax
+  f = ptr<my_target>;
+  x = 42;
+  
+  // Test indirect call syntax
+  y = f(x);
+  
+  return;
+}

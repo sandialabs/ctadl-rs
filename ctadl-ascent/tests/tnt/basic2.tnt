@@ -1,0 +1,12 @@
+// Requires a summary due to assignments. Tests that value assignments don't
+// induce summaries because pass-by-value is assumed.
+def F(p byval, q byval): 1
+where summaries [p </- q]
+{
+start:
+  a = q;
+  p = a;
+  goto end;
+end:
+  return p;
+}

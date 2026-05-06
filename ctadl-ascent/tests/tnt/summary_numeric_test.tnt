@@ -1,0 +1,11 @@
+// Test numeric field access in summary requirements
+
+def TestSummaryNumeric(a, b): 1
+where summaries [return <- a.[0], b.[1] <- a.[2]]
+{
+start:
+    // Simple function that should satisfy the summary requirements
+    c = a.[0];
+    b.[1] = a.[2];
+    return c;
+}

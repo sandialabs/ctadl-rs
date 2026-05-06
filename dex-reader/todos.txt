@@ -1,0 +1,8 @@
+- Add testing
+  - Use Smali/Baksmali to generate ground truth, get rid of extra empty lines/directives they have
+  - Modify our print-outs to produce the same output style as Smali
+  - Diff # of lines and/or actual content to find errors
+  - Spot checks for a few routines
+  
+- Add simpler IR that hides details of instruction sizes
+  - Many instructions are teh same as one another but they permit different operand sizes.  These could be unified into a smaller set of instructions

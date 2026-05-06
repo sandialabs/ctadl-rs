@@ -1,0 +1,37 @@
+def F(a): 1
+where
+summaries [return <- a]
+{
+s:
+  b = a;
+  test = 3;
+  test = "yabadabadoo";
+  aoeu = use_it;
+  return b;
+}
+
+def G(c byref): 1
+where summaries [return <- c]
+{
+s:
+  d = F(c);
+  return d;
+}
+
+def H() {
+s:
+  e = source(Network);
+  f = G(e);
+  sink(f, Network);
+  return;
+}
+
+// def I(a)
+// where summaries [return <- a]
+// {
+// s:
+//   b = a;
+//   c = b;
+//   d = c;
+//   return d;
+// }

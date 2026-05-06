@@ -1,0 +1,8 @@
+def F(p, q)
+where summaries [p.f.g <- q] {
+start:
+  this = p.f;
+  this.g = q;
+  tmp = a.f.g; // adds .f.g access path
+  return;
+}

@@ -1,0 +1,21 @@
+def Main() {
+start:
+  x.bar = source(Network);
+  r = A(x, y);
+  sink(y.foo, Network);
+  return;
+}
+
+def A(ain, aout)
+where summaries [aout.foo <- ain.bar] {
+start:
+  r = B(ain, aout);
+  return;
+}
+
+def B(bin, bout)
+where summaries [bout.foo <- bin.bar] {
+start:
+  bout.foo = bin.bar;
+  return;
+}

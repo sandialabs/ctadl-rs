@@ -1,0 +1,18 @@
+
+// Test numeric field access in summary requirements
+
+def Transfer(a, b): 0
+where summaries [a.[1] <- b]
+{
+start:
+    a.[1] = b;
+    return;
+}
+
+def Main() {
+start:
+  s = source(Test);
+  Transfer(x.[1], s);
+  sink(x.[2], Test);
+  return;
+}

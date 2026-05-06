@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = ["ctadl-ascent", "ctadl-flowy", "ctadl-ir", "pcode-reader", "sarif-util"]
+# All path dependencies become workspace members, which means bins from
+# dex-reader are included in the distro; they should not be included.
+exclude = ["dex-reader"]
+
+[workspace.package]
+version = "0.1.0"
+
+# Section defining rustc compiler lint rules for the workspace
+[workspace.lints.rust]
+
+# Fail on violations of the `rust-2018-idioms` lint group
+rust-2018-idioms = "deny"
+
+# Section defining Clippy lint rules for the workspace
+[workspace.lints.clippy]
+
+# Require a "SAFETY" comment preceding any unsafe code
+undocumented_unsafe_blocks = "deny"
+
+# Ignore a couple Clippy warnings that aren't important IMO
+type_complexity = "allow"
+large_enum_variant = "allow"
+result_large_err = "allow"
+# Our Ascent code uses _ as a name all the time
+just_underscores_and_digits = "allow"
+
+[profile.release]
+debug = true
