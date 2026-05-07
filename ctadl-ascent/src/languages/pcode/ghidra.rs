@@ -70,12 +70,11 @@ fn find_ghidra_base() -> Result<PathBuf, Error> {
         return Ok(PathBuf::from(ghidra_home));
     }
 
-    if let Ok(ghidra_bin) = which::which("ghidra") {
-        if let Ok(ghidra_bin) = ghidra_bin.canonicalize() {
-            if let Some(parent) = ghidra_bin.parent() {
-                return Ok(parent.to_path_buf());
-            }
-        }
+    if let Ok(ghidra_bin) = which::which("ghidra")
+        && let Ok(ghidra_bin) = ghidra_bin.canonicalize()
+        && let Some(parent) = ghidra_bin.parent()
+    {
+        return Ok(parent.to_path_buf());
     }
 
     Err(Error::PcodeConversion(
