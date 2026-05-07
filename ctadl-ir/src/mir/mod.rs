@@ -165,9 +165,9 @@ impl Display for Offset {
         // Print signed hex
         if self.0 < 0i64 {
             let pos = -self.0;
-            write!(f, "-{:x}", pos)
+            write!(f, "-0x{:x}", pos)
         } else {
-            write!(f, "{:x}", self.0)
+            write!(f, "0x{:x}", self.0)
         }
     }
 }
