@@ -719,7 +719,7 @@ impl Context {
             }
             "RETURN" | "BRANCH" | "CBRANCH" | "BRANCHIND" => {
                 // Control flow is handled in process_pcode_instructions for terminators
-                Ok(Statement::new_kind(StatementKind::Nop)).map(|s| [s].into_iter().collect())
+                Ok(Vec::new())
             }
             "MULTIEQUAL" | "INT_ADD" | "INT_SUB" | "INT_MULT" | "INT_DIV" | "INT_SDIV"
             | "INT_REM" | "INT_SREM" | "INT_AND" | "INT_OR" | "INT_XOR" | "INT_LEFT"
