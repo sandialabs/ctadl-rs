@@ -883,7 +883,8 @@ impl Context {
         }
 
         if let Some(vnode_data) = vnode_facts.get(vnode_id)
-            && (vnode_data.space.as_deref() == Some("const") || vnode_data.space.as_deref() == Some("unique"))
+            && (vnode_data.space.as_deref() == Some("const")
+                || vnode_data.space.as_deref() == Some("unique"))
             && let Some(address) = &vnode_data.address
         {
             let var_name = format!("ram_{:x}", address.0);
