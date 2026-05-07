@@ -91,7 +91,7 @@ pub fn import(import: &ArtifactImport) -> Result<(), Error> {
         Apk => dex::import_apk(&import.artifact_path)?,
         Jar => jvm::import_jar(&import.artifact_path)?,
         Jvm => jvm::import_class(&import.artifact_path)?,
-        Pcode => pcode::import_pcode(&import.artifact_path)?,
+        Pcode => pcode::import_pcode(import)?,
         Flowy => crate::codegen::flowy::import(import)?,
         _ => unimplemented!(),
     };

@@ -15,12 +15,21 @@ use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;
 
+mod ghidra;
+
 /// TODO read this from facts
 const WORD_SIZE: i64 = 8;
 
-/// Import pcode facts from a directory containing Ghidra pcode facts
-pub fn import_pcode<P: AsRef<Path>>(path: P) -> Result<ProgramInfo, Error> {
-    let path = path.as_ref();
+/// Import pcode facts from an artifact by running Ghidra and then converting the facts
+pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramInfo, Error> {
+    let path = &import.artifact_path;
+    let import_path = &import.import_path;
+
+    // Run Ghidra to generate facts
+    ghidra::run_ghidra_export(path, import_path)?;
+
+    let facts_dir = import_path.join("facts");
+
     let mut ctx = Context::new();
     let mut builders = Builders::new();
 
@@ -31,7 +40,7 @@ pub fn import_pcode<P: AsRef<Path>>(path: P) -> Result<ProgramInfo, Error> {
         encoding: source_info::ArtifactEncoding::Binary,
     };
 
-    ctx.process(path, key, &mut builders)?;
+    ctx.process(&facts_dir, key, &mut builders)?;
     ctx.finish(builders)
 }
 
