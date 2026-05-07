@@ -856,6 +856,41 @@ impl Context {
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
     ) -> Result<Exp, Error> {
+        if let Some(prop) = self.cp_results.get(vnode_id).cloned() {
+            match prop {
+                pcode_reader::constant_propagation::SymbolicProp::Value(Some(base_vn), offset) => {
+                    let is_stack = base_vn.deref().deref() == "__stack_top";
+                    if is_stack {
+                        let var_ref = VariableRef::new_local("__stack_top".to_string());
+                        let mut ap = AccessPath::without_fields(var_ref);
+                        ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
+                        return Ok(Exp::AccessPath(ap));
+                    } else if base_vn != *vnode_id {
+                        let mut ap = self.get_lvalue(&base_vn, vnode_facts)?;
+                        if offset != 0 {
+                            ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
+                        }
+                        return Ok(Exp::AccessPath(ap));
+                    }
+                }
+                pcode_reader::constant_propagation::SymbolicProp::Value(None, offset) => {
+                    let var_name = format!("ram_{:x}", offset);
+                    let var_ref = VariableRef::new_local(var_name);
+                    return Ok(Exp::AccessPath(AccessPath::without_fields(var_ref)));
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(vnode_data) = vnode_facts.get(vnode_id)
+            && (vnode_data.space.as_deref() == Some("const") || vnode_data.space.as_deref() == Some("unique"))
+            && let Some(address) = &vnode_data.address
+        {
+            let var_name = format!("ram_{:x}", address.0);
+            let var_ref = VariableRef::new_local(var_name);
+            return Ok(Exp::AccessPath(AccessPath::without_fields(var_ref)));
+        }
+
         self.get_exp(vnode_id, vnode_facts)
     }
 
