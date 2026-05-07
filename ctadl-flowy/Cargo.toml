@@ -9,7 +9,7 @@ version = "0.1.0"
 serde-sarif = "0.8"
 anyhow = "1.0"
 ctadl-ir = { path = "../ctadl-ir" }
-datafusion = "52"
+datafusion = "53"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 env_logger = "0.11"
 hashbrown = "0.16"

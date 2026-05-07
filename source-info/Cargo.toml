@@ -6,12 +6,12 @@ edition = "2024"
 [dependencies]
 sled  = { version = "0.34", optional = true }
 serde = { version = "1",    optional = true, features = ["derive"] }
-parquet = "57"
-arrow = "57"
+parquet = "58"
+arrow = "58"
 
 [dev-dependencies]
 tempfile   = "3"
-datafusion = "52"
+datafusion = "53"
 tokio      = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde-sarif = "0.8"
 serde_json  = "1"
