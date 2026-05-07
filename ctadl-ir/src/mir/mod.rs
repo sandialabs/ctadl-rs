@@ -162,8 +162,13 @@ pub enum FieldAccess {
 
 impl Display for Offset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // hex
-        write!(f, "{:x}", self.0)
+        // Print signed hex
+        if self.0 < 0i64 {
+            let pos = -self.0;
+            write!(f, "-{:x}", pos)
+        } else {
+            write!(f, "{:x}", self.0)
+        }
     }
 }
 
@@ -585,13 +590,13 @@ impl FieldAccesses {
 
     /// Create a new FieldAccesses with mixed field accesses
     #[inline]
-    pub fn mixed<S: AsRef<str>>(path: impl IntoIterator<Item = Result<S, u64>>) -> Self {
+    pub fn mixed<S: AsRef<str>>(path: impl IntoIterator<Item = Result<S, i64>>) -> Self {
         Self {
             fields: path
                 .into_iter()
                 .map(|item| match item {
                     Ok(s) => FieldAccess::Symbol(ArcIntern::from(s.as_ref())),
-                    Err(offset) => FieldAccess::Offset(Offset(offset as i64)),
+                    Err(offset) => FieldAccess::Offset(Offset(offset)),
                 })
                 .collect(),
         }

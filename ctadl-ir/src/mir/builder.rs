@@ -245,7 +245,7 @@ impl<'a> BasicBlockBuilder<'a> {
     /// * `fields` - Sequence of either field names (Ok) or offsets (Err)
     pub fn new_mixed_field_path<S: AsRef<str>>(
         &self,
-        fields: impl IntoIterator<Item = Result<S, u64>>,
+        fields: impl IntoIterator<Item = Result<S, i64>>,
     ) -> FieldAccesses {
         FieldAccesses::mixed(fields)
     }
