@@ -1,17 +1,14 @@
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use crate::error::Error;
 use std::env;
 use std::fs;
-use crate::error::Error;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const MAXMEM: &str = "40G";
 const LAUNCH_MODE: &str = "fg";
 const VMARG_LIST: &str = "-XX:ParallelGCThreads=4 -XX:CICompilerCount=4 ";
 
-pub fn run_ghidra_export(
-    artifact_path: &Path,
-    output_dir: &Path,
-) -> Result<(), Error> {
+pub fn run_ghidra_export(artifact_path: &Path, output_dir: &Path) -> Result<(), Error> {
     let ghidra_base = find_ghidra_base()?;
     let analyze_headless = find_analyze_headless(&ghidra_base)?;
     let script_dir = analyze_headless.parent().ok_or_else(|| {
@@ -29,7 +26,10 @@ pub fn run_ghidra_export(
     // Write ExportPcode.java to a temporary directory
     let script_temp_dir = tempfile::tempdir()?;
     let export_script_path = script_temp_dir.path().join("ExportPcode.java");
-    fs::write(&export_script_path, include_str!("../../../../pcode-reader/ExportPcode.java"))?;
+    fs::write(
+        &export_script_path,
+        include_str!("../../../../pcode-reader/ExportPcode.java"),
+    )?;
 
     let mut command = Command::new(&launch_script);
     command.args([
@@ -85,7 +85,9 @@ fn find_ghidra_base() -> Result<PathBuf, Error> {
 
 fn find_analyze_headless(ghidra_base: &Path) -> Result<PathBuf, Error> {
     let candidates = [
-        ghidra_base.parent().map(|p| p.join("lib/ghidra/support/analyzeHeadless")),
+        ghidra_base
+            .parent()
+            .map(|p| p.join("lib/ghidra/support/analyzeHeadless")),
         Some(ghidra_base.join("support/analyzeHeadless")),
     ];
 
@@ -102,4 +104,3 @@ fn find_analyze_headless(ghidra_base: &Path) -> Result<PathBuf, Error> {
 }
 
 // No more need for find_export_script
-
