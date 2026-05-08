@@ -35,12 +35,16 @@ fn build_query_endpoints(
     batch: &crate::models::EndpointBatch,
     facts: &IndexFacts,
     idmap: &facts::IdMap,
-) -> Vec<(crate::query_engine::QueryEndpoint,)> {
+) -> (
+    Vec<(crate::query_engine::QueryEndpoint,)>,
+    Vec<(facts::FunctionId, facts::FlowVariable, facts::FormalType)>,
+) {
     use crate::models::FormalIndexTypeTag;
     let ap_map = batch.aps.build_ap_map();
     let func_num_params = facts.compute_num_params();
 
-    let mut out = Vec::new();
+    let mut out_eps = Vec::new();
+    let mut out_formals = Vec::new();
     for (func_name, selector_ty, idx_opt, path_id, label_str, direction) in batch.iter_endpoints() {
         // Resolve function name → FunctionId; skip if not present.
         let infunc = match idmap.get_function_id(crate::facts::Function(func_name.into())) {
@@ -72,15 +76,18 @@ fn build_query_endpoints(
         let lbl = Label(label_str.into());
 
         for var in vars {
-            out.push((crate::query_engine::QueryEndpoint {
+            out_eps.push((crate::query_engine::QueryEndpoint {
                 infunc,
-                vertex: FlowVertex(var, ap.clone()),
+                vertex: FlowVertex(var.clone(), ap.clone()),
                 label: lbl.clone(),
                 direction,
             },));
+            if let FlowVariable::Formal(_) = var {
+                out_formals.push((infunc, var, facts::FormalType::ByRef));
+            }
         }
     }
-    out
+    (out_eps, out_formals)
 }
 
 // Imports a program for an artifact into the store
@@ -190,13 +197,15 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
                 builder.endpoints(eps);
             }
         }
+        let mut formal_params = index_facts.formal_param.clone();
         if let Some(ref batch) = models_batch {
-            let eps = build_query_endpoints(&batch.endpoint, &index_facts, &ids);
+            let (eps, model_formals) = build_query_endpoints(&batch.endpoint, &index_facts, &ids);
             builder.endpoints(eps);
+            formal_params.extend(model_formals);
         }
 
         builder
-            .formal_param(index_facts.formal_param)
+            .formal_param(formal_params)
             .actual_param(index_facts.actual_param)
             .call(index_facts.call);
         let index_result = IndexResult::try_load(&index_path)?;
@@ -232,20 +241,26 @@ pub fn format(
     let index_path = project.index_path()?;
     let query_path = project.query_path()?;
     {
+        let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading id map")?;
         let index_facts =
             IndexFacts::try_load(&index_path).err_context(|| "loading index facts")?;
         let index_result =
             IndexResult::try_load(&index_path).err_context(|| "loading index result")?;
         let taint_result =
             QueryResult::try_load(&query_path).err_context(|| "loading query result")?;
+
+        let formal_params = taint_result.formal_param.clone();
+
         let mut b = query_engine::formatter::FormatFactsBuilder::default();
         b.taint(taint_result.taint)
-            .formal_param(index_facts.formal_param)
+            .formal_param(formal_params)
             .index_actual_param(index_facts.actual_param)
             .call(index_facts.call)
             .assign(index_result.assign_like)
-            .paths(index_result.paths);
+            .paths(index_result.paths)
+            .id_to_name(ids.get_id_to_name_map());
         let facts = b.build().unwrap();
+
         query_engine::formatter::format_sarif(project, facts.clone(), compact, output, profile)
             .err_context(|| "formatting sarif")?;
 
