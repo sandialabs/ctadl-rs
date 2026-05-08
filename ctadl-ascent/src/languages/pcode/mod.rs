@@ -15,12 +15,21 @@ use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;
 
+mod ghidra;
+
 /// TODO read this from facts
 const WORD_SIZE: i64 = 8;
 
-/// Import pcode facts from a directory containing Ghidra pcode facts
-pub fn import_pcode<P: AsRef<Path>>(path: P) -> Result<ProgramInfo, Error> {
-    let path = path.as_ref();
+/// Import pcode facts from an artifact by running Ghidra and then converting the facts
+pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramInfo, Error> {
+    let path = &import.artifact_path;
+    let import_path = &import.import_path;
+
+    // Run Ghidra to generate facts
+    ghidra::run_ghidra_export(path, import_path)?;
+
+    let facts_dir = import_path.join("facts");
+
     let mut ctx = Context::new();
     let mut builders = Builders::new();
 
@@ -31,7 +40,7 @@ pub fn import_pcode<P: AsRef<Path>>(path: P) -> Result<ProgramInfo, Error> {
         encoding: source_info::ArtifactEncoding::Binary,
     };
 
-    ctx.process(path, key, &mut builders)?;
+    ctx.process(&facts_dir, key, &mut builders)?;
     ctx.finish(builders)
 }
 
@@ -710,7 +719,7 @@ impl Context {
             }
             "RETURN" | "BRANCH" | "CBRANCH" | "BRANCHIND" => {
                 // Control flow is handled in process_pcode_instructions for terminators
-                Ok(Statement::new_kind(StatementKind::Nop)).map(|s| [s].into_iter().collect())
+                Ok(Vec::new())
             }
             "MULTIEQUAL" | "INT_ADD" | "INT_SUB" | "INT_MULT" | "INT_DIV" | "INT_SDIV"
             | "INT_REM" | "INT_SREM" | "INT_AND" | "INT_OR" | "INT_XOR" | "INT_LEFT"
@@ -847,6 +856,42 @@ impl Context {
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
     ) -> Result<Exp, Error> {
+        if let Some(prop) = self.cp_results.get(vnode_id).cloned() {
+            match prop {
+                pcode_reader::constant_propagation::SymbolicProp::Value(Some(base_vn), offset) => {
+                    let is_stack = base_vn.deref().deref() == "__stack_top";
+                    if is_stack {
+                        let var_ref = VariableRef::new_local("__stack_top".to_string());
+                        let mut ap = AccessPath::without_fields(var_ref);
+                        ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
+                        return Ok(Exp::AccessPath(ap));
+                    } else if base_vn != *vnode_id {
+                        let mut ap = self.get_lvalue(&base_vn, vnode_facts)?;
+                        if offset != 0 {
+                            ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
+                        }
+                        return Ok(Exp::AccessPath(ap));
+                    }
+                }
+                pcode_reader::constant_propagation::SymbolicProp::Value(None, offset) => {
+                    let var_name = format!("ram_{:x}", offset);
+                    let var_ref = VariableRef::new_local(var_name);
+                    return Ok(Exp::AccessPath(AccessPath::without_fields(var_ref)));
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(vnode_data) = vnode_facts.get(vnode_id)
+            && (vnode_data.space.as_deref() == Some("const")
+                || vnode_data.space.as_deref() == Some("unique"))
+            && let Some(address) = &vnode_data.address
+        {
+            let var_name = format!("ram_{:x}", address.0);
+            let var_ref = VariableRef::new_local(var_name);
+            return Ok(Exp::AccessPath(AccessPath::without_fields(var_ref)));
+        }
+
         self.get_exp(vnode_id, vnode_facts)
     }
 

@@ -123,12 +123,12 @@ fn test_field_accesses_with_offsets() {
     assert_eq!(offset_path.len(), 1);
 
     // Test display format for offsets
-    assert_eq!(format!("{}", offset_path), ".[2a]");
+    assert_eq!(format!("{}", offset_path), ".[0x2a]");
 
     // Test mixed field accesses
     let mixed_path = FieldAccesses::mixed(vec![Ok("field1"), Err(10), Ok("field2")]);
     assert_eq!(mixed_path.len(), 3);
-    assert_eq!(format!("{}", mixed_path), ".field1.[a].field2");
+    assert_eq!(format!("{}", mixed_path), ".field1.[0xa].field2");
 
     // Test creating access path with offsets
     let var = VariableRef::new_local("obj".to_string());
@@ -137,7 +137,7 @@ fn test_field_accesses_with_offsets() {
         variable_ref: var,
         path: field_accesses,
     };
-    assert_eq!(format!("{}", access_path), "%obj.field.[5]");
+    assert_eq!(format!("{}", access_path), "%obj.field.[0x5]");
 }
 
 #[test]
@@ -145,12 +145,12 @@ fn test_offset_newtype() {
     // Test Offset newtype
     let offset = Offset(123);
     assert_eq!(offset.0, 123);
-    assert_eq!(format!("{}", offset), "7b");
+    assert_eq!(format!("{}", offset), "0x7b");
 
     // Test FieldAccess enum
     let symbol_access = FieldAccess::Symbol(ArcIntern::from("test"));
     let offset_access = FieldAccess::Offset(Offset(456));
 
     assert_eq!(format!("{}", symbol_access), "test");
-    assert_eq!(format!("{}", offset_access), "[1c8]");
+    assert_eq!(format!("{}", offset_access), "[0x1c8]");
 }
