@@ -132,6 +132,8 @@ pub struct FormatFacts {
     pub assign: Vec<(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)>,
     #[builder(default)]
     pub paths: Vec<(Path,)>,
+    #[builder(default)]
+    pub id_to_name: BTreeMap<u32, String>,
 }
 
 pub struct TaintedInstructions {
@@ -981,6 +983,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
 
     let mut results: Vec<SarifResult> = Vec::new();
     let mut source_data = SourceLocationData::default();
+    // Populate id_to_name with names from facts (as fallback)
+    for (&id, name) in &ctx.facts.id_to_name {
+        source_data.id_to_name.insert(id, name.clone());
+    }
     populate_source_info(ctx, config, sarif_data, &mut source_data, &needed_spans).await?;
 
     // Now build results for tainted instructions (only for Debug or Machine profiles)

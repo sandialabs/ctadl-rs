@@ -73,7 +73,19 @@ pub fn codegen_summary(
         log::trace!("src_index: {}", src_index.len());
         // codegen
         for dst_index in &dst_index {
+            // Ensure formal_param exists for the indices used in summaries
+            facts.formal_param.push((
+                func_id,
+                facts::FlowVariable::Formal(*dst_index),
+                facts::FormalType::ByRef,
+            ));
             for src_index in &src_index {
+                // Ensure formal_param exists for the indices used in summaries
+                facts.formal_param.push((
+                    func_id,
+                    facts::FlowVariable::Formal(*src_index),
+                    facts::FormalType::ByRef,
+                ));
                 if dst_index == src_index {
                     continue;
                 }

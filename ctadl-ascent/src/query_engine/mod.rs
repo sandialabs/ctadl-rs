@@ -79,18 +79,30 @@ pub struct QueryFacts {
 #[derive(Default, Debug, Clone)]
 pub struct QueryResult {
     pub taint: Vec<(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)>,
+    // Queries may introduce new formals for models, so we need to save them for the format phase.
+    pub formal_param: Vec<(FunctionId, FlowVariable, FormalType)>,
 }
 
 impl QueryResult {
     pub fn new() -> Self {
         Self {
             taint: Default::default(),
+            formal_param: Default::default(),
         }
     }
 
     pub fn try_save<P: AsRef<path::Path>>(self, dir: P) -> Result<(), Error> {
         use crate::facts::schema::*;
         taint::try_save(&dir, self.taint)?;
+        formal_param::try_save(
+            &dir,
+            self.formal_param
+                .into_iter()
+                .filter_map(|(fid, v, ty)| match v {
+                    FlowVariable::Formal(i) => Some((fid, i, ty)),
+                    _ => None,
+                }),
+        )?;
         Ok(())
     }
 
@@ -98,7 +110,14 @@ impl QueryResult {
     pub fn try_load<P: AsRef<path::Path>>(dir: P) -> Result<QueryResult, Error> {
         use crate::facts::schema::*;
         let taint = taint::try_load(&dir)?;
-        Ok(QueryResult { taint })
+        let formal_param = formal_param::try_load(&dir)?
+            .into_iter()
+            .map(|(fid, idx, ty)| (fid, FlowVariable::Formal(idx), ty))
+            .collect();
+        Ok(QueryResult {
+            taint,
+            formal_param,
+        })
     }
 }
 
@@ -171,6 +190,7 @@ pub fn taint_analysis(facts: QueryFacts) -> QueryResult {
     );
     QueryResult {
         taint: engine.taint,
+        formal_param: engine.formal_param,
     }
 }
 

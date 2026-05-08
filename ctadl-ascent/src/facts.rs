@@ -1,6 +1,6 @@
 //! Data types for facts
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::ops::Deref;
 use std::str::FromStr;
 use std::{fmt, fmt::Display};
@@ -908,7 +908,7 @@ pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<VecDeque<mir::FieldAcces
 /// index time. This is a helper when doing codegen.
 #[derive(Default, Debug, Clone, Builder)]
 pub struct IdMap {
-    function_id: HashMap<Function, FunctionId>,
+    function_id: BTreeMap<Function, FunctionId>,
     functions: Vec<Function>,
 }
 
@@ -924,6 +924,14 @@ impl IdMap {
     pub fn clear(&mut self) {
         self.function_id.clear();
         self.functions.clear();
+    }
+
+    pub fn get_id_to_name_map(&self) -> BTreeMap<u32, String> {
+        self.functions
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (i as u32, f.0.to_string()))
+            .collect()
     }
 
     pub fn try_save<P: AsRef<std::path::Path>>(self, path: P) -> Result<(), Error> {
