@@ -114,7 +114,16 @@ impl<'a> dot::Labeller<'a> for TaintGraphViz<'a> {
     }
 
     fn node_label(&self, n: &Self::Node) -> dot::LabelText<'a> {
-        dot::LabelText::EscStr(self.node_to_string(&n.0, &n.1, &n.2).into())
+        let mut s = self.node_to_string(&n.0, &n.1, &n.2);
+        let ep = if self.sources.contains(n) {
+            "\nSOURCE"
+        } else if self.sinks.contains(n) {
+            "\nSINK"
+        } else {
+            ""
+        };
+        s.push_str(ep);
+        dot::LabelText::EscStr(s.into())
     }
 
     fn node_style(&self, _n: &Self::Node) -> dot::Style {

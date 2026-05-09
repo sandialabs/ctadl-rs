@@ -50,6 +50,7 @@ packed_struct = "0.10"
 parquet = "58"
 paste = "1.0"
 pcode-reader = { path = "../pcode-reader" }
+php-reader = { path = "../php-reader" }
 pest = "2.8"
 pest_derive = "2.8"
 rayon = "1.10"

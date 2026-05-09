@@ -57,11 +57,13 @@ pub struct BasicBlockBuilder<'a> {
 }
 
 impl<'a> BasicBlockBuilder<'a> {
-    /// Create a new BasicBlockBuilder with given basic block
+    /// Create a new BasicBlockBuilder with given basic block. Insertion point is after the last
+    /// statement of the block.
     pub fn new(block_data: &'a mut BasicBlockData) -> Self {
+        let insertion_point = block_data.statements.len();
         Self {
             block_data,
-            insertion_point: 0,
+            insertion_point,
         }
     }
 

@@ -11,8 +11,8 @@ targets of control flow. Terminator instructions are returns and gotos with mult
 - Expressions are all values, which are constants, variables, and access paths.
 
 - [`StatementKind::Assign`] represent assignments. Assignments set a variable and allow expressions
-  on the right-hand side. Multiple assignments can be done in parallel in one statement. Assignments
-  such as `a, b = b, a` are expressed in vec form as `[(a,b),(b,a)]` and implement a swap.
+  on the right-hand side. Multiple expressions on the right-hand side mean there are multiple flows
+  to the destination variable.
 
 - Setting of fields is done through the [`StatementKind::Store`] instruction; reading fields can
   additionally be done through the [`StatementKind::Load`] instruction.
@@ -35,7 +35,12 @@ targets of control flow. Terminator instructions are returns and gotos with mult
 
 - Functions have a return type which is just an arity. Return statements can return multiple values
   and the function declares the arity each return statement must have. This is not necessary to
-  emulate returning by reference; like having multiple parallel assignments, it's just a convenience.
+  emulate returning by reference, as parameters already support by-reference passing. Rather, it's
+  a useful model for compositional analysis: to handle exceptions, for example, one can return a
+  tuple of `(return-value, except-value)`. On normal paths, one returns a return value paired with
+  [`Exp::Bytes`] of 0. On exceptional paths, one returns an [`Exp::Bytes`] of 0 along with the
+  exceptional value. This way, normal & exceptional control flow can be put into function
+  summaries.
 
 - There is a global heap. Together with access paths, global variables can be modeled as fields of
   the global heap.
@@ -56,9 +61,9 @@ To make a program suitable for Datalog compilation, one can use SSA transformati
 ## How to Generate CIR
 
 Frontend language assignment statements can be modeled with [`StatementKind::Assign`] instructions.
-Assignments like `x = a + b` can be modeled with `(x, x) = (a, b)`. Expressions must be linearized
+Assignments like `x = a + b` can be modeled with `x = a, b`. Expressions must be linearized
 before conversion. For instance, a frontend language expression like `x = a + (b + c)` can be
-linearized as `(t1, t1) = (b, c); (t2, t2) = (a, t1); x = t1`.
+linearized as `t1 = b, c; t2 = t1, a; x = t2`.
 
 Stores into objects and structures often look like `obj.x.y = w` in frontend languages. These are
 modeled as [`StatementKind::Store`] instructions whose destination is `obj`.
@@ -68,8 +73,8 @@ destination object.
 
 Globals variables in frontend languages can be modeled using [`Variable::GlobalHeap`] and fields.
 Say you have a global variable `speed`. Loading a global is done with an access path whose variable
-is the global heap and a field called `speed`. Storing to speed is done with an
-[`StatementKind::Store`] instruction to the `speed` field, using the global heap as the
+is the global heap ([`Variable::GlobalHeap`]) and a field called `speed`. Storing to speed is done
+with an [`StatementKind::Store`] instruction to the `speed` field, using the global heap as the
 destination.
 
 Extern functions (functions that are called, for example, but not defined) are modeled with a
@@ -77,24 +82,9 @@ Extern functions (functions that are called, for example, but not defined) are m
 
 # Source info
 
-We need to report the source locations of instructions when we report taint results. I considered a
-naming scheme so that source info could be held externally, off to the side. The problem is that we
-don't have a good name for instructions that survives reordering. I didn't want to give a unique
-name to each instructions. I decided, instead, to follow the pattern of rust's MIR and store source
-info into the instructions themselves.
-
-# Naming of IR Items
-
-**This section is in progress and isn't correct yet.**
-
-There is a naming convention that provides a unique name for every IR element. Function name is
-outermost. Next is a namespace either "param" or "local" or "block".
-- For parameters, next is the parameter name.
-- For local variables, next is the variable name.
-- For basic blocks, next is an index into the basic block. Next is an index into the instruction.
-
-This enables us to correlate location information and models with unique IDs for variables,
-parameters, and instructions.
+Source info is stored into the instructions themselves. It is managed by the `source-info` crate,
+which provides an API to store span offsets (byte offset + length) that returns an ID (`u32`). The
+ID is stored into the IR, keeping its memory footprint down.
 
 # Future
 

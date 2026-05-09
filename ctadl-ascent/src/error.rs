@@ -174,6 +174,8 @@ pub enum Error {
     Jvm(#[from] jvm_reader::error::ClassFileError),
     #[error("flowy error")]
     Flowy(#[from] ctadl_flowy::FlowyError),
+    #[error("php reader error")]
+    Php(#[from] php_reader::error::PhpReaderError),
     #[error("IR verify error")]
     Verify(#[from] ctadl_ir::mir::VerifyErrors),
     #[error("source-info serialization error")]

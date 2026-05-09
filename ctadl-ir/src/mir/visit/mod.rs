@@ -200,6 +200,12 @@ macro_rules! make_ast_visitor {
                     CallStyle::JavaCall { receiver, cls: _, simple_name: _, descriptor: _ } => {
                         self.visit_variable_ref(receiver)
                     },
+                    CallStyle::PhpCall { receiver, declared_class: _, method_name: _, callee, kind: _ } => {
+                        if let Some(r) = receiver {
+                            self.visit_variable_ref(r);
+                        }
+                        self.visit_access_path(callee);
+                    }
                     CallStyle::Unknown => (),
                 }
             }

@@ -1,0 +1,18 @@
+[package]
+name = "php-reader"
+edition = "2024"
+version.workspace = true
+
+[dependencies]
+ctadl-ir = { path = "../ctadl-ir" }
+hashbrown = "0.14"
+internment = "0.8.6"
+log = "0.4"
+smallvec = "1.11"
+source-info = { path = "../source-info" }
+thiserror = "2.0"
+tree-sitter = "0.26"
+tree-sitter-php = "0.24"
+
+[lints]
+workspace = true

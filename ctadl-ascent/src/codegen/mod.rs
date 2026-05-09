@@ -491,6 +491,53 @@ impl Visitor for CodegenVisitor<'_> {
                             }
                         }
                     }
+                    CallStyle::PhpCall {
+                        callee,
+                        method_name,
+                        ..
+                    } => {
+                        // Very simple CHA for PHP based on callee variable ref for direct calls,
+                        // and method names for instance method calls.
+                        let mut resolved = false;
+                        if let Some(m_name) = method_name {
+                            // Instance method
+                            if let ctadl_ir::call::VirtualMethodTable::Php { methods, .. } =
+                                &self.cha.vmt
+                            {
+                                for (_, name, target_meth) in methods {
+                                    if *name == *m_name {
+                                        let target = fx::Function(target_meth.0.clone().into());
+                                        let target =
+                                            self.source_info.sites.get_or_add_function(target);
+                                        self.facts.call.push((site, target));
+                                        resolved = true;
+                                    }
+                                }
+                            }
+                        }
+                        // Direct call (from `callee` variable name if possible, otherwise we miss it for now)
+                        let callee_name = callee.variable_ref.variable.to_string();
+                        // Look for it in VMT or just treat as direct func name
+                        if let ctadl_ir::call::VirtualMethodTable::Php { methods, .. } =
+                            &self.cha.vmt
+                        {
+                            for (cls, _, target_meth) in methods {
+                                if cls.0.is_empty() && target_meth.0 == callee_name {
+                                    let target = fx::Function(target_meth.0.clone().into());
+                                    let target = self.source_info.sites.get_or_add_function(target);
+                                    self.facts.call.push((site, target));
+                                    resolved = true;
+                                }
+                            }
+                        }
+                        if !resolved {
+                            // Fallback to direct function call assuming callee name is the target
+                            let target = fx::Function(callee_name.into());
+                            let target = self.source_info.sites.get_or_add_function(target);
+                            self.facts.call.push((site, target));
+                        }
+                    }
+
                     CallStyle::FuncPtrCall { callee, .. } => {
                         let vertex = self.trans_access_path(callee);
                         self.facts.indirect_call.push((site, vertex));
@@ -723,6 +770,7 @@ impl CodegenVisitor<'_> {
 #[derive(Debug, Default)]
 struct ClassHierarchyAnalysis {
     java_resolvents: BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>>,
+    vmt: VirtualMethodTable,
 }
 
 impl ClassHierarchyAnalysis {
@@ -752,11 +800,21 @@ impl ClassHierarchyAnalysis {
                     super_interface,
                     instantiated_classes_vec,
                 );
-                Self { java_resolvents }
+                Self {
+                    java_resolvents,
+                    vmt: vmt.clone(),
+                }
             }
+            VirtualMethodTable::Php { .. } => Self {
+                java_resolvents: Default::default(),
+                vmt: vmt.clone(),
+            },
             _ => {
                 log::warn!("CHA: unsupported virtual method table");
-                Self::default()
+                Self {
+                    java_resolvents: Default::default(),
+                    vmt: vmt.clone(),
+                }
             }
         }
     }

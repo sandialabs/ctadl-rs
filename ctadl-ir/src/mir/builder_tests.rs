@@ -106,6 +106,41 @@ fn test_builder_call_statement() {
 }
 
 #[test]
+fn test_builder_reopen_appends_by_default() {
+    let mut block_data = BasicBlockData::new(None);
+
+    {
+        let mut builder = BasicBlockBuilder::new(&mut block_data);
+        let var_a = builder.new_local_var("a");
+        let var_b = builder.new_local_var("b");
+        builder.create_assign(var_a, vec![var_b.into()]);
+    }
+
+    {
+        let mut builder = BasicBlockBuilder::new(&mut block_data);
+        let var_c = builder.new_local_var("c");
+        let var_d = builder.new_local_var("d");
+        builder.create_assign(var_c, vec![var_d.into()]);
+    }
+
+    assert_eq!(block_data.statements.len(), 2);
+
+    match &block_data.statements[StatementIdx::new(0)].kind {
+        crate::mir::StatementKind::Assign { dest, .. } => {
+            assert_eq!(dest.to_string(), "%a");
+        }
+        _ => panic!("Expected Assign at position 0"),
+    }
+
+    match &block_data.statements[StatementIdx::new(1)].kind {
+        crate::mir::StatementKind::Assign { dest, .. } => {
+            assert_eq!(dest.to_string(), "%c");
+        }
+        _ => panic!("Expected Assign at position 1"),
+    }
+}
+
+#[test]
 fn test_builder_terminators() {
     let mut block_data = BasicBlockData::new(None);
     let mut builder = BasicBlockBuilder::new(&mut block_data);

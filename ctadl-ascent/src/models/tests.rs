@@ -1,6 +1,7 @@
 // Tests for EndpointBuilder
 use super::*;
 use crate::codegen::RETURN_INDEX;
+use std::path::Path;
 
 #[test]
 fn endpoint_builder_basic() {
@@ -96,5 +97,51 @@ fn endpoint_batch_iter_endpoints() {
             TaintDirection::Backward,
             true,
         ),
+    );
+}
+
+#[test]
+fn php_dvwa_models_include_sink_endpoints() {
+    let source = r#"
+        <?php
+        if (isset($_POST['Submit'])) {
+            $ip = $_REQUEST['ip'];
+            $cmd = shell_exec('ping ' . $ip);
+            $query = "SELECT * FROM users WHERE id = '" . $_REQUEST['id'] . "'";
+            mysqli_query($db, $query);
+            echo $cmd;
+        }
+    "#;
+
+    let program_info = php_reader::lower_php(source, "mini.php").expect("PHP lowering failed");
+    let model_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../php-reader/models/dvwa_taint_models.json");
+    let batch = try_load_models(&program_info, model_path).expect("model load failed");
+
+    let endpoints: Vec<_> = batch.endpoint.iter_endpoints().collect();
+    assert!(
+        endpoints
+            .iter()
+            .any(|(func, _, index, _, _, direction, _)| {
+                *func == "shell_exec" && *index == Some(0) && *direction == TaintDirection::Backward
+            })
+    );
+    assert!(
+        endpoints
+            .iter()
+            .any(|(func, _, index, _, _, direction, _)| {
+                *func == "mysqli_query"
+                    && *index == Some(1)
+                    && *direction == TaintDirection::Backward
+            })
+    );
+    assert!(
+        endpoints
+            .iter()
+            .any(|(func, selector, _, _, _, direction, _)| {
+                *func == "__php_main__::mini.php"
+                    && *selector == FormalIndexTypeTag::Global
+                    && *direction == TaintDirection::Forward
+            })
     );
 }

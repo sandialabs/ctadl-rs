@@ -50,8 +50,6 @@ where
     assert!(result.is_ok())
 }
 
-// TODO fix these by finding some small dex files to test on
-
 #[test]
 fn test_cli_import() {
     run_store_test(|| {

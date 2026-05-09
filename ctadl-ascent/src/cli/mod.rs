@@ -68,7 +68,13 @@ fn build_query_endpoints(
         // Resolve function name → FunctionId; skip if not present.
         let infunc = match idmap.get_function_id(crate::facts::Function(func_name.into())) {
             Some(id) => id,
-            None => continue,
+            None => {
+                let external_name = format!("%{func_name}");
+                match idmap.get_function_id(crate::facts::Function(external_name.into())) {
+                    Some(id) => id,
+                    None => continue,
+                }
+            }
         };
 
         // Map selector tag to variables.
@@ -167,6 +173,7 @@ pub fn import(import: &ArtifactImport) -> Result<(), Error> {
         Jvm => jvm::import_class(&import.artifact_path)?,
         Pcode => pcode::import_pcode(import)?,
         Flowy => crate::codegen::flowy::import(import)?,
+        Php => crate::languages::php::import_php(&import.artifact_path)?,
         _ => unimplemented!(),
     };
     log::info!("encoding");
@@ -279,6 +286,28 @@ pub fn query(
     profile: query_engine::formatter::SarifProfile,
     dump_taint_graph: Option<&Path>,
 ) -> Result<(), Error> {
+    let (result, ids, index_facts) = query_taint(project, models)?;
+    format_query_result(
+        project,
+        result,
+        ids,
+        index_facts,
+        compact,
+        output,
+        profile,
+        dump_taint_graph,
+    )
+}
+
+/// Runs the taint query for `project` under `models` and returns the raw result
+/// along with the id map and index facts needed to report it. This is the
+/// analysis half of [`query`], which additionally formats the result as SARIF.
+/// Query results are not persisted, so callers that want the tuples themselves
+/// (rather than a SARIF file) use this.
+pub fn query_taint(
+    project: &AnalysisProject,
+    models: &[std::path::PathBuf],
+) -> Result<(query_engine::QueryResult, facts::IdMap, IndexFacts), Error> {
     let index_path = project.index_path()?;
     let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
     // Load the index tables once; they seed the query and are reused to format the results.
@@ -357,6 +386,23 @@ pub fn query(
         }
     }
 
+    Ok((result, ids, index_facts))
+}
+
+/// Formats a query result as SARIF, writing it to `output`. This is the
+/// reporting half of [`query`].
+#[allow(clippy::too_many_arguments)]
+fn format_query_result(
+    project: &AnalysisProject,
+    result: query_engine::QueryResult,
+    ids: facts::IdMap,
+    index_facts: IndexFacts,
+    compact: bool,
+    output: &Path,
+    profile: query_engine::formatter::SarifProfile,
+    dump_taint_graph: Option<&Path>,
+) -> Result<(), Error> {
+    let index_path = project.index_path()?;
     let taint_results = query_engine::formatter::TaintAnalysisResults::from_query_result(&result);
     let mut b = query_engine::formatter::FormatFactsBuilder::default();
     b.taint(result.taint)
@@ -582,7 +628,7 @@ pub fn save_program_info(
     Ok(())
 }
 
-/// Load a serialized [`ProgramInfo`] from the import directory. The source info is elided.
+/// Load a serialized [`ProgramInfo`] from the import directory.
 fn load_program_info_without_source_info(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.program_path();
     log::info!("reading {}", path.display());
@@ -594,10 +640,12 @@ fn load_program_info_without_source_info(import: &ArtifactImport) -> Result<Prog
     let data = std::fs::read(path)?;
     let vmt = bitcode::deserialize(&data)?;
 
+    let source_info = source_info::read_parquet_source_info(&import.source_info_dir())?;
+
     Ok(ProgramInfo {
         program,
         vmt,
-        source_info: Default::default(),
+        source_info,
     })
 }
 
@@ -720,6 +768,7 @@ pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
                         ctadl_ir::call::CallStyle::DirectCall { .. } => "DirectCall",
                         ctadl_ir::call::CallStyle::FuncPtrCall { .. } => "FuncPtrCall",
                         ctadl_ir::call::CallStyle::JavaCall { .. } => "JavaCall",
+                        ctadl_ir::call::CallStyle::PhpCall { .. } => "PhpCall",
                     };
                     *call_style_counts.entry(style_name).or_insert(0) += 1;
                 }
@@ -1037,4 +1086,36 @@ pub fn inspect_index_facts(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::facts::{Function, IdMap, TaintDirection};
+    use crate::models::{EndpointBuilder, FormalIndexTypeTag};
+
+    #[test]
+    fn build_query_endpoints_resolves_php_external_name_with_percent_prefix() {
+        let mut endpoint_builder = EndpointBuilder::new();
+        endpoint_builder.append(
+            "shell_exec",
+            (FormalIndexTypeTag::Index, Some(0)),
+            &[],
+            "sink",
+            TaintDirection::Backward,
+            false,
+        );
+        let batch = endpoint_builder.finish().expect("finish endpoints");
+
+        let mut idmap = IdMap::new();
+        let func_id = idmap.get_or_add_function(Function("%shell_exec".into()));
+
+        let (endpoints, formals) =
+            build_query_endpoints(&batch, &IndexFacts::default(), &idmap, &[]);
+        assert_eq!(endpoints.len(), 1);
+        assert_eq!(formals.len(), 1);
+        let endpoint = &endpoints[0].0;
+        assert_eq!(endpoint.infunc, func_id);
+        assert_eq!(endpoint.direction, TaintDirection::Backward);
+    }
 }

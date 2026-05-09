@@ -338,10 +338,8 @@ impl AnalysisProject {
     ) -> Result<AnalysisProject, Error> {
         let path = StorePaths::projects_path().join(name);
         std::fs::create_dir_all(&path)
-            .map_err(Error::Io)
             .err_context(|| format!("in create project dir: {}", path.display()))?;
         let dir = canonicalize(&path)
-            .map_err(Error::Io)
             .err_context(|| format!("in canonicalize project dir: {}", path.display()))?;
         // Dedup import names (order-preserving): `index` co-indexes every argument, so a
         // repeated program name (e.g. `index amuled amuled`) would codegen its facts twice and
@@ -411,7 +409,6 @@ impl AnalysisProject {
     pub fn index_path(&self) -> Result<PathBuf, Error> {
         let path = self.dir.join("index");
         std::fs::create_dir_all(&path)
-            .map_err(Error::Io)
             .err_context(|| format!("in create index dir: '{}'", path.display()))?;
         Ok(path)
     }
@@ -530,6 +527,8 @@ pub enum ArtifactLanguage {
     Pcode,
     /// Treat as Flowy file
     Flowy,
+    /// Treat as PHP file
+    Php,
 }
 
 // XDG_RUNTIME_DIR, if it doesn't exist, requires creating something temporary, and I'd like that

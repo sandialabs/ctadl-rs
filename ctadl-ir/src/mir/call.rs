@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ops::Deref;
 use std::{fmt, fmt::Display};
 
@@ -27,6 +28,25 @@ pub enum CallStyle {
         simple_name: Symbol,
         descriptor: Symbol,
     },
+    /// PHP call. At analysis time, this consults metadata in the
+    /// [`VirtualMethodTable::Php`] enum.
+    PhpCall {
+        receiver: Option<VariableRef>,
+        declared_class: Option<PhpClass>,
+        method_name: Option<PhpMethodName>,
+        callee: super::AccessPath,
+        kind: PhpCallKind,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum PhpCallKind {
+    DirectFunction,
+    DynamicFunction,
+    InstanceMethod,
+    StaticMethod,
+    DynamicMethod,
 }
 
 impl CallStyle {
@@ -34,6 +54,7 @@ impl CallStyle {
         match self {
             CallStyle::JavaCall { receiver, .. } => Some(receiver),
             CallStyle::FuncPtrCall { callee, .. } => Some(&callee.variable_ref),
+            CallStyle::PhpCall { receiver, .. } => receiver.as_ref(),
             _ => None,
         }
     }
@@ -42,6 +63,7 @@ impl CallStyle {
         match self {
             CallStyle::JavaCall { receiver, .. } => Some(receiver),
             CallStyle::FuncPtrCall { callee, .. } => Some(&mut callee.variable_ref),
+            CallStyle::PhpCall { receiver, .. } => receiver.as_mut(),
             _ => None,
         }
     }
@@ -82,6 +104,24 @@ impl Display for CallStyle {
                 simple_name,
                 descriptor,
             } => write!(f, "java-call {receiver}.<{cls}.{simple_name}{descriptor}>"),
+            PhpCall {
+                receiver,
+                declared_class,
+                method_name,
+                callee,
+                kind,
+            } => {
+                write!(f, "php-call ")?;
+                if let Some(r) = receiver {
+                    write!(f, "{r}.")?;
+                }
+                if let (Some(c), Some(m)) = (declared_class, method_name) {
+                    write!(f, "<{c}::{m}>")?;
+                } else {
+                    write!(f, "{callee}")?;
+                }
+                write!(f, " ({kind:?})")
+            }
             FuncPtrCall { callee, signature } => match signature {
                 Some(signature) => write!(f, "funcptr-call {callee} <{signature}>"),
                 None => write!(f, "funcptr-call {callee}"),
@@ -146,6 +186,15 @@ pub enum VirtualMethodTable {
         /// - Fully-qualified function name (the id used everywhere else)
         methods: Vec<(NativeSimpleName, NativeSignature, NativeFunction)>,
     },
+    Php {
+        /// The columns are as follows:
+        /// - Fully qualified class name defining the method
+        /// - Lowercase method name
+        /// - Fully qualified method name
+        methods: Vec<(PhpClass, PhpMethodName, PhpMethod)>,
+        hierarchy: BTreeMap<PhpClass, SmallVec<[PhpClass; 2]>>,
+        aliases: BTreeMap<Symbol, Symbol>,
+    },
     CplusPlus,
 }
 
@@ -160,6 +209,14 @@ impl VirtualMethodTable {
     pub fn new_native() -> Self {
         VirtualMethodTable::Native {
             methods: Vec::new(),
+        }
+    }
+
+    pub fn new_php() -> Self {
+        VirtualMethodTable::Php {
+            methods: Vec::new(),
+            hierarchy: BTreeMap::new(),
+            aliases: BTreeMap::new(),
         }
     }
 }
@@ -186,6 +243,26 @@ impl Display for VirtualMethodTable {
                     writeln!(f, "{name}{sig}: {func}")?;
                 }
                 writeln!(f, "end native virtual method table")?;
+                Ok(())
+            }
+            VirtualMethodTable::Php {
+                methods,
+                hierarchy,
+                aliases,
+            } => {
+                writeln!(f, "php virtual method table")?;
+                for (cls, name, method) in methods {
+                    writeln!(f, "{cls}::{name}: {method}")?;
+                }
+                for (subclass, superclasses) in hierarchy {
+                    for superclass in superclasses {
+                        writeln!(f, "{subclass} extends {superclass}")?;
+                    }
+                }
+                for (alias, original) in aliases {
+                    writeln!(f, "alias {alias} -> {original}")?;
+                }
+                writeln!(f, "end php virtual method table")?;
                 Ok(())
             }
             VirtualMethodTable::Unknown => write!(f, "unknown virtual method table"),
@@ -355,6 +432,78 @@ impl From<NativeFunction> for Symbol {
 }
 
 impl Display for NativeFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[repr(transparent)]
+pub struct PhpClass(pub Symbol);
+
+impl Deref for PhpClass {
+    type Target = Symbol;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<PhpClass> for Symbol {
+    fn from(c: PhpClass) -> Self {
+        c.0.clone()
+    }
+}
+
+impl Display for PhpClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[repr(transparent)]
+pub struct PhpMethodName(pub Symbol);
+
+impl Deref for PhpMethodName {
+    type Target = Symbol;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<PhpMethodName> for Symbol {
+    fn from(c: PhpMethodName) -> Self {
+        c.0.clone()
+    }
+}
+
+impl Display for PhpMethodName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[repr(transparent)]
+pub struct PhpMethod(pub Symbol);
+
+impl Deref for PhpMethod {
+    type Target = Symbol;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<PhpMethod> for Symbol {
+    fn from(c: PhpMethod) -> Self {
+        c.0.clone()
+    }
+}
+
+impl Display for PhpMethod {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }

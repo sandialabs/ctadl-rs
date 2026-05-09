@@ -1,0 +1,50 @@
+{
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        { "constraint": "signature", "pattern": "echo|passthru|exec" }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "port": "Argument(0)",
+            "kind": "sink"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        { "constraint": "signature", "pattern": "__php_main__::.*" }
+      ],
+      "model": {
+        "sources": [
+          {
+            "port": "Global._GET",
+            "kind": "source"
+          },
+          {
+            "port": "Global._POST",
+            "kind": "source"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        { "constraint": "signature", "pattern": "my_source" }
+      ],
+      "model": {
+        "sources": [
+          {
+            "port": "Return",
+            "kind": "source"
+          }
+        ]
+      }
+    }
+  ]
+}

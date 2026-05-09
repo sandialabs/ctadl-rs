@@ -43,6 +43,7 @@ pub struct ModelGeneratorIngest<'p, 'b> {
 
 static ARGUMENT_REGEX: OnceLock<Regex> = OnceLock::new();
 static RETURN_REGEX: OnceLock<Regex> = OnceLock::new();
+static GLOBAL_REGEX: OnceLock<Regex> = OnceLock::new();
 
 #[inline]
 fn argument_regex() -> &'static Regex {
@@ -52,6 +53,11 @@ fn argument_regex() -> &'static Regex {
 #[inline]
 fn return_regex() -> &'static Regex {
     RETURN_REGEX.get_or_init(|| Regex::new(r#"Return(.*)?"#).unwrap())
+}
+
+#[inline]
+fn global_regex() -> &'static Regex {
+    GLOBAL_REGEX.get_or_init(|| Regex::new(r#"Global(.*)?"#).unwrap())
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -66,45 +72,82 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         let mut program_method_parents: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
         let mut program_method_signatures: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
 
-        if let VirtualMethodTable::Java { methods, .. } = vmt {
-            methods
-                .iter()
-                .map(|(_cls, name, _sig, fid)| (name.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| program_method_names.entry(key).or_default().push(val));
+        match vmt {
+            VirtualMethodTable::Java { methods, .. } => {
+                methods
+                    .iter()
+                    .map(|(_cls, name, _sig, fid)| (name.as_ref(), fid.as_ref()))
+                    .for_each(|(key, val)| program_method_names.entry(key).or_default().push(val));
 
-            methods
-                .iter()
-                .map(|(cls, _name, _sig, fid)| (cls.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| program_method_parents.entry(key).or_default().push(val));
+                methods
+                    .iter()
+                    .map(|(cls, _name, _sig, fid)| (cls.as_ref(), fid.as_ref()))
+                    .for_each(|(key, val)| {
+                        program_method_parents.entry(key).or_default().push(val)
+                    });
 
-            methods
-                .iter()
-                .map(|(_cls, _name, sig, fid)| (sig.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| program_method_signatures.entry(key).or_default().push(val));
-        } else if let VirtualMethodTable::Native { methods } = vmt {
-            // Native frontends (pcode, clang) carry, per function, a simple
-            // (un-decorated) name and a best-effort type signature alongside the
-            // fully-qualified IR name. Key matching off the SIMPLE name so a model
-            // pattern like `^system$` resolves even when the IR name is decorated
-            // (e.g. Ghidra's `<EXTERNAL>::system@00101008`). The fully-qualified
-            // name is also kept matchable for models that spell it out verbatim.
-            for (simple, sig, fq) in methods {
-                let simple = simple.as_ref();
-                let fq = fq.as_ref();
-                program_method_names.entry(simple).or_default().push(fq);
-                program_method_signatures.entry(sig).or_default().push(fq);
-                program_method_names.entry(fq).or_default().push(fq);
-                program_method_signatures.entry(fq).or_default().push(fq);
+                methods
+                    .iter()
+                    .map(|(_cls, _name, sig, fid)| (sig.as_ref(), fid.as_ref()))
+                    .for_each(|(key, val)| {
+                        program_method_signatures.entry(key).or_default().push(val)
+                    });
             }
-        } else {
-            // Fallback (Unknown / CplusPlus): use the IR function names directly.
-            for func in &program_info.program.functions.functions {
-                let name = func.name.as_str();
-                program_method_signatures
-                    .entry(name)
-                    .or_default()
-                    .push(name);
-                program_method_names.entry(name).or_default().push(name);
+            VirtualMethodTable::Native { methods } => {
+                // Native frontends (pcode, clang) carry, per function, a simple
+                // (un-decorated) name and a best-effort type signature alongside the
+                // fully-qualified IR name. Key matching off the SIMPLE name so a model
+                // pattern like `^system$` resolves even when the IR name is decorated
+                // (e.g. Ghidra's `<EXTERNAL>::system@00101008`). The fully-qualified
+                // name is also kept matchable for models that spell it out verbatim.
+                for (simple, sig, fq) in methods {
+                    let simple = simple.as_ref();
+                    let fq = fq.as_ref();
+                    program_method_names.entry(simple).or_default().push(fq);
+                    program_method_signatures.entry(sig).or_default().push(fq);
+                    program_method_names.entry(fq).or_default().push(fq);
+                    program_method_signatures.entry(fq).or_default().push(fq);
+                }
+            }
+            VirtualMethodTable::Php { methods, .. } => {
+                methods
+                    .iter()
+                    .map(|(_cls, name, fid)| (name.as_ref(), fid.as_ref()))
+                    .for_each(|(key, val)| program_method_names.entry(key).or_default().push(val));
+
+                methods
+                    .iter()
+                    .map(|(cls, _name, fid)| (cls.as_ref(), fid.as_ref()))
+                    .for_each(|(key, val)| {
+                        program_method_parents.entry(key).or_default().push(val)
+                    });
+
+                methods
+                    .iter()
+                    .map(|(_cls, _name, fid)| (fid.as_ref(), fid.as_ref()))
+                    .for_each(|(key, val)| {
+                        program_method_signatures.entry(key).or_default().push(val)
+                    });
+
+                for func in &program_info.program.functions.functions {
+                    let name = func.name.as_str();
+                    program_method_signatures
+                        .entry(name)
+                        .or_default()
+                        .push(name);
+                    program_method_names.entry(name).or_default().push(name);
+                }
+            }
+            VirtualMethodTable::Unknown | VirtualMethodTable::CplusPlus => {
+                // For non-VMT languages, use the function names as signatures.
+                for func in &program_info.program.functions.functions {
+                    let name = func.name.as_str();
+                    program_method_signatures
+                        .entry(name)
+                        .or_default()
+                        .push(name);
+                    program_method_names.entry(name).or_default().push(name);
+                }
             }
         }
         // constructs index for the program
@@ -518,6 +561,10 @@ fn parse_port(
         let tag = FormalIndexTypeTag::Return;
         let index = None;
         Ok((tag, index, parse_access_path(m.get(1).map(|m| m.as_str()))))
+    } else if let Some(m) = global_regex().captures(text) {
+        let tag = FormalIndexTypeTag::Global;
+        let index = None;
+        Ok((tag, index, parse_access_path(m.get(1).map(|m| m.as_str()))))
     } else {
         parse_argument(text).map_err(|mut err| {
             // Update the index in the error
@@ -878,6 +925,9 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
                 methods.iter().map(|t| t.3.to_string()).collect()
             }
             VirtualMethodTable::Native { methods } => {
+                methods.iter().map(|t| t.2.to_string()).collect()
+            }
+            VirtualMethodTable::Php { methods, .. } => {
                 methods.iter().map(|t| t.2.to_string()).collect()
             }
             VirtualMethodTable::Unknown | VirtualMethodTable::CplusPlus => {

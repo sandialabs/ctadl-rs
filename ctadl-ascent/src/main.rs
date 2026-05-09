@@ -1,5 +1,6 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::{collections::BTreeSet, fs};
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -155,7 +156,7 @@ pub struct ImportArgs {
     pub skip_existing: bool,
 }
 
-#[derive(Debug, Clone, ValueEnum, Copy)]
+#[derive(Debug, Clone, ValueEnum, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ImportLanguage {
     /// Treat as JVM bytecode inputs (e.g., .class)
     Jvm,
@@ -173,6 +174,8 @@ pub enum ImportLanguage {
     Pcode,
     /// Treat as Flowy file
     Flowy,
+    /// Treat as PHP file
+    Php,
     /// Infer from extension/content
     Auto,
 }
@@ -575,6 +578,10 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
 /// If there are any errors importing or writing to the store
 fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
     let path = &args.artifact;
+    if path.is_dir() {
+        return import_directory_artifact_to_store(args);
+    }
+
     // Detect the language
     let language = {
         use project::ArtifactLanguage::*;
@@ -586,6 +593,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             ImportLanguage::C => C,
             ImportLanguage::Pcode => Pcode,
             ImportLanguage::Flowy => Flowy,
+            ImportLanguage::Php => Php,
             ImportLanguage::Auto => unreachable!(),
         }
     };
@@ -621,6 +629,55 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
     if !project::is_ghidra_server_url(&config.artifact_path) {
         config.record_artifact_hash()?;
     }
+    Ok(name.to_string())
+}
+
+fn import_directory_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
+    let path = &args.artifact;
+    let detected = detect_directory_languages(path, args.language)?;
+    let languages: BTreeSet<_> = detected.iter().map(|(_, language)| *language).collect();
+
+    if languages.is_empty() {
+        anyhow::bail!(
+            "no importable files found in directory '{}'",
+            path.display()
+        );
+    }
+    if languages.len() > 1 {
+        let found = languages
+            .iter()
+            .map(|language| format!("{language:?}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!(
+            "directory '{}' contains multiple import languages: {}",
+            path.display(),
+            found
+        );
+    }
+
+    let language = *languages.iter().next().unwrap();
+    let artifact_language = match language {
+        ImportLanguage::Apk => project::ArtifactLanguage::Apk,
+        ImportLanguage::Dex => project::ArtifactLanguage::Dex,
+        ImportLanguage::Jar => project::ArtifactLanguage::Jar,
+        ImportLanguage::Jvm => project::ArtifactLanguage::Jvm,
+        ImportLanguage::C => project::ArtifactLanguage::C,
+        ImportLanguage::Pcode => project::ArtifactLanguage::Pcode,
+        ImportLanguage::Flowy => project::ArtifactLanguage::Flowy,
+        ImportLanguage::Php => project::ArtifactLanguage::Php,
+        ImportLanguage::Auto => unreachable!(),
+    };
+
+    let name = match &args.name {
+        None => project::artifact_name(path)?.as_os_str(),
+        Some(n) => OsStr::new(n),
+    }
+    .to_str()
+    .ok_or(anyhow::anyhow!("error converting filename to string"))?;
+
+    let config = project::ArtifactImport::try_create(name, artifact_language, path)?;
+    cli::import(&config)?;
     Ok(name.to_string())
 }
 
@@ -663,7 +720,7 @@ fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
+pub fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
     if let Some(name) = &args.name {
         let path = Path::new(name);
         if path.exists() && path.is_file() {
@@ -717,22 +774,147 @@ fn autodetect_by_extension<P: AsRef<Path>>(
             if project::is_ghidra_server_url(path) {
                 return Ok(ImportLanguage::Pcode);
             }
-            let ext = path
-                .extension()
-                .and_then(|e| OsStr::to_str(e))
-                .ok_or_else(|| anyhow::anyhow!("no filename extension"))?;
-
-            match ext {
-                "dex" => ImportLanguage::Dex,
-                "apk" => ImportLanguage::Apk,
-                "class" => ImportLanguage::Jvm,
-                "jar" => ImportLanguage::Jar,
-                "tnt" => ImportLanguage::Flowy,
-                // A Ghidra project file: export pcode from the existing project.
-                "gpr" => ImportLanguage::Pcode,
-                _ => anyhow::bail!("unrecognized filename extension: '{}'", ext),
-            }
+            autodetect_by_extension_if_known(path)?
+                .ok_or_else(|| anyhow::anyhow!("no recognized filename extension"))?
         }
         _ => language,
     })
+}
+
+fn autodetect_by_extension_if_known(path: &Path) -> anyhow::Result<Option<ImportLanguage>> {
+    let Some(ext) = path.extension().and_then(|e| OsStr::to_str(e)) else {
+        return Ok(None);
+    };
+
+    let language = match ext {
+        "dex" => Some(ImportLanguage::Dex),
+        "apk" => Some(ImportLanguage::Apk),
+        "class" => Some(ImportLanguage::Jvm),
+        "jar" => Some(ImportLanguage::Jar),
+        "tnt" => Some(ImportLanguage::Flowy),
+        "php" => Some(ImportLanguage::Php),
+        // A Ghidra project file: export pcode from the existing project.
+        "gpr" => Some(ImportLanguage::Pcode),
+        _ => None,
+    };
+    Ok(language)
+}
+
+fn detect_directory_languages(
+    dir: &Path,
+    requested_language: ImportLanguage,
+) -> anyhow::Result<Vec<(PathBuf, ImportLanguage)>> {
+    let mut files = Vec::new();
+    collect_directory_files(dir, &mut files)?;
+    files.sort();
+
+    let mut detected = Vec::new();
+    for file in files {
+        let language = match autodetect_by_extension_if_known(&file)? {
+            Some(language) => language,
+            None => continue,
+        };
+
+        if requested_language == ImportLanguage::Auto || requested_language == language {
+            detected.push((file, language));
+        }
+    }
+
+    Ok(detected)
+}
+
+fn collect_directory_files(dir: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_directory_files(&path, files)?;
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ctadl_ascent::project::{self, ArtifactImport, init_store_path};
+    use std::sync::Once;
+    use tempfile::tempdir;
+
+    static INIT: Once = Once::new();
+
+    fn initialize_store() {
+        INIT.call_once(|| {
+            let dir = tempdir().unwrap();
+            let path = dir.keep();
+            init_store_path(Some(path)).unwrap();
+        });
+    }
+
+    #[test]
+    fn detect_directory_languages_skips_unknown_files() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(dir.path().join("a.php"), "<?php echo $_GET['x'];").unwrap();
+        std::fs::write(nested.join("b.php"), "<?php echo $_POST['y'];").unwrap();
+        std::fs::write(dir.path().join("README.txt"), "ignore me").unwrap();
+
+        let detected = detect_directory_languages(dir.path(), ImportLanguage::Auto).unwrap();
+        let detected_paths: Vec<_> = detected
+            .into_iter()
+            .map(|(path, language)| {
+                (
+                    path.strip_prefix(dir.path())
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    language,
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            detected_paths,
+            vec![
+                ("a.php".to_string(), ImportLanguage::Php),
+                ("nested/b.php".to_string(), ImportLanguage::Php),
+            ]
+        );
+    }
+
+    #[test]
+    fn import_directory_artifact_merges_php_files() {
+        initialize_store();
+
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(dir.path().join("a.php"), "<?php echo $_GET['x'];").unwrap();
+        std::fs::write(nested.join("b.php"), "<?php echo $_POST['y'];").unwrap();
+        std::fs::write(dir.path().join("README.txt"), "ignore me").unwrap();
+
+        let args = ImportArgs {
+            artifact: dir.path().to_path_buf(),
+            name: None,
+            language: ImportLanguage::Auto,
+            skip_existing: false,
+        };
+        let name = import_artifact_to_store(&args).unwrap();
+        let import = ArtifactImport::load_by_name(&name).unwrap();
+
+        assert_eq!(import.language, project::ArtifactLanguage::Php);
+
+        let data = std::fs::read(import.program_path()).unwrap();
+        let program = ctadl_ir::encode::decode_program(&data).unwrap();
+        let function_names: Vec<_> = program
+            .functions
+            .iter()
+            .map(|func| func.name.clone())
+            .collect();
+        assert!(function_names.contains(&"__php_main__::a.php".to_string()));
+        assert!(function_names.contains(&"__php_main__::nested/b.php".to_string()));
+    }
 }
