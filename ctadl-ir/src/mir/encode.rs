@@ -1,6 +1,7 @@
-use bitcode::Error;
-
+#[cfg(feature = "serde")]
 use super::*;
+#[cfg(feature = "serde")]
+use bitcode::Error;
 
 #[cfg(feature = "serde")]
 #[inline]
