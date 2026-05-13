@@ -809,10 +809,11 @@ impl Context {
         pcode: &pcode_reader::PcodeData,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
     ) -> Result<Statement, Error> {
-        let (inputs, outputs) = (&pcode.inputs, &pcode.outputs);
+        let inputs = &pcode.inputs;
+        let outputs = &pcode.outputs;
         if inputs.len() >= 2 && !outputs.is_empty() {
             // LOAD <space>, <offset> -> <dest>
-            let offset_exp = self.resolve_offset_exp(&inputs[1], vnode_facts)?;
+            let offset_exp = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts)?;
             let output_var = self
                 .get_lvalue(&outputs[0], vnode_facts)
                 .map(access_path_expect_variable)?;
@@ -835,7 +836,7 @@ impl Context {
         let (inputs, _) = (&pcode.inputs, &pcode.outputs);
         if inputs.len() >= 3 {
             // STORE <space>, <offset>, <value>
-            let offset_exp = self.resolve_offset_exp(&inputs[1], vnode_facts)?;
+            let offset_exp = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts)?;
             let value_exp = self.get_exp(&inputs[2], vnode_facts)?;
 
             // If offset is an access path, we can try to use it as destination
@@ -851,11 +852,13 @@ impl Context {
 
     /// Resolve an offset expression using constant propagation results if available.
     /// If offset = x + c, returns an access path for x with [c] as a symbolic field.
-    fn resolve_offset_exp(
+    fn resolve_mem_exp(
         &mut self,
+        _space_id: &pcode_reader::PcodeVarnode,
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
     ) -> Result<Exp, Error> {
+        // TODO use space_id to figure out whether to load from ram or
         if let Some(prop) = self.cp_results.get(vnode_id).cloned() {
             match prop {
                 pcode_reader::constant_propagation::SymbolicProp::Value(Some(base_vn), offset) => {
