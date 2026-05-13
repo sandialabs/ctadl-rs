@@ -68,6 +68,7 @@
               parquet-tools
               graphviz
               checksarif
+              ghidra-bin
             ];
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
           };
