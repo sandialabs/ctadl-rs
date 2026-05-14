@@ -615,10 +615,10 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
     let data = std::fs::read(path)?;
     if filename == "ir-program.bitcode" {
         let program = ctadl_ir::encode::decode_program(&data)?;
-        println!("{:#?}", program);
+        println!("{}", program);
     } else if filename == "ir-vmt.bitcode" {
         let vmt: ctadl_ir::call::VirtualMethodTable = bitcode::deserialize(&data)?;
-        println!("{:#?}", vmt);
+        println!("{}", vmt);
     } else {
         return Err(Error::Path {
             message: format!("unrecognized bitcode file: {}", filename),
