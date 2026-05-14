@@ -358,7 +358,7 @@ pub fn compile_program_contents(
     let mut ssa_funcs = Vec::new();
     let mut find_specs = ExtractSpec::default();
     while let Some(mut f) = result.program_info.program.functions.pop() {
-        ssa::transform(&mut f);
+        ssa::transform(&mut f, false);
         find_specs.set_function_name(f.name.clone().into());
         find_specs.visit_function_data(FunctionIdx::new(0), &mut f);
         ssa_funcs.push(f);

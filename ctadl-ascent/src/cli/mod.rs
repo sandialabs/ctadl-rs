@@ -127,7 +127,7 @@ pub fn index(
         }
 
         log::trace!("summary length: {}", models_batch.summary.num_rows());
-        ssa::transform_program(&mut program_info.program);
+        ssa::transform_program(&mut program_info.program, false);
         codegen_program(program_info, &mut facts, &mut source_info, strategy);
         log::trace!("summary length: {}", facts.summary.len());
         codegen_summary(models_batch.summary, &mut facts, &mut source_info);

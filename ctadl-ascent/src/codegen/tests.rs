@@ -23,7 +23,7 @@ fn test_basic2_f() {
     let f = function_f();
     let mut f_ssa = f.clone();
     log::trace!("f before transform: {f}");
-    ssa::transform(&mut f_ssa);
+    ssa::transform(&mut f_ssa, false);
     log::trace!("f after transform: {f_ssa}");
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -38,7 +38,7 @@ fn test_basic2_j() {
     let f = function_j();
     let mut f_ssa = f.clone();
     log::trace!("{f}");
-    ssa::transform(&mut f_ssa);
+    ssa::transform(&mut f_ssa, false);
     log::trace!("{f_ssa}");
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -92,7 +92,7 @@ fn test_basic2_source_sink() {
     let (h, ss) = function_h();
     let mut h_ssa = h.clone();
     log::trace!("{h}");
-    ssa::transform(&mut h_ssa);
+    ssa::transform(&mut h_ssa, false);
     log::trace!("{h_ssa}");
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -142,7 +142,7 @@ fn test_phi_instruction() {
     let f = function_with_phi();
     let mut f_ssa = f.clone();
     log::trace!("Phi function before transform: {f}");
-    ssa::transform(&mut f_ssa);
+    ssa::transform(&mut f_ssa, false);
     log::trace!("Phi function after transform: {f_ssa}");
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -158,7 +158,7 @@ fn test_update_instruction() {
     let f = function_with_update();
     let mut f_ssa = f.clone();
     log::trace!("Update function before transform: {f}");
-    ssa::transform(&mut f_ssa);
+    ssa::transform(&mut f_ssa, false);
     log::trace!("Update function after transform: {f_ssa}");
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -174,7 +174,7 @@ fn test_local_to_global_field() {
     let f = function_with_param_to_global_field();
     let mut f_ssa = f.clone();
     log::trace!("Local to global field function before transform: {f}");
-    ssa::transform(&mut f_ssa);
+    ssa::transform(&mut f_ssa, false);
     log::trace!("Local to global field function after transform: {f_ssa}");
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
