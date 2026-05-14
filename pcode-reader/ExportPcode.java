@@ -56,6 +56,7 @@ import ghidra.graph.algo.DepthFirstSorter;
 import ghidra.program.database.symbol.FunctionSymbol;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressFactory;
+import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.data.AbstractFloatDataType;
 import ghidra.program.model.data.AbstractIntegerDataType;
 import ghidra.program.model.data.Array;
@@ -184,7 +185,7 @@ enum PredicateFile {
 	PROTO_HAS_THIS("PROTO_HAS_THIS"), PROTO_CALLING_CONVENTION("PROTO_CALLING_CONVENTION"),
 	PROTO_RETTYPE("PROTO_RETTYPE"), PROTO_PARAMETER("PROTO_PARAMETER"), PROTO_PARAMETER_COUNT("PROTO_PARAMETER_COUNT"),
 	PROTO_PARAMETER_DATATYPE("PROTO_PARAMETER_DATATYPE"), SYMBOL_HVAR("SYMBOL_HVAR"), SYMBOL_HFUNC("SYMBOL_HFUNC"),
-	DATA_STRING("DATA_STRING"), VTABLE("VTABLE"), SYMBOL_NAME("SYMBOL_NAME"), PROGRAM_FILE("PROGRAM_FILE"), OFFSET_INDEX("OFFSET_INDEX");
+	DATA_STRING("DATA_STRING"), VTABLE("VTABLE"), SYMBOL_NAME("SYMBOL_NAME"), PROGRAM_FILE("PROGRAM_FILE"), OFFSET_INDEX("OFFSET_INDEX"), SPACE_OFFSET("SPACE_OFFSET");
 
 	private final String name;
 
@@ -902,6 +903,12 @@ class HighFunctionExporter {
 		}
 	}
 
+	public void exportAddressSpaces(Program program) {
+		for (AddressSpace space : program.getAddressFactory().getAddressSpaces()) {
+			export(PredicateFile.SPACE_OFFSET, space.getName(), Integer.toString(space.getSpaceID()));
+		}
+	}
+
 	public void exportDefinedData(Program p) {
 		DataIterator dataIter = p.getListing().getDefinedData(p.getMinAddress(), true);
 		for (Data d : dataIter) {
@@ -1201,6 +1208,7 @@ public class ExportPcode extends GhidraScript {
 		// dump defined data once
 		ex.exportDefinedData(currentProgram);
 		ex.exportRegisterInfo(currentProgram);
+		ex.exportAddressSpaces(currentProgram);
 		ex.writeFacts(true);
 
 		ParallelDecompiler.decompileFunctions(callback, toProcessList, monitor);

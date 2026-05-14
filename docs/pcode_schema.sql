@@ -309,3 +309,6 @@ create table vnode_tostr(vnode TEXT, tostr TEXT);
 create table vtable(id TEXT);
 .import VTABLE.facts vtable
 
+create table space_offset(space TEXT, offset INTEGER);
+.import SPACE_OFFSET.facts space_offset
+
