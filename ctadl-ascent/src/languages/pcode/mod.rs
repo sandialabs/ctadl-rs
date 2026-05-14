@@ -72,8 +72,6 @@ enum VnodeRep {
 struct Context {
     // Function mapping: pcode function ID -> CTADL function index
     functions: BTreeMap<pcode_reader::HighFunc, FunctionIdx>,
-    // Variable mapping: pcode varnode ID -> CTADL variable
-    variables: BTreeMap<pcode_reader::PcodeVarnode, AccessPath>,
     // Basic block mapping: (function ID, pcode block ID) -> CTADL basic block index
     basic_blocks: BTreeMap<(pcode_reader::HighFunc, pcode_reader::PcodeBlockBasic), BasicBlockIdx>,
     // Basic block facts for function lookup
@@ -85,6 +83,8 @@ struct Context {
         BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::constant_propagation::SymbolicProp>,
     // Stack pointer register name
     sp_name: Option<String>,
+    // Register facts needed for vnode conversion
+    register_facts: Vec<pcode_reader::RegisterData>,
     // Current function being processed
     current_hfunc: Option<pcode_reader::HighFunc>,
     counter: i64,
@@ -94,12 +94,12 @@ impl Context {
     fn new() -> Self {
         Self {
             functions: Default::default(),
-            variables: Default::default(),
             basic_blocks: Default::default(),
             bb_facts: Default::default(),
             address_to_bb: Default::default(),
             cp_results: Default::default(),
             sp_name: None,
+            register_facts: Default::default(),
             current_hfunc: None,
             counter: 0,
         }
@@ -142,6 +142,7 @@ impl Context {
         // Run and store constant propagation results
         self.cp_results =
             pcode_reader::constant_propagation::compute_constant_propagation(&pcode_facts);
+        self.register_facts = pcode_facts.register_facts.clone();
 
         // Store bb_facts for later use
         self.bb_facts = pcode_facts.bb_facts.clone();
@@ -862,6 +863,7 @@ impl Context {
     /// to a Offset of the vnode_id and the constant offset. All other varnodes map to a Var of the
     /// vnode_id.
     fn convert_vnode(
+        &self,
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
         register_facts: &[pcode_reader::RegisterData],
@@ -921,9 +923,7 @@ impl Context {
                         return Ok(Exp::AccessPath(ap));
                     } else if base_vn != *vnode_id {
                         let mut ap = self.get_lvalue(&base_vn, vnode_facts)?;
-                        if offset != 0 {
-                            ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-                        }
+                        ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
                         return Ok(Exp::AccessPath(ap));
                     }
                 }
@@ -1084,49 +1084,28 @@ impl Context {
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
     ) -> Result<Exp, Error> {
-        if let Some(vnode_data) = vnode_facts.get(vnode_id)
-            && matches!(vnode_data.space.as_deref(), Some("const"))
-            && let Some(address) = &vnode_data.address
-        {
-            // Constant value is in the address field for 'const' space
-            // We use size if available, otherwise default to 8 bytes for u64
-            let size = vnode_data.size.unwrap_or(8) as usize;
-            let bytes = address.0.to_be_bytes();
-            let start = 8 - size.min(8);
-            return Ok(Exp::Bytes(bytes[start..].to_vec()));
-        }
-
-        // Try to resolve using constant propagation results
-        if let Some(prop) = self.cp_results.get(vnode_id).cloned() {
-            match prop {
-                pcode_reader::constant_propagation::SymbolicProp::Value(Some(base_vn), offset) => {
-                    // Use CP result if it's stack-relative OR a non-trivial relative offset
-                    let is_stack = base_vn.deref().deref() == "__stack_top";
-                    if is_stack {
-                        let var_ref = VariableRef::new_local("__stack_top".to_string());
-                        let mut ap = AccessPath::without_fields(var_ref);
-                        ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-                        return Ok(Exp::AccessPath(ap));
-                    } else if base_vn != *vnode_id {
-                        let mut ap = self.get_lvalue(&base_vn, vnode_facts)?;
-                        if offset != 0 {
-                            ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-                        }
-                        return Ok(Exp::AccessPath(ap));
-                    }
-                }
-                pcode_reader::constant_propagation::SymbolicProp::Value(None, offset) => {
-                    // Absolute constant address - treat as a function-local variable
-                    let var_name = format!("ram_{:x}", offset);
-                    let var_ref = VariableRef::new_local(var_name);
-                    return Ok(Exp::AccessPath(AccessPath::without_fields(var_ref)));
-                }
-                _ => {}
+        let rep = self.convert_vnode(vnode_id, vnode_facts, &self.register_facts);
+        let exp = match rep {
+            VnodeRep::Const(value) => {
+                let size = vnode_facts
+                    .get(vnode_id)
+                    .and_then(|vnode| vnode.size)
+                    .unwrap_or(8);
+                let bytes = value.to_be_bytes();
+                let bytes = match usize::try_from(size) {
+                    Ok(size) if size <= bytes.len() => bytes[bytes.len() - size..].to_vec(),
+                    _ => bytes.to_vec(),
+                };
+                Exp::new_bytes(bytes)
             }
-        }
-
-        let ap = self.get_lvalue(vnode_id, vnode_facts)?;
-        Ok(Exp::AccessPath(ap))
+            VnodeRep::Var(var) => Exp::AccessPath(AccessPath::without_fields(var)),
+            VnodeRep::Offset(var, offset) => {
+                let mut ap = AccessPath::without_fields(var);
+                ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
+                Exp::AccessPath(ap)
+            }
+        };
+        Ok(exp)
     }
 
     fn get_lvalue(
@@ -1134,35 +1113,20 @@ impl Context {
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
     ) -> Result<AccessPath, Error> {
-        if let Some(var) = self.variables.get(vnode_id) {
-            return Ok(var.clone());
-        }
-
-        if let Some(vnode_data) = vnode_facts.get(vnode_id)
-            && matches!(vnode_data.space.as_deref(), Some("ram"))
-            && let Some(address) = &vnode_data.address
-        {
-            let offset = FieldAccess::Offset(Offset(address.0));
-            let ap = AccessPath::new_global("ram", FieldAccesses::new([offset]));
-            self.variables.insert(vnode_id.clone(), ap.clone());
-            return Ok(ap);
-        }
-
-        if let Some(vnode_data) = vnode_facts.get(vnode_id)
-            && matches!(vnode_data.space.as_deref(), Some("stack"))
-            && let Some(address) = &vnode_data.constant_offset
-        {
-            let mut ap =
-                AccessPath::without_fields(VariableRef::new_local("__stack_top".to_string()));
-            ap.path.fields.push(FieldAccess::Offset(Offset(*address)));
-            return Ok(ap);
-        }
-
-        // Create a new variable based on vnode information
-        let var_name = vnode_id.to_string();
-        let variable = VariableRef::new_local(var_name);
-        let ap = AccessPath::new(variable, []);
-        self.variables.insert(vnode_id.clone(), ap.clone());
+        let rep = self.convert_vnode(vnode_id, vnode_facts, &self.register_facts);
+        let ap = match rep {
+            VnodeRep::Const(value) => {
+                return Err(Error::PcodeConversion(format!(
+                    "constant varnode {vnode_id} cannot be used as an lvalue: {value}"
+                )));
+            }
+            VnodeRep::Var(var) => AccessPath::without_fields(var),
+            VnodeRep::Offset(var, offset) => {
+                let mut ap = AccessPath::without_fields(var);
+                ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
+                ap
+            }
+        };
         Ok(ap)
     }
 

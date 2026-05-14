@@ -886,10 +886,8 @@ pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<VecDeque<mir::FieldAcces
         (FieldAccess::Offset(Offset(an)), FieldAccess::Offset(Offset(pn))) => {
             let mut suffix = VecDeque::new();
             let diff = an - pn;
-            // Include an Offset in the suffix if there's a difference.
-            if diff != 0 {
-                suffix.push_back(FieldAccess::Offset(Offset(diff)));
-            }
+            // Include an Offset in the suffix
+            suffix.push_back(FieldAccess::Offset(Offset(diff)));
             // Append the remaining components of ap
             for comp in ap_comps.iter().skip(prefix_comps.len()) {
                 suffix.push_back(comp.clone());
