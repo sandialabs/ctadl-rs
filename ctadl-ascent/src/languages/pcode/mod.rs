@@ -62,6 +62,12 @@ impl Builders {
     }
 }
 
+enum VnodeRep {
+    Const(i64),
+    Var(VariableRef),
+    Offset(VariableRef, i64),
+}
+
 #[derive(Debug)]
 struct Context {
     // Function mapping: pcode function ID -> CTADL function index
@@ -848,6 +854,51 @@ impl Context {
         }
         log::warn!("STORE missing inputs");
         Ok(Statement::new_kind(StatementKind::Nop))
+    }
+
+    /// Converts varnode into our internal representation. Constant space varnodes map to a Const
+    /// address. stack register maps to __stack_top with the appropriate offset. Other registers
+    /// map to a Var using vnode_id. Varnodes not in the register and not in the unique spaces map
+    /// to a Offset of the vnode_id and the constant offset. All other varnodes map to a Var of the
+    /// vnode_id.
+    fn convert_vnode(
+        vnode_id: &pcode_reader::PcodeVarnode,
+        vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
+        register_facts: &[pcode_reader::RegisterData],
+    ) -> VnodeRep {
+        let Some(vnode_data) = vnode_facts.get(vnode_id) else {
+            panic!("no data for vnode");
+        };
+        let var = VariableRef::new_local(vnode_id.to_string());
+        let space = vnode_data.space.as_deref();
+
+        if space == Some("const") {
+            if let Some(address) = &vnode_data.address {
+                return VnodeRep::Const(address.0);
+            }
+            if let Some(offset) = vnode_data.constant_offset {
+                return VnodeRep::Const(offset);
+            }
+        }
+
+        if space == Some("register")
+            && let Some(offset) = &vnode_data.constant_offset
+            && register_facts
+                .iter()
+                .any(|reg| reg.is_stack_pointer && reg.offset == *offset)
+        {
+            let stack_top = VariableRef::new_local("__stack_top".to_string());
+            return VnodeRep::Offset(stack_top, 0);
+        }
+
+        if space != Some("register")
+            && space != Some("unique")
+            && let Some(offset) = vnode_data.constant_offset
+        {
+            return VnodeRep::Offset(var, offset);
+        }
+
+        VnodeRep::Var(var)
     }
 
     /// Resolve an offset expression using constant propagation results if available.
