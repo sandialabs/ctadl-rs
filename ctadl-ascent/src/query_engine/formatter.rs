@@ -798,11 +798,11 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     config: &FormatConfig,
     sarif_data: &mut SarifData,
 ) -> Result<Vec<SarifResult>, Error> {
-    // Prepare graph for path finding if profile is human
+    // Prepare graph for path finding when the selected profile emits path traces.
     let mut node_to_id: BTreeMap<(FunctionId, FlowVariable, Path), u32> = BTreeMap::new();
     let mut id_to_node: Vec<(FunctionId, FlowVariable, Path)> = Vec::new();
 
-    let graph = if config.profile == SarifProfile::Human {
+    let graph = if matches!(config.profile, SarifProfile::Human | SarifProfile::Debug) {
         let taint_edge = &ctx.taint_results.edges;
         // Collect all nodes into node_to_id first
         for (f, _, v, p, src) in &ctx.facts.taint {
@@ -989,13 +989,66 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     }
     populate_source_info(ctx, config, sarif_data, &mut source_data, &needed_spans).await?;
 
+    let mut span_to_location: BTreeMap<u32, Location> = BTreeMap::new();
+    for (file_span_id, _, _, location) in &source_data.batch_data {
+        span_to_location.insert(*file_span_id, location.clone());
+    }
+
+    let mut code_flows_by_span: BTreeMap<u32, Vec<CodeFlow>> = BTreeMap::new();
+    for (path, (file_span_id, _details)) in &results_by_path {
+        let mut thread_flow_locations = Vec::new();
+        let mut last_loc_id: Option<(&String, Option<String>)> = None;
+        for &node_id in path {
+            let node = &id_to_node[node_id as usize];
+            if let Some(site) = node_to_site.get(node)
+                && let Some(loc) = source_data.all_locations.get(&(site.0.id, site.1.id))
+            {
+                let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
+                    let uri = p.artifact_location.as_ref()?.uri.as_ref()?;
+                    let pos = p
+                        .address
+                        .as_ref()
+                        .and_then(|a| a.absolute_address.as_ref().map(|v| v.to_string()))
+                        .or_else(|| {
+                            p.region.as_ref().and_then(|r| {
+                                Some(format!("{}:{}", r.start_line?, r.start_column?))
+                            })
+                        });
+                    Some((uri, pos))
+                });
+
+                if current_loc_id.is_some() && current_loc_id == last_loc_id {
+                    continue;
+                }
+                last_loc_id = current_loc_id;
+
+                let mut loc_with_msg = loc.clone();
+                loc_with_msg.message = Some(Message::builder().text(format!("{}", node.1)).build());
+                thread_flow_locations
+                    .push(ThreadFlowLocation::builder().location(loc_with_msg).build());
+            }
+        }
+
+        if !thread_flow_locations.is_empty() {
+            code_flows_by_span.entry(*file_span_id).or_default().push(
+                CodeFlow::builder()
+                    .thread_flows(vec![
+                        ThreadFlow::builder()
+                            .locations(thread_flow_locations)
+                            .build(),
+                    ])
+                    .build(),
+            );
+        }
+    }
+
     // Now build results for tainted instructions (only for Debug or Machine profiles)
     if config.profile == SarifProfile::Debug || config.profile == SarifProfile::Machine {
         let tainted_span_ids: BTreeSet<u32> =
             ctx.source_spans.iter().map(|(fs, _, _)| fs.0).collect();
 
         let mut results_by_span: BTreeMap<u32, SarifResult> = BTreeMap::new();
-        for (file_span_id, _func_id, _insn_id, location) in &source_data.batch_data {
+        for (file_span_id, func_id, insn_id, location) in &source_data.batch_data {
             if !tainted_span_ids.contains(file_span_id) {
                 continue;
             }
@@ -1036,13 +1089,19 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 }
             }
 
-            let additional_properties = BTreeMap::from([
+            let mut additional_properties = BTreeMap::from([
                 ("taintLabels".to_string(), serde_json::json!(sorted_labels)),
                 (
                     "taintVertices".to_string(),
                     serde_json::json!(labels_to_vertices),
                 ),
             ]);
+            if config.profile == SarifProfile::Debug {
+                additional_properties
+                    .insert("fileSpanId".to_string(), serde_json::json!(*file_span_id));
+                additional_properties.insert("funcId".to_string(), serde_json::json!(*func_id));
+                additional_properties.insert("insnId".to_string(), serde_json::json!(*insn_id));
+            }
             let properties = PropertyBag::builder()
                 .additional_properties(additional_properties)
                 .build();
@@ -1053,8 +1112,14 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 .level(ResultLevel::None)
                 .message(Message::builder().text(final_msg_text).build())
                 .locations(vec![location.clone()])
-                .properties(properties)
-                .build();
+                .properties(properties);
+            let result = if config.profile == SarifProfile::Debug
+                && let Some(code_flows) = code_flows_by_span.get(file_span_id)
+            {
+                result.code_flows(code_flows.clone()).build()
+            } else {
+                result.build()
+            };
 
             results_by_span.insert(*file_span_id, result);
         }
@@ -1074,12 +1139,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
 
     // Now build results for paths (only for Human profile, one per path)
     if config.profile == SarifProfile::Human {
-        let mut span_to_location: BTreeMap<u32, Location> = BTreeMap::new();
-        for (file_span_id, _, _, location) in &source_data.batch_data {
-            span_to_location.insert(*file_span_id, location.clone());
-        }
-
-        for (path, (file_span_id, details)) in results_by_path {
+        for (_path, (file_span_id, details)) in results_by_path {
             let location = if let Some(loc) = span_to_location.get(&file_span_id) {
                 loc.clone()
             } else {
@@ -1129,49 +1189,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 .additional_properties(additional_properties)
                 .build();
 
-            let mut thread_flow_locations = Vec::new();
-            let mut last_loc_id: Option<(&String, Option<String>)> = None;
-            for &node_id in &path {
-                let node = &id_to_node[node_id as usize];
-                if let Some(site) = node_to_site.get(node)
-                    && let Some(loc) = source_data.all_locations.get(&(site.0.id, site.1.id))
-                {
-                    let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
-                        let uri = p.artifact_location.as_ref()?.uri.as_ref()?;
-                        let pos = p
-                            .address
-                            .as_ref()
-                            .and_then(|a| a.absolute_address.as_ref().map(|v| v.to_string()))
-                            .or_else(|| {
-                                p.region.as_ref().and_then(|r| {
-                                    Some(format!("{}:{}", r.start_line?, r.start_column?))
-                                })
-                            });
-                        Some((uri, pos))
-                    });
-
-                    if current_loc_id.is_some() && current_loc_id == last_loc_id {
-                        continue;
-                    }
-                    last_loc_id = current_loc_id;
-
-                    let mut loc_with_msg = loc.clone();
-                    loc_with_msg.message =
-                        Some(Message::builder().text(format!("{}", node.1)).build());
-                    thread_flow_locations
-                        .push(ThreadFlowLocation::builder().location(loc_with_msg).build());
-                }
-            }
-
-            if !thread_flow_locations.is_empty() {
-                let code_flow = CodeFlow::builder()
-                    .thread_flows(vec![
-                        ThreadFlow::builder()
-                            .locations(thread_flow_locations)
-                            .build(),
-                    ])
-                    .build();
-
+            if let Some(code_flows) = code_flows_by_span.get(&file_span_id) {
                 let result = SarifResult::builder()
                     .rule_id(TAINTED_PATH_RULE_ID.to_string())
                     .kind(ResultKind::Informational)
@@ -1179,7 +1197,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     .message(Message::builder().text(final_msg_text).build())
                     .locations(vec![location])
                     .properties(properties)
-                    .code_flows(vec![code_flow])
+                    .code_flows(code_flows.clone())
                     .build();
 
                 results.push(result);
