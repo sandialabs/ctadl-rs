@@ -927,7 +927,7 @@ impl Context {
             offset_exp
                 .path
                 .fields
-                .push(FieldAccess::Symbol(".deref".into()));
+                .push(FieldAccess::Symbol("deref".into()));
             let output_var = self.get_lvalue(&outputs[0], vnode_facts)?;
 
             let kind = StatementKind::assign_or_update(output_var, Exp::AccessPath(offset_exp));
@@ -948,7 +948,7 @@ impl Context {
             offset_exp
                 .path
                 .fields
-                .push(FieldAccess::Symbol(".deref".into()));
+                .push(FieldAccess::Symbol("deref".into()));
             let value_exp = self.get_exp(&inputs[2], vnode_facts)?;
 
             // If offset is an access path, we can try to use it as destination
