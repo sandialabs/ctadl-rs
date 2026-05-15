@@ -189,23 +189,35 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
         }
         let mut builder = QueryFactsBuilder::default();
         let index_facts = IndexFacts::try_load(&index_path)?;
+        let mut endpoints = Vec::new();
         // Slightly ugly special case for flowy artifacts. Since the query is built in, take it
         // into account here
         for import in project.iter_imports() {
             let import = import?;
             if import.language == ArtifactLanguage::Flowy {
                 let eps = crate::codegen::flowy::get_endpoints(&import, &ids)?;
-                builder.endpoints(eps);
+                endpoints.extend(eps);
             }
         }
         let mut formal_params = index_facts.formal_param.clone();
         if let Some(ref batch) = models_batch {
             let (eps, model_formals) = build_query_endpoints(&batch.endpoint, &index_facts, &ids);
-            builder.endpoints(eps);
+            endpoints.extend(eps);
             formal_params.extend(model_formals);
         }
 
+        let sources = endpoints
+            .iter()
+            .filter(|(ep,)| ep.direction == crate::facts::TaintDirection::Forward)
+            .count();
+        let sinks = endpoints
+            .iter()
+            .filter(|(ep,)| ep.direction == crate::facts::TaintDirection::Backward)
+            .count();
+        eprintln!("Matched {} sources and {} sinks", sources, sinks);
+
         builder
+            .endpoints(endpoints)
             .formal_param(formal_params)
             .actual_param(index_facts.actual_param)
             .call(index_facts.call);
