@@ -69,6 +69,7 @@
               graphviz
               checksarif
               ghidra-bin
+              pkgsCross.gnu64.stdenv.cc
             ];
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
           };
