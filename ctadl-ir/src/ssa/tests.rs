@@ -211,7 +211,7 @@ fn test_ssa_function_f() {
     let f = function_f();
     let mut f_ssa = f.clone();
     log::trace!("{f}");
-    transform(&mut f_ssa);
+    transform(&mut f_ssa, false);
     log::trace!("{f_ssa}");
     check_ssa_func(&f_ssa);
 }
@@ -221,7 +221,7 @@ fn test_ssa_function_g() {
     let g = function_g();
     let mut g_ssa = g.clone();
     log::trace!("{g}");
-    transform(&mut g_ssa);
+    transform(&mut g_ssa, false);
     check_ssa_func(&g_ssa);
     assert_eq!(g_ssa[0.into()].len(), 5);
     assert!(g_ssa[0.into()].terminator_opt().is_some());
@@ -232,7 +232,7 @@ fn test_ssa_function_g1() {
     let g = function_g1();
     let mut g_ssa = g.clone();
     log::trace!("{g}");
-    transform(&mut g_ssa);
+    transform(&mut g_ssa, false);
     check_ssa_func(&g_ssa);
     assert_eq!(g_ssa[0.into()].len(), 5);
     assert!(g_ssa[0.into()].terminator_opt().is_some());
@@ -242,8 +242,44 @@ fn test_ssa_function_g1() {
 fn test_ssa_function_h() {
     let mut p = program_h();
     log::trace!("{p}");
-    transform_program(&mut p);
+    transform_program(&mut p, false);
     check_ssa_func(&p.functions[0.into()]);
+}
+
+#[test]
+fn test_prune_unreachable() {
+    let mut f = FunctionData::default();
+    f.name = "PruneMe".to_string();
+    f.return_type = ReturnType { arity: 0 };
+    let blocks = f.blocks.blocks_mut();
+
+    // Block 0: goto 1
+    blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
+        TerminatorKind::Goto {
+            targets: smallvec![BasicBlockIdx::new(1)],
+        },
+    ))));
+
+    // Block 1: return
+    blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
+        TerminatorKind::Return { args: smallvec![] },
+    ))));
+
+    // Block 2: unreachable, goto 1
+    blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
+        TerminatorKind::Goto {
+            targets: smallvec![BasicBlockIdx::new(1)],
+        },
+    ))));
+
+    assert_eq!(f.blocks.num_nodes(), 3);
+
+    // Transform with prune=true
+    transform(&mut f, true);
+
+    // Should have 2 blocks + 1 exit block (from complete()) = 3 blocks
+    // If it didn't prune, it would have 4 blocks (and panic)
+    assert_eq!(f.blocks.num_nodes(), 3);
 }
 
 /// Checks for multiply-defined variables

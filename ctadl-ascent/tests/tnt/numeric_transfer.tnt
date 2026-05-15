@@ -2,10 +2,10 @@
 // Test numeric field access in summary requirements
 
 def Transfer(a, b): 0
-where summaries [a.[1] <- b]
+where summaries [a.[1].deref <- b]
 {
 start:
-    a.[1] = b;
+    a.[1].deref = b;
     return;
 }
 
@@ -13,6 +13,6 @@ def Main() {
 start:
   s = source(Test);
   Transfer(x.[1], s);
-  sink(x.[2], Test);
+  sink(x.[2].deref, Test);
   return;
 }

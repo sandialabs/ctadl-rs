@@ -19,6 +19,8 @@ ON t.endpoint_infunc = f.id;
 
 # Pcode
 
+## Duckdb
+
 Print high PCode in Duckdb:
 
 ```sql
@@ -45,3 +47,11 @@ ORDER BY target."column1", idx."column1";
 -- bbf.hfunc = 'main@1400014d2'
 -- ORDER BY target.target_address, idx."index";
 ```
+
+## Sqlite
+
+```
+cd ~/.local/state/ctadl/imports/ls/facts
+cat pcode_schema.sql | sqlite3 facts.db
+```
+

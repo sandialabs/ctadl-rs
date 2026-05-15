@@ -1,0 +1,38 @@
+{
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature",
+          "pattern": ".*source.*"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "xfer",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature",
+          "name": ".*sink.*"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "xfer",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}

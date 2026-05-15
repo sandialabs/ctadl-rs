@@ -4,7 +4,8 @@ Graph traits.
 Much of this code is inspired by or cribbed from
 <https://doc.rust-lang.org/beta/nightly-rustc/src/rustc_data_structures/graph/mod.rs.html>.
 */
-use crate::index::idx::Idx;
+use crate::index::{idx::Idx, index_vec::IndexVec};
+use bit_set::BitSet;
 
 pub mod dominators;
 pub mod reference;
@@ -92,4 +93,26 @@ pub fn find_path<G: Successors>(graph: &G, start: G::Node, end: G::Node) -> Opti
     } else {
         None
     }
+}
+
+/// Assigns a depth-first numbering to each graph node and returns the nodes in dfs numbered order.
+pub fn reachable<G>(graph: &G) -> impl Iterator<Item = G::Node>
+where
+    G: DirectedGraph + StartNode + Predecessors + Successors,
+{
+    let mut nodes = vec![graph.start_node()];
+    let mut seen = BitSet::new();
+    let mut reach: IndexVec<G::Node, G::Node> = IndexVec::new();
+
+    while let Some(n) = nodes.pop() {
+        if seen.insert(n.index()) {
+            reach.push(n);
+
+            for w in graph.successors(n) {
+                nodes.push(w);
+            }
+        }
+    }
+
+    reach.into_iter()
 }

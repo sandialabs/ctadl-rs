@@ -255,7 +255,7 @@ pub(crate) fn get_summary(
 ) -> Result<(Vec<FunctionSummary>, IndexSourceInfo), Error> {
     program_info.program.verify()?;
     let mut facts = IndexFacts::default();
-    ssa::transform_program(&mut program_info.program);
+    ssa::transform_program(&mut program_info.program, false);
     let mut source_info = IndexSourceInfo::default();
     codegen_program(
         program_info,

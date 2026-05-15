@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 use internment::ArcIntern;
 use smallvec::{SmallVec, smallvec};
 
-use crate::graph::{DirectedGraph, Predecessors, StartNode, Successors};
+use crate::graph::{DirectedGraph, Predecessors, StartNode, Successors, reachable};
 use crate::index::{idx::Idx, index_vec::IndexVec};
 use crate::mir::visit::MutVisitor;
 use crate::mir::*;
@@ -36,20 +36,25 @@ struct SsaRename {
     c: HashMap<ArcIntern<Variable>, usize>,
 }
 
-pub fn transform_program(program: &mut Program) {
+pub fn transform_program(program: &mut Program, prune: bool) {
     for (_, f) in program.functions.iter_enumerated_mut() {
         log::debug!("f: {f}");
-        transform(f);
+        transform(f, prune);
     }
 }
 
 /// Transform a function into SSA form. All [`VariableRef`]s are *versioned* so that each one has
 /// exactly one definition and the definition dominates all its uses.
 ///
+/// - `prune`: Prune unreachable CFG blocks before transforming
+///
 /// Precondition: the function isn't already in SSA form.
-pub fn transform(function: &mut FunctionData) {
+pub fn transform(function: &mut FunctionData, prune: bool) {
     if function.blocks.is_empty() {
         return;
+    }
+    if prune {
+        prune_unreachable_nodes(function);
     }
     // Forward returns into the exit block as a new return. Change the former returns into gotos
     log::trace!("begin ssa transform");
@@ -82,6 +87,48 @@ pub fn transform(function: &mut FunctionData) {
     log::trace!("assume that version 0 is initial version");
     log::trace!("blocks after rename: {}", function);
     function.verify().unwrap();
+}
+
+fn prune_unreachable_nodes(function: &mut FunctionData) {
+    let reachable_indices: Vec<BasicBlockIdx> = reachable(&function.blocks).collect();
+    if reachable_indices.len() == function.blocks.num_nodes() {
+        return;
+    }
+
+    let mut mapping = HashMap::new();
+    for (new_idx, &old_idx) in reachable_indices.iter().enumerate() {
+        mapping.insert(old_idx, BasicBlockIdx::new(new_idx));
+    }
+
+    let mut new_blocks = IndexVec::new();
+    for &old_idx in &reachable_indices {
+        let mut data = function.blocks[old_idx].clone();
+
+        // Update terminator targets
+        if let Some(term) = &mut data.terminator
+            && let TerminatorKind::Goto { targets } = &mut term.kind
+        {
+            for target in targets {
+                *target = *mapping
+                    .get(target)
+                    .expect("Successor of reachable block should be reachable");
+            }
+        }
+
+        // Update Phi nodes (if any - though we likely call this before SSA)
+        for stmt in data.iter_mut() {
+            if let StatementKind::Phi { operands, .. } = &mut stmt.kind {
+                operands.retain(|(pred, _)| mapping.contains_key(pred));
+                for (pred, _) in operands.iter_mut() {
+                    *pred = *mapping.get(pred).unwrap();
+                }
+            }
+        }
+
+        new_blocks.push(data);
+    }
+
+    *function.blocks.blocks_mut() = new_blocks;
 }
 
 /// Completes the CFG by adding an exit node and tying the start node and every node that has no
