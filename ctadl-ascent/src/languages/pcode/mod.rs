@@ -17,7 +17,7 @@ use pcode_reader::PcodeFactsReader;
 
 mod ghidra;
 
-/// TODO read this from facts
+/// This is hardcoded for now, but should be read from the facts
 const WORD_SIZE: i64 = 8;
 
 /// Import pcode facts from an artifact by running Ghidra and then converting the facts
@@ -820,16 +820,14 @@ impl Context {
         let outputs = &pcode.outputs;
         if inputs.len() >= 2 && !outputs.is_empty() {
             // LOAD <space>, <offset> -> <dest>
-            let offset_exp = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts)?;
-            let output_var = self
-                .get_lvalue(&outputs[0], vnode_facts)
-                .map(access_path_expect_variable)?;
+            let mut offset_exp = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts)?;
+            offset_exp
+                .path
+                .fields
+                .push(FieldAccess::Symbol(".deref".into()));
+            let output_var = self.get_lvalue(&outputs[0], vnode_facts)?;
 
-            let kind = StatementKind::Assign {
-                dest: output_var,
-                sources: smallvec![offset_exp],
-            };
-
+            let kind = StatementKind::assign_or_update(output_var, Exp::AccessPath(offset_exp));
             return Ok(Statement::new_kind(kind));
         }
         Ok(Statement::new_kind(StatementKind::Nop))
@@ -843,15 +841,16 @@ impl Context {
         let (inputs, _) = (&pcode.inputs, &pcode.outputs);
         if inputs.len() >= 3 {
             // STORE <space>, <offset>, <value>
-            let offset_exp = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts)?;
+            let mut offset_exp = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts)?;
+            offset_exp
+                .path
+                .fields
+                .push(FieldAccess::Symbol(".deref".into()));
             let value_exp = self.get_exp(&inputs[2], vnode_facts)?;
 
             // If offset is an access path, we can try to use it as destination
-            if let Exp::AccessPath(ap) = offset_exp {
-                let kind = StatementKind::assign_or_update(ap, value_exp);
-                return Ok(Statement::new_kind(kind));
-            }
-            log::warn!("STORE offset was not AccessPath");
+            let kind = StatementKind::assign_or_update(offset_exp, value_exp);
+            return Ok(Statement::new_kind(kind));
         }
         log::warn!("STORE missing inputs");
         Ok(Statement::new_kind(StatementKind::Nop))
@@ -910,8 +909,7 @@ impl Context {
         _space_id: &pcode_reader::PcodeVarnode,
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-    ) -> Result<Exp, Error> {
-        // TODO use space_id to figure out whether to load from ram or
+    ) -> Result<AccessPath, Error> {
         if let Some(prop) = self.cp_results.get(vnode_id).cloned() {
             match prop {
                 pcode_reader::constant_propagation::SymbolicProp::Value(Some(base_vn), offset) => {
@@ -920,33 +918,18 @@ impl Context {
                         let var_ref = VariableRef::new_local("__stack_top".to_string());
                         let mut ap = AccessPath::without_fields(var_ref);
                         ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-                        return Ok(Exp::AccessPath(ap));
+                        return Ok(ap);
                     } else if base_vn != *vnode_id {
                         let mut ap = self.get_lvalue(&base_vn, vnode_facts)?;
                         ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-                        return Ok(Exp::AccessPath(ap));
+                        return Ok(ap);
                     }
-                }
-                pcode_reader::constant_propagation::SymbolicProp::Value(None, offset) => {
-                    let var_name = format!("ram_{:x}", offset);
-                    let var_ref = VariableRef::new_local(var_name);
-                    return Ok(Exp::AccessPath(AccessPath::without_fields(var_ref)));
                 }
                 _ => {}
             }
         }
 
-        if let Some(vnode_data) = vnode_facts.get(vnode_id)
-            && (vnode_data.space.as_deref() == Some("const")
-                || vnode_data.space.as_deref() == Some("unique"))
-            && let Some(address) = &vnode_data.address
-        {
-            let var_name = format!("ram_{:x}", address.0);
-            let var_ref = VariableRef::new_local(var_name);
-            return Ok(Exp::AccessPath(AccessPath::without_fields(var_ref)));
-        }
-
-        self.get_exp(vnode_id, vnode_facts)
+        self.get_lvalue(vnode_id, vnode_facts)
     }
 
     /// Op is "CALL" or "CALLIND"
