@@ -114,6 +114,7 @@ pub fn index(
     summary_projects: &[String],
     models: &[std::path::PathBuf],
     strategy: CallResolutionStrategy,
+    prune_unreachable_cfg_nodes: bool,
 ) -> Result<(), Error> {
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -127,7 +128,7 @@ pub fn index(
         }
 
         log::trace!("summary length: {}", models_batch.summary.num_rows());
-        ssa::transform_program(&mut program_info.program, false);
+        ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
         codegen_program(program_info, &mut facts, &mut source_info, strategy);
         log::trace!("summary length: {}", facts.summary.len());
         codegen_summary(models_batch.summary, &mut facts, &mut source_info);

@@ -184,6 +184,13 @@ pub struct IndexArgs {
     /// Call resolution strategy: cha, hi, mixed
     #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
     pub strategy: CallResolutionStrategy,
+
+    /// Prune unreachable CFG nodes before SSA transformation.
+    ///
+    /// Passing `--prune-unreachable-cfg-nodes` enables pruning. Passing
+    /// `--prune-unreachable-cfg-nodes=false` disables it explicitly.
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+    pub prune_unreachable_cfg_nodes: Option<bool>,
 }
 
 #[derive(Debug, Args)]
@@ -312,6 +319,7 @@ fn main() -> anyhow::Result<()> {
                 summary: vec![],
                 models: args.models.clone(),
                 strategy: args.strategy,
+                prune_unreachable_cfg_nodes: None,
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -368,6 +376,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 summary: vec![],
                 models: args.models.clone(),
                 strategy: CallResolutionStrategy::Mixed,
+                prune_unreachable_cfg_nodes: None,
             };
             index_artifacts_to_store(&index_args)?;
         }
@@ -456,7 +465,13 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         args.progs.clone()
     };
     let project = project::AnalysisProject::try_create(&args.name, &import_names)?;
-    cli::index(&project, &args.summary, &args.models, args.strategy)?;
+    cli::index(
+        &project,
+        &args.summary,
+        &args.models,
+        args.strategy,
+        args.prune_unreachable_cfg_nodes.unwrap_or(false),
+    )?;
     Ok(())
 }
 
