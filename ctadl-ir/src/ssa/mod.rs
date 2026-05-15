@@ -105,13 +105,13 @@ fn prune_unreachable_nodes(function: &mut FunctionData) {
         let mut data = function.blocks[old_idx].clone();
 
         // Update terminator targets
-        if let Some(term) = &mut data.terminator {
-            if let TerminatorKind::Goto { targets } = &mut term.kind {
-                for target in targets {
-                    *target = *mapping
-                        .get(target)
-                        .expect("Successor of reachable block should be reachable");
-                }
+        if let Some(term) = &mut data.terminator
+            && let TerminatorKind::Goto { targets } = &mut term.kind
+        {
+            for target in targets {
+                *target = *mapping
+                    .get(target)
+                    .expect("Successor of reachable block should be reachable");
             }
         }
 

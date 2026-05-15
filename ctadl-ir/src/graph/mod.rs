@@ -5,7 +5,6 @@ Much of this code is inspired by or cribbed from
 <https://doc.rust-lang.org/beta/nightly-rustc/src/rustc_data_structures/graph/mod.rs.html>.
 */
 use crate::index::{idx::Idx, index_vec::IndexVec};
-use crate::indexvec;
 use bit_set::BitSet;
 
 pub mod dominators;

@@ -834,10 +834,8 @@ impl Context {
         }
 
         let temp = self.create_temp();
-        let stmt1 = StatementKind::assign(
-            temp.clone(),
-            [Exp::AccessPath(base.clone()), offset_exp].into_iter(),
-        );
+        let stmt1 =
+            StatementKind::assign(temp.clone(), [Exp::AccessPath(base.clone()), offset_exp]);
         let stmt2 = StatementKind::assign_or_update(
             outputs[0].clone(),
             Exp::AccessPath(AccessPath::without_fields(temp)),
@@ -1015,22 +1013,20 @@ impl Context {
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
     ) -> Result<AccessPath, Error> {
-        if let Some(prop) = self.cp_results.get(vnode_id).cloned() {
-            match prop {
-                pcode_reader::constant_propagation::SymbolicProp::Value(Some(base_vn), offset) => {
-                    let is_stack = base_vn.deref().deref() == "__stack_top";
-                    if is_stack {
-                        let var_ref = VariableRef::new_local("__stack_top".to_string());
-                        let mut ap = AccessPath::without_fields(var_ref);
-                        ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-                        return Ok(ap);
-                    } else if base_vn != *vnode_id {
-                        let mut ap = self.get_lvalue(&base_vn, vnode_facts)?;
-                        ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-                        return Ok(ap);
-                    }
-                }
-                _ => {}
+        if let Some(prop) = self.cp_results.get(vnode_id).cloned()
+            && let pcode_reader::constant_propagation::SymbolicProp::Value(Some(base_vn), offset) =
+                prop
+        {
+            let is_stack = base_vn.deref().deref() == "__stack_top";
+            if is_stack {
+                let var_ref = VariableRef::new_local("__stack_top".to_string());
+                let mut ap = AccessPath::without_fields(var_ref);
+                ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
+                return Ok(ap);
+            } else if base_vn != *vnode_id {
+                let mut ap = self.get_lvalue(&base_vn, vnode_facts)?;
+                ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
+                return Ok(ap);
             }
         }
 
