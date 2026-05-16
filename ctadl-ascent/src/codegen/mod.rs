@@ -36,9 +36,9 @@ pub mod models;
 /// Strategy for resolving virtual calls
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum CallResolutionStrategy {
-    /// Every call is resolved with CHA
+    /// Every call is resolved with Class Hierarchy Analysis.
     Cha,
-    /// No calls are resolved up front, every call is resolved with hybrid inlining.
+    /// Every call is resolved with hybrid inlining (no calls resolved with CHA).
     Hi,
     /// CHA for easy calls, hybrid inlining otherwise.
     #[default]

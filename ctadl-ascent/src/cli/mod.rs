@@ -490,7 +490,7 @@ pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
         }
     };
 
-    println!("Artifact: {}", import.name);
+    println!("Artifact: {} ({})", import.name, import.artifact_path.display());
     println!("  Number of functions: {}", program.functions.len());
     println!("  Total number of assignments: {}", total_assignments);
     println!(
@@ -536,7 +536,11 @@ pub fn list_store_contents() -> Result<(), Error> {
     } else {
         imports.sort();
         for name in imports {
-            println!("  {}", name);
+            if let Ok(import) = ArtifactImport::load_by_name(&name) {
+                println!("  {} ({})", name, import.artifact_path.display());
+            } else {
+                println!("  {}", name);
+            }
         }
     }
 

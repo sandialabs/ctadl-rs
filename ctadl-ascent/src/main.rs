@@ -20,37 +20,34 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Import a single artifact (dex, jar, .class, directory of .c files, etc.)
-    ///
-    /// Produces a serialized Program into proj. Each program is associated with
-    /// the filename/dir it imports and remembers the full original path.
     Import(ImportArgs),
 
-    /// Index artifacts, creating an analysis project
+    /// Index artifacts. (See 'import' to import artifacts)
     ///
-    /// Takes a project name and a sequence of imported program names (from import).
-    /// Co-indexes them and stores into proj under that project name.
+    /// Indexes a set of artifacts, such as Java programs along with shared libraries.
+    /// The index is stored under the project name.
     Index(IndexArgs),
 
-    /// Analyze taint in a project
+    /// Run a taint analysis query. (See 'index' for prerequisites)
     Query(QueryArgs),
 
     /// Format the last query results for the named project
     Format(FormatArgs),
 
-    /// Inspect an imported artifact and print statistics
-    Inspect(InspectArgs),
-
     /// One-shot: import artifacts, index them under name, query, and format output
     Go(GoArgs),
-
-    /// Legacy Ghidra Pcode CLI: index and query commands for Ghidra integration.
-    #[command(name = "legacy-pcode-cli")]
-    LegacyPcodeCli(LegacyPcodeCliArgs),
 
     /// Generate a template JSON5 model file to help write custom analysis models. Analysis models
     /// are used to specify sources and sinks (see the 'query' command) as well as specifying
     /// external function behavior (see the 'index' command)
     InitModel(InitModelArgs),
+
+    /// Inspect the CTADL store
+    Inspect(InspectArgs),
+
+    /// Legacy Ghidra Pcode CLI: index and query commands for Ghidra integration.
+    #[command(name = "legacy-pcode-cli")]
+    LegacyPcodeCli(LegacyPcodeCliArgs),
 }
 
 #[derive(Debug, Args)]
@@ -169,7 +166,7 @@ pub enum ImportLanguage {
 
 #[derive(Debug, Args)]
 pub struct InspectArgs {
-    /// Name of the imported artifact to inspect
+    /// Artifact name, project name, or store path
     pub name: Option<String>,
 }
 
@@ -189,7 +186,9 @@ pub struct IndexArgs {
     pub summary: Vec<String>,
 
     /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
-    /// multiple times to load multiple model files.
+    /// multiple times to load multiple model files. This option is use primarily to provide
+    /// propagation models, which provide function summaries for indexing external or
+    /// hard-to-analyze code.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
