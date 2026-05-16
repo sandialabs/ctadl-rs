@@ -47,6 +47,7 @@
           in
           ctadl;
         packages.checksarif = checksarif;
+        packages.examples.nginx = pkgs.pkgsCross.gnu64.enableDebugging (pkgs.pkgsCross.gnu64.nginx.override { withDebug = true; withPerl = false; perl = null; });
 
         formatter = pkgs.nixfmt;
         devShell =
