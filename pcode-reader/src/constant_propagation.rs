@@ -640,4 +640,106 @@ mod tests {
             Some(&SymbolicProp::Value(Some(stack_top), 0))
         );
     }
+
+    #[test]
+    fn test_ptradd_ptrsub_constants() {
+        let mut facts = PcodeFacts::default();
+        let base = PcodeVarnode::from("base");
+        let index = PcodeVarnode::from("index");
+        let size_vn = PcodeVarnode::from("size");
+        let out_ptradd = PcodeVarnode::from("out_ptradd");
+        let out_ptrsub = PcodeVarnode::from("out_ptrsub");
+        let offset = PcodeVarnode::from("offset");
+
+        // base = 1000
+        facts.vnode_facts.insert(
+            base.clone(),
+            VnodeData {
+                name: "base".to_string(),
+                size: Some(8),
+                is_address: false,
+                space: Some("const".to_string()),
+                address: Some(PcodeAddress(1000)),
+                constant_offset: None,
+            },
+        );
+
+        // index = 2
+        facts.vnode_facts.insert(
+            index.clone(),
+            VnodeData {
+                name: "index".to_string(),
+                size: Some(8),
+                is_address: false,
+                space: Some("const".to_string()),
+                address: Some(PcodeAddress(2)),
+                constant_offset: None,
+            },
+        );
+
+        // size = 4
+        facts.vnode_facts.insert(
+            size_vn.clone(),
+            VnodeData {
+                name: "size".to_string(),
+                size: Some(8),
+                is_address: false,
+                space: Some("const".to_string()),
+                address: Some(PcodeAddress(4)),
+                constant_offset: None,
+            },
+        );
+
+        // offset = 50
+        facts.vnode_facts.insert(
+            offset.clone(),
+            VnodeData {
+                name: "offset".to_string(),
+                size: Some(8),
+                is_address: false,
+                space: Some("const".to_string()),
+                address: Some(PcodeAddress(50)),
+                constant_offset: None,
+            },
+        );
+
+        // out_ptradd = PTRADD(base, index, size) -> 1000 + 2 * 4 = 1008
+        facts.pcode_facts.insert(
+            PcodeInstruction::from("i1"),
+            PcodeData {
+                mnemonic: PcodeMnemonic::from("PTRADD"),
+                opcode: None,
+                inputs: smallvec::smallvec![base.clone(), index.clone(), size_vn.clone()],
+                outputs: smallvec::smallvec![out_ptradd.clone()],
+                bb_id: None,
+                index: 0,
+                target: None,
+            },
+        );
+
+        // out_ptrsub = PTRSUB(base, offset) -> 1000 + 50 = 1050
+        facts.pcode_facts.insert(
+            PcodeInstruction::from("i2"),
+            PcodeData {
+                mnemonic: PcodeMnemonic::from("PTRSUB"),
+                opcode: None,
+                inputs: smallvec::smallvec![base.clone(), offset.clone()],
+                outputs: smallvec::smallvec![out_ptrsub.clone()],
+                bb_id: None,
+                index: 1,
+                target: None,
+            },
+        );
+
+        let results = compute_constant_propagation(&facts);
+
+        assert_eq!(
+            results.get(&out_ptradd),
+            Some(&SymbolicProp::Value(None, 1008))
+        );
+        assert_eq!(
+            results.get(&out_ptrsub),
+            Some(&SymbolicProp::Value(None, 1050))
+        );
+    }
 }

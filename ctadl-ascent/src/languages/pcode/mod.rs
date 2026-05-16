@@ -807,14 +807,21 @@ impl Context {
 
         if let Some(prop) = self.cp_results.get(&pcode.outputs[0]).cloned()
             && let pcode_reader::constant_propagation::SymbolicProp::Value(None, addr) = prop
-            && let Some(func_name) = self.resolve_address_to_func_name(addr, hfunc_facts, program)
         {
-            let kind = StatementKind::assign_or_update(
-                outputs[0].clone(),
-                Exp::ObjectRef(CallObject::FunctionPtr(func_name.into())),
-            );
-            log::warn!("Found a function pointer, yay");
-            return Ok([Statement::new_kind(kind)].into_iter().collect());
+            if let Some(func_name) = self.resolve_address_to_func_name(addr, hfunc_facts, program) {
+                let kind = StatementKind::assign_or_update(
+                    outputs[0].clone(),
+                    Exp::ObjectRef(CallObject::FunctionPtr(func_name.into())),
+                );
+                log::warn!("Found a function pointer, yay");
+                return Ok([Statement::new_kind(kind)].into_iter().collect());
+            } else {
+                let kind = StatementKind::assign_or_update(
+                    outputs[0].clone(),
+                    self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr)
+                );
+                return Ok([Statement::new_kind(kind)].into_iter().collect());
+            }
         }
 
         if pcode.inputs.len() < 2 {
@@ -861,6 +868,16 @@ impl Context {
             return Ok([Statement::new_kind(StatementKind::Nop)]
                 .into_iter()
                 .collect());
+        }
+
+        if let Some(prop) = self.cp_results.get(&pcode.outputs[0]).cloned()
+            && let pcode_reader::constant_propagation::SymbolicProp::Value(None, addr) = prop
+        {
+            let kind = StatementKind::assign_or_update(
+                outputs[0].clone(),
+                self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr)
+            );
+            return Ok([Statement::new_kind(kind)].into_iter().collect());
         }
 
         let base = self.get_lvalue(&pcode.inputs[0], vnode_facts)?;
