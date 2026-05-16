@@ -46,6 +46,18 @@ pub enum Command {
     /// Legacy Ghidra Pcode CLI: index and query commands for Ghidra integration.
     #[command(name = "legacy-pcode-cli")]
     LegacyPcodeCli(LegacyPcodeCliArgs),
+
+    /// Generate a template JSON5 model file to help write custom analysis models. Analysis models
+    /// are used to specify sources and sinks (see the 'query' command) as well as specifying
+    /// external function behavior (see the 'index' command)
+    InitModel(InitModelArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct InitModelArgs {
+    /// Path where the template model file will be written (defaults to model.json5)
+    #[arg(default_value = "model.json5")]
+    pub output: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -343,8 +355,86 @@ fn main() -> anyhow::Result<()> {
         Command::LegacyPcodeCli(args) => {
             handle_legacy_pcode_cli(args).context("running 'legacy-pcode-cli'")?;
         }
+        Command::InitModel(args) => {
+            handle_init_model(args).context("running 'init-model'")?;
+        }
     };
 
+    Ok(())
+}
+
+fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
+    let template = r#"{
+    // Link to the schema to enable IDE features like autocomplete and hover documentation.
+    // Adjust the path to match your installation if necessary.
+    "$schema": "https://raw.githubusercontent.com/sandialabs/ctadl-rs/refs/heads/main/ctadl-ascent/src/models/ctadl-model-generator.schema.json",
+    
+    "model_generators": [
+        {
+            // Example 1: Define a data source using a signature pattern.
+            // This will match any method containing 'readData' in its signature
+            // and mark its return value as a source of taint.
+            "find": "methods",
+            "where": [
+                {
+                    "constraint": "signature_pattern",
+                    "pattern": ".*readData.*"
+                }
+            ],
+            "model": {
+                "sources": [
+                    {
+                        "port": "Return",
+                        "kind": "input_data"
+                    }
+                ]
+            }
+        },
+        {
+            // Example 2: Define a sink using an exact signature match.
+            // This will match the exact method signature 'executeQuery' and mark its first argument
+            // as a sink for taint analysis.
+            "find": "methods",
+            "where": [
+                {
+                    "constraint": "signature_match",
+                    "name": "executeQuery"
+                }
+            ],
+            "model": {
+                "sinks": [
+                    {
+                        "port": "Argument(0)",
+                        "kind": "sql_injection"
+                    }
+                ]
+            }
+        },
+        {
+            // Example 3: Define a propagation model.
+            // This models a method 'canonicalize_url' that transforms data.
+            // We model it as propagating taint from its first argument to its return value.
+            "find": "methods",
+            "where": [
+                {
+                    "constraint": "signature_match",
+                    "name": "canonicalize_url"
+                }
+            ],
+            "model": {
+                "propagation": [
+                    {
+                        "input": "Argument(0)",
+                        "output": "Return"
+                    }
+                ]
+            }
+        }
+        ]
+        }"#;
+
+    std::fs::write(&args.output, template)?;
+    eprintln!("Wrote template model file to '{}'", args.output.display());
     Ok(())
 }
 
