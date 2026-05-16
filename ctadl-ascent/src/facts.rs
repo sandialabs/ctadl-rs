@@ -29,7 +29,7 @@ lazy_static::lazy_static! {
 /// The path dereferences go left to right
 /// ["foo", "bar", "baz"] represents .foo.bar.baz
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord)]
-pub struct Path(VecDeque<mir::FieldAccess>);
+pub struct Path(pub VecDeque<mir::FieldAccess>);
 
 impl Path {
     /// Creates an empty path
@@ -138,6 +138,18 @@ impl Path {
                 result.extend_merging(suffix);
                 result
             })
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct Heap {
+    formal_index: FormalIndex,
+}
+
+impl Heap {
+    pub fn new(formal_index: FormalIndex) -> Self {
+        Self { formal_index }
     }
 }
 
@@ -424,7 +436,9 @@ impl TryFrom<usize> for Index {
 }
 
 /// Index into the parameter list. Negative indices are reserved for the engine
-#[derive(Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Serialize, Deserialize, Default,
+)]
 #[repr(transparent)]
 pub struct FormalIndex(Index);
 
@@ -646,6 +660,13 @@ pub enum FlowVariable {
 }
 
 impl FlowVariable {
+    pub fn formal(&self) -> Option<FormalIndex> {
+        match self {
+            FlowVariable::Formal(i) => Some(*i),
+            _ => None,
+        }
+    }
+
     pub fn is_globals(&self) -> bool {
         crate::codegen::variable_is_globals(self)
     }

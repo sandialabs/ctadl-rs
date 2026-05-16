@@ -46,8 +46,8 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId, InsnSiteId,
-    PackedInsnSiteId, Path, isout,
+    CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, Heap, InsnId,
+    InsnSiteId, PackedInsnSiteId, Path, isout,
 };
 use ctadl_ir::Symbol;
 
@@ -253,6 +253,10 @@ pub struct IndexResult {
     pub assign_like: Vec<(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)>,
     pub java_obj_assign_like: Vec<(FunctionId, InsnId, FlowVariable, Path, Symbol)>,
     pub paths: Vec<(Path,)>,
+
+    // --- Pointer Analysis Results ---
+    pub var_points_to: Vec<(FunctionId, FlowVariable, Heap)>,
+    pub fld_points_to: Vec<(FunctionId, Heap, Symbol, Heap)>,
 }
 
 impl IndexResult {
@@ -274,6 +278,8 @@ impl IndexResult {
             assign_like,
             java_obj_assign_like: Vec::new(),
             paths,
+            var_points_to: Vec::new(),
+            fld_points_to: Vec::new(),
         })
     }
 }
@@ -310,6 +316,30 @@ impl std::fmt::Display for IndexResult {
         writeln!(f, "\nPaths:")?;
         for (p,) in &self.paths {
             writeln!(f, "{}", p)?;
+        }
+        Ok(())
+    }
+}
+
+struct PointerAnalysisRelations<'a> {
+    var_points_to: &'a [(FunctionId, FlowVariable, Heap)],
+    fld_points_to: &'a [(FunctionId, Heap, Symbol, Heap)],
+}
+
+impl<'a> std::fmt::Display for PointerAnalysisRelations<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Var Points-To ({}):", self.var_points_to.len())?;
+        for (func_id, var, heap) in self.var_points_to {
+            let var_str = match var {
+                FlowVariable::Local(name) => name.to_string(),
+                _ => format!("{}", var),
+            };
+            writeln!(f, "  {}: {} -> {:?}", func_id.id, var_str, heap)?;
+        }
+
+        writeln!(f, "\nFld Points-To ({}):", self.fld_points_to.len())?;
+        for (func_id, base_heap, fld, heap) in self.fld_points_to {
+            writeln!(f, "  {}: {:?}.{} -> {:?}", func_id.id, base_heap, fld, heap)?;
         }
         Ok(())
     }
@@ -469,6 +499,15 @@ pub fn taint_index(facts: IndexFacts) -> IndexResult {
 }
 
 pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexResult {
+    fn first_symbol(path: &Path) -> Option<Symbol> {
+        if path.len() > 0 {
+            if let ctadl_ir::mir::FieldAccess::Symbol(f) = &path.0[0] {
+                return Some(f.clone());
+            }
+        }
+        None
+    }
+
     // Access paths may be introduced in summaries, so include those.
     use hashbrown::hash_set::HashSet;
     let summary_paths: HashSet<_> = facts
@@ -524,6 +563,11 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         relation context_locals(CallString, FunctionId, FlowVariable, Path, FormalIndex, Path);
         relation context_summary(CallString, FunctionId, FormalIndex, Path, FormalIndex, Path);
 
+        // Pointer Analysis derived relations
+        relation pointer_alloc(FlowVariable, Heap, FunctionId);
+        relation pointer_var_points_to(FunctionId, FlowVariable, Heap);
+        relation pointer_fld_points_to(FunctionId, Heap, Symbol, Heap);
+
         // Sets up paths from input program with static info. Paths must remain finite so we
         // shouldn't add paths from constructed summaries directly.
         program_paths(p) <-- actual_param(_, _, vx), let FlowVertex(_, p) = vx;
@@ -534,6 +578,38 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         // Combine model paths with program paths (one level only to ensure termination)
         paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
         paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
+
+        // Pointer Analysis Rules (Context-Insensitive Andersen Style)
+        // 1. Alloc
+        pointer_alloc(v, h, m) <-- formal_param(m, v, ty), let h = Heap::new(v.formal().unwrap());
+        // TODO fields in pointer_alloc
+        pointer_var_points_to(m.clone(), v.clone(), h.clone()) <-- pointer_alloc(v, h, m);
+
+        // 2. Move (derived from assign_like with empty paths)
+        pointer_var_points_to(m.clone(), to.clone(), h.clone()) <--
+            assign_like(m, _insn_id, to, dst_path, from, src_path),
+            if dst_path.is_empty() && src_path.is_empty(),
+            pointer_var_points_to(m, from, h);
+
+        // 3. Store (base.fld = from)
+        pointer_fld_points_to(m.clone(), base_h.clone(), f.clone(), h.clone()) <--
+            assign_like(m, _insn_id, base, dst_path, from, src_path),
+            if !dst_path.is_empty() && src_path.is_empty(),
+            if dst_path.len() == 1,
+            if let Some(f) = first_symbol(dst_path),
+            pointer_var_points_to(m, base, base_h),
+            pointer_var_points_to(m, from, h);
+
+        // 4. Load (to = base.fld)
+        pointer_var_points_to(m.clone(), to.clone(), h.clone()) <--
+            assign_like(m, _insn_id, to, dst_path, base, src_path),
+            if dst_path.is_empty() && !src_path.is_empty(),
+            if src_path.len() == 1,
+            if let Some(f) = first_symbol(src_path),
+            pointer_var_points_to(m, base, base_h),
+            pointer_fld_points_to(m, base_h, f, h);
+
+        // Data Flow Analysis rules:
 
         // Initialize locals with formals
         locals(infunc, v1, p1.clone(), i, p1.clone()) <--
@@ -590,19 +666,19 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             if n1 != n2 || p1 != p2;
 
         // aliasing summary rule, see discussion above
-        summary(infunc, n1, ap3.clone(), n2, bp) <--
-            //config(c),
-            //if c.alias_rule,
-            // this is the alias: v1.p1 <- n1.ap
-            locals(infunc, v1, p1, n1, ap),
-            // v1.p13 <- n2.bp
-            locals(infunc, v1, p13, n2, bp),
-            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            // if let Some(p3) = match_prefix(p13, p1),
-            // if !p3.is_empty(),
-            // let ap3 = ap.concat_str(p3),
-            paths(&ap3),
-            if n1 != n2 || ap3 != *bp;
+        //summary(infunc, n1, ap3.clone(), n2, bp) <--
+        //    //config(c),
+        //    //if c.alias_rule,
+        //    // this is the alias: v1.p1 <- n1.ap
+        //    locals(infunc, v1, p1, n1, ap),
+        //    // v1.p13 <- n2.bp
+        //    locals(infunc, v1, p13, n2, bp),
+        //    if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
+        //    // if let Some(p3) = match_prefix(p13, p1),
+        //    // if !p3.is_empty(),
+        //    // let ap3 = ap.concat_str(p3),
+        //    paths(&ap3),
+        //    if n1 != n2 || ap3 != *bp;
 
         // Hybrid Inlining Rules:
         // Phase 1: propagate up the stack from indirect calls
@@ -755,6 +831,9 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             assign_like(func_id, insn_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
             paths(p_new.clone());
+
+        // Pointer analysis relations:
+
     };
     log::info!("index scc times: {}", prog.scc_times_summary());
     log::trace!(
@@ -768,11 +847,20 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             context_summary: &prog.context_summary,
         }
     );
+    log::trace!(
+        "pointer analysis relations:\n{}",
+        PointerAnalysisRelations {
+            var_points_to: &prog.pointer_var_points_to,
+            fld_points_to: &prog.pointer_fld_points_to,
+        }
+    );
     let result = IndexResult {
         summary: prog.summary,
         assign_like: prog.assign_like,
         java_obj_assign_like: prog.java_obj_assign_like,
         paths: prog.paths,
+        var_points_to: prog.pointer_var_points_to,
+        fld_points_to: prog.pointer_fld_points_to,
     };
     log::trace!("index result: {}", result);
     result
