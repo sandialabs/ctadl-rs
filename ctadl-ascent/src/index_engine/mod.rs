@@ -256,7 +256,7 @@ pub struct IndexResult {
 
     // --- Pointer Analysis Results ---
     pub var_points_to: Vec<(FunctionId, FlowVariable, Heap)>,
-    pub fld_points_to: Vec<(FunctionId, Heap, Symbol, Heap)>,
+    pub fld_points_to: Vec<(FunctionId, Heap, Path, Heap)>,
 }
 
 impl IndexResult {
@@ -323,7 +323,7 @@ impl std::fmt::Display for IndexResult {
 
 struct PointerAnalysisRelations<'a> {
     var_points_to: &'a [(FunctionId, FlowVariable, Heap)],
-    fld_points_to: &'a [(FunctionId, Heap, Symbol, Heap)],
+    fld_points_to: &'a [(FunctionId, Heap, Path, Heap)],
 }
 
 impl<'a> std::fmt::Display for PointerAnalysisRelations<'a> {
@@ -338,8 +338,15 @@ impl<'a> std::fmt::Display for PointerAnalysisRelations<'a> {
         }
 
         writeln!(f, "\nFld Points-To ({}):", self.fld_points_to.len())?;
-        for (func_id, base_heap, fld, heap) in self.fld_points_to {
-            writeln!(f, "  {}: {:?}.{} -> {:?}", func_id.id, base_heap, fld, heap)?;
+        for (func_id, base_heap, fld_path, heap) in self.fld_points_to {
+            writeln!(
+                f,
+                "  {}: {:?}{} -> {:?}",
+                func_id.id,
+                base_heap,
+                fld_path.to_dot_string(),
+                heap
+            )?;
         }
         Ok(())
     }
@@ -499,15 +506,6 @@ pub fn taint_index(facts: IndexFacts) -> IndexResult {
 }
 
 pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexResult {
-    fn first_symbol(path: &Path) -> Option<Symbol> {
-        if path.len() > 0 {
-            if let ctadl_ir::mir::FieldAccess::Symbol(f) = &path.0[0] {
-                return Some(f.clone());
-            }
-        }
-        None
-    }
-
     // Access paths may be introduced in summaries, so include those.
     use hashbrown::hash_set::HashSet;
     let summary_paths: HashSet<_> = facts
@@ -566,7 +564,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         // Pointer Analysis derived relations
         relation pointer_alloc(FlowVariable, Heap, FunctionId);
         relation pointer_var_points_to(FunctionId, FlowVariable, Heap);
-        relation pointer_fld_points_to(FunctionId, Heap, Symbol, Heap);
+        relation pointer_fld_points_to(FunctionId, Heap, Path, Heap);
 
         // Sets up paths from input program with static info. Paths must remain finite so we
         // shouldn't add paths from constructed summaries directly.
@@ -582,32 +580,34 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         // Pointer Analysis Rules (Context-Insensitive Andersen Style)
         // 1. Alloc
         pointer_alloc(v, h, m) <-- formal_param(m, v, ty), let h = Heap::new(v.formal().unwrap());
-        // TODO fields in pointer_alloc
         pointer_var_points_to(m.clone(), v.clone(), h.clone()) <-- pointer_alloc(v, h, m);
+        pointer_fld_points_to(m.clone(), base_h.clone(), path.clone(), h) <--
+            pointer_var_points_to(m, v, base_h),
+            pointer_alloc(_, base_h, m),
+            (assign_like(m, _, _, _, v, path) | assign_like(m, _, v, path, _, _)),
+            if !path.is_empty(),
+            let h = Heap::with_path(base_h.index(), path.clone());
+
 
         // 2. Move (derived from assign_like with empty paths)
         pointer_var_points_to(m.clone(), to.clone(), h.clone()) <--
-            assign_like(m, _insn_id, to, dst_path, from, src_path),
+            assign_like(m, _, to, dst_path, from, src_path),
             if dst_path.is_empty() && src_path.is_empty(),
             pointer_var_points_to(m, from, h);
 
-        // 3. Store (base.fld = from)
-        pointer_fld_points_to(m.clone(), base_h.clone(), f.clone(), h.clone()) <--
-            assign_like(m, _insn_id, base, dst_path, from, src_path),
+        // 3. Store (base.path = from)
+        pointer_fld_points_to(m.clone(), base_h.clone(), dst_path.clone(), h.clone()) <--
+            assign_like(m, _, base, dst_path, from, src_path),
             if !dst_path.is_empty() && src_path.is_empty(),
-            if dst_path.len() == 1,
-            if let Some(f) = first_symbol(dst_path),
             pointer_var_points_to(m, base, base_h),
             pointer_var_points_to(m, from, h);
 
-        // 4. Load (to = base.fld)
+        // 4. Load (to = base.path)
         pointer_var_points_to(m.clone(), to.clone(), h.clone()) <--
             assign_like(m, _insn_id, to, dst_path, base, src_path),
             if dst_path.is_empty() && !src_path.is_empty(),
-            if src_path.len() == 1,
-            if let Some(f) = first_symbol(src_path),
             pointer_var_points_to(m, base, base_h),
-            pointer_fld_points_to(m, base_h, f, h);
+            pointer_fld_points_to(m, base_h, src_path.clone(), h);
 
         // Data Flow Analysis rules:
 

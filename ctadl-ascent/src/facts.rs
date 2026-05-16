@@ -142,14 +142,25 @@ impl Path {
 }
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord)]
-#[repr(transparent)]
 pub struct Heap {
     formal_index: FormalIndex,
+    path: Path,
 }
 
 impl Heap {
     pub fn new(formal_index: FormalIndex) -> Self {
-        Self { formal_index }
+        Self {
+            formal_index,
+            path: Path::empty(),
+        }
+    }
+
+    pub fn with_path(formal_index: FormalIndex, path: Path) -> Self {
+        Self { formal_index, path }
+    }
+
+    pub fn index(&self) -> FormalIndex {
+        self.formal_index
     }
 }
 
