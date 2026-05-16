@@ -9,7 +9,7 @@ use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SourceInfoBuilder};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::error::Error;
+use crate::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::VirtualMethodTable;
 use ctadl_ir::*;
 
@@ -797,7 +797,7 @@ impl Context {
             .iter()
             .map(|vn| self.get_lvalue(vn, vnode_facts))
             .collect();
-        let outputs = outputs?;
+        let outputs = outputs.err_context(|| format!("handling outputs: {:?}", pcode.outputs))?;
 
         if outputs.is_empty() {
             return Ok([Statement::new_kind(StatementKind::Nop)]
@@ -818,7 +818,7 @@ impl Context {
             } else {
                 let kind = StatementKind::assign_or_update(
                     outputs[0].clone(),
-                    self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr)
+                    self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr),
                 );
                 return Ok([Statement::new_kind(kind)].into_iter().collect());
             }
@@ -830,7 +830,9 @@ impl Context {
                 .collect());
         }
 
-        let base = self.get_lvalue(&pcode.inputs[0], vnode_facts)?;
+        let base = self
+            .get_lvalue(&pcode.inputs[0], vnode_facts)
+            .err_context(|| format!("handling base: {:?}", pcode.inputs[0]))?;
         let offset_exp = self.get_exp(&pcode.inputs[1], vnode_facts)?;
 
         if let Some(offset) = self.get_propagated_const_value(&pcode.inputs[1], vnode_facts) {
@@ -875,7 +877,7 @@ impl Context {
         {
             let kind = StatementKind::assign_or_update(
                 outputs[0].clone(),
-                self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr)
+                self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr),
             );
             return Ok([Statement::new_kind(kind)].into_iter().collect());
         }
@@ -1113,7 +1115,7 @@ impl Context {
         };
 
         let mut stmts = Vec::new();
-        let outputs = outputs?;
+        let outputs = outputs.err_context(|| format!("handling call: {:?}", pcode))?;
         let temps: SmallVec<[VariableRef; 4]> =
             (0..outputs.len()).map(|_| self.create_temp()).collect();
         let kind = StatementKind::CallAssign {
