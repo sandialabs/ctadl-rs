@@ -830,28 +830,40 @@ impl Context {
                 .collect());
         }
 
-        let base = self
-            .get_lvalue(&pcode.inputs[0], vnode_facts)
-            .err_context(|| format!("handling base: {:?}", pcode.inputs[0]))?;
-        let offset_exp = self.get_exp(&pcode.inputs[1], vnode_facts)?;
+        let base_vn = &pcode.inputs[0];
+        let offset_vn = &pcode.inputs[1];
+        let base_const = self.get_propagated_const_value(base_vn, vnode_facts);
+        let offset_const = self.get_propagated_const_value(offset_vn, vnode_facts);
 
-        if let Some(offset) = self.get_propagated_const_value(&pcode.inputs[1], vnode_facts) {
-            let mut ap = base;
-            ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-            let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
-            return Ok([Statement::new_kind(kind)].into_iter().collect());
+        match (base_const, offset_const) {
+            (Some(_), Some(_)) => {
+                // Handled elsewhere, at use sites of this instruction
+                Ok(Vec::new())
+            }
+            (Some(c), None) => {
+                let mut ap = self.get_lvalue(offset_vn, vnode_facts)?;
+                ap.path.fields.push(FieldAccess::Offset(Offset(c)));
+                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
+                Ok(vec![Statement::new_kind(kind)])
+            }
+            (None, Some(c)) => {
+                let mut ap = self.get_lvalue(base_vn, vnode_facts)?;
+                ap.path.fields.push(FieldAccess::Offset(Offset(c)));
+                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
+                Ok(vec![Statement::new_kind(kind)])
+            }
+            (None, None) => {
+                let base_exp = self.get_exp(base_vn, vnode_facts)?;
+                let offset_exp = self.get_exp(offset_vn, vnode_facts)?;
+                let temp = self.create_temp();
+                let stmt1 = StatementKind::assign(temp.clone(), [base_exp, offset_exp]);
+                let stmt2 = StatementKind::assign_or_update(
+                    outputs[0].clone(),
+                    Exp::AccessPath(AccessPath::without_fields(temp)),
+                );
+                Ok(vec![Statement::new_kind(stmt1), Statement::new_kind(stmt2)])
+            }
         }
-
-        let temp = self.create_temp();
-        let stmt1 =
-            StatementKind::assign(temp.clone(), [Exp::AccessPath(base.clone()), offset_exp]);
-        let stmt2 = StatementKind::assign_or_update(
-            outputs[0].clone(),
-            Exp::AccessPath(AccessPath::without_fields(temp)),
-        );
-        Ok([Statement::new_kind(stmt1), Statement::new_kind(stmt2)]
-            .into_iter()
-            .collect())
     }
 
     fn handle_ptradd(
@@ -882,40 +894,49 @@ impl Context {
             return Ok([Statement::new_kind(kind)].into_iter().collect());
         }
 
-        let base = self.get_lvalue(&pcode.inputs[0], vnode_facts)?;
-        let index_exp = self.get_exp(&pcode.inputs[1], vnode_facts)?;
-        let elem_size = self.get_const_value(&pcode.inputs[2], vnode_facts);
+        let base_vn = &pcode.inputs[0];
+        let index_vn = &pcode.inputs[1];
+        let size_vn = &pcode.inputs[2];
 
-        if let (Some(index), Some(elem_size)) = (
-            self.get_const_value(&pcode.inputs[1], vnode_facts),
-            elem_size,
-        ) {
-            let mut ap = base;
-            ap.path
-                .fields
-                .push(FieldAccess::Offset(Offset(index * elem_size)));
-            let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
-            return Ok([Statement::new_kind(kind)].into_iter().collect());
+        let base_const = self.get_propagated_const_value(base_vn, vnode_facts);
+        let index_const = self.get_propagated_const_value(index_vn, vnode_facts);
+        let size_const = self
+            .get_propagated_const_value(size_vn, vnode_facts)
+            .or_else(|| self.get_const_value(size_vn, vnode_facts));
+
+        match (base_const, index_const) {
+            (Some(_), Some(_)) => Ok(Vec::new()),
+            (None, Some(idx_c)) => {
+                let mut ap = self.get_lvalue(base_vn, vnode_facts)?;
+                let s_val = size_const.unwrap_or(1);
+                ap.path.fields.push(FieldAccess::Offset(Offset(idx_c * s_val)));
+                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
+                Ok(vec![Statement::new_kind(kind)])
+            }
+            (Some(base_c), None) if size_const == Some(1) => {
+                let mut ap = self.get_lvalue(index_vn, vnode_facts)?;
+                ap.path.fields.push(FieldAccess::Offset(Offset(base_c)));
+                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
+                Ok(vec![Statement::new_kind(kind)])
+            }
+            _ => {
+                let base_exp = self.get_exp(base_vn, vnode_facts)?;
+                let index_exp = self.get_exp(index_vn, vnode_facts)?;
+                let size_exp = if let Some(s) = size_const {
+                    self.exp_from_const_value(size_vn, vnode_facts, s)
+                } else {
+                    self.get_exp(size_vn, vnode_facts)?
+                };
+
+                let temp = self.create_temp();
+                let stmt1 = StatementKind::assign(temp.clone(), [base_exp, index_exp, size_exp]);
+                let stmt2 = StatementKind::assign_or_update(
+                    outputs[0].clone(),
+                    Exp::AccessPath(AccessPath::without_fields(temp)),
+                );
+                Ok(vec![Statement::new_kind(stmt1), Statement::new_kind(stmt2)])
+            }
         }
-
-        let mut sources = SmallVec::<[Exp; 3]>::new();
-        sources.push(Exp::AccessPath(base.clone()));
-        sources.push(index_exp);
-        if let Some(elem_size) = elem_size {
-            sources.push(self.exp_from_const_value(&pcode.inputs[2], vnode_facts, elem_size));
-        } else {
-            sources.push(self.get_exp(&pcode.inputs[2], vnode_facts)?);
-        }
-
-        let temp = self.create_temp();
-        let stmt1 = StatementKind::assign(temp.clone(), sources);
-        let stmt2 = StatementKind::assign_or_update(
-            outputs[0].clone(),
-            Exp::AccessPath(AccessPath::without_fields(temp)),
-        );
-        Ok([Statement::new_kind(stmt1), Statement::new_kind(stmt2)]
-            .into_iter()
-            .collect())
     }
 
     fn handle_copy_operation(
