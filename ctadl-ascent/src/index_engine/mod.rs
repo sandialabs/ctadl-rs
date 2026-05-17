@@ -355,6 +355,21 @@ impl<'a> std::fmt::Display for PointerAnalysisRelations<'a> {
                 heap
             )?;
         }
+
+        let mut heaps = std::collections::BTreeSet::new();
+        for (_, _, _, heap) in self.vtx_points_to {
+            heaps.insert(heap);
+        }
+        for (_, base_heap, _, heap) in self.fld_points_to {
+            heaps.insert(base_heap);
+            heaps.insert(heap);
+        }
+
+        writeln!(f, "\nHeaps ({}):", heaps.len())?;
+        for heap in heaps {
+            writeln!(f, "  {:?}", heap)?;
+        }
+
         Ok(())
     }
 }
