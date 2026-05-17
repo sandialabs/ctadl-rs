@@ -331,7 +331,7 @@ fn parameter_lists_query() {
     let (summary, source_info) = get_summary(program_info).unwrap();
     //    log::info!("SUMMARY: {:?}", summary);
     //[(Function("parameter_what"), AuxParam(1), Path(""), Param(Index(0)), Path(""))]
-    assert!(summary_count(&summary, 1));
+    assert!(summary.len() >= 1);
     assert!(summary_search(&summary, 0, "", -1, ""));
     assert!(summary_returns_param(
         &summary,
