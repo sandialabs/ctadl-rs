@@ -102,6 +102,20 @@ impl Path {
         self.0.push_back(component);
     }
 
+    pub fn is_prefix_of(&self, other: &Path) -> bool {
+        match_prefix(other, self).map_or(false, |suffix| {
+            !matches!((self.0.back(), suffix.front()), 
+                (Some(mir::FieldAccess::Offset(_)), Some(mir::FieldAccess::Offset(Offset(d)))) if *d < 0)
+        })
+    }
+
+    pub fn pop(mut self) -> Option<Self> {
+        match self.0.pop_back() {
+            Some(_) => Some(self),
+            None => None,
+        }
+    }
+
     /// Appends components from an iterator, merging offsets.
     pub fn extend_merging(&mut self, iter: impl IntoIterator<Item = mir::FieldAccess>) {
         for component in iter {
@@ -143,8 +157,8 @@ impl Path {
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct Heap {
-    formal_index: FormalIndex,
-    path: Path,
+    pub formal_index: FormalIndex,
+    pub path: Path,
 }
 
 impl Heap {
@@ -1070,6 +1084,25 @@ mod tests {
         let r: Path = ".y".into();
         let e: Path = ".y.[1].f".into();
         assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
+    }
+
+    #[test]
+    fn test_is_prefix_of() {
+        let p1: Path = ".x.[1]".into();
+        let p2: Path = ".x.[2]".into();
+        let p3: Path = ".x.[2].y".into();
+        let p4: Path = ".y".into();
+
+        assert!(p1.is_prefix_of(&p2));
+        assert!(p1.is_prefix_of(&p3));
+        assert!(p2.is_prefix_of(&p3));
+        assert!(!p2.is_prefix_of(&p1));
+        assert!(!p1.is_prefix_of(&p4));
+
+        let empty = Path::empty();
+        assert!(empty.is_prefix_of(&p1));
+        assert!(p1.is_prefix_of(&p1));
+        assert!(p3.is_prefix_of(&p3));
     }
 
     #[test]

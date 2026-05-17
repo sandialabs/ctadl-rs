@@ -255,7 +255,7 @@ pub struct IndexResult {
     pub paths: Vec<(Path,)>,
 
     // --- Pointer Analysis Results ---
-    pub var_points_to: Vec<(FunctionId, FlowVariable, Heap)>,
+    pub vtx_points_to: Vec<(FunctionId, FlowVariable, Path, Heap)>,
     pub fld_points_to: Vec<(FunctionId, Heap, Path, Heap)>,
 }
 
@@ -278,7 +278,7 @@ impl IndexResult {
             assign_like,
             java_obj_assign_like: Vec::new(),
             paths,
-            var_points_to: Vec::new(),
+            vtx_points_to: Vec::new(),
             fld_points_to: Vec::new(),
         })
     }
@@ -322,19 +322,26 @@ impl std::fmt::Display for IndexResult {
 }
 
 struct PointerAnalysisRelations<'a> {
-    var_points_to: &'a [(FunctionId, FlowVariable, Heap)],
+    vtx_points_to: &'a [(FunctionId, FlowVariable, Path, Heap)],
     fld_points_to: &'a [(FunctionId, Heap, Path, Heap)],
 }
 
 impl<'a> std::fmt::Display for PointerAnalysisRelations<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Var Points-To ({}):", self.var_points_to.len())?;
-        for (func_id, var, heap) in self.var_points_to {
+        writeln!(f, "Vtx Points-To ({}):", self.vtx_points_to.len())?;
+        for (func_id, var, path, heap) in self.vtx_points_to {
             let var_str = match var {
                 FlowVariable::Local(name) => name.to_string(),
                 _ => format!("{}", var),
             };
-            writeln!(f, "  {}: {} -> {:?}", func_id.id, var_str, heap)?;
+            writeln!(
+                f,
+                "  {}: {}{} -> {:?}",
+                func_id.id,
+                var_str,
+                path.to_dot_string(),
+                heap
+            )?;
         }
 
         writeln!(f, "\nFld Points-To ({}):", self.fld_points_to.len())?;
@@ -562,8 +569,9 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         relation context_summary(CallString, FunctionId, FormalIndex, Path, FormalIndex, Path);
 
         // Pointer Analysis derived relations
-        relation pointer_alloc(FlowVariable, Heap, FunctionId);
-        relation pointer_var_points_to(FunctionId, FlowVariable, Heap);
+        relation pointer_alloc(FlowVariable, Path, Heap, FunctionId);
+        //relation pointer_var_points_to(FunctionId, FlowVariable, Heap);
+        relation pointer_vtx_points_to(FunctionId, FlowVariable, Path, Heap);
         relation pointer_fld_points_to(FunctionId, Heap, Path, Heap);
 
         // Sets up paths from input program with static info. Paths must remain finite so we
@@ -577,57 +585,88 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
         paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
 
+
         // Pointer Analysis Rules (Context-Insensitive Andersen Style)
         // 1. Alloc
-        pointer_alloc(v, h, m) <-- formal_param(m, v, ty), let h = Heap::new(v.formal().unwrap());
-        pointer_var_points_to(m.clone(), v.clone(), h.clone()) <-- pointer_alloc(v, h, m);
-        pointer_fld_points_to(m.clone(), base_h.clone(), path.clone(), h) <--
-            pointer_var_points_to(m, v, base_h),
-            pointer_alloc(_, base_h, m),
-            (assign_like(m, _, _, _, v, path) | assign_like(m, _, v, path, _, _)),
-            if !path.is_empty(),
-            let h = Heap::with_path(base_h.index(), path.clone());
+        pointer_alloc(v, Path::empty(), h, m) <-- formal_param(m, v, ty), let h = Heap::new(v.formal().unwrap());
+        //pointer_var_points_to(m.clone(), v.clone(), h.clone()) <-- pointer_alloc(v, h, m);
+        pointer_alloc(v, path, h, m) <--
+        //pointer_fld_points_to(m.clone(), base_h.clone(), path.clone(), h) <--
+            pointer_alloc(v, path, base_h, m),
+            pointer_vtx_points_to(m, v2, assign_path, base_h),
+            if path.is_prefix_of(assign_path),
+            (assign_like(m, _, _, _, v2, assign_path) | assign_like(m, _, v2, assign_path, _, _)),
+            let h = Heap::with_path(base_h.index(), assign_path.clone());
+        // pointer_fld_points_to(m.clone(), base_h.clone(), path.clone(), h) <--
+        //     pointer_var_points_to(m, v, base_h),
+        //     pointer_alloc(_, base_h, m),
+        //     (assign_like(m, _, _, _, v, path) | assign_like(m, _, v, path, _, _)),
+        //     if !path.is_empty(),
+        //     let h = Heap::with_path(base_h.index(), path.clone());
 
-
-        // 2. Move (derived from assign_like with empty paths)
-        pointer_var_points_to(m.clone(), to.clone(), h.clone()) <--
+        pointer_vtx_points_to(m.clone(), v, path, h.clone()) <--
+            pointer_alloc(v, path, h, m);
+        pointer_vtx_points_to(m.clone(), to.clone(), dst_path.clone(), h.clone()) <--
             assign_like(m, _, to, dst_path, from, src_path),
-            if dst_path.is_empty() && src_path.is_empty(),
-            pointer_var_points_to(m, from, h);
-
-        // 3. Store (base.path = from)
+            pointer_vtx_points_to(m, from, src_path, h);
         pointer_fld_points_to(m.clone(), base_h.clone(), dst_path.clone(), h.clone()) <--
             assign_like(m, _, base, dst_path, from, src_path),
-            if !dst_path.is_empty() && src_path.is_empty(),
-            pointer_var_points_to(m, base, base_h),
-            pointer_var_points_to(m, from, h);
+            pointer_vtx_points_to(m, from, src_path, h),
+            if let Some(inner_path) = dst_path.clone().pop(),
+            pointer_vtx_points_to(m, base, inner_path, base_h);
+        pointer_vtx_points_to(m.clone(), to.clone(), dst_path.clone(), h.clone()) <--
+            assign_like(m, _, to, dst_path, base, src_path),
+            if let Some(inner_path) = src_path.clone().pop(),
+            pointer_vtx_points_to(m, base, inner_path, base_h),
+            pointer_fld_points_to(m, base_h, src_path.clone(), h);
+        summary(m, n1, p1.clone(), n2, p2.clone()) <--
+            pointer_vtx_points_to(m, dst_var, p1, h2),
+            formal_param(m, dst_var, formal_ty),
+            if let FlowVariable::Formal(n1) = dst_var,
+            let n2 = h2.formal_index,
+            let p2 = &h2.path,
+            if isout(n1, *formal_ty, p1),
+            if *n1 != n2 || p1 != p2;
+
+        // 2. Move (derived from assign_like with empty paths)
+        // pointer_var_points_to(m.clone(), to.clone(), h.clone()) <--
+        //     assign_like(m, _, to, dst_path, from, src_path),
+        //     if dst_path.is_empty() && src_path.is_empty(),
+        //     pointer_var_points_to(m, from, h);
+
+        // 3. Store (base.path = from)
+        // pointer_fld_points_to(m.clone(), base_h.clone(), dst_path.clone(), h.clone()) <--
+        //     assign_like(m, _, base, dst_path, from, src_path),
+        //     if !dst_path.is_empty() && src_path.is_empty(),
+        //     pointer_var_points_to(m, base, base_h),
+        //     pointer_var_points_to(m, from, h);
 
         // 4. Load (to = base.path)
-        pointer_var_points_to(m.clone(), to.clone(), h.clone()) <--
-            assign_like(m, _insn_id, to, dst_path, base, src_path),
-            if dst_path.is_empty() && !src_path.is_empty(),
-            pointer_var_points_to(m, base, base_h),
-            pointer_fld_points_to(m, base_h, src_path.clone(), h);
+        // pointer_var_points_to(m.clone(), to.clone(), h.clone()) <--
+        //     assign_like(m, _, to, dst_path, base, src_path),
+        //     if dst_path.is_empty() && !src_path.is_empty(),
+        //     pointer_var_points_to(m, base, base_h),
+        //     pointer_fld_points_to(m, base_h, src_path.clone(), h);
 
         // Data Flow Analysis rules:
 
         // Initialize locals with formals
-        locals(infunc, v1, p1.clone(), i, p1.clone()) <--
-            formal_param(infunc, v1, _),
-            if let FlowVariable::Formal(i) = v1,
-            let p1 = Path::empty();
+        // locals(infunc, v1, p1.clone(), i, p1.clone()) <--
+        //     formal_param(infunc, v1, _),
+        //     if let FlowVariable::Formal(i) = v1,
+        //     let p1 = Path::empty();
 
         // Propagate fields
-        locals(infunc, v1, p13.clone(), a, p4) <--
-            locals(infunc, v2, p23, a, p4),
-            assign_like(infunc, insn_id,  v1, p1, v2, p2),
-            if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(&p13);
-        locals(infunc, v1, p1, a, p43.clone()) <--
-            locals(infunc, v2, p2, a, p4),
-            assign_like(infunc, _, v1, p1, v2, p23),
-            if let Some(p43) = p23.substitute_prefix(p2, p4),
-            paths(&p43);
+        // locals(infunc, v1, p13.clone(), a, p4) <--
+        //     locals(infunc, v2, p23, a, p4),
+        //     assign_like(infunc, insn_id,  v1, p1, v2, p2),
+        //     if let Some(p13) = p23.substitute_prefix(p2, p1),
+        //     paths(&p13);
+        // locals(infunc, v1, p1, a, p43.clone()) <--
+        //     locals(infunc, v2, p2, a, p4),
+        //     assign_like(infunc, _, v1, p1, v2, p23),
+        //     if let Some(p43) = p23.substitute_prefix(p2, p4),
+        //     paths(&p43);
 
         // Initialize assigns from program
         assign_like(func_id, insn_id, v1, p1, v2, p2) <--
@@ -656,14 +695,14 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             let p2 = src_path.clone();
 
         // Compute summaries from local reachability
-        summary(infunc, n1, p1, n2, p2) <--
-            locals(infunc, dst_var, p1, n2, p2),
-            // join with formal_param here instead of using if so that we don't have to traverse all of
-            // locals
-            formal_param(infunc, dst_var, formal_ty),
-            if let FlowVariable::Formal(n1) = dst_var,
-            if isout(n1, *formal_ty, p1),
-            if n1 != n2 || p1 != p2;
+        // summary(infunc, n1, p1, n2, p2) <--
+        //     locals(infunc, dst_var, p1, n2, p2),
+        //     // join with formal_param here instead of using if so that we don't have to traverse all of
+        //     // locals
+        //     formal_param(infunc, dst_var, formal_ty),
+        //     if let FlowVariable::Formal(n1) = dst_var,
+        //     if isout(n1, *formal_ty, p1),
+        //     if n1 != n2 || p1 != p2;
 
         // aliasing summary rule, see discussion above
         //summary(infunc, n1, ap3.clone(), n2, bp) <--
@@ -850,7 +889,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
     log::trace!(
         "pointer analysis relations:\n{}",
         PointerAnalysisRelations {
-            var_points_to: &prog.pointer_var_points_to,
+            vtx_points_to: &prog.pointer_vtx_points_to,
             fld_points_to: &prog.pointer_fld_points_to,
         }
     );
@@ -859,7 +898,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         assign_like: prog.assign_like,
         java_obj_assign_like: prog.java_obj_assign_like,
         paths: prog.paths,
-        var_points_to: prog.pointer_var_points_to,
+        vtx_points_to: prog.pointer_vtx_points_to,
         fld_points_to: prog.pointer_fld_points_to,
     };
     log::trace!("index result: {}", result);
