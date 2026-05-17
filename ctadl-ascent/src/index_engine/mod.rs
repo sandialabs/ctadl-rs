@@ -606,11 +606,12 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             formal_param(m, v, ty), let h = Heap::new(v.formal().unwrap());
 
         // 2. Alloc fields of formals if those fields are used
+        pointer_vtx_points_to(m.clone(), v, assign_path.clone(), h.clone()),
         pointer_fld_points_to(m.clone(), base_h.clone(), Path(suffix.clone()), h.clone()) <--
             pointer_vtx_points_to(m, v, path, base_h),
             (assign_like(m, _, _, _, v, assign_path) | assign_like(m, _, v, assign_path, _, _)),
             if let Some(suffix) = match_prefix(assign_path, path),
-            if !suffix.is_empty() && suffix.back().unwrap().is_symbol(),
+            if let Some(end) = suffix.back() && end.is_symbol(),
             let h = Heap::with_path(base_h.index(), assign_path.clone());
 
         // 3. Propagation and Assignments
@@ -620,12 +621,11 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         // ==>
         // x.p.g -> h
         pointer_vtx_points_to(m.clone(), to.clone(), to_path.clone(), h.clone()) <--
-            // to.dst_path = from.src_path
             assign_like(m, _, to, dst_path, from, src_path),
-            // from.from_path -> h
             pointer_vtx_points_to(m, from, from_path, h),
-            // from_path = src_path + suffix
+            let _ = if Path::from(".[50].field") == *src_path {eprintln!("hi ap = {} prefix = {} suffix = {}", from_path, src_path, dst_path)} else {},
             if let Some(to_path) = from_path.substitute_prefix(src_path, dst_path),
+            let _ = if Path::from(".[50].field") == *src_path {eprintln!("{}", to_path)} else {},
             paths(&to_path);
 
         // This propagates in the reverse direction of assignment
@@ -668,6 +668,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             let n = h.formal_index,
             let pn = &h.path;
 
+        // Flow from heap to formal
         summary(m, n1, p1.clone(), n2, p2.clone()) <--
             pointer_vtx_points_to(m, dst_var, p1, h2),
             formal_param(m, dst_var, formal_ty),
@@ -676,6 +677,13 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             let p2 = &h2.path,
             if isout(n1, *formal_ty, p1),
             if *n1 != n2 || p1 != p2;
+        // Flow from formal to heap
+        summary(m, h.formal_index, h.path.clone(), src_n, src_path.clone()) <--
+            pointer_vtx_points_to(m, src_var, src_path, h),
+            formal_param(m, src_var, formal_ty),
+            if let FlowVariable::Formal(src_n) = src_var,
+            if isout(&h.formal_index, *formal_ty, src_path),
+            if *h.formal_index != **src_n;
 
         // Initialize assigns from program
         assign_like(func_id, insn_id, v1, p1, v2, p2) <--
