@@ -2,9 +2,47 @@ use crate::index::idx::Idx;
 use crate::mir::call::CallStyle;
 use crate::mir::terminator::{Terminator, TerminatorKind};
 use crate::mir::{
-    AccessPath, BasicBlockData, Exp, FieldAccesses, ParameterIdx, Statement, StatementIdx,
-    StatementKind, VariableRef,
+    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldAccesses, FunctionData, ParameterIdx,
+    ParameterType, Statement, StatementIdx, StatementKind, VariableRef,
 };
+
+/// A builder for creating functions.
+#[derive(Debug)]
+pub struct FunctionBuilder<'a> {
+    function: &'a mut FunctionData,
+}
+
+impl<'a> FunctionBuilder<'a> {
+    /// Create a new FunctionBuilder wrapping an existing FunctionData
+    pub fn new(function: &'a mut FunctionData) -> Self {
+        Self { function }
+    }
+
+    /// Add a parameter to the function
+    pub fn add_param(&mut self, param_type: ParameterType) -> ParameterIdx {
+        self.function.params.push(param_type)
+    }
+
+    /// Add a new basic block to the function
+    pub fn add_block(&mut self) -> BasicBlockIdx {
+        self.function.blocks.new_block()
+    }
+
+    /// Get a builder for a specific basic block
+    pub fn at_block(&mut self, block_idx: BasicBlockIdx) -> BasicBlockBuilder<'_> {
+        BasicBlockBuilder::new(&mut self.function.blocks[block_idx])
+    }
+
+    /// Set the name of the function
+    pub fn set_name(&mut self, name: impl Into<String>) {
+        self.function.name = name.into();
+    }
+
+    /// Set the return arity of the function
+    pub fn set_return_arity(&mut self, arity: u8) {
+        self.function.return_type.arity = arity;
+    }
+}
 
 /// A builder for creating basic blocks with convenient methods for inserting statements.
 ///
@@ -82,8 +120,12 @@ impl<'a> BasicBlockBuilder<'a> {
     /// # Arguments
     /// * `dest` - Destination access path
     /// * `source` - Source expression
-    pub fn create_update(&mut self, dest: AccessPath, source: Exp) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::update(dest, source));
+    pub fn create_update(
+        &mut self,
+        dest: impl Into<AccessPath>,
+        source: impl Into<Exp>,
+    ) -> StatementIdx {
+        let statement = Statement::new_kind(StatementKind::update(dest.into(), source.into()));
         let current_pos = self.insertion_point;
         self.insert_statement(statement);
         StatementIdx::from(current_pos as u32)
@@ -94,8 +136,13 @@ impl<'a> BasicBlockBuilder<'a> {
     /// # Arguments
     /// * `dest` - Destination access path
     /// * `source` - Source expression
-    pub fn create_assign_or_update(&mut self, dest: AccessPath, source: Exp) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::assign_or_update(dest, source));
+    pub fn create_assign_or_update(
+        &mut self,
+        dest: impl Into<AccessPath>,
+        source: impl Into<Exp>,
+    ) -> StatementIdx {
+        let statement =
+            Statement::new_kind(StatementKind::assign_or_update(dest.into(), source.into()));
         let current_pos = self.insertion_point;
         self.insert_statement(statement);
         StatementIdx::from(current_pos as u32)
