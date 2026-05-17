@@ -1,12 +1,10 @@
 // This is a common alias pattern. Something aliases the "this" object and a
 // parameter flows to it.
 def F(this, p1, p2, p3)
-where
-summaries [
+where summaries [
   this.field1 <- p1,
   this.field2 <- p2.field2
-]
-{
+] {
 start:
     tmp = this;
     tmp.field1 = p1;

@@ -47,7 +47,7 @@ use packed_struct::prelude::*;
 use crate::error::Error;
 use crate::facts::{
     CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, Heap, InsnId,
-    InsnSiteId, PackedInsnSiteId, Path, isout,
+    InsnSiteId, PackedInsnSiteId, Path, isout, match_prefix,
 };
 use ctadl_ir::Symbol;
 
@@ -569,8 +569,6 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         relation context_summary(CallString, FunctionId, FormalIndex, Path, FormalIndex, Path);
 
         // Pointer Analysis derived relations
-        relation pointer_alloc(FlowVariable, Path, Heap, FunctionId);
-        //relation pointer_var_points_to(FunctionId, FlowVariable, Heap);
         relation pointer_vtx_points_to(FunctionId, FlowVariable, Path, Heap);
         relation pointer_fld_points_to(FunctionId, Heap, Path, Heap);
 
@@ -587,38 +585,73 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
 
 
         // Pointer Analysis Rules (Context-Insensitive Andersen Style)
-        // 1. Alloc
-        pointer_alloc(v, Path::empty(), h, m) <-- formal_param(m, v, ty), let h = Heap::new(v.formal().unwrap());
-        //pointer_var_points_to(m.clone(), v.clone(), h.clone()) <-- pointer_alloc(v, h, m);
-        pointer_alloc(v, path, h, m) <--
-        //pointer_fld_points_to(m.clone(), base_h.clone(), path.clone(), h) <--
-            pointer_alloc(v, path, base_h, m),
-            pointer_vtx_points_to(m, v2, assign_path, base_h),
-            if path.is_prefix_of(assign_path),
-            (assign_like(m, _, _, _, v2, assign_path) | assign_like(m, _, v2, assign_path, _, _)),
-            let h = Heap::with_path(base_h.index(), assign_path.clone());
-        // pointer_fld_points_to(m.clone(), base_h.clone(), path.clone(), h) <--
-        //     pointer_var_points_to(m, v, base_h),
-        //     pointer_alloc(_, base_h, m),
-        //     (assign_like(m, _, _, _, v, path) | assign_like(m, _, v, path, _, _)),
-        //     if !path.is_empty(),
-        //     let h = Heap::with_path(base_h.index(), path.clone());
+        // 1. Alloc. Each formal param gets an object.
+        pointer_vtx_points_to(m.clone(), v.clone(), Path::empty(), h) <--
+            formal_param(m, v, ty), let h = Heap::new(v.formal().unwrap());
 
-        pointer_vtx_points_to(m.clone(), v, path, h.clone()) <--
-            pointer_alloc(v, path, h, m);
-        pointer_vtx_points_to(m.clone(), to.clone(), dst_path.clone(), h.clone()) <--
+        // 2. Alloc fields of formals if those fields are used
+        pointer_fld_points_to(m.clone(), base_h.clone(), Path(suffix.clone()), h.clone()) <--
+            pointer_vtx_points_to(m, v, path, base_h),
+            (assign_like(m, _, _, _, v, assign_path) | assign_like(m, _, v, assign_path, _, _)),
+            if let Some(suffix) = match_prefix(assign_path, path),
+            if !suffix.is_empty() && suffix.back().unwrap().is_symbol(),
+            let h = Heap::with_path(base_h.index(), assign_path.clone());
+
+        // 3. Propagation and Assignments
+        // This propagates in the direction of assignment.
+        // x.p = y.f;
+        // y.f.g -> h
+        // ==>
+        // x.p.g -> h
+        pointer_vtx_points_to(m.clone(), to.clone(), to_path.clone(), h.clone()) <--
+            // to.dst_path = from.src_path
             assign_like(m, _, to, dst_path, from, src_path),
-            pointer_vtx_points_to(m, from, src_path, h);
-        pointer_fld_points_to(m.clone(), base_h.clone(), dst_path.clone(), h.clone()) <--
+            // from.from_path -> h
+            pointer_vtx_points_to(m, from, from_path, h),
+            // from_path = src_path + suffix
+            if let Some(to_path) = from_path.substitute_prefix(src_path, dst_path),
+            paths(&to_path);
+
+        // This propagates in the reverse direction of assignment
+        // x.p = y.f;
+        // x.p.g -> h
+        // ==>
+        // y.f.g -> h
+        pointer_vtx_points_to(m.clone(), from.clone(), from_path.clone(), h.clone()) <--
+            assign_like(m, _, to, dst_path, from, src_path),
+            pointer_vtx_points_to(m, to, to_path, h),
+            if let Some(from_path) = to_path.substitute_prefix(dst_path, src_path),
+            paths(&from_path);
+
+        // Store
+        // x.p.q = y.f;
+        // y.f -> h /\ x.p -> base_h
+        // ==>
+        // base_h|.q -> h
+        pointer_fld_points_to(m.clone(), base_h.clone(), Path(fld.clone()), h.clone()) <--
             assign_like(m, _, base, dst_path, from, src_path),
             pointer_vtx_points_to(m, from, src_path, h),
-            if let Some(inner_path) = dst_path.clone().pop(),
-            pointer_vtx_points_to(m, base, inner_path, base_h);
-        pointer_vtx_points_to(m.clone(), to.clone(), dst_path.clone(), h.clone()) <--
+            pointer_vtx_points_to(m, base, base_path, base_h),
+            if let Some(fld) = match_prefix(dst_path, base_path) && fld.len() == 1,
+            paths(&Path(fld.clone()));
+
+        // Load
+        // x.p = y.f.q;
+        // y.f -> -> base_h /\ base_h|.q -> h
+        // ==>
+        // x.p -> h
+        pointer_vtx_points_to(m.clone(), to, dst_path.clone(), h.clone()) <--
             assign_like(m, _, to, dst_path, base, src_path),
-            if let Some(inner_path) = src_path.clone().pop(),
-            pointer_vtx_points_to(m, base, inner_path, base_h),
-            pointer_fld_points_to(m, base_h, src_path.clone(), h);
+            pointer_vtx_points_to(m, base, base_path, base_h),
+            if let Some(fld) = match_prefix(src_path, base_path) && fld.len() == 1 ,
+            pointer_fld_points_to(m, base_h, Path(fld.clone()), h),
+            paths(&Path(fld.clone()));
+
+        locals(m.clone(), v, p, n, pn.clone()) <--
+            pointer_vtx_points_to(m, v, p, h),
+            let n = h.formal_index,
+            let pn = &h.path;
+
         summary(m, n1, p1.clone(), n2, p2.clone()) <--
             pointer_vtx_points_to(m, dst_var, p1, h2),
             formal_param(m, dst_var, formal_ty),
@@ -627,46 +660,6 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             let p2 = &h2.path,
             if isout(n1, *formal_ty, p1),
             if *n1 != n2 || p1 != p2;
-
-        // 2. Move (derived from assign_like with empty paths)
-        // pointer_var_points_to(m.clone(), to.clone(), h.clone()) <--
-        //     assign_like(m, _, to, dst_path, from, src_path),
-        //     if dst_path.is_empty() && src_path.is_empty(),
-        //     pointer_var_points_to(m, from, h);
-
-        // 3. Store (base.path = from)
-        // pointer_fld_points_to(m.clone(), base_h.clone(), dst_path.clone(), h.clone()) <--
-        //     assign_like(m, _, base, dst_path, from, src_path),
-        //     if !dst_path.is_empty() && src_path.is_empty(),
-        //     pointer_var_points_to(m, base, base_h),
-        //     pointer_var_points_to(m, from, h);
-
-        // 4. Load (to = base.path)
-        // pointer_var_points_to(m.clone(), to.clone(), h.clone()) <--
-        //     assign_like(m, _, to, dst_path, base, src_path),
-        //     if dst_path.is_empty() && !src_path.is_empty(),
-        //     pointer_var_points_to(m, base, base_h),
-        //     pointer_fld_points_to(m, base_h, src_path.clone(), h);
-
-        // Data Flow Analysis rules:
-
-        // Initialize locals with formals
-        // locals(infunc, v1, p1.clone(), i, p1.clone()) <--
-        //     formal_param(infunc, v1, _),
-        //     if let FlowVariable::Formal(i) = v1,
-        //     let p1 = Path::empty();
-
-        // Propagate fields
-        // locals(infunc, v1, p13.clone(), a, p4) <--
-        //     locals(infunc, v2, p23, a, p4),
-        //     assign_like(infunc, insn_id,  v1, p1, v2, p2),
-        //     if let Some(p13) = p23.substitute_prefix(p2, p1),
-        //     paths(&p13);
-        // locals(infunc, v1, p1, a, p43.clone()) <--
-        //     locals(infunc, v2, p2, a, p4),
-        //     assign_like(infunc, _, v1, p1, v2, p23),
-        //     if let Some(p43) = p23.substitute_prefix(p2, p4),
-        //     paths(&p43);
 
         // Initialize assigns from program
         assign_like(func_id, insn_id, v1, p1, v2, p2) <--
@@ -693,31 +686,6 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             let p1 = dst_path.clone(),
             let v2 = FlowVariable::CallArg { id: call_site_id, formal: n2.clone() },
             let p2 = src_path.clone();
-
-        // Compute summaries from local reachability
-        // summary(infunc, n1, p1, n2, p2) <--
-        //     locals(infunc, dst_var, p1, n2, p2),
-        //     // join with formal_param here instead of using if so that we don't have to traverse all of
-        //     // locals
-        //     formal_param(infunc, dst_var, formal_ty),
-        //     if let FlowVariable::Formal(n1) = dst_var,
-        //     if isout(n1, *formal_ty, p1),
-        //     if n1 != n2 || p1 != p2;
-
-        // aliasing summary rule, see discussion above
-        //summary(infunc, n1, ap3.clone(), n2, bp) <--
-        //    //config(c),
-        //    //if c.alias_rule,
-        //    // this is the alias: v1.p1 <- n1.ap
-        //    locals(infunc, v1, p1, n1, ap),
-        //    // v1.p13 <- n2.bp
-        //    locals(infunc, v1, p13, n2, bp),
-        //    if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-        //    // if let Some(p3) = match_prefix(p13, p1),
-        //    // if !p3.is_empty(),
-        //    // let ap3 = ap.concat_str(p3),
-        //    paths(&ap3),
-        //    if n1 != n2 || ap3 != *bp;
 
         // Hybrid Inlining Rules:
         // Phase 1: propagate up the stack from indirect calls
