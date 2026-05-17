@@ -12,15 +12,13 @@ pub struct ObjectGraphViz<'a> {
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub enum ObjectNode {
-    Vertex(FunctionId, FlowVariable, Path),
+    Vertex(FunctionId, FlowVariable),
     Heap(FunctionId, Heap),
-    Field(FunctionId, Heap, Path),
 }
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub enum ObjectEdge {
-    PointsTo { from: ObjectNode, to: ObjectNode },
-    HasField { from: ObjectNode, to: ObjectNode },
+    PointsTo { from: ObjectNode, to: ObjectNode, path: Path },
 }
 
 impl<'a> ObjectGraphViz<'a> {
@@ -45,8 +43,8 @@ impl<'a> ObjectGraphViz<'a> {
 
     fn node_to_label(&self, n: &ObjectNode) -> String {
         match n {
-            ObjectNode::Vertex(f, v, p) => {
-                format!("{}\\n{}{}", self.func_name(*f), v, p.to_dot_string())
+            ObjectNode::Vertex(f, v) => {
+                format!("{}\\n{}", self.func_name(*f), v)
             }
             ObjectNode::Heap(f, h) => {
                 format!(
@@ -54,14 +52,6 @@ impl<'a> ObjectGraphViz<'a> {
                     self.func_name(*f),
                     h.formal_index,
                     h.path.to_dot_string()
-                )
-            }
-            ObjectNode::Field(_f, h, p) => {
-                format!(
-                    "Heap@{}{}{}",
-                    h.formal_index,
-                    h.path.to_dot_string(),
-                    p.to_dot_string()
                 )
             }
         }
@@ -78,17 +68,10 @@ impl<'a> dot::Labeller<'a> for ObjectGraphViz<'a> {
 
     fn node_id(&'a self, n: &Self::Node) -> dot::Id<'a> {
         let s = match n {
-            ObjectNode::Vertex(f, v, p) => format!("v_{}_{}_{}", f.id, v, p.to_dot_string()),
+            ObjectNode::Vertex(f, v) => format!("v_{}_{}", f.id, v),
             ObjectNode::Heap(f, h) => {
                 format!("h_{}_{}_{}", f.id, h.formal_index, h.path.to_dot_string())
             }
-            ObjectNode::Field(f, h, p) => format!(
-                "f_{}_{}_{}_{}",
-                f.id,
-                h.formal_index,
-                h.path.to_dot_string(),
-                p.to_dot_string()
-            ),
         };
         let safe_id = s
             .chars()
@@ -111,15 +94,23 @@ impl<'a> dot::Labeller<'a> for ObjectGraphViz<'a> {
     fn node_shape(&'a self, n: &Self::Node) -> Option<dot::LabelText<'a>> {
         match n {
             ObjectNode::Heap(_, _) => Some(dot::LabelText::LabelStr("box".into())),
-            ObjectNode::Vertex(_, _, _) => Some(dot::LabelText::LabelStr("ellipse".into())),
-            ObjectNode::Field(_, _, _) => Some(dot::LabelText::LabelStr("plaintext".into())),
+            ObjectNode::Vertex(_, _) => Some(dot::LabelText::LabelStr("ellipse".into())),
         }
     }
 
-    fn edge_style(&self, e: &Self::Edge) -> dot::Style {
+    fn edge_style(&self, _e: &Self::Edge) -> dot::Style {
+        dot::Style::None
+    }
+
+    fn edge_label(&self, e: &Self::Edge) -> dot::LabelText<'a> {
         match e {
-            ObjectEdge::HasField { .. } => dot::Style::Dashed,
-            ObjectEdge::PointsTo { .. } => dot::Style::None,
+            ObjectEdge::PointsTo { path, .. } => {
+                if path.is_empty() {
+                    dot::LabelText::LabelStr("".into())
+                } else {
+                    dot::LabelText::EscStr(path.to_dot_string().into())
+                }
+            }
         }
     }
 }
@@ -130,16 +121,12 @@ impl<'a> dot::GraphWalk<'a> for ObjectGraphViz<'a> {
 
     fn nodes(&'a self) -> dot::Nodes<'a, Self::Node> {
         let mut nodes = std::collections::BTreeSet::new();
-        for (f, v, p, h) in self.vtx_points_to {
-            nodes.insert(ObjectNode::Vertex(*f, v.clone(), p.clone()));
+        for (f, v, _p, h) in self.vtx_points_to {
+            nodes.insert(ObjectNode::Vertex(*f, v.clone()));
             nodes.insert(ObjectNode::Heap(*f, h.clone()));
-            if !p.is_empty() {
-                nodes.insert(ObjectNode::Vertex(*f, v.clone(), Path::empty()));
-            }
         }
-        for (f, base_h, fld_p, h) in self.fld_points_to {
+        for (f, base_h, _fld_p, h) in self.fld_points_to {
             nodes.insert(ObjectNode::Heap(*f, base_h.clone()));
-            nodes.insert(ObjectNode::Field(*f, base_h.clone(), fld_p.clone()));
             nodes.insert(ObjectNode::Heap(*f, h.clone()));
         }
         nodes.into_iter().collect()
@@ -148,28 +135,14 @@ impl<'a> dot::GraphWalk<'a> for ObjectGraphViz<'a> {
     fn edges(&'a self) -> dot::Edges<'a, Self::Edge> {
         let mut edges = Vec::new();
         for (f, v, p, h) in self.vtx_points_to {
-            let from = ObjectNode::Vertex(*f, v.clone(), p.clone());
+            let from = ObjectNode::Vertex(*f, v.clone());
             let to = ObjectNode::Heap(*f, h.clone());
-            edges.push(ObjectEdge::PointsTo { from, to });
-
-            if !p.is_empty() {
-                let base = ObjectNode::Vertex(*f, v.clone(), Path::empty());
-                let field = ObjectNode::Vertex(*f, v.clone(), p.clone());
-                edges.push(ObjectEdge::HasField {
-                    from: base,
-                    to: field,
-                });
-            }
+            edges.push(ObjectEdge::PointsTo { from, to, path: p.clone() });
         }
         for (f, base_h, fld_p, h) in self.fld_points_to {
-            let base = ObjectNode::Heap(*f, base_h.clone());
-            let field = ObjectNode::Field(*f, base_h.clone(), fld_p.clone());
+            let from = ObjectNode::Heap(*f, base_h.clone());
             let to = ObjectNode::Heap(*f, h.clone());
-            edges.push(ObjectEdge::HasField {
-                from: base,
-                to: field.clone(),
-            });
-            edges.push(ObjectEdge::PointsTo { from: field, to });
+            edges.push(ObjectEdge::PointsTo { from, to, path: fld_p.clone() });
         }
         edges.into_iter().collect()
     }
@@ -177,14 +150,12 @@ impl<'a> dot::GraphWalk<'a> for ObjectGraphViz<'a> {
     fn source(&'a self, e: &Self::Edge) -> Self::Node {
         match e {
             ObjectEdge::PointsTo { from, .. } => from.clone(),
-            ObjectEdge::HasField { from, .. } => from.clone(),
         }
     }
 
     fn target(&'a self, e: &Self::Edge) -> Self::Node {
         match e {
             ObjectEdge::PointsTo { to, .. } => to.clone(),
-            ObjectEdge::HasField { to, .. } => to.clone(),
         }
     }
 }

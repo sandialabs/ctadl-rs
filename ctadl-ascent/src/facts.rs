@@ -875,12 +875,7 @@ pub fn isin(formal: i64) -> bool {
     formal == -3 || formal >= 0
 }
 
-// /// Returns true if the formal flows output
-// #[inline(always)]
-// pub fn isout(formal: i64, ap: &Path) -> bool {
-//     formal < 0 || *ap != *EMPTY_PATH
-// }
-
+/// Returns true if the formal flows output
 #[inline(always)]
 pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> bool {
     let i: i16 = **formal_index;
