@@ -51,6 +51,7 @@ use crate::facts::{
 };
 use ctadl_ir::Symbol;
 
+pub mod graphviz;
 pub mod source_info;
 
 /// An assignment statement. The order is destination vertex then source vertex.

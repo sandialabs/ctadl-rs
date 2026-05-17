@@ -909,7 +909,9 @@ impl Context {
             (None, Some(idx_c)) => {
                 let mut ap = self.get_lvalue(base_vn, vnode_facts)?;
                 let s_val = size_const.unwrap_or(1);
-                ap.path.fields.push(FieldAccess::Offset(Offset(idx_c * s_val)));
+                ap.path
+                    .fields
+                    .push(FieldAccess::Offset(Offset(idx_c * s_val)));
                 let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
                 Ok(vec![Statement::new_kind(kind)])
             }
