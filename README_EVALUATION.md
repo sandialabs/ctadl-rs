@@ -43,6 +43,15 @@ Once the dataset is set up, run the evaluation script:
 python3 scripts/evaluate_benchmarks.py benchmarks/karonte_elfs/ --model benchmarks/firmware_model.json
 ```
 
+**Debugging Models:**
+If you find that `ctadl` is reporting 0 flows when you expect it to find a vulnerability, it is often because the sources or sinks defined in your model didn't match anything in the binary. You can pass the `--debug` flag to the script:
+
+```bash
+python3 scripts/evaluate_benchmarks.py benchmarks/karonte_elfs/ --debug
+```
+
+This will run the SARIF format step using the `debug` profile and explicitly tell you if your model failed to match any sources or sinks in that specific binary.
+
 *(Note: The `firmware_model.json` provides a good baseline for common C/C++ sinks like `system()` or `strcpy()`, which are identical to the sinks targeted in the Mango paper for CWE-78 and CWE-121. You may want to extend it to include firmware-specific sources like `nvram_get`).*
 
 ### Expected Results

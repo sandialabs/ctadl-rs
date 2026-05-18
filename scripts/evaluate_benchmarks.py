@@ -7,6 +7,7 @@ import time
 
 def run_command(cmd, cwd=None):
     try:
+        print(cmd)
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
         return result
     except Exception as e:
@@ -18,19 +19,35 @@ def run_command(cmd, cwd=None):
         d.stderr = str(e)
         return d
 
-def parse_sarif(sarif_path):
+def parse_sarif(sarif_path, debug=False):
     try:
         with open(sarif_path, 'r') as f:
             sarif = json.load(f)
         
         flows = []
+        sources_matched = 0
+        sinks_matched = 0
+        
         for run in sarif.get("runs", []):
             for result in run.get("results", []):
                 if "codeFlows" in result:
                     flows.append(result)
+                elif debug:
+                    # In debug profile, CTADL typically outputs non-flow results 
+                    # with specific ruleIds or categories indicating matched sources/sinks
+                    rule_id = result.get("ruleId", "").lower()
+                    if "source" in rule_id:
+                        sources_matched += 1
+                    elif "sink" in rule_id:
+                        sinks_matched += 1
+                        
+        if debug:
+            return flows, sources_matched, sinks_matched
         return flows
     except Exception as e:
         print(f"Error parsing SARIF {sarif_path}: {e}")
+        if debug:
+            return None, 0, 0
         return None
 
 def main():
@@ -39,6 +56,7 @@ def main():
     parser.add_argument("--model", default="benchmarks/firmware_model.json", help="Path to the query model JSON")
     parser.add_argument("--output", default="evaluation_report.json", help="Path to save the evaluation report")
     parser.add_argument("--ctadl", default="target/release/ctadl", help="Path to the ctadl binary")
+    parser.add_argument("--debug", action="store_true", help="Enable debug SARIF profile and check for source/sink matches")
     args = parser.parse_args()
 
     if not os.path.exists(args.ctadl):
@@ -113,7 +131,11 @@ def main():
 
         # 4. Format
         sarif_path = f"{name}_results.sarif"
-        res = run_command([args.ctadl, "format", name, "-o", sarif_path])
+        format_cmd = [args.ctadl, "format", name, "-o", sarif_path]
+        if args.debug:
+            format_cmd.extend(["--sarif-profile", "debug"])
+            
+        res = run_command(format_cmd)
         if res.returncode != 0:
             print("Format FAILED")
             report["results"].append({"name": name, "status": "Crashed", "phase": "format", "error": res.stderr})
@@ -121,7 +143,11 @@ def main():
             continue
 
         # 5. Analyze results
-        flows = parse_sarif(sarif_path)
+        if args.debug:
+            flows, sources_matched, sinks_matched = parse_sarif(sarif_path, debug=True)
+        else:
+            flows = parse_sarif(sarif_path)
+            
         duration = time.time() - start_time
         
         if flows is None:
@@ -140,15 +166,24 @@ def main():
                 print(f"FAILED ({len(flows)} flows found, expected {expected_flow} in {duration:.2f}s)")
                 report["summary"]["failed"] += 1
                 status = "Failed"
+                
+            if args.debug:
+                if sources_matched == 0 or sinks_matched == 0:
+                    print(f"    [!] Debug Warning: matched {sources_matched} sources and {sinks_matched} sinks. Need >0 of both to find flows.")
             
-            report["results"].append({
+            result_data = {
                 "name": name,
                 "status": status,
                 "expected_flow": expected_flow,
                 "found_flow": found_flow,
                 "num_flows": len(flows),
                 "duration": duration
-            })
+            }
+            if args.debug:
+                result_data["sources_matched"] = sources_matched
+                result_data["sinks_matched"] = sinks_matched
+                
+            report["results"].append(result_data)
         
         # Clean up SARIF
         if os.path.exists(sarif_path):
