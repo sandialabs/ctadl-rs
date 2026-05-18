@@ -36,7 +36,7 @@ def parse_sarif(sarif_path):
 def main():
     parser = argparse.ArgumentParser(description="Evaluate ctadl on benchmarks.")
     parser.add_argument("binary_dir", help="Directory containing benchmark binaries")
-    parser.add_argument("--model", default="benchmarks/juliet_model.json", help="Path to the query model JSON")
+    parser.add_argument("--model", default="benchmarks/firmware_model.json", help="Path to the query model JSON")
     parser.add_argument("--output", default="evaluation_report.json", help="Path to save the evaluation report")
     parser.add_argument("--ctadl", default="target/release/ctadl", help="Path to the ctadl binary")
     args = parser.parse_args()
