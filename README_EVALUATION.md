@@ -4,36 +4,52 @@ This framework is designed to evaluate the performance and accuracy of `ctadl` o
 
 ## Benchmarks
 
-The primary benchmarks supported are:
-1.  **Juliet Test Suite (C/C++):** Specifically CWE-78 (Command Injection) and CWE-121 (Stack-based Buffer Overflow).
-2.  **Real-world Binaries:** Any ELF binaries imported through the Pcode frontend.
+The "Operation Mango" paper primarily relies on real-world firmware datasets rather than artificial test suites like Juliet. You can use the following datasets for evaluation:
 
-## Components
+1.  **Karonte Dataset (49 Firmware Samples):**
+    *   This is the primary dataset used for comparative evaluation in the paper.
+    *   **Download:** The dataset is hosted on Google Drive. You can download it via the link provided in the original Karonte repository: [Download Karonte Dataset](https://drive.google.com/file/d/1-VOf-tEpu4LIgyDyZr7bBZCDK-K2DHaj/view?usp=sharing)
+    *   **Note:** This dataset contains full firmware files. You will need to extract the file system (using tools like `binwalk`) and locate the user-space ELF binaries (e.g., `httpd`, `dlnad`) to run through `ctadl`.
 
-1.  **`benchmarks/juliet_model.json`**: A `ctadl` model file defining common sources and sinks for Juliet test cases.
-2.  **`scripts/evaluate_benchmarks.py`**: A Python script that automates the evaluation process.
+2.  **SaTC & Greenhouse Datasets:**
+    *   The paper also mentions a handpicked dataset from SaTC and a large-scale "Greenhouse" dataset. These are typically available via the authors' artifact releases or Docker containers on their GitHub: [sefcom/operation-mango-public](https://github.com/sefcom/operation-mango-public).
 
 ## Usage
 
 ### Prerequisites
 
-- `ctadl` binary built (the script will attempt to build it if missing).
+- `ctadl` binary built.
 - Ghidra installed and `GHIDRA_HOME` environment variable set (for `-l pcode` support).
 - Python 3.
+- `binwalk` (optional, for extracting firmware images).
+
+### Setting up the Dataset
+
+We provide an automated script to download the Karonte dataset from Google Drive, extract the firmware using `binwalk`, and gather all the user-space ELF binaries into a single directory for easy evaluation.
+
+1.  Ensure you have `binwalk` installed on your system (`sudo apt install binwalk` or `brew install binwalk`).
+2.  Run the setup script:
+    ```bash
+    python3 scripts/setup_karonte_dataset.py
+    ```
+
+This script will automatically install `gdown` (if missing) to handle the Google Drive download, extract the images, and place the discovered ELF binaries into `benchmarks/karonte_elfs/`.
 
 ### Running the Evaluation
 
-To run the evaluation on a directory of binaries:
+Once the dataset is set up, run the evaluation script:
 
 ```bash
-python3 scripts/evaluate_benchmarks.py /path/to/binaries/ --model benchmarks/juliet_model.json
+python3 scripts/evaluate_benchmarks.py benchmarks/karonte_elfs/ --model benchmarks/firmware_model.json
 ```
+
+*(Note: The `firmware_model.json` provides a good baseline for common C/C++ sinks like `system()` or `strcpy()`, which are identical to the sinks targeted in the Mango paper for CWE-78 and CWE-121. You may want to extend it to include firmware-specific sources like `nvram_get`).*
 
 ### Expected Results
 
-The script determines expected results based on the filename:
-- If the filename contains `_bad`, it expects at least one flow.
-- If the filename contains `_good`, it expects zero flows.
+The provided evaluation script (`evaluate_benchmarks.py`) was originally structured for standard benchmark suites with `_bad` / `_good` naming conventions. When running on real firmware binaries:
+- The script defaults to expecting a flow (vulnerability) to be found.
+- If you are evaluating a known vulnerable binary, a "Passed" result means `ctadl` successfully found a path from a defined source to a sink.
 
 ### Reporting
 
