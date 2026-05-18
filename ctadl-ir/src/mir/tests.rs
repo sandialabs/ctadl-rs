@@ -154,3 +154,34 @@ fn test_offset_newtype() {
     assert_eq!(format!("{}", symbol_access), "test");
     assert_eq!(format!("{}", offset_access), "[0x1c8]");
 }
+
+#[test]
+fn test_load_store_iter_vars_and_display() {
+    let base = VariableRef::new_local("base".to_string());
+    let dest = VariableRef::new_local("dest".to_string());
+    let value = VariableRef::new_local("value".to_string());
+    let field = FieldAccess::Symbol(ArcIntern::from("slot"));
+
+    let load = StatementKind::Load {
+        dest: dest.clone(),
+        source: base.clone(),
+        field: field.clone(),
+    };
+    let store = StatementKind::Store {
+        dest: base.clone(),
+        field,
+        value: value.clone(),
+    };
+
+    let load_srcs: Vec<_> = load.iter_src_var().cloned().collect();
+    let load_dsts: Vec<_> = load.iter_dst_var().cloned().collect();
+    let store_srcs: Vec<_> = store.iter_src_var().cloned().collect();
+    let store_dsts: Vec<_> = store.iter_dst_var().cloned().collect();
+
+    assert_eq!(load_srcs, vec![base.clone()]);
+    assert_eq!(load_dsts, vec![dest.clone()]);
+    assert_eq!(store_srcs, vec![base.clone(), value.clone()]);
+    assert!(store_dsts.is_empty());
+    assert_eq!(format!("{load}"), "%dest = load %base.slot");
+    assert_eq!(format!("{store}"), "store %base.slot := %value");
+}

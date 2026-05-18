@@ -290,6 +290,36 @@ impl Visitor for CodegenVisitor<'_> {
                         .push((site, FlowVertex(dest, fx::Path::empty()), src));
                 }
             }
+            Load {
+                dest,
+                source,
+                field,
+            } => {
+                let dest = self.trans_variable_ref(dest);
+                let source = self.trans_variable_ref(source);
+                let path = fx::Path::from(field);
+                self.paths_dedup.insert((path.clone(),));
+                self.facts.assign.push((
+                    site,
+                    FlowVertex(dest, fx::Path::empty()),
+                    FlowVertex(source, path),
+                ));
+            }
+            Store {
+                dest: base,
+                field,
+                value,
+            } => {
+                let base = self.trans_variable_ref(base);
+                let value = self.trans_variable_ref(value);
+                let path = fx::Path::from(field);
+                self.paths_dedup.insert((path.clone(),));
+                self.facts.assign.push((
+                    site,
+                    FlowVertex(base, path),
+                    FlowVertex(value, fx::Path::empty()),
+                ));
+            }
             Phi {
                 dest: out,
                 operands,

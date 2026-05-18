@@ -228,6 +228,20 @@ pub enum StatementKind {
         value: Exp,
     },
 
+    /// Load a value from a source variable and field.
+    Load {
+        dest: VariableRef,
+        source: VariableRef,
+        field: FieldAccess,
+    },
+
+    /// Store a value to a dest variable and field.
+    Store {
+        dest: VariableRef,
+        field: FieldAccess,
+        value: VariableRef,
+    },
+
     /// Call instructions. Call instructions pass parameters in `args` and return values in `rets`.
     /// Multiple values may be returned. Effective all handling is complex, depending on a number
     /// of factors such as source language, whether the program analysis is partial, and others.
@@ -964,6 +978,16 @@ impl StatementKind {
                 };
                 Box::new(a.chain(b))
             }
+            Load {
+                dest: _,
+                source,
+                field: _,
+            } => Box::new(std::iter::once(source)),
+            Store {
+                dest: base,
+                field: _,
+                value,
+            } => Box::new([base, value].into_iter()),
             Phi { operands, .. } => Box::new(operands.iter().map(|(_, v)| v)),
             ParamFlow { params, global } => Box::new(params.iter().chain(std::iter::once(global))),
             Update {
@@ -1017,6 +1041,16 @@ impl StatementKind {
                 };
                 Box::new(a.chain(b))
             }
+            Load {
+                dest: _,
+                source,
+                field: _,
+            } => Box::new(std::iter::once(source)),
+            Store {
+                dest: base,
+                field: _,
+                value,
+            } => Box::new([base, value].into_iter()),
             Phi { operands, .. } => Box::new(operands.iter_mut().map(|(_, v)| v)),
             ParamFlow { params, global } => {
                 Box::new(params.iter_mut().chain(std::iter::once(global)))
@@ -1046,6 +1080,11 @@ impl StatementKind {
         use StatementKind::*;
         match self {
             Assign { dest, .. } => Box::new(std::iter::once(dest)),
+            Load {
+                dest,
+                source: _,
+                field: _,
+            } => Box::new(std::iter::once(dest)),
             CallAssign { rets, .. } => Box::new(rets.iter()),
             Phi { dest, .. } => Box::new(std::iter::once(dest)),
             ParamFlow { .. } => Box::new(std::iter::empty()),
@@ -1054,6 +1093,7 @@ impl StatementKind {
                 source: _,
                 value: _,
             } => Box::new(std::iter::once(dest_var)),
+            Store { .. } => Box::new(std::iter::empty()),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1063,6 +1103,11 @@ impl StatementKind {
         use StatementKind::*;
         match self {
             Assign { dest, sources: _ } => Box::new(std::iter::once(dest)),
+            Load {
+                dest,
+                source: _,
+                field: _,
+            } => Box::new(std::iter::once(dest)),
             CallAssign { rets, .. } => Box::new(rets.iter_mut()),
             Phi { dest: out, .. } => Box::new(std::iter::once(out)),
             ParamFlow { .. } => Box::new(std::iter::empty()),
@@ -1071,6 +1116,7 @@ impl StatementKind {
                 source: _,
                 value: _,
             } => Box::new(std::iter::once(dest_var)),
+            Store { .. } => Box::new(std::iter::empty()),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1432,6 +1478,18 @@ impl Display for StatementKind {
                 value,
             } => {
                 write!(f, "{dest_var} = update ({source}{dest_fields} := {value})")
+            }
+            Load {
+                dest,
+                source,
+                field,
+            } => write!(f, "{dest} = load {source}.{field}"),
+            Store {
+                dest: base,
+                field,
+                value,
+            } => {
+                write!(f, "store {base}.{field} := {value}")
             }
             Nop => write!(f, "nop"),
         }

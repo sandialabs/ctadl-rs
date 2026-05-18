@@ -324,6 +324,15 @@ impl From<&mir::FieldAccesses> for Path {
     }
 }
 
+impl From<&mir::FieldAccess> for Path {
+    #[inline]
+    fn from(field: &mir::FieldAccess) -> Self {
+        let mut p = Path::empty();
+        p.push(field.clone());
+        p
+    }
+}
+
 impl From<&[&str]> for Path {
     #[inline]
     fn from(path: &[&str]) -> Self {
