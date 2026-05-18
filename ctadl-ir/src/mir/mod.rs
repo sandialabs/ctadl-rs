@@ -127,6 +127,7 @@ mod basic_blocks;
 pub mod builder;
 pub mod call;
 pub mod encode;
+pub mod mem_lower;
 pub mod pos;
 mod terminator;
 mod verify;
