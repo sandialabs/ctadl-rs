@@ -18,7 +18,11 @@ pub enum ObjectNode {
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub enum ObjectEdge {
-    PointsTo { from: ObjectNode, to: ObjectNode, path: Path },
+    PointsTo {
+        from: ObjectNode,
+        to: ObjectNode,
+        path: Path,
+    },
 }
 
 impl<'a> ObjectGraphViz<'a> {
@@ -48,7 +52,7 @@ impl<'a> ObjectGraphViz<'a> {
             }
             ObjectNode::Heap(f, h) => {
                 format!(
-                    "{}\\nHeap@{}{}",
+                    "{}\\n@p{}{}",
                     self.func_name(*f),
                     h.formal_index,
                     h.path.to_dot_string()
@@ -137,12 +141,20 @@ impl<'a> dot::GraphWalk<'a> for ObjectGraphViz<'a> {
         for (f, v, p, h) in self.vtx_points_to {
             let from = ObjectNode::Vertex(*f, v.clone());
             let to = ObjectNode::Heap(*f, h.clone());
-            edges.push(ObjectEdge::PointsTo { from, to, path: p.clone() });
+            edges.push(ObjectEdge::PointsTo {
+                from,
+                to,
+                path: p.clone(),
+            });
         }
         for (f, base_h, fld_p, h) in self.fld_points_to {
             let from = ObjectNode::Heap(*f, base_h.clone());
             let to = ObjectNode::Heap(*f, h.clone());
-            edges.push(ObjectEdge::PointsTo { from, to, path: fld_p.clone() });
+            edges.push(ObjectEdge::PointsTo {
+                from,
+                to,
+                path: fld_p.clone(),
+            });
         }
         edges.into_iter().collect()
     }
