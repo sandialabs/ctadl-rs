@@ -300,15 +300,26 @@ mod tests {
     use super::*;
     use crate::mir::builder::FunctionBuilder;
     use crate::mir::{BasicBlocks, CallEdges, CallStyle, Params, ReturnType};
+    use smallvec::smallvec;
+
+    fn new_test_function(name: &str, return_arity: u8) -> FunctionData {
+        FunctionData::new(
+            name,
+            Params::default(),
+            BasicBlocks::default(),
+            ReturnType {
+                arity: return_arity,
+            },
+        )
+    }
+
+    fn field(name: &str) -> FieldAccess {
+        FieldAccess::Symbol(name.into())
+    }
 
     #[test]
     fn lowers_access_paths_to_load_store() {
-        let mut function = FunctionData::new(
-            "mem_lower_test",
-            Params::default(),
-            BasicBlocks::default(),
-            ReturnType { arity: 1 },
-        );
+        let mut function = new_test_function("mem_lower_test", 1);
         let entry = function.blocks.new_block();
         {
             let mut function_builder = FunctionBuilder::new(&mut function);
@@ -404,5 +415,279 @@ mod tests {
         assert!(rendered.contains("load"));
         assert!(rendered.contains("store"));
         assert!(!rendered.contains("update"));
+    }
+
+    #[test]
+    fn lowers_each_nested_assign_source_in_order() {
+        let mut function = new_test_function("mem_lower_assign_multi", 0);
+        let entry = function.blocks.new_block();
+        {
+            let mut function_builder = FunctionBuilder::new(&mut function);
+            let mut builder = function_builder.at_block(entry);
+
+            let out = builder.new_local_var("out");
+            let left = builder.new_local_var("left");
+            let right = builder.new_local_var("right");
+            let plain = builder.new_local_var("plain");
+
+            builder.create_assign(
+                out,
+                [
+                    Exp::AccessPath(builder.new_access_path(left, ["head", "tail"])),
+                    Exp::AccessPath(builder.new_access_path(right, ["slot"])),
+                    Exp::AccessPath(AccessPath::without_fields(plain)),
+                ],
+            );
+            builder.create_ret([]);
+        }
+
+        transform(&mut function);
+        function.verify().unwrap();
+
+        let statements: Vec<_> = function.blocks[BasicBlockIdx::START_BLOCK]
+            .statements
+            .iter()
+            .map(|statement| statement.kind.clone())
+            .collect();
+
+        assert_eq!(statements.len(), 4);
+        assert_eq!(
+            statements[0],
+            StatementKind::Load {
+                dest: VariableRef::new_local("_$mem0".to_string()),
+                source: VariableRef::new_local("left".to_string()),
+                field: field("head"),
+            }
+        );
+        assert_eq!(
+            statements[1],
+            StatementKind::Load {
+                dest: VariableRef::new_local("_$mem1".to_string()),
+                source: VariableRef::new_local("_$mem0".to_string()),
+                field: field("tail"),
+            }
+        );
+        assert_eq!(
+            statements[2],
+            StatementKind::Load {
+                dest: VariableRef::new_local("_$mem2".to_string()),
+                source: VariableRef::new_local("right".to_string()),
+                field: field("slot"),
+            }
+        );
+        assert_eq!(
+            statements[3],
+            StatementKind::Assign {
+                dest: VariableRef::new_local("out".to_string()),
+                sources: smallvec![
+                    Exp::AccessPath(AccessPath::without_fields(VariableRef::new_local(
+                        "_$mem1".to_string()
+                    ))),
+                    Exp::AccessPath(AccessPath::without_fields(VariableRef::new_local(
+                        "_$mem2".to_string()
+                    ))),
+                    Exp::AccessPath(AccessPath::without_fields(VariableRef::new_local(
+                        "plain".to_string()
+                    ))),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn lowers_funcptr_callee_args_and_return_access_paths() {
+        let mut function = new_test_function("mem_lower_funcptr", 1);
+        let entry = function.blocks.new_block();
+        {
+            let mut function_builder = FunctionBuilder::new(&mut function);
+            let mut builder = function_builder.at_block(entry);
+
+            let ret = builder.new_local_var("ret");
+            let fp = builder.new_local_var("fp");
+            let arg = builder.new_local_var("arg");
+            let plain = builder.new_local_var("plain");
+            let out = builder.new_local_var("out");
+
+            builder.create_call(
+                CallStyle::FuncPtrCall {
+                    callee: builder.new_access_path(fp, ["dispatch", "target"]),
+                    signature: Some("void (*)(void *)".to_string()),
+                },
+                [ret],
+                [
+                    Exp::AccessPath(builder.new_access_path(arg, ["payload"])),
+                    Exp::AccessPath(AccessPath::without_fields(plain)),
+                ],
+            );
+            builder.create_ret([Exp::AccessPath(builder.new_access_path(out, ["result"]))]);
+        }
+
+        transform(&mut function);
+        function.verify().unwrap();
+
+        let statements: Vec<_> = function.blocks[BasicBlockIdx::START_BLOCK]
+            .statements
+            .iter()
+            .map(|statement| statement.kind.clone())
+            .collect();
+
+        assert_eq!(statements.len(), 5);
+        assert_eq!(
+            statements[0],
+            StatementKind::Load {
+                dest: VariableRef::new_local("_$mem0".to_string()),
+                source: VariableRef::new_local("fp".to_string()),
+                field: field("dispatch"),
+            }
+        );
+        assert_eq!(
+            statements[1],
+            StatementKind::Load {
+                dest: VariableRef::new_local("_$mem1".to_string()),
+                source: VariableRef::new_local("_$mem0".to_string()),
+                field: field("target"),
+            }
+        );
+        assert_eq!(
+            statements[2],
+            StatementKind::Load {
+                dest: VariableRef::new_local("_$mem2".to_string()),
+                source: VariableRef::new_local("arg".to_string()),
+                field: field("payload"),
+            }
+        );
+        assert_eq!(
+            statements[3],
+            StatementKind::CallAssign {
+                style: CallStyle::FuncPtrCall {
+                    callee: AccessPath::without_fields(VariableRef::new_local(
+                        "_$mem1".to_string()
+                    )),
+                    signature: Some("void (*)(void *)".to_string()),
+                },
+                rets: smallvec![VariableRef::new_local("ret".to_string())],
+                args: smallvec![
+                    Exp::AccessPath(AccessPath::without_fields(VariableRef::new_local(
+                        "_$mem2".to_string()
+                    ))),
+                    Exp::AccessPath(AccessPath::without_fields(VariableRef::new_local(
+                        "plain".to_string()
+                    ))),
+                ],
+            }
+        );
+        assert_eq!(
+            statements[4],
+            StatementKind::Load {
+                dest: VariableRef::new_local("_$mem3".to_string()),
+                source: VariableRef::new_local("out".to_string()),
+                field: field("result"),
+            }
+        );
+
+        let TerminatorKind::Return { args } = &function.blocks[BasicBlockIdx::START_BLOCK]
+            .terminator()
+            .kind
+        else {
+            panic!("expected return terminator");
+        };
+        assert_eq!(
+            args.as_slice(),
+            &[Exp::AccessPath(AccessPath::without_fields(
+                VariableRef::new_local("_$mem3".to_string())
+            ))]
+        );
+    }
+
+    #[test]
+    fn lowers_update_with_non_access_value_and_deep_field_chain() {
+        let mut function = new_test_function("mem_lower_update", 0);
+        let entry = function.blocks.new_block();
+        {
+            let mut function_builder = FunctionBuilder::new(&mut function);
+            let mut builder = function_builder.at_block(entry);
+
+            let root = builder.new_local_var("root");
+            let root_next = builder.new_local_var("root_next");
+
+            builder.insert_statement(Statement::new_kind(StatementKind::Update {
+                dest: (
+                    root_next,
+                    FieldAccesses::from_iter(["left", "right", "leaf"]),
+                ),
+                source: root,
+                value: Exp::new_str("literal"),
+            }));
+            builder.create_ret([]);
+        }
+
+        eprintln!("before mem_lower: {}", &function);
+        transform(&mut function);
+        function.verify().unwrap();
+        eprintln!("after mem_lower: {}", &function);
+
+        let statements: Vec<_> = function.blocks[BasicBlockIdx::START_BLOCK]
+            .statements
+            .iter()
+            .map(|statement| statement.kind.clone())
+            .collect();
+
+        assert_eq!(statements.len(), 7);
+        assert_eq!(
+            statements[0],
+            StatementKind::Assign {
+                dest: VariableRef::new_local("_$mem0".to_string()),
+                sources: smallvec![Exp::new_str("literal")],
+            }
+        );
+        assert_eq!(
+            statements[1],
+            StatementKind::Assign {
+                dest: VariableRef::new_local("root_next".to_string()),
+                sources: smallvec![Exp::AccessPath(AccessPath::without_fields(
+                    VariableRef::new_local("root".to_string())
+                ))],
+            }
+        );
+        assert_eq!(
+            statements[2],
+            StatementKind::Load {
+                dest: VariableRef::new_local("_$mem1".to_string()),
+                source: VariableRef::new_local("root_next".to_string()),
+                field: field("left"),
+            }
+        );
+        assert_eq!(
+            statements[3],
+            StatementKind::Load {
+                dest: VariableRef::new_local("_$mem2".to_string()),
+                source: VariableRef::new_local("_$mem1".to_string()),
+                field: field("right"),
+            }
+        );
+        assert_eq!(
+            statements[4],
+            StatementKind::Store {
+                dest: VariableRef::new_local("_$mem2".to_string()),
+                field: field("leaf"),
+                value: VariableRef::new_local("_$mem0".to_string()),
+            }
+        );
+        assert_eq!(
+            statements[5],
+            StatementKind::Store {
+                dest: VariableRef::new_local("_$mem1".to_string()),
+                field: field("right"),
+                value: VariableRef::new_local("_$mem2".to_string()),
+            }
+        );
+        assert_eq!(
+            function.blocks[BasicBlockIdx::START_BLOCK].statements[StatementIdx::new(6)].kind,
+            StatementKind::Store {
+                dest: VariableRef::new_local("root_next".to_string()),
+                field: field("left"),
+                value: VariableRef::new_local("_$mem1".to_string()),
+            }
+        );
     }
 }
