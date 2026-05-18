@@ -665,22 +665,15 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             let n = h.formal_index,
             let pn = &h.path;
 
-        // Flow from heap to formal
-        summary(m, n1, p1.clone(), n2, p2.clone()) <--
-            pointer_vtx_points_to(m, dst_var, p1, h2),
-            formal_param(m, dst_var, formal_ty),
-            if let FlowVariable::Formal(n1) = dst_var,
-            let n2 = h2.formal_index,
-            let p2 = &h2.path,
-            if isout(n1, *formal_ty, p1),
-            if *n1 != n2 || p1 != p2;
-        // Flow from formal to heap
-        summary(m, h.formal_index, h.path.clone(), src_n, src_path.clone()) <--
-            pointer_vtx_points_to(m, src_var, src_path, h),
-            formal_param(m, src_var, formal_ty),
-            if let FlowVariable::Formal(src_n) = src_var,
-            if isout(&h.formal_index, *formal_ty, src_path),
-            if *h.formal_index != **src_n;
+        summary(m, to_n, to_path, from_n, from_path) <--
+            assign_like(m, _, to, dst_path, from, src_path),
+            pointer_vtx_points_to(m, from, src_path, src_h),
+            pointer_vtx_points_to(m, to, dst_path, dst_h),
+            let from_n = src_h.formal_index,
+            let from_path = &src_h.path,
+            let to_n = dst_h.formal_index,
+            let to_path = &dst_h.path,
+            if to_n != from_n || to_path != from_path;
 
         // Initialize assigns from program
         assign_like(func_id, insn_id, v1, p1, v2, p2) <--
