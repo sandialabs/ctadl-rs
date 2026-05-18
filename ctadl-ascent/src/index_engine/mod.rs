@@ -615,7 +615,6 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             let h = Heap::with_path(base_h.index(), assign_path.clone());
 
         // 3. Propagation and Assignments
-        // This propagates in the direction of assignment.
         // x.p = y.f;
         // y.f.g -> h
         // ==>
@@ -623,9 +622,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         pointer_vtx_points_to(m.clone(), to.clone(), to_path.clone(), h.clone()) <--
             assign_like(m, _, to, dst_path, from, src_path),
             pointer_vtx_points_to(m, from, from_path, h),
-            let _ = if Path::from(".[50].field") == *src_path {eprintln!("hi ap = {} prefix = {} suffix = {}", from_path, src_path, dst_path)} else {},
             if let Some(to_path) = from_path.substitute_prefix(src_path, dst_path),
-            let _ = if Path::from(".[50].field") == *src_path {eprintln!("{}", to_path)} else {},
             paths(&to_path);
 
         // This propagates in the reverse direction of assignment
@@ -633,11 +630,11 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         // x.p.g -> h
         // ==>
         // y.f.g -> h
-        pointer_vtx_points_to(m.clone(), from.clone(), from_path.clone(), h.clone()) <--
-            assign_like(m, _, to, dst_path, from, src_path),
-            pointer_vtx_points_to(m, to, to_path, h),
-            if let Some(from_path) = to_path.substitute_prefix(dst_path, src_path),
-            paths(&from_path);
+        // pointer_vtx_points_to(m.clone(), from.clone(), from_path.clone(), h.clone()) <--
+        //     assign_like(m, _, to, dst_path, from, src_path),
+        //     pointer_vtx_points_to(m, to, to_path, h),
+        //     if let Some(from_path) = to_path.substitute_prefix(dst_path, src_path),
+        //     paths(&from_path);
 
         // Store
         // x.p.q = y.f;

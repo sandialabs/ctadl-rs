@@ -1,6 +1,6 @@
 // This is a common alias pattern. Something aliases the "this" object and a
 // parameter flows to it.
-def F(this, p)
+def F(this byref, p byref)
 where
 summaries [this.field <- p, this.g.h <- p.j]
 {
