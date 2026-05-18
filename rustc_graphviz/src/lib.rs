@@ -277,6 +277,7 @@ use std::io::prelude::*;
 use LabelText::*;
 
 /// The text for a graphviz label on a node or edge.
+#[derive(Clone)]
 pub enum LabelText<'a> {
     /// This kind of label preserves the text directly as is.
     ///
@@ -464,6 +465,46 @@ pub trait Labeller<'a> {
     fn edge_style(&'a self, _e: &Self::Edge) -> Style {
         Style::None
     }
+
+    /// Returns the attributes for the graph as a whole.
+    fn global_graph_attrs(&'a self) -> Vec<(Cow<'a, str>, LabelText<'a>)> {
+        Vec::new()
+    }
+
+    /// Returns the global attributes for nodes.
+    fn global_node_attrs(&'a self) -> Vec<(Cow<'a, str>, LabelText<'a>)> {
+        Vec::new()
+    }
+
+    /// Returns the global attributes for edges.
+    fn global_edge_attrs(&'a self) -> Vec<(Cow<'a, str>, LabelText<'a>)> {
+        Vec::new()
+    }
+
+    /// Returns the attributes for a specific node.
+    fn node_attrs(&'a self, _n: &Self::Node) -> Vec<(Cow<'a, str>, LabelText<'a>)> {
+        Vec::new()
+    }
+
+    /// Returns the attributes for a specific edge.
+    fn edge_attrs(&'a self, _e: &Self::Edge) -> Vec<(Cow<'a, str>, LabelText<'a>)> {
+        Vec::new()
+    }
+
+    /// Maps `e` to a label that will be used as a taillabel.
+    fn edge_taillabel(&'a self, _e: &Self::Edge) -> Option<LabelText<'a>> {
+        None
+    }
+
+    /// Maps `e` to a label that will be used as a headlabel.
+    fn edge_headlabel(&'a self, _e: &Self::Edge) -> Option<LabelText<'a>> {
+        None
+    }
+
+    /// Maps `e` to a label that will be used as an xlabel.
+    fn edge_xlabel(&'a self, _e: &Self::Edge) -> Option<LabelText<'a>> {
+        None
+    }
 }
 
 /// Escape tags in such a way that it is suitable for inclusion in a
@@ -587,9 +628,10 @@ where
     writeln!(w, "digraph {} {{", g.graph_id().as_slice())?;
 
     // Global graph properties
-    let mut graph_attrs = Vec::new();
-    let mut content_attrs = Vec::new();
-    let font;
+    let mut global_graph_attrs = g.global_graph_attrs();
+    let mut global_node_attrs = g.global_node_attrs();
+    let mut global_edge_attrs = g.global_edge_attrs();
+
     if let Some(fontname) = options.iter().find_map(|option| {
         if let RenderOption::Fontname(fontname) = option {
             Some(fontname)
@@ -597,21 +639,49 @@ where
             None
         }
     }) {
-        font = format!(r#"fontname="{fontname}""#);
-        graph_attrs.push(&font[..]);
-        content_attrs.push(&font[..]);
+        let font_val = LabelText::LabelStr(fontname.clone().into());
+        global_graph_attrs.push(("fontname".into(), font_val.clone()));
+        global_node_attrs.push(("fontname".into(), font_val.clone()));
+        global_edge_attrs.push(("fontname".into(), font_val));
     }
     if options.contains(&RenderOption::DarkTheme) {
-        graph_attrs.push(r#"bgcolor="black""#);
-        graph_attrs.push(r#"fontcolor="white""#);
-        content_attrs.push(r#"color="white""#);
-        content_attrs.push(r#"fontcolor="white""#);
+        global_graph_attrs.push(("bgcolor".into(), LabelText::LabelStr("black".into())));
+        global_graph_attrs.push(("fontcolor".into(), LabelText::LabelStr("white".into())));
+        global_node_attrs.push(("color".into(), LabelText::LabelStr("white".into())));
+        global_node_attrs.push(("fontcolor".into(), LabelText::LabelStr("white".into())));
+        global_edge_attrs.push(("color".into(), LabelText::LabelStr("white".into())));
+        global_edge_attrs.push(("fontcolor".into(), LabelText::LabelStr("white".into())));
     }
-    if !(graph_attrs.is_empty() && content_attrs.is_empty()) {
-        writeln!(w, r#"    graph[{}];"#, graph_attrs.join(" "))?;
-        let content_attrs_str = content_attrs.join(" ");
-        writeln!(w, r#"    node[{content_attrs_str}];"#)?;
-        writeln!(w, r#"    edge[{content_attrs_str}];"#)?;
+
+    if !global_graph_attrs.is_empty() {
+        write!(w, "    graph [")?;
+        for (i, (name, value)) in global_graph_attrs.into_iter().enumerate() {
+            if i > 0 {
+                write!(w, ", ")?;
+            }
+            write!(w, "{}={}", name, value.to_dot_string())?;
+        }
+        writeln!(w, "];")?;
+    }
+    if !global_node_attrs.is_empty() {
+        write!(w, "    node [")?;
+        for (i, (name, value)) in global_node_attrs.into_iter().enumerate() {
+            if i > 0 {
+                write!(w, ", ")?;
+            }
+            write!(w, "{}={}", name, value.to_dot_string())?;
+        }
+        writeln!(w, "];")?;
+    }
+    if !global_edge_attrs.is_empty() {
+        write!(w, "    edge [")?;
+        for (i, (name, value)) in global_edge_attrs.into_iter().enumerate() {
+            if i > 0 {
+                write!(w, ", ")?;
+            }
+            write!(w, "{}={}", name, value.to_dot_string())?;
+        }
+        writeln!(w, "];")?;
     }
 
     let mut text = Vec::new();
@@ -634,6 +704,10 @@ where
 
         if let Some(s) = g.node_shape(n) {
             write!(text, "[shape={}]", &s.to_dot_string()).unwrap();
+        }
+
+        for (name, value) in g.node_attrs(n) {
+            write!(text, "[{}={}]", name, value.to_dot_string()).unwrap();
         }
 
         writeln!(text, ";").unwrap();
@@ -659,6 +733,20 @@ where
         let style = g.edge_style(e);
         if !options.contains(&RenderOption::NoEdgeStyles) && style != Style::None {
             write!(text, "[style=\"{}\"]", style.as_slice()).unwrap();
+        }
+
+        if let Some(l) = g.edge_taillabel(e) {
+            write!(text, "[taillabel={}]", l.to_dot_string()).unwrap();
+        }
+        if let Some(l) = g.edge_headlabel(e) {
+            write!(text, "[headlabel={}]", l.to_dot_string()).unwrap();
+        }
+        if let Some(l) = g.edge_xlabel(e) {
+            write!(text, "[xlabel={}]", l.to_dot_string()).unwrap();
+        }
+
+        for (name, value) in g.edge_attrs(e) {
+            write!(text, "[{}={}]", name, value.to_dot_string()).unwrap();
         }
 
         writeln!(text, ";").unwrap();

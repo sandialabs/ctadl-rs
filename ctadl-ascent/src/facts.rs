@@ -29,7 +29,7 @@ lazy_static::lazy_static! {
 /// The path dereferences go left to right
 /// ["foo", "bar", "baz"] represents .foo.bar.baz
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord)]
-pub struct Path(VecDeque<mir::FieldAccess>);
+pub struct Path(pub VecDeque<mir::FieldAccess>);
 
 impl Path {
     /// Creates an empty path
@@ -102,6 +102,10 @@ impl Path {
         self.0.push_back(component);
     }
 
+    pub fn pop(mut self) -> Option<Self> {
+        self.0.pop_back().map(|_| self)
+    }
+
     /// Appends components from an iterator, merging offsets.
     pub fn extend_merging(&mut self, iter: impl IntoIterator<Item = mir::FieldAccess>) {
         for component in iter {
@@ -109,7 +113,7 @@ impl Path {
         }
     }
 
-    /// Substitutes given prefix of path with new_prefix.
+    /// Substitutes given prefix of path with new_prefix and returns the new path.
     /// self is ["p2", "p3"]
     /// prefix is ["p2"]
     /// new_prefix is ["p1"]
@@ -138,6 +142,29 @@ impl Path {
                 result.extend_merging(suffix);
                 result
             })
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct Heap {
+    pub formal_index: FormalIndex,
+    pub path: Path,
+}
+
+impl Heap {
+    pub fn new(formal_index: FormalIndex) -> Self {
+        Self {
+            formal_index,
+            path: Path::empty(),
+        }
+    }
+
+    pub fn with_path(formal_index: FormalIndex, path: Path) -> Self {
+        Self { formal_index, path }
+    }
+
+    pub fn index(&self) -> FormalIndex {
+        self.formal_index
     }
 }
 
@@ -424,7 +451,9 @@ impl TryFrom<usize> for Index {
 }
 
 /// Index into the parameter list. Negative indices are reserved for the engine
-#[derive(Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Serialize, Deserialize, Default,
+)]
 #[repr(transparent)]
 pub struct FormalIndex(Index);
 
@@ -646,6 +675,13 @@ pub enum FlowVariable {
 }
 
 impl FlowVariable {
+    pub fn formal(&self) -> Option<FormalIndex> {
+        match self {
+            FlowVariable::Formal(i) => Some(*i),
+            _ => None,
+        }
+    }
+
     pub fn is_globals(&self) -> bool {
         crate::codegen::variable_is_globals(self)
     }
@@ -836,12 +872,7 @@ pub fn isin(formal: i64) -> bool {
     formal == -3 || formal >= 0
 }
 
-// /// Returns true if the formal flows output
-// #[inline(always)]
-// pub fn isout(formal: i64, ap: &Path) -> bool {
-//     formal < 0 || *ap != *EMPTY_PATH
-// }
-
+/// Returns true if the formal flows output
 #[inline(always)]
 pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> bool {
     let i: i16 = **formal_index;

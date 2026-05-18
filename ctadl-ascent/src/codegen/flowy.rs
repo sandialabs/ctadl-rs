@@ -216,6 +216,7 @@ pub fn check<P: AsRef<Path>>(file: P) -> anyhow::Result<()> {
         .map(|e| (from_flowy_endpoint(&source_info.sites, e),))
         .collect();
     let index_result = taint_index(index_facts.clone());
+
     let (ipass, ifail) = index_check_summaries(
         &index_result,
         program.requirements.summary_requires,

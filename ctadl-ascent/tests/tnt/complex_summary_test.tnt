@@ -2,14 +2,14 @@
 
 def ComplexSummaryTest(input, output): 1
 where summaries [
-    return <- input.[0].field.[1],
-    output.[10].nested <- input.[20].[30]
+    return <- input.[0].field.[1].field,
+    output.[10].nested <- input.[50].field
 ]
 {
 start:
     // Function that should satisfy complex summary requirements
-    temp1 = input.[0].field.[1];
-    temp2 = input.[20].[30];
+    temp1 = input.[0].field.[1].field;
+    temp2 = input.[20].[30].field;
     output.[10].nested = temp2;
     return temp1;
 }

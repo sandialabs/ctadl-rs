@@ -160,6 +160,16 @@ pub enum FieldAccess {
     Offset(Offset),
 }
 
+impl FieldAccess {
+    pub fn is_symbol(&self) -> bool {
+        matches!(self, FieldAccess::Symbol(_))
+    }
+
+    pub fn is_offset(&self) -> bool {
+        matches!(self, FieldAccess::Offset(_))
+    }
+}
+
 impl Display for Offset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Print signed hex

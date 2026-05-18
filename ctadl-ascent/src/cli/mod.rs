@@ -9,10 +9,9 @@ all the intermediate files should be stored; the API below this should be writte
 as parameters.
 */
 
+use itertools::Itertools;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
-
-use itertools::Itertools;
 
 use crate::codegen::models::codegen_summary;
 use crate::codegen::{CallResolutionStrategy, codegen_program};
@@ -154,6 +153,7 @@ pub fn index(
         config.alias_rule = false;
     }
     let result = taint_index_with_config(facts, config);
+
     // Slightly ugly special case for flowy artifacts. Since they have specific assertions at index
     // time, check them here.
     for import in project.iter_imports() {
@@ -189,23 +189,35 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
         }
         let mut builder = QueryFactsBuilder::default();
         let index_facts = IndexFacts::try_load(&index_path)?;
+        let mut endpoints = Vec::new();
         // Slightly ugly special case for flowy artifacts. Since the query is built in, take it
         // into account here
         for import in project.iter_imports() {
             let import = import?;
             if import.language == ArtifactLanguage::Flowy {
                 let eps = crate::codegen::flowy::get_endpoints(&import, &ids)?;
-                builder.endpoints(eps);
+                endpoints.extend(eps);
             }
         }
         let mut formal_params = index_facts.formal_param.clone();
         if let Some(ref batch) = models_batch {
             let (eps, model_formals) = build_query_endpoints(&batch.endpoint, &index_facts, &ids);
-            builder.endpoints(eps);
+            endpoints.extend(eps);
             formal_params.extend(model_formals);
         }
 
+        let sources = endpoints
+            .iter()
+            .filter(|(ep,)| ep.direction == crate::facts::TaintDirection::Forward)
+            .count();
+        let sinks = endpoints
+            .iter()
+            .filter(|(ep,)| ep.direction == crate::facts::TaintDirection::Backward)
+            .count();
+        eprintln!("Matched {} sources and {} sinks", sources, sinks);
+
         builder
+            .endpoints(endpoints)
             .formal_param(formal_params)
             .actual_param(index_facts.actual_param)
             .call(index_facts.call);
@@ -478,7 +490,11 @@ pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
         }
     };
 
-    println!("Artifact: {}", import.name);
+    println!(
+        "Artifact: {} ({})",
+        import.name,
+        import.artifact_path.display()
+    );
     println!("  Number of functions: {}", program.functions.len());
     println!("  Total number of assignments: {}", total_assignments);
     println!(
@@ -524,7 +540,11 @@ pub fn list_store_contents() -> Result<(), Error> {
     } else {
         imports.sort();
         for name in imports {
-            println!("  {}", name);
+            if let Ok(import) = ArtifactImport::load_by_name(&name) {
+                println!("  {} ({})", name, import.artifact_path.display());
+            } else {
+                println!("  {}", name);
+            }
         }
     }
 

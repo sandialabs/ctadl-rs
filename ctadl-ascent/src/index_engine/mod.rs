@@ -591,8 +591,8 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
 
         // aliasing summary rule, see discussion above
         summary(infunc, n1, ap3.clone(), n2, bp) <--
-            //config(c),
-            //if c.alias_rule,
+            config(c),
+            if c.alias_rule,
             // this is the alias: v1.p1 <- n1.ap
             locals(infunc, v1, p1, n1, ap),
             // v1.p13 <- n2.bp

@@ -20,32 +20,41 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Import a single artifact (dex, jar, .class, directory of .c files, etc.)
-    ///
-    /// Produces a serialized Program into proj. Each program is associated with
-    /// the filename/dir it imports and remembers the full original path.
     Import(ImportArgs),
 
-    /// Index artifacts, creating an analysis project
+    /// Index artifacts. (See 'import' to import artifacts)
     ///
-    /// Takes a project name and a sequence of imported program names (from import).
-    /// Co-indexes them and stores into proj under that project name.
+    /// Indexes a set of artifacts, such as Java programs along with shared libraries.
+    /// The index is stored under the project name.
     Index(IndexArgs),
 
-    /// Analyze taint in a project
+    /// Run a taint analysis query. (See 'index' for prerequisites)
     Query(QueryArgs),
 
     /// Format the last query results for the named project
     Format(FormatArgs),
 
-    /// Inspect an imported artifact and print statistics
-    Inspect(InspectArgs),
-
     /// One-shot: import artifacts, index them under name, query, and format output
     Go(GoArgs),
+
+    /// Generate a template JSON5 model file to help write custom analysis models. Analysis models
+    /// are used to specify sources and sinks (see the 'query' command) as well as specifying
+    /// external function behavior (see the 'index' command)
+    InitModel(InitModelArgs),
+
+    /// Inspect the CTADL store
+    Inspect(InspectArgs),
 
     /// Legacy Ghidra Pcode CLI: index and query commands for Ghidra integration.
     #[command(name = "legacy-pcode-cli")]
     LegacyPcodeCli(LegacyPcodeCliArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct InitModelArgs {
+    /// Path where the template model file will be written (defaults to model.json5)
+    #[arg(default_value = "model.json5")]
+    pub output: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -157,7 +166,7 @@ pub enum ImportLanguage {
 
 #[derive(Debug, Args)]
 pub struct InspectArgs {
-    /// Name of the imported artifact to inspect
+    /// Artifact name, project name, or store path
     pub name: Option<String>,
 }
 
@@ -177,7 +186,9 @@ pub struct IndexArgs {
     pub summary: Vec<String>,
 
     /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
-    /// multiple times to load multiple model files.
+    /// multiple times to load multiple model files. This option is use primarily to provide
+    /// propagation models, which provide function summaries for indexing external or
+    /// hard-to-analyze code.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -343,8 +354,86 @@ fn main() -> anyhow::Result<()> {
         Command::LegacyPcodeCli(args) => {
             handle_legacy_pcode_cli(args).context("running 'legacy-pcode-cli'")?;
         }
+        Command::InitModel(args) => {
+            handle_init_model(args).context("running 'init-model'")?;
+        }
     };
 
+    Ok(())
+}
+
+fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
+    let template = r#"{
+    // Link to the schema to enable IDE features like autocomplete and hover documentation.
+    // Adjust the path to match your installation if necessary.
+    "$schema": "https://raw.githubusercontent.com/sandialabs/ctadl-rs/refs/heads/main/ctadl-ascent/src/models/ctadl-model-generator.schema.json",
+    
+    "model_generators": [
+        {
+            // Example 1: Define a data source using a signature pattern.
+            // This will match any method containing 'readData' in its signature
+            // and mark its return value as a source of taint.
+            "find": "methods",
+            "where": [
+                {
+                    "constraint": "signature_pattern",
+                    "pattern": ".*readData.*"
+                }
+            ],
+            "model": {
+                "sources": [
+                    {
+                        "port": "Return",
+                        "kind": "input_data"
+                    }
+                ]
+            }
+        },
+        {
+            // Example 2: Define a sink using an exact signature match.
+            // This will match the exact method signature 'executeQuery' and mark its first argument
+            // as a sink for taint analysis.
+            "find": "methods",
+            "where": [
+                {
+                    "constraint": "signature_match",
+                    "name": "executeQuery"
+                }
+            ],
+            "model": {
+                "sinks": [
+                    {
+                        "port": "Argument(0)",
+                        "kind": "sql_injection"
+                    }
+                ]
+            }
+        },
+        {
+            // Example 3: Define a propagation model.
+            // This models a method 'canonicalize_url' that transforms data.
+            // We model it as propagating taint from its first argument to its return value.
+            "find": "methods",
+            "where": [
+                {
+                    "constraint": "signature_match",
+                    "name": "canonicalize_url"
+                }
+            ],
+            "model": {
+                "propagation": [
+                    {
+                        "input": "Argument(0)",
+                        "output": "Return"
+                    }
+                ]
+            }
+        }
+        ]
+        }"#;
+
+    std::fs::write(&args.output, template)?;
+    eprintln!("Wrote template model file to '{}'", args.output.display());
     Ok(())
 }
 
