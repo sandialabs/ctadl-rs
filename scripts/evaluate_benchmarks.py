@@ -7,7 +7,7 @@ import time
 
 def run_command(cmd, cwd=None):
     try:
-        print(cmd)
+        #print(cmd)
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
         return result
     except Exception as e:
