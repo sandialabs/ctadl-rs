@@ -415,3 +415,78 @@ fn badly_formatted_id() {
         Err(..) => {}
     }
 }
+
+#[test]
+fn custom_attributes() {
+    use std::borrow::Cow;
+    struct CustomGraph;
+    impl<'a> Labeller<'a> for CustomGraph {
+        type Node = usize;
+        type Edge = (usize, usize);
+        fn graph_id(&'a self) -> Id<'a> {
+            Id::new("G").unwrap()
+        }
+        fn node_id(&'a self, n: &usize) -> Id<'a> {
+            Id::new(format!("N{}", n)).unwrap()
+        }
+
+        fn global_graph_attrs(&'a self) -> Vec<(Cow<'a, str>, LabelText<'a>)> {
+            vec![("rankdir".into(), LabelText::LabelStr("LR".into()))]
+        }
+        fn global_node_attrs(&'a self) -> Vec<(Cow<'a, str>, LabelText<'a>)> {
+            vec![("shape".into(), LabelText::LabelStr("box".into()))]
+        }
+        fn global_edge_attrs(&'a self) -> Vec<(Cow<'a, str>, LabelText<'a>)> {
+            vec![("fontsize".into(), LabelText::LabelStr("10".into()))]
+        }
+
+        fn edge_taillabel(&'a self, _e: &(usize, usize)) -> Option<LabelText<'a>> {
+            Some(LabelText::LabelStr("tail".into()))
+        }
+
+        fn node_attrs(&'a self, n: &usize) -> Vec<(Cow<'a, str>, LabelText<'a>)> {
+            if *n == 0 {
+                vec![("color".into(), LabelText::LabelStr("red".into()))]
+            } else {
+                vec![]
+            }
+        }
+
+        fn edge_attrs(&'a self, _e: &(usize, usize)) -> Vec<(Cow<'a, str>, LabelText<'a>)> {
+            vec![("penwidth".into(), LabelText::LabelStr("2.0".into()))]
+        }
+    }
+
+    impl<'a> GraphWalk<'a> for CustomGraph {
+        type Node = usize;
+        type Edge = (usize, usize);
+        fn nodes(&'a self) -> Nodes<'a, usize> {
+            vec![0, 1].into()
+        }
+        fn edges(&'a self) -> Edges<'a, (usize, usize)> {
+            vec![(0, 1)].into()
+        }
+        fn source(&'a self, e: &(usize, usize)) -> usize {
+            e.0
+        }
+        fn target(&'a self, e: &(usize, usize)) -> usize {
+            e.1
+        }
+    }
+
+    let mut writer = Vec::new();
+    render(&CustomGraph, &mut writer).unwrap();
+    let r = String::from_utf8(writer).unwrap();
+    assert_eq!(
+        r,
+        r#"digraph G {
+    graph [rankdir="LR"];
+    node [shape="box"];
+    edge [fontsize="10"];
+    N0[label="N0"][color="red"];
+    N1[label="N1"];
+    N0 -> N1[label=""][taillabel="tail"][penwidth="2.0"];
+}
+"#
+    );
+}

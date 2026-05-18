@@ -106,13 +106,17 @@ impl<'a> dot::Labeller<'a> for ObjectGraphViz<'a> {
         dot::Style::None
     }
 
-    fn edge_label(&self, e: &Self::Edge) -> dot::LabelText<'a> {
+    fn edge_label(&self, _e: &Self::Edge) -> dot::LabelText<'a> {
+        dot::LabelText::LabelStr("".into())
+    }
+
+    fn edge_taillabel(&'a self, e: &Self::Edge) -> Option<dot::LabelText<'a>> {
         match e {
             ObjectEdge::PointsTo { path, .. } => {
                 if path.is_empty() {
-                    dot::LabelText::LabelStr("".into())
+                    None
                 } else {
-                    dot::LabelText::EscStr(path.to_dot_string().into())
+                    Some(dot::LabelText::EscStr(path.to_dot_string().into()))
                 }
             }
         }
