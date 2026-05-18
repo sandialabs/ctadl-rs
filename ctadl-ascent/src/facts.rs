@@ -103,10 +103,7 @@ impl Path {
     }
 
     pub fn pop(mut self) -> Option<Self> {
-        match self.0.pop_back() {
-            Some(_) => Some(self),
-            None => None,
-        }
+        self.0.pop_back().map(|_| self)
     }
 
     /// Appends components from an iterator, merging offsets.
