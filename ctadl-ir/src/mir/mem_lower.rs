@@ -299,6 +299,7 @@ impl TerminatorExt for Terminator {
 mod tests {
     use super::*;
     use crate::mir::builder::FunctionBuilder;
+    use crate::mir::visit::Visitor;
     use crate::mir::{BasicBlocks, CallEdges, CallStyle, Params, ReturnType};
     use smallvec::smallvec;
 
@@ -315,6 +316,19 @@ mod tests {
 
     fn field(name: &str) -> FieldAccess {
         FieldAccess::Symbol(name.into())
+    }
+
+    #[derive(Default)]
+    struct UnversionedVarCollector {
+        refs: Vec<VariableRef>,
+    }
+
+    impl Visitor for UnversionedVarCollector {
+        fn visit_variable_ref(&mut self, variable_ref: &VariableRef) {
+            if variable_ref.version.is_none() {
+                self.refs.push(variable_ref.clone());
+            }
+        }
     }
 
     #[test]
@@ -688,6 +702,73 @@ mod tests {
                 field: field("left"),
                 value: VariableRef::new_local("_$mem1".to_string()),
             }
+        );
+    }
+
+    #[test]
+    fn lowered_mir_survives_ssa_transform() {
+        let mut function = new_test_function("mem_lower_then_ssa", 1);
+        function.params.push(crate::mir::ParameterType::ByVal);
+        let entry = function.blocks.new_block();
+        {
+            let mut function_builder = FunctionBuilder::new(&mut function);
+            let mut builder = function_builder.at_block(entry);
+
+            let param0 = builder.new_param_var(crate::mir::ParameterIdx::new(0));
+            let out = builder.new_local_var("out");
+            let ret = builder.new_local_var("ret");
+            let state = builder.new_local_var("state");
+            let state_next = builder.new_local_var("state_next");
+
+            builder.create_assign(
+                out.clone(),
+                [
+                    Exp::AccessPath(builder.new_access_path(param0.clone(), ["a", "b"])),
+                    Exp::AccessPath(builder.new_access_path(state.clone(), ["head"])),
+                ],
+            );
+            builder.create_call(
+                CallStyle::DirectCall {
+                    call_edges: CallEdges::Explicit(vec!["callee".to_string()].into()),
+                },
+                [ret.clone()],
+                [Exp::AccessPath(builder.new_access_path(out, ["tail"]))],
+            );
+            builder.insert_statement(Statement::new_kind(StatementKind::Update {
+                dest: (
+                    state_next.clone(),
+                    FieldAccesses::from_iter(["slot", "leaf"]),
+                ),
+                source: state,
+                value: Exp::AccessPath(builder.new_access_path(ret.clone(), ["next"])),
+            }));
+            builder.create_ret([Exp::AccessPath(
+                builder.new_access_path(state_next, ["slot", "leaf"]),
+            )]);
+        }
+
+        eprintln!("Before: {}", function);
+        transform(&mut function);
+        function.verify().unwrap();
+
+        crate::ssa::transform(&mut function, false);
+        function.verify().unwrap();
+        eprintln!("After: {}", function);
+
+        let rendered = function.to_string();
+        assert!(rendered.contains("param-flow"));
+
+        let mut collector = UnversionedVarCollector::default();
+        collector.visit_function_data(FunctionIdx::new(0), &function);
+        assert!(
+            collector.refs.iter().all(|var| {
+                matches!(
+                    var.variable.as_ref(),
+                    Variable::GlobalHeap | Variable::Param(crate::mir::ParameterIdx(0))
+                )
+            }),
+            "found unexpected unversioned vars after SSA: {:?}",
+            collector.refs
         );
     }
 }
