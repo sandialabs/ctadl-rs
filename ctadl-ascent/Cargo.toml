@@ -20,6 +20,10 @@ path = "src/index_engine/bin/analyze-ir.rs"
 name = "flowy"
 path = "src/bin/flowy.rs"
 
+[[bin]]
+name = "get-paths"
+path = "src/bin/get-paths.rs"
+
 [dependencies]
 anyhow = "1.0"
 arrow = "58"

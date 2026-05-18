@@ -1046,7 +1046,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         node_to_id = fg.node_to_id;
         Some(fg.graph)
     } else {
-        None
+        (None, Vec::new(), BTreeMap::new())
     };
 
     // Call site -> callee, used to name a call-site-anchored source/sink by the
