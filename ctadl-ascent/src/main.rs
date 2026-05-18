@@ -203,9 +203,6 @@ pub struct IndexArgs {
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     pub prune_unreachable_cfg_nodes: Option<bool>,
 
-    /// Dump the object graph to a dot file
-    #[arg(long)]
-    pub dump_object_graph: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -335,7 +332,6 @@ fn main() -> anyhow::Result<()> {
                 models: args.models.clone(),
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
-                dump_object_graph: None,
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -471,7 +467,6 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 models: args.models.clone(),
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
-                dump_object_graph: None,
             };
             index_artifacts_to_store(&index_args)?;
         }
@@ -566,7 +561,6 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         &args.models,
         args.strategy,
         args.prune_unreachable_cfg_nodes.unwrap_or(false),
-        args.dump_object_graph.as_deref(),
     )?;
     Ok(())
 }

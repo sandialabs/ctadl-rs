@@ -46,12 +46,11 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, Heap, InsnId,
-    InsnSiteId, PackedInsnSiteId, Path, isout, match_prefix,
+    CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId, InsnSiteId,
+    PackedInsnSiteId, Path, isout,
 };
 use ctadl_ir::Symbol;
 
-pub mod graphviz;
 pub mod source_info;
 
 /// An assignment statement. The order is destination vertex then source vertex.
@@ -254,10 +253,6 @@ pub struct IndexResult {
     pub assign_like: Vec<(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)>,
     pub java_obj_assign_like: Vec<(FunctionId, InsnId, FlowVariable, Path, Symbol)>,
     pub paths: Vec<(Path,)>,
-
-    // --- Pointer Analysis Results ---
-    pub vtx_points_to: Vec<(FunctionId, FlowVariable, Path, Heap)>,
-    pub fld_points_to: Vec<(FunctionId, Heap, Path, Heap)>,
 }
 
 impl IndexResult {
@@ -279,8 +274,6 @@ impl IndexResult {
             assign_like,
             java_obj_assign_like: Vec::new(),
             paths,
-            vtx_points_to: Vec::new(),
-            fld_points_to: Vec::new(),
         })
     }
 }
@@ -318,59 +311,6 @@ impl std::fmt::Display for IndexResult {
         for (p,) in &self.paths {
             writeln!(f, "{}", p)?;
         }
-        Ok(())
-    }
-}
-
-struct PointerAnalysisRelations<'a> {
-    vtx_points_to: &'a [(FunctionId, FlowVariable, Path, Heap)],
-    fld_points_to: &'a [(FunctionId, Heap, Path, Heap)],
-}
-
-impl<'a> std::fmt::Display for PointerAnalysisRelations<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Vtx Points-To ({}):", self.vtx_points_to.len())?;
-        for (func_id, var, path, heap) in self.vtx_points_to {
-            let var_str = match var {
-                FlowVariable::Local(name) => name.to_string(),
-                _ => format!("{}", var),
-            };
-            writeln!(
-                f,
-                "  {}: {}{} -> {:?}",
-                func_id.id,
-                var_str,
-                path.to_dot_string(),
-                heap
-            )?;
-        }
-
-        writeln!(f, "\nFld Points-To ({}):", self.fld_points_to.len())?;
-        for (func_id, base_heap, fld_path, heap) in self.fld_points_to {
-            writeln!(
-                f,
-                "  {}: {:?}{} -> {:?}",
-                func_id.id,
-                base_heap,
-                fld_path.to_dot_string(),
-                heap
-            )?;
-        }
-
-        let mut heaps = std::collections::BTreeSet::new();
-        for (_, _, _, heap) in self.vtx_points_to {
-            heaps.insert(heap);
-        }
-        for (_, base_heap, _, heap) in self.fld_points_to {
-            heaps.insert(base_heap);
-            heaps.insert(heap);
-        }
-
-        writeln!(f, "\nHeaps ({}):", heaps.len())?;
-        for heap in heaps {
-            writeln!(f, "  {:?}", heap)?;
-        }
-
         Ok(())
     }
 }
@@ -584,10 +524,6 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         relation context_locals(CallString, FunctionId, FlowVariable, Path, FormalIndex, Path);
         relation context_summary(CallString, FunctionId, FormalIndex, Path, FormalIndex, Path);
 
-        // Pointer Analysis derived relations
-        relation pointer_vtx_points_to(FunctionId, FlowVariable, Path, Heap);
-        relation pointer_fld_points_to(FunctionId, Heap, Path, Heap);
-
         // Sets up paths from input program with static info. Paths must remain finite so we
         // shouldn't add paths from constructed summaries directly.
         program_paths(p) <-- actual_param(_, _, vx), let FlowVertex(_, p) = vx;
@@ -599,81 +535,23 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
         paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
 
+        // Initialize locals with formals
+        locals(infunc, v1, p1.clone(), i, p1.clone()) <--
+            formal_param(infunc, v1, _),
+            if let FlowVariable::Formal(i) = v1,
+            let p1 = Path::empty();
 
-        // Pointer Analysis Rules (Context-Insensitive Andersen Style)
-        // 1. Alloc. Each formal param gets an object.
-        pointer_vtx_points_to(m.clone(), v.clone(), Path::empty(), h) <--
-            formal_param(m, v, ty), let h = Heap::new(v.formal().unwrap());
-
-        // 2. Alloc fields of formals if those fields are used
-        pointer_vtx_points_to(m.clone(), v, assign_path.clone(), h.clone()),
-        pointer_fld_points_to(m.clone(), base_h.clone(), Path(suffix.clone()), h.clone()) <--
-            pointer_vtx_points_to(m, v, path, base_h),
-            (assign_like(m, _, _, _, v, assign_path) | assign_like(m, _, v, assign_path, _, _)),
-            if let Some(suffix) = match_prefix(assign_path, path),
-            if let Some(end) = suffix.back() && end.is_symbol(),
-            let h = Heap::with_path(base_h.index(), assign_path.clone());
-
-        // 3. Propagation and Assignments
-        // x.p = y.f;
-        // y.f.g -> h
-        // ==>
-        // x.p.g -> h
-        pointer_vtx_points_to(m.clone(), to.clone(), to_path.clone(), h.clone()) <--
-            assign_like(m, _, to, dst_path, from, src_path),
-            pointer_vtx_points_to(m, from, from_path, h),
-            if let Some(to_path) = from_path.substitute_prefix(src_path, dst_path),
-            paths(&to_path);
-
-        // This propagates in the reverse direction of assignment
-        // x.p = y.f;
-        // x.p.g -> h
-        // ==>
-        // y.f.g -> h
-        // pointer_vtx_points_to(m.clone(), from.clone(), from_path.clone(), h.clone()) <--
-        //     assign_like(m, _, to, dst_path, from, src_path),
-        //     pointer_vtx_points_to(m, to, to_path, h),
-        //     if let Some(from_path) = to_path.substitute_prefix(dst_path, src_path),
-        //     paths(&from_path);
-
-        // Store
-        // x.p.q = y.f;
-        // y.f -> h /\ x.p -> base_h
-        // ==>
-        // base_h|.q -> h
-        pointer_fld_points_to(m.clone(), base_h.clone(), Path(fld.clone()), h.clone()) <--
-            assign_like(m, _, base, dst_path, from, src_path),
-            pointer_vtx_points_to(m, from, src_path, h),
-            pointer_vtx_points_to(m, base, base_path, base_h),
-            if let Some(fld) = match_prefix(dst_path, base_path) && fld.len() == 1,
-            paths(&Path(fld.clone()));
-
-        // Load
-        // x.p = y.f.q;
-        // y.f -> -> base_h /\ base_h|.q -> h
-        // ==>
-        // x.p -> h
-        pointer_vtx_points_to(m.clone(), to, dst_path.clone(), h.clone()) <--
-            assign_like(m, _, to, dst_path, base, src_path),
-            pointer_vtx_points_to(m, base, base_path, base_h),
-            if let Some(fld) = match_prefix(src_path, base_path) && fld.len() == 1 ,
-            pointer_fld_points_to(m, base_h, Path(fld.clone()), h),
-            paths(&Path(fld.clone()));
-
-        locals(m.clone(), v, p, n, pn.clone()) <--
-            pointer_vtx_points_to(m, v, p, h),
-            let n = h.formal_index,
-            let pn = &h.path;
-
-        summary(m, to_n, to_path, from_n, from_path) <--
-            assign_like(m, _, to, dst_path, from, src_path),
-            pointer_vtx_points_to(m, from, src_path, src_h),
-            pointer_vtx_points_to(m, to, dst_path, dst_h),
-            let from_n = src_h.formal_index,
-            let from_path = &src_h.path,
-            let to_n = dst_h.formal_index,
-            let to_path = &dst_h.path,
-            if to_n != from_n || to_path != from_path;
+        // Propagate fields
+        locals(infunc, v1, p13.clone(), a, p4) <--
+            locals(infunc, v2, p23, a, p4),
+            assign_like(infunc, insn_id,  v1, p1, v2, p2),
+            if let Some(p13) = p23.substitute_prefix(p2, p1),
+            paths(&p13);
+        locals(infunc, v1, p1, a, p43.clone()) <--
+            locals(infunc, v2, p2, a, p4),
+            assign_like(infunc, _, v1, p1, v2, p23),
+            if let Some(p43) = p23.substitute_prefix(p2, p4),
+            paths(&p43);
 
         // Initialize assigns from program
         assign_like(func_id, insn_id, v1, p1, v2, p2) <--
@@ -700,6 +578,31 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             let p1 = dst_path.clone(),
             let v2 = FlowVariable::CallArg { id: call_site_id, formal: n2.clone() },
             let p2 = src_path.clone();
+
+        // Compute summaries from local reachability
+        summary(infunc, n1, p1, n2, p2) <--
+            locals(infunc, dst_var, p1, n2, p2),
+            // join with formal_param here instead of using if so that we don't have to traverse all of
+            // locals
+            formal_param(infunc, dst_var, formal_ty),
+            if let FlowVariable::Formal(n1) = dst_var,
+            if isout(n1, *formal_ty, p1),
+            if n1 != n2 || p1 != p2;
+
+        // aliasing summary rule, see discussion above
+        summary(infunc, n1, ap3.clone(), n2, bp) <--
+            config(c),
+            if c.alias_rule,
+            // this is the alias: v1.p1 <- n1.ap
+            locals(infunc, v1, p1, n1, ap),
+            // v1.p13 <- n2.bp
+            locals(infunc, v1, p13, n2, bp),
+            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
+            // if let Some(p3) = match_prefix(p13, p1),
+            // if !p3.is_empty(),
+            // let ap3 = ap.concat_str(p3),
+            paths(&ap3),
+            if n1 != n2 || ap3 != *bp;
 
         // Hybrid Inlining Rules:
         // Phase 1: propagate up the stack from indirect calls
@@ -852,9 +755,6 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             assign_like(func_id, insn_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
             paths(p_new.clone());
-
-        // Pointer analysis relations:
-
     };
     log::info!("index scc times: {}", prog.scc_times_summary());
     log::trace!(
@@ -868,20 +768,11 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             context_summary: &prog.context_summary,
         }
     );
-    log::trace!(
-        "pointer analysis relations:\n{}",
-        PointerAnalysisRelations {
-            vtx_points_to: &prog.pointer_vtx_points_to,
-            fld_points_to: &prog.pointer_fld_points_to,
-        }
-    );
     let result = IndexResult {
         summary: prog.summary,
         assign_like: prog.assign_like,
         java_obj_assign_like: prog.java_obj_assign_like,
         paths: prog.paths,
-        vtx_points_to: prog.pointer_vtx_points_to,
-        fld_points_to: prog.pointer_fld_points_to,
     };
     log::trace!("index result: {}", result);
     result

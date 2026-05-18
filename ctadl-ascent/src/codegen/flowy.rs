@@ -187,7 +187,7 @@ pub fn query_check(
 }
 
 /// Check a flowy program, running the ctadl index and query steps, and print errors.
-pub fn check<P: AsRef<Path>>(file: P, dump_object_graph: Option<&Path>) -> anyhow::Result<()> {
+pub fn check<P: AsRef<Path>>(file: P) -> anyhow::Result<()> {
     let file = file.as_ref();
     let program = flowy::compile_program(file)?;
     let mut pass_count = 0;
@@ -216,20 +216,6 @@ pub fn check<P: AsRef<Path>>(file: P, dump_object_graph: Option<&Path>) -> anyho
         .map(|e| (from_flowy_endpoint(&source_info.sites, e),))
         .collect();
     let index_result = taint_index(index_facts.clone());
-
-    if let Some(dot_path) = dump_object_graph {
-        use crate::error::ErrorContext;
-        let mut f =
-            std::fs::File::create(dot_path).err_context(|| "creating object graph dot file")?;
-        crate::index_engine::graphviz::render_object_graph(
-            &index_result.vtx_points_to,
-            &index_result.fld_points_to,
-            &source_info.sites,
-            &mut f,
-        )
-        .err_context(|| "rendering object graph")?;
-        eprintln!("Wrote object graph to '{}'", dot_path.display());
-    }
 
     let (ipass, ifail) = index_check_summaries(
         &index_result,

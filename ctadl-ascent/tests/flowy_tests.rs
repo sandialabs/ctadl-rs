@@ -5,7 +5,7 @@ use ctadl_ascent::codegen::flowy;
 /// Indexes a .tnt file and ensures the summary requirements are met.
 fn tnt_test<P: AsRef<std::path::Path>>(filename: P) -> anyhow::Result<()> {
     let filename = filename.as_ref();
-    flowy::check(filename, None)
+    flowy::check(filename)
         .map(|_| ())
         .with_context(|| {
             format!(

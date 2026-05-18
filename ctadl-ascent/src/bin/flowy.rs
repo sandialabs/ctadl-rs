@@ -7,14 +7,10 @@ use std::path::PathBuf;
 struct Args {
     /// The flowy program file to check
     file: PathBuf,
-
-    /// Dump the object graph to a dot file
-    #[arg(long)]
-    dump_object_graph: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
     env_logger::builder().format_timestamp(None).init();
     let args = Args::parse();
-    flowy::check(&args.file, args.dump_object_graph.as_deref())
+    flowy::check(&args.file)
 }

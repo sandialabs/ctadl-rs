@@ -11,7 +11,6 @@ as parameters.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
-
 use itertools::Itertools;
 
 use crate::codegen::models::codegen_summary;
@@ -115,7 +114,6 @@ pub fn index(
     models: &[std::path::PathBuf],
     strategy: CallResolutionStrategy,
     prune_unreachable_cfg_nodes: bool,
-    dump_object_graph: Option<&Path>,
 ) -> Result<(), Error> {
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -155,19 +153,6 @@ pub fn index(
         config.alias_rule = false;
     }
     let result = taint_index_with_config(facts, config);
-
-    if let Some(dot_path) = dump_object_graph {
-        let mut file =
-            std::fs::File::create(dot_path).err_context(|| "creating object graph dot file")?;
-        crate::index_engine::graphviz::render_object_graph(
-            &result.vtx_points_to,
-            &result.fld_points_to,
-            &source_info.sites,
-            &mut file,
-        )
-        .err_context(|| "rendering object graph")?;
-        eprintln!("Wrote object graph to '{}'", dot_path.display());
-    }
 
     // Slightly ugly special case for flowy artifacts. Since they have specific assertions at index
     // time, check them here.
