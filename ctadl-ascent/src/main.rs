@@ -202,7 +202,6 @@ pub struct IndexArgs {
     /// `--prune-unreachable-cfg-nodes=false` disables it explicitly.
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     pub prune_unreachable_cfg_nodes: Option<bool>,
-
 }
 
 #[derive(Debug, Args)]

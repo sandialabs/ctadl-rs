@@ -9,9 +9,9 @@ all the intermediate files should be stored; the API below this should be writte
 as parameters.
 */
 
+use itertools::Itertools;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
-use itertools::Itertools;
 
 use crate::codegen::models::codegen_summary;
 use crate::codegen::{CallResolutionStrategy, codegen_program};
