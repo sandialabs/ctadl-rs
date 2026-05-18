@@ -7,3 +7,5 @@ ascent/**
 /.opencode
 /results.sarif
 *.o
+/benchmarks/karonte_elfs
+/benchmarks/karonte_firmware
