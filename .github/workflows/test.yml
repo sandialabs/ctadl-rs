@@ -27,5 +27,11 @@ jobs:
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy -- -Dwarnings
+
       - name: Run workspace tests
         run: cargo test --workspace --verbose
