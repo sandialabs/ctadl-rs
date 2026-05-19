@@ -6,13 +6,41 @@
       "where": [
         {
           "constraint": "signature_pattern",
-          "pattern": ".*(fgets|fgetws|gets|getws|recv|fscanf|fwscanf|getenv|read|fread|msgrcv).*"
+          "pattern": ".*(fgets|fgetws|gets|getws|getenv|fscanf|fwscanf|msgrcv).*"
         }
       ],
       "model": {
         "sources": [
-          { "port": "Return", "kind": "user_input" },
-          { "port": "Argument(0)", "kind": "user_input" }
+          { "port": "Return.deref", "kind": "user_input" },
+          { "port": "Argument(0).deref", "kind": "user_input" }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_pattern",
+          "pattern": ".*(read|recv).*"
+        }
+      ],
+      "model": {
+        "sources": [
+          { "port": "Argument(1).deref", "kind": "user_input" }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_pattern",
+          "pattern": ".*(fread).*"
+        }
+      ],
+      "model": {
+        "sources": [
+          { "port": "Argument(0).deref", "kind": "user_input" }
         ]
       }
     },
@@ -26,7 +54,7 @@
       ],
       "model": {
         "sinks": [
-          { "port": "Argument(0)", "kind": "command_injection" }
+          { "port": "Argument(0).deref", "kind": "command_injection" }
         ]
       }
     },
@@ -35,12 +63,45 @@
       "where": [
         {
           "constraint": "signature_pattern",
-          "pattern": ".*(strcpy|wcscpy|strcat|wcscat|sprintf|swprintf).*"
+          "pattern": ".*(strcpy|wcscpy|strcat|wcscat).*"
         }
       ],
       "model": {
         "sinks": [
-          { "port": "Argument(1)", "kind": "buffer_overflow" }
+          { "port": "Argument(1).deref", "kind": "buffer_overflow" }
+        ],
+        "propagation": [
+          { "input": "Argument(1).deref", "output": "Argument(0).deref" },
+          { "input": "Argument(1).deref", "output": "Return.deref" }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_pattern",
+          "pattern": ".*(memcpy|memmove).*"
+        }
+      ],
+      "model": {
+        "propagation": [
+          { "input": "Argument(1).deref", "output": "Argument(0).deref" },
+          { "input": "Argument(1).deref", "output": "Return.deref" }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_pattern",
+          "pattern": ".*(sprintf|swprintf).*"
+        }
+      ],
+      "model": {
+        "sinks": [
+          { "port": "Argument(*).deref", "kind": "buffer_overflow" }
         ]
       }
     }
