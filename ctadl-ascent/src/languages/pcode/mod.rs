@@ -323,10 +323,9 @@ impl Context {
                             )
                         } else {
                             // Other parameter (register, etc.) - bind to local variable
-                            StatementKind::assign(
-                                self.get_lvalue(rep, &pcode_facts.vnode_facts)
-                                    .map(access_path_expect_variable)?,
-                                [VariableRef::new_parameter(ParameterIdx::new(i)).into()],
+                            StatementKind::assign_or_update(
+                                self.get_lvalue(rep, &pcode_facts.vnode_facts)?,
+                                VariableRef::new_parameter(ParameterIdx::new(i)).into(),
                             )
                         };
                         func.blocks.blocks_mut()[bb_idx].push_back(Statement::new_kind(kind));
@@ -366,12 +365,22 @@ impl Context {
                     entry_bb_id = sorted_bb_ids
                         .iter()
                         .find(|&bb_id| {
-                            if let Some(bb_data) = pcode_facts.bb_facts.get(bb_id)
-                                && let Some(first_inst_id) = &bb_data.first_inst
-                                && let Some(pcode) = pcode_facts.pcode_facts.get(first_inst_id)
-                                && let Some(addr) = &pcode.target
-                            {
-                                addr.0 == ep.0
+                            if let Some(bb_data) = pcode_facts.bb_facts.get(bb_id) {
+                                // Try BB_START first
+                                if let Some(start_addr) = &bb_data.start_address
+                                    && start_addr.0 == ep.0
+                                {
+                                    return true;
+                                }
+                                // Fallback to first instruction address
+                                if let Some(first_inst_id) = &bb_data.first_inst
+                                    && let Some(pcode) = pcode_facts.pcode_facts.get(first_inst_id)
+                                    && let Some(addr) = &pcode.target
+                                {
+                                    addr.0 == ep.0
+                                } else {
+                                    false
+                                }
                             } else {
                                 false
                             }
@@ -1304,9 +1313,4 @@ impl Context {
             source_info: builders.source_info_builder.finish(),
         })
     }
-}
-
-fn access_path_expect_variable(ap: AccessPath) -> VariableRef {
-    assert!(ap.path.is_empty());
-    ap.variable_ref
 }

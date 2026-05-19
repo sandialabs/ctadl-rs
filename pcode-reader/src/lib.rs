@@ -165,6 +165,7 @@ pub struct RegisterData {
 #[derive(Debug, Clone)]
 pub struct BBData {
     pub hfunc: HighFunc,
+    pub start_address: Option<PcodeAddress>,
     pub first_inst: Option<PcodeInstruction>,
     pub last_inst: Option<PcodeInstruction>,
     pub instruction_indices: Vec<(u32, PcodeInstruction)>, // (index, instruction) pairs
@@ -623,6 +624,11 @@ impl PcodeFactsReader {
         let last_facts =
             self.read_csv_facts::<(PcodeBlockBasic, PcodeInstruction)>("BB_LAST.facts")?;
 
+        // Read BB_START.facts
+        let start_addr_facts = self
+            .read_csv_facts_optional::<(PcodeBlockBasic, i64)>("BB_START.facts")?
+            .unwrap_or_default();
+
         // Convert to more usable formats
         let mut hfunc_map: BTreeMap<PcodeBlockBasic, HighFunc> = BTreeMap::new();
         for (bb_id, hfunc_id) in hfunc_facts {
@@ -637,6 +643,11 @@ impl PcodeFactsReader {
         let mut last_map: BTreeMap<PcodeBlockBasic, PcodeInstruction> = BTreeMap::new();
         for (bb_id, last_inst) in last_facts {
             last_map.insert(bb_id, last_inst);
+        }
+
+        let mut start_addr_map: BTreeMap<PcodeBlockBasic, PcodeAddress> = BTreeMap::new();
+        for (bb_id, start_addr) in start_addr_facts {
+            start_addr_map.insert(bb_id, PcodeAddress(start_addr));
         }
 
         // Read BB_PCODE_INDEX.facts
@@ -684,6 +695,7 @@ impl PcodeFactsReader {
         for (bb_id, hfunc_id) in hfunc_map {
             let first_inst = first_map.get(&bb_id).cloned();
             let last_inst = last_map.get(&bb_id).cloned();
+            let start_address = start_addr_map.get(&bb_id).cloned();
             let instruction_indices = index_map.get(&bb_id).cloned().unwrap_or_default();
             let out_edges = out_edge_map.get(&bb_id).cloned().unwrap_or_default();
             let tout_edges = tout_edge_map.get(&bb_id).cloned().unwrap_or_default();
@@ -693,6 +705,7 @@ impl PcodeFactsReader {
                 bb_id,
                 BBData {
                     hfunc: hfunc_id,
+                    start_address,
                     first_inst,
                     last_inst,
                     instruction_indices,
