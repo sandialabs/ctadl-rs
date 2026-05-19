@@ -30,12 +30,14 @@ def parse_sarif(sarif_path, debug=False):
         
         for run in sarif.get("runs", []):
             for result in run.get("results", []):
-                if "codeFlows" in result:
-                    flows.append(result)
-                elif debug:
-                    # In debug profile, CTADL typically outputs non-flow results 
-                    # with specific ruleIds or categories indicating matched sources/sinks
-                    rule_id = result.get("ruleId", "").lower()
+                rule_id = result.get("ruleId", "").lower()
+                
+                # In the human profile, a true complete path is C0001.tainted-path.
+                if "c0001" in rule_id:
+                    if "codeFlows" in result:
+                        flows.append(result)
+                
+                if debug:
                     if "source" in rule_id:
                         sources_matched += 1
                     elif "sink" in rule_id:
@@ -131,22 +133,27 @@ def main():
 
         # 4. Format
         sarif_path = f"{name}_results.sarif"
-        format_cmd = [args.ctadl, "format", name, "-o", sarif_path]
-        if args.debug:
-            format_cmd.extend(["--sarif-profile", "debug"])
-            
-        res = run_command(format_cmd)
+        debug_sarif_path = f"{name}_debug.sarif"
+        
+        # Always run the human profile to get actual completed flows (C0001.tainted-path)
+        res = run_command([args.ctadl, "format", name, "-o", sarif_path, "--sarif-profile", "human"])
         if res.returncode != 0:
             print("Format FAILED")
             report["results"].append({"name": name, "status": "Crashed", "phase": "format", "error": res.stderr})
             report["summary"]["crashed"] += 1
             continue
+            
+        sources_matched = 0
+        sinks_matched = 0
+        if args.debug:
+            # Run the debug profile to check if sources/sinks were matched
+            run_command([args.ctadl, "format", name, "-o", debug_sarif_path, "--sarif-profile", "debug"])
+            _, sources_matched, sinks_matched = parse_sarif(debug_sarif_path, debug=True)
+            if os.path.exists(debug_sarif_path):
+                os.remove(debug_sarif_path)
 
         # 5. Analyze results
-        if args.debug:
-            flows, sources_matched, sinks_matched = parse_sarif(sarif_path, debug=True)
-        else:
-            flows = parse_sarif(sarif_path)
+        flows = parse_sarif(sarif_path, debug=False)
             
         duration = time.time() - start_time
         
