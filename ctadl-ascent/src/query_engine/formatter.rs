@@ -915,23 +915,6 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                                 }
                             }
                         }
-                    } else {
-                        for src in &fwd_sources {
-                            let start_node =
-                                (src.infunc, src.vertex.0.clone(), src.vertex.1.clone());
-                            let end_node = node.clone();
-                            if let (Some(&start_id), Some(&end_id)) =
-                                (node_to_id.get(&start_node), node_to_id.get(&end_node))
-                                && seen_pairs.insert((start_id, u32::MAX))
-                                && let Some(p) = find_path(g, start_id, end_id)
-                            {
-                                results_by_path
-                                    .entry(p)
-                                    .or_insert((*fs_id, Vec::new()))
-                                    .1
-                                    .push(((*src).clone(), None, lbl.clone()));
-                            }
-                        }
                     }
                 }
             }
@@ -1112,14 +1095,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 .level(ResultLevel::None)
                 .message(Message::builder().text(final_msg_text).build())
                 .locations(vec![location.clone()])
-                .properties(properties);
-            let result = if config.profile == SarifProfile::Debug
-                && let Some(code_flows) = code_flows_by_span.get(file_span_id)
-            {
-                result.code_flows(code_flows.clone()).build()
-            } else {
-                result.build()
-            };
+                .properties(properties)
+                .build();
 
             results_by_span.insert(*file_span_id, result);
         }
@@ -1137,8 +1114,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         ));
     }
 
-    // Now build results for paths (only for Human profile, one per path)
-    if config.profile == SarifProfile::Human {
+    // Now build results for paths (for Human or Debug profiles, one per path)
+    if config.profile == SarifProfile::Human || config.profile == SarifProfile::Debug {
         for (_path, (file_span_id, details)) in results_by_path {
             let location = if let Some(loc) = span_to_location.get(&file_span_id) {
                 loc.clone()
