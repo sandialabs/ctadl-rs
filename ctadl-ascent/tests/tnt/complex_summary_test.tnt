@@ -9,7 +9,7 @@ where summaries [
 start:
     // Function that should satisfy complex summary requirements
     temp1 = input.[0].field.[1].field;
-    temp2 = input.[20].[30].field;
+    temp2 = input.[50].field;
     output.[10].nested = temp2;
     return temp1;
 }

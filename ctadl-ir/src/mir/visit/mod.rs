@@ -42,6 +42,15 @@ macro_rules! index_vec_iter {
     };
 }
 
+macro_rules! field_accesses_iter {
+    ($field_accesses:ident, mut) => {
+        $field_accesses.fields.iter_mut()
+    };
+    ($field_accesses:ident,) => {
+        $field_accesses.fields.iter()
+    };
+}
+
 macro_rules! make_ast_visitor {
     ($visitor_trait_name:ident, $($mutability:ident)?) => {
         pub trait $visitor_trait_name {
@@ -86,6 +95,9 @@ macro_rules! make_ast_visitor {
             }
             fn visit_field_accesses(&mut self, field_accesses: &$($mutability)? FieldAccesses) {
                 self.super_field_accesses(field_accesses);
+            }
+            fn visit_field_access(&mut self, field_access: &$($mutability)? FieldAccess) {
+                self.super_field_access(field_access);
             }
             fn visit_call_style(&mut self, call_style: &$($mutability)? CallStyle) {
                 self.super_call_style(call_style);
@@ -158,6 +170,16 @@ macro_rules! make_ast_visitor {
                         }
                         self.visit_variable_ref(dest);
                     }
+                    Load { dest, source, field } => {
+                        self.visit_variable_ref(dest);
+                        self.visit_variable_ref(source);
+                        self.visit_field_access(field);
+                    }
+                    Store { dest, field, value } => {
+                        self.visit_variable_ref(dest);
+                        self.visit_field_access(field);
+                        self.visit_variable_ref(value);
+                    }
                     CallAssign { rets, args, style } => {
                         self.visit_call_style(style);
                         for a in args {
@@ -178,12 +200,6 @@ macro_rules! make_ast_visitor {
                             self.visit_variable_ref(op);
                         }
                         self.visit_variable_ref(global);
-                    }
-                    Update { dest: (dest_var, dest_fields), source, value } => {
-                        self.visit_variable_ref(dest_var);
-                        self.visit_field_accesses(dest_fields);
-                        self.visit_variable_ref(source);
-                        self.visit_exp(value);
                     }
                     Nop => (),
                 }
@@ -244,14 +260,18 @@ macro_rules! make_ast_visitor {
 
             fn super_field_accesses(&mut self, field_accesses: &$($mutability)? FieldAccesses) {
                 // Traverse each field access in the sequence
-                for field_access in &field_accesses.fields {
-                    match field_access {
-                        FieldAccess::Symbol(_) => {
-                            // No additional traversal needed for Symbol
-                        }
-                        FieldAccess::Offset(_) => {
-                            // No additional traversal needed for Offset
-                        }
+                for field_access in field_accesses_iter!(field_accesses, $($mutability)?) {
+                    self.visit_field_access(field_access);
+                }
+            }
+
+            fn super_field_access(&mut self, field_access: &$($mutability)? FieldAccess) {
+                match field_access {
+                    FieldAccess::Symbol(_) => {
+                        // No additional traversal needed for Symbol
+                    }
+                    FieldAccess::Offset(_) => {
+                        // No additional traversal needed for Offset
                     }
                 }
             }

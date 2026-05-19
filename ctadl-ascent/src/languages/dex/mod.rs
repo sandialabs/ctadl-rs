@@ -677,13 +677,11 @@ impl Context {
                     source.cloned().map(|r| reg_to_var(code_item, r).into()),
                 )));
                 // flow temp into field update
-                stmts.push(Statement::new_kind(StatementKind::update(
-                    AccessPath::new(
-                        VariableRef::new_global(),
-                        [mir::FieldAccess::Symbol(name.into())],
-                    ),
-                    temp_var.into(),
-                )));
+                stmts.push(Statement::new_kind(StatementKind::Store {
+                    dest: VariableRef::new_global(),
+                    field: mir::FieldAccess::Symbol(name.into()),
+                    value: temp_var.clone(),
+                }));
                 return Ok(stmts);
             }
             Instruction::SGet(f)
@@ -725,10 +723,11 @@ impl Context {
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
                 // flow temp into field update
-                stmts.push(Statement::new_kind(StatementKind::update(
-                    AccessPath::new(object, [mir::FieldAccess::Symbol(name.into())]),
-                    temp_var.into(),
-                )));
+                stmts.push(Statement::new_kind(StatementKind::Store {
+                    dest: object,
+                    field: mir::FieldAccess::Symbol(name.into()),
+                    value: temp_var.clone(),
+                }));
                 return Ok(stmts);
             }
             Instruction::IGet(f)
@@ -787,11 +786,11 @@ impl Context {
                         .map(|r| reg_to_var(code_item, r).into()),
                 )));
                 let array_var = reg_to_var(code_item, f.b);
-                let dest_path = AccessPath::new(array_var, [mir::FieldAccess::Symbol("[]".into())]);
-                stmts.push(Statement::new_kind(StatementKind::update(
-                    dest_path,
-                    temp_var.into(),
-                )));
+                stmts.push(Statement::new_kind(StatementKind::Store {
+                    dest: array_var,
+                    field: mir::FieldAccess::Symbol("[]".into()),
+                    value: temp_var.clone(),
+                }));
                 return Ok(stmts);
             }
             Instruction::Throw(f) => {

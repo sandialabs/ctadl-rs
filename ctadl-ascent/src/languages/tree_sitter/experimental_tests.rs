@@ -198,11 +198,11 @@ fn simple_else() {
     log::info!("{}", dump);
     assert!(janky_expected(
         &dump,
-        "begin block_1:\n@p1 = update (@p1.v_if := @p0"
+        "begin block_1:\nstore @p1.v_if := @p0"
     ));
     assert!(janky_expected(
         &dump,
-        "begin block_3:\n@p1 = update (@p1.v_else := <const"
+        "begin block_3:\nassign %t_store_val = <const: \"5\">\nstore @p1.v_else := %t_store_val"
     ));
     //todo add block
 }
@@ -333,21 +333,18 @@ fn field_access_values() {
     log::info!("{}", dump);
     //let summary = get_summary(program);
     //log::info!("SUMMARY {:#?}", summary);
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f2 := @p2)"));
+    assert!(janky_expected(&dump, "store @p0.f2 := @p2"));
 
     assert!(janky_expected(
         &dump,
-        "@p0 = update (@p0.f2.nf1.y := @p1.f2.f3.f4)"
+        "store @p0.y := %t_store_val"
     ));
 
-    assert!(janky_expected(
-        &dump,
-        "@p0 = update (@p0.f2.nf1.y := @p1.f2.f3.f4)"
-    ));
+    // Obsolete check
 
     assert!(janky_expected(&dump, "assign %<t1> = @p2, @p3"));
 
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f3 := %<t2>)"));
+    assert!(janky_expected(&dump, "store @p0.f3 := %<t2>"));
 
     assert!(janky_expected(&dump, "return @p0.f1"));
 }
@@ -495,7 +492,7 @@ fn compound_declaration_with_fields() {
     let dump = program_from_string(src).to_string();
     assert!(janky_expected(&dump, "assign %<t0> = @p0.f1, @p0.f3"));
     assert!(janky_expected(&dump, "assign %<t1> = @p0.f5, $globals.b"));
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f4 := %<t1>)"));
+    assert!(janky_expected(&dump, "store @p0.f4 := %<t1>"));
 }
 
 #[test_log::test]

@@ -115,39 +115,6 @@ impl<'a> BasicBlockBuilder<'a> {
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create and insert an update statement
-    ///
-    /// # Arguments
-    /// * `dest` - Destination access path
-    /// * `source` - Source expression
-    pub fn create_update(
-        &mut self,
-        dest: impl Into<AccessPath>,
-        source: impl Into<Exp>,
-    ) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::update(dest.into(), source.into()));
-        let current_pos = self.insertion_point;
-        self.insert_statement(statement);
-        StatementIdx::from(current_pos as u32)
-    }
-
-    /// Create and insert an assign_or_update statement
-    ///
-    /// # Arguments
-    /// * `dest` - Destination access path
-    /// * `source` - Source expression
-    pub fn create_assign_or_update(
-        &mut self,
-        dest: impl Into<AccessPath>,
-        source: impl Into<Exp>,
-    ) -> StatementIdx {
-        let statement =
-            Statement::new_kind(StatementKind::assign_or_update(dest.into(), source.into()));
-        let current_pos = self.insertion_point;
-        self.insert_statement(statement);
-        StatementIdx::from(current_pos as u32)
-    }
-
     /// Create and insert a call statement
     ///
     /// # Arguments

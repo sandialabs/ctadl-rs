@@ -290,6 +290,36 @@ impl Visitor for CodegenVisitor<'_> {
                         .push((site, FlowVertex(dest, fx::Path::empty()), src));
                 }
             }
+            Load {
+                dest,
+                source,
+                field,
+            } => {
+                let dest = self.trans_variable_ref(dest);
+                let source = self.trans_variable_ref(source);
+                let path = fx::Path::from(field);
+                self.paths_dedup.insert((path.clone(),));
+                self.facts.assign.push((
+                    site,
+                    FlowVertex(dest, fx::Path::empty()),
+                    FlowVertex(source, path),
+                ));
+            }
+            Store {
+                dest: base,
+                field,
+                value,
+            } => {
+                let base = self.trans_variable_ref(base);
+                let value = self.trans_variable_ref(value);
+                let path = fx::Path::from(field);
+                self.paths_dedup.insert((path.clone(),));
+                self.facts.assign.push((
+                    site,
+                    FlowVertex(base, path),
+                    FlowVertex(value, fx::Path::empty()),
+                ));
+            }
             Phi {
                 dest: out,
                 operands,
@@ -468,26 +498,6 @@ impl Visitor for CodegenVisitor<'_> {
                         fx::Path::empty(),
                     ),
                 ));
-            }
-            Update {
-                dest: (dest_var, dest_fields),
-                source,
-                value,
-            } => {
-                let dest_var = self.trans_variable_ref(dest_var);
-                let source = self.trans_variable_ref(source);
-                let value = self.trans_exp(value);
-                // dest_var <- source
-                let dest = FlowVertex(dest_var.clone(), dest_fields.into());
-                self.facts.assign.push((
-                    site,
-                    FlowVertex(dest_var.clone(), fx::Path::empty()),
-                    FlowVertex(source.clone(), fx::Path::empty()),
-                ));
-                // dest_var.dest_fields <- value
-                if let Some(value) = value {
-                    self.facts.assign.push((site, dest, value));
-                }
             }
             Nop => (),
         }

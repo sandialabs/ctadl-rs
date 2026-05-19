@@ -209,23 +209,18 @@ pub enum StatementKind {
         sources: SmallVec<[Exp; 2]>,
     },
 
-    /// Update the field of a structure and return the new structure. The `dest` is specified as a
-    /// tuple of the new structure and the field to update. The update is performed on the
-    /// `dest` and the field is set to `value`. It's important to explicitly specify the source
-    /// and destination so that SSA conversion can rename the dest after the update.
-    ///
-    /// It looks like this:
-    ///
-    /// ```text
-    /// s = update(s.foo := new_value);
-    /// ```
-    ///
-    /// This instruction is used to handle local variables with fields and global variables.
-    Update {
-        dest: (VariableRef, FieldAccesses),
+    /// Load a value from a source variable and field.
+    Load {
+        dest: VariableRef,
         source: VariableRef,
-        /// Value to store
-        value: Exp,
+        field: FieldAccess,
+    },
+
+    /// Store a value to a dest variable and field.
+    Store {
+        dest: VariableRef,
+        field: FieldAccess,
+        value: VariableRef,
     },
 
     /// Call instructions. Call instructions pass parameters in `args` and return values in `rets`.
@@ -890,37 +885,6 @@ impl StatementKind {
         }
     }
 
-    /// Constructs an update to a structure. Note: for the IR to be well-formed, the field must be
-    /// non-empty. Use this to update a field of a variable.
-    pub fn update(dest: AccessPath, src: Exp) -> Self {
-        let AccessPath { variable_ref, path } = dest;
-        StatementKind::Update {
-            dest: (variable_ref.clone(), path),
-            source: variable_ref.clone(),
-            value: src,
-        }
-    }
-
-    /// Generates either an assign or an update depending on whether fields are being set. Use this
-    /// when the caller might or might not be updating a field.
-    #[inline]
-    pub fn assign_or_update(dest: AccessPath, src: Exp) -> Self {
-        if !dest.path.is_empty() {
-            let AccessPath { variable_ref, path } = dest;
-            StatementKind::Update {
-                dest: (variable_ref.clone(), path),
-                source: variable_ref.clone(),
-                value: src,
-            }
-        } else {
-            let dest = dest.variable_ref;
-            StatementKind::Assign {
-                dest,
-                sources: smallvec![src],
-            }
-        }
-    }
-
     // #[inline]
     // pub fn assigns<B>(assigns: &[(AccessPath, Exp)]) -> B
     // where
@@ -964,24 +928,18 @@ impl StatementKind {
                 };
                 Box::new(a.chain(b))
             }
-            Phi { operands, .. } => Box::new(operands.iter().map(|(_, v)| v)),
-            ParamFlow { params, global } => Box::new(params.iter().chain(std::iter::once(global))),
-            Update {
+            Load {
                 dest: _,
                 source,
+                field: _,
+            } => Box::new(std::iter::once(source)),
+            Store {
+                dest: base,
+                field: _,
                 value,
-            } => {
-                let a: VarIter<'s> = Box::new(std::iter::once(source));
-                let b: VarIter<'s> = if matches!(value, Exp::AccessPath(_)) {
-                    let Exp::AccessPath(ap) = value else {
-                        unreachable!()
-                    };
-                    Box::new(std::iter::once(&ap.variable_ref))
-                } else {
-                    Box::new(std::iter::empty())
-                };
-                Box::new(a.chain(b))
-            }
+            } => Box::new([base, value].into_iter()),
+            Phi { operands, .. } => Box::new(operands.iter().map(|(_, v)| v)),
+            ParamFlow { params, global } => Box::new(params.iter().chain(std::iter::once(global))),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1017,25 +975,19 @@ impl StatementKind {
                 };
                 Box::new(a.chain(b))
             }
+            Load {
+                dest: _,
+                source,
+                field: _,
+            } => Box::new(std::iter::once(source)),
+            Store {
+                dest: base,
+                field: _,
+                value,
+            } => Box::new([base, value].into_iter()),
             Phi { operands, .. } => Box::new(operands.iter_mut().map(|(_, v)| v)),
             ParamFlow { params, global } => {
                 Box::new(params.iter_mut().chain(std::iter::once(global)))
-            }
-            Update {
-                dest: _,
-                source,
-                value,
-            } => {
-                let a: VarIterMut<'s> = Box::new(std::iter::once(source));
-                let b: VarIterMut<'s> = if matches!(value, Exp::AccessPath(_)) {
-                    let Exp::AccessPath(ap) = value else {
-                        unreachable!()
-                    };
-                    Box::new(std::iter::once(&mut ap.variable_ref))
-                } else {
-                    Box::new(std::iter::empty())
-                };
-                Box::new(a.chain(b))
             }
             Nop => Box::new(std::iter::empty()),
         }
@@ -1046,14 +998,15 @@ impl StatementKind {
         use StatementKind::*;
         match self {
             Assign { dest, .. } => Box::new(std::iter::once(dest)),
+            Load {
+                dest,
+                source: _,
+                field: _,
+            } => Box::new(std::iter::once(dest)),
             CallAssign { rets, .. } => Box::new(rets.iter()),
             Phi { dest, .. } => Box::new(std::iter::once(dest)),
             ParamFlow { .. } => Box::new(std::iter::empty()),
-            Update {
-                dest: (dest_var, _dest_fields),
-                source: _,
-                value: _,
-            } => Box::new(std::iter::once(dest_var)),
+            Store { .. } => Box::new(std::iter::empty()),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1063,14 +1016,15 @@ impl StatementKind {
         use StatementKind::*;
         match self {
             Assign { dest, sources: _ } => Box::new(std::iter::once(dest)),
+            Load {
+                dest,
+                source: _,
+                field: _,
+            } => Box::new(std::iter::once(dest)),
             CallAssign { rets, .. } => Box::new(rets.iter_mut()),
             Phi { dest: out, .. } => Box::new(std::iter::once(out)),
             ParamFlow { .. } => Box::new(std::iter::empty()),
-            Update {
-                dest: (dest_var, _dest_fields),
-                source: _,
-                value: _,
-            } => Box::new(std::iter::once(dest_var)),
+            Store { .. } => Box::new(std::iter::empty()),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1426,12 +1380,17 @@ impl Display for StatementKind {
                 write!(f, "; {global}")?;
                 Ok(())
             }
-            Update {
-                dest: (dest_var, dest_fields),
+            Load {
+                dest,
                 source,
+                field,
+            } => write!(f, "{dest} = load {source}.{field}"),
+            Store {
+                dest: base,
+                field,
                 value,
             } => {
-                write!(f, "{dest_var} = update ({source}{dest_fields} := {value})")
+                write!(f, "store {base}.{field} := {value}")
             }
             Nop => write!(f, "nop"),
         }

@@ -234,8 +234,8 @@ fn function_f() -> FunctionData {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_update(a.clone(), q);
-    b.create_assign_or_update(p.clone(), a);
+    b.create_assign(a.clone(), smallvec![Exp::AccessPath(q.into())] as SmallVec<[Exp; 1]>);
+    b.create_assign(p.clone(), smallvec![Exp::AccessPath(a.into())] as SmallVec<[Exp; 1]>);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -269,8 +269,8 @@ fn function_j() -> FunctionData {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign(a.clone(), vec![q.into(), param_b.into()]);
-    b.create_assign_or_update(p.clone(), a);
+    b.create_assign(a.clone(), vec![Exp::AccessPath(q.clone().into()), Exp::AccessPath(param_b.into())]);
+    b.create_assign(p.clone(), smallvec![Exp::AccessPath(a.into())] as SmallVec<[Exp; 1]>);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -337,8 +337,8 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_update(a.clone(), q);
-    b.create_assign_or_update(p.clone(), a);
+    b.create_assign(a.clone(), smallvec![Exp::AccessPath(q.into())] as SmallVec<[Exp; 1]>);
+    b.create_assign(p.clone(), smallvec![Exp::AccessPath(a.into())] as SmallVec<[Exp; 1]>);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -415,16 +415,16 @@ fn function_with_phi() -> FunctionData {
 
     // True branch: x = a (using builder API)
     let mut true_builder = BasicBlockBuilder::new(&mut f[true_branch]);
-    true_builder.create_assign_or_update(
-        true_builder.new_access_path(x.clone(), Vec::<&str>::new()),
-        Exp::AccessPath(true_builder.new_access_path(a, Vec::<&str>::new())),
+    true_builder.create_assign(
+        x.clone(),
+        smallvec![Exp::AccessPath(true_builder.new_access_path(a, Vec::<&str>::new()))] as SmallVec<[Exp; 1]>,
     );
 
     // False branch: x = b (using builder API)
     let mut false_builder = BasicBlockBuilder::new(&mut f[false_branch]);
-    false_builder.create_assign_or_update(
-        false_builder.new_access_path(x.clone(), Vec::<&str>::new()),
-        Exp::AccessPath(false_builder.new_access_path(b, Vec::<&str>::new())),
+    false_builder.create_assign(
+        x.clone(),
+        smallvec![Exp::AccessPath(false_builder.new_access_path(b, Vec::<&str>::new()))] as SmallVec<[Exp; 1]>,
     );
 
     // Merge block will get phi node during SSA conversion (using builder API)
@@ -471,10 +471,12 @@ fn function_with_update() -> FunctionData {
     let s_access = builder.new_access_path(s_var.clone(), vec!["field"]);
 
     // Create update statement using builder API
-    builder.create_update(
-        s_access,
-        Exp::AccessPath(builder.new_access_path(new_value.clone(), Vec::<&str>::new())),
-    );
+    let val_exp = Exp::AccessPath(builder.new_access_path(new_value.clone(), Vec::<&str>::new()));
+    builder.insert_statement(Statement::new_kind(StatementKind::Store {
+        dest: s_var.clone(),
+        field: ctadl_ir::FieldAccess::Symbol("field".into()),
+        value: match val_exp { Exp::AccessPath(ap) => ap.variable_ref, _ => unreachable!() },
+    }));
 
     // Create return statement using builder API
     builder.create_ret(vec![Exp::AccessPath(
@@ -514,10 +516,12 @@ fn function_with_param_to_global_field() -> FunctionData {
     let globals_field_access = builder.new_access_path(globals_var.clone(), vec!["field"]);
 
     // This is the key assignment: globals.field = local_var
-    builder.create_update(
-        globals_field_access,
-        Exp::AccessPath(builder.new_access_path(local_var.clone(), Vec::<&str>::new())),
-    );
+    let val_exp = Exp::AccessPath(builder.new_access_path(local_var.clone(), Vec::<&str>::new()));
+    builder.insert_statement(Statement::new_kind(StatementKind::Store {
+        dest: globals_var.clone(),
+        field: ctadl_ir::FieldAccess::Symbol("field".into()),
+        value: match val_exp { Exp::AccessPath(ap) => ap.variable_ref, _ => unreachable!() },
+    }));
 
     // Return globals
     builder.create_ret(vec![]);
