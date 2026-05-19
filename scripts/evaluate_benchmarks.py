@@ -4,6 +4,7 @@ import os
 import sys
 import argparse
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def run_command(cmd, cwd=None):
     try:
@@ -52,6 +53,94 @@ def parse_sarif(sarif_path, debug=False):
             return None, 0, 0
         return None
 
+def evaluate_binary(binary_path, ctadl, model, debug):
+    name = os.path.basename(binary_path)
+    
+    # Determine expectation
+    expected_flow = True
+    if "_good" in name.lower():
+        expected_flow = False
+    elif "_bad" in name.lower():
+        expected_flow = True
+    else:
+        # Default to expecting flow if not specified
+        expected_flow = True
+
+    start_time = time.time()
+    
+    # Clean up previous state if any
+    run_command([ctadl, "inspect", name])
+
+    # 1. Import
+    res = run_command([ctadl, "import", binary_path, "-l", "pcode"])
+    if res.returncode != 0:
+        return {"name": name, "status": "Crashed", "phase": "import", "error": res.stderr}, "crashed", f"Processing {name} (Expected Flow: {expected_flow})... Import FAILED"
+
+    # 2. Index
+    res = run_command([ctadl, "index", name])
+    if res.returncode != 0:
+        return {"name": name, "status": "Crashed", "phase": "index", "error": res.stderr}, "crashed", f"Processing {name} (Expected Flow: {expected_flow})... Index FAILED"
+
+    # 3. Query
+    res = run_command([ctadl, "query", name, "-m", model])
+    if res.returncode != 0:
+        return {"name": name, "status": "Crashed", "phase": "query", "error": res.stderr}, "crashed", f"Processing {name} (Expected Flow: {expected_flow})... Query FAILED"
+
+    # 4. Format
+    sarif_path = f"{name}_results.sarif"
+    debug_sarif_path = f"{name}_debug.sarif"
+    
+    # Always run the human profile to get actual completed flows (C0001.tainted-path)
+    res = run_command([ctadl, "format", name, "-o", sarif_path, "--sarif-profile", "human"])
+    if res.returncode != 0:
+        return {"name": name, "status": "Crashed", "phase": "format", "error": res.stderr}, "crashed", f"Processing {name} (Expected Flow: {expected_flow})... Format FAILED"
+        
+    sources_matched = 0
+    sinks_matched = 0
+    if debug:
+        # Run the debug profile to check if sources/sinks were matched
+        run_command([ctadl, "format", name, "-o", debug_sarif_path, "--sarif-profile", "debug"])
+        _, sources_matched, sinks_matched = parse_sarif(debug_sarif_path, debug=True)
+        if os.path.exists(debug_sarif_path):
+            os.remove(debug_sarif_path)
+
+    # 5. Analyze results
+    flows = parse_sarif(sarif_path, debug=False)
+        
+    duration = time.time() - start_time
+    
+    # Clean up SARIF
+    if os.path.exists(sarif_path):
+        os.remove(sarif_path)
+
+    if flows is None:
+        return {"name": name, "status": "Error", "phase": "parse", "duration": duration}, "errors", f"Processing {name} (Expected Flow: {expected_flow})... Parse ERROR"
+    else:
+        found_flow = len(flows) > 0
+        passed = (found_flow == expected_flow)
+        
+        status = "Passed" if passed else "Failed"
+        summary_key = "passed" if passed else "failed"
+        
+        log_msg = f"Processing {name} (Expected Flow: {expected_flow})... {status.upper()} ({len(flows)} flows found in {duration:.2f}s)"
+        if debug:
+            if sources_matched == 0 or sinks_matched == 0:
+                log_msg += f"\n    [!] Debug Warning: matched {sources_matched} sources and {sinks_matched} sinks. Need >0 of both to find flows."
+        
+        result_data = {
+            "name": name,
+            "status": status,
+            "expected_flow": expected_flow,
+            "found_flow": found_flow,
+            "num_flows": len(flows),
+            "duration": duration
+        }
+        if debug:
+            result_data["sources_matched"] = sources_matched
+            result_data["sinks_matched"] = sinks_matched
+            
+        return result_data, summary_key, log_msg
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate ctadl on benchmarks.")
     parser.add_argument("binary_dir", help="Directory containing benchmark binaries")
@@ -59,6 +148,7 @@ def main():
     parser.add_argument("--output", default="evaluation_report.json", help="Path to save the evaluation report")
     parser.add_argument("--ctadl", default="target/release/ctadl", help="Path to the ctadl binary")
     parser.add_argument("--debug", action="store_true", help="Enable debug SARIF profile and check for source/sink matches")
+    parser.add_argument("-j", "--jobs", type=int, default=1, help="Number of parallel jobs")
     args = parser.parse_args()
 
     if not os.path.exists(args.ctadl):
@@ -85,116 +175,17 @@ def main():
 
     print(f"Found {len(binaries)} binaries in {args.binary_dir}")
 
-    for binary in binaries:
-        binary_path = os.path.join(args.binary_dir, binary)
-        name = binary
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+        futures = {executor.submit(evaluate_binary, os.path.join(args.binary_dir, b), args.ctadl, args.model, args.debug): b for b in binaries}
         
-        # Determine expectation
-        expected_flow = True
-        if "_good" in name.lower():
-            expected_flow = False
-        elif "_bad" in name.lower():
-            expected_flow = True
-        else:
-            # Default to expecting flow if not specified
-            expected_flow = True
-
-        print(f"Processing {name} (Expected Flow: {expected_flow})... ", end="", flush=True)
-        
-        start_time = time.time()
-        
-        # Clean up previous state if any
-        run_command([args.ctadl, "inspect", name]) # Just to check if it exists? No, ctadl doesn't have a clear way to delete.
-        # Assume it's a fresh run or we don't care about persistence for now.
-
-        # 1. Import
-        res = run_command([args.ctadl, "import", binary_path, "-l", "pcode"])
-        if res.returncode != 0:
-            print("Import FAILED")
-            report["results"].append({"name": name, "status": "Crashed", "phase": "import", "error": res.stderr})
-            report["summary"]["crashed"] += 1
-            continue
-
-        # 2. Index
-        res = run_command([args.ctadl, "index", name])
-        if res.returncode != 0:
-            print("Index FAILED")
-            report["results"].append({"name": name, "status": "Crashed", "phase": "index", "error": res.stderr})
-            report["summary"]["crashed"] += 1
-            continue
-
-        # 3. Query
-        res = run_command([args.ctadl, "query", name, "-m", args.model])
-        if res.returncode != 0:
-            print("Query FAILED")
-            report["results"].append({"name": name, "status": "Crashed", "phase": "query", "error": res.stderr})
-            report["summary"]["crashed"] += 1
-            continue
-
-        # 4. Format
-        sarif_path = f"{name}_results.sarif"
-        debug_sarif_path = f"{name}_debug.sarif"
-        
-        # Always run the human profile to get actual completed flows (C0001.tainted-path)
-        res = run_command([args.ctadl, "format", name, "-o", sarif_path, "--sarif-profile", "human"])
-        if res.returncode != 0:
-            print("Format FAILED")
-            report["results"].append({"name": name, "status": "Crashed", "phase": "format", "error": res.stderr})
-            report["summary"]["crashed"] += 1
-            continue
-            
-        sources_matched = 0
-        sinks_matched = 0
-        if args.debug:
-            # Run the debug profile to check if sources/sinks were matched
-            run_command([args.ctadl, "format", name, "-o", debug_sarif_path, "--sarif-profile", "debug"])
-            _, sources_matched, sinks_matched = parse_sarif(debug_sarif_path, debug=True)
-            if os.path.exists(debug_sarif_path):
-                os.remove(debug_sarif_path)
-
-        # 5. Analyze results
-        flows = parse_sarif(sarif_path, debug=False)
-            
-        duration = time.time() - start_time
-        
-        if flows is None:
-            print("Parse ERROR")
-            report["results"].append({"name": name, "status": "Error", "phase": "parse", "duration": duration})
-            report["summary"]["errors"] += 1
-        else:
-            found_flow = len(flows) > 0
-            passed = (found_flow == expected_flow)
-            
-            if passed:
-                print(f"PASSED ({len(flows)} flows found in {duration:.2f}s)")
-                report["summary"]["passed"] += 1
-                status = "Passed"
-            else:
-                print(f"FAILED ({len(flows)} flows found, expected {expected_flow} in {duration:.2f}s)")
-                report["summary"]["failed"] += 1
-                status = "Failed"
-                
-            if args.debug:
-                if sources_matched == 0 or sinks_matched == 0:
-                    print(f"    [!] Debug Warning: matched {sources_matched} sources and {sinks_matched} sinks. Need >0 of both to find flows.")
-            
-            result_data = {
-                "name": name,
-                "status": status,
-                "expected_flow": expected_flow,
-                "found_flow": found_flow,
-                "num_flows": len(flows),
-                "duration": duration
-            }
-            if args.debug:
-                result_data["sources_matched"] = sources_matched
-                result_data["sinks_matched"] = sinks_matched
-                
+        for future in as_completed(futures):
+            result_data, summary_key, log_msg = future.result()
+            print(log_msg)
             report["results"].append(result_data)
-        
-        # Clean up SARIF
-        if os.path.exists(sarif_path):
-            os.remove(sarif_path)
+            report["summary"][summary_key] += 1
+
+    # Sort results by name to maintain a consistent report
+    report["results"].sort(key=lambda x: x["name"])
 
     # Final summary
     print("\n" + "="*40)
