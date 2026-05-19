@@ -94,7 +94,7 @@ impl Context {
     ) -> Result<(), Error> {
         // Iterate over all classes (no artificial limit).
         for class_def in parser.classes() {
-            let class_name = parser.class_name()?;
+            let class_name = "L".to_owned() + parser.class_name()? + ";";
             log::trace!("Class: {}", class_name);
             // Populate class hierarchy information for the VMT.
             // Immediate superclass (if any) and immediate super‑interfaces.
@@ -150,7 +150,7 @@ impl Context {
                 // The full method signature (`sig`) includes the enclosing class; we want the proto
                 // pretty‑signature, e.g. "(I)I". Use the parser's `proto_signature` helper.
                 let java_sig = parser.method_proto(enc)?;
-                let full_name: String = "L".to_owned() + &class_name + ";." + &sig;
+                let full_name: String = class_name.to_owned() + "->" + &sig;
                 fdat.name = full_name.clone();
 
 
@@ -301,7 +301,7 @@ impl Context {
                         let class_name = "?unknown";
                         let method_name = call.dynamic_name.as_ref().unwrap();
                         let descr = call.dynamic_type.as_ref().unwrap();
-                        let java_sig = method_name.clone() + &descr.clone();
+                        let java_sig = "L".to_owned() + &class_name + ";->" + &method_name + &descr;
                         let in_params = jvm_reader::descriptor_parameter_info(&descr);
                         let mut out_params = Vec::new();
                         for p in in_params {
@@ -336,10 +336,10 @@ impl Context {
                     CallKind::Special => CallStyle::Unknown,
                     CallKind::Virtual => CallStyle::Unknown, 
                     CallKind::Static => {
-                        let class_name = &call.target.as_ref().unwrap().class_name;
+                        let class_name = "L".to_owned() + &call.target.as_ref().unwrap().class_name + ";";
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
-                        let java_sig = "L".to_owned() + &class_name + ";." + &method_name + &descr;
+                        let java_sig = class_name.to_owned() + "->" + &method_name + &descr;
                         let in_params = jvm_reader::descriptor_parameter_info(&descr);
                         let mut out_params = Vec::new();
                         for p in in_params {
@@ -377,10 +377,10 @@ impl Context {
                     // Java invokedynamic calls have a bootstrap method index and dynamic name/type
                     // I'm not entirely sure what these are supposed to look like
                     CallKind::Dynamic => {
-                        let class_name = &call.target.as_ref().unwrap().class_name;
+                        let class_name = "L".to_owned() + &call.target.as_ref().unwrap().class_name + ";";
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = call.dynamic_type.as_ref().unwrap();
-                        let java_sig = "L".to_owned() + &class_name + ";." + &method_name + &descr;
+                        let java_sig = class_name.to_owned() + "->" + &method_name + &descr;
                         let in_params = jvm_reader::descriptor_parameter_info(&descr);
                         let mut out_params = Vec::new();
                         for p in in_params {
@@ -408,17 +408,17 @@ impl Context {
                         );
                         CallStyle::JavaCall {
                         receiver: self.convert_location_to_var_ref(recv),
-                        cls: ("L".to_owned() + class_name + ";").into(),
+                        cls: class_name.clone().into(),
                         simple_name: method_name.clone().into(),
                         descriptor: descr.clone().into()
                         }
                     },
                     // other calls have a class name, method name, and descriptor
                     _ => {
-                        let class_name = &call.target.as_ref().unwrap().class_name;
+                        let class_name = "L".to_owned() + &call.target.as_ref().unwrap().class_name + ";";
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
-                        let java_sig = "L".to_owned() + &class_name + ";." + &method_name + &descr;
+                        let java_sig = class_name.to_owned() + "->" + &method_name + &descr;
                         let in_params = jvm_reader::descriptor_parameter_info(&descr);
                         let mut out_params = Vec::new();
                         for p in in_params {
@@ -446,7 +446,7 @@ impl Context {
                         );
                         CallStyle::JavaCall {
                             receiver: self.convert_location_to_var_ref(recv),
-                            cls: ("L".to_owned() + class_name + ";").into(),
+                            cls: class_name.clone().into(),
                             simple_name: method_name.clone().into(),
                             descriptor: descr.clone().into(),
                         }
