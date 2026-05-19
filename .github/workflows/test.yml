@@ -31,7 +31,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy -- -Dwarnings
 
       - name: Run workspace tests
         run: cargo test --workspace --verbose
