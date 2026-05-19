@@ -36,9 +36,17 @@ mod tests;
 pub fn try_load_default_models(program_info: &ProgramInfo) -> Result<ModelsBatch, Error> {
     log::trace!("load_models");
     // Load model_generator built-in models
-    let default = include_bytes!("../languages/jadx/default-index.jsonl") as &[u8];
-    let rdr = BufReader::new(default);
-    try_load_jsonl_models(program_info, rdr).err_context(|| "loading default index models")
+    let jadx_default = include_bytes!("../languages/jadx/default-index.jsonl") as &[u8];
+    let rdr = BufReader::new(jadx_default);
+    let mut jadx_models = try_load_jsonl_models(program_info, rdr).err_context(|| "loading jadx default index models")?;
+    
+    let pcode_default = include_bytes!("../languages/pcode/default-index.jsonl") as &[u8];
+    let rdr_pcode = BufReader::new(pcode_default);
+    let pcode_models = try_load_jsonl_models(program_info, rdr_pcode).err_context(|| "loading pcode default index models")?;
+    
+    jadx_models.union_with(&pcode_models)?;
+    
+    Ok(jadx_models)
 }
 
 /// Load models from a `jsonl` source. `jsonl` allows streaming models one at a time efficiently.
