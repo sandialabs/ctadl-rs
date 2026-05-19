@@ -323,10 +323,9 @@ impl Context {
                             )
                         } else {
                             // Other parameter (register, etc.) - bind to local variable
-                            StatementKind::assign(
-                                self.get_lvalue(rep, &pcode_facts.vnode_facts)
-                                    .map(access_path_expect_variable)?,
-                                [VariableRef::new_parameter(ParameterIdx::new(i)).into()],
+                            StatementKind::assign_or_update(
+                                self.get_lvalue(rep, &pcode_facts.vnode_facts)?,
+                                VariableRef::new_parameter(ParameterIdx::new(i)).into(),
                             )
                         };
                         func.blocks.blocks_mut()[bb_idx].push_back(Statement::new_kind(kind));
@@ -1304,9 +1303,4 @@ impl Context {
             source_info: builders.source_info_builder.finish(),
         })
     }
-}
-
-fn access_path_expect_variable(ap: AccessPath) -> VariableRef {
-    assert!(ap.path.is_empty());
-    ap.variable_ref
 }
