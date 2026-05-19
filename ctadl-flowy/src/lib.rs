@@ -641,20 +641,49 @@ impl FlowyCtx {
                     }
                     result
                 };
-                let assign = {
-                    if dst.path.is_empty() {
-                        StatementKind::assign(dst.variable_ref, src)
-                    } else if src.len() > 1 {
-                        return Err(FlowyError::Compile {
-                            message: "cannot update a field with multiple sources".to_string(),
-                            line,
-                            col,
-                        });
-                    } else {
-                        StatementKind::assign_or_update(dst, src[0].clone())
+                
+                if dst.path.fields.is_empty() {
+                    let assign = StatementKind::assign(dst.variable_ref, src);
+                    data.push_back(Statement::new(assign, source_info));
+                } else if src.len() > 1 {
+                    return Err(FlowyError::Compile {
+                        message: "cannot update a field with multiple sources".to_string(),
+                        line,
+                        col,
+                    });
+                } else {
+                    let value_exp = src[0].clone();
+                    let value_var = match &value_exp {
+                        Exp::AccessPath(ap) if ap.path.fields.is_empty() => ap.variable_ref.clone(),
+                        _ => {
+                            let tmp = VariableRef::new_local(format!("t{}?", self.counter.next()));
+                            data.push_back(Statement::new(StatementKind::assign(tmp.clone().into(), smallvec![value_exp] as SmallVec<[Exp; 1]>), source_info));
+                            tmp.into()
+                        }
+                    };
+
+                    let mut current_base = dst.variable_ref;
+                    for (i, field) in dst.path.fields.iter().enumerate() {
+                        if i == dst.path.fields.len() - 1 {
+                            let store = StatementKind::Store {
+                                dest: current_base.clone(),
+                                field: field.clone(),
+                                value: value_var.clone(),
+                            };
+                            data.push_back(Statement::new(store, source_info));
+                        } else {
+                            let next_tmp = VariableRef::new_local(format!("t{}?", self.counter.next()));
+                            let next_var: VariableRef = next_tmp.into();
+                            let load = StatementKind::Load {
+                                dest: next_var.clone(),
+                                source: current_base,
+                                field: field.clone(),
+                            };
+                            data.push_back(Statement::new(load, source_info));
+                            current_base = next_var;
+                        }
                     }
-                };
-                data.push_back(Statement::new(assign, source_info));
+                }
             }
             Rule::assign_call_stmt => {
                 let (line, col) = stmt_pair.line_col();
@@ -738,9 +767,32 @@ impl FlowyCtx {
                 data.push_back(Statement::new(call, source_info));
 
                 // assign the temporary to the field (if applicable)
-                let assign_lhs =
-                    StatementKind::assign_or_update(lhs.clone(), Exp::AccessPath(tmp.into()));
-                data.push_back(Statement::new(assign_lhs, source_info));
+                if lhs.path.fields.is_empty() {
+                    let assign_lhs = StatementKind::assign(lhs.variable_ref, smallvec![Exp::AccessPath(tmp.into())] as SmallVec<[Exp; 1]>);
+                    data.push_back(Statement::new(assign_lhs, source_info));
+                } else {
+                    let mut current_base = lhs.variable_ref;
+                    for (i, field) in lhs.path.fields.iter().enumerate() {
+                        if i == lhs.path.fields.len() - 1 {
+                            let store = StatementKind::Store {
+                                dest: current_base.clone(),
+                                field: field.clone(),
+                                value: tmp.clone(),
+                            };
+                            data.push_back(Statement::new(store, source_info));
+                        } else {
+                            let next_tmp = VariableRef::new_local(format!("t{}?", self.counter.next()));
+                            let next_var: VariableRef = next_tmp.into();
+                            let load = StatementKind::Load {
+                                dest: next_var.clone(),
+                                source: current_base,
+                                field: field.clone(),
+                            };
+                            data.push_back(Statement::new(load, source_info));
+                            current_base = next_var;
+                        }
+                    }
+                }
             }
             Rule::call_stmt => {
                 let (line, col) = stmt_pair.line_col();
@@ -820,8 +872,7 @@ impl FlowyCtx {
                             args.push(x)
                         }
                     }
-                    let assign_tmp =
-                        StatementKind::assign_or_update(tmp.into(), orig_args[0].clone());
+                    let assign_tmp = StatementKind::assign(tmp.into(), smallvec![orig_args[0].clone()] as SmallVec<[Exp; 1]>);
                     data.push_back(Statement::new(assign_tmp, source_info));
                     args
                 } else {

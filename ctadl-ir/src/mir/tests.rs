@@ -37,25 +37,6 @@ fn test_unnamed_function_error() {
 }
 
 #[test]
-fn test_empty_field_update_error() {
-    let mut prog = make_program();
-    // Add an Update statement with no fields.
-    let f_idx = FunctionIdx::new(0);
-    let f = &mut prog[f_idx];
-    let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
-    let var = VariableRef::new_local("x".to_string());
-    let upd = StatementKind::Update {
-        dest: (var.clone(), FieldAccesses::empty()),
-        source: var.clone(),
-        value: Exp::new_str("val"),
-    };
-    block.statements.push_back(Statement::new_kind(upd));
-    let result = prog.verify();
-    assert!(
-        matches!(result, Err(e) if e.iter().any(|err| matches!(err, VerifyError::EmptyFieldUpdate { .. })))
-    );
-}
-
 // Test for ParameterDoesNotExist (no assertions, just runs verification)
 #[test]
 fn test_parameter_does_not_exist_error() {

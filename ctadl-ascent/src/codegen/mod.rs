@@ -499,26 +499,6 @@ impl Visitor for CodegenVisitor<'_> {
                     ),
                 ));
             }
-            Update {
-                dest: (dest_var, dest_fields),
-                source,
-                value,
-            } => {
-                let dest_var = self.trans_variable_ref(dest_var);
-                let source = self.trans_variable_ref(source);
-                let value = self.trans_exp(value);
-                // dest_var <- source
-                let dest = FlowVertex(dest_var.clone(), dest_fields.into());
-                self.facts.assign.push((
-                    site,
-                    FlowVertex(dest_var.clone(), fx::Path::empty()),
-                    FlowVertex(source.clone(), fx::Path::empty()),
-                ));
-                // dest_var.dest_fields <- value
-                if let Some(value) = value {
-                    self.facts.assign.push((site, dest, value));
-                }
-            }
             Nop => (),
         }
     }

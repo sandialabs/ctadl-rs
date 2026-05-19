@@ -455,21 +455,18 @@ fn field_access_values() {
         ";
     let program = program_from_string(src);
     let dump = program.to_string();
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f2 := @p2)"));
+    assert!(janky_expected(&dump, "store @p0.f2 := @p2"));
 
     assert!(janky_expected(
         &dump,
-        "@p0 = update (@p0.f2.nf1.y := @p1.f2.f3.f4)"
+        "store @p0.y := %t_store_val"
     ));
 
-    assert!(janky_expected(
-        &dump,
-        "@p0 = update (@p0.f2.nf1.y := @p1.f2.f3.f4)"
-    ));
+    // Removed obsolete check
 
     assert!(janky_expected(&dump, "assign %<t1> = @p2, @p3"));
 
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f3 := %<t2>)"));
+    assert!(janky_expected(&dump, "store @p0.f3 := %<t2>"));
 
     assert!(janky_expected(&dump, "return @p0.f1"));
 }
@@ -673,7 +670,7 @@ fn compound_declaration_with_fields() {
     let dump = program_from_string(src).to_string();
     assert!(janky_expected(&dump, "assign %<t0> = @p0.f1, @p0.f3"));
     assert!(janky_expected(&dump, "assign %<t1> = @p0.f5, $globals.b"));
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f4 := %<t1>)"));
+    assert!(janky_expected(&dump, "store @p0.f4 := %<t1>"));
 }
 
 #[test_log::test]

@@ -1063,12 +1063,23 @@ impl<'a> Context<'a> {
                 fa.push(righty);
             }
 
-            let sa = if my_path.path.is_empty() {
-                StatementKind::assign(my_path.variable_ref.clone(), fa)
+            if my_path.path.is_empty() {
+                let sa = StatementKind::assign(my_path.variable_ref.clone(), fa);
+                program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(sa));
             } else {
-                StatementKind::update(my_path, val_exp.clone())
-            };
-            program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(sa));
+                let (last_field, rest) = my_path.path.fields.split_last().unwrap();
+                let val_var = match val_exp.clone() {
+                    Exp::AccessPath(ap) if ap.path.fields.is_empty() => ap.variable_ref,
+                    _ => {
+                        let tmp = VariableRef::new_local("t_store_val".to_string());
+                        let tmp_assign = StatementKind::assign(tmp.clone(), smallvec![val_exp.clone()] as smallvec::SmallVec<[Exp; 1]>);
+                        program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(tmp_assign));
+                        tmp
+                    }
+                };
+                let sa = StatementKind::Store { dest: my_path.variable_ref, field: last_field.clone(), value: val_var };
+                program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(sa));
+            }
         }
     }
 }

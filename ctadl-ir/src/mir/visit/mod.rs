@@ -201,12 +201,6 @@ macro_rules! make_ast_visitor {
                         }
                         self.visit_variable_ref(global);
                     }
-                    Update { dest: (dest_var, dest_fields), source, value } => {
-                        self.visit_variable_ref(dest_var);
-                        self.visit_field_accesses(dest_fields);
-                        self.visit_variable_ref(source);
-                        self.visit_exp(value);
-                    }
                     Nop => (),
                 }
             }

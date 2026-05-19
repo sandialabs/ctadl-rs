@@ -188,15 +188,6 @@ impl Visitor for MirVerify {
     #[inline]
     fn visit_statement_kind(&mut self, statement: &StatementKind, location: Location) {
         self.super_statement_kind(statement, location);
-        use StatementKind::*;
-        if let Update {
-            dest: (_var, fields),
-            ..
-        } = statement
-            && fields.is_empty()
-        {
-            self.add_error(VerifyError::EmptyFieldUpdate { location });
-        }
     }
 
     #[inline]

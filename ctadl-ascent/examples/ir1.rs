@@ -1,5 +1,5 @@
 use internment::ArcIntern;
-use smallvec::smallvec;
+use smallvec::{smallvec, SmallVec};
 
 use ctadl_ir::index::{idx::Idx, index_vec::IndexVec};
 use ctadl_ir::*;
@@ -45,14 +45,8 @@ fn function_f() -> FunctionData {
             path: Default::default(),
         };
         let stmts: IndexVec<StatementIdx, _> = indexvec![
-            Statement::new_kind(StatementKind::assign_or_update(
-                a.clone(),
-                Exp::AccessPath(q)
-            )),
-            Statement::new_kind(StatementKind::assign_or_update(
-                p.clone(),
-                Exp::AccessPath(a.clone())
-            ))
+            Statement::new_kind(StatementKind::assign(a.variable_ref.clone(), smallvec![Exp::AccessPath(q)] as SmallVec<[Exp; 1]>)),
+            Statement::new_kind(StatementKind::assign(p.variable_ref.clone(), smallvec![Exp::AccessPath(a.clone())] as SmallVec<[Exp; 1]>))
         ];
         // stmts.extend(]));
         let body_block = &mut f[body];
@@ -89,10 +83,7 @@ fn function_g() -> FunctionData {
     let call_edges = CallEdges::Explicit(smallvec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
-        Statement::new_kind(StatementKind::assign_or_update(
-            a.clone(),
-            Exp::Bytes(1u8.to_be_bytes().to_vec())
-        )),
+        Statement::new_kind(StatementKind::assign(a.variable_ref.clone(), smallvec![Exp::Bytes(1u8.to_be_bytes().to_vec())] as SmallVec<[Exp; 1]>)),
         Statement::new_kind(StatementKind::CallAssign {
             style,
             rets: vec![VariableRef::new_local("c".to_string())].into(),
@@ -136,10 +127,7 @@ fn function_g1() -> FunctionData {
     let call_edges = CallEdges::Explicit(smallvec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
-        Statement::new_kind(StatementKind::assign_or_update(
-            a.clone(),
-            Exp::Bytes(1u8.to_be_bytes().to_vec())
-        )),
+        Statement::new_kind(StatementKind::assign(a.variable_ref.clone(), smallvec![Exp::Bytes(1u8.to_be_bytes().to_vec())] as SmallVec<[Exp; 1]>)),
         Statement::new_kind(StatementKind::CallAssign {
             style,
             rets: vec![VariableRef::new_local("c".to_string())].into(),
@@ -181,10 +169,10 @@ fn program_h() -> Program {
         };
         let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
         let stmts: IndexVec<StatementIdx, _> =
-            indexvec![Statement::new_kind(StatementKind::Update {
-                dest: (global_ref.clone(), ["bar"].into_iter().collect()),
-                source: global_ref.clone(),
-                value: Exp::AccessPath(p.clone()),
+            indexvec![Statement::new_kind(StatementKind::Store {
+                dest: global_ref.clone(),
+                field: ctadl_ir::mir::FieldAccess::Symbol("bar".into()),
+                value: p.variable_ref.clone(),
             })];
         let body_block = &mut h[body];
         body_block.extend(stmts);
