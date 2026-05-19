@@ -64,15 +64,22 @@
               cargo-expand
               sarif-tools
               cargo-flamegraph
-              (python3.withPackages (ps: [ ps.pyarrow ]))
+              (python3.withPackages (
+                ps: with ps; [
+                  pyarrow
+                  gdown
+                ]
+              ))
               ctadl-souffle-wrapper
               parquet-tools
               graphviz
               checksarif
               ghidra-bin
               pkgsCross.gnu64.stdenv.cc
+              binwalk
             ];
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
+            GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
           };
       }
     );
