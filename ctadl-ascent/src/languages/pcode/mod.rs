@@ -313,22 +313,20 @@ impl Context {
                             && data.space.as_deref() == Some("stack")
                             && let Some(addr) = &data.address
                         {
-                            let tmp = VariableRef::new_parameter(ParameterIdx::new(i));
-                            StatementKind::Store {
-                                dest: VariableRef::new_local("__stack_top".to_string()),
-                                field: mir::FieldAccess::Offset(mir::Offset(addr.0)),
-                                value: tmp.clone(),
-                            }
+                            // Stack parameter - bind to __stack_top offset
+                            StatementKind::assign_or_update(
+                                AccessPath {
+                                    variable_ref: VariableRef::new_local("__stack_top".to_string()),
+                                    path: FieldAccesses::with_offset(addr.0),
+                                },
+                                VariableRef::new_parameter(ParameterIdx::new(i)).into(),
+                            )
                         } else {
-                            let lval = self.get_lvalue(rep, &pcode_facts.vnode_facts)?;
-                            if lval.path.fields.is_empty() {
-                                StatementKind::assign(lval.variable_ref, smallvec![VariableRef::new_parameter(ParameterIdx::new(i)).into()] as SmallVec<[Exp; 1]>)
-                            } else {
-                                // Assuming parameters are only assigned to variables without deep paths.
-                                // If they could have paths, we need multiple instructions, which `StatementKind` alone cannot do.
-                                // For now, pcode `get_lvalue` usually returns variables or `__stack_top` with offsets.
-                                unimplemented!("Path assignment for pcode parameter not supported here")
-                            }
+                            // Other parameter (register, etc.) - bind to local variable
+                            StatementKind::assign_or_update(
+                                self.get_lvalue(rep, &pcode_facts.vnode_facts)?,
+                                VariableRef::new_parameter(ParameterIdx::new(i)).into(),
+                            )
                         };
                         func.blocks.blocks_mut()[bb_idx].push_back(Statement::new_kind(kind));
                     } else {
@@ -787,18 +785,10 @@ impl Context {
 
         let temp = self.create_temp();
         let stmt1 = StatementKind::assign(temp.clone(), inputs);
-        let stmt2 = if outputs[0].path.fields.is_empty() {
-            StatementKind::assign(outputs[0].variable_ref.clone(), smallvec![Exp::AccessPath(AccessPath::without_fields(temp))] as SmallVec<[Exp; 1]>)
-        } else {
-            // Need Store instead of Update. Assuming single field for simplicity, given PCode offsets.
-            let (last_field, rest) = outputs[0].path.fields.split_last().unwrap();
-            assert!(rest.is_empty(), "Multiple fields in pcode path not supported here");
-            StatementKind::Store {
-                dest: outputs[0].variable_ref.clone(),
-                field: last_field.clone(),
-                value: temp.clone(),
-            }
-        };
+        let stmt2 = StatementKind::assign_or_update(
+            outputs[0].clone(),
+            Exp::AccessPath(AccessPath::without_fields(temp)),
+        );
         Ok([Statement::new_kind(stmt1), Statement::new_kind(stmt2)]
             .into_iter()
             .collect())
@@ -828,34 +818,18 @@ impl Context {
             && let pcode_reader::constant_propagation::SymbolicProp::Value(None, addr) = prop
         {
             if let Some(func_name) = self.resolve_address_to_func_name(addr, hfunc_facts, program) {
-                let kind = if outputs[0].path.fields.is_empty() {
-                    StatementKind::assign(outputs[0].variable_ref.clone(), smallvec![Exp::ObjectRef(CallObject::FunctionPtr(func_name.into()))] as SmallVec<[Exp; 1]>)
-                } else {
-                    let (last_field, rest) = outputs[0].path.fields.split_last().unwrap();
-                    assert!(rest.is_empty());
-                    let tmp = self.create_temp();
-                    // Need multiple statements but this closure expects 1 kind.
-                    // Wait, returning a Vec of Statements is fine.
-                    return Ok(vec![
-                        Statement::new_kind(StatementKind::assign(tmp.clone(), smallvec![Exp::ObjectRef(CallObject::FunctionPtr(func_name.into()))] as SmallVec<[Exp; 1]>)),
-                        Statement::new_kind(StatementKind::Store { dest: outputs[0].variable_ref.clone(), field: last_field.clone(), value: tmp })
-                    ]);
-                };
+                let kind = StatementKind::assign_or_update(
+                    outputs[0].clone(),
+                    Exp::ObjectRef(CallObject::FunctionPtr(func_name.into())),
+                );
                 log::warn!("Found a function pointer, yay");
-                return Ok(vec![Statement::new_kind(kind)]);
+                return Ok([Statement::new_kind(kind)].into_iter().collect());
             } else {
-                let kind = if outputs[0].path.fields.is_empty() {
-                    StatementKind::assign(outputs[0].variable_ref.clone(), smallvec![self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr)] as SmallVec<[Exp; 1]>)
-                } else {
-                    let (last_field, rest) = outputs[0].path.fields.split_last().unwrap();
-                    assert!(rest.is_empty());
-                    let tmp = self.create_temp();
-                    return Ok(vec![
-                        Statement::new_kind(StatementKind::assign(tmp.clone(), smallvec![self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr)] as SmallVec<[Exp; 1]>)),
-                        Statement::new_kind(StatementKind::Store { dest: outputs[0].variable_ref.clone(), field: last_field.clone(), value: tmp })
-                    ]);
-                };
-                return Ok(vec![Statement::new_kind(kind)]);
+                let kind = StatementKind::assign_or_update(
+                    outputs[0].clone(),
+                    self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr),
+                );
+                return Ok([Statement::new_kind(kind)].into_iter().collect());
             }
         }
 
@@ -878,33 +852,13 @@ impl Context {
             (Some(c), None) => {
                 let mut ap = self.get_lvalue(offset_vn, vnode_facts)?;
                 ap.path.fields.push(FieldAccess::Offset(Offset(c)));
-                let kind = if outputs[0].path.fields.is_empty() {
-                    StatementKind::assign(outputs[0].variable_ref.clone(), smallvec![Exp::AccessPath(ap)] as SmallVec<[Exp; 1]>)
-                } else {
-                    let (last_field, rest) = outputs[0].path.fields.split_last().unwrap();
-                    assert!(rest.is_empty());
-                    let tmp = self.create_temp();
-                    return Ok(vec![
-                        Statement::new_kind(StatementKind::assign(tmp.clone(), smallvec![Exp::AccessPath(ap)] as SmallVec<[Exp; 1]>)),
-                        Statement::new_kind(StatementKind::Store { dest: outputs[0].variable_ref.clone(), field: last_field.clone(), value: tmp })
-                    ]);
-                };
+                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
                 Ok(vec![Statement::new_kind(kind)])
             }
             (None, Some(c)) => {
                 let mut ap = self.get_lvalue(base_vn, vnode_facts)?;
                 ap.path.fields.push(FieldAccess::Offset(Offset(c)));
-                let kind = if outputs[0].path.fields.is_empty() {
-                    StatementKind::assign(outputs[0].variable_ref.clone(), smallvec![Exp::AccessPath(ap)] as SmallVec<[Exp; 1]>)
-                } else {
-                    let (last_field, rest) = outputs[0].path.fields.split_last().unwrap();
-                    assert!(rest.is_empty());
-                    let tmp = self.create_temp();
-                    return Ok(vec![
-                        Statement::new_kind(StatementKind::assign(tmp.clone(), smallvec![Exp::AccessPath(ap)] as SmallVec<[Exp; 1]>)),
-                        Statement::new_kind(StatementKind::Store { dest: outputs[0].variable_ref.clone(), field: last_field.clone(), value: tmp })
-                    ]);
-                };
+                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
                 Ok(vec![Statement::new_kind(kind)])
             }
             (None, None) => {
@@ -912,17 +866,10 @@ impl Context {
                 let offset_exp = self.get_exp(offset_vn, vnode_facts)?;
                 let temp = self.create_temp();
                 let stmt1 = StatementKind::assign(temp.clone(), [base_exp, offset_exp]);
-                let stmt2 = if outputs[0].path.fields.is_empty() {
-                    StatementKind::assign(outputs[0].variable_ref.clone(), smallvec![Exp::AccessPath(AccessPath::without_fields(temp))] as SmallVec<[Exp; 1]>)
-                } else {
-                    let (last_field, rest) = outputs[0].path.fields.split_last().unwrap();
-                    assert!(rest.is_empty());
-                    StatementKind::Store {
-                        dest: outputs[0].variable_ref.clone(),
-                        field: last_field.clone(),
-                        value: temp.clone(),
-                    }
-                };
+                let stmt2 = StatementKind::assign_or_update(
+                    outputs[0].clone(),
+                    Exp::AccessPath(AccessPath::without_fields(temp)),
+                );
                 Ok(vec![Statement::new_kind(stmt1), Statement::new_kind(stmt2)])
             }
         }
@@ -949,18 +896,11 @@ impl Context {
         if let Some(prop) = self.cp_results.get(&pcode.outputs[0]).cloned()
             && let pcode_reader::constant_propagation::SymbolicProp::Value(None, addr) = prop
         {
-            let kind = if outputs[0].path.fields.is_empty() {
-                StatementKind::assign(outputs[0].variable_ref.clone(), smallvec![self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr)] as SmallVec<[Exp; 1]>)
-            } else {
-                let (last_field, rest) = outputs[0].path.fields.split_last().unwrap();
-                assert!(rest.is_empty());
-                let tmp = self.create_temp();
-                return Ok(vec![
-                    Statement::new_kind(StatementKind::assign(tmp.clone(), smallvec![self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr)] as SmallVec<[Exp; 1]>)),
-                    Statement::new_kind(StatementKind::Store { dest: outputs[0].variable_ref.clone(), field: last_field.clone(), value: tmp })
-                ]);
-            };
-            return Ok(vec![Statement::new_kind(kind)]);
+            let kind = StatementKind::assign_or_update(
+                outputs[0].clone(),
+                self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr),
+            );
+            return Ok([Statement::new_kind(kind)].into_iter().collect());
         }
 
         let base_vn = &pcode.inputs[0];
@@ -981,33 +921,13 @@ impl Context {
                 ap.path
                     .fields
                     .push(FieldAccess::Offset(Offset(idx_c * s_val)));
-                let kind = if outputs[0].path.fields.is_empty() {
-                    StatementKind::assign(outputs[0].variable_ref.clone(), smallvec![Exp::AccessPath(ap)] as SmallVec<[Exp; 1]>)
-                } else {
-                    let (last_field, rest) = outputs[0].path.fields.split_last().unwrap();
-                    assert!(rest.is_empty());
-                    let tmp = self.create_temp();
-                    return Ok(vec![
-                        Statement::new_kind(StatementKind::assign(tmp.clone(), smallvec![Exp::AccessPath(ap)] as SmallVec<[Exp; 1]>)),
-                        Statement::new_kind(StatementKind::Store { dest: outputs[0].variable_ref.clone(), field: last_field.clone(), value: tmp })
-                    ]);
-                };
+                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
                 Ok(vec![Statement::new_kind(kind)])
             }
             (Some(base_c), None) if size_const == Some(1) => {
                 let mut ap = self.get_lvalue(index_vn, vnode_facts)?;
                 ap.path.fields.push(FieldAccess::Offset(Offset(base_c)));
-                let kind = if outputs[0].path.fields.is_empty() {
-                    StatementKind::assign(outputs[0].variable_ref.clone(), smallvec![Exp::AccessPath(ap)] as SmallVec<[Exp; 1]>)
-                } else {
-                    let (last_field, rest) = outputs[0].path.fields.split_last().unwrap();
-                    assert!(rest.is_empty());
-                    let tmp = self.create_temp();
-                    return Ok(vec![
-                        Statement::new_kind(StatementKind::assign(tmp.clone(), smallvec![Exp::AccessPath(ap)] as SmallVec<[Exp; 1]>)),
-                        Statement::new_kind(StatementKind::Store { dest: outputs[0].variable_ref.clone(), field: last_field.clone(), value: tmp })
-                    ]);
-                };
+                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
                 Ok(vec![Statement::new_kind(kind)])
             }
             _ => {
@@ -1021,13 +941,10 @@ impl Context {
 
                 let temp = self.create_temp();
                 let stmt1 = StatementKind::assign(temp.clone(), [base_exp, index_exp, size_exp]);
-                let stmt2 = if outputs[0].path.fields.is_empty() {
-                    StatementKind::assign(outputs[0].variable_ref.clone(), smallvec![Exp::AccessPath(AccessPath::without_fields(temp))] as SmallVec<[Exp; 1]>)
-                } else {
-                    let (last_field, rest) = outputs[0].path.fields.split_last().unwrap();
-                    assert!(rest.is_empty());
-                    StatementKind::Store { dest: outputs[0].variable_ref.clone(), field: last_field.clone(), value: temp.clone() }
-                };
+                let stmt2 = StatementKind::assign_or_update(
+                    outputs[0].clone(),
+                    Exp::AccessPath(AccessPath::without_fields(temp)),
+                );
                 Ok(vec![Statement::new_kind(stmt1), Statement::new_kind(stmt2)])
             }
         }
@@ -1042,16 +959,7 @@ impl Context {
         if !inputs.is_empty() && !outputs.is_empty() && inputs[0] != outputs[0] {
             let input_exp = self.get_exp(&inputs[0], vnode_facts)?;
             let output_var = self.get_lvalue(&outputs[0], vnode_facts)?;
-            let kind = if output_var.path.fields.is_empty() {
-                StatementKind::assign(output_var.variable_ref.clone(), smallvec![input_exp] as SmallVec<[Exp; 1]>)
-            } else {
-                let (last_field, rest) = output_var.path.fields.split_last().unwrap();
-                assert!(rest.is_empty());
-                let tmp = self.create_temp();
-                // This function currently returns a single Statement. We should really return a Vec<Statement> here.
-                // However, pcode copy dest usually doesn't have a path, it's a temp/register.
-                unimplemented!("Path assignment in pcode copy not supported")
-            };
+            let kind = StatementKind::assign_or_update(output_var, input_exp);
             return Ok(Statement::new_kind(kind));
         }
         Ok(Statement::new_kind(StatementKind::Nop))
@@ -1073,11 +981,7 @@ impl Context {
                 .push(FieldAccess::Symbol("deref".into()));
             let output_var = self.get_lvalue(&outputs[0], vnode_facts)?;
 
-            let kind = if output_var.path.fields.is_empty() {
-                StatementKind::assign(output_var.variable_ref.clone(), smallvec![Exp::AccessPath(offset_exp)] as SmallVec<[Exp; 1]>)
-            } else {
-                unimplemented!("Path assignment in pcode load not supported")
-            };
+            let kind = StatementKind::assign_or_update(output_var, Exp::AccessPath(offset_exp));
             return Ok(Statement::new_kind(kind));
         }
         Ok(Statement::new_kind(StatementKind::Nop))
@@ -1099,13 +1003,7 @@ impl Context {
             let value_exp = self.get_exp(&inputs[2], vnode_facts)?;
 
             // If offset is an access path, we can try to use it as destination
-            let kind = if offset_exp.path.fields.is_empty() {
-                StatementKind::assign(offset_exp.variable_ref.clone(), smallvec![value_exp] as SmallVec<[Exp; 1]>)
-            } else {
-                let (last_field, rest) = offset_exp.path.fields.split_last().unwrap();
-                assert!(rest.is_empty());
-                StatementKind::Store { dest: offset_exp.variable_ref.clone(), field: last_field.clone(), value: match value_exp { Exp::AccessPath(ap) if ap.path.fields.is_empty() => ap.variable_ref, _ => unimplemented!("Requires tmp for store value") } }
-            };
+            let kind = StatementKind::assign_or_update(offset_exp, value_exp);
             return Ok(Statement::new_kind(kind));
         }
         log::warn!("STORE missing inputs");
@@ -1260,13 +1158,10 @@ impl Context {
         stmts.push(Statement::new_kind(kind));
         // store temps into outputs
         outputs.iter().zip(temps).for_each(|(o, t)| {
-            if o.path.fields.is_empty() {
-                stmts.push(Statement::new_kind(StatementKind::assign(o.variable_ref.clone(), smallvec![Exp::AccessPath(AccessPath::without_fields(t))] as SmallVec<[Exp; 1]>)));
-            } else {
-                let (last_field, rest) = o.path.fields.split_last().unwrap();
-                assert!(rest.is_empty());
-                stmts.push(Statement::new_kind(StatementKind::Store { dest: o.variable_ref.clone(), field: last_field.clone(), value: t }));
-            }
+            stmts.push(Statement::new_kind(StatementKind::assign_or_update(
+                o.clone(),
+                Exp::AccessPath(AccessPath::without_fields(t)),
+            )))
         });
 
         Ok(stmts)
