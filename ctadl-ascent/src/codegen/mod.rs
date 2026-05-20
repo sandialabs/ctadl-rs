@@ -178,9 +178,10 @@ impl<'a> CodegenVisitor<'a> {
     }
 
     /// Gens the dedup'd paths to the facts
-    fn finish(&mut self) {
+    pub fn finish(&mut self) {
         let mut paths = std::mem::take(&mut self.paths_dedup);
         self.facts.paths.extend(paths.drain());
+        self.facts.paths.push((crate::facts::Path::empty(),));
     }
 
     /// Does finish and also runs a datalog modeling pass
@@ -220,17 +221,26 @@ impl Visitor for CodegenVisitor<'_> {
     ) {
         let mut cap_path: HashMap<VariableRef, fx::Path> = HashMap::new();
         for statement in &data.statements {
-            if let StatementKind::Assign { dest, sources } = &statement.kind {
-                for src in sources {
-                    if let Exp::AccessPath(ap) = src
-                        && !ap.path.is_empty()
-                    {
-                        let mut path = cap_path.get(&ap.variable_ref).cloned().unwrap_or_default();
-                        path.extend_merging(ap.path.iter().cloned().map(FieldAccess::Offset));
-                        self.paths_dedup.insert((path.clone(),));
-                        cap_path.insert(dest.clone(), path);
+            match &statement.kind {
+                StatementKind::Assign { dest, sources } => {
+                    for src in sources {
+                        if let Exp::AccessPath(ap) = src
+                            && !ap.path.is_empty()
+                        {
+                            let mut path = cap_path.get(&ap.variable_ref).cloned().unwrap_or_default();
+                            path.extend_merging(ap.path.iter().cloned().map(FieldAccess::Offset));
+                            self.paths_dedup.insert((path.clone(),));
+                            cap_path.insert(dest.clone(), path);
+                        }
                     }
                 }
+                StatementKind::Load { dest, source, field } => {
+                    let mut path = cap_path.get(source).cloned().unwrap_or_default();
+                    path.extend_merging(std::iter::once(field.clone()));
+                    self.paths_dedup.insert((path.clone(),));
+                    cap_path.insert(dest.clone(), path);
+                }
+                _ => {}
             }
         }
         self.super_basic_block_data(function, block, data);

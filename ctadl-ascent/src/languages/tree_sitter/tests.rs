@@ -376,7 +376,9 @@ fn ascending_temps_per_function() {
     let dump = program_from_string(src).to_string();
     log::info!("{}", dump);
     assert!(janky_expected(&dump, "%<t4>"));
-    assert!(!janky_expected(&dump, "%<t5>"));
+    assert!(janky_expected(&dump, "define a() -> 1:"));
+    assert!(janky_expected(&dump, "%<t0> = load"));
+    assert!(janky_expected(&dump, "%<t12>"));
 }
 
 #[test_log::test]
@@ -455,23 +457,18 @@ fn field_access_values() {
         ";
     let program = program_from_string(src);
     let dump = program.to_string();
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f2 := @p2)"));
+    assert!(janky_expected(&dump, "store @p0.f2 := @p2"));
 
     assert!(janky_expected(
         &dump,
-        "@p0 = update (@p0.f2.nf1.y := @p1.f2.f3.f4)"
+        "store %<t1>.y := %<t4>"
     ));
 
-    assert!(janky_expected(
-        &dump,
-        "@p0 = update (@p0.f2.nf1.y := @p1.f2.f3.f4)"
-    ));
+    assert!(janky_expected(&dump, "assign %<t8> = @p2, @p3"));
 
-    assert!(janky_expected(&dump, "assign %<t1> = @p2, @p3"));
+    assert!(janky_expected(&dump, "store @p0.f3 := %<t10>"));
 
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f3 := %<t2>)"));
-
-    assert!(janky_expected(&dump, "return @p0.f1"));
+    assert!(janky_expected(&dump, "return %<t"));
 }
 
 #[test_log::test]
@@ -580,7 +577,7 @@ fn params_and_simple_assign_in_example_2() {
         "has the simplest assign, a=b"
     );
     assert!(
-        janky_expected(&dump, "assign %a = $globals.d"),
+        janky_expected(&dump, "assign %a = %<t0>"),
         "has 2nd simple a=d"
     );
 }
@@ -597,7 +594,7 @@ fn passthrough_assignment() {
         ";
     let dump = program_from_string(src).to_string();
     assert!(janky_expected(&dump, "assign %a = <const"));
-    assert!(janky_expected(&dump, "assign %b = %a"));
+    assert!(janky_expected(&dump, "assign %b = <const"));
     assert!(janky_expected(&dump, "assign %<t0> = %a, %b"));
     assert!(
         janky_expected(&dump, "assign %c = %<t0>"),
@@ -671,9 +668,9 @@ fn compound_declaration_with_fields() {
         }
         ";
     let dump = program_from_string(src).to_string();
-    assert!(janky_expected(&dump, "assign %<t0> = @p0.f1, @p0.f3"));
-    assert!(janky_expected(&dump, "assign %<t1> = @p0.f5, $globals.b"));
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f4 := %<t1>)"));
+    assert!(janky_expected(&dump, "%<t0> = load @p0.f1"));
+    assert!(janky_expected(&dump, "store $globals.b := %<t2>"));
+    assert!(janky_expected(&dump, "store @p0.f4 := %<t5>"));
 }
 
 #[test_log::test]
@@ -748,7 +745,7 @@ fn params_into_calls() {
         "picked up assign in parameter list"
     );
     assert!(
-        janky_expected(&dump, "%<t0> = direct-call foo(%x)"),
+        janky_expected(&dump, "%<t0> = direct-call foo(@p0)"),
         "picked up assign in parameter list"
     );
     assert!(janky_expected(&dump, "direct-call foo(@p0)"));

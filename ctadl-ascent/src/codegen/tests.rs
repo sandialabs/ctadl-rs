@@ -97,7 +97,17 @@ fn test_basic2_source_sink() {
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
     codegen_function(&h_ssa, &mut facts, &mut source_info);
+    println!("h_ssa:\n{h_ssa}");
+    for (site, dest, src) in &facts.assign {
+        println!("Assign: {dest} <- {src}");
+    }
     let index_result = taint_index(facts.clone());
+    for p in &facts.paths {
+        println!("Path: {}", p.0);
+    }
+    for (fid, iid, v1, p1, v2, p2) in &index_result.assign_like {
+        println!("Assign_like: {fid:?} {iid:?} {v1} {p1} <- {v2} {p2}");
+    }
     let h_id = source_info
         .sites
         .get_function_id(fx::Function("H".into()))
@@ -114,6 +124,9 @@ fn test_basic2_source_sink() {
             .collect(),
     };
     let query_result = taint_analysis(qfacts);
+    for t in &query_result.taint {
+        println!("Taint: {:?}", t);
+    }
     assert!(
         query_result
             .taint
