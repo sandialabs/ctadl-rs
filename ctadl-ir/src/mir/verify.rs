@@ -21,10 +21,6 @@ pub enum VerifyError {
     #[error("multiply-defined function: {}", index.index())]
     MultiplyDefinedFunction { index: FunctionIdx },
 
-    /// An Update instruction that doesn't update any field
-    #[error("update with no field: {location}")]
-    EmptyFieldUpdate { location: Location },
-
     /// Parameter reference found outside the bounds of declared parameters
     #[error("in function: {function}: reference to nonexistent parameter: '{}'", parameter.index())]
     ParameterDoesNotExist {
@@ -188,15 +184,6 @@ impl Visitor for MirVerify {
     #[inline]
     fn visit_statement_kind(&mut self, statement: &StatementKind, location: Location) {
         self.super_statement_kind(statement, location);
-        use StatementKind::*;
-        if let Update {
-            dest: (_var, fields),
-            ..
-        } = statement
-            && fields.is_empty()
-        {
-            self.add_error(VerifyError::EmptyFieldUpdate { location });
-        }
     }
 
     #[inline]

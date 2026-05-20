@@ -395,12 +395,23 @@ impl<'a> Context<'a> {
         target_node: Node<'_>,
         expr_node: Node<'_>,
     ) -> anyhow::Result<Exp, Error> {
-        let target_var = self.flatten_expr(program, target_node, source, scope_view)?;
+        let (base_var, opt_field) = self.flatten_lvalue(program, target_node, source, scope_view)?;
+        let rhs_exp = self.flatten_expr(program, expr_node, source, scope_view)?;
 
-        let rhs_var = self.flatten_expr(program, expr_node, source, scope_view)?;
-
-        self.add_assign_to_program(program, scope_view, target_var.clone(), rhs_var, None);
-        Ok(target_var)
+        if let Some(field) = opt_field {
+            let rhs_var = self.exp_to_var(program, rhs_exp.clone(), scope_view);
+            let sa = StatementKind::Store {
+                dest: base_var,
+                field,
+                value: rhs_var,
+            };
+            program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(sa));
+            Ok(rhs_exp)
+        } else {
+            let sa = StatementKind::assign(base_var.clone(), [rhs_exp.clone()]);
+            program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(sa));
+            Ok(rhs_exp) // Or Exp::AccessPath(AccessPath::without_fields(base_var)) but rhs_exp is fine
+        }
     }
 
     fn walk_compound_statement(
@@ -610,51 +621,140 @@ impl<'a> Context<'a> {
             .map(|(param_idx, _)| param_idx)
     }
 
-    fn build_access_path(
-        &self,
-        name_pre_scope: &str,
-        field_path: FieldAccesses,
-        scope_view: &ScopeView,
-    ) -> AccessPath {
-        let name: String;
-        let varkind: VarKind;
+    fn resolve_var(&self, name_pre_scope: &str, scope_view: &ScopeView) -> (VarKind, String) {
         if let Some(vardecl) = self
             .scope_tree
             .find_variable(scope_view.sidx, name_pre_scope)
         {
-            name = self.scope_tree.to_string(vardecl);
-            varkind = vardecl.kind.clone();
+            (vardecl.kind.clone(), self.scope_tree.to_string(vardecl))
         } else {
-            name = name_pre_scope.to_string();
-            if name.starts_with("<t")
-            // this is a temp
-            {
-                varkind = VarKind::Local
+            let name = name_pre_scope.to_string();
+            if name.starts_with("<t") {
+                (VarKind::Local, name)
             } else {
                 log::info!("Implicit Global bourn: {}", name);
-                varkind = VarKind::Global;
+                (VarKind::Global, name)
             }
         }
+    }
 
+    fn var_ref_from_resolved(
+        &self,
+        varkind: VarKind,
+        name: String,
+        scope_view: &ScopeView,
+    ) -> VariableRef {
         match varkind {
-            VarKind::Global => AccessPath::new_global(name.as_str(), field_path),
-            VarKind::Local => ctadl_ir::mir::AccessPath {
-                variable_ref: VariableRef::new_local(name),
-                path: field_path,
-            },
+            VarKind::Global => VariableRef::new_global(),
+            VarKind::Local => VariableRef::new_local(name),
             VarKind::Parameter => {
                 if let Some(param_idx) =
                     self.get_param_idx(scope_view.func_name.as_str(), name.as_str())
                 {
-                    ctadl_ir::mir::AccessPath {
-                        variable_ref: VariableRef::new_parameter(param_idx),
-                        path: field_path,
-                    }
+                    VariableRef::new_parameter(param_idx)
                 } else {
                     panic!("no parameter index for parameters");
                 }
             }
-        } // end match
+        }
+    }
+
+    fn exp_to_var(
+        &mut self,
+        program: &mut Program,
+        exp: Exp,
+        scope_view: &ScopeView,
+    ) -> VariableRef {
+        match exp {
+            Exp::AccessPath(ap) if ap.path.is_empty() => ap.variable_ref,
+            _ => {
+                let temp_name = self.allocator.next_temp();
+                let temp_var = VariableRef::new_local(temp_name);
+                let sa = StatementKind::assign(temp_var.clone(), [exp]);
+                program[scope_view.fidx].blocks[scope_view.blidx]
+                    .push_back(Statement::new_kind(sa));
+                temp_var
+            }
+        }
+    }
+
+    fn flatten_lvalue(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        source: &str,
+        scope_view: &ScopeView,
+    ) -> Result<(VariableRef, Option<FieldAccess>), Error> {
+        match node.kind() {
+            "identifier" => {
+                let text = to_str(&node, source);
+                let (varkind, name) = self.resolve_var(text, scope_view);
+                if varkind == VarKind::Global {
+                    Ok((
+                        VariableRef::new_global(),
+                        Some(FieldAccess::Symbol(ArcIntern::from(name.as_str()))),
+                    ))
+                } else {
+                    Ok((self.var_ref_from_resolved(varkind, name, scope_view), None))
+                }
+            }
+            "field_expression" => {
+                let argument = node.child_by_field_name("argument").unwrap();
+                let field = node.child_by_field_name("field").unwrap();
+                let base_exp = self.flatten_expr(program, argument, source, scope_view)?;
+                let base_var = self.exp_to_var(program, base_exp, scope_view);
+                let field_name = to_str(&field, source);
+                Ok((
+                    base_var,
+                    Some(FieldAccess::Symbol(ArcIntern::from(field_name))),
+                ))
+            }
+            "subscript_expression" => {
+                let argument = node.child_by_field_name("argument").unwrap();
+                let index = node.child_by_field_name("index").unwrap();
+                let base_exp = self.flatten_expr(program, argument, source, scope_view)?;
+                let base_var = self.exp_to_var(program, base_exp, scope_view);
+                let index_exp = self.flatten_expr(program, index, source, scope_view)?;
+                let s = match index_exp {
+                    Exp::Str(esp) => format!("[{}]", esp),
+                    _ => format!("[{:?}]", index_exp),
+                };
+                Ok((
+                    base_var,
+                    Some(FieldAccess::Symbol(ArcIntern::from(s.as_str()))),
+                ))
+            }
+            "pointer_expression" => {
+                let argument = node.child_by_field_name("argument").unwrap();
+                self.flatten_lvalue(program, argument, source, scope_view)
+            }
+            "parenthesized_expression" => {
+                let inner = node.child(1).expect("missing inner expr");
+                self.flatten_lvalue(program, inner, source, scope_view)
+            }
+            "pointer_declarator" => {
+                if let Some(iden) = node.child_by_field_name("declarator") {
+                    let symbol = to_str(&iden, source);
+                    self.scope_tree.add_variable(
+                        scope_view.sidx,
+                        symbol.to_string(),
+                        VarKind::Local,
+                        None,
+                        None,
+                    );
+                    let (varkind, name) = self.resolve_var(symbol, scope_view);
+                    Ok((self.var_ref_from_resolved(varkind, name, scope_view), None))
+                } else {
+                    Err(Error::TreeSitterParse(
+                        "Pointer Declarators missing declarator".to_string(),
+                    ))
+                }
+            }
+            _ => Err(Error::TreeSitterParse(format!(
+                "Unsupported LValue type: {}",
+                node.kind()
+            ))),
+        }
     }
 
     // This will gather assigns, find terminator, and recursively descend if you've got inner blocks.
@@ -744,40 +844,27 @@ impl<'a> Context<'a> {
         source: &str,
         scope_view: &ScopeView,
     ) -> Result<Exp, Error> {
-        //debug_print_tree(node, 0, Some("FLATTEN_EXPR"), Some(50));
-        let text = to_str(&node, source); //.to_string();
+        let text = to_str(&node, source);
         match node.kind() {
-            "identifier" => Ok(Exp::AccessPath(self.build_access_path(
-                text,
-                Default::default(),
-                scope_view,
-            ))),
-            "pointer_declarator" => self.flatten_pointer_decl(node, source, scope_view),
+            "identifier" | "field_expression" | "subscript_expression" | "pointer_expression" | "pointer_declarator" | "parenthesized_expression" => {
+                let (base_var, opt_field) = self.flatten_lvalue(program, node, source, scope_view)?;
+                if let Some(field) = opt_field {
+                    let temp_name = self.allocator.next_temp();
+                    let temp_var = VariableRef::new_local(temp_name);
+                    let load = StatementKind::Load {
+                        dest: temp_var.clone(),
+                        source: base_var,
+                        field,
+                    };
+                    program[scope_view.fidx].blocks[scope_view.blidx]
+                        .push_back(Statement::new_kind(load));
+                    Ok(Exp::AccessPath(AccessPath::without_fields(temp_var)))
+                } else {
+                    Ok(Exp::AccessPath(AccessPath::without_fields(base_var)))
+                }
+            }
             "number_literal" | "string_literal" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
-
-            // COMPOUND NODES: Flatten children first, then generate a temp.
             "binary_expression" => self.flatten_binary(program, node, source, scope_view),
-
-            // PASS-THROUGH NODES: Parentheses don't need their own temp,
-            // just pass the inner value up.
-            "parenthesized_expression" => {
-                // () is not a valid expression.
-                let inner_node = node.child(1).expect("missing inner expr");
-                self.flatten_expr(program, inner_node, source, scope_view)
-            }
-
-            "field_expression" => {
-                let mut path_vec = Vec::<&str>::new();
-                //let tt = to_str(&node, &source);
-                let final_ident = extract_field_expression(node, source, &mut path_vec)?;
-                let ret = Exp::AccessPath(self.build_access_path(
-                    final_ident,
-                    path_vec.into_iter().collect(),
-                    scope_view,
-                ));
-                Ok(ret)
-            }
-
             "assignment_expression" => self.collect_assignment(
                 source,
                 program,
@@ -785,14 +872,6 @@ impl<'a> Context<'a> {
                 node.child_by_field_name("left").expect("always a left"),
                 node.child_by_field_name("right").expect("always a right"),
             ),
-            "pointer_expression" => self.flatten_expr(
-                program,
-                node.child_by_field_name("argument")
-                    .expect("always a argument for the * operator"),
-                source,
-                scope_view,
-            ),
-            "subscript_expression" => self.flatten_subscript(program, node, source, scope_view),
             "call_expression" => {
                 let x = self.allocator.next_temp();
                 self.collect_call(program, node, source, scope_view, x)
@@ -807,35 +886,6 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn flatten_pointer_decl(
-        &mut self,
-        node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
-    ) -> std::result::Result<Exp, Error> {
-        //how come only this declarator came up in expr? see pointer_decl way?
-        if let Some(iden) = node.child_by_field_name("declarator") {
-            let symbol = to_str(&iden, source);
-            self.scope_tree.add_variable(
-                scope_view.sidx,
-                symbol.to_string(),
-                VarKind::Local,
-                None,
-                None,
-            );
-            Ok(Exp::AccessPath(self.build_access_path(
-                symbol,
-                Default::default(),
-                scope_view,
-            )))
-        } else {
-            debug_print_tree(node, 0, None, None);
-            Err(Error::TreeSitterParse(
-                "Surprised, Pointer Declarators dont always have a declarators".to_string(),
-            ))
-        }
-    }
-
     fn flatten_binary(
         &mut self,
         program: &mut Program,
@@ -843,65 +893,19 @@ impl<'a> Context<'a> {
         source: &str,
         scope_view: &ScopeView,
     ) -> std::result::Result<Exp, Error> {
-        // 1. Extract the children
         let left_node = node.child_by_field_name("left").expect("missing left");
         let right_node = node.child_by_field_name("right").expect("missing right");
-        // 2. Recurse down! (Bottom-up evaluation)
         let left_val = self.flatten_expr(program, left_node, source, scope_view)?;
         let right_val = self.flatten_expr(program, right_node, source, scope_view)?;
-        // 3. Generate a new temporary for this specific operation
+        
         let temp_name = self.allocator.next_temp();
-        let target = Exp::AccessPath(self.build_access_path(
-            temp_name.as_str(),
-            Default::default(),
-            scope_view,
-        ));
-        self.add_assign_to_program(program, scope_view, target, left_val, Some(right_val));
-        // 5. Return the temporary to whatever parent called us
-        Ok(Exp::AccessPath(ctadl_ir::mir::AccessPath {
-            variable_ref: VariableRef::new_local(temp_name),
-            path: Default::default(),
-        }))
-    }
-
-    fn flatten_subscript(
-        &mut self,
-        program: &mut Program,
-        node: Node<'_>,
-        source: &str,
-        scope_view: &ScopeView,
-    ) -> std::result::Result<Exp, Error> {
-        let lhs = self.flatten_expr(
-            program,
-            node.child_by_field_name("argument").unwrap(),
-            source,
-            scope_view,
-        )?;
-        let index = self.flatten_expr(
-            program,
-            node.child_by_field_name("index").unwrap(),
-            source,
-            scope_view,
-        )?;
-        //TODO check if LHS is Exp of type bytes if so you've got 3[f];
-        let mut s = format!("[{:?}]", index);
-        if let Exp::Str(esp) = index {
-            s = format!("[{}]", esp);
-        } else {
-            log::warn!("Not a str is this an ident? : {}", s);
-            s = "[_elem_]".to_string();
-        }
-        if let Exp::AccessPath(eap) = lhs {
-            let mut fields = eap.path.fields.clone();
-            fields.push(FieldAccess::Symbol(ArcIntern::<str>::from(s)));
-
-            Ok(Exp::AccessPath(ctadl_ir::mir::AccessPath {
-                variable_ref: eap.variable_ref,
-                path: fields.into_iter().collect(),
-            }))
-        } else {
-            Err(Error::TreeSitterParse("EAP wasnt accessPath".to_owned()))
-        }
+        let target_var = VariableRef::new_local(temp_name);
+        
+        let sa = StatementKind::assign(target_var.clone(), [left_val, right_val]);
+        program[scope_view.fidx].blocks[scope_view.blidx]
+            .push_back(Statement::new_kind(sa));
+            
+        Ok(Exp::AccessPath(AccessPath::without_fields(target_var)))
     }
 
     fn collect_arguments(
@@ -920,12 +924,11 @@ impl<'a> Context<'a> {
             arg_list.kind()
         );
 
-        //walk does not descend into the grandchildren, neat.
         let mut cursor = arg_list.walk();
 
         for child in arg_list.children(&mut cursor) {
             if !child.is_named() {
-                continue; // we skip , ( stuff like that...
+                continue;
             }
             result.push(self.flatten_expr(program, child, source, scope_view)?);
         }
@@ -962,12 +965,8 @@ impl<'a> Context<'a> {
                 args,
             },
         ));
-        //we return the temp_name, so that the assignment expression for the actual int x = foo() gets the result of foo()
-        Ok(Exp::AccessPath(self.build_access_path(
-            temp_name.as_str(),
-            Default::default(),
-            scope_view,
-        )))
+        
+        Ok(Exp::AccessPath(AccessPath::without_fields(VariableRef::new_local(temp_name))))
     }
 
     /// parses and creates new functions and parameters
@@ -1047,30 +1046,6 @@ impl<'a> Context<'a> {
     }
 
     //this is a helper function to take the SSA list and shove them all into the block
-    fn add_assign_to_program(
-        &mut self,
-        program: &mut Program,
-        scope_view: &ScopeView,
-        target: Exp,
-        left_op: Exp,
-        right_op: Option<Exp>,
-    ) {
-        let val_exp = left_op; //todo get rid of val_exp and just use left_op
-        if let Exp::AccessPath(my_path) = target {
-            //what's with this if? //todo: why can't i take a Exp::AccessPath?
-            let mut fa: Vec<Exp> = [val_exp.clone()].into();
-            if let Some(righty) = right_op {
-                fa.push(righty);
-            }
-
-            let sa = if my_path.path.is_empty() {
-                StatementKind::assign(my_path.variable_ref.clone(), fa)
-            } else {
-                StatementKind::update(my_path, val_exp.clone())
-            };
-            program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(sa));
-        }
-    }
 }
 
 // A little helper to make grabbing stuff out of the tree-sitter iterator easier
@@ -1176,31 +1151,3 @@ pub fn debug_print_tree(
     }
 }
 
-// this returns the field expresion chained from the 1st field_expression,
-// The final argument of kind "identifier" is returned, as it needs to be stuffed
-// in the variable field, while the rest (the out_vec) is the path
-
-fn extract_field_expression<'a>(
-    chain: Node<'a>,
-    source: &'a str,
-    out_vec: &mut Vec<&'a str>,
-) -> anyhow::Result<&'a str, Error> {
-    if chain.kind() == "identifier" {
-        return Ok(to_str(&chain, source));
-    }
-    //otherwise, we have a field expression, and expect 2 children.
-    assert!(
-        chain.kind() == "field_expression",
-        "Expected only nodes of kind field_expression"
-    );
-    let argument = chain
-        .child_by_field_name("argument")
-        .expect("expected all field_expressions have argument,field children");
-    let field = chain
-        .child_by_field_name("field")
-        .expect("expected all field_expressions have argument,field children");
-
-    let final_res = extract_field_expression(argument, source, out_vec);
-    out_vec.push(to_str(&field, source));
-    final_res
-}

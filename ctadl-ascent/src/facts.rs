@@ -324,6 +324,15 @@ impl From<&mir::FieldAccesses> for Path {
     }
 }
 
+impl From<&mir::Offsets> for Path {
+    #[inline]
+    fn from(path: &mir::Offsets) -> Self {
+        let mut p = Path::empty();
+        p.extend_merging(path.fields.iter().cloned().map(mir::FieldAccess::Offset));
+        p
+    }
+}
+
 impl From<&mir::FieldAccess> for Path {
     #[inline]
     fn from(field: &mir::FieldAccess) -> Self {

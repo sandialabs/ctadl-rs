@@ -93,12 +93,19 @@ macro_rules! make_ast_visitor {
             fn visit_access_path(&mut self, access_path: &$($mutability)? AccessPath) {
                 self.super_access_path(access_path);
             }
+
+            fn visit_offsets(&mut self, offsets: &$($mutability)? Offsets) {
+                self.super_offsets(offsets);
+            }
+
             fn visit_field_accesses(&mut self, field_accesses: &$($mutability)? FieldAccesses) {
                 self.super_field_accesses(field_accesses);
             }
+
             fn visit_field_access(&mut self, field_access: &$($mutability)? FieldAccess) {
                 self.super_field_access(field_access);
             }
+
             fn visit_call_style(&mut self, call_style: &$($mutability)? CallStyle) {
                 self.super_call_style(call_style);
             }
@@ -201,12 +208,6 @@ macro_rules! make_ast_visitor {
                         }
                         self.visit_variable_ref(global);
                     }
-                    Update { dest: (dest_var, dest_fields), source, value } => {
-                        self.visit_variable_ref(dest_var);
-                        self.visit_field_accesses(dest_fields);
-                        self.visit_variable_ref(source);
-                        self.visit_exp(value);
-                    }
                     Nop => (),
                 }
             }
@@ -261,7 +262,11 @@ macro_rules! make_ast_visitor {
             fn super_access_path(&mut self, access_path: &$($mutability)? AccessPath) {
                 let AccessPath { variable_ref, path } = access_path;
                 self.visit_variable_ref(variable_ref);
-                self.visit_field_accesses(path);
+                self.visit_offsets(path);
+            }
+
+            fn super_offsets(&mut self, _offsets: &$($mutability)? Offsets) {
+                // No additional traversal needed for Offsets (they are just i64)
             }
 
             fn super_field_accesses(&mut self, field_accesses: &$($mutability)? FieldAccesses) {

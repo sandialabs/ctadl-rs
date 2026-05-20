@@ -109,6 +109,7 @@ use thiserror::Error;
 
 use crate::parse::{FlowyParser, Rule};
 use ctadl_ir::index::idx::Idx;
+use ctadl_ir::index::index_vec_deque::IndexVecDeque;
 use ctadl_ir::mir::visit::MutVisitor;
 use ctadl_ir::mir::*;
 use ctadl_ir::ssa;
@@ -257,7 +258,7 @@ impl Display for EndpointRequires {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Endpoint {
     pub infunc: ArcIntern<str>,
-    pub port: (VariableRef, FieldAccesses),
+    pub port: (VariableRef, Offsets),
     /// The taint label
     pub label: String,
     pub direction: EndpointDirection,
@@ -632,35 +633,98 @@ impl FlowyCtx {
             Rule::assign_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let dst = parse_ap(locals, inner.next().unwrap(), defined_functions)?;
-                // src is comma-separated
+
+                let (mut dst_var, dst_fields) =
+                    parse_lvalue(locals, inner.next().unwrap(), defined_functions)?;
+                for i in 0..dst_fields.len().saturating_sub(1) {
+                    let tmp = VariableRef::new_local(format!("t{}?", self.counter.next()));
+                    data.push_back(Statement::new(
+                        StatementKind::Load {
+                            dest: tmp.clone(),
+                            source: dst_var,
+                            field: dst_fields[i].clone(),
+                        },
+                        source_info,
+                    ));
+                    dst_var = tmp;
+                }
+
                 let src = {
                     let mut result = Vec::new();
                     for p in inner.next().unwrap().into_inner() {
-                        result.push(parse_exp(locals, p, defined_functions));
+                        result.push(parse_exp(
+                            locals,
+                            p,
+                            defined_functions,
+                            &mut self.counter,
+                            &mut data.statements,
+                            source_info,
+                        ));
                     }
                     result
                 };
-                let assign = {
-                    if dst.path.is_empty() {
-                        StatementKind::assign(dst.variable_ref, src)
-                    } else if src.len() > 1 {
+
+                if let Some(last_field) = dst_fields.last() {
+                    if src.len() > 1 {
                         return Err(FlowyError::Compile {
                             message: "cannot update a field with multiple sources".to_string(),
                             line,
                             col,
                         });
-                    } else {
-                        StatementKind::assign_or_update(dst, src[0].clone())
                     }
-                };
-                data.push_back(Statement::new(assign, source_info));
+                    let val_var = match &src[0] {
+                        Exp::AccessPath(ap) if ap.path.is_empty() => ap.variable_ref.clone(),
+                        _ => {
+                            let tmp = VariableRef::new_local(format!("t{}?", self.counter.next()));
+                            data.push_back(Statement::new(
+                                StatementKind::assign(tmp.clone(), [src[0].clone()]),
+                                source_info,
+                            ));
+                            tmp
+                        }
+                    };
+                    data.push_back(Statement::new(
+                        StatementKind::Store {
+                            dest: dst_var,
+                            field: last_field.clone(),
+                            value: val_var,
+                        },
+                        source_info,
+                    ));
+                } else {
+                    data.push_back(Statement::new(
+                        StatementKind::assign(dst_var, src),
+                        source_info,
+                    ));
+                }
             }
             Rule::assign_call_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let lhs = parse_ap(locals, inner.next().unwrap(), defined_functions)?;
-                let callee = match parse_exp(locals, inner.next().unwrap(), defined_functions) {
+
+                let (mut dst_var, dst_fields) =
+                    parse_lvalue(locals, inner.next().unwrap(), defined_functions)?;
+                for i in 0..dst_fields.len().saturating_sub(1) {
+                    let tmp = VariableRef::new_local(format!("t{}?", self.counter.next()));
+                    data.push_back(Statement::new(
+                        StatementKind::Load {
+                            dest: tmp.clone(),
+                            source: dst_var,
+                            field: dst_fields[i].clone(),
+                        },
+                        source_info,
+                    ));
+                    dst_var = tmp;
+                }
+
+                let callee = match parse_exp(
+                    locals,
+                    inner.next().unwrap(),
+                    defined_functions,
+                    &mut self.counter,
+                    &mut data.statements,
+                    source_info,
+                ) {
                     Exp::AccessPath(ap) => ap,
                     _ => {
                         return Err(FlowyError::Compile {
@@ -674,7 +738,14 @@ impl FlowyCtx {
                     variable_ref: variable,
                     path,
                 } = callee;
-                let actuals = parse_actuals(locals, inner.next().unwrap(), defined_functions);
+                let actuals = parse_actuals(
+                    locals,
+                    inner.next().unwrap(),
+                    defined_functions,
+                    &mut self.counter,
+                    &mut data.statements,
+                    source_info,
+                );
                 let style = if !path.is_empty() {
                     // Indirect call
                     CallStyle::FuncPtrCall {
@@ -738,14 +809,33 @@ impl FlowyCtx {
                 data.push_back(Statement::new(call, source_info));
 
                 // assign the temporary to the field (if applicable)
-                let assign_lhs =
-                    StatementKind::assign_or_update(lhs.clone(), Exp::AccessPath(tmp.into()));
-                data.push_back(Statement::new(assign_lhs, source_info));
+                if let Some(last_field) = dst_fields.last() {
+                    data.push_back(Statement::new(
+                        StatementKind::Store {
+                            dest: dst_var,
+                            field: last_field.clone(),
+                            value: tmp,
+                        },
+                        source_info,
+                    ));
+                } else {
+                    data.push_back(Statement::new(
+                        StatementKind::assign(dst_var, [Exp::AccessPath(tmp.into())]),
+                        source_info,
+                    ));
+                }
             }
             Rule::call_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let callee = match parse_exp(locals, inner.next().unwrap(), defined_functions) {
+                let callee = match parse_exp(
+                    locals,
+                    inner.next().unwrap(),
+                    defined_functions,
+                    &mut self.counter,
+                    &mut data.statements,
+                    source_info,
+                ) {
                     Exp::AccessPath(ap) => ap,
                     _ => {
                         return Err(FlowyError::Compile {
@@ -759,7 +849,14 @@ impl FlowyCtx {
                     variable_ref: variable,
                     path,
                 } = callee;
-                let actuals = parse_actuals(locals, inner.next().unwrap(), defined_functions);
+                let actuals = parse_actuals(
+                    locals,
+                    inner.next().unwrap(),
+                    defined_functions,
+                    &mut self.counter,
+                    &mut data.statements,
+                    source_info,
+                );
 
                 let style = if !path.is_empty() {
                     // Indirect call
@@ -820,9 +917,10 @@ impl FlowyCtx {
                             args.push(x)
                         }
                     }
-                    let assign_tmp =
-                        StatementKind::assign_or_update(tmp.into(), orig_args[0].clone());
-                    data.push_back(Statement::new(assign_tmp, source_info));
+                    data.push_back(Statement::new(
+                        StatementKind::assign(tmp, [orig_args[0].clone()]),
+                        source_info,
+                    ));
                     args
                 } else {
                     actuals.into_iter().collect()
@@ -837,7 +935,14 @@ impl FlowyCtx {
                 let terminator = inner
                     .next()
                     .map(|var| {
-                        let src = parse_exp(locals, var, defined_functions);
+                        let src = parse_exp(
+                            locals,
+                            var,
+                            defined_functions,
+                            &mut self.counter,
+                            &mut data.statements,
+                            source_info,
+                        );
                         TerminatorKind::Return {
                             args: vec![src].into(),
                         }
@@ -1008,25 +1113,39 @@ fn parse_p(pair: Pair<'_, Rule>) -> FieldAccess {
     }
 }
 
-fn parse_ap(
-    parameters: &Env,
+fn parse_lvalue(
+    env: &Env,
     pair: Pair<'_, Rule>,
-    defined_functions: &HashSet<String>,
-) -> Result<AccessPath, FlowyError> {
-    let (line, col) = pair.line_col();
-    match parse_exp(parameters, pair, defined_functions) {
-        Exp::AccessPath(ap) => Ok(ap),
-        _ => Err(FlowyError::Compile {
-            message: "bad lhs ap".to_string(),
-            line,
-            col,
-        }),
-    }
+    _defined_functions: &HashSet<String>,
+) -> Result<(VariableRef, Vec<FieldAccess>), FlowyError> {
+    let mut iter = pair.into_inner();
+    let first = iter.next().unwrap();
+    let name: String = first.as_str().into();
+    let mut fields: Vec<FieldAccess> = iter.map(parse_p).collect();
+
+    let base_var = if let Some(v) = env.parameters.get(&name) {
+        v.clone()
+    } else if env.globals.contains(&name) {
+        fields.insert(0, FieldAccess::Symbol(ArcIntern::from(name.clone())));
+        VariableRef::new_global()
+    } else {
+        VariableRef::new_local(name.clone())
+    };
+
+    Ok((base_var, fields))
 }
 
 /// A regular access path is variable + fields (as opposed to a summary access path)
-fn parse_exp(env: &Env, pair: Pair<'_, Rule>, defined_functions: &HashSet<String>) -> Exp {
+fn parse_exp(
+    env: &Env,
+    pair: Pair<'_, Rule>,
+    defined_functions: &HashSet<String>,
+    counter: &mut Counter,
+    stmts: &mut IndexVecDeque<StatementIdx, Statement>,
+    source_info: SourceInfo,
+) -> Exp {
     // int | string | ident ~ p* | function_ptr
+    let pair_clone = pair.clone();
     let mut iter = pair.into_inner();
     let first = iter.next().unwrap();
     match first.as_rule() {
@@ -1043,42 +1162,20 @@ fn parse_exp(env: &Env, pair: Pair<'_, Rule>, defined_functions: &HashSet<String
             Exp::ObjectRef(CallObject::FunctionPtr(ArcIntern::from(name)))
         }
         _ => {
-            let name: String = first.as_str().into();
-            let ps: Vec<FieldAccess> = iter.map(parse_p).collect();
-            let field_accesses = FieldAccesses::from_iter(ps.clone());
-            env.parameters
-                .get(&name)
-                // try the parameter
-                .map(|v| {
-                    Exp::AccessPath(AccessPath {
-                        variable_ref: v.clone(),
-                        path: field_accesses.clone(),
-                    })
-                })
-                // try the global
-                .or_else(|| {
-                    if env.globals.contains(&name) {
-                        let mut global_field_accesses = FieldAccesses::from_iter(std::iter::once(
-                            FieldAccess::Symbol(ArcIntern::from(name.clone())),
-                        ));
-                        global_field_accesses
-                            .fields
-                            .extend(field_accesses.fields.clone());
-                        Some(Exp::AccessPath(AccessPath {
-                            variable_ref: VariableRef::new_global(),
-                            path: global_field_accesses,
-                        }))
-                    } else {
-                        None
-                    }
-                })
-                // treat it as local
-                .unwrap_or_else(|| {
-                    Exp::AccessPath(AccessPath {
-                        variable_ref: VariableRef::new_local(name.clone()),
-                        path: field_accesses,
-                    })
-                })
+            let (mut var, fields) = parse_lvalue(env, pair_clone, defined_functions).unwrap();
+            for field in fields {
+                let tmp = VariableRef::new_local(format!("t{}?", counter.next()));
+                stmts.push_back(Statement::new(
+                    StatementKind::Load {
+                        dest: tmp.clone(),
+                        source: var,
+                        field,
+                    },
+                    source_info,
+                ));
+                var = tmp;
+            }
+            Exp::AccessPath(AccessPath::without_fields(var))
         }
     }
 }
@@ -1087,10 +1184,13 @@ fn parse_actuals(
     locals: &Env,
     pair: Pair<'_, Rule>,
     defined_functions: &HashSet<String>,
+    counter: &mut Counter,
+    stmts: &mut IndexVecDeque<StatementIdx, Statement>,
+    source_info: SourceInfo,
 ) -> Vec<Exp> {
     assert!(pair.as_rule() == Rule::actuals);
     pair.into_inner()
-        .map(|ap| parse_exp(locals, ap, defined_functions))
+        .map(|ap| parse_exp(locals, ap, defined_functions, counter, stmts, source_info))
         .collect()
 }
 
@@ -1126,7 +1226,7 @@ impl MutVisitor for ExtractSpec {
             match endpoint_name {
                 "source" | "errsource" => {
                     let infunc = &self.function;
-                    let port = (rets[0].clone(), FieldAccesses::empty());
+                    let port = (rets[0].clone(), Offsets::default());
                     let endpoint = Endpoint {
                         infunc: infunc.clone(),
                         port,

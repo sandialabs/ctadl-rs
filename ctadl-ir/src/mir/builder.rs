@@ -2,8 +2,8 @@ use crate::index::idx::Idx;
 use crate::mir::call::CallStyle;
 use crate::mir::terminator::{Terminator, TerminatorKind};
 use crate::mir::{
-    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldAccesses, FunctionData, ParameterIdx,
-    ParameterType, Statement, StatementIdx, StatementKind, VariableRef,
+    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldAccess, FieldAccesses, FunctionData,
+    ParameterIdx, ParameterType, Statement, StatementIdx, StatementKind, VariableRef,
 };
 
 /// A builder for creating functions.
@@ -115,34 +115,35 @@ impl<'a> BasicBlockBuilder<'a> {
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create and insert an update statement
-    ///
-    /// # Arguments
-    /// * `dest` - Destination access path
-    /// * `source` - Source expression
-    pub fn create_update(
+    /// Create and insert a load statement
+    pub fn create_load(
         &mut self,
-        dest: impl Into<AccessPath>,
-        source: impl Into<Exp>,
+        dest: VariableRef,
+        source: VariableRef,
+        field: impl Into<FieldAccess>,
     ) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::update(dest.into(), source.into()));
+        let statement = Statement::new_kind(StatementKind::Load {
+            dest,
+            source,
+            field: field.into(),
+        });
         let current_pos = self.insertion_point;
         self.insert_statement(statement);
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create and insert an assign_or_update statement
-    ///
-    /// # Arguments
-    /// * `dest` - Destination access path
-    /// * `source` - Source expression
-    pub fn create_assign_or_update(
+    /// Create and insert a store statement
+    pub fn create_store(
         &mut self,
-        dest: impl Into<AccessPath>,
-        source: impl Into<Exp>,
+        dest: VariableRef,
+        field: impl Into<FieldAccess>,
+        value: VariableRef,
     ) -> StatementIdx {
-        let statement =
-            Statement::new_kind(StatementKind::assign_or_update(dest.into(), source.into()));
+        let statement = Statement::new_kind(StatementKind::Store {
+            dest,
+            field: field.into(),
+            value,
+        });
         let current_pos = self.insertion_point;
         self.insert_statement(statement);
         StatementIdx::from(current_pos as u32)
@@ -255,15 +256,15 @@ impl<'a> BasicBlockBuilder<'a> {
     ///
     /// # Arguments
     /// * `variable` - Variable reference
-    /// * `fields` - Field access path
-    pub fn new_access_path<S: AsRef<str>>(
+    /// * `offsets` - Numeric offsets
+    pub fn new_access_path(
         &self,
         variable_ref: VariableRef,
-        fields: impl IntoIterator<Item = S>,
+        offsets: impl IntoIterator<Item = crate::mir::Offset>,
     ) -> AccessPath {
         AccessPath {
             variable_ref,
-            path: fields.into_iter().collect(),
+            path: offsets.into_iter().collect(),
         }
     }
 
@@ -271,11 +272,15 @@ impl<'a> BasicBlockBuilder<'a> {
     ///
     /// # Arguments
     /// * `fields` - Field names
-    pub fn new_field_path<S: AsRef<str>>(
+    pub fn new_field_path<S: Into<String>>(
         &self,
         fields: impl IntoIterator<Item = S>,
     ) -> FieldAccesses {
-        fields.into_iter().collect()
+        FieldAccesses::new(
+            fields
+                .into_iter()
+                .map(|s| FieldAccess::Symbol(s.into().into())),
+        )
     }
 
     /// Create a new field access path with a single offset

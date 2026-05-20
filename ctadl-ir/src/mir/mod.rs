@@ -14,7 +14,7 @@ targets of control flow. Terminator instructions are returns and gotos with mult
   on the right-hand side. Multiple assignments can be done in parallel in one statement. Assignments
   such as `a, b = b, a` are expressed in vec form as `[(a,b),(b,a)]` and implement a swap.
 
-- Setting of fields is done through the [`StatementKind::Update`] instruction.
+- Setting of fields is done through the [`StatementKind::Store`] instruction.
 
 - Calls come in two flavors: direct and indirect. Direct calls are tagged with call edges. Indirect
   calls are tagged with an indirect call style. Calls can be internal or external to a program. Call
@@ -60,7 +60,7 @@ before conversion. For instance, a frontend language expression like `x = a + (b
 linearized as `(t1, t1) = (b, c); (t2, t2) = (a, t1); x = t1`.
 
 Stores into objects and structures often look like `obj.x.y = w` in frontend languages. These are
-modeled as [`StatementKind::Update`] instructions where the source and destination are both `obj`.
+modeled as [`StatementKind::Store`] instructions where the source and destination are both `obj`.
 Statements like `obj.x = F(y.z)` have to be split into two CIR instructions: first, call the
 function and return into a temporary like `t1 = F(y.z)`; next, store the temporary to the
 destination object.
@@ -68,7 +68,7 @@ destination object.
 Globals variables in frontend languages can be modeled using [`Variable::GlobalHeap`] and fields.
 Say you have a global variable `speed`. Loading a global is done with an access path whose variable
 is the global heap and a field called `speed`. Storing to speed is done with an
-[`StatementKind::Update`] instruction to the `speed` field, using the global heap as the source and
+[`StatementKind::Store`] instruction to the `speed` field, using the global heap as the source and
 destination.
 
 Extern functions (functions that are called, for example, but not defined) are modeled with a
@@ -146,7 +146,7 @@ impl BasicBlockIdx {
 pub type Symbol = ArcIntern<str>;
 
 /// A newtype wrapper for u64 representing a numeric offset in field access
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Offset(pub i64);
 
@@ -200,7 +200,7 @@ impl Display for FieldAccess {
 pub enum StatementKind {
     /// Assignment of constants and variables. The first element of the tuple is the destination;
     /// the second element of the tuple is a list of sources. Assignments only set variables, to
-    /// set fields, use the `Update` instruction.
+    /// set fields, use the `Store` instruction.
     ///
     /// The destinations should not overlap. If they do, the right-most destination overwrites the
     /// previous updates, which is probably not what you want.
@@ -209,26 +209,9 @@ pub enum StatementKind {
         sources: SmallVec<[Exp; 2]>,
     },
 
-    /// Update the field of a structure and return the new structure. The `dest` is specified as a
-    /// tuple of the new structure and the field to update. The update is performed on the
-    /// `dest` and the field is set to `value`. It's important to explicitly specify the source
-    /// and destination so that SSA conversion can rename the dest after the update.
-    ///
-    /// It looks like this:
-    ///
-    /// ```text
-    /// s = update(s.foo := new_value);
-    /// ```
-    ///
-    /// This instruction is used to handle local variables with fields and global variables.
-    Update {
-        dest: (VariableRef, FieldAccesses),
-        source: VariableRef,
-        /// Value to store
-        value: Exp,
-    },
-
     /// Load a value from a source variable and field.
+    ///
+    /// Load of a symbolic field dereferences the field; load of an offset derefences the offset.
     Load {
         dest: VariableRef,
         source: VariableRef,
@@ -293,7 +276,7 @@ pub struct SourceInfo {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Variable {
     /// A global variable represents a heap for storing globals. This variable may only be written
-    /// in an [`StatementKind::Update`] instruction.
+    /// in an [`StatementKind::Store`] instruction.
     GlobalHeap,
     /// A local variable
     Local(String),
@@ -314,7 +297,41 @@ pub struct VariableRef {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AccessPath {
     pub variable_ref: VariableRef,
-    pub path: FieldAccesses,
+    pub path: Offsets,
+}
+
+/// A sequence of offset accesses.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Offsets {
+    pub fields: SmallVec<[Offset; 2]>,
+}
+
+impl Offsets {
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Offset> {
+        self.fields.iter()
+    }
+}
+
+impl FromIterator<Offset> for Offsets {
+    fn from_iter<T: IntoIterator<Item = Offset>>(iter: T) -> Self {
+        Self {
+            fields: iter.into_iter().collect(),
+        }
+    }
+}
+
+impl Display for Offsets {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for field in &self.fields {
+            write!(f, "{field}")?;
+        }
+        Ok(())
+    }
 }
 
 /// A sequence of field accesses. The first or innermost field is index 0.
@@ -534,7 +551,7 @@ impl VariableRef {
 impl AccessPath {
     /// Creates a new access path from a variable and field access iterator
     #[inline]
-    pub fn new(variable: VariableRef, path: impl IntoIterator<Item = FieldAccess>) -> Self {
+    pub fn new(variable: VariableRef, path: impl IntoIterator<Item = Offset>) -> Self {
         Self {
             variable_ref: variable,
             path: path.into_iter().collect(),
@@ -545,16 +562,8 @@ impl AccessPath {
     pub fn without_fields(variable: VariableRef) -> Self {
         Self {
             variable_ref: variable,
-            path: FieldAccesses::new(std::iter::empty::<FieldAccess>()),
+            path: Offsets::default(),
         }
-    }
-
-    /// This functions takes a name like `count` or `frobnaz` and returns a reference to the global
-    /// variable with that name. The name should not have a dot (`.`) in it.
-    pub fn new_global(name: &str, fp: FieldAccesses) -> Self {
-        let path =
-            std::iter::once(FieldAccess::Symbol(ArcIntern::<str>::from(name))).chain(fp.fields);
-        Self::new(VariableRef::new_global(), path)
     }
 }
 
@@ -644,6 +653,27 @@ impl FromIterator<FieldAccess> for FieldAccesses {
     fn from_iter<I: IntoIterator<Item = FieldAccess>>(data: I) -> Self {
         Self {
             fields: data.into_iter().collect(),
+        }
+    }
+}
+
+impl From<Offsets> for FieldAccesses {
+    fn from(offsets: Offsets) -> Self {
+        Self {
+            fields: offsets.fields.into_iter().map(FieldAccess::Offset).collect(),
+        }
+    }
+}
+
+impl From<&Offsets> for FieldAccesses {
+    fn from(offsets: &Offsets) -> Self {
+        Self {
+            fields: offsets
+                .fields
+                .iter()
+                .cloned()
+                .map(FieldAccess::Offset)
+                .collect(),
         }
     }
 }
@@ -904,37 +934,6 @@ impl StatementKind {
         }
     }
 
-    /// Constructs an update to a structure. Note: for the IR to be well-formed, the field must be
-    /// non-empty. Use this to update a field of a variable.
-    pub fn update(dest: AccessPath, src: Exp) -> Self {
-        let AccessPath { variable_ref, path } = dest;
-        StatementKind::Update {
-            dest: (variable_ref.clone(), path),
-            source: variable_ref.clone(),
-            value: src,
-        }
-    }
-
-    /// Generates either an assign or an update depending on whether fields are being set. Use this
-    /// when the caller might or might not be updating a field.
-    #[inline]
-    pub fn assign_or_update(dest: AccessPath, src: Exp) -> Self {
-        if !dest.path.is_empty() {
-            let AccessPath { variable_ref, path } = dest;
-            StatementKind::Update {
-                dest: (variable_ref.clone(), path),
-                source: variable_ref.clone(),
-                value: src,
-            }
-        } else {
-            let dest = dest.variable_ref;
-            StatementKind::Assign {
-                dest,
-                sources: smallvec![src],
-            }
-        }
-    }
-
     // #[inline]
     // pub fn assigns<B>(assigns: &[(AccessPath, Exp)]) -> B
     // where
@@ -990,22 +989,6 @@ impl StatementKind {
             } => Box::new([base, value].into_iter()),
             Phi { operands, .. } => Box::new(operands.iter().map(|(_, v)| v)),
             ParamFlow { params, global } => Box::new(params.iter().chain(std::iter::once(global))),
-            Update {
-                dest: _,
-                source,
-                value,
-            } => {
-                let a: VarIter<'s> = Box::new(std::iter::once(source));
-                let b: VarIter<'s> = if matches!(value, Exp::AccessPath(_)) {
-                    let Exp::AccessPath(ap) = value else {
-                        unreachable!()
-                    };
-                    Box::new(std::iter::once(&ap.variable_ref))
-                } else {
-                    Box::new(std::iter::empty())
-                };
-                Box::new(a.chain(b))
-            }
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1055,22 +1038,6 @@ impl StatementKind {
             ParamFlow { params, global } => {
                 Box::new(params.iter_mut().chain(std::iter::once(global)))
             }
-            Update {
-                dest: _,
-                source,
-                value,
-            } => {
-                let a: VarIterMut<'s> = Box::new(std::iter::once(source));
-                let b: VarIterMut<'s> = if matches!(value, Exp::AccessPath(_)) {
-                    let Exp::AccessPath(ap) = value else {
-                        unreachable!()
-                    };
-                    Box::new(std::iter::once(&mut ap.variable_ref))
-                } else {
-                    Box::new(std::iter::empty())
-                };
-                Box::new(a.chain(b))
-            }
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1088,11 +1055,6 @@ impl StatementKind {
             CallAssign { rets, .. } => Box::new(rets.iter()),
             Phi { dest, .. } => Box::new(std::iter::once(dest)),
             ParamFlow { .. } => Box::new(std::iter::empty()),
-            Update {
-                dest: (dest_var, _dest_fields),
-                source: _,
-                value: _,
-            } => Box::new(std::iter::once(dest_var)),
             Store { .. } => Box::new(std::iter::empty()),
             Nop => Box::new(std::iter::empty()),
         }
@@ -1111,11 +1073,6 @@ impl StatementKind {
             CallAssign { rets, .. } => Box::new(rets.iter_mut()),
             Phi { dest: out, .. } => Box::new(std::iter::once(out)),
             ParamFlow { .. } => Box::new(std::iter::empty()),
-            Update {
-                dest: (dest_var, _dest_fields),
-                source: _,
-                value: _,
-            } => Box::new(std::iter::once(dest_var)),
             Store { .. } => Box::new(std::iter::empty()),
             Nop => Box::new(std::iter::empty()),
         }
@@ -1471,13 +1428,6 @@ impl Display for StatementKind {
                 }
                 write!(f, "; {global}")?;
                 Ok(())
-            }
-            Update {
-                dest: (dest_var, dest_fields),
-                source,
-                value,
-            } => {
-                write!(f, "{dest_var} = update ({source}{dest_fields} := {value})")
             }
             Load {
                 dest,

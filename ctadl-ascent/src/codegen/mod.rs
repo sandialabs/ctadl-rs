@@ -226,7 +226,7 @@ impl Visitor for CodegenVisitor<'_> {
                         && !ap.path.is_empty()
                     {
                         let mut path = cap_path.get(&ap.variable_ref).cloned().unwrap_or_default();
-                        path.extend_merging(ap.path.iter().cloned());
+                        path.extend_merging(ap.path.iter().cloned().map(FieldAccess::Offset));
                         self.paths_dedup.insert((path.clone(),));
                         cap_path.insert(dest.clone(), path);
                     }
@@ -498,26 +498,6 @@ impl Visitor for CodegenVisitor<'_> {
                         fx::Path::empty(),
                     ),
                 ));
-            }
-            Update {
-                dest: (dest_var, dest_fields),
-                source,
-                value,
-            } => {
-                let dest_var = self.trans_variable_ref(dest_var);
-                let source = self.trans_variable_ref(source);
-                let value = self.trans_exp(value);
-                // dest_var <- source
-                let dest = FlowVertex(dest_var.clone(), dest_fields.into());
-                self.facts.assign.push((
-                    site,
-                    FlowVertex(dest_var.clone(), fx::Path::empty()),
-                    FlowVertex(source.clone(), fx::Path::empty()),
-                ));
-                // dest_var.dest_fields <- value
-                if let Some(value) = value {
-                    self.facts.assign.push((site, dest, value));
-                }
             }
             Nop => (),
         }
