@@ -1,7 +1,7 @@
 use crate::index::idx::Idx;
 use crate::mir::builder::BasicBlockBuilder;
 use crate::mir::call::CallStyle;
-use crate::mir::{BasicBlockData, BasicBlockIdx, Exp, ParameterIdx, StatementIdx};
+use crate::mir::{BasicBlockData, BasicBlockIdx, Exp, ParameterIdx, StatementIdx, Offset};
 use smallvec::smallvec;
 
 #[test]
@@ -142,8 +142,8 @@ fn test_builder_convenience_methods() {
     assert_eq!(global_var.to_string(), "$globals");
 
     // Test access path creation
-    let access_path = builder.new_access_path(local_var.clone(), vec!["field1", "field2"]);
-    assert_eq!(access_path.to_string(), "%test.field1.field2");
+    let access_path = builder.new_access_path(local_var.clone(), vec![Offset(10), Offset(20)]);
+    assert_eq!(access_path.to_string(), "%test.[0xa].[0x14]");
 
     // Test expression creation
     let str_exp = builder.new_str_exp("hello");

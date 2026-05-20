@@ -234,8 +234,8 @@ fn function_f() -> FunctionData {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign(a.clone(), [q]);
-    b.create_assign(p.clone(), [a]);
+    b.create_assign(a.clone(), [q.into()]);
+    b.create_assign(p.clone(), [a.into()]);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -270,7 +270,7 @@ fn function_j() -> FunctionData {
     let q = b.new_param_var(ParameterIdx::new(1));
 
     b.create_assign(a.clone(), vec![q.into(), param_b.into()]);
-    b.create_assign(p.clone(), [a]);
+    b.create_assign(p.clone(), [a.into()]);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -337,8 +337,8 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign(a.clone(), [q]);
-    b.create_assign(p.clone(), [a]);
+    b.create_assign(a.clone(), [q.into()]);
+    b.create_assign(p.clone(), [a.into()]);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -547,7 +547,7 @@ fn test_cap_algorithm() {
     builder.create_load(t3.clone(), t2, FieldAccess::Symbol("baz".into()));
 
     builder.create_ret(vec![Exp::AccessPath(
-        builder.new_access_path(t3, Vec::<&str>::new()),
+        builder.new_access_path(t3, []),
     )]);
 
     f.verify().expect("doesn't verify");

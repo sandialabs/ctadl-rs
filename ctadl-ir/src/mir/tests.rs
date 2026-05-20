@@ -112,12 +112,12 @@ fn test_field_accesses_with_offsets() {
 
     // Test creating access path with offsets
     let var = VariableRef::new_local("obj".to_string());
-    let field_accesses = FieldAccesses::mixed(vec![Ok("field"), Err(5)]);
+    let offsets = Offsets::from_iter(vec![Offset(5)]);
     let access_path = AccessPath {
         variable_ref: var,
-        path: field_accesses,
+        path: offsets,
     };
-    assert_eq!(format!("{}", access_path), "%obj.field.[0x5]");
+    assert_eq!(format!("{}", access_path), "%obj.[0x5]");
 }
 
 #[test]

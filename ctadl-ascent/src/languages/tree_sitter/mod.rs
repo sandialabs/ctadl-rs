@@ -846,7 +846,7 @@ impl<'a> Context<'a> {
     ) -> Result<Exp, Error> {
         let text = to_str(&node, source);
         match node.kind() {
-            "identifier" | "field_expression" | "subscript_expression" | "pointer_expression" | "pointer_declarator" | "parenthesized_expression" => {
+            "identifier" | "field_expression" | "subscript_expression" | "pointer_expression" | "pointer_declarator" => {
                 let (base_var, opt_field) = self.flatten_lvalue(program, node, source, scope_view)?;
                 if let Some(field) = opt_field {
                     let temp_name = self.allocator.next_temp();
@@ -862,6 +862,10 @@ impl<'a> Context<'a> {
                 } else {
                     Ok(Exp::AccessPath(AccessPath::without_fields(base_var)))
                 }
+            }
+            "parenthesized_expression" => {
+                let inner = node.child(1).expect("missing inner expr");
+                self.flatten_expr(program, inner, source, scope_view)
             }
             "number_literal" | "string_literal" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
             "binary_expression" => self.flatten_binary(program, node, source, scope_view),

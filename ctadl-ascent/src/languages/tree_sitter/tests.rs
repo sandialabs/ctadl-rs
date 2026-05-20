@@ -229,9 +229,9 @@ fn declare_assign() {
         ";
     let dump = program_from_string(src).to_string();
     log::info!("{}", dump);
-    assert!(janky_expected(&dump, "assign %b = $globals.a"));
-    assert!(janky_expected(&dump, "assign %<t0> = %b"));
-    assert!(janky_expected(&dump, "assign %c = %<t0>"));
+    assert!(janky_expected(&dump, "assign %b = %<t0>"));
+    assert!(janky_expected(&dump, "assign %<t2> = %b"));
+    assert!(janky_expected(&dump, "assign %c = %<t2>"));
 }
 
 #[test_log::test]

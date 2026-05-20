@@ -328,7 +328,7 @@ impl FromIterator<Offset> for Offsets {
 impl Display for Offsets {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for field in &self.fields {
-            write!(f, "{field}")?;
+            write!(f, ".[{field}]")?;
         }
         Ok(())
     }
