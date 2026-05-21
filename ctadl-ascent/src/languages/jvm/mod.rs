@@ -326,8 +326,8 @@ impl Context {
                         let class_name = "?unknown";
                         let method_name = call.dynamic_name.as_ref().unwrap();
                         let descr = call.dynamic_type.as_ref().unwrap();
-                        let java_sig = "L".to_owned() + &class_name + ";->" + &method_name + &descr;
-                        let in_params = jvm_reader::descriptor_parameter_info(&descr);
+                        let java_sig = "L".to_owned() + class_name + ";->" + method_name + descr;
+                        let in_params = jvm_reader::descriptor_parameter_info(descr);
                         let mut out_params = Vec::new();
                         for p in in_params {
                             match p.kind {
@@ -340,7 +340,7 @@ impl Context {
                             };
                         }
                         // All functions return 2 values: (normal_return, exception_return)
-                        let return_arity = match jvm_reader::descriptor_returns_value(&descr) {
+                        let return_arity = match jvm_reader::descriptor_returns_value(descr) {
                             true => 1,
                             false => 0,
                         };
@@ -369,8 +369,8 @@ impl Context {
                             "L".to_owned() + &call.target.as_ref().unwrap().class_name + ";";
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
-                        let java_sig = class_name.to_owned() + "->" + &method_name + &descr;
-                        let in_params = jvm_reader::descriptor_parameter_info(&descr);
+                        let java_sig = class_name.to_owned() + "->" + method_name + descr;
+                        let in_params = jvm_reader::descriptor_parameter_info(descr);
                         let mut out_params = Vec::new();
                         for p in in_params {
                             match p.kind {
@@ -383,7 +383,7 @@ impl Context {
                             };
                         }
                         // All functions return 2 values: (normal_return, exception_return)
-                        let return_arity = match jvm_reader::descriptor_returns_value(&descr) {
+                        let return_arity = match jvm_reader::descriptor_returns_value(descr) {
                             true => 1,
                             false => 0,
                         };
@@ -415,8 +415,8 @@ impl Context {
                             "L".to_owned() + &call.target.as_ref().unwrap().class_name + ";";
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = call.dynamic_type.as_ref().unwrap();
-                        let java_sig = class_name.to_owned() + "->" + &method_name + &descr;
-                        let in_params = jvm_reader::descriptor_parameter_info(&descr);
+                        let java_sig = class_name.to_owned() + "->" + method_name + descr;
+                        let in_params = jvm_reader::descriptor_parameter_info(descr);
                         let mut out_params = Vec::new();
                         for p in in_params {
                             match p.kind {
@@ -429,7 +429,7 @@ impl Context {
                             };
                         }
                         // All functions return 2 values: (normal_return, exception_return)
-                        let return_arity = match jvm_reader::descriptor_returns_value(&descr) {
+                        let return_arity = match jvm_reader::descriptor_returns_value(descr) {
                             true => 1,
                             false => 0,
                         };
@@ -459,8 +459,8 @@ impl Context {
                             "L".to_owned() + &call.target.as_ref().unwrap().class_name + ";";
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
-                        let java_sig = class_name.to_owned() + "->" + &method_name + &descr;
-                        let in_params = jvm_reader::descriptor_parameter_info(&descr);
+                        let java_sig = class_name.to_owned() + "->" + method_name + descr;
+                        let in_params = jvm_reader::descriptor_parameter_info(descr);
                         let mut out_params = Vec::new();
                         for p in in_params {
                             match p.kind {
@@ -473,7 +473,7 @@ impl Context {
                             };
                         }
                         // All functions return 2 values: (normal_return, exception_return)
-                        let return_arity = match jvm_reader::descriptor_returns_value(&descr) {
+                        let return_arity = match jvm_reader::descriptor_returns_value(descr) {
                             true => 1,
                             false => 0,
                         };
@@ -564,7 +564,7 @@ impl Context {
             Location::Register(n) => VariableRef::new_local(format!("reg{}", n)),
             Location::Parameter(n) => VariableRef::new_parameter((*n).into()),
             // Just the var ref part - field will be put in later
-            Location::FieldRef(f) => VariableRef::new_local(format!("{}", f.class_name)),
+            Location::FieldRef(f) => VariableRef::new_local(f.class_name.to_string()),
             // TODO: not sure what is going on with this one, why is there no base/index?
             Location::ArrayElement { base, offset } => match (base.as_ref(), offset.as_ref()) {
                 (Location::StackSlot(n), Location::StackSlot(m)) => {

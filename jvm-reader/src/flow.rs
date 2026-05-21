@@ -540,6 +540,7 @@ pub fn normalize_stack_slots_for_method<'a>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite_location_stack_inputs(
     loc: &mut Location,
     stack_len: usize,
