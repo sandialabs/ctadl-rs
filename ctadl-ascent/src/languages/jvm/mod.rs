@@ -517,7 +517,7 @@ impl Context {
                 VariableRef::new_local("Stack Local?".to_string())
             }
             Location::Register(n) => VariableRef::new_local(format!("reg{}", n)),
-            Location::Parameter(n) => VariableRef::new_local(format!("param{}", n)),
+            Location::Parameter(n) => VariableRef::new_parameter((*n).into()),
             // Just the var ref part - field will be put in later
             Location::FieldRef(f) => {
                 VariableRef::new_local(format!("{}", f.class_name))
