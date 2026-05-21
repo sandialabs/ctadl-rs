@@ -3241,12 +3241,14 @@ dependencies = [
  "ascent",
  "ascent_base",
  "csv",
+ "datafusion",
  "hashbrown 0.16.1",
  "internment",
  "log",
  "serde",
  "smallvec",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

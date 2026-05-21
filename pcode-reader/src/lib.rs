@@ -4,9 +4,13 @@
 //! It's designed to be used by the CTADL pcode frontend to convert pcode facts
 //! into CTADL IR.
 
+use datafusion::arrow::array::{Int64Array, StringArray};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::prelude::*;
 use std::fmt::Display;
 use std::ops::Deref;
 use std::path::Path;
+use std::sync::Arc;
 
 use internment::ArcIntern;
 use smallvec::SmallVec;
@@ -412,90 +416,306 @@ impl PcodeFactsReader {
 
     /// Read PCODE facts
     pub fn read_pcode_facts(&self) -> Result<BTreeMap<PcodeInstruction, PcodeData>> {
-        let mut result = BTreeMap::new();
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(async { self.read_pcode_facts_async().await })
+    }
 
-        // Read PCODE_MNEMONIC.facts
-        let mnemonic_facts =
-            self.read_csv_facts::<(PcodeInstruction, String)>("PCODE_MNEMONIC.facts")?;
+    async fn read_pcode_facts_async(&self) -> Result<BTreeMap<PcodeInstruction, PcodeData>> {
+        let ctx = SessionContext::new();
 
-        // Read PCODE_OPCODE.facts
-        let opcode_facts =
-            self.read_csv_facts::<(PcodeInstruction, String)>("PCODE_OPCODE.facts")?;
+        // Register all pcode related tables
+        let tables = [
+            (
+                "PCODE_MNEMONIC.facts",
+                "pcode_mnemonic",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "PCODE_OPCODE.facts",
+                "pcode_opcode",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "PCODE_INPUT.facts",
+                "pcode_input",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Int64, false),
+                    Field::new("c2", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "PCODE_OUTPUT.facts",
+                "pcode_output",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "PCODE_INDEX.facts",
+                "pcode_index",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Int64, false),
+                ],
+            ),
+            (
+                "PCODE_TARGET.facts",
+                "pcode_target",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Int64, false),
+                ],
+            ),
+            (
+                "PCODE_PARENT.facts",
+                "pcode_parent",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "BB_HFUNC.facts",
+                "bb_hfunc",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+        ];
 
-        // Read PCODE_INPUT.facts
-        let input_facts =
-            self.read_csv_facts::<(PcodeInstruction, i64, PcodeVarnode)>("PCODE_INPUT.facts")?;
-
-        // Read PCODE_OUTPUT.facts
-        let output_facts =
-            self.read_csv_facts::<(PcodeInstruction, PcodeVarnode)>("PCODE_OUTPUT.facts")?;
-
-        // Read PCODE_INDEX.facts
-        let index_facts = self.read_csv_facts::<(PcodeInstruction, i64)>("PCODE_INDEX.facts")?;
-
-        // Read PCODE_TARGET.facts
-        let target_facts =
-            self.read_csv_facts::<(PcodeInstruction, PcodeAddress)>("PCODE_TARGET.facts")?;
-
-        log::trace!("done parsing pcode facts");
-
-        // Group inputs by instruction
-        let mut inputs_by_inst: BTreeMap<PcodeInstruction, Vec<(i64, PcodeVarnode)>> =
-            BTreeMap::new();
-        for (inst_id, index, vnode_id) in input_facts {
-            inputs_by_inst
-                .entry(inst_id)
-                .or_default()
-                .push((index, vnode_id));
+        for (file, table, fields) in tables {
+            let path = self.facts_dir.join(file);
+            if path.exists() {
+                let schema = Arc::new(Schema::new(fields));
+                ctx.register_csv(
+                    table,
+                    path.to_str()
+                        .ok_or_else(|| PcodeError::fact_consistency_error("Invalid path"))?,
+                    CsvReadOptions::new()
+                        .has_header(false)
+                        .delimiter(b'\t')
+                        .file_extension(".facts")
+                        .schema(&schema),
+                )
+                .await?;
+            }
         }
 
-        // Sort inputs by index and strip the index
-        let mut sorted_inputs_by_inst: BTreeMap<PcodeInstruction, SmallVec<[PcodeVarnode; 2]>> =
-            BTreeMap::new();
-        for (inst_id, mut inputs) in inputs_by_inst {
-            inputs.sort_by_key(|(idx, _)| *idx);
-            let sorted_vnodes: SmallVec<[PcodeVarnode; 2]> =
-                inputs.into_iter().map(|(_, v)| v).collect();
-            sorted_inputs_by_inst.insert(inst_id, sorted_vnodes);
+        // Build mnemonic map
+        let mut mnemonic_map = BTreeMap::new();
+        if ctx.table_exist("pcode_mnemonic")? {
+            let df = ctx.sql("SELECT c0, c1 FROM pcode_mnemonic").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                for i in 0..batch.num_rows() {
+                    mnemonic_map.insert(
+                        PcodeInstruction::from(c0.value(i)),
+                        PcodeMnemonic::from(c1.value(i)),
+                    );
+                }
+            }
         }
 
-        // Group outputs by instruction
+        // Build opcode map
+        let mut opcodes_by_inst = BTreeMap::new();
+        if ctx.table_exist("pcode_opcode")? {
+            let df = ctx.sql("SELECT c0, c1 FROM pcode_opcode").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                for i in 0..batch.num_rows() {
+                    opcodes_by_inst
+                        .insert(PcodeInstruction::from(c0.value(i)), c1.value(i).to_string());
+                }
+            }
+        }
+
+        // Build input map
+        let mut inputs_by_inst: BTreeMap<PcodeInstruction, SmallVec<[PcodeVarnode; 2]>> =
+            BTreeMap::new();
+        if ctx.table_exist("pcode_input")? {
+            let df = ctx
+                .sql("SELECT c0, c1, c2 FROM pcode_input ORDER BY c0, c1")
+                .await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                // Column 1 is index, but we ordered by it, so we can just push
+                let c2 = batch
+                    .column(2)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                for i in 0..batch.num_rows() {
+                    inputs_by_inst
+                        .entry(PcodeInstruction::from(c0.value(i)))
+                        .or_default()
+                        .push(PcodeVarnode::from(c2.value(i)));
+                }
+            }
+        }
+
+        // Build output map
         let mut outputs_by_inst: BTreeMap<PcodeInstruction, SmallVec<[PcodeVarnode; 1]>> =
             BTreeMap::new();
-        for (inst_id, vnode_id) in output_facts {
-            outputs_by_inst.entry(inst_id).or_default().push(vnode_id);
+        if ctx.table_exist("pcode_output")? {
+            let df = ctx.sql("SELECT c0, c1 FROM pcode_output").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                for i in 0..batch.num_rows() {
+                    outputs_by_inst
+                        .entry(PcodeInstruction::from(c0.value(i)))
+                        .or_default()
+                        .push(PcodeVarnode::from(c1.value(i)));
+                }
+            }
         }
 
-        // Group targets by instruction
-        let mut targets_by_inst: BTreeMap<PcodeInstruction, PcodeAddress> = BTreeMap::new();
-        for (inst_id, target_addr) in target_facts {
-            targets_by_inst.insert(inst_id, target_addr);
+        // Build index map
+        let mut indices_by_inst = BTreeMap::new();
+        if ctx.table_exist("pcode_index")? {
+            let df = ctx.sql("SELECT c0, c1 FROM pcode_index").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
+                for i in 0..batch.num_rows() {
+                    indices_by_inst.insert(PcodeInstruction::from(c0.value(i)), c1.value(i));
+                }
+            }
         }
 
-        // Group opcodes by instruction
-        let mut opcodes_by_inst: BTreeMap<PcodeInstruction, String> = BTreeMap::new();
-        for (inst_id, opcode) in opcode_facts {
-            opcodes_by_inst.insert(inst_id, opcode);
+        // Build target map
+        let mut targets_by_inst = BTreeMap::new();
+        if ctx.table_exist("pcode_target")? {
+            let df = ctx.sql("SELECT c0, c1 FROM pcode_target").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
+                for i in 0..batch.num_rows() {
+                    targets_by_inst.insert(
+                        PcodeInstruction::from(c0.value(i)),
+                        PcodeAddress(c1.value(i)),
+                    );
+                }
+            }
         }
 
-        // Group indices by instruction
-        let mut indices_by_inst: BTreeMap<PcodeInstruction, i64> = BTreeMap::new();
-        for (inst_id, index) in index_facts {
-            indices_by_inst.insert(inst_id, index);
+        // Build parent map
+        let mut parent_map = BTreeMap::new();
+        if ctx.table_exist("pcode_parent")? {
+            let df = ctx.sql("SELECT c0, c1 FROM pcode_parent").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                for i in 0..batch.num_rows() {
+                    parent_map.insert(
+                        PcodeInstruction::from(c0.value(i)),
+                        PcodeBlockBasic::from(c1.value(i)),
+                    );
+                }
+            }
         }
 
-        // Combine the facts
-        for (inst_id, mnemonic_str) in mnemonic_facts {
-            let mnemonic = PcodeMnemonic(ArcIntern::from(mnemonic_str));
+        // Build bb_ids set
+        let mut bb_ids = BTreeSet::new();
+        if ctx.table_exist("bb_hfunc")? {
+            let df = ctx.sql("SELECT DISTINCT c0 FROM bb_hfunc").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                for i in 0..batch.num_rows() {
+                    bb_ids.insert(PcodeBlockBasic::from(c0.value(i)));
+                }
+            }
+        }
 
+        let mut result = BTreeMap::new();
+        for (inst_id, mnemonic) in mnemonic_map {
             let opcode = opcodes_by_inst.get(&inst_id).cloned();
-            let inputs = sorted_inputs_by_inst
-                .get(&inst_id)
-                .cloned()
-                .unwrap_or_default();
+            let inputs = inputs_by_inst.get(&inst_id).cloned().unwrap_or_default();
             let outputs = outputs_by_inst.get(&inst_id).cloned().unwrap_or_default();
             let index = indices_by_inst.get(&inst_id).copied().unwrap_or(0);
             let target = targets_by_inst.get(&inst_id).cloned();
+            let bb_id = parent_map.get(&inst_id).and_then(|id| {
+                if bb_ids.contains(id) {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            });
 
             result.insert(
                 inst_id,
@@ -504,30 +724,11 @@ impl PcodeFactsReader {
                     opcode,
                     inputs,
                     outputs,
-                    bb_id: None, // Will be set later
+                    bb_id,
                     index,
                     target,
                 },
             );
-        }
-
-        // Read PCODE_PARENT.facts to determine basic block membership
-        let parent_facts =
-            self.read_csv_facts::<(PcodeInstruction, PcodeBlockBasic)>("PCODE_PARENT.facts")?;
-
-        // Read BB_HFUNC.facts to get all basic block IDs
-        let bb_hfunc_facts =
-            self.read_csv_facts::<(PcodeBlockBasic, HighFunc)>("BB_HFUNC.facts")?;
-        let bb_ids: BTreeSet<PcodeBlockBasic> =
-            bb_hfunc_facts.into_iter().map(|(bb_id, _)| bb_id).collect();
-
-        for (inst_id, parent_id) in parent_facts {
-            if let Some(pcode) = result.get_mut(&inst_id) {
-                // Check if parent is a basic block ID
-                if bb_ids.contains(&parent_id) {
-                    pcode.bb_id = Some(parent_id);
-                }
-            }
         }
 
         Ok(result)
@@ -535,56 +736,159 @@ impl PcodeFactsReader {
 
     /// Read VNODE facts
     pub fn read_vnode_facts(&self) -> Result<BTreeMap<PcodeVarnode, VnodeData>> {
-        let mut result = BTreeMap::new();
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(async { self.read_vnode_facts_async().await })
+    }
 
-        // Read VNODE_NAME.facts
-        let name_facts = self.read_csv_facts::<(PcodeVarnode, String)>("VNODE_NAME.facts")?;
+    async fn read_vnode_facts_async(&self) -> Result<BTreeMap<PcodeVarnode, VnodeData>> {
+        let ctx = SessionContext::new();
 
-        // Read VNODE_SIZE.facts
-        let size_facts = self.read_csv_facts::<(PcodeVarnode, i64)>("VNODE_SIZE.facts")?;
+        let tables = [
+            (
+                "VNODE_NAME.facts",
+                "vnode_name",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "VNODE_SIZE.facts",
+                "vnode_size",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Int64, false),
+                ],
+            ),
+            (
+                "VNODE_IS_ADDRESS.facts",
+                "vnode_is_address",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "VNODE_SPACE.facts",
+                "vnode_space",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "VNODE_ADDRESS.facts",
+                "vnode_address",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Int64, false),
+                ],
+            ),
+            (
+                "VNODE_OFFSET_N.facts",
+                "vnode_offset_n",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Int64, false),
+                ],
+            ),
+        ];
 
-        // Read VNODE_IS_ADDRESS.facts
-        let is_address_facts = self.read_csv_facts::<PcodeVarnode>("VNODE_IS_ADDRESS.facts")?;
+        for (file_name, table_name, fields) in tables {
+            let path = self.facts_dir.join(file_name);
+            if path.exists() {
+                let schema = Schema::new(fields);
+                ctx.register_csv(
+                    table_name,
+                    path.to_str()
+                        .ok_or_else(|| PcodeError::fact_consistency_error("Invalid path"))?,
+                    CsvReadOptions::new()
+                        .has_header(false)
+                        .delimiter(b'\t')
+                        .file_extension(".facts")
+                        .schema(&schema),
+                )
+                .await?;
+            }
+        }
 
-        // Read VNODE_SPACE.facts
-        let space_facts = self.read_csv_facts::<(PcodeVarnode, String)>("VNODE_SPACE.facts")?;
-
-        // Convert to more usable formats
         let mut name_map: BTreeMap<PcodeVarnode, String> = BTreeMap::new();
-        for (vnode_id, name) in name_facts {
-            name_map.insert(vnode_id, name);
+        if ctx.table_exist("vnode_name")? {
+            let df = ctx.sql("SELECT c0, c1 FROM vnode_name").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                for i in 0..batch.num_rows() {
+                    name_map.insert(PcodeVarnode::from(c0.value(i)), c1.value(i).to_string());
+                }
+            }
         }
 
         let mut size_map: BTreeMap<PcodeVarnode, i64> = BTreeMap::new();
-        for (vnode_id, size) in size_facts {
-            size_map.insert(vnode_id, size);
+        if ctx.table_exist("vnode_size")? {
+            let df = ctx.sql("SELECT c0, c1 FROM vnode_size").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<Int64Array>().unwrap();
+                for i in 0..batch.num_rows() {
+                    size_map.insert(PcodeVarnode::from(c0.value(i)), c1.value(i));
+                }
+            }
         }
 
-        let is_address_set: BTreeSet<PcodeVarnode> = is_address_facts.into_iter().collect();
+        let mut is_address_set: BTreeSet<PcodeVarnode> = BTreeSet::new();
+        if ctx.table_exist("vnode_is_address")? {
+            let df = ctx.sql("SELECT c0 FROM vnode_is_address").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                for i in 0..batch.num_rows() {
+                    is_address_set.insert(PcodeVarnode::from(c0.value(i)));
+                }
+            }
+        }
 
         let mut space_map: BTreeMap<PcodeVarnode, String> = BTreeMap::new();
-        for (vnode_id, space) in space_facts {
-            space_map.insert(vnode_id, space);
+        if ctx.table_exist("vnode_space")? {
+            let df = ctx.sql("SELECT c0, c1 FROM vnode_space").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                for i in 0..batch.num_rows() {
+                    space_map.insert(PcodeVarnode::from(c0.value(i)), c1.value(i).to_string());
+                }
+            }
         }
-
-        // Read VNODE_ADDRESS.facts
-        let address_facts =
-            self.read_csv_facts::<(PcodeVarnode, PcodeAddress)>("VNODE_ADDRESS.facts")?;
 
         let mut address_map: BTreeMap<PcodeVarnode, PcodeAddress> = BTreeMap::new();
-        for (vnode_id, address) in address_facts {
-            address_map.insert(vnode_id, address);
+        if ctx.table_exist("vnode_address")? {
+            let df = ctx.sql("SELECT c0, c1 FROM vnode_address").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<Int64Array>().unwrap();
+                for i in 0..batch.num_rows() {
+                    address_map.insert(PcodeVarnode::from(c0.value(i)), PcodeAddress(c1.value(i)));
+                }
+            }
         }
 
-        // Read VNODE_OFFSET_N.facts
-        let offset_facts = self
-            .read_csv_facts_optional::<(PcodeVarnode, i64)>("VNODE_OFFSET_N.facts")?
-            .unwrap_or_default();
         let mut offset_map: BTreeMap<PcodeVarnode, i64> = BTreeMap::new();
-        for (vnode_id, offset) in offset_facts {
-            offset_map.insert(vnode_id, offset);
+        if ctx.table_exist("vnode_offset_n")? {
+            let df = ctx.sql("SELECT c0, c1 FROM vnode_offset_n").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<Int64Array>().unwrap();
+                for i in 0..batch.num_rows() {
+                    offset_map.insert(PcodeVarnode::from(c0.value(i)), c1.value(i));
+                }
+            }
         }
 
+        let mut result = BTreeMap::new();
         // Combine the facts
         for (vnode_id, name) in name_map {
             let size = size_map.get(&vnode_id).cloned();
@@ -611,86 +915,208 @@ impl PcodeFactsReader {
 
     /// Read BB (basic block) facts
     pub fn read_bb_facts(&self) -> Result<BTreeMap<PcodeBlockBasic, BBData>> {
-        let mut result = BTreeMap::new();
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(async { self.read_bb_facts_async().await })
+    }
 
-        // Read BB_HFUNC.facts
-        let hfunc_facts = self.read_csv_facts::<(PcodeBlockBasic, HighFunc)>("BB_HFUNC.facts")?;
+    async fn read_bb_facts_async(&self) -> Result<BTreeMap<PcodeBlockBasic, BBData>> {
+        let ctx = SessionContext::new();
 
-        // Read BB_FIRST.facts
-        let first_facts =
-            self.read_csv_facts::<(PcodeBlockBasic, PcodeInstruction)>("BB_FIRST.facts")?;
+        let tables = [
+            (
+                "BB_HFUNC.facts",
+                "bb_hfunc",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "BB_FIRST.facts",
+                "bb_first",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "BB_LAST.facts",
+                "bb_last",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "BB_START.facts",
+                "bb_start",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Int64, false),
+                ],
+            ),
+            (
+                "BB_PCODE_INDEX.facts",
+                "bb_pcode_index",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Int64, false),
+                    Field::new("c2", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "BB_OUT.facts",
+                "bb_out",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "BB_TOUT.facts",
+                "bb_tout",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+            (
+                "BB_FOUT.facts",
+                "bb_fout",
+                vec![
+                    Field::new("c0", DataType::Utf8, false),
+                    Field::new("c1", DataType::Utf8, false),
+                ],
+            ),
+        ];
 
-        // Read BB_LAST.facts
-        let last_facts =
-            self.read_csv_facts::<(PcodeBlockBasic, PcodeInstruction)>("BB_LAST.facts")?;
+        for (file_name, table_name, fields) in tables {
+            let path = self.facts_dir.join(file_name);
+            if path.exists() {
+                let schema = Schema::new(fields);
+                ctx.register_csv(
+                    table_name,
+                    path.to_str()
+                        .ok_or_else(|| PcodeError::fact_consistency_error("Invalid path"))?,
+                    CsvReadOptions::new()
+                        .has_header(false)
+                        .delimiter(b'\t')
+                        .file_extension(".facts")
+                        .schema(&schema),
+                )
+                .await?;
+            }
+        }
 
-        // Read BB_START.facts
-        let start_addr_facts = self
-            .read_csv_facts_optional::<(PcodeBlockBasic, i64)>("BB_START.facts")?
-            .unwrap_or_default();
-
-        // Convert to more usable formats
         let mut hfunc_map: BTreeMap<PcodeBlockBasic, HighFunc> = BTreeMap::new();
-        for (bb_id, hfunc_id) in hfunc_facts {
-            hfunc_map.insert(bb_id, hfunc_id);
+        if ctx.table_exist("bb_hfunc")? {
+            let df = ctx.sql("SELECT c0, c1 FROM bb_hfunc").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                for i in 0..batch.num_rows() {
+                    hfunc_map.insert(PcodeBlockBasic::from(c0.value(i)), HighFunc::from(c1.value(i)));
+                }
+            }
         }
 
         let mut first_map: BTreeMap<PcodeBlockBasic, PcodeInstruction> = BTreeMap::new();
-        for (bb_id, first_inst) in first_facts {
-            first_map.insert(bb_id, first_inst);
+        if ctx.table_exist("bb_first")? {
+            let df = ctx.sql("SELECT c0, c1 FROM bb_first").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                for i in 0..batch.num_rows() {
+                    first_map.insert(PcodeBlockBasic::from(c0.value(i)), PcodeInstruction::from(c1.value(i)));
+                }
+            }
         }
 
         let mut last_map: BTreeMap<PcodeBlockBasic, PcodeInstruction> = BTreeMap::new();
-        for (bb_id, last_inst) in last_facts {
-            last_map.insert(bb_id, last_inst);
+        if ctx.table_exist("bb_last")? {
+            let df = ctx.sql("SELECT c0, c1 FROM bb_last").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                for i in 0..batch.num_rows() {
+                    last_map.insert(PcodeBlockBasic::from(c0.value(i)), PcodeInstruction::from(c1.value(i)));
+                }
+            }
         }
 
         let mut start_addr_map: BTreeMap<PcodeBlockBasic, PcodeAddress> = BTreeMap::new();
-        for (bb_id, start_addr) in start_addr_facts {
-            start_addr_map.insert(bb_id, PcodeAddress(start_addr));
+        if ctx.table_exist("bb_start")? {
+            let df = ctx.sql("SELECT c0, c1 FROM bb_start").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<Int64Array>().unwrap();
+                for i in 0..batch.num_rows() {
+                    start_addr_map.insert(PcodeBlockBasic::from(c0.value(i)), PcodeAddress(c1.value(i)));
+                }
+            }
         }
 
-        // Read BB_PCODE_INDEX.facts
-        let index_facts = self
-            .read_csv_facts::<(PcodeBlockBasic, u32, PcodeInstruction)>("BB_PCODE_INDEX.facts")?;
-
-        let mut index_map: BTreeMap<PcodeBlockBasic, Vec<(u32, PcodeInstruction)>> =
-            BTreeMap::new();
-        for (bb_id, index, inst_id) in index_facts {
-            index_map.entry(bb_id).or_default().push((index, inst_id));
+        let mut index_map: BTreeMap<PcodeBlockBasic, Vec<(u32, PcodeInstruction)>> = BTreeMap::new();
+        if ctx.table_exist("bb_pcode_index")? {
+            let df = ctx.sql("SELECT c0, c1, c2 FROM bb_pcode_index").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<Int64Array>().unwrap();
+                let c2 = batch.column(2).as_any().downcast_ref::<StringArray>().unwrap();
+                for i in 0..batch.num_rows() {
+                    index_map.entry(PcodeBlockBasic::from(c0.value(i))).or_default().push((c1.value(i) as u32, PcodeInstruction::from(c2.value(i))));
+                }
+            }
         }
-
-        // Sort the instruction indices by their index value
         for indices in index_map.values_mut() {
             indices.sort_by_key(|&(index, _)| index);
         }
 
-        // Read edge facts
-        let out_edges = self
-            .read_csv_facts_optional::<(PcodeBlockBasic, PcodeBlockBasic)>("BB_OUT.facts")?
-            .unwrap_or_default();
-        let tout_edges = self
-            .read_csv_facts_optional::<(PcodeBlockBasic, PcodeBlockBasic)>("BB_TOUT.facts")?
-            .unwrap_or_default();
-        let fout_edges = self
-            .read_csv_facts_optional::<(PcodeBlockBasic, PcodeBlockBasic)>("BB_FOUT.facts")?
-            .unwrap_or_default();
-
         let mut out_edge_map: BTreeMap<PcodeBlockBasic, Vec<PcodeBlockBasic>> = BTreeMap::new();
-        for (src, dst) in out_edges {
-            out_edge_map.entry(src).or_default().push(dst);
+        if ctx.table_exist("bb_out")? {
+            let df = ctx.sql("SELECT c0, c1 FROM bb_out").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                for i in 0..batch.num_rows() {
+                    out_edge_map.entry(PcodeBlockBasic::from(c0.value(i))).or_default().push(PcodeBlockBasic::from(c1.value(i)));
+                }
+            }
         }
 
         let mut tout_edge_map: BTreeMap<PcodeBlockBasic, Vec<PcodeBlockBasic>> = BTreeMap::new();
-        for (src, dst) in tout_edges {
-            tout_edge_map.entry(src).or_default().push(dst);
+        if ctx.table_exist("bb_tout")? {
+            let df = ctx.sql("SELECT c0, c1 FROM bb_tout").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                for i in 0..batch.num_rows() {
+                    tout_edge_map.entry(PcodeBlockBasic::from(c0.value(i))).or_default().push(PcodeBlockBasic::from(c1.value(i)));
+                }
+            }
         }
 
         let mut fout_edge_map: BTreeMap<PcodeBlockBasic, Vec<PcodeBlockBasic>> = BTreeMap::new();
-        for (src, dst) in fout_edges {
-            fout_edge_map.entry(src).or_default().push(dst);
+        if ctx.table_exist("bb_fout")? {
+            let df = ctx.sql("SELECT c0, c1 FROM bb_fout").await?;
+            let batches = df.collect().await?;
+            for batch in batches {
+                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                for i in 0..batch.num_rows() {
+                    fout_edge_map.entry(PcodeBlockBasic::from(c0.value(i))).or_default().push(PcodeBlockBasic::from(c1.value(i)));
+                }
+            }
         }
 
+        let mut result = BTreeMap::new();
         // Combine the facts
         for (bb_id, hfunc_id) in hfunc_map {
             let first_inst = first_map.get(&bb_id).cloned();
