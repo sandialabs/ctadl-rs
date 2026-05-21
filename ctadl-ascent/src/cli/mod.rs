@@ -271,6 +271,7 @@ pub fn format(
             .call(index_facts.call)
             .assign(index_result.assign_like)
             .paths(index_result.paths)
+            .external_function(index_result.external_function)
             .id_to_name(ids.get_id_to_name_map());
         let facts = b.build().unwrap();
 
@@ -618,7 +619,8 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
         paths,
         taint,
         index_source_map,
-        function_id
+        function_id,
+        external_function
     );
 
     Ok(())
@@ -674,6 +676,7 @@ pub fn inspect_index_facts(
     log::info!("  indirect_call:  {}", facts.indirect_call.len());
     log::info!("  java_call:      {}", facts.java_call.len());
     log::info!("  java_obj_assign:{}", facts.java_obj_assign.len());
+    log::info!("  external_function: {}", facts.external_function.len());
 
     use crate::facts::InsnSiteId;
 

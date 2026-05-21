@@ -86,6 +86,8 @@ pub struct IndexFacts {
     pub summary: Vec<FunctionSummary>,
     #[builder(default)]
     pub paths: Vec<(Path,)>,
+    #[builder(default)]
+    pub external_function: Vec<(FunctionId,)>,
 }
 
 impl IndexFacts {
@@ -144,6 +146,7 @@ impl IndexFacts {
                 }),
         )?;
         java_resolvents::try_save(&dir, self.java_resolvents)?;
+        external_function::try_save(&dir, self.external_function)?;
         Ok(())
     }
 
@@ -211,7 +214,8 @@ impl IndexFacts {
                     })
                     .collect(),
             )
-            .java_resolvents(java_resolvents::try_load(&dir)?);
+            .java_resolvents(java_resolvents::try_load(&dir)?)
+            .external_function(external_function::try_load(&dir)?);
         Ok(builder.build().unwrap())
     }
 
@@ -253,6 +257,7 @@ pub struct IndexResult {
     pub assign_like: Vec<(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)>,
     pub java_obj_assign_like: Vec<(FunctionId, InsnId, FlowVariable, Path, Symbol)>,
     pub paths: Vec<(Path,)>,
+    pub external_function: Vec<(FunctionId,)>,
 }
 
 impl IndexResult {
@@ -261,6 +266,7 @@ impl IndexResult {
         summary::try_save(&dir, self.summary)?;
         assign::try_save(&dir, self.assign_like)?;
         paths::try_save(&dir, self.paths)?;
+        external_function::try_save(&dir, self.external_function)?;
         Ok(())
     }
 
@@ -269,11 +275,13 @@ impl IndexResult {
         let summary = summary::try_load(&dir)?;
         let assign_like = assign::try_load(&dir)?;
         let paths = paths::try_load(&dir)?;
+        let external_function = external_function::try_load(&dir)?;
         Ok(IndexResult {
             summary,
             assign_like,
             java_obj_assign_like: Vec::new(),
             paths,
+            external_function,
         })
     }
 }
@@ -773,6 +781,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         assign_like: prog.assign_like,
         java_obj_assign_like: prog.java_obj_assign_like,
         paths: prog.paths,
+        external_function: facts.external_function,
     };
     log::trace!("index result: {}", result);
     result
