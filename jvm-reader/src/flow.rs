@@ -1880,7 +1880,9 @@ mod tests {
             decode_dataflow(&[0x59], 0, cf, 0x59, 0, false, false).expect("decode");
         assert_eq!(sources, vec![Location::StackInput(0)]);
         assert_eq!(destinations.len(), 2);
-        assert!(destinations.iter().all(|d| matches!(d, Location::StackOutput)));
+        assert!(destinations
+            .iter()
+            .all(|d| matches!(d, Location::StackOutput)));
     }
 
     #[test]
@@ -1892,7 +1894,9 @@ mod tests {
             decode_dataflow(&[0x5a], 0, cf, 0x5a, 0, false, false).expect("decode");
         assert_eq!(sources.len(), 2);
         assert_eq!(destinations.len(), 3);
-        assert!(destinations.iter().all(|d| matches!(d, Location::StackOutput)));
+        assert!(destinations
+            .iter()
+            .all(|d| matches!(d, Location::StackOutput)));
     }
 
     #[test]
@@ -1904,7 +1908,9 @@ mod tests {
             decode_dataflow(&[0x5c], 0, cf, 0x5c, 0, false, false).expect("decode");
         assert_eq!(sources.len(), 2);
         assert_eq!(destinations.len(), 4);
-        assert!(destinations.iter().all(|d| matches!(d, Location::StackOutput)));
+        assert!(destinations
+            .iter()
+            .all(|d| matches!(d, Location::StackOutput)));
     }
 
     #[test]
@@ -1919,7 +1925,9 @@ mod tests {
             vec![Location::StackInput(0), Location::StackInput(1)]
         );
         assert_eq!(destinations.len(), 2);
-        assert!(destinations.iter().all(|d| matches!(d, Location::StackOutput)));
+        assert!(destinations
+            .iter()
+            .all(|d| matches!(d, Location::StackOutput)));
     }
 
     #[test]
