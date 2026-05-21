@@ -577,3 +577,106 @@ fn test_cap_algorithm() {
     assert!(path_strings.contains(".foo.bar"));
     assert!(path_strings.contains(".foo.bar.baz"));
 }
+
+#[test]
+fn test_lower_access_paths_rewrites_assign_update_and_call_args() {
+    use ctadl_ir::mir::builder::BasicBlockBuilder;
+
+    let mut f = FunctionData {
+        name: "lower_ap".to_string(),
+        return_type: ReturnType { arity: 0 },
+        ..Default::default()
+    };
+    f.params.push(ParameterType::ByVal);
+
+    let blocks = f.blocks.blocks_mut();
+    let body = blocks.push(BasicBlockData::new(None));
+    let mut builder = BasicBlockBuilder::new(&mut f[body]);
+
+    let p0 = builder.new_param_var(ParameterIdx::new(0));
+    let dst = builder.new_local_var("dst");
+    let obj = builder.new_local_var("obj");
+    let ret = builder.new_local_var("ret");
+
+    builder.create_assign(
+        dst.clone(),
+        vec![Exp::AccessPath(
+            builder.new_access_path(p0.clone(), vec!["foo", "bar"]),
+        )],
+    );
+    builder.create_update(
+        builder.new_access_path(obj.clone(), vec!["slot"]),
+        Exp::AccessPath(builder.new_access_path(p0.clone(), vec!["baz", "qux"])),
+    );
+    builder.create_call(
+        CallStyle::Unknown,
+        vec![ret],
+        vec![Exp::AccessPath(
+            builder.new_access_path(p0.clone(), vec!["zap", "zip"]),
+        )],
+    );
+    builder.create_ret(vec![]);
+
+    super::lower_ap::LowerAccessPaths::lower_function(&mut f);
+    f.verify().expect("lowered function doesn't verify");
+
+    let statements: Vec<_> = f[body].statements.iter().collect();
+    assert_eq!(statements.len(), 6);
+
+    let lowered_paths: Vec<&FieldAccesses> = statements
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StatementKind::Assign { sources, .. } => sources
+                .iter()
+                .filter_map(Exp::access_path)
+                .map(|ap| &ap.path)
+                .next(),
+            StatementKind::Update { value, .. } => value.access_path().map(|ap| &ap.path),
+            StatementKind::CallAssign { args, .. } => args
+                .iter()
+                .filter_map(Exp::access_path)
+                .map(|ap| &ap.path)
+                .next(),
+            StatementKind::Phi { .. } | StatementKind::ParamFlow { .. } | StatementKind::Nop => {
+                None
+            }
+        })
+        .collect();
+
+    assert!(lowered_paths.iter().all(|path| path.len() <= 1));
+}
+
+#[test]
+fn test_codegen_function_lowers_multi_hop_assign_sources() {
+    use ctadl_ir::mir::builder::BasicBlockBuilder;
+
+    let mut f = FunctionData {
+        name: "codegen_lower_ap".to_string(),
+        return_type: ReturnType { arity: 1 },
+        ..Default::default()
+    };
+    f.params.push(ParameterType::ByVal);
+
+    let blocks = f.blocks.blocks_mut();
+    let body = blocks.push(BasicBlockData::new(None));
+    let mut builder = BasicBlockBuilder::new(&mut f[body]);
+
+    let p0 = builder.new_param_var(ParameterIdx::new(0));
+    let dst = builder.new_local_var("dst");
+    builder.create_assign(
+        dst.clone(),
+        vec![Exp::AccessPath(
+            builder.new_access_path(p0.clone(), vec!["foo", "bar", "baz"]),
+        )],
+    );
+    builder.create_ret(vec![dst.into()]);
+
+    let mut facts = IndexFacts::default();
+    let mut source_info = IndexSourceInfo::default();
+    codegen_function(&f, &mut facts, &mut source_info);
+
+    let path_strings: HashSet<String> = facts.paths.iter().map(|(p,)| p.to_dot_string()).collect();
+    assert!(path_strings.contains(".foo"));
+    assert!(path_strings.contains(".foo.bar"));
+    assert!(path_strings.contains(".foo.bar.baz"));
+}

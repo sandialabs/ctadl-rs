@@ -29,6 +29,7 @@ use ctadl_ir::mir::{call::VirtualMethodTable, visit::Visitor, *};
 mod tests;
 
 pub mod flowy;
+mod lower_ap;
 pub mod models;
 
 /// Strategy for resolving virtual calls
@@ -51,6 +52,10 @@ pub fn codegen_program(
     source_info: &mut IndexSourceInfo,
     strategy: CallResolutionStrategy,
 ) {
+    for function in program_info.program.functions.iter_mut() {
+        lower_ap::LowerAccessPaths::lower_function(function);
+    }
+
     let mut instantiated_classes = BTreeSet::new();
     let mut finder = InstantiationFinder {
         instantiated_classes: &mut instantiated_classes,
@@ -87,13 +92,14 @@ pub fn codegen_function(
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
 ) {
-    let function_data_owned = function_data.clone();
-    let function_data = &function_data_owned;
+    let mut function_data = function_data.clone();
+    lower_ap::LowerAccessPaths::lower_function(&mut function_data);
+
     let mut instantiated_classes = BTreeSet::new();
     let mut finder = InstantiationFinder {
         instantiated_classes: &mut instantiated_classes,
     };
-    finder.visit_function_data(FunctionIdx::new(0), function_data);
+    finder.visit_function_data(FunctionIdx::new(0), &function_data);
 
     let cha = ClassHierarchyAnalysis::new(&VirtualMethodTable::Unknown, instantiated_classes);
     for ((cls, name, desc), targets) in &cha.java_resolvents {
@@ -108,7 +114,7 @@ pub fn codegen_function(
     }
     log::trace!("codegen for {}", function_data.name);
     let mut v = CodegenVisitor::new(cha, facts, source_info, CallResolutionStrategy::Mixed);
-    v.visit_function_data(FunctionIdx::new(0), function_data);
+    v.visit_function_data(FunctionIdx::new(0), &function_data);
     v.finish();
 }
 
