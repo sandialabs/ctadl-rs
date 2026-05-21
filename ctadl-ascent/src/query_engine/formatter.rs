@@ -802,7 +802,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     let mut node_to_id: BTreeMap<(FunctionId, FlowVariable, Path), u32> = BTreeMap::new();
     let mut id_to_node: Vec<(FunctionId, FlowVariable, Path)> = Vec::new();
 
-    let graph = if matches!(config.profile, SarifProfile::Human | SarifProfile::Debug) {
+    let graph = if matches!(config.profile, SarifProfile::Human | SarifProfile::Debug | SarifProfile::Agent) {
         let taint_edge = &ctx.taint_results.edges;
         // Collect all nodes into node_to_id first
         for (f, _, v, p, src) in &ctx.facts.taint {
@@ -1103,8 +1103,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         results.extend(results_by_span.into_values());
     }
 
-    // Add source and sink location results (only for Debug profile)
-    if config.profile == SarifProfile::Debug {
+    // Add source and sink location results (for Debug and Agent profiles)
+    if matches!(config.profile, SarifProfile::Debug | SarifProfile::Agent) {
         results.extend(format_source_sink_results(
             sarif_data,
             &endpoints,
@@ -1114,8 +1114,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         ));
     }
 
-    // Now build results for paths (for Human or Debug profiles, one per path)
-    if config.profile == SarifProfile::Human || config.profile == SarifProfile::Debug {
+    // Now build results for paths (for Human, Debug, or Agent profiles, one per path)
+    if matches!(config.profile, SarifProfile::Human | SarifProfile::Debug | SarifProfile::Agent) {
         for (_path, (file_span_id, details)) in results_by_path {
             let location = if let Some(loc) = span_to_location.get(&file_span_id) {
                 loc.clone()
