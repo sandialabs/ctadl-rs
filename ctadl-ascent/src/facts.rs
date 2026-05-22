@@ -25,7 +25,126 @@ lazy_static::lazy_static! {
     pub static ref EMPTY_STR: Str = ArcIntern::<str>::from("");
 }
 
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Default)]
 pub struct AccessPathSet(Trie<mir::FieldAccess>);
+
+impl AccessPathSet {
+    pub fn new() -> Self {
+        Self(Trie::new())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn contains_empty_path(&self) -> bool {
+        self.0.is_terminal()
+    }
+
+    pub fn insert(&mut self, path: &Path) {
+        self.0.insert(path.0.iter().cloned());
+    }
+
+    pub fn union(&mut self, other: &Self) {
+        self.0.union(&other.0);
+    }
+
+    pub fn substitute_prefix(&self, prefix: &Path, new_prefix: &Path) -> Option<Self> {
+        // We get all sequences from the trie and check which match the prefix using our offset-aware match_prefix
+        let mut result = Self::new();
+        let mut found = false;
+
+        for seq in self.0.all_sequences() {
+            let path = Path(seq.into());
+            if let Some(suffix) = crate::facts::match_prefix(&path, prefix) {
+                found = true;
+                let mut substituted_path = new_prefix.clone();
+                substituted_path.extend_merging(suffix);
+                result.insert(&substituted_path);
+            }
+        }
+
+        if found { Some(result) } else { None }
+    }
+    pub fn substitute_prefix_with_nonempty_suffix(
+        &self,
+        prefix: &Path,
+        new_prefix: &Path,
+    ) -> Option<Self> {
+        let mut result = Self::new();
+        let mut found = false;
+
+        for seq in self.0.all_sequences() {
+            let path = Path(seq.into());
+            if let Some(suffix) =
+                crate::facts::match_prefix(&path, prefix).filter(|s| !s.is_empty())
+            {
+                found = true;
+                let mut substituted_path = new_prefix.clone();
+                substituted_path.extend_merging(suffix);
+                result.insert(&substituted_path);
+            }
+        }
+
+        if found { Some(result) } else { None }
+    }
+
+    pub fn concat(&self, other: &Path) -> Self {
+        let mut result = Self::new();
+
+        for seq in self.0.all_sequences() {
+            let mut path = Path(seq.into());
+            path.extend_merging(other.0.iter().cloned());
+            result.insert(&path);
+        }
+
+        result
+    }
+
+    pub fn pop(&self) -> Self {
+        let mut result = Self::new();
+
+        for seq in self.0.all_sequences() {
+            let path = Path(seq.into());
+            if let Some(popped_path) = path.pop() {
+                result.insert(&popped_path);
+            } else {
+                result.insert(&Path::empty());
+            }
+        }
+
+        result
+    }
+}
+
+impl serde::Serialize for AccessPathSet {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let paths: Vec<Path> = self
+            .0
+            .all_sequences()
+            .into_iter()
+            .map(|seq| Path(seq.into()))
+            .collect();
+        paths.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AccessPathSet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let paths: Vec<Path> = Vec::deserialize(deserializer)?;
+        let mut aps = AccessPathSet::new();
+        for p in paths {
+            aps.insert(&p);
+        }
+        Ok(aps)
+    }
+}
 
 /// A sequence of field/array accesses
 ///
