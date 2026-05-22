@@ -21,6 +21,7 @@ name = "flowy"
 path = "src/bin/flowy.rs"
 
 [dependencies]
+trie = { path = "../../trie" }
 anyhow = "1.0"
 arrow = "58"
 ascent = "0.8.0"

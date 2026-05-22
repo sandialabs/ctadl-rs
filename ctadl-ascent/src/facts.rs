@@ -10,6 +10,7 @@ use internment::ArcIntern;
 use packed_struct::prelude::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use trie::Trie;
 
 use crate::error::{Error, ErrorContext};
 use ctadl_ir::{Idx, mir, mir::Offset};
@@ -23,6 +24,8 @@ type EltId = Str;
 lazy_static::lazy_static! {
     pub static ref EMPTY_STR: Str = ArcIntern::<str>::from("");
 }
+
+pub struct AccessPathSet(Trie<mir::FieldAccess>);
 
 /// A sequence of field/array accesses
 ///
