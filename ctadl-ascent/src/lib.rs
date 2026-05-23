@@ -8,6 +8,7 @@ pub mod facts;
 pub mod index_engine;
 pub mod languages;
 pub mod models;
+pub mod path;
 pub mod project;
 pub mod query_engine;
 pub mod stats;

@@ -511,7 +511,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         // Analysis drivers:
 
         // Set of syntactic access paths
-        relation paths(Path);
+        lattice paths(ascent::lattice::set::Set<Path>);
         relation summary(FunctionId, FormalIndex, Path, FormalIndex, Path) = facts.summary;
         relation config(IndexConfig) = config;
 
@@ -536,12 +536,12 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         // shouldn't add paths from constructed summaries directly.
         program_paths(p) <-- actual_param(_, _, vx), let FlowVertex(_, p) = vx;
         program_paths(p1), program_paths(p2) <-- assign(_, vx, vy), let FlowVertex(_, p1) = vx, let FlowVertex(_, p2) = vy;
-        paths(p) <-- program_paths(p);
-        paths(p) <-- model_paths(p);
+        paths(ascent::lattice::set::Set::singleton(p.clone())) <-- program_paths(p);
+        paths(ascent::lattice::set::Set::singleton(p.clone())) <-- model_paths(p);
 
         // Combine model paths with program paths (one level only to ensure termination)
-        paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
-        paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
+        paths(ascent::lattice::set::Set::singleton(p1.concat(p2))) <-- model_paths(p1), program_paths(p2);
+        paths(ascent::lattice::set::Set::singleton(p2.concat(p1))) <-- program_paths(p2), model_paths(p1);
 
         // Initialize locals with formals
         locals(infunc, v1, p1.clone(), i, p1.clone()) <--
@@ -554,12 +554,12 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             locals(infunc, v2, p23, a, p4),
             assign_like(infunc, insn_id,  v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(&p13);
+            paths(ps), if ps.contains(&p13);
         locals(infunc, v1, p1, a, p43.clone()) <--
             locals(infunc, v2, p2, a, p4),
             assign_like(infunc, _, v1, p1, v2, p23),
             if let Some(p43) = p23.substitute_prefix(p2, p4),
-            paths(&p43);
+            paths(ps), if ps.contains(&p43);
 
         // Initialize assigns from program
         assign_like(func_id, insn_id, v1, p1, v2, p2) <--
@@ -609,7 +609,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             // if let Some(p3) = match_prefix(p13, p1),
             // if !p3.is_empty(),
             // let ap3 = ap.concat_str(p3),
-            paths(&ap3),
+            paths(ps), if ps.contains(&ap3),
             if n1 != n2 || ap3 != *bp;
 
         // Hybrid Inlining Rules:
@@ -674,25 +674,25 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             context_assign(cs, func_id, _, v1, p1, v2, p2),
             locals(func_id, v2, p23, n, pn),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(p13.clone());
+            paths(ps), if ps.contains(&p13);
 
         context_locals(cs.clone(), func_id, v2.clone(), p23.clone(), n.clone(), pn.clone()) <--
             context_assign(cs, func_id, _, v1, p1, v2, p2),
             locals(func_id, v1, p13, n, pn),
             if let Some(p23) = p13.substitute_prefix(p1, p2),
-            paths(p23.clone());
+            paths(ps), if ps.contains(&p23);
 
         context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
             context_locals(cs, func_id, v2, p23, n, pn),
             assign_like(func_id, _, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(p13.clone());
+            paths(ps), if ps.contains(&p13);
 
         context_locals(cs.clone(), func_id, v1.clone(), p1.clone(), n.clone(), pn3.clone()) <--
             context_locals(cs, func_id, v2, p2, n, pn),
             assign_like(func_id, _, v1, p1, v2, p23),
             if let Some(pn3) = p23.substitute_prefix(p2, pn),
-            paths(pn3.clone());
+            paths(ps), if ps.contains(&pn3);
 
         // 3.3: Contextual Summary Creation
         context_summary(cs.clone(), func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
@@ -706,21 +706,21 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             context_locals(cs, func_id, v1, p1, n1, ap),
             locals(func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            paths(ap3.clone()),
+            paths(ps), if ps.contains(&ap3),
             if n1 != n2 || ap3 != *bp;
 
         context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
             locals(func_id, v1, p1, n1, ap),
             context_locals(cs, func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            paths(ap3.clone()),
+            paths(ps), if ps.contains(&ap3),
             if n1 != n2 || ap3 != *bp;
 
         context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
             context_locals(cs, func_id, v1, p1, n1, ap),
             context_locals(cs, func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            paths(ap3.clone()),
+            paths(ps), if ps.contains(&ap3),
             if n1 != n2 || ap3 != *bp;
 
         // 3.4: Instantiate Summaries and pop call string
@@ -751,7 +751,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             func_ptr_assign_like(func_id, _, v2, p_context, tgt),
             assign_like(func_id, insn_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
-            paths(p_new.clone());
+            paths(ps), if ps.contains(&p_new);
 
         // Java Object Propagation
         java_obj_assign_like(func_id, insn_id, v.clone(), p.clone(), tgt) <--
@@ -762,7 +762,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             java_obj_assign_like(func_id, _, v2, p_context, tgt),
             assign_like(func_id, insn_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
-            paths(p_new.clone());
+            paths(ps), if ps.contains(&p_new);
     };
     log::info!("index scc times: {}", prog.scc_times_summary());
     log::trace!(
@@ -780,7 +780,11 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         summary: prog.summary,
         assign_like: prog.assign_like,
         java_obj_assign_like: prog.java_obj_assign_like,
-        paths: prog.paths,
+        paths: prog
+            .paths
+            .iter()
+            .flat_map(|(s,)| s.iter().cloned().map(|p| (p,)))
+            .collect(),
         external_function: facts.external_function,
     };
     log::trace!("index result: {}", result);
