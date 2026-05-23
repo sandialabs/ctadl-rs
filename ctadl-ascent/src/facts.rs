@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::error::{Error, ErrorContext};
-pub use crate::path::{AccessPathSet, Path, match_prefix, parse_path_string};
+pub use crate::path::{AccessPathMap, AccessPathSet, Path, match_prefix, parse_path_string};
 use ctadl_ir::{Idx, mir};
 
 pub mod parquet;

@@ -46,8 +46,8 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    AccessPathSet, CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId,
-    InsnId, InsnSiteId, PackedInsnSiteId, Path, isout,
+    AccessPathMap, AccessPathSet, CallString, FlowVariable, FlowVertex, FormalIndex, FormalType,
+    FunctionId, InsnId, InsnSiteId, PackedInsnSiteId, Path, isout,
 };
 use ctadl_ir::Symbol;
 
@@ -323,6 +323,32 @@ impl std::fmt::Display for IndexResult {
     }
 }
 
+struct LocalsDisplay<'a>(&'a [(FunctionId, FlowVariable, FormalIndex, AccessPathMap)]);
+
+impl<'a> std::fmt::Display for LocalsDisplay<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Locals ({}):", self.0.len())?;
+        for (i, (func_id, var, formal_idx, pairs)) in self.0.iter().enumerate() {
+            let var_str = match var {
+                FlowVariable::Local(name) => name.to_string(),
+                _ => format!("{}", var),
+            };
+            for (p1, p2) in pairs.iter() {
+                writeln!(
+                    f,
+                    "  {i} {}: {}{} from arg{}{}",
+                    func_id.id,
+                    var_str,
+                    p1.to_dot_string(),
+                    formal_idx,
+                    p2.to_dot_string()
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
 struct HybridInliningRelations<'a> {
     critical_summary: &'a [(FunctionId, FormalIndex, Path, PackedInsnSiteId)],
     resolvent: &'a [(
@@ -347,9 +373,8 @@ struct HybridInliningRelations<'a> {
         CallString,
         FunctionId,
         FlowVariable,
-        Path,
         FormalIndex,
-        Path,
+        AccessPathMap,
     )],
     context_summary: &'a [(CallString, FunctionId, FormalIndex, Path, FormalIndex, Path)],
 }
@@ -437,21 +462,23 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Locals ({}):", self.context_locals.len())?;
-        for (cs, func_id, var, path, formal_idx, formal_path) in self.context_locals {
+        for (cs, func_id, var, formal_idx, pairs) in self.context_locals {
             let var_str = match var {
                 FlowVariable::Local(name) => name.to_string(),
                 _ => format!("{}", var),
             };
-            writeln!(
-                f,
-                "  {} {}: {}{} from arg{}{}",
-                cs,
-                func_id.id,
-                var_str,
-                path.to_dot_string(),
-                formal_idx,
-                formal_path.to_dot_string()
-            )?;
+            for (p1, p2) in pairs.iter() {
+                writeln!(
+                    f,
+                    "  {} {}: {}{} from arg{}{}",
+                    cs,
+                    func_id.id,
+                    var_str,
+                    p1.to_dot_string(),
+                    formal_idx,
+                    p2.to_dot_string()
+                )?;
+            }
         }
 
         writeln!(f, "\nContext Summary ({}):", self.context_summary.len())?;
@@ -517,7 +544,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
 
         // Derived:
 
-        relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
+        lattice locals(FunctionId, FlowVariable, FormalIndex, AccessPathMap);
         relation assign_like(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path);
         relation java_obj_assign_like(FunctionId, InsnId, FlowVariable, Path, Symbol);
         relation model_paths(Path) = summary_paths.into_iter().collect();
@@ -529,7 +556,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         relation resolvent(CallString, FunctionId, FormalIndex, Path, PackedInsnSiteId, FunctionId);
         relation func_ptr_assign_like(FunctionId, InsnId, FlowVariable, Path, FunctionId);
         relation context_assign(CallString, FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path);
-        relation context_locals(CallString, FunctionId, FlowVariable, Path, FormalIndex, Path);
+        lattice context_locals(CallString, FunctionId, FlowVariable, FormalIndex, AccessPathMap);
         relation context_summary(CallString, FunctionId, FormalIndex, Path, FormalIndex, Path);
 
         // Sets up paths from input program with static info. Paths must remain finite so we
@@ -544,22 +571,40 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         paths(AccessPathSet::singleton(p2.concat(p1))) <-- program_paths(p2), model_paths(p1);
 
         // Initialize locals with formals
-        locals(infunc, v1, p1.clone(), i, p1.clone()) <--
+        locals(infunc, v1, i, AccessPathMap::singleton(p1.clone(), p1.clone())) <--
             formal_param(infunc, v1, _),
             if let FlowVariable::Formal(i) = v1,
             let p1 = Path::empty();
 
-        // Propagate fields
-        locals(infunc, v1, p13.clone(), a, p4) <--
-            locals(infunc, v2, p23, a, p4),
+        // assignment if rhs is a prefix of a known path
+        // this extends the post-condition
+        //   <v1, p1> := <v2, p2>
+        //     if <v2, p23> -> <a, p4>
+        //     and p23 == p2 ++ p3
+        //     then <v1, p1 ++ p3> -> <a, p4>
+        // example:
+        //   assume x.foo -> $1.bar
+        //   assign y.baz := x
+        //   result y.baz.foo -> $1.bar
+        locals(infunc, v1, a, pairs13) <--
+            locals(infunc, v2, a, pairs),
             assign_like(infunc, insn_id,  v1, p1, v2, p2),
-            if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(ps), if ps.contains(&p13);
-        locals(infunc, v1, p1, a, p43.clone()) <--
-            locals(infunc, v2, p2, a, p4),
+            paths(ps),
+            if let Some(pairs13) = pairs.substitute_first_prefix(p2, p1, ps);
+        // assignment if a known path is a prefix of rhs
+        // this extends the pre-condition
+        //   <v1, p1> := <v2, p2 ++ p3>
+        //     if <v2, p2> -> <a, p4>
+        //     then <v1, p1> -> <a, p4 ++ p3>
+        // example:
+        //   assume x.foo -> $1.bar
+        //   assign y := x.foo.baz
+        //   result y -> $1.bar.baz
+        locals(infunc, v1, a, pairs43) <--
+            locals(infunc, v2, a, pairs),
             assign_like(infunc, _, v1, p1, v2, p23),
-            if let Some(p43) = p23.substitute_prefix(p2, p4),
-            paths(ps), if ps.contains(&p43);
+            paths(ps),
+            if let Some(pairs43) = pairs.apply_second_propagation(p1, p23, ps);
 
         // Initialize assigns from program
         assign_like(func_id, insn_id, v1, p1, v2, p2) <--
@@ -589,28 +634,27 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
 
         // Compute summaries from local reachability
         summary(infunc, n1, p1, n2, p2) <--
-            locals(infunc, dst_var, p1, n2, p2),
+            locals(infunc, dst_var, n2, pairs),
             // join with formal_param here instead of using if so that we don't have to traverse all of
             // locals
             formal_param(infunc, dst_var, formal_ty),
             if let FlowVariable::Formal(n1) = dst_var,
-            if isout(n1, *formal_ty, p1),
+            for (p1, p2) in pairs.iter(),
+            if isout(n1, *formal_ty, &p1),
             if n1 != n2 || p1 != p2;
 
-        // aliasing summary rule, see discussion above
-        summary(infunc, n1, ap3.clone(), n2, bp) <--
+        summary(infunc, n1, ap3.clone(), n2, bp.clone()) <--
             config(c),
             if c.alias_rule,
             // this is the alias: v1.p1 <- n1.ap
-            locals(infunc, v1, p1, n1, ap),
+            locals(infunc, v1, n1, pairs1),
             // v1.p13 <- n2.bp
-            locals(infunc, v1, p13, n2, bp),
-            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            // if let Some(p3) = match_prefix(p13, p1),
-            // if !p3.is_empty(),
-            // let ap3 = ap.concat_str(p3),
+            locals(infunc, v1, n2, pairs2),
+            for (p1, ap) in pairs1.iter(),
+            for (p13, bp) in pairs2.iter(),
+            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(&p1, &ap),
             paths(ps), if ps.contains(&ap3),
-            if n1 != n2 || ap3 != *bp;
+            if n1 != n2 || ap3 != bp;
 
         // Hybrid Inlining Rules:
         // Phase 1: propagate up the stack from indirect calls
@@ -622,7 +666,9 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             (indirect_call(site_id, vx) | java_call(site_id, vx, _, _)),
             let FlowVertex(v, p_call) = vx,
             let InsnSiteId {func_id, ..} = InsnSiteId::unpack_from_slice(&**site_id).unwrap(),
-            locals(func_id, v, p_call, n, p_n);
+            locals(func_id, v, n, pairs),
+            for (p, p_n) in pairs.iter(),
+            if p == *p_call;
 
         // 1.2: Propagate Critical Summary
         critical_summary(caller_func_id, n, p_n, critical_site_id) <--
@@ -630,7 +676,9 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             call(caller_func_id, caller_insn_id, tgt),
             let cs_id = PackedInsnSiteId::try_from_parts(*caller_func_id, *caller_insn_id).unwrap(),
             let arg = FlowVariable::CallArg { id: cs_id, formal: *n_tgt },
-            locals(caller_func_id, arg, p_tgt, n, p_n);
+            locals(caller_func_id, arg, n, pairs),
+            for (p, p_n) in pairs.iter(),
+            if p == *p_tgt;
 
         // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
         //   resolvent in parameters of summary
@@ -652,14 +700,19 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             call(func_id, insn_id, tgt),
             critical_summary(tgt, _, _, critical_site_id),
             let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
-            locals(func_id, v_tgt, p_tgt, n, p),
+            locals(func_id, v_tgt, n, pairs),
+            for (p_tgt_actual, p_formal) in pairs.iter(),
+            if p_formal == *p,
+            let p_tgt = p_tgt_actual.clone(),
             if let FlowVariable::CallArg { id: tgt_site, formal: n_tgt } = v_tgt,
             if let Some(new_cs) = cs.push(call_site_id);
 
         // 3.1: Contextual Assignment (instantiate)
         context_assign(cs.clone(), func_id, insn_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
             resolvent(cs, func_id, n, p, critical_site_id, ptr_tgt),
-            locals(func_id, v_rec, p_v, n, p),
+            locals(func_id, v_rec, n, pairs),
+            for (p_v, p_formal) in pairs.iter(),
+            if p_formal == *p,
             let vx_rec = FlowVertex(v_rec.clone(), p_v.clone()),
             summary(ptr_tgt, n1, p1_sum, n2, p2_sum),
             (java_call(critical_site_id, vx_rec, _, _) | indirect_call(critical_site_id, vx_rec)),
@@ -670,58 +723,70 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             let InsnSiteId {func_id: call_func_id, insn_id} = InsnSiteId::unpack_from_slice(&**critical_site_id).unwrap();
 
         // 3.2: Contextual Locals Initialization and Propagation
-        context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
+        context_locals(cs.clone(), func_id, v1.clone(), n.clone(), pairs13) <--
             context_assign(cs, func_id, _, v1, p1, v2, p2),
-            locals(func_id, v2, p23, n, pn),
-            if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(ps), if ps.contains(&p13);
+            locals(func_id, v2, n, pairs),
+            paths(ps),
+            if let Some(pairs13) = pairs.substitute_first_prefix(p2, p1, ps);
 
-        context_locals(cs.clone(), func_id, v2.clone(), p23.clone(), n.clone(), pn.clone()) <--
+        context_locals(cs.clone(), func_id, v2.clone(), n.clone(), pairs23) <--
             context_assign(cs, func_id, _, v1, p1, v2, p2),
-            locals(func_id, v1, p13, n, pn),
-            if let Some(p23) = p13.substitute_prefix(p1, p2),
-            paths(ps), if ps.contains(&p23);
+            locals(func_id, v1, n, pairs),
+            paths(ps),
+            if let Some(pairs23) = pairs.substitute_first_prefix(p1, p2, ps);
 
-        context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
-            context_locals(cs, func_id, v2, p23, n, pn),
+        context_locals(cs.clone(), func_id, v1.clone(), n.clone(), pairs13) <--
+            context_locals(cs, func_id, v2, n, pairs),
             assign_like(func_id, _, v1, p1, v2, p2),
-            if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(ps), if ps.contains(&p13);
+            paths(ps),
+            if let Some(pairs13) = pairs.substitute_first_prefix(p2, p1, ps);
 
-        context_locals(cs.clone(), func_id, v1.clone(), p1.clone(), n.clone(), pn3.clone()) <--
-            context_locals(cs, func_id, v2, p2, n, pn),
+        context_locals(cs.clone(), func_id, v1.clone(), n.clone(), pairs43) <--
+            context_locals(cs, func_id, v2, n, pairs),
             assign_like(func_id, _, v1, p1, v2, p23),
-            if let Some(pn3) = p23.substitute_prefix(p2, pn),
-            paths(ps), if ps.contains(&pn3);
+            paths(ps),
+            if let Some(pairs43) = pairs.apply_second_propagation(p1, p23, ps);
 
         // 3.3: Contextual Summary Creation
         context_summary(cs.clone(), func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
-            context_locals(cs, func_id, dst_var, p1, n2, p2),
+            context_locals(cs, func_id, dst_var, n2, pairs),
             formal_param(func_id, dst_var, formal_ty),
             if let FlowVariable::Formal(n1) = dst_var,
-            if isout(n1, *formal_ty, p1),
-            if n1 != n2 || p1 != p2;
+            for (p1, p2) in pairs.iter(),
+            if isout(n1, *formal_ty, &p1);
 
         context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
-            context_locals(cs, func_id, v1, p1, n1, ap),
-            locals(func_id, v1, p13, n2, bp),
-            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
+            config(c),
+            if c.alias_rule,
+            context_locals(cs, func_id, v1, n1, pairs1),
+            locals(func_id, v1, n2, pairs2),
+            for (p1, ap) in pairs1.iter(),
+            for (p13, bp) in pairs2.iter(),
+            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(&p1, &ap),
             paths(ps), if ps.contains(&ap3),
-            if n1 != n2 || ap3 != *bp;
+            if n1 != n2 || ap3 != bp;
 
         context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
-            locals(func_id, v1, p1, n1, ap),
-            context_locals(cs, func_id, v1, p13, n2, bp),
-            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
+            config(c),
+            if c.alias_rule,
+            locals(func_id, v1, n1, pairs1),
+            context_locals(cs, func_id, v1, n2, pairs2),
+            for (p1, ap) in pairs1.iter(),
+            for (p13, bp) in pairs2.iter(),
+            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(&p1, &ap),
             paths(ps), if ps.contains(&ap3),
-            if n1 != n2 || ap3 != *bp;
+            if n1 != n2 || ap3 != bp;
 
         context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
-            context_locals(cs, func_id, v1, p1, n1, ap),
-            context_locals(cs, func_id, v1, p13, n2, bp),
-            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
+            config(c),
+            if c.alias_rule,
+            context_locals(cs, func_id, v1, n1, pairs1),
+            context_locals(cs, func_id, v1, n2, pairs2),
+            for (p1, ap) in pairs1.iter(),
+            for (p13, bp) in pairs2.iter(),
+            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(&p1, &ap),
             paths(ps), if ps.contains(&ap3),
-            if n1 != n2 || ap3 != *bp;
+            if n1 != n2 || ap3 != bp;
 
         // 3.4: Instantiate Summaries and pop call string
         context_assign(new_cs.clone(), func_id, insn_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
@@ -776,6 +841,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             context_summary: &prog.context_summary,
         }
     );
+    log::trace!("locals:\n{}", LocalsDisplay(&prog.locals));
     let result = IndexResult {
         summary: prog.summary,
         assign_like: prog.assign_like,

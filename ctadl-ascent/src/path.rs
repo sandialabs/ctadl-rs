@@ -185,8 +185,11 @@ impl FromStr for Path {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Default)]
-pub struct AccessPathSet(Trie<mir::FieldAccess>);
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize)]
+pub struct Nothing;
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize)]
+pub struct AccessPathSet(pub Trie<mir::FieldAccess, Nothing>);
 
 impl PartialOrd for AccessPathSet {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -228,7 +231,7 @@ impl AccessPathSet {
     }
 
     pub fn contains(&self, path: &Path) -> bool {
-        self.0.contains(path.0.iter().cloned())
+        self.0.contains_key(path.0.iter().cloned())
     }
 
     pub fn contains_empty_path(&self) -> bool {
@@ -236,7 +239,7 @@ impl AccessPathSet {
     }
 
     pub fn insert(&mut self, path: &Path) {
-        self.0.insert(path.0.iter().cloned());
+        self.0.insert(path.0.iter().cloned(), Nothing);
     }
 
     pub fn union(&mut self, other: &Self) {
@@ -244,7 +247,10 @@ impl AccessPathSet {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Path> + '_ {
-        self.0.all_sequences().into_iter().map(|seq| Path(seq.into()))
+        self.0
+            .all_sequences()
+            .into_iter()
+            .map(|(seq, _)| Path(seq.into()))
     }
 
     pub fn substitute_prefix(&self, prefix: &Path, new_prefix: &Path) -> Option<Self> {
@@ -252,7 +258,7 @@ impl AccessPathSet {
         let mut result = Self::new();
         let mut found = false;
 
-        for seq in self.0.all_sequences() {
+        for (seq, _) in self.0.all_sequences() {
             let path = Path(seq.into());
             if let Some(suffix) = match_prefix(&path, prefix) {
                 found = true;
@@ -272,11 +278,9 @@ impl AccessPathSet {
         let mut result = Self::new();
         let mut found = false;
 
-        for seq in self.0.all_sequences() {
+        for (seq, _) in self.0.all_sequences() {
             let path = Path(seq.into());
-            if let Some(suffix) =
-                match_prefix(&path, prefix).filter(|s| !s.is_empty())
-            {
+            if let Some(suffix) = match_prefix(&path, prefix).filter(|s| !s.is_empty()) {
                 found = true;
                 let mut substituted_path = new_prefix.clone();
                 substituted_path.extend_merging(suffix);
@@ -290,7 +294,7 @@ impl AccessPathSet {
     pub fn concat(&self, other: &Path) -> Self {
         let mut result = Self::new();
 
-        for seq in self.0.all_sequences() {
+        for (seq, _) in self.0.all_sequences() {
             let mut path = Path(seq.into());
             path.extend_merging(other.0.iter().cloned());
             result.insert(&path);
@@ -302,7 +306,7 @@ impl AccessPathSet {
     pub fn pop(&self) -> Self {
         let mut result = Self::new();
 
-        for seq in self.0.all_sequences() {
+        for (seq, _) in self.0.all_sequences() {
             let path = Path(seq.into());
             if let Some(popped_path) = path.pop() {
                 result.insert(&popped_path);
@@ -315,32 +319,265 @@ impl AccessPathSet {
     }
 }
 
-impl serde::Serialize for AccessPathSet {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let paths: Vec<Path> = self
-            .0
-            .all_sequences()
-            .into_iter()
-            .map(|seq| Path(seq.into()))
-            .collect();
-        paths.serialize(serializer)
+/// A map from access paths to access path sets.
+///
+/// Conceptually, this is a map [K -> [K -> ()]], where K is a trie.
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize)]
+pub struct AccessPathMap(Trie<mir::FieldAccess, AccessPathSet>);
+
+impl PartialOrd for AccessPathMap {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self == other {
+            return Some(std::cmp::Ordering::Equal);
+        }
+
+        // Subset check for map: self <= other iff forall k in self, self[k] <= other[k]
+        let mut self_le_other = true;
+        for (seq, p2s) in self.0.all_sequences() {
+            match other.0.get(seq) {
+                Some(other_p2s) => {
+                    if p2s.partial_cmp(other_p2s) == Some(std::cmp::Ordering::Greater)
+                        || p2s.partial_cmp(other_p2s).is_none()
+                    {
+                        self_le_other = false;
+                        break;
+                    }
+                }
+                None => {
+                    self_le_other = false;
+                    break;
+                }
+            }
+        }
+
+        let mut other_le_self = true;
+        for (seq, p2s) in other.0.all_sequences() {
+            match self.0.get(seq) {
+                Some(self_p2s) => {
+                    if p2s.partial_cmp(self_p2s) == Some(std::cmp::Ordering::Greater)
+                        || p2s.partial_cmp(self_p2s).is_none()
+                    {
+                        other_le_self = false;
+                        break;
+                    }
+                }
+                None => {
+                    other_le_self = false;
+                    break;
+                }
+            }
+        }
+
+        match (self_le_other, other_le_self) {
+            (true, true) => Some(std::cmp::Ordering::Equal),
+            (true, false) => Some(std::cmp::Ordering::Less),
+            (false, true) => Some(std::cmp::Ordering::Greater),
+            (false, false) => None,
+        }
     }
 }
 
-impl<'de> serde::Deserialize<'de> for AccessPathSet {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let paths: Vec<Path> = Vec::deserialize(deserializer)?;
-        let mut aps = AccessPathSet::new();
-        for p in paths {
-            aps.insert(&p);
+impl AccessPathMap {
+    pub fn new() -> Self {
+        Self(Trie::new())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn singleton(p1: Path, p2: Path) -> Self {
+        let mut res = Self::new();
+        res.insert(p1, p2);
+        res
+    }
+
+    pub fn insert(&mut self, p1: Path, p2: Path) {
+        let mut set = self
+            .0
+            .get(p1.0.iter().cloned())
+            .cloned()
+            .unwrap_or_default();
+        set.insert(&p2);
+        self.0.insert(p1.0.iter().cloned(), set);
+    }
+
+    pub fn union(&mut self, other: &Self) {
+        if self == other {
+            return;
         }
-        Ok(aps)
+        for (seq, set) in other.0.all_sequences() {
+            let mut existing = self.0.get(&seq).cloned().unwrap_or_default();
+            existing.union(&set);
+            self.0.insert(seq, existing);
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Path, Path)> + '_ {
+        self.0.all_sequences().into_iter().flat_map(|(seq1, set)| {
+            let p1 = Path(seq1.into());
+            set.0
+                .all_sequences()
+                .into_iter()
+                .map(move |(seq2, _)| (p1.clone(), Path(seq2.into())))
+        })
+    }
+
+    pub fn substitute_first_prefix(
+        &self,
+        prefix: &Path,
+        new_prefix: &Path,
+        paths: &AccessPathSet,
+    ) -> Option<Self> {
+        let mut result = Self::new();
+        let mut found = false;
+
+        for (seq1, p2s) in self.0.all_sequences() {
+            let p1 = Path(seq1.into());
+            if let Some(p1_new) = p1.substitute_prefix(prefix, new_prefix) {
+                if paths.contains(&p1_new) {
+                    found = true;
+                    let mut existing = result
+                        .0
+                        .get(p1_new.0.iter().cloned())
+                        .cloned()
+                        .unwrap_or_default();
+                    existing.union(&p2s);
+                    result.0.insert(p1_new.0.iter().cloned(), existing);
+                }
+            }
+        }
+
+        if found { Some(result) } else { None }
+    }
+
+    pub fn apply_second_propagation(
+        &self,
+        p1: &Path,
+        p23: &Path,
+        paths: &AccessPathSet,
+    ) -> Option<Self> {
+        let mut result = Self::new();
+        let mut found = false;
+
+        for (seq2, p4s) in self.0.all_sequences() {
+            let p2 = Path(seq2.into());
+            for p4 in p4s.iter() {
+                if let Some(p43) = p23.substitute_prefix(&p2, &p4) {
+                    if paths.contains(&p43) {
+                        found = true;
+                        result.insert(p1.clone(), p43);
+                    }
+                }
+            }
+        }
+
+        if found { Some(result) } else { None }
+    }
+}
+
+// Ascent Lattice implementations
+
+use ascent::lattice::Lattice;
+
+impl Lattice for Path {
+    fn meet(self, other: Self) -> Self {
+        // Longest Common Prefix meet
+        let mut res = VecDeque::new();
+        for (a, b) in self.0.into_iter().zip(other.0.into_iter()) {
+            if a == b {
+                res.push_back(a);
+            } else {
+                break;
+            }
+        }
+        Path(res)
+    }
+
+    fn join(self, other: Self) -> Self {
+        // For Path, join is only possible if they are equal.
+        if self == other { self } else { self }
+    }
+
+    fn meet_mut(&mut self, other: Self) -> bool {
+        let met = self.clone().meet(other);
+        if met != *self {
+            *self = met;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn join_mut(&mut self, other: Self) -> bool {
+        let joined = self.clone().join(other);
+        if joined != *self {
+            *self = joined;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Lattice for AccessPathSet {
+    fn meet(mut self, other: Self) -> Self {
+        self.0.intersection(&other.0);
+        self
+    }
+
+    fn join(mut self, other: Self) -> Self {
+        self.0.union(&other.0);
+        self
+    }
+
+    fn meet_mut(&mut self, other: Self) -> bool {
+        let old = self.clone();
+        self.0.intersection(&other.0);
+        *self != old
+    }
+
+    fn join_mut(&mut self, other: Self) -> bool {
+        let old = self.clone();
+        self.0.union(&other.0);
+        *self != old
+    }
+}
+
+impl Lattice for AccessPathMap {
+    fn meet(self, other: Self) -> Self {
+        let mut result = Self::new();
+        for (seq, p2s) in self.0.all_sequences() {
+            if let Some(other_p2s) = other.0.get(&seq) {
+                let met_p2s = p2s.meet(other_p2s.clone());
+                if !met_p2s.is_empty() {
+                    result.0.insert(seq, met_p2s);
+                }
+            }
+        }
+        result
+    }
+
+    fn join(mut self, other: Self) -> Self {
+        self.union(&other);
+        self
+    }
+
+    fn meet_mut(&mut self, other: Self) -> bool {
+        let old = self.clone();
+        let met = self.clone().meet(other);
+        if met != old {
+            *self = met;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn join_mut(&mut self, other: Self) -> bool {
+        let old = self.clone();
+        self.union(&other);
+        *self != old
     }
 }
 
@@ -448,89 +685,102 @@ pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<VecDeque<mir::FieldAcces
     }
 }
 
-// Ascent Lattice implementation for Path
-use ascent::lattice::Lattice;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
 
-impl Lattice for Path {
-    fn meet(self, other: Self) -> Self {
-        // Longest Common Prefix meet
-        let mut res = VecDeque::new();
-        for (a, b) in self.0.into_iter().zip(other.0.into_iter()) {
-            if a == b {
-                res.push_back(a);
-            } else {
-                break;
-            }
-        }
-        Path(res)
+    #[test]
+    fn test_substitute_prefix() {
+        let p: Path = Path::empty();
+        assert_eq!(p, p.substitute_prefix(&p, &p).unwrap());
+
+        let p: Path = ["a", "c"].iter().collect();
+        let q: Path = ["a"].iter().collect();
+        let r: Path = ["b"].iter().collect();
+        let e: Path = ["b", "c"].iter().collect();
+
+        assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
+
+        let p: Path = ["a", "b"].iter().collect();
+        let q: Path = ["c", "d"].iter().collect();
+        assert!(p.substitute_prefix(&q, &Path::empty()).is_none());
+
+        // Test case: p23.substitute_prefix(p2, p1) where p23=.[1], p2='', p1=.[1] -> .[2]
+        // This tests offset merging when matching empty prefix
+        use ctadl_ir::mir::{FieldAccess, Offset};
+
+        // Create p23 = .[1]
+        let mut p23_components = VecDeque::new();
+        p23_components.push_back(FieldAccess::Offset(Offset(1)));
+        let p23 = Path(p23_components);
+
+        // Create p2 = '' (empty path)
+        let p2 = Path::empty();
+
+        // Create p1 = .[1]
+        let mut p1_components = VecDeque::new();
+        p1_components.push_back(FieldAccess::Offset(Offset(1)));
+        let p1 = Path(p1_components);
+
+        let result = p23.substitute_prefix(&p2, &p1).unwrap();
+
+        // Create expected = .[2]
+        let mut expected_components = VecDeque::new();
+        expected_components.push_back(FieldAccess::Offset(Offset(2)));
+        let expected = Path(expected_components);
+
+        assert_eq!(result, expected);
+
+        // More offset arithmetic tests
+        let p: Path = ".x.[2]".into();
+        let q: Path = ".x.[1]".into();
+        let r: Path = ".y".into();
+        let e: Path = ".y.[1]".into();
+        assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
+
+        let p: Path = ".x.[1].f".into();
+        let q: Path = ".x".into();
+        let r: Path = ".y".into();
+        let e: Path = ".y.[1].f".into();
+        assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
     }
 
-    fn join(self, other: Self) -> Self {
-        // For Path, join is only possible if they are equal.
-        if self == other {
-            self
-        } else {
-            self
-        }
+    #[test]
+    fn test_path_serialization() {
+        let path: Path = ["foo", "bar.baz"].iter().collect();
+        let serialized = path.to_dot_string();
+        assert_eq!(serialized, ".foo.bar\\.baz");
+
+        let parsed_back: Path = serialized.parse().unwrap();
+        assert_eq!(path, parsed_back);
     }
 
-    fn meet_mut(&mut self, other: Self) -> bool {
-        let met = self.clone().meet(other);
-        if met != *self {
-            *self = met;
-            true
-        } else {
-            false
-        }
+    #[test]
+    fn test_path_with_dots() {
+        let path: Path = ["foo.bar", "baz.qux"].iter().collect();
+        let serialized = path.to_dot_string();
+        assert_eq!(serialized, ".foo\\.bar.baz\\.qux");
+
+        let parsed_back: Path = serialized.parse().unwrap();
+        assert_eq!(path, parsed_back);
     }
 
-    fn join_mut(&mut self, other: Self) -> bool {
-        let joined = self.clone().join(other);
-        if joined != *self {
-            *self = joined;
-            true
-        } else {
-            false
-        }
-    }
-}
+    #[test]
+    fn test_path_with_offsets() {
+        // Test path with numeric offsets
+        // Create a path manually with mixed FieldAccess types
+        use ctadl_ir::mir::{FieldAccess, Offset};
+        let mut path_components = VecDeque::new();
+        path_components.push_back(FieldAccess::Symbol(ArcIntern::from("foo")));
+        path_components.push_back(FieldAccess::Offset(Offset(42)));
+        path_components.push_back(FieldAccess::Symbol(ArcIntern::from("bar")));
+        let path = Path(path_components);
 
-impl Lattice for AccessPathSet {
-    fn meet(self, other: Self) -> Self {
-        let mut result = Self::new();
-        for seq in self.0.all_sequences() {
-            let path = Path(seq.into());
-            if other.contains(&path) {
-                result.insert(&path);
-            }
-        }
-        result
-    }
+        let serialized = path.to_dot_string();
+        assert_eq!(serialized, ".foo.[42].bar");
 
-    fn join(mut self, other: Self) -> Self {
-        self.union(&other);
-        self
-    }
-
-    fn meet_mut(&mut self, other: Self) -> bool {
-        let met = self.clone().meet(other);
-        if met != *self {
-            *self = met;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn join_mut(&mut self, other: Self) -> bool {
-        let mut changed = false;
-        for seq in other.0.all_sequences() {
-            let path = Path(seq.into());
-            if !self.contains(&path) {
-                self.insert(&path);
-                changed = true;
-            }
-        }
-        changed
+        let parsed_back: Path = serialized.parse().unwrap();
+        assert_eq!(path, parsed_back);
     }
 }
