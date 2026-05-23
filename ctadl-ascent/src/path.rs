@@ -188,13 +188,47 @@ impl FromStr for Path {
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default)]
 pub struct AccessPathSet(Trie<mir::FieldAccess>);
 
+impl PartialOrd for AccessPathSet {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self == other {
+            return Some(std::cmp::Ordering::Equal);
+        }
+
+        // Check if self is a subset of other: self union other == other
+        let mut self_union_other = self.clone();
+        self_union_other.union(other);
+        if self_union_other == *other {
+            return Some(std::cmp::Ordering::Less);
+        }
+
+        // Check if other is a subset of self: other union self == self
+        let mut other_union_self = other.clone();
+        other_union_self.union(self);
+        if other_union_self == *self {
+            return Some(std::cmp::Ordering::Greater);
+        }
+
+        None
+    }
+}
+
 impl AccessPathSet {
     pub fn new() -> Self {
         Self(Trie::new())
     }
 
+    pub fn singleton(path: Path) -> Self {
+        let mut set = Self::new();
+        set.insert(&path);
+        set
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    pub fn contains(&self, path: &Path) -> bool {
+        self.0.contains(path.0.iter().cloned())
     }
 
     pub fn contains_empty_path(&self) -> bool {
@@ -207,6 +241,10 @@ impl AccessPathSet {
 
     pub fn union(&mut self, other: &Self) {
         self.0.union(&other.0);
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Path> + '_ {
+        self.0.all_sequences().into_iter().map(|seq| Path(seq.into()))
     }
 
     pub fn substitute_prefix(&self, prefix: &Path, new_prefix: &Path) -> Option<Self> {
@@ -454,5 +492,45 @@ impl Lattice for Path {
         } else {
             false
         }
+    }
+}
+
+impl Lattice for AccessPathSet {
+    fn meet(self, other: Self) -> Self {
+        let mut result = Self::new();
+        for seq in self.0.all_sequences() {
+            let path = Path(seq.into());
+            if other.contains(&path) {
+                result.insert(&path);
+            }
+        }
+        result
+    }
+
+    fn join(mut self, other: Self) -> Self {
+        self.union(&other);
+        self
+    }
+
+    fn meet_mut(&mut self, other: Self) -> bool {
+        let met = self.clone().meet(other);
+        if met != *self {
+            *self = met;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn join_mut(&mut self, other: Self) -> bool {
+        let mut changed = false;
+        for seq in other.0.all_sequences() {
+            let path = Path(seq.into());
+            if !self.contains(&path) {
+                self.insert(&path);
+                changed = true;
+            }
+        }
+        changed
     }
 }

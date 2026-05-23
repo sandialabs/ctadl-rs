@@ -46,8 +46,8 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId, InsnSiteId,
-    PackedInsnSiteId, Path, isout,
+    AccessPathSet, CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId,
+    InsnId, InsnSiteId, PackedInsnSiteId, Path, isout,
 };
 use ctadl_ir::Symbol;
 
@@ -511,7 +511,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         // Analysis drivers:
 
         // Set of syntactic access paths
-        lattice paths(ascent::lattice::set::Set<Path>);
+        lattice paths(AccessPathSet);
         relation summary(FunctionId, FormalIndex, Path, FormalIndex, Path) = facts.summary;
         relation config(IndexConfig) = config;
 
@@ -536,12 +536,12 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         // shouldn't add paths from constructed summaries directly.
         program_paths(p) <-- actual_param(_, _, vx), let FlowVertex(_, p) = vx;
         program_paths(p1), program_paths(p2) <-- assign(_, vx, vy), let FlowVertex(_, p1) = vx, let FlowVertex(_, p2) = vy;
-        paths(ascent::lattice::set::Set::singleton(p.clone())) <-- program_paths(p);
-        paths(ascent::lattice::set::Set::singleton(p.clone())) <-- model_paths(p);
+        paths(AccessPathSet::singleton(p.clone())) <-- program_paths(p);
+        paths(AccessPathSet::singleton(p.clone())) <-- model_paths(p);
 
         // Combine model paths with program paths (one level only to ensure termination)
-        paths(ascent::lattice::set::Set::singleton(p1.concat(p2))) <-- model_paths(p1), program_paths(p2);
-        paths(ascent::lattice::set::Set::singleton(p2.concat(p1))) <-- program_paths(p2), model_paths(p1);
+        paths(AccessPathSet::singleton(p1.concat(p2))) <-- model_paths(p1), program_paths(p2);
+        paths(AccessPathSet::singleton(p2.concat(p1))) <-- program_paths(p2), model_paths(p1);
 
         // Initialize locals with formals
         locals(infunc, v1, p1.clone(), i, p1.clone()) <--
@@ -783,7 +783,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         paths: prog
             .paths
             .iter()
-            .flat_map(|(s,)| s.iter().cloned().map(|p| (p,)))
+            .flat_map(|(s,): &(AccessPathSet,)| s.iter().map(|p| (p,)))
             .collect(),
         external_function: facts.external_function,
     };

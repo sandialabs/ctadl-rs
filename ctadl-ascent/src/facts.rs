@@ -1,6 +1,6 @@
 //! Data types for facts
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::{fmt, fmt::Display};
@@ -736,6 +736,7 @@ impl IdMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
 
     #[test]
     fn test_substitute_prefix() {
