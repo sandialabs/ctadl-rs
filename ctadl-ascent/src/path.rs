@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::fmt::{self, Display};
 use std::str::FromStr;
 
@@ -15,13 +14,13 @@ pub type Str = ArcIntern<str>;
 /// The path dereferences go left to right
 /// ["foo", "bar", "baz"] represents .foo.bar.baz
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord)]
-pub struct Path(pub VecDeque<mir::FieldAccess>);
+pub struct Path(pub Vec<mir::FieldAccess>);
 
 impl Path {
     /// Creates an empty path
     #[inline]
     pub fn empty() -> Self {
-        Path(VecDeque::new())
+        Path(Vec::new())
     }
 
     /// Denotes the empty path
@@ -80,16 +79,16 @@ impl Path {
     /// Pushes a new component to the path, merging offsets if possible.
     pub fn push(&mut self, component: mir::FieldAccess) {
         if let (mir::FieldAccess::Offset(new_off), Some(mir::FieldAccess::Offset(last_off))) =
-            (&component, self.0.back_mut())
+            (&component, self.0.last_mut())
         {
             last_off.0 += new_off.0;
             return;
         }
-        self.0.push_back(component);
+        self.0.push(component);
     }
 
     pub fn pop(mut self) -> Option<Self> {
-        self.0.pop_back().map(|_| self)
+        self.0.pop().map(|_| self)
     }
 
     /// Appends components from an iterator, merging offsets.
@@ -172,7 +171,7 @@ impl<S: AsRef<str>> FromIterator<S> for Path {
 impl From<&str> for Path {
     fn from(s: &str) -> Self {
         let components = parse_path_string(s);
-        Path(components.into())
+        Path(components)
     }
 }
 
@@ -181,7 +180,7 @@ impl FromStr for Path {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let components = parse_path_string(s);
-        Ok(Path(components.into()))
+        Ok(Path(components))
     }
 }
 
@@ -230,6 +229,10 @@ impl AccessPathSet {
         self.0.contains_key(path.0.iter().cloned())
     }
 
+    pub fn contains_accesses(&self, path: &[mir::FieldAccess]) -> bool {
+        self.0.contains_key(path.iter().cloned())
+    }
+
     pub fn contains_empty_path(&self) -> bool {
         self.0.is_terminal()
     }
@@ -243,10 +246,7 @@ impl AccessPathSet {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Path> + '_ {
-        self.0
-            .all_sequences()
-            .into_iter()
-            .map(|(seq, _)| Path(seq.into()))
+        self.0.all_sequences().into_iter().map(|(seq, _)| Path(seq))
     }
 
     pub fn substitute_prefix(&self, prefix: &Path, new_prefix: &Path) -> Option<Self> {
@@ -256,7 +256,7 @@ impl AccessPathSet {
         let mut found = false;
 
         for (seq, _) in self.0.all_sequences() {
-            let path = Path(seq.into());
+            let path = Path(seq);
             if let Some(suffix) = match_prefix(&path, prefix) {
                 found = true;
                 let mut substituted_path = new_prefix.clone();
@@ -276,7 +276,7 @@ impl AccessPathSet {
         let mut found = false;
 
         for (seq, _) in self.0.all_sequences() {
-            let path = Path(seq.into());
+            let path = Path(seq);
             if let Some(suffix) = match_prefix(&path, prefix).filter(|s| !s.is_empty()) {
                 found = true;
                 let mut substituted_path = new_prefix.clone();
@@ -292,7 +292,7 @@ impl AccessPathSet {
         let mut result = Self::new();
 
         for (seq, _) in self.0.all_sequences() {
-            let mut path = Path(seq.into());
+            let mut path = Path(seq);
             path.extend_merging(other.0.iter().cloned());
             result.insert(&path);
         }
@@ -304,7 +304,7 @@ impl AccessPathSet {
         let mut result = Self::new();
 
         for (seq, _) in self.0.all_sequences() {
-            let path = Path(seq.into());
+            let path = Path(seq);
             if let Some(popped_path) = path.pop() {
                 result.insert(&popped_path);
             } else {
@@ -412,12 +412,25 @@ impl AccessPathMap {
 
     pub fn iter(&self) -> impl Iterator<Item = (Path, Path)> + '_ {
         self.0.all_sequences().into_iter().flat_map(|(seq1, set)| {
-            let p1 = Path(seq1.into());
+            let p1 = Path(seq1);
             set.0
                 .all_sequences()
                 .into_iter()
-                .map(move |(seq2, _)| (p1.clone(), Path(seq2.into())))
+                .map(move |(seq2, _)| (p1.clone(), Path(seq2)))
         })
+    }
+
+    pub fn filter_map<F>(&self, mut f: F) -> Self
+    where
+        F: FnMut(&Path, &Path) -> Option<(Path, Path)>,
+    {
+        let mut result = Self::new();
+        for (p1, p2) in self.iter() {
+            if let Some((new_p1, new_p2)) = f(&p1, &p2) {
+                result.insert(new_p1, new_p2);
+            }
+        }
+        result
     }
 
     /// Prefix substitution on sets of access paths
@@ -429,26 +442,34 @@ impl AccessPathMap {
         new_prefix: &Path,
         paths: &AccessPathSet,
     ) -> Option<Self> {
-        let mut result = Self::new();
-        let mut found = false;
-
-        for (seq1, p2s) in self.0.all_sequences() {
-            let p1 = Path(seq1.into());
-            if let Some(p1_new) = p1.substitute_prefix(prefix, new_prefix) {
-                if paths.contains(&p1_new) {
-                    found = true;
-                    let mut existing = result
-                        .0
-                        .get(p1_new.0.iter().cloned())
-                        .cloned()
-                        .unwrap_or_default();
-                    existing.union(&p2s);
-                    result.0.insert(p1_new.0.iter().cloned(), existing);
-                }
-            }
+        if let Some(new) = self.0.substitute_prefix(&prefix.0, new_prefix.0.clone()) {
+            let new = new.filter(|seq, _v| paths.contains_accesses(&seq));
+            Some(Self(new))
+        } else {
+            None
         }
+    }
 
-        if found { Some(result) } else { None }
+    pub fn substitute_second_prefix(
+        &self,
+        prefix: &Path,
+        new_prefix: &Path,
+        paths: &AccessPathSet,
+    ) -> Option<Self> {
+        let result = self.filter_map(|f, t| {
+            t.substitute_prefix(prefix, new_prefix).and_then(|p| {
+                if paths.contains(&p) {
+                    Some((f.clone(), p))
+                } else {
+                    None
+                }
+            })
+        });
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
     }
 
     pub fn apply_second_propagation(
@@ -461,7 +482,7 @@ impl AccessPathMap {
         let mut found = false;
 
         for (seq2, p4s) in self.0.all_sequences() {
-            let p2 = Path(seq2.into());
+            let p2 = Path(seq2);
             for p4 in p4s.iter() {
                 if let Some(p43) = p23.substitute_prefix(&p2, &p4) {
                     if paths.contains(&p43) {
@@ -483,10 +504,10 @@ use ascent::lattice::Lattice;
 impl Lattice for Path {
     fn meet(self, other: Self) -> Self {
         // Longest Common Prefix meet
-        let mut res = VecDeque::new();
+        let mut res = Vec::new();
         for (a, b) in self.0.into_iter().zip(other.0.into_iter()) {
             if a == b {
-                res.push_back(a);
+                res.push(a);
             } else {
                 break;
             }
@@ -635,7 +656,7 @@ pub fn parse_path_string(s: &str) -> Vec<mir::FieldAccess> {
         path.push(mir::FieldAccess::Symbol(ArcIntern::from(current_component)));
     }
 
-    path.0.into()
+    path.0
 }
 
 /// Returns the suffix solving the equation ap = prefix + suffix, if there is one. The suffix may
@@ -644,7 +665,7 @@ pub fn parse_path_string(s: &str) -> Vec<mir::FieldAccess> {
 /// This supports offset arithmetic. For example, if ap = .x.[2] and prefix = .x.[1],
 /// the suffix is .[1].
 #[inline]
-pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<VecDeque<mir::FieldAccess>> {
+pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<Vec<mir::FieldAccess>> {
     use mir::FieldAccess;
     use mir::Offset;
     let (ap_comps, prefix_comps) = (&ap.0, &prefix.0);
@@ -667,19 +688,19 @@ pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<VecDeque<mir::FieldAcces
     let last_idx = prefix_comps.len() - 1;
     match (&ap_comps[last_idx], &prefix_comps[last_idx]) {
         (FieldAccess::Offset(Offset(an)), FieldAccess::Offset(Offset(pn))) => {
-            let mut suffix = VecDeque::new();
+            let mut suffix = Vec::new();
             let diff = an - pn;
             // Include an Offset in the suffix
-            suffix.push_back(FieldAccess::Offset(Offset(diff)));
+            suffix.push(FieldAccess::Offset(Offset(diff)));
             // Append the remaining components of ap
             for comp in ap_comps.iter().skip(prefix_comps.len()) {
-                suffix.push_back(comp.clone());
+                suffix.push(comp.clone());
             }
             Some(suffix)
         }
         (a, p) if a == p => {
             // Exact match for the last prefix component
-            Some(ap_comps.range(prefix_comps.len()..).cloned().collect())
+            Some(ap_comps[prefix_comps.len()..].to_vec())
         }
         _ => None,
     }
@@ -688,7 +709,6 @@ pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<VecDeque<mir::FieldAcces
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::VecDeque;
 
     #[test]
     fn test_substitute_prefix() {
@@ -711,23 +731,23 @@ mod tests {
         use ctadl_ir::mir::{FieldAccess, Offset};
 
         // Create p23 = .[1]
-        let mut p23_components = VecDeque::new();
-        p23_components.push_back(FieldAccess::Offset(Offset(1)));
+        let mut p23_components = Vec::new();
+        p23_components.push(FieldAccess::Offset(Offset(1)));
         let p23 = Path(p23_components);
 
         // Create p2 = '' (empty path)
         let p2 = Path::empty();
 
         // Create p1 = .[1]
-        let mut p1_components = VecDeque::new();
-        p1_components.push_back(FieldAccess::Offset(Offset(1)));
+        let mut p1_components = Vec::new();
+        p1_components.push(FieldAccess::Offset(Offset(1)));
         let p1 = Path(p1_components);
 
         let result = p23.substitute_prefix(&p2, &p1).unwrap();
 
         // Create expected = .[2]
-        let mut expected_components = VecDeque::new();
-        expected_components.push_back(FieldAccess::Offset(Offset(2)));
+        let mut expected_components = Vec::new();
+        expected_components.push(FieldAccess::Offset(Offset(2)));
         let expected = Path(expected_components);
 
         assert_eq!(result, expected);
@@ -771,10 +791,10 @@ mod tests {
         // Test path with numeric offsets
         // Create a path manually with mixed FieldAccess types
         use ctadl_ir::mir::{FieldAccess, Offset};
-        let mut path_components = VecDeque::new();
-        path_components.push_back(FieldAccess::Symbol(ArcIntern::from("foo")));
-        path_components.push_back(FieldAccess::Offset(Offset(42)));
-        path_components.push_back(FieldAccess::Symbol(ArcIntern::from("bar")));
+        let mut path_components = Vec::new();
+        path_components.push(FieldAccess::Symbol(ArcIntern::from("foo")));
+        path_components.push(FieldAccess::Offset(Offset(42)));
+        path_components.push(FieldAccess::Symbol(ArcIntern::from("bar")));
         let path = Path(path_components);
 
         let serialized = path.to_dot_string();
@@ -782,5 +802,85 @@ mod tests {
 
         let parsed_back: Path = serialized.parse().unwrap();
         assert_eq!(path, parsed_back);
+    }
+
+    #[test]
+    fn test_access_path_map_filter_map() {
+        let mut map = AccessPathMap::new();
+        map.insert("a.b".into(), "c.d".into());
+        map.insert("x.y".into(), "z.w".into());
+
+        let filtered = map.filter_map(|p1, p2| {
+            if p1.to_dot_string().contains('a') {
+                Some((p1.clone(), p2.clone()))
+            } else {
+                None
+            }
+        });
+
+        assert_eq!(filtered.iter().count(), 1);
+        let (p1, p2) = filtered.iter().next().unwrap();
+        assert_eq!(p1, Path::from("a.b"));
+        assert_eq!(p2, Path::from("c.d"));
+    }
+
+    #[test]
+    fn test_access_path_map_substitute_first_prefix() {
+        let mut map = AccessPathMap::new();
+        let p_ab = Path::from(".a.b");
+        let p_ac = Path::from(".a.c");
+        let p_ef = Path::from(".e.f");
+        let p_gh = Path::from(".g.h");
+
+        map.insert(p_ab, p_ef.clone());
+        map.insert(p_ac, p_gh.clone());
+
+        let prefix = Path::from(".a");
+        let new_prefix = Path::from(".g");
+
+        let mut paths = AccessPathSet::new();
+        paths.insert(&Path::from(".g.b"));
+        paths.insert(&Path::from(".g.c"));
+
+        let substituted = map
+            .substitute_first_prefix(&prefix, &new_prefix, &paths)
+            .unwrap();
+
+        let mut expected = AccessPathMap::new();
+        expected.insert(Path::from(".g.b"), p_ef.clone());
+        expected.insert(Path::from(".g.c"), p_gh);
+
+        assert_eq!(substituted, expected);
+    }
+
+    #[test]
+    fn test_access_path_map_substitute_second_prefix() {
+        let mut map = AccessPathMap::new();
+        let p_ab = Path::from(".a.b");
+        let p_ac = Path::from(".a.c");
+        let p_ef = Path::from(".e.f");
+        let p_eg = Path::from(".e.g");
+
+        map.insert(p_ab.clone(), p_ef);
+        map.insert(p_ac.clone(), p_eg);
+
+        let prefix = Path::from(".e");
+        let new_prefix = Path::from(".h");
+
+        let mut paths = AccessPathSet::new();
+        let p_hf = Path::from(".h.f");
+        let p_hg = Path::from(".h.g");
+        paths.insert(&p_hf);
+        paths.insert(&p_hg);
+
+        let substituted = map
+            .substitute_second_prefix(&prefix, &new_prefix, &paths)
+            .unwrap();
+
+        let mut expected = AccessPathMap::new();
+        expected.insert(p_ab, p_hf);
+        expected.insert(p_ac, p_hg);
+
+        assert_eq!(substituted, expected);
     }
 }

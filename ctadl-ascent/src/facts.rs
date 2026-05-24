@@ -736,7 +736,6 @@ impl IdMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::VecDeque;
 
     #[test]
     fn test_substitute_prefix() {
@@ -759,23 +758,23 @@ mod tests {
         use ctadl_ir::mir::{FieldAccess, Offset};
 
         // Create p23 = .[1]
-        let mut p23_components = VecDeque::new();
-        p23_components.push_back(FieldAccess::Offset(Offset(1)));
+        let mut p23_components = Vec::new();
+        p23_components.push(FieldAccess::Offset(Offset(1)));
         let p23 = Path(p23_components);
 
         // Create p2 = '' (empty path)
         let p2 = Path::empty();
 
         // Create p1 = .[1]
-        let mut p1_components = VecDeque::new();
-        p1_components.push_back(FieldAccess::Offset(Offset(1)));
+        let mut p1_components = Vec::new();
+        p1_components.push(FieldAccess::Offset(Offset(1)));
         let p1 = Path(p1_components);
 
         let result = p23.substitute_prefix(&p2, &p1).unwrap();
 
         // Create expected = .[2]
-        let mut expected_components = VecDeque::new();
-        expected_components.push_back(FieldAccess::Offset(Offset(2)));
+        let mut expected_components = Vec::new();
+        expected_components.push(FieldAccess::Offset(Offset(2)));
         let expected = Path(expected_components);
 
         assert_eq!(result, expected);
@@ -819,10 +818,10 @@ mod tests {
         // Test path with numeric offsets
         // Create a path manually with mixed FieldAccess types
         use ctadl_ir::mir::{FieldAccess, Offset};
-        let mut path_components = VecDeque::new();
-        path_components.push_back(FieldAccess::Symbol(ArcIntern::from("foo")));
-        path_components.push_back(FieldAccess::Offset(Offset(42)));
-        path_components.push_back(FieldAccess::Symbol(ArcIntern::from("bar")));
+        let mut path_components = Vec::new();
+        path_components.push(FieldAccess::Symbol(ArcIntern::from("foo")));
+        path_components.push(FieldAccess::Offset(Offset(42)));
+        path_components.push(FieldAccess::Symbol(ArcIntern::from("bar")));
         let path = Path(path_components);
 
         let serialized = path.to_dot_string();

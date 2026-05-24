@@ -12,6 +12,7 @@ pub mod path;
 pub mod project;
 pub mod query_engine;
 pub mod stats;
+pub mod test_trie;
 
 /// Initializes the logger
 pub fn init() {

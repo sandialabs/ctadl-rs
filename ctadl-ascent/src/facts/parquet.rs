@@ -506,7 +506,7 @@ macro_rules! impl_encode_newtype {
     };
 }
 
-// Custom encoding for Path since it's now VecDeque<mir::FieldAccess> instead of Str
+// Custom encoding for Path since it's now Vec<mir::FieldAccess> instead of Str
 impl EncodeColumn<facts::Path> for DefaultEncoder {
     #[inline]
     fn encode_column(name: &str, col: Vec<facts::Path>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
