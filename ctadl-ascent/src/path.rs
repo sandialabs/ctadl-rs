@@ -198,16 +198,12 @@ impl PartialOrd for AccessPathSet {
         }
 
         // Check if self is a subset of other: self union other == other
-        let mut self_union_other = self.clone();
-        self_union_other.union(other);
-        if self_union_other == *other {
+        if self.0.is_subset(&other.0) {
             return Some(std::cmp::Ordering::Less);
         }
 
         // Check if other is a subset of self: other union self == self
-        let mut other_union_self = other.clone();
-        other_union_self.union(self);
-        if other_union_self == *self {
+        if other.0.is_subset(&self.0) {
             return Some(std::cmp::Ordering::Greater);
         }
 
@@ -254,7 +250,8 @@ impl AccessPathSet {
     }
 
     pub fn substitute_prefix(&self, prefix: &Path, new_prefix: &Path) -> Option<Self> {
-        // We get all sequences from the trie and check which match the prefix using our offset-aware match_prefix
+        // We get all sequences from the trie and check which match the prefix using our
+        // offset-aware match_prefix
         let mut result = Self::new();
         let mut found = false;
 
@@ -423,6 +420,9 @@ impl AccessPathMap {
         })
     }
 
+    /// Prefix substitution on sets of access paths
+    ///
+    /// - `paths`: Set of allowed access paths
     pub fn substitute_first_prefix(
         &self,
         prefix: &Path,
