@@ -152,7 +152,7 @@ pub fn index(
     }) {
         config.alias_rule = false;
     }
-    let result = taint_index_with_config(facts, config);
+    let result = taint_index_with_config(facts, config, Some(&source_info.sites));
 
     // Slightly ugly special case for flowy artifacts. Since they have specific assertions at index
     // time, check them here.
@@ -172,9 +172,9 @@ pub fn index(
 /// Runs a taint query
 pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result<(), Error> {
     let index_path = project.index_path()?;
+    let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
     let facts = {
         let mut models_batch: Option<crate::models::ModelsBatch> = None;
-        let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
         for model_path in models {
             for import in project.iter_imports() {
                 let import = import?;
@@ -229,7 +229,7 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
         builder.build().unwrap()
     };
 
-    let result = taint_analysis(facts);
+    let result = taint_analysis(facts, Some(&ids));
     for import in project.iter_imports() {
         let import = import?;
         if import.language == ArtifactLanguage::Flowy {

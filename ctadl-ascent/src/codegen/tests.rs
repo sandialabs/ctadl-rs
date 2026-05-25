@@ -113,7 +113,7 @@ fn test_basic2_source_sink() {
             .map(|e| (QueryEndpoint::from_taint_endpoint(&source_info.sites, e),))
             .collect(),
     };
-    let query_result = taint_analysis(qfacts);
+    let query_result = taint_analysis(qfacts, None);
     assert!(
         query_result
             .taint

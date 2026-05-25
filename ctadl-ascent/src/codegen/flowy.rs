@@ -7,7 +7,9 @@ use std::path::Path;
 use crate::codegen::{CallResolutionStrategy, codegen_program};
 use crate::error::{Error, ErrorContext};
 use crate::facts as fx;
-use crate::index_engine::{IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index};
+use crate::index_engine::{
+    IndexConfig, IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index_with_config,
+};
 use crate::project::ArtifactImport;
 use crate::query_engine::{QueryEndpoint, QueryFacts, QueryResult, taint_analysis};
 use ctadl_flowy as flowy;
@@ -215,7 +217,8 @@ pub fn check<P: AsRef<Path>>(file: P) -> anyhow::Result<()> {
         .flat_map(|(_k, v)| v.iter().map(|(ep, _)| ep))
         .map(|e| (from_flowy_endpoint(&source_info.sites, e),))
         .collect();
-    let index_result = taint_index(index_facts.clone());
+    let index_result =
+        taint_index_with_config(index_facts.clone(), IndexConfig::default(), Some(&source_info.sites));
 
     let (ipass, ifail) = index_check_summaries(
         &index_result,
@@ -232,7 +235,7 @@ pub fn check<P: AsRef<Path>>(file: P) -> anyhow::Result<()> {
         paths: index_facts.paths,
         endpoints,
     };
-    let query_result = taint_analysis(query_facts);
+    let query_result = taint_analysis(query_facts, Some(&source_info.sites));
     let (ipass, ifail) = query_check_endpoints(
         &query_result,
         program.requirements.endpoint_requires,
