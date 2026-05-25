@@ -590,7 +590,8 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             locals(infunc, v2, a, pairs),
             assign_like(infunc, insn_id,  v1, p1, v2, p2),
             paths(ps),
-            if let Some(pairs13) = pairs.substitute_first_prefix(p2, p1, ps);
+            if let Some(pairs13) = pairs.substitute_second_prefix(p2, p1, ps);
+
         // assignment if a known path is a prefix of rhs
         // this extends the pre-condition
         //   <v1, p1> := <v2, p2 ++ p3>
@@ -604,7 +605,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             locals(infunc, v2, a, pairs),
             assign_like(infunc, _, v1, p1, v2, p23),
             paths(ps),
-            if let Some(pairs43) = pairs.apply_second_propagation(p1, p23, ps);
+            if let Some(pairs43) = pairs.substitute_first_prefix(p1, p23, ps);
 
         // Initialize assigns from program
         assign_like(func_id, insn_id, v1, p1, v2, p2) <--

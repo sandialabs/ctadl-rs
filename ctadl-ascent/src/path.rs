@@ -883,4 +883,18 @@ mod tests {
 
         assert_eq!(substituted, expected);
     }
+
+    #[test]
+    fn test_access_path_map_substitute_first_prefix_none() {
+        let mut map = AccessPathMap::new();
+        map.insert(".a.b".into(), ".e.f".into());
+        map.insert(".a.c".into(), ".e.g".into());
+
+        let prefix = Path::from(".x");
+        let new_prefix = Path::from(".y");
+        let paths = AccessPathSet::new();
+
+        let substituted = map.substitute_first_prefix(&prefix, &new_prefix, &paths);
+        assert!(substituted.is_none());
+    }
 }
