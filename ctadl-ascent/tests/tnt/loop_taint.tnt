@@ -1,0 +1,13 @@
+// Test taint flow through a loop-like structure using back-edges
+def LoopTaint(n) {
+start:
+    x = source(Secret);
+    y = "safe";
+    goto loop;
+loop:
+    y = x;
+    goto loop, exit;
+exit:
+    sink(y, Secret);
+    return;
+}

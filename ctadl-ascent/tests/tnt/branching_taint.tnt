@@ -1,0 +1,15 @@
+// Test taint flow through multiple branches
+def BranchingTaint() {
+start:
+    x = source(Secret);
+    goto left, right;
+left:
+    y = x;
+    goto merge;
+right:
+    y = "safe";
+    goto merge;
+merge:
+    sink(y, Secret);
+    return;
+}
