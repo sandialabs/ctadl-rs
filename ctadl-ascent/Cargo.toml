@@ -21,7 +21,7 @@ name = "flowy"
 path = "src/bin/flowy.rs"
 
 [dependencies]
-trie = { path = "../../trie", features = ["serde"] }
+trie = { path = "../trie", features = ["serde"] }
 anyhow = "1.0"
 arrow = "58"
 ascent = "0.8.0"
@@ -70,6 +70,7 @@ which = "6"
 
 [dev-dependencies]
 test-log = "0.2.19"
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [lints]
 workspace = true

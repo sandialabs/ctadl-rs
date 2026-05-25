@@ -12,8 +12,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::error::{Error, ErrorContext};
-pub use crate::path::{AccessPathMap, AccessPathSet, Path, match_prefix, parse_path_string};
+pub use crate::path::{AccessPathSet, Path, match_prefix, parse_path_string};
+use ascent::lattice::Lattice;
 use ctadl_ir::{Idx, mir};
+use trie::Trie;
 
 pub mod parquet;
 pub mod schema;
@@ -530,6 +532,298 @@ impl Display for FlowVertex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let FlowVertex(var, path) = self;
         write!(f, "{var}{path}")
+    }
+}
+
+/// A bidirectional map representing reachability between (Variable, Path) pairs.
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize)]
+pub struct AccessPathMap {
+    pub forward:
+        BTreeMap<FlowVariable, Trie<mir::FieldAccess, BTreeMap<FlowVariable, AccessPathSet>>>,
+    pub backward:
+        BTreeMap<FlowVariable, Trie<mir::FieldAccess, BTreeMap<FlowVariable, AccessPathSet>>>,
+}
+
+impl PartialOrd for AccessPathMap {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self == other {
+            return Some(std::cmp::Ordering::Equal);
+        }
+
+        let mut self_le_other = true;
+        for (v1, trie1) in &self.forward {
+            let trie2 = match other.forward.get(v1) {
+                Some(t) => t,
+                None => {
+                    self_le_other = false;
+                    break;
+                }
+            };
+            if !trie_le(trie1, trie2) {
+                self_le_other = false;
+                break;
+            }
+        }
+
+        let mut other_le_self = true;
+        for (v1, trie2) in &other.forward {
+            let trie1 = match self.forward.get(v1) {
+                Some(t) => t,
+                None => {
+                    other_le_self = false;
+                    break;
+                }
+            };
+            if !trie_le(trie2, trie1) {
+                other_le_self = false;
+                break;
+            }
+        }
+
+        match (self_le_other, other_le_self) {
+            (true, true) => Some(std::cmp::Ordering::Equal),
+            (true, false) => Some(std::cmp::Ordering::Less),
+            (false, true) => Some(std::cmp::Ordering::Greater),
+            (false, false) => None,
+        }
+    }
+}
+
+fn trie_le(
+    t1: &Trie<mir::FieldAccess, BTreeMap<FlowVariable, AccessPathSet>>,
+    t2: &Trie<mir::FieldAccess, BTreeMap<FlowVariable, AccessPathSet>>,
+) -> bool {
+    for (seq, map1) in t1.all_sequences() {
+        let map2 = match t2.get(&seq) {
+            Some(m) => m,
+            None => return false,
+        };
+        for (v2, set1) in map1 {
+            let set2 = match map2.get(&v2) {
+                Some(s) => s,
+                None => return false,
+            };
+            if set1.partial_cmp(set2) == Some(std::cmp::Ordering::Greater)
+                || set1.partial_cmp(set2).is_none()
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+impl AccessPathMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.forward.is_empty()
+    }
+
+    pub fn singleton(v1: FlowVariable, p1: Path, v2: FlowVariable, p2: Path) -> Self {
+        let mut res = Self::new();
+        res.insert(v1, p1, v2, p2);
+        res
+    }
+
+    pub fn insert(&mut self, v1: FlowVariable, p1: Path, v2: FlowVariable, p2: Path) {
+        // Forward: v1.p1 -> {v2.p2}
+        let trie_f = self.forward.entry(v1.clone()).or_default();
+        let mut map_f = trie_f.get(&p1.0).cloned().unwrap_or_default();
+        map_f.entry(v2.clone()).or_default().insert(&p2);
+        trie_f.insert(p1.0.iter().cloned(), map_f);
+
+        // Backward: v2.p2 -> {v1.p1}
+        let trie_b = self.backward.entry(v2).or_default();
+        let mut map_b = trie_b.get(&p2.0).cloned().unwrap_or_default();
+        map_b.entry(v1).or_default().insert(&p1);
+        trie_b.insert(p2.0.iter().cloned(), map_b);
+    }
+
+    pub fn union(&mut self, other: &Self) {
+        if self == other {
+            return;
+        }
+        for (v1, trie_other) in &other.forward {
+            let trie_self = self.forward.entry(v1.clone()).or_default();
+            for (seq, map_other) in trie_other.all_sequences() {
+                let mut map_self = trie_self.get(&seq).cloned().unwrap_or_default();
+                for (v2, set_other) in map_other {
+                    map_self.entry(v2.clone()).or_default().union(&set_other);
+                }
+                trie_self.insert(seq, map_self);
+            }
+        }
+        for (v2, trie_other) in &other.backward {
+            let trie_self = self.backward.entry(v2.clone()).or_default();
+            for (seq, map_other) in trie_other.all_sequences() {
+                let mut map_self = trie_self.get(&seq).cloned().unwrap_or_default();
+                for (v1, set_other) in map_other {
+                    map_self.entry(v1.clone()).or_default().union(&set_other);
+                }
+                trie_self.insert(seq, map_self);
+            }
+        }
+    }
+
+    pub fn reached_from(
+        &self,
+        v: &FlowVariable,
+    ) -> Option<&Trie<mir::FieldAccess, BTreeMap<FlowVariable, AccessPathSet>>> {
+        self.forward.get(v)
+    }
+
+    pub fn reached_to(
+        &self,
+        v: &FlowVariable,
+    ) -> Option<&Trie<mir::FieldAccess, BTreeMap<FlowVariable, AccessPathSet>>> {
+        self.backward.get(v)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (FlowVariable, Path, FlowVariable, Path)> + '_ {
+        self.forward.iter().flat_map(|(v1, trie)| {
+            trie.all_sequences()
+                .into_iter()
+                .flat_map(move |(seq1, map)| {
+                    let p1 = Path(seq1);
+                    map.into_iter().flat_map(move |(v2, set)| {
+                        let v1 = v1.clone();
+                        let v2 = v2.clone();
+                        let p1 = p1.clone();
+                        set.iter()
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .map(move |p2| (v1.clone(), p1.clone(), v2.clone(), p2))
+                    })
+                })
+        })
+    }
+
+    pub fn propagate_assignment(
+        &self,
+        v_src: &FlowVariable,
+        p_src: &Path,
+        v_dst: &FlowVariable,
+        p_dst: &Path,
+        valid_paths: &AccessPathSet,
+    ) -> Option<Self> {
+        let trie_src = self.forward.get(v_src)?;
+        if let Some(new_trie_for_dst) = trie_src.substitute_prefix(&p_src.0, p_dst.0.clone()) {
+            let filtered_trie =
+                new_trie_for_dst.filter(|seq, _map| valid_paths.contains_accesses(seq));
+            if filtered_trie.is_empty() {
+                return None;
+            }
+
+            let mut res = Self::new();
+            for (seq, map) in filtered_trie.all_sequences() {
+                let p_new = Path(seq);
+                for (v_tgt, set_tgt) in map {
+                    for p_tgt in set_tgt.iter() {
+                        res.insert(v_dst.clone(), p_new.clone(), v_tgt.clone(), p_tgt);
+                    }
+                }
+            }
+            Some(res)
+        } else {
+            None
+        }
+    }
+
+    pub fn propagate_assignment_reverse(
+        &self,
+        v_src: &FlowVariable,
+        p_src_long: &Path,
+        v_dst: &FlowVariable,
+        p_dst: &Path,
+        valid_paths: &AccessPathSet,
+    ) -> Option<Self> {
+        let trie_src = self.forward.get(v_src)?;
+        let mut res = Self::new();
+        let mut found = false;
+
+        for (p_src_short_seq, map) in trie_src.all_sequences() {
+            let p_src_short = Path(p_src_short_seq);
+            // If p_src_short is a prefix of p_src_long
+            if let Some(suffix) = match_prefix(p_src_long, &p_src_short) {
+                for (v_tgt, set_tgt) in map {
+                    for p_tgt in set_tgt.iter() {
+                        let mut p_tgt_new = p_tgt.clone();
+                        p_tgt_new.extend_merging(suffix.iter().cloned());
+                        if valid_paths.contains(&p_tgt_new) {
+                            found = true;
+                            res.insert(v_dst.clone(), p_dst.clone(), v_tgt.clone(), p_tgt_new);
+                        }
+                    }
+                }
+            }
+        }
+
+        if found { Some(res) } else { None }
+    }
+}
+
+impl Lattice for AccessPathMap {
+    fn meet(self, other: Self) -> Self {
+        let mut res = Self::new();
+        for (v1, trie1) in self.forward {
+            if let Some(trie2) = other.forward.get(&v1) {
+                let mut trie_met = Trie::new();
+                for (seq, map1) in trie1.all_sequences() {
+                    if let Some(map2) = trie2.get(&seq) {
+                        let mut map_met = BTreeMap::new();
+                        for (v2, set1) in map1 {
+                            if let Some(set2) = map2.get(&v2) {
+                                let set_met = set1.meet(set2.clone());
+                                if !set_met.is_empty() {
+                                    map_met.insert(v2, set_met);
+                                }
+                            }
+                        }
+                        if !map_met.is_empty() {
+                            trie_met.insert(seq, map_met);
+                        }
+                    }
+                }
+                if !trie_met.is_empty() {
+                    res.forward.insert(v1, trie_met);
+                }
+            }
+        }
+        // Sync backward
+        for (v1, trie) in &res.forward {
+            for (seq, map) in trie.all_sequences() {
+                let p1 = Path(seq);
+                for (v2, set) in map {
+                    for p2 in set.iter() {
+                        let trie_b = res.backward.entry(v2.clone()).or_default();
+                        let mut map_b = trie_b.get(&p2.0).cloned().unwrap_or_default();
+                        map_b.entry(v1.clone()).or_default().insert(&p1);
+                        trie_b.insert(p2.0.iter().cloned(), map_b);
+                    }
+                }
+            }
+        }
+        res
+    }
+
+    fn join(mut self, other: Self) -> Self {
+        self.union(&other);
+        self
+    }
+
+    fn meet_mut(&mut self, other: Self) -> bool {
+        let old = self.clone();
+        *self = self.clone().meet(other);
+        *self != old
+    }
+
+    fn join_mut(&mut self, other: Self) -> bool {
+        let old = self.clone();
+        self.union(&other);
+        *self != old
     }
 }
 

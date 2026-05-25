@@ -206,7 +206,7 @@ where
         if self == other {
             return Some(std::cmp::Ordering::Equal);
         }
-        
+
         if self.is_subset(other) {
             Some(std::cmp::Ordering::Less)
         } else if self.is_superset(other) {
@@ -365,7 +365,7 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
                 return None;
             }
         }
-        Some(current.clone())
+        Some(*current)
     }
 
     /// Removes all sequences starting with the given prefix.
@@ -390,8 +390,8 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
             if let Some(item) = prefix.next() {
                 let item_borrow = item.borrow();
                 let mut node = (*trie.0).clone();
-                if let Some(mut child) = node.children.get(item_borrow).cloned() {
-                    if remove_recursive(&mut child, prefix) {
+                if let Some(mut child) = node.children.get(item_borrow).cloned()
+                    && remove_recursive(&mut child, prefix) {
                         if child.0.children.is_empty() && child.0.value.is_none() {
                             node.children.remove(item_borrow);
                         } else {
@@ -400,7 +400,6 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
                         *trie = Trie::intern(node);
                         return true;
                     }
-                }
                 false
             } else {
                 let empty = Trie::new();
@@ -425,7 +424,7 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
         J: IntoIterator<Item = T>,
     {
         if let Some(subtrie) = self.get_subtrie(prefix.clone()) {
-            let mut result = self.clone();
+            let mut result = *self;
             result.remove_prefix(prefix);
 
             let mut substituted = subtrie;
@@ -454,15 +453,14 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
         }
 
         let mut node = (*self.0).clone();
-        let other_node = &*other.0;
+        let other_node = other.0;
 
         let mut modified = false;
-        if let Some(other_val) = &other_node.value {
-            if node.value.as_ref() != Some(other_val) {
+        if let Some(other_val) = &other_node.value
+            && node.value.as_ref() != Some(other_val) {
                 node.value = Some(other_val.clone());
                 modified = true;
             }
-        }
 
         for (item, other_child) in &other_node.children {
             if let Some(child) = node.children.get_mut(item) {
@@ -472,7 +470,7 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
                     modified = true;
                 }
             } else {
-                node.children.insert(item.clone(), other_child.clone());
+                node.children.insert(item.clone(), *other_child);
                 modified = true;
             }
         }
@@ -510,11 +508,10 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
             predicate: &mut F,
         ) -> Trie<T, V> {
             let mut new_value = None;
-            if let Some(val) = &trie.0.value {
-                if predicate(current, val) {
+            if let Some(val) = &trie.0.value
+                && predicate(current, val) {
                     new_value = Some(val.clone());
                 }
-            }
 
             let mut new_children = BTreeMap::new();
             for (item, child) in &trie.0.children {
@@ -583,11 +580,10 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
             return true;
         }
 
-        if let Some(val) = &self.0.value {
-            if other.0.value.as_ref() != Some(val) {
+        if let Some(val) = &self.0.value
+            && other.0.value.as_ref() != Some(val) {
                 return false;
             }
-        }
 
         for (item, child) in &self.0.children {
             if let Some(other_child) = other.0.children.get(item) {
@@ -615,7 +611,7 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
         }
 
         let mut node = (*self.0).clone();
-        let other_node = &*other.0;
+        let other_node = other.0;
 
         let mut modified = false;
         if node.value.is_some() && other_node.value.is_none() {

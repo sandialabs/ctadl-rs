@@ -302,8 +302,7 @@ impl Context {
             if !func_data.is_external
                 && let Some(bb_ids) = func_to_bbs.get(&hfunc_id)
                 && !bb_ids.is_empty()
-            {
-                if let Some(proto_id) = &func_data.proto
+                && let Some(proto_id) = &func_data.proto
                     && let Some(proto_data) = pcode_facts.proto_facts.get(proto_id)
                     && (!proto_data.parameters.is_empty() || self.sp_name.is_some())
                 {
@@ -359,7 +358,6 @@ impl Context {
                         func.blocks.blocks_mut()[bb_idx].push_back(stmt);
                     }
                 }
-            }
 
             // 2. Add function blocks
             let mut entry_bb_idx = None;
@@ -425,14 +423,13 @@ impl Context {
             }
 
             // 3. Link pre-entry to entry
-            if let Some(p_idx) = pre_entry_idx {
-                if let Some(e_idx) = entry_bb_idx {
+            if let Some(p_idx) = pre_entry_idx
+                && let Some(e_idx) = entry_bb_idx {
                     func.blocks.blocks_mut()[p_idx].terminator =
                         Some(Terminator::new_kind(TerminatorKind::Goto {
                             targets: smallvec![e_idx],
                         }));
                 }
-            }
         }
 
         Ok(())
