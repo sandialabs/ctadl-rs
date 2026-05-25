@@ -62,6 +62,7 @@ source-info = { path = "../source-info", features = ["serde"] }
 streaming-iterator = { version = "0.1", features = ["alloc"] }
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread"] }
+trie = { path = "../trie" }
 tree-sitter = "0.26"
 tree-sitter-c = "0.24"
 tempfile = "3"
