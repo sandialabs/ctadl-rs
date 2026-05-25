@@ -10,13 +10,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Internal node of the Trie.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct Node<T, V>
+pub struct Node<T, V>
 where
     T: Ord + Hash + Clone + Send + Sync + 'static,
     V: Eq + Hash + Clone + Send + Sync + 'static,
 {
-    children: BTreeMap<T, Trie<T, V>>,
-    value: Option<V>,
+    pub children: BTreeMap<T, Trie<T, V>>,
+    pub value: Option<V>,
 }
 
 #[cfg(feature = "serde")]
@@ -158,7 +158,7 @@ where
     T: Ord + Hash + Clone + Send + Sync + 'static,
     V: Eq + Hash + Clone + Send + Sync + 'static,
 {
-    fn intern(node: Node<T, V>) -> Self {
+    pub fn intern(node: Node<T, V>) -> Self {
         Trie(get_interner::<T, V>().intern(&node))
     }
 }
@@ -195,6 +195,22 @@ where
     T: Ord + Hash + Clone + Send + Sync + 'static,
     V: Eq + Hash + Clone + Send + Sync + 'static,
 {
+}
+
+impl<T, V> PartialOrd for Trie<T, V>
+where
+    T: Ord + Hash + Clone + Send + Sync + 'static,
+    V: Eq + Hash + Clone + Send + Sync + 'static,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self == other {
+            return Some(std::cmp::Ordering::Equal);
+        } else if self.is_subset(other) {
+            Some(std::cmp::Ordering::Less)
+        } else {
+            Some(std::cmp::Ordering::Greater)
+        }
+    }
 }
 
 impl<T, V> Hash for Trie<T, V>
@@ -429,37 +445,62 @@ impl<T: Ord + Hash + Clone + Send + Sync + 'static, V: Eq + Hash + Clone + Send 
     /// Merges another `Trie` into this one.
     /// If both tries have a value for the same sequence, the value from `other` is used.
     pub fn union(&mut self, other: &Self) {
-        if self == other {
-            return;
-        }
+        self.union_with(other, |_, v2| v2.clone())
+    }
 
-        let mut node = (*self.0).clone();
-        let other_node = &*other.0;
-
-        let mut modified = false;
-        if let Some(other_val) = &other_node.value {
-            if node.value.as_ref() != Some(other_val) {
-                node.value = Some(other_val.clone());
-                modified = true;
+    /// Merges another `Trie` into this one, using a merge function for values.
+    pub fn union_with<F>(&mut self, other: &Self, mut merge: F)
+    where
+        F: FnMut(&V, &V) -> V,
+    {
+        fn union_with_internal<
+            T: Ord + Hash + Clone + Send + Sync + 'static,
+            V: Eq + Hash + Clone + Send + Sync + 'static,
+        >(
+            trie: &mut Trie<T, V>,
+            other: &Trie<T, V>,
+            merge: &mut dyn FnMut(&V, &V) -> V,
+        ) {
+            if trie == other {
+                return;
             }
-        }
 
-        for (item, other_child) in &other_node.children {
-            if let Some(child) = node.children.get_mut(item) {
-                let old_child_ptr = child.0 as *const _;
-                child.union(other_child);
-                if !std::ptr::eq(old_child_ptr, child.0 as *const _) {
+            let mut node = (*trie.0).clone();
+            let other_node = &*other.0;
+
+            let mut modified = false;
+            if let Some(other_val) = &other_node.value {
+                if let Some(self_val) = &node.value {
+                    let merged = merge(self_val, other_val);
+                    if &merged != self_val {
+                        node.value = Some(merged);
+                        modified = true;
+                    }
+                } else {
+                    node.value = Some(other_val.clone());
                     modified = true;
                 }
-            } else {
-                node.children.insert(item.clone(), other_child.clone());
-                modified = true;
+            }
+
+            for (item, other_child) in &other_node.children {
+                if let Some(child) = node.children.get_mut(item) {
+                    let old_child_ptr = child.0 as *const _;
+                    union_with_internal(child, other_child, merge);
+                    if !std::ptr::eq(old_child_ptr, child.0 as *const _) {
+                        modified = true;
+                    }
+                } else {
+                    node.children.insert(item.clone(), other_child.clone());
+                    modified = true;
+                }
+            }
+
+            if modified {
+                *trie = Trie::intern(node);
             }
         }
 
-        if modified {
-            *self = Self::intern(node);
-        }
+        union_with_internal(self, other, &mut merge);
     }
 
     /// Returns a new `Trie` containing only the sequences that satisfy the predicate.
