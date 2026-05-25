@@ -1334,7 +1334,7 @@ fn format_absorbing_function_results(
         grouped
             .entry(*fid)
             .or_default()
-            .entry(formal.clone())
+            .entry(*formal)
             .or_default()
             .insert(qe.label.0.to_string());
     }

@@ -7,5 +7,8 @@ fn main() {
     std::fs::create_dir_all(&dir).unwrap();
     let records = vec![(FunctionId::new(42),), (FunctionId::new(100),)];
     external_function::try_save(&dir, records).unwrap();
-    println!("Saved dummy parquet file to {:?}", dir.join("external_function.parquet"));
+    println!(
+        "Saved dummy parquet file to {:?}",
+        dir.join("external_function.parquet")
+    );
 }

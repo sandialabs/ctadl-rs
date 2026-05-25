@@ -302,62 +302,58 @@ impl Context {
             if !func_data.is_external
                 && let Some(bb_ids) = func_to_bbs.get(&hfunc_id)
                 && !bb_ids.is_empty()
+                && let Some(proto_id) = &func_data.proto
+                && let Some(proto_data) = pcode_facts.proto_facts.get(proto_id)
+                && (!proto_data.parameters.is_empty() || self.sp_name.is_some())
             {
-                if let Some(proto_id) = &func_data.proto
-                    && let Some(proto_data) = pcode_facts.proto_facts.get(proto_id)
-                    && (!proto_data.parameters.is_empty() || self.sp_name.is_some())
-                {
-                    let bb_idx = func.blocks.new_block();
-                    pre_entry_idx = Some(bb_idx);
+                let bb_idx = func.blocks.new_block();
+                pre_entry_idx = Some(bb_idx);
 
-                    // Add parameter mapping statements
-                    for (i, param) in proto_data.parameters.iter().enumerate() {
-                        if let Some(rep) = pcode_facts.get_symbol_representative(&param.symbol) {
-                            let vnode_data = pcode_facts.vnode_facts.get(rep);
-                            let kind = if let Some(data) = vnode_data
-                                && data.space.as_deref() == Some("stack")
-                                && let Some(addr) = &data.address
-                            {
-                                // Stack parameter - bind to __stack_top offset
-                                StatementKind::assign_or_update(
-                                    AccessPath {
-                                        variable_ref: VariableRef::new_local(
-                                            "__stack_top".to_string(),
-                                        ),
-                                        path: FieldAccesses::with_offset(addr.0),
-                                    },
-                                    VariableRef::new_parameter(ParameterIdx::new(i)).into(),
-                                )
-                            } else {
-                                // Other parameter (register, etc.) - bind to local variable
-                                StatementKind::assign_or_update(
-                                    self.get_lvalue(rep, &pcode_facts.vnode_facts)?,
-                                    VariableRef::new_parameter(ParameterIdx::new(i)).into(),
-                                )
-                            };
-                            func.blocks.blocks_mut()[bb_idx].push_back(Statement::new_kind(kind));
+                // Add parameter mapping statements
+                for (i, param) in proto_data.parameters.iter().enumerate() {
+                    if let Some(rep) = pcode_facts.get_symbol_representative(&param.symbol) {
+                        let vnode_data = pcode_facts.vnode_facts.get(rep);
+                        let kind = if let Some(data) = vnode_data
+                            && data.space.as_deref() == Some("stack")
+                            && let Some(addr) = &data.address
+                        {
+                            // Stack parameter - bind to __stack_top offset
+                            StatementKind::assign_or_update(
+                                AccessPath {
+                                    variable_ref: VariableRef::new_local("__stack_top".to_string()),
+                                    path: FieldAccesses::with_offset(addr.0),
+                                },
+                                VariableRef::new_parameter(ParameterIdx::new(i)).into(),
+                            )
                         } else {
-                            log::warn!(
-                                "No representative varnode found for parameter {} of function {}",
-                                i,
-                                hfunc_id
-                            );
-                        }
+                            // Other parameter (register, etc.) - bind to local variable
+                            StatementKind::assign_or_update(
+                                self.get_lvalue(rep, &pcode_facts.vnode_facts)?,
+                                VariableRef::new_parameter(ParameterIdx::new(i)).into(),
+                            )
+                        };
+                        func.blocks.blocks_mut()[bb_idx].push_back(Statement::new_kind(kind));
+                    } else {
+                        log::warn!(
+                            "No representative varnode found for parameter {} of function {}",
+                            i,
+                            hfunc_id
+                        );
                     }
+                }
 
-                    // Initialize stack pointer if known - must be done after parameter updates
-                    // so that SP points to the stack state including the parameters.
-                    if let Some(sp_name) = &self.sp_name {
-                        let sp_var = VariableRef::new_local(sp_name.to_string());
-                        let stack_top_var = VariableRef::new_local("__stack_top".to_string());
-                        let stmt = Statement::new_kind(StatementKind::Assign {
-                            dest: sp_var,
-                            sources: smallvec![Exp::AccessPath(AccessPath::without_fields(
-                                stack_top_var
-                            ))],
-                        });
-                        func.blocks.blocks_mut()[bb_idx].push_back(stmt);
-                    }
+                // Initialize stack pointer if known - must be done after parameter updates
+                // so that SP points to the stack state including the parameters.
+                if let Some(sp_name) = &self.sp_name {
+                    let sp_var = VariableRef::new_local(sp_name.to_string());
+                    let stack_top_var = VariableRef::new_local("__stack_top".to_string());
+                    let stmt = Statement::new_kind(StatementKind::Assign {
+                        dest: sp_var,
+                        sources: smallvec![Exp::AccessPath(AccessPath::without_fields(
+                            stack_top_var
+                        ))],
+                    });
+                    func.blocks.blocks_mut()[bb_idx].push_back(stmt);
                 }
             }
 
@@ -425,13 +421,13 @@ impl Context {
             }
 
             // 3. Link pre-entry to entry
-            if let Some(p_idx) = pre_entry_idx {
-                if let Some(e_idx) = entry_bb_idx {
-                    func.blocks.blocks_mut()[p_idx].terminator =
-                        Some(Terminator::new_kind(TerminatorKind::Goto {
-                            targets: smallvec![e_idx],
-                        }));
-                }
+            if let Some(p_idx) = pre_entry_idx
+                && let Some(e_idx) = entry_bb_idx
+            {
+                func.blocks.blocks_mut()[p_idx].terminator =
+                    Some(Terminator::new_kind(TerminatorKind::Goto {
+                        targets: smallvec![e_idx],
+                    }));
             }
         }
 

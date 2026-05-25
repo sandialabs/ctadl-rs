@@ -763,9 +763,7 @@ impl PcodeFactsReader {
             (
                 "VNODE_IS_ADDRESS.facts",
                 "vnode_is_address",
-                vec![
-                    Field::new("c0", DataType::Utf8, false),
-                ],
+                vec![Field::new("c0", DataType::Utf8, false)],
             ),
             (
                 "VNODE_SPACE.facts",
@@ -816,8 +814,16 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0, c1 FROM vnode_name").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
                     name_map.insert(PcodeVarnode::from(c0.value(i)), c1.value(i).to_string());
                 }
@@ -829,8 +835,16 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0, c1 FROM vnode_size").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<Int64Array>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
                     size_map.insert(PcodeVarnode::from(c0.value(i)), c1.value(i));
                 }
@@ -842,7 +856,11 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0 FROM vnode_is_address").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
                     is_address_set.insert(PcodeVarnode::from(c0.value(i)));
                 }
@@ -854,8 +872,16 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0, c1 FROM vnode_space").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
                     space_map.insert(PcodeVarnode::from(c0.value(i)), c1.value(i).to_string());
                 }
@@ -867,8 +893,16 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0, c1 FROM vnode_address").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<Int64Array>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
                     address_map.insert(PcodeVarnode::from(c0.value(i)), PcodeAddress(c1.value(i)));
                 }
@@ -880,8 +914,16 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0, c1 FROM vnode_offset_n").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<Int64Array>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
                     offset_map.insert(PcodeVarnode::from(c0.value(i)), c1.value(i));
                 }
@@ -1013,10 +1055,21 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0, c1 FROM bb_hfunc").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
-                    hfunc_map.insert(PcodeBlockBasic::from(c0.value(i)), HighFunc::from(c1.value(i)));
+                    hfunc_map.insert(
+                        PcodeBlockBasic::from(c0.value(i)),
+                        HighFunc::from(c1.value(i)),
+                    );
                 }
             }
         }
@@ -1026,10 +1079,21 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0, c1 FROM bb_first").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
-                    first_map.insert(PcodeBlockBasic::from(c0.value(i)), PcodeInstruction::from(c1.value(i)));
+                    first_map.insert(
+                        PcodeBlockBasic::from(c0.value(i)),
+                        PcodeInstruction::from(c1.value(i)),
+                    );
                 }
             }
         }
@@ -1039,10 +1103,21 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0, c1 FROM bb_last").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
-                    last_map.insert(PcodeBlockBasic::from(c0.value(i)), PcodeInstruction::from(c1.value(i)));
+                    last_map.insert(
+                        PcodeBlockBasic::from(c0.value(i)),
+                        PcodeInstruction::from(c1.value(i)),
+                    );
                 }
             }
         }
@@ -1052,24 +1127,51 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0, c1 FROM bb_start").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<Int64Array>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
-                    start_addr_map.insert(PcodeBlockBasic::from(c0.value(i)), PcodeAddress(c1.value(i)));
+                    start_addr_map.insert(
+                        PcodeBlockBasic::from(c0.value(i)),
+                        PcodeAddress(c1.value(i)),
+                    );
                 }
             }
         }
 
-        let mut index_map: BTreeMap<PcodeBlockBasic, Vec<(u32, PcodeInstruction)>> = BTreeMap::new();
+        let mut index_map: BTreeMap<PcodeBlockBasic, Vec<(u32, PcodeInstruction)>> =
+            BTreeMap::new();
         if ctx.table_exist("bb_pcode_index")? {
             let df = ctx.sql("SELECT c0, c1, c2 FROM bb_pcode_index").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<Int64Array>().unwrap();
-                let c2 = batch.column(2).as_any().downcast_ref::<StringArray>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
+                let c2 = batch
+                    .column(2)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
-                    index_map.entry(PcodeBlockBasic::from(c0.value(i))).or_default().push((c1.value(i) as u32, PcodeInstruction::from(c2.value(i))));
+                    index_map
+                        .entry(PcodeBlockBasic::from(c0.value(i)))
+                        .or_default()
+                        .push((c1.value(i) as u32, PcodeInstruction::from(c2.value(i))));
                 }
             }
         }
@@ -1082,10 +1184,21 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0, c1 FROM bb_out").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
-                    out_edge_map.entry(PcodeBlockBasic::from(c0.value(i))).or_default().push(PcodeBlockBasic::from(c1.value(i)));
+                    out_edge_map
+                        .entry(PcodeBlockBasic::from(c0.value(i)))
+                        .or_default()
+                        .push(PcodeBlockBasic::from(c1.value(i)));
                 }
             }
         }
@@ -1095,10 +1208,21 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0, c1 FROM bb_tout").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
-                    tout_edge_map.entry(PcodeBlockBasic::from(c0.value(i))).or_default().push(PcodeBlockBasic::from(c1.value(i)));
+                    tout_edge_map
+                        .entry(PcodeBlockBasic::from(c0.value(i)))
+                        .or_default()
+                        .push(PcodeBlockBasic::from(c1.value(i)));
                 }
             }
         }
@@ -1108,10 +1232,21 @@ impl PcodeFactsReader {
             let df = ctx.sql("SELECT c0, c1 FROM bb_fout").await?;
             let batches = df.collect().await?;
             for batch in batches {
-                let c0 = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-                let c1 = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                let c0 = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let c1 = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
                 for i in 0..batch.num_rows() {
-                    fout_edge_map.entry(PcodeBlockBasic::from(c0.value(i))).or_default().push(PcodeBlockBasic::from(c1.value(i)));
+                    fout_edge_map
+                        .entry(PcodeBlockBasic::from(c0.value(i)))
+                        .or_default()
+                        .push(PcodeBlockBasic::from(c1.value(i)));
                 }
             }
         }
