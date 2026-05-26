@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["ctadl-ascent", "ctadl-flowy", "ctadl-ir", "pcode-reader", "sarif-util"]
+members = ["ctadl-ascent", "ctadl-flowy", "ctadl-ir", "pcode-reader", "sarif-util", "trie", "suffix-seq"]
 # All path dependencies become workspace members, which means bins from
 # dex-reader are included in the distro; they should not be included.
 exclude = ["dex-reader"]

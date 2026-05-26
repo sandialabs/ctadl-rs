@@ -298,7 +298,11 @@ impl Context {
             let mut pre_entry_idx = None;
 
             // 1. Create pre-entry block for parameter mapping and SP initialization if needed
-            if let Some(proto_id) = &func_data.proto
+            // Only do this if the function actually has a body
+            if !func_data.is_external
+                && let Some(bb_ids) = func_to_bbs.get(&hfunc_id)
+                && !bb_ids.is_empty()
+                && let Some(proto_id) = &func_data.proto
                 && let Some(proto_data) = pcode_facts.proto_facts.get(proto_id)
                 && (!proto_data.parameters.is_empty() || self.sp_name.is_some())
             {
@@ -416,34 +420,14 @@ impl Context {
                 }
             }
 
-            // 3. Link pre-entry to entry or handle external/empty functions
-            if let Some(p_idx) = pre_entry_idx {
-                if let Some(e_idx) = entry_bb_idx {
-                    func.blocks.blocks_mut()[p_idx].terminator =
-                        Some(Terminator::new_kind(TerminatorKind::Goto {
-                            targets: smallvec![e_idx],
-                        }));
-                } else {
-                    // Function with parameters but no body (e.g. external)
-                    let return_arity = func.return_type.arity;
-                    let mut args = smallvec![];
-                    for _ in 0..return_arity {
-                        args.push(Exp::new_bytes(Vec::new()));
-                    }
-                    func.blocks.blocks_mut()[p_idx].terminator =
-                        Some(Terminator::new_kind(TerminatorKind::Return { args }));
-                }
-            } else if entry_bb_idx.is_none() {
-                // Function with no parameters and no body (e.g. external)
-                // Every function MUST have at least one block starting at index 0
-                let bb_idx = func.blocks.new_block();
-                let return_arity = func.return_type.arity;
-                let mut args = smallvec![];
-                for _ in 0..return_arity {
-                    args.push(Exp::new_bytes(Vec::new()));
-                }
-                func.blocks.blocks_mut()[bb_idx].terminator =
-                    Some(Terminator::new_kind(TerminatorKind::Return { args }));
+            // 3. Link pre-entry to entry
+            if let Some(p_idx) = pre_entry_idx
+                && let Some(e_idx) = entry_bb_idx
+            {
+                func.blocks.blocks_mut()[p_idx].terminator =
+                    Some(Terminator::new_kind(TerminatorKind::Goto {
+                        targets: smallvec![e_idx],
+                    }));
             }
         }
 

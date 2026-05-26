@@ -117,6 +117,10 @@ const ALMOST_PATH_FUNCTION_RULE_ID: &str = "C0006";
 const ALMOST_PATH_FUNCTION_RULE_NAME: &str = "Almost-path function";
 const ALMOST_PATH_FUNCTION_RULE_DESCRIPTION: &str = "A function which contains source-tainted and sink-tainted data, which means there's 'almost' a path between them.";
 
+const ABSORBING_FUNCTION_RULE_ID: &str = "C0007.absorbing-function";
+const ABSORBING_FUNCTION_RULE_NAME: &str = "Absorbing functions";
+const ABSORBING_FUNCTION_RULE_DESCRIPTION: &str = "An external function that receives tainted data";
+
 #[derive(Default, Builder, Clone)]
 pub struct FormatFacts {
     /// Taint results on variables
@@ -132,6 +136,8 @@ pub struct FormatFacts {
     pub assign: Vec<(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)>,
     #[builder(default)]
     pub paths: Vec<(Path,)>,
+    #[builder(default)]
+    pub external_function: Vec<(FunctionId,)>,
     #[builder(default)]
     pub id_to_name: BTreeMap<u32, String>,
 }
@@ -151,6 +157,7 @@ pub struct TaintAnalysisResults {
         Path,
     )>,
     pub tainted_insns: TaintedInstructions,
+    pub absorbing_functions: Vec<(FunctionId, QueryEndpoint, FormalIndex)>,
 }
 
 impl FormatFactsBuilder {
@@ -180,8 +187,16 @@ pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
         }
         relation taint_edge(FunctionId, FlowVariable, Path, FunctionId, FlowVariable, Path);
         relation tainted_var_at_insn(PackedInsnSiteId, Label, FlowVariable, Path);
+        relation external_function(FunctionId);
+        relation absorbing_functions(FunctionId, QueryEndpoint, FormalIndex);
 
         include_source!(crate::query_engine::ascent_code::taint_analysis_rules);
+
+        absorbing_functions(target, src, formal.clone()) <--
+            taint(_, _, v, _, src),
+            if let FlowVariable::CallArg { id, formal } = v,
+            call(id, target),
+            external_function(target);
 
         // taint call sites
         tainted_var_at_insn(id, label, v2, p2) <--
@@ -207,6 +222,7 @@ pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
         call: facts.call.clone(),
         assign_like: facts.assign.clone(),
         paths: facts.paths.clone(),
+        external_function: facts.external_function.clone(),
         ..Default::default()
     };
     engine.run();
@@ -216,6 +232,7 @@ pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
         tainted_insns: TaintedInstructions {
             tainted_insn: engine.tainted_var_at_insn.into_iter().collect(),
         },
+        absorbing_functions: engine.absorbing_functions.into_iter().collect(),
     }
 }
 
@@ -324,7 +341,7 @@ async fn async_format_sarif(
         instr_to_details
             .entry(key)
             .or_default()
-            .push((label.clone(), var.clone(), pth.clone()));
+            .push((label.clone(), var.clone(), *pth));
     }
     // Build a map from each file span to its associated taint details.
     let mut details_by_span: BTreeMap<u32, Vec<(Label, FunctionId, FlowVariable, Path)>> =
@@ -337,7 +354,7 @@ async fn async_format_sarif(
                     label.clone(),
                     *func_id,
                     var.clone(),
-                    pth.clone(),
+                    *pth,
                 ));
             }
         }
@@ -466,6 +483,21 @@ async fn async_format_sarif(
                             "default".to_string(),
                             MultiformatMessageString::builder()
                                 .text("This function contains source and sink taint.")
+                                .build(),
+                        )]))
+                        .build(),
+                    ReportingDescriptor::builder()
+                        .id(ABSORBING_FUNCTION_RULE_ID)
+                        .name(ABSORBING_FUNCTION_RULE_NAME)
+                        .short_description(
+                            MultiformatMessageString::builder()
+                                .text(ABSORBING_FUNCTION_RULE_DESCRIPTION)
+                                .build(),
+                        )
+                        .message_strings(BTreeMap::from([(
+                            "default".to_string(),
+                            MultiformatMessageString::builder()
+                                .text("This external function receives tainted data.")
                                 .build(),
                         )]))
                         .build(),
@@ -802,28 +834,31 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     let mut node_to_id: BTreeMap<(FunctionId, FlowVariable, Path), u32> = BTreeMap::new();
     let mut id_to_node: Vec<(FunctionId, FlowVariable, Path)> = Vec::new();
 
-    let graph = if matches!(config.profile, SarifProfile::Human | SarifProfile::Debug) {
+    let graph = if matches!(
+        config.profile,
+        SarifProfile::Human | SarifProfile::Debug | SarifProfile::Agent
+    ) {
         let taint_edge = &ctx.taint_results.edges;
         // Collect all nodes into node_to_id first
         for (f, _, v, p, src) in &ctx.facts.taint {
-            let n = (*f, v.clone(), p.clone());
+            let n = (*f, v.clone(), *p);
             if !node_to_id.contains_key(&n) {
                 node_to_id.insert(n.clone(), id_to_node.len() as u32);
                 id_to_node.push(n);
             }
-            let src_n = (src.infunc, src.vertex.0.clone(), src.vertex.1.clone());
+            let src_n = (src.infunc, src.vertex.0.clone(), src.vertex.1);
             if !node_to_id.contains_key(&src_n) {
                 node_to_id.insert(src_n.clone(), id_to_node.len() as u32);
                 id_to_node.push(src_n);
             }
         }
         for (df, dv, dp, sf, sv, sp) in taint_edge {
-            let src_n = (*sf, sv.clone(), sp.clone());
+            let src_n = (*sf, sv.clone(), *sp);
             if !node_to_id.contains_key(&src_n) {
                 node_to_id.insert(src_n.clone(), id_to_node.len() as u32);
                 id_to_node.push(src_n);
             }
-            let dst_n = (*df, dv.clone(), dp.clone());
+            let dst_n = (*df, dv.clone(), *dp);
             if !node_to_id.contains_key(&dst_n) {
                 node_to_id.insert(dst_n.clone(), id_to_node.len() as u32);
                 id_to_node.push(dst_n);
@@ -833,8 +868,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         let edges: Vec<(u32, u32)> = taint_edge
             .iter()
             .map(|(df, dv, dp, sf, sv, sp)| {
-                let src_n = (*sf, sv.clone(), sp.clone());
-                let dst_n = (*df, dv.clone(), dp.clone());
+                let src_n = (*sf, sv.clone(), *sp);
+                let dst_n = (*df, dv.clone(), *dp);
                 let src_id = *node_to_id.get(&src_n).unwrap();
                 let dst_id = *node_to_id.get(&dst_n).unwrap();
                 (src_id, dst_id)
@@ -850,7 +885,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         BTreeMap::new();
     for (f, _, v, p, src) in &ctx.facts.taint {
         node_to_endpoint
-            .entry((*f, v.clone(), p.clone()))
+            .entry((*f, v.clone(), *p))
             .or_default()
             .push(src.clone());
     }
@@ -862,16 +897,16 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         BTreeMap::new();
     for (f, i, v1, p1, v2, p2) in &ctx.facts.assign {
         node_to_site
-            .entry((*f, v1.clone(), p1.clone()))
+            .entry((*f, v1.clone(), *p1))
             .or_insert((*f, *i));
         node_to_site
-            .entry((*f, v2.clone(), p2.clone()))
+            .entry((*f, v2.clone(), *p2))
             .or_insert((*f, *i));
     }
     for (site, _, v, p) in &ctx.facts.actual_param {
         let site_unpacked = InsnSiteId::unpack(site).unwrap();
         node_to_site
-            .entry((site_unpacked.func_id, v.clone(), p.clone()))
+            .entry((site_unpacked.func_id, v.clone(), *p))
             .or_insert((site_unpacked.func_id, site_unpacked.insn_id));
     }
 
@@ -889,7 +924,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         for (fs_id, details) in ctx.details_by_span {
             let mut seen_pairs = BTreeSet::new();
             for (lbl, func_id, var, pth) in details {
-                let node = (*func_id, var.clone(), pth.clone());
+                let node = (*func_id, var.clone(), *pth);
                 if let Some(sources) = node_to_endpoint.get(&node) {
                     let (fwd_sources, bwd_sinks): (Vec<_>, Vec<_>) = sources
                         .iter()
@@ -898,10 +933,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     if has_sinks {
                         for sink in &bwd_sinks {
                             for src in &fwd_sources {
-                                let start_node =
-                                    (src.infunc, src.vertex.0.clone(), src.vertex.1.clone());
-                                let end_node =
-                                    (sink.infunc, sink.vertex.0.clone(), sink.vertex.1.clone());
+                                let start_node = (src.infunc, src.vertex.0.clone(), src.vertex.1);
+                                let end_node = (sink.infunc, sink.vertex.0.clone(), sink.vertex.1);
                                 if let (Some(&start_id), Some(&end_id)) =
                                     (node_to_id.get(&start_node), node_to_id.get(&end_node))
                                     && seen_pairs.insert((start_id, end_id))
@@ -1103,8 +1136,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         results.extend(results_by_span.into_values());
     }
 
-    // Add source and sink location results (only for Debug profile)
-    if config.profile == SarifProfile::Debug {
+    // Add source and sink location results (for Debug and Agent profiles)
+    if matches!(config.profile, SarifProfile::Debug | SarifProfile::Agent) {
         results.extend(format_source_sink_results(
             sarif_data,
             &endpoints,
@@ -1114,8 +1147,19 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         ));
     }
 
-    // Now build results for paths (for Human or Debug profiles, one per path)
-    if config.profile == SarifProfile::Human || config.profile == SarifProfile::Debug {
+    if config.profile == SarifProfile::Agent {
+        results.extend(format_absorbing_function_results(
+            sarif_data,
+            &ctx.taint_results.absorbing_functions,
+            &source_data.id_to_name,
+        ));
+    }
+
+    // Now build results for paths (for Human, Debug, or Agent profiles, one per path)
+    if matches!(
+        config.profile,
+        SarifProfile::Human | SarifProfile::Debug | SarifProfile::Agent
+    ) {
         for (_path, (file_span_id, details)) in results_by_path {
             let location = if let Some(loc) = span_to_location.get(&file_span_id) {
                 loc.clone()
@@ -1202,7 +1246,7 @@ fn format_source_sink_results(
         let node = (
             endpoint.infunc,
             endpoint.vertex.0.clone(),
-            endpoint.vertex.1.clone(),
+            endpoint.vertex.1,
         );
         // Use the logical location of the source, and use the physical location additionally if it's available
         if is_source || is_sink {
@@ -1271,6 +1315,82 @@ fn format_source_sink_results(
         }
     }
     source_sink_results
+}
+
+fn format_absorbing_function_results(
+    sarif_data: &mut SarifData,
+    absorbing_functions: &[(FunctionId, QueryEndpoint, FormalIndex)],
+    id_to_name: &BTreeMap<u32, String>,
+) -> Vec<SarifResult> {
+    let mut results = Vec::new();
+
+    // Group by FunctionId, then map FormalIndex -> Set of Labels
+    let mut grouped: BTreeMap<FunctionId, BTreeMap<FormalIndex, BTreeSet<String>>> =
+        BTreeMap::new();
+
+    for (fid, qe, formal) in absorbing_functions {
+        grouped
+            .entry(*fid)
+            .or_default()
+            .entry(*formal)
+            .or_default()
+            .insert(qe.label.0.to_string());
+    }
+
+    for (fid, formals_map) in grouped {
+        let func_name = id_to_name
+            .get(&fid.id)
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let msg_text = format!("Absorbing function: {} receives tainted data", func_name);
+
+        // Convert the BTreeMap<FormalIndex, BTreeSet<String>> into a format for JSON serialization
+        let mut tainted_formals_json: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (formal_idx, labels) in formals_map {
+            let sorted_labels: Vec<String> = labels.into_iter().collect();
+            tainted_formals_json.insert(formal_idx.to_string(), sorted_labels);
+        }
+
+        let properties = PropertyBag::builder()
+            .additional_properties(BTreeMap::from([(
+                "taintedFormals".to_string(),
+                serde_json::json!(tainted_formals_json),
+            )]))
+            .build();
+
+        // Logical location for the absorbing function
+        let loc_idx = *sarif_data
+            .global_logical_locations_map
+            .entry(func_name.clone())
+            .or_insert_with(|| {
+                let idx = sarif_data.global_logical_locations.len();
+                sarif_data.global_logical_locations.push(
+                    LogicalLocation::builder()
+                        .kind("function")
+                        .name(func_name.clone())
+                        .fully_qualified_name(func_name)
+                        .build(),
+                );
+                idx
+            });
+
+        let logical_location = LogicalLocation::builder().index(loc_idx as i64).build();
+        let location = Location::builder()
+            .logical_locations(vec![logical_location])
+            .build();
+
+        let result = SarifResult::builder()
+            .rule_id(ABSORBING_FUNCTION_RULE_ID.to_string())
+            .kind(ResultKind::Informational)
+            .level(ResultLevel::None)
+            .message(Message::builder().text(msg_text).build())
+            .locations(vec![location])
+            .properties(properties)
+            .build();
+        results.push(result);
+    }
+    results
 }
 
 /// Look up the sites in the index source map and returns the span ids

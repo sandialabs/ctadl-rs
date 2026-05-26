@@ -46,8 +46,8 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId, InsnSiteId,
-    PackedInsnSiteId, Path, isout,
+    CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId,
+    InsnSiteId, PackedInsnSiteId, Path, isout,
 };
 use ctadl_ir::Symbol;
 
@@ -86,6 +86,8 @@ pub struct IndexFacts {
     pub summary: Vec<FunctionSummary>,
     #[builder(default)]
     pub paths: Vec<(Path,)>,
+    #[builder(default)]
+    pub external_function: Vec<(FunctionId,)>,
 }
 
 impl IndexFacts {
@@ -144,6 +146,7 @@ impl IndexFacts {
                 }),
         )?;
         java_resolvents::try_save(&dir, self.java_resolvents)?;
+        external_function::try_save(&dir, self.external_function)?;
         Ok(())
     }
 
@@ -211,7 +214,8 @@ impl IndexFacts {
                     })
                     .collect(),
             )
-            .java_resolvents(java_resolvents::try_load(&dir)?);
+            .java_resolvents(java_resolvents::try_load(&dir)?)
+            .external_function(external_function::try_load(&dir)?);
         Ok(builder.build().unwrap())
     }
 
@@ -253,6 +257,7 @@ pub struct IndexResult {
     pub assign_like: Vec<(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)>,
     pub java_obj_assign_like: Vec<(FunctionId, InsnId, FlowVariable, Path, Symbol)>,
     pub paths: Vec<(Path,)>,
+    pub external_function: Vec<(FunctionId,)>,
 }
 
 impl IndexResult {
@@ -261,6 +266,7 @@ impl IndexResult {
         summary::try_save(&dir, self.summary)?;
         assign::try_save(&dir, self.assign_like)?;
         paths::try_save(&dir, self.paths)?;
+        external_function::try_save(&dir, self.external_function)?;
         Ok(())
     }
 
@@ -269,23 +275,44 @@ impl IndexResult {
         let summary = summary::try_load(&dir)?;
         let assign_like = assign::try_load(&dir)?;
         let paths = paths::try_load(&dir)?;
+        let external_function = external_function::try_load(&dir)?;
         Ok(IndexResult {
             summary,
             assign_like,
             java_obj_assign_like: Vec::new(),
             paths,
+            external_function,
         })
     }
 }
 
 impl std::fmt::Display for IndexResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.display(None).fmt(f)
+    }
+}
+
+pub struct IndexResultDisplay<'a> {
+    result: &'a IndexResult,
+    id_map: Option<&'a IdMap>,
+}
+
+impl<'a> std::fmt::Display for IndexResultDisplay<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Summary:")?;
-        for s in &self.summary {
-            writeln!(f, "{:?}", s)?;
+        for s in &self.result.summary {
+            if let Some(id_map) = self.id_map {
+                let func_name = id_map
+                    .get_function(s.0)
+                    .map(|f| f.0.as_ref())
+                    .unwrap_or("unknown");
+                writeln!(f, "{}({}): {:?}", func_name, s.0.id, s)?;
+            } else {
+                writeln!(f, "{:?}", s)?;
+            }
         }
         writeln!(f, "\nAssign-like:")?;
-        for (func_id, insn_id, dest_var, dest_path, src_var, src_path) in &self.assign_like {
+        for (func_id, insn_id, dest_var, dest_path, src_var, src_path) in &self.result.assign_like {
             let dest_str = {
                 let var_str = match dest_var {
                     FlowVariable::Local(name) => name.to_string(),
@@ -301,17 +328,32 @@ impl std::fmt::Display for IndexResult {
                 format!("{}{}", var_str, src_path.to_dot_string())
             };
 
+            let func_name = self
+                .id_map
+                .and_then(|m| m.get_function(*func_id))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
+
             writeln!(
                 f,
-                "{:?}:{:?}: {} = {}",
-                func_id.id, insn_id.id, dest_str, src_str
+                "{}({}):{}: {} = {}",
+                func_name, func_id.id, insn_id.id, dest_str, src_str
             )?;
         }
         writeln!(f, "\nPaths:")?;
-        for (p,) in &self.paths {
+        for (p,) in &self.result.paths {
             writeln!(f, "{}", p)?;
         }
         Ok(())
+    }
+}
+
+impl IndexResult {
+    pub fn display<'a>(&'a self, id_map: Option<&'a IdMap>) -> IndexResultDisplay<'a> {
+        IndexResultDisplay {
+            result: self,
+            id_map,
+        }
     }
 }
 
@@ -344,6 +386,7 @@ struct HybridInliningRelations<'a> {
         Path,
     )],
     context_summary: &'a [(CallString, FunctionId, FormalIndex, Path, FormalIndex, Path)],
+    id_map: Option<&'a IdMap>,
 }
 
 impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
@@ -354,12 +397,26 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
                 func_id: site_func_id,
                 insn_id: site_insn_id,
             } = InsnSiteId::unpack_from_slice(&**site_id).unwrap();
+
+            let func_name = self
+                .id_map
+                .and_then(|m| m.get_function(*func_id))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
+            let site_func_name = self
+                .id_map
+                .and_then(|m| m.get_function(site_func_id))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
+
             writeln!(
                 f,
-                "  {}: arg{} {} -> site {}:{}",
+                "  {}({}): arg{} {} -> site {}({}):{}",
+                func_name,
                 func_id.id,
                 formal_index,
                 path.to_dot_string(),
+                site_func_name,
                 site_func_id.id,
                 site_insn_id.id
             )?;
@@ -371,15 +428,35 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
                 func_id: site_func_id,
                 insn_id: site_insn_id,
             } = InsnSiteId::unpack_from_slice(&**site_id).unwrap();
+
+            let func_name = self
+                .id_map
+                .and_then(|m| m.get_function(*func_id))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
+            let site_func_name = self
+                .id_map
+                .and_then(|m| m.get_function(site_func_id))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
+            let tgt_name = self
+                .id_map
+                .and_then(|m| m.get_function(*tgt))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
+
             writeln!(
                 f,
-                "  {} {}: arg{} {} -> site {}:{} resolves to {}",
+                "  {} {}({}): arg{} {} -> site {}({}):{} resolves to {}({})",
                 cs,
+                func_name,
                 func_id.id,
                 formal_index,
                 path.to_dot_string(),
+                site_func_name,
                 site_func_id.id,
                 site_insn_id.id,
+                tgt_name,
                 tgt.id
             )?;
         }
@@ -394,13 +471,27 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
                 FlowVariable::Local(name) => name.to_string(),
                 _ => format!("{}", var),
             };
+
+            let func_name = self
+                .id_map
+                .and_then(|m| m.get_function(*func_id))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
+            let tgt_name = self
+                .id_map
+                .and_then(|m| m.get_function(*tgt))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
+
             writeln!(
                 f,
-                "  {}:{}: {}{} = ptr {}",
+                "  {}({}):{}: {}{} = ptr {}({})",
+                func_name,
                 func_id.id,
                 insn_id.id,
                 var_str,
                 path.to_dot_string(),
+                tgt_name,
                 tgt.id
             )?;
         }
@@ -421,10 +512,17 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
                 };
                 format!("{}{}", var_str, src_path.to_dot_string())
             };
+
+            let func_name = self
+                .id_map
+                .and_then(|m| m.get_function(*func_id))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
+
             writeln!(
                 f,
-                "  {} {}:{}: {} = {}",
-                cs, func_id.id, insn_id.id, dest_str, src_str
+                "  {} {}({}):{}: {} = {}",
+                cs, func_name, func_id.id, insn_id.id, dest_str, src_str
             )?;
         }
 
@@ -434,10 +532,18 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
                 FlowVariable::Local(name) => name.to_string(),
                 _ => format!("{}", var),
             };
+
+            let func_name = self
+                .id_map
+                .and_then(|m| m.get_function(*func_id))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
+
             writeln!(
                 f,
-                "  {} {}: {}{} from arg{}{}",
+                "  {} {}({}): {}{} from arg{}{}",
                 cs,
+                func_name,
                 func_id.id,
                 var_str,
                 path.to_dot_string(),
@@ -448,10 +554,17 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
 
         writeln!(f, "\nContext Summary ({}):", self.context_summary.len())?;
         for (cs, func_id, dest_idx, dest_path, src_idx, src_path) in self.context_summary {
+            let func_name = self
+                .id_map
+                .and_then(|m| m.get_function(*func_id))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
+
             writeln!(
                 f,
-                "  {} {}: arg{}{} = arg{}{}",
+                "  {} {}({}): arg{}{} = arg{}{}",
                 cs,
+                func_name,
                 func_id.id,
                 dest_idx,
                 dest_path.to_dot_string(),
@@ -465,16 +578,20 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
 
 /// Creates a data flow graph for taint analysis.
 pub fn taint_index(facts: IndexFacts) -> IndexResult {
-    taint_index_with_config(facts, IndexConfig::default())
+    taint_index_with_config(facts, IndexConfig::default(), None)
 }
 
-pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexResult {
+pub fn taint_index_with_config(
+    facts: IndexFacts,
+    config: IndexConfig,
+    id_map: Option<&IdMap>,
+) -> IndexResult {
     // Access paths may be introduced in summaries, so include those.
     use hashbrown::hash_set::HashSet;
     let summary_paths: HashSet<_> = facts
         .summary
         .iter()
-        .flat_map(|(_, _, p1, _, p2)| [(p1.clone(),), (p2.clone(),)])
+        .flat_map(|(_, _, p1, _, p2)| [(*p1,), (*p2,)])
         .collect();
     let call = facts
         .call
@@ -766,6 +883,7 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
             context_assign: &prog.context_assign,
             context_locals: &prog.context_locals,
             context_summary: &prog.context_summary,
+            id_map,
         }
     );
     let result = IndexResult {
@@ -773,7 +891,8 @@ pub fn taint_index_with_config(facts: IndexFacts, config: IndexConfig) -> IndexR
         assign_like: prog.assign_like,
         java_obj_assign_like: prog.java_obj_assign_like,
         paths: prog.paths,
+        external_function: facts.external_function,
     };
-    log::trace!("index result: {}", result);
+    log::trace!("index result: {}", result.display(id_map));
     result
 }

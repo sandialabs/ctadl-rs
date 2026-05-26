@@ -1,0 +1,16 @@
+// Test inter-procedural flow with pass-by-reference aliasing
+def SetValue(target byref, val) 
+where summaries [target.inner <- val]
+{
+start:
+    target.inner = val;
+    return;
+}
+
+def InterProceduralAlias() {
+start:
+    s = source(Secret);
+    SetValue(myobj, s);
+    sink(myobj.inner, Secret);
+    return;
+}

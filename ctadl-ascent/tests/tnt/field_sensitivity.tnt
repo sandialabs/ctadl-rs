@@ -1,0 +1,13 @@
+// Test that different fields of the same object are tracked independently
+def FieldSensitivity() {
+start:
+    obj.tainted = source(Secret);
+    obj.safe = "safe";
+    
+    a = obj.tainted;
+    b = obj.safe;
+    
+    sink(a, Secret);
+    errsink(b, Secret);
+    return;
+}

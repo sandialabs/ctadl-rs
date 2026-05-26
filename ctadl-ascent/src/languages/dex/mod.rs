@@ -382,16 +382,9 @@ impl Context {
                         fdat.blocks[block_idx].terminator = Some(Terminator::new_kind(term));
                     }
                 } else {
-                    // Method without code – create a single empty block that returns.
+                    // Method without code – no basic blocks should be generated.
+                    // We just set the return type.
                     fdat.return_type = ReturnType { arity: 2 };
-                    let empty_exp = Exp::new_bytes(Vec::new());
-                    fdat.blocks
-                        .blocks_mut()
-                        .push(BasicBlockData::new(Some(Terminator::new_kind(
-                            TerminatorKind::Return {
-                                args: smallvec![empty_exp.clone(), empty_exp],
-                            },
-                        ))));
                 }
             }
         }

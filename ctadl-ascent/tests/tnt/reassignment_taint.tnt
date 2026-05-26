@@ -1,0 +1,9 @@
+// Test that reassignment clears taint (strong update)
+def ReassignmentTaint() {
+start:
+    x = source(Secret);
+    sink(x, Secret);
+    x = "safe";
+    errsink(x, Secret);
+    return;
+}

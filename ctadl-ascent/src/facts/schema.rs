@@ -141,3 +141,11 @@ pub mod function_id {
     pub const FILENAME: &str = "function_id.parquet";
     save_load!();
 }
+
+pub mod external_function {
+    use super::*;
+    pub type Record = (FunctionId,);
+    pub const COLUMNS: [&str; 1] = ["func_id"];
+    pub const FILENAME: &str = "external_function.parquet";
+    save_load!();
+}

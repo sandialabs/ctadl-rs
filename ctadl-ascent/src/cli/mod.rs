@@ -77,7 +77,7 @@ fn build_query_endpoints(
         for var in vars {
             out_eps.push((crate::query_engine::QueryEndpoint {
                 infunc,
-                vertex: FlowVertex(var.clone(), ap.clone()),
+                vertex: FlowVertex(var.clone(), ap),
                 label: lbl.clone(),
                 direction,
             },));
@@ -152,7 +152,7 @@ pub fn index(
     }) {
         config.alias_rule = false;
     }
-    let result = taint_index_with_config(facts, config);
+    let result = taint_index_with_config(facts, config, Some(&source_info.sites));
 
     // Slightly ugly special case for flowy artifacts. Since they have specific assertions at index
     // time, check them here.
@@ -172,9 +172,9 @@ pub fn index(
 /// Runs a taint query
 pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result<(), Error> {
     let index_path = project.index_path()?;
+    let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
     let facts = {
         let mut models_batch: Option<crate::models::ModelsBatch> = None;
-        let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
         for model_path in models {
             for import in project.iter_imports() {
                 let import = import?;
@@ -229,7 +229,7 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
         builder.build().unwrap()
     };
 
-    let result = taint_analysis(facts);
+    let result = taint_analysis(facts, Some(&ids));
     for import in project.iter_imports() {
         let import = import?;
         if import.language == ArtifactLanguage::Flowy {
@@ -271,6 +271,7 @@ pub fn format(
             .call(index_facts.call)
             .assign(index_result.assign_like)
             .paths(index_result.paths)
+            .external_function(index_result.external_function)
             .id_to_name(ids.get_id_to_name_map());
         let facts = b.build().unwrap();
 
@@ -283,7 +284,7 @@ pub fn format(
             let nodes: BTreeSet<_> = facts
                 .taint
                 .iter()
-                .map(|(func_id, _, var, path, _)| (*func_id, var.clone(), path.clone()))
+                .map(|(func_id, _, var, path, _)| (*func_id, var.clone(), *path))
                 .collect();
             let nodes: Vec<_> = nodes.into_iter().collect();
             let sources: BTreeSet<_> = facts
@@ -291,7 +292,7 @@ pub fn format(
                 .iter()
                 .filter_map(|(_, _, _, _, ep)| {
                     if ep.direction == crate::facts::TaintDirection::Forward {
-                        Some((ep.infunc, ep.vertex.0.clone(), ep.vertex.1.clone()))
+                        Some((ep.infunc, ep.vertex.0.clone(), ep.vertex.1))
                     } else {
                         None
                     }
@@ -302,7 +303,7 @@ pub fn format(
                 .iter()
                 .filter_map(|(_, _, _, _, ep)| {
                     if ep.direction == crate::facts::TaintDirection::Backward {
-                        Some((ep.infunc, ep.vertex.0.clone(), ep.vertex.1.clone()))
+                        Some((ep.infunc, ep.vertex.0.clone(), ep.vertex.1))
                     } else {
                         None
                     }
@@ -618,7 +619,8 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
         paths,
         taint,
         index_source_map,
-        function_id
+        function_id,
+        external_function
     );
 
     Ok(())
@@ -674,6 +676,7 @@ pub fn inspect_index_facts(
     log::info!("  indirect_call:  {}", facts.indirect_call.len());
     log::info!("  java_call:      {}", facts.java_call.len());
     log::info!("  java_obj_assign:{}", facts.java_obj_assign.len());
+    log::info!("  external_function: {}", facts.external_function.len());
 
     use crate::facts::InsnSiteId;
 

@@ -1,0 +1,15 @@
+// Test multi-level field access and aliasing
+def MultiLevelAlias() {
+start:
+    s = source(Secret);
+    a.b.c = s;
+    x = a;
+    y = x.b;
+    z = y.c;
+    sink(z, Secret);
+    
+    a.b.d = "safe";
+    w = a.b.d;
+    errsink(w, Secret);
+    return;
+}

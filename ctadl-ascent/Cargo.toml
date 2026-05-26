@@ -58,10 +58,12 @@ serde-sarif = "0.8"
 rustc_graphviz = { path = "../rustc_graphviz" }
 serde_json = { version = "1", features = ["preserve_order"] }
 smallvec = "1"
+suffix-seq = { path = "../suffix-seq", features = ["serde"] }
 source-info = { path = "../source-info", features = ["serde"] }
 streaming-iterator = { version = "0.1", features = ["alloc"] }
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread"] }
+trie = { path = "../trie" }
 tree-sitter = "0.26"
 tree-sitter-c = "0.24"
 tempfile = "3"

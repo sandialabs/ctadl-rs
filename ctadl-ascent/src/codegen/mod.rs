@@ -195,7 +195,11 @@ impl Visitor for CodegenVisitor<'_> {
     #[inline]
     fn visit_function_data(&mut self, idx: FunctionIdx, function: &FunctionData) {
         let func = fx::Function(function.name.clone().into());
-        self.function = Some(self.source_info.sites.get_or_add_function(func));
+        let func_id = self.source_info.sites.get_or_add_function(func);
+        self.function = Some(func_id);
+        if function.blocks.is_empty() {
+            self.facts.external_function.push((func_id,));
+        }
         // Gens global param
         self.facts.formal_param.push((
             self.function.unwrap(),
@@ -227,7 +231,7 @@ impl Visitor for CodegenVisitor<'_> {
                     {
                         let mut path = cap_path.get(&ap.variable_ref).cloned().unwrap_or_default();
                         path.extend_merging(ap.path.iter().cloned());
-                        self.paths_dedup.insert((path.clone(),));
+                        self.paths_dedup.insert((path,));
                         cap_path.insert(dest.clone(), path);
                     }
                 }

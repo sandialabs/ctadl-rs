@@ -89,13 +89,9 @@ pub fn codegen_summary(
                 if dst_index == src_index {
                     continue;
                 }
-                facts.summary.push((
-                    func_id,
-                    *dst_index,
-                    dst_ap.clone(),
-                    *src_index,
-                    src_ap.clone(),
-                ));
+                facts
+                    .summary
+                    .push((func_id, *dst_index, dst_ap, *src_index, src_ap));
             }
         }
     }

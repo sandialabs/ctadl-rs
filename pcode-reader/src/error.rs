@@ -18,6 +18,9 @@ pub enum PcodeError {
     #[error("Invalid fact format in {file}: {message}")]
     InvalidFactFormat { file: String, message: String },
 
+    #[error("DataFusion error: {0}")]
+    DataFusion(#[from] datafusion::error::DataFusionError),
+
     #[error("Fact consistency error: {0}")]
     FactConsistency(String),
 

@@ -39,6 +39,13 @@ pub struct QueryEndpoint {
 }
 
 impl QueryEndpoint {
+    pub fn display<'a>(&'a self, id_map: Option<&'a IdMap>) -> QueryEndpointDisplay<'a> {
+        QueryEndpointDisplay {
+            endpoint: self,
+            id_map,
+        }
+    }
+
     pub fn to_taint_endpoint(self, sites: &IdMap) -> TaintEndpoint {
         TaintEndpoint {
             infunc: sites.get_function(self.infunc).unwrap().clone(),
@@ -91,6 +98,13 @@ impl QueryResult {
         }
     }
 
+    pub fn display<'a>(&'a self, id_map: Option<&'a IdMap>) -> QueryResultDisplay<'a> {
+        QueryResultDisplay {
+            result: self,
+            id_map,
+        }
+    }
+
     pub fn try_save<P: AsRef<path::Path>>(self, dir: P) -> Result<(), Error> {
         use crate::facts::schema::*;
         taint::try_save(&dir, self.taint)?;
@@ -123,7 +137,18 @@ impl QueryResult {
 
 impl std::fmt::Display for QueryResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (func_id, taint_state, flow_var, path, endpoint) in &self.taint {
+        self.display(None).fmt(f)
+    }
+}
+
+pub struct QueryResultDisplay<'a> {
+    result: &'a QueryResult,
+    id_map: Option<&'a IdMap>,
+}
+
+impl<'a> std::fmt::Display for QueryResultDisplay<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (func_id, taint_state, flow_var, path, endpoint) in &self.result.taint {
             let var_path_str = {
                 let var_str = match flow_var {
                     FlowVariable::Local(name) => name.to_string(),
@@ -132,26 +157,21 @@ impl std::fmt::Display for QueryResult {
                 format!("{}{}", var_str, path.to_dot_string())
             };
 
-            let endpoint_vertex_str = {
-                let FlowVertex(endpoint_var, endpoint_path) = &endpoint.vertex;
-                let var_str = match endpoint_var {
-                    FlowVariable::Local(name) => name.to_string(),
-                    _ => format!("{}", endpoint_var),
-                };
-                format!("{}{}", var_str, endpoint_path.to_dot_string())
-            };
+            let func_name = self
+                .id_map
+                .and_then(|m| m.get_function(*func_id))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
 
             let taint_state_str = format!("{:?}", taint_state);
             writeln!(
                 f,
-                "[{}] {:<10} {} <-- {}, {} @ {}:{}",
+                "{}({}): {:<10} {} <-- {}",
+                func_name,
                 func_id.id,
                 taint_state_str,
                 var_path_str,
-                endpoint.direction,
-                endpoint.label,
-                endpoint.infunc.id,
-                endpoint_vertex_str
+                endpoint.display(self.id_map),
             )?;
         }
         Ok(())
@@ -163,7 +183,7 @@ impl std::fmt::Display for QueryResult {
 /// Runs taint analysis given the set of query facts, which include relations from the 'index'
 /// phase and a set of taint sources. Returns a relation containing the set of vertices tainted by
 /// each taint source.
-pub fn taint_analysis(facts: QueryFacts) -> QueryResult {
+pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     ascent! {
         struct QueryEngine;
         macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sv:expr, $sp:expr) {
@@ -185,7 +205,8 @@ pub fn taint_analysis(facts: QueryFacts) -> QueryResult {
     log::trace!(
         "query result: {}",
         DisplayTaint {
-            taint: &engine.taint
+            taint: &engine.taint,
+            id_map,
         }
     );
     QueryResult {
@@ -289,24 +310,28 @@ pub mod graphviz;
 
 struct DisplayTaint<'a> {
     taint: &'a [(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)],
+    id_map: Option<&'a IdMap>,
 }
 
 impl<'a> std::fmt::Display for DisplayTaint<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Taint output")?;
         for (func_id, ts, var, path, endpoint) in self.taint {
-            // let InsnSiteId {
-            //     func_id: site_func_id,
-            //     insn_id: site_insn_id,
-            // } = InsnSiteId::unpack_from_slice(&**site_id).unwrap();
+            let func_name = self
+                .id_map
+                .and_then(|m| m.get_function(*func_id))
+                .map(|f| f.0.as_ref())
+                .unwrap_or("unknown");
+
             writeln!(
                 f,
-                "  {} {:?} {}{} <- {}",
+                "  {}({}) {:?} {}{} <- {}",
+                func_name,
                 func_id.id,
                 ts,
                 var,
                 path.to_dot_string(),
-                endpoint,
+                endpoint.display(self.id_map),
             )?;
         }
         Ok(())
@@ -315,15 +340,33 @@ impl<'a> std::fmt::Display for DisplayTaint<'a> {
 
 impl std::fmt::Display for QueryEndpoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.display(None).fmt(f)
+    }
+}
+
+pub struct QueryEndpointDisplay<'a> {
+    endpoint: &'a QueryEndpoint,
+    id_map: Option<&'a IdMap>,
+}
+
+impl<'a> std::fmt::Display for QueryEndpointDisplay<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let QueryEndpoint {
             label,
             direction,
             infunc,
             vertex,
-        } = self;
+        } = self.endpoint;
+
+        let func_name = self
+            .id_map
+            .and_then(|m| m.get_function(*infunc))
+            .map(|f| f.0.as_ref())
+            .unwrap_or("unknown");
+
         write!(
             f,
-            "{label} {direction} {} {}{}",
+            "{label} {direction} {func_name}({}) {}{}",
             infunc.id,
             vertex.0,
             vertex.1.to_dot_string()

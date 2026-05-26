@@ -71,6 +71,7 @@
               checksarif
               ghidra-bin
               pkgsCross.gnu64.stdenv.cc
+              pkgsCross.gnu64.binutils
             ];
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
           };

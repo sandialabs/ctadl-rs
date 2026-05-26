@@ -1,0 +1,19 @@
+[package]
+name = "trie"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"], optional = true }
+parking_lot = "0.12"
+
+[features]
+serde = ["dep:serde"]
+
+[dev-dependencies]
+serde_json = "1.0"
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "trie_bench"
+harness = false
