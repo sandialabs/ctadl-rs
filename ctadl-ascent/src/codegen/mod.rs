@@ -231,7 +231,7 @@ impl Visitor for CodegenVisitor<'_> {
                     {
                         let mut path = cap_path.get(&ap.variable_ref).cloned().unwrap_or_default();
                         path.extend_merging(ap.path.iter().cloned());
-                        self.paths_dedup.insert((path.clone(),));
+                        self.paths_dedup.insert((path,));
                         cap_path.insert(dest.clone(), path);
                     }
                 }

@@ -46,8 +46,8 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId,
-    PackedInsnSiteId, Path, isout,
+    CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId,
+    InsnSiteId, PackedInsnSiteId, Path, isout,
 };
 use ctadl_ir::Symbol;
 
@@ -591,7 +591,7 @@ pub fn taint_index_with_config(
     let summary_paths: HashSet<_> = facts
         .summary
         .iter()
-        .flat_map(|(_, _, p1, _, p2)| [(p1.clone(),), (p2.clone(),)])
+        .flat_map(|(_, _, p1, _, p2)| [(*p1,), (*p2,)])
         .collect();
     let call = facts
         .call

@@ -30,7 +30,9 @@ lazy_static::lazy_static! {
 ///
 /// The path dereferences go left to right
 /// ["foo", "bar", "baz"] represents .foo.bar.baz
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord,
+)]
 pub struct Path(pub SuffixSeq<mir::FieldAccess>);
 
 impl Path {
@@ -98,16 +100,17 @@ impl Path {
 
     /// Pushes a new component to the path, merging offsets if possible.
     pub fn push(&mut self, component: mir::FieldAccess) {
-        if let mir::FieldAccess::Offset(new_off) = &component {
-            if let Some(mir::FieldAccess::Offset(last_off)) = self.0.last() {
-                let mut last_off = last_off.clone();
-                last_off.0 += new_off.0;
-                self.0 = self.0
-                    .all_but_last()
-                    .unwrap()
-                    .push_back(mir::FieldAccess::Offset(last_off));
-                return;
-            }
+        if let mir::FieldAccess::Offset(new_off) = &component
+            && let Some(mir::FieldAccess::Offset(last_off)) = self.0.last()
+        {
+            let mut last_off = last_off.clone();
+            last_off.0 += new_off.0;
+            self.0 = self
+                .0
+                .all_but_last()
+                .unwrap()
+                .push_back(mir::FieldAccess::Offset(last_off));
+            return;
         }
         self.0 = self.0.push_back(component);
     }

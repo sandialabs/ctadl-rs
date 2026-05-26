@@ -217,8 +217,11 @@ pub fn check<P: AsRef<Path>>(file: P) -> anyhow::Result<()> {
         .flat_map(|(_k, v)| v.iter().map(|(ep, _)| ep))
         .map(|e| (from_flowy_endpoint(&source_info.sites, e),))
         .collect();
-    let index_result =
-        taint_index_with_config(index_facts.clone(), IndexConfig::default(), Some(&source_info.sites));
+    let index_result = taint_index_with_config(
+        index_facts.clone(),
+        IndexConfig::default(),
+        Some(&source_info.sites),
+    );
 
     let (ipass, ifail) = index_check_summaries(
         &index_result,

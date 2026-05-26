@@ -341,7 +341,7 @@ async fn async_format_sarif(
         instr_to_details
             .entry(key)
             .or_default()
-            .push((label.clone(), var.clone(), pth.clone()));
+            .push((label.clone(), var.clone(), *pth));
     }
     // Build a map from each file span to its associated taint details.
     let mut details_by_span: BTreeMap<u32, Vec<(Label, FunctionId, FlowVariable, Path)>> =
@@ -354,7 +354,7 @@ async fn async_format_sarif(
                     label.clone(),
                     *func_id,
                     var.clone(),
-                    pth.clone(),
+                    *pth,
                 ));
             }
         }
@@ -841,24 +841,24 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         let taint_edge = &ctx.taint_results.edges;
         // Collect all nodes into node_to_id first
         for (f, _, v, p, src) in &ctx.facts.taint {
-            let n = (*f, v.clone(), p.clone());
+            let n = (*f, v.clone(), *p);
             if !node_to_id.contains_key(&n) {
                 node_to_id.insert(n.clone(), id_to_node.len() as u32);
                 id_to_node.push(n);
             }
-            let src_n = (src.infunc, src.vertex.0.clone(), src.vertex.1.clone());
+            let src_n = (src.infunc, src.vertex.0.clone(), src.vertex.1);
             if !node_to_id.contains_key(&src_n) {
                 node_to_id.insert(src_n.clone(), id_to_node.len() as u32);
                 id_to_node.push(src_n);
             }
         }
         for (df, dv, dp, sf, sv, sp) in taint_edge {
-            let src_n = (*sf, sv.clone(), sp.clone());
+            let src_n = (*sf, sv.clone(), *sp);
             if !node_to_id.contains_key(&src_n) {
                 node_to_id.insert(src_n.clone(), id_to_node.len() as u32);
                 id_to_node.push(src_n);
             }
-            let dst_n = (*df, dv.clone(), dp.clone());
+            let dst_n = (*df, dv.clone(), *dp);
             if !node_to_id.contains_key(&dst_n) {
                 node_to_id.insert(dst_n.clone(), id_to_node.len() as u32);
                 id_to_node.push(dst_n);
@@ -868,8 +868,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         let edges: Vec<(u32, u32)> = taint_edge
             .iter()
             .map(|(df, dv, dp, sf, sv, sp)| {
-                let src_n = (*sf, sv.clone(), sp.clone());
-                let dst_n = (*df, dv.clone(), dp.clone());
+                let src_n = (*sf, sv.clone(), *sp);
+                let dst_n = (*df, dv.clone(), *dp);
                 let src_id = *node_to_id.get(&src_n).unwrap();
                 let dst_id = *node_to_id.get(&dst_n).unwrap();
                 (src_id, dst_id)
@@ -885,7 +885,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         BTreeMap::new();
     for (f, _, v, p, src) in &ctx.facts.taint {
         node_to_endpoint
-            .entry((*f, v.clone(), p.clone()))
+            .entry((*f, v.clone(), *p))
             .or_default()
             .push(src.clone());
     }
@@ -897,16 +897,16 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         BTreeMap::new();
     for (f, i, v1, p1, v2, p2) in &ctx.facts.assign {
         node_to_site
-            .entry((*f, v1.clone(), p1.clone()))
+            .entry((*f, v1.clone(), *p1))
             .or_insert((*f, *i));
         node_to_site
-            .entry((*f, v2.clone(), p2.clone()))
+            .entry((*f, v2.clone(), *p2))
             .or_insert((*f, *i));
     }
     for (site, _, v, p) in &ctx.facts.actual_param {
         let site_unpacked = InsnSiteId::unpack(site).unwrap();
         node_to_site
-            .entry((site_unpacked.func_id, v.clone(), p.clone()))
+            .entry((site_unpacked.func_id, v.clone(), *p))
             .or_insert((site_unpacked.func_id, site_unpacked.insn_id));
     }
 
@@ -924,7 +924,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         for (fs_id, details) in ctx.details_by_span {
             let mut seen_pairs = BTreeSet::new();
             for (lbl, func_id, var, pth) in details {
-                let node = (*func_id, var.clone(), pth.clone());
+                let node = (*func_id, var.clone(), *pth);
                 if let Some(sources) = node_to_endpoint.get(&node) {
                     let (fwd_sources, bwd_sinks): (Vec<_>, Vec<_>) = sources
                         .iter()
@@ -933,10 +933,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     if has_sinks {
                         for sink in &bwd_sinks {
                             for src in &fwd_sources {
-                                let start_node =
-                                    (src.infunc, src.vertex.0.clone(), src.vertex.1.clone());
-                                let end_node =
-                                    (sink.infunc, sink.vertex.0.clone(), sink.vertex.1.clone());
+                                let start_node = (src.infunc, src.vertex.0.clone(), src.vertex.1);
+                                let end_node = (sink.infunc, sink.vertex.0.clone(), sink.vertex.1);
                                 if let (Some(&start_id), Some(&end_id)) =
                                     (node_to_id.get(&start_node), node_to_id.get(&end_node))
                                     && seen_pairs.insert((start_id, end_id))
@@ -1248,7 +1246,7 @@ fn format_source_sink_results(
         let node = (
             endpoint.infunc,
             endpoint.vertex.0.clone(),
-            endpoint.vertex.1.clone(),
+            endpoint.vertex.1,
         );
         // Use the logical location of the source, and use the physical location additionally if it's available
         if is_source || is_sink {

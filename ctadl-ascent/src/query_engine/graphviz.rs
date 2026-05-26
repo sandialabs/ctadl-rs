@@ -126,12 +126,12 @@ impl<'a> dot::GraphWalk<'a> for TaintGraphViz<'a> {
 
     fn source(&'a self, e: &Self::Edge) -> Self::Node {
         let (sf, sv, sp, _, _, _) = *e;
-        (*sf, sv.clone(), sp.clone())
+        (*sf, sv.clone(), *sp)
     }
 
     fn target(&'a self, e: &Self::Edge) -> Self::Node {
         let (_, _, _, df, dv, dp) = *e;
-        (*df, dv.clone(), dp.clone())
+        (*df, dv.clone(), *dp)
     }
 }
 
