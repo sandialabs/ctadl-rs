@@ -1297,6 +1297,7 @@ dependencies = [
  "smallvec",
  "source-info",
  "streaming-iterator",
+ "suffix-seq",
  "tempfile",
  "test-log",
  "thiserror",

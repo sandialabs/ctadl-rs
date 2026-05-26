@@ -14,7 +14,7 @@ where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
     Nil,
-    Cons(T, SuffixSeq<T>),
+    Cons(T, SuffixSeq<T>, usize),
 }
 
 #[cfg(feature = "serde")]
@@ -28,7 +28,7 @@ where
     {
         match self {
             Node::Nil => serializer.serialize_unit_variant("Node", 0, "Nil"),
-            Node::Cons(head, tail) => {
+            Node::Cons(head, tail, _) => {
                 use serde::ser::SerializeStruct;
                 let mut state = serializer.serialize_struct("Node", 2)?;
                 state.serialize_field("head", head)?;
@@ -60,7 +60,10 @@ where
         let data = NodeData::deserialize(deserializer)?;
         match data {
             NodeData::Nil => Ok(Node::Nil),
-            NodeData::Cons { head, tail } => Ok(Node::Cons(head, tail)),
+            NodeData::Cons { head, tail } => {
+                let len = tail.len() + 1;
+                Ok(Node::Cons(head, tail, len))
+            }
         }
     }
 }
@@ -165,14 +168,15 @@ where
 
     /// Returns a new `SuffixSeq` with `item` prepended to the current sequence.
     pub fn push_front(&self, item: T) -> Self {
-        Self::intern(Node::Cons(item, *self))
+        let len = self.len() + 1;
+        Self::intern(Node::Cons(item, *self, len))
     }
 
     /// Returns the head element of the sequence, if it's not empty.
     pub fn head(&self) -> Option<&T> {
         match self.0 {
             Node::Nil => None,
-            Node::Cons(head, _) => Some(head),
+            Node::Cons(head, _, _) => Some(head),
         }
     }
 
@@ -180,13 +184,73 @@ where
     pub fn tail(&self) -> Option<Self> {
         match self.0 {
             Node::Nil => None,
-            Node::Cons(_, tail) => Some(*tail),
+            Node::Cons(_, tail, _) => Some(*tail),
         }
     }
 
     /// Returns `true` if the sequence is empty.
     pub fn is_empty(&self) -> bool {
         matches!(self.0, Node::Nil)
+    }
+
+    /// Returns the length of the sequence.
+    pub fn len(&self) -> usize {
+        match self.0 {
+            Node::Nil => 0,
+            Node::Cons(_, _, len) => *len,
+        }
+    }
+
+    /// Returns a new `SuffixSeq` with `item` appended to the current sequence.
+    /// $O(n)$ complexity as it requires rebuilding the sequence.
+    pub fn push_back(&self, item: T) -> Self {
+        let mut items: Vec<_> = self.iter().cloned().collect();
+        items.push(item);
+        items.into_iter().collect()
+    }
+
+    /// Returns the last element of the sequence, if it's not empty.
+    /// $O(n)$ complexity.
+    pub fn last(&self) -> Option<&'static T> {
+        self.iter().last()
+    }
+
+    /// Returns a new `SuffixSeq` containing all but the last element of the current sequence.
+    /// $O(n)$ complexity.
+    pub fn all_but_last(&self) -> Option<Self> {
+        if self.is_empty() {
+            return None;
+        }
+        let items: Vec<_> = self.iter().cloned().collect();
+        if items.is_empty() {
+            return Some(Self::new());
+        }
+        Some(items[..items.len() - 1].iter().cloned().collect())
+    }
+
+    /// Returns a new `SuffixSeq` that is the concatenation of `self` and `other`.
+    /// Shares `other`'s backing memory. $O(self.len())$ complexity.
+    pub fn concat(&self, other: &Self) -> Self {
+        let items: Vec<_> = self.iter().cloned().collect();
+        let mut result = *other;
+        for item in items.into_iter().rev() {
+            result = result.push_front(item);
+        }
+        result
+    }
+
+    /// Returns the suffix of the sequence starting at index `n`.
+    /// If `n >= len()`, returns an empty sequence.
+    pub fn suffix(&self, n: usize) -> Self {
+        let mut current = *self;
+        for _ in 0..n {
+            if let Some(tail) = current.tail() {
+                current = tail;
+            } else {
+                return Self::new();
+            }
+        }
+        current
     }
 
     /// Returns an iterator over the elements of the sequence.
@@ -218,6 +282,30 @@ where
 }
 
 impl<T> Eq for SuffixSeq<T> where T: Hash + Eq + Clone + Send + Sync + 'static {}
+
+impl<T> PartialOrd for SuffixSeq<T>
+where
+    T: Hash + Eq + Clone + Send + Sync + 'static + PartialOrd,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self == other {
+            return Some(std::cmp::Ordering::Equal);
+        }
+        self.iter().partial_cmp(other.iter())
+    }
+}
+
+impl<T> Ord for SuffixSeq<T>
+where
+    T: Hash + Eq + Clone + Send + Sync + 'static + Ord,
+{
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        if self == other {
+            return std::cmp::Ordering::Equal;
+        }
+        self.iter().cmp(other.iter())
+    }
+}
 
 impl<T> Hash for SuffixSeq<T>
 where
@@ -285,7 +373,7 @@ where
                 self.current = None;
                 None
             }
-            Node::Cons(head, tail) => {
+            Node::Cons(head, tail, _) => {
                 self.current = Some(*tail);
                 Some(head)
             }
