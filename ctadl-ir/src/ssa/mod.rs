@@ -244,14 +244,13 @@ impl PhiPlace {
         let mut phi_place = Self {
             variables: Default::default(),
         };
-        let blocks = &mut function.blocks;
         // Script-a in the paper. Maps variable to all the blocks that assign that variable.
         let mut a: HashMap<ArcIntern<Variable>, SmallVec<[BasicBlockIdx; 4]>> = Default::default();
         // Set of all variables.
         let variables = &mut phi_place.variables;
 
         // Initialize `a` and `variables`.
-        for (bb, data) in blocks.iter_enumerated() {
+        for (bb, data) in function.blocks.iter_enumerated() {
             for stmt in data.iter() {
                 for v in stmt.iter_dst_var() {
                     a.entry(v.variable.clone()).or_default().push(bb);
@@ -274,10 +273,11 @@ impl PhiPlace {
         let mut w: Vec<BasicBlockIdx> = Vec::new();
         // work[x] indicates whether x has ever been added to w during the current iteration of the
         // outer loop.
-        let mut work: IndexVec<BasicBlockIdx, usize> = IndexVec::from_elem_n(0, blocks.num_nodes());
+        let mut work: IndexVec<BasicBlockIdx, usize> =
+            IndexVec::from_elem_n(0, function.blocks.num_nodes());
         // has_already[x] indices whether a phi-function for v has been inserted at x.
         let mut has_already: IndexVec<BasicBlockIdx, usize> =
-            IndexVec::from_elem_n(0, blocks.num_nodes());
+            IndexVec::from_elem_n(0, function.blocks.num_nodes());
         let mut iter_count = 0;
 
         for v in variables.clone() {
@@ -289,15 +289,16 @@ impl PhiPlace {
                 w.push(x);
             }
             while let Some(x) = w.pop() {
-                let df_y: SmallVec<[_; 4]> = blocks.dominance_frontier().iter(x).collect();
+                let df_y: SmallVec<[_; 4]> = function.blocks.dominance_frontier().iter(x).collect();
                 for y in df_y.into_iter() {
                     if has_already[y] < iter_count {
                         // Insert a phi func with placeholder copies of predecessor operand
-                        let operands = blocks
+                        let operands = function
+                            .blocks
                             .predecessors(y)
                             .map(|pred| (pred, VariableRef::new_var_ref(v.clone())))
                             .collect();
-                        let block_data = &mut blocks[y];
+                        let block_data = &mut function.blocks.blocks_mut_preserves_cfg()[y];
                         block_data.push_front(Statement::new_kind(StatementKind::Phi {
                             dest: VariableRef::new_var_ref(v.clone()),
                             operands,

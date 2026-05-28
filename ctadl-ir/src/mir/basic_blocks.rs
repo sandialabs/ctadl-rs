@@ -102,10 +102,10 @@ impl BasicBlocks {
     /// this function also computes dominators.
     #[inline]
     pub fn dominance_frontier(&self) -> &DominanceFrontier<BasicBlockIdx> {
-        let dominators = self.dominators();
-        self.cache
-            .dominance_frontier
-            .get_or_init(|| dominators.compute_frontier(&self))
+        self.cache.dominance_frontier.get_or_init(|| {
+            let dominators = self.dominators();
+            dominators.compute_frontier(&self)
+        })
     }
 
     pub fn invalidate_cfg_cache(&mut self) {
