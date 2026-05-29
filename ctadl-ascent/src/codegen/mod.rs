@@ -229,8 +229,8 @@ impl Visitor for CodegenVisitor<'_> {
                     if let Exp::AccessPath(ap) = src
                         && !ap.path.is_empty()
                     {
-                        let mut path = cap_path.get(&ap.variable_ref).cloned().unwrap_or_default();
-                        path.extend_merging(ap.path.iter().cloned());
+                        let base_path = cap_path.get(&ap.variable_ref).cloned().unwrap_or_default();
+                        let path = fx::Path::from_accesses(base_path.iter().cloned().chain(ap.path.iter().cloned()));
                         self.paths_dedup.insert((path,));
                         cap_path.insert(dest.clone(), path);
                     }

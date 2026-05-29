@@ -30,12 +30,15 @@ lazy_static::lazy_static! {
 ///
 /// The access path is represented as a stack of accesses, innermost first. So an access path like x.foo.bar.baz
 /// is represented as `cons(.foo, cons(.bar, cons(.baz)))`
+///
+/// Access paths are composed of field and offset accesses. Contiguous runs of offset accesses are summed, so there is never more than one offset access in a row. In effect, the offsets are "addresses of" the containing field.
 #[derive(
     Clone, Copy, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord,
 )]
 pub struct Path(pub SuffixSeq<mir::FieldAccess>);
 
 impl Path {
+    /// Creates access path from a sequences of accesses
     pub fn from_accesses(iter: impl IntoIterator<Item = mir::FieldAccess>) -> Self {
         let mut items = Vec::new();
         for item in iter {
@@ -109,8 +112,12 @@ impl Path {
     }
 
     /// Iterates from the innermost access out
-    pub fn iter(&self) -> impl Iterator<Item = &mir::FieldAccess> {
+    pub fn iter(&self) -> suffix_seq::Iter<mir::FieldAccess> {
         self.0.iter()
+    }
+
+    pub fn concat(&self, other: &Self) -> Self {
+        Self::from_accesses(self.iter().chain(other.iter()).cloned())
     }
 
     /// Substitutes given prefix of path with new_prefix and returns the new path.
@@ -1030,21 +1037,18 @@ mod tests {
         use ctadl_ir::mir::{FieldAccess, Offset};
 
         // Create p23 = .[1]
-        let mut p23 = Path::empty();
-        p23.push(FieldAccess::Offset(Offset(1)));
+        let p23 = Path::from_accesses([FieldAccess::Offset(Offset(1))]);
 
         // Create p2 = '' (empty path)
         let p2 = Path::empty();
 
         // Create p1 = .[1]
-        let mut p1 = Path::empty();
-        p1.push(FieldAccess::Offset(Offset(1)));
+        let p1 = Path::from_accesses([FieldAccess::Offset(Offset(1))]);
 
         let result = p23.substitute_prefix(&p2, &p1).unwrap();
 
         // Create expected = .[2]
-        let mut expected = Path::empty();
-        expected.push(FieldAccess::Offset(Offset(2)));
+        let expected = Path::from_accesses([FieldAccess::Offset(Offset(2))]);
 
         assert_eq!(result, expected);
 
@@ -1087,10 +1091,11 @@ mod tests {
         // Test path with numeric offsets
         // Create a path manually with mixed FieldAccess types
         use ctadl_ir::mir::{FieldAccess, Offset};
-        let mut path = Path::empty();
-        path.push(FieldAccess::Symbol(ArcIntern::from("foo")));
-        path.push(FieldAccess::Offset(Offset(42)));
-        path.push(FieldAccess::Symbol(ArcIntern::from("bar")));
+        let path = Path::from_accesses([
+            FieldAccess::Symbol(ArcIntern::from("foo")),
+            FieldAccess::Offset(Offset(42)),
+            FieldAccess::Symbol(ArcIntern::from("bar")),
+        ]);
 
         let serialized = path.to_dot_string();
         assert_eq!(serialized, ".foo.[42].bar");
