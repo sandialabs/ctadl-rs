@@ -15,8 +15,7 @@ Parameters in IR are mapped to the same indices in the Datalog. Return values ar
 -1, -2, -3, etc. The global heap is mapped to [`GLOBALS_INDEX`], which is [`i16::MIN`].
 
 */
-use hashbrown::hash_map::HashMap;
-use hashbrown::hash_set::HashSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use internment::ArcIntern;
 use smallvec::SmallVec;
@@ -53,7 +52,7 @@ pub fn codegen_program(
     source_info: &mut IndexSourceInfo,
     strategy: CallResolutionStrategy,
 ) {
-    let mut instantiated_classes = HashSet::new();
+    let mut instantiated_classes = BTreeSet::new();
     let mut finder = InstantiationFinder {
         instantiated_classes: &mut instantiated_classes,
     };
@@ -89,7 +88,9 @@ pub fn codegen_function(
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
 ) {
-    let mut instantiated_classes = HashSet::new();
+    let function_data_owned = function_data.clone();
+    let function_data = &function_data_owned;
+    let mut instantiated_classes = BTreeSet::new();
     let mut finder = InstantiationFinder {
         instantiated_classes: &mut instantiated_classes,
     };
@@ -132,7 +133,7 @@ pub fn variable_is_globals(v: &FlowVariable) -> bool {
 }
 
 struct InstantiationFinder<'a> {
-    instantiated_classes: &'a mut HashSet<Symbol>,
+    instantiated_classes: &'a mut BTreeSet<Symbol>,
 }
 
 impl Visitor for InstantiationFinder<'_> {
@@ -154,7 +155,7 @@ struct CodegenVisitor<'a> {
     /// Name of the function under translation (set in visit_function_data)
     function: Option<fx::FunctionId>,
     /// We may see the same access path multiple times so we dedup them with this set
-    paths_dedup: HashSet<(fx::Path,)>,
+    paths_dedup: BTreeSet<(fx::Path,)>,
 }
 
 impl<'a> CodegenVisitor<'a> {
@@ -179,8 +180,8 @@ impl<'a> CodegenVisitor<'a> {
 
     /// Gens the dedup'd paths to the facts
     fn finish(&mut self) {
-        let mut paths = std::mem::take(&mut self.paths_dedup);
-        self.facts.paths.extend(paths.drain());
+        let paths = std::mem::take(&mut self.paths_dedup);
+        self.facts.paths.extend(paths.into_iter());
     }
 
     /// Does finish and also runs a datalog modeling pass
@@ -222,7 +223,7 @@ impl Visitor for CodegenVisitor<'_> {
         block: BasicBlockIdx,
         data: &BasicBlockData,
     ) {
-        let mut cap_path: HashMap<VariableRef, fx::Path> = HashMap::new();
+        let mut cap_path: BTreeMap<VariableRef, fx::Path> = BTreeMap::new();
         for statement in &data.statements {
             if let StatementKind::Assign { dest, sources } = &statement.kind {
                 for src in sources {
@@ -301,30 +302,35 @@ impl Visitor for CodegenVisitor<'_> {
                 operands,
             } => {
                 let dst = FlowVertex(self.trans_variable_ref(out).clone(), fx::Path::empty());
+                let mut seen_phi = BTreeSet::new();
                 for (_, op) in operands {
                     let src = FlowVertex(self.trans_variable_ref(op).clone(), fx::Path::empty());
-                    //log::trace!("{p}: {dv:#?} {sv:#?}");
-                    self.facts.assign.push((site, dst.clone(), src));
+                    if seen_phi.insert(src.clone()) {
+                        self.facts.assign.push((site, dst.clone(), src));
+                    }
                 }
             }
             ParamFlow { params, global } => {
+                let mut seen_param = BTreeSet::new();
                 for (i, op) in params.iter().enumerate() {
                     // assign current version of formal back to the formal itself so we can track
                     // data flow
-                    let dst = FlowVertex(
-                        FlowVariable::Formal(i.try_into().unwrap()),
-                        fx::Path::empty(),
-                    );
-                    let src = FlowVertex(self.trans_variable_ref(op), fx::Path::empty());
-                    self.facts.assign.push((site, dst, src));
+                    let dst = FlowVariable::Formal(i.try_into().unwrap());
+                    let src = self.trans_variable_ref(op);
+                    if seen_param.insert((dst.clone(), src.clone())) {
+                        let dst = FlowVertex(dst, fx::Path::empty());
+                        let src = FlowVertex(src, fx::Path::empty());
+                        self.facts.assign.push((site, dst, src));
+                    }
                 }
                 // assign current version of global back to the auxparam global
-                let dst = FlowVertex(
-                    FlowVariable::Formal(GLOBALS_INDEX.into()),
-                    fx::Path::empty(),
-                );
-                let src = FlowVertex(self.trans_variable_ref(global), fx::Path::empty());
-                self.facts.assign.push((site, dst, src));
+                let dst = FlowVariable::Formal(GLOBALS_INDEX.into());
+                let src = self.trans_variable_ref(global);
+                if seen_param.insert((dst.clone(), src.clone())) {
+                    let dst = FlowVertex(dst, fx::Path::empty());
+                    let src = FlowVertex(src, fx::Path::empty());
+                    self.facts.assign.push((site, dst, src));
+                }
             }
             CallAssign { rets, args, style } => {
                 let mut args = args.clone();
@@ -491,7 +497,9 @@ impl Visitor for CodegenVisitor<'_> {
                     FlowVertex(source.clone(), fx::Path::empty()),
                 ));
                 // dest_var.dest_fields <- value
-                if let Some(value) = value {
+                if !dest_fields.is_empty()
+                    && let Some(value) = value
+                {
                     self.facts.assign.push((site, dest, value));
                 }
             }
@@ -579,11 +587,11 @@ impl CodegenVisitor<'_> {
 
 #[derive(Debug, Default)]
 struct ClassHierarchyAnalysis {
-    java_resolvents: HashMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>>,
+    java_resolvents: BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>>,
 }
 
 impl ClassHierarchyAnalysis {
-    fn new(vmt: &VirtualMethodTable, instantiated_classes: HashSet<Symbol>) -> Self {
+    fn new(vmt: &VirtualMethodTable, instantiated_classes: BTreeSet<Symbol>) -> Self {
         match vmt {
             VirtualMethodTable::Java { methods, hierarchy } => {
                 let method_implemented = methods
@@ -639,7 +647,7 @@ fn run_cha(
     interface_type: Vec<(Symbol,)>,
     super_interface: Vec<(Symbol, Symbol)>,
     instantiated_classes: Vec<(Symbol,)>,
-) -> HashMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>> {
+) -> BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>> {
     let prog = ascent::ascent_run! {
         // input relations
         relation method_implemented(Symbol, Symbol, Symbol, Symbol) = method_implemented;
@@ -687,7 +695,7 @@ fn run_cha(
             // RTA rule: Only resolve if there is an instantiated subtype
             //instantiated_class(sub);
     };
-    let mut result: HashMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>> = HashMap::new();
+    let mut result: BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>> = BTreeMap::new();
     for (c, n, d, id) in prog.cha_resolve.into_iter() {
         result.entry((c, n, d)).or_default().push(id);
     }
