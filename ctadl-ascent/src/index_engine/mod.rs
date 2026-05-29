@@ -783,25 +783,25 @@ pub fn taint_index_with_config(
             context_assign(cs, func_id, _, v1, p1, v2, p2),
             locals(func_id, v2, p23, n, pn),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(p13.clone());
+            paths(&p13);
 
         context_locals(cs.clone(), func_id, v2.clone(), p23.clone(), n.clone(), pn.clone()) <--
             context_assign(cs, func_id, _, v1, p1, v2, p2),
             locals(func_id, v1, p13, n, pn),
             if let Some(p23) = p13.substitute_prefix(p1, p2),
-            paths(p23.clone());
+            paths(&p23);
 
         context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
             context_locals(cs, func_id, v2, p23, n, pn),
             assign_like(func_id, _, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(p13.clone());
+            paths(&p13);
 
         context_locals(cs.clone(), func_id, v1.clone(), p1.clone(), n.clone(), pn3.clone()) <--
             context_locals(cs, func_id, v2, p2, n, pn),
             assign_like(func_id, _, v1, p1, v2, p23),
             if let Some(pn3) = p23.substitute_prefix(p2, pn),
-            paths(pn3.clone());
+            paths(&pn3);
 
         // 3.3: Contextual Summary Creation
         context_summary(cs.clone(), func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
@@ -815,21 +815,21 @@ pub fn taint_index_with_config(
             context_locals(cs, func_id, v1, p1, n1, ap),
             locals(func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            paths(ap3.clone()),
+            paths(&ap3),
             if n1 != n2 || ap3 != *bp;
 
         context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
             locals(func_id, v1, p1, n1, ap),
             context_locals(cs, func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            paths(ap3.clone()),
+            paths(&ap3),
             if n1 != n2 || ap3 != *bp;
 
         context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
             context_locals(cs, func_id, v1, p1, n1, ap),
             context_locals(cs, func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            paths(ap3.clone()),
+            paths(&ap3),
             if n1 != n2 || ap3 != *bp;
 
         // 3.4: Instantiate Summaries and pop call string
@@ -860,7 +860,7 @@ pub fn taint_index_with_config(
             func_ptr_assign_like(func_id, _, v2, p_context, tgt),
             assign_like(func_id, insn_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
-            paths(p_new.clone());
+            paths(&p_new);
 
         // Java Object Propagation
         java_obj_assign_like(func_id, insn_id, v.clone(), p.clone(), tgt) <--
@@ -871,7 +871,7 @@ pub fn taint_index_with_config(
             java_obj_assign_like(func_id, _, v2, p_context, tgt),
             assign_like(func_id, insn_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
-            paths(p_new.clone());
+            paths(&p_new);
     };
     log::info!("index scc times: {}", prog.scc_times_summary());
     log::trace!(
