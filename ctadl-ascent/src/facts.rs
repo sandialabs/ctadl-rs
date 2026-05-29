@@ -31,7 +31,9 @@ lazy_static::lazy_static! {
 /// The access path is represented as a stack of accesses, innermost first. So an access path like x.foo.bar.baz
 /// is represented as `cons(.foo, cons(.bar, cons(.baz)))`
 ///
-/// Access paths are composed of field and offset accesses. Contiguous runs of offset accesses are summed, so there is never more than one offset access in a row. In effect, the offsets are "addresses of" the containing field.
+/// Access paths are composed of field and offset accesses. Contiguous runs of offset accesses are
+/// summed, so there is never more than one offset access in a row. In effect, the offsets are
+/// "addresses of" the containing field.
 #[derive(
     Clone, Copy, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord,
 )]
