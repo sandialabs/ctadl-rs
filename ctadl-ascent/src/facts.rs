@@ -892,43 +892,40 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> 
 /// the suffix is .[1].
 #[inline]
 pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<SuffixSeq<mir::FieldAccess>> {
-    use mir::FieldAccess;
-    use mir::Offset;
-    let ap_seq = ap.0;
-    let prefix_seq = prefix.0;
+    use mir::{FieldAccess, Offset};
+    let mut ap_seq = ap.0;
+    let mut prefix_seq = prefix.0;
 
     if prefix_seq.is_empty() {
         return Some(ap_seq);
     }
 
-    if ap_seq.len() < prefix_seq.len() {
-        return None;
-    }
-
     // Check that all components except the last one match exactly
-    let mut ap_iter = ap_seq.iter();
-    let mut prefix_iter = prefix_seq.iter();
-
-    for _ in 0..prefix_seq.len() - 1 {
-        if ap_iter.next() != prefix_iter.next() {
+    // Invariant: prefix_seq.tail() is a non-empty seq
+    while prefix_seq.tail().unwrap_or_default().head().is_some() {
+        if prefix_seq.head() != ap_seq.head() {
             return None;
         }
+        prefix_seq = prefix_seq.tail().unwrap();
+        ap_seq = ap_seq.tail().unwrap_or_default();
     }
+    // unwrap() safety follows from while condition
+    let prefix_last = prefix_seq.head().unwrap();
 
-    let ap_last = ap_iter.next().unwrap();
-    let prefix_last = prefix_iter.next().unwrap();
+    // There's one prefix component left. If there are no more ap components, we fail to match.
+    let Some(ap_last) = ap_seq.head() else {
+        return None;
+    };
 
     match (ap_last, prefix_last) {
+        // The last offsets match with an offset adjustment
         (FieldAccess::Offset(Offset(an)), FieldAccess::Offset(Offset(pn))) => {
-            let diff = an - pn;
-            // Include an Offset in the suffix
-            let rest = ap_seq.suffix(prefix_seq.len());
-            let result = rest.push_front(FieldAccess::Offset(Offset(diff)));
-            Some(result)
+            let adjust = an - pn;
+            Some(ap_seq.map_head(|_| FieldAccess::Offset(Offset(adjust))))
         }
         (a, p) if a == p => {
             // Exact match for the last prefix component
-            Some(ap_seq.suffix(prefix_seq.len()))
+            Some(ap_seq.tail().unwrap())
         }
         _ => None,
     }
@@ -1064,6 +1061,67 @@ mod tests {
         let r: Path = ".y".into();
         let e: Path = ".y.[1].f".into();
         assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
+    }
+
+    #[test]
+    fn test_substitute_prefix_comprehensive() {
+        // 1. Several offsets
+        let p: Path = ".x.[30]".into();
+        let q: Path = ".x.[10]".into();
+        let r: Path = ".y.[2]".into();
+        let expected: Path = ".y.[22]".into();
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        let p: Path = ".a.[100].b.[50]".into();
+        let q: Path = ".a.[60]".into();
+        let r: Path = ".c.[10]".into();
+        let expected: Path = ".c.[50].b.[50]".into(); // .c.[10] + ([100]-[60]) = .c.[50]
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        // 2. Empty prefix
+        let p: Path = ".x.[10]".into();
+        let q: Path = Path::empty();
+        let r: Path = ".y.[5]".into();
+        let expected: Path = ".y.[5].x.[10]".into();
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        let p: Path = ".[10]".into();
+        let q: Path = Path::empty();
+        let r: Path = ".[5]".into();
+        let expected: Path = ".[15]".into();
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        // 3. Empty new_prefix
+        let p: Path = ".x.y".into();
+        let q: Path = ".x".into();
+        let r: Path = Path::empty();
+        let expected: Path = ".y".into();
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        let p: Path = ".x.[10]".into();
+        let q: Path = ".x".into();
+        let r: Path = Path::empty();
+        let expected: Path = ".[10]".into();
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        // 4. Empty path
+        let p: Path = Path::empty();
+        let q: Path = Path::empty();
+        let r: Path = ".x.[10]".into();
+        let expected: Path = ".x.[10]".into();
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        let p: Path = Path::empty();
+        let q: Path = ".x".into();
+        let r: Path = ".y".into();
+        assert_eq!(p.substitute_prefix(&q, &r), None);
+
+        // Additional cases: Negative offsets
+        let p: Path = ".[10]".into();
+        let q: Path = ".[20]".into();
+        let r: Path = ".[5]".into();
+        let expected: Path = ".[-5]".into(); // [5] + ([10] - [20]) = [5] - [10] = [-5]
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
     }
 
     #[test]
