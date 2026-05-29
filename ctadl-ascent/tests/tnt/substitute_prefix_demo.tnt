@@ -1,0 +1,32 @@
+// Demonstration of Path::substitute_prefix logic with offset arithmetic.
+// This program matches the logic in the following test case:
+// p = .a.[100].b.[50]
+// q = .a.[60]
+// r = .c.[10]
+// expected = .c.[50].b.[50]
+//
+// The logic for p.substitute_prefix(q, r) is:
+// 1. Match p with prefix q.
+//    .a matches .a
+//    [100] matches [60] with an adjustment of 100 - 60 = 40.
+//    The suffix is [40].b.[50].
+// 2. Prepend r to the suffix.
+//    .c.[10] + [40].b.[50]
+// 3. Merge contiguous offsets.
+//    [10] + [40] = [50].
+// 4. Result: .c.[50].b.[50].
+
+def Main() {
+start:
+  // We initialize a variable with a "deep" path and taint it.
+  secret = source(Secret);
+  p_val.a.[100].b.[50].contents = secret;
+
+  result.c.[10] = p_val.a.[60];
+
+  // Based on the substitution logic, the taint at .a.[100].b.[50]
+  // should flow to .c.[50].b.[50] in the result.
+  expected_path = result.c.[50].b.[50].contents;
+  sink(expected_path, Secret);
+  return;
+}
