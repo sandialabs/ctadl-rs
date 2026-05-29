@@ -28,8 +28,9 @@ lazy_static::lazy_static! {
 
 /// A sequence of field/array accesses
 ///
-/// The access path is represented as a stack of accesses, innermost first. So an access path like x.foo.bar.baz
-/// is represented as `cons(.foo, cons(.bar, cons(.baz)))`
+/// The access path is represented as a stack of accesses, innermost first. So an access path like
+/// x.foo.bar.baz is represented as `cons(.foo, cons(.bar, cons(.baz)))`. This representation allows
+/// common suffix sharing, something provided by the [`SuffixSeq`] datatype.
 ///
 /// Access paths are composed of field and offset accesses. Contiguous runs of offset accesses are
 /// summed, so there is never more than one offset access in a row. In effect, the offsets are
@@ -106,18 +107,12 @@ impl Path {
         }
     }
 
-    pub fn pop(mut self) -> Option<Self> {
-        self.0.all_but_last().map(|s| {
-            self.0 = s;
-            self
-        })
-    }
-
     /// Iterates from the innermost access out
     pub fn iter(&self) -> suffix_seq::Iter<mir::FieldAccess> {
         self.0.iter()
     }
 
+    /// Concatenates self onto other, returning new path
     pub fn concat(&self, other: &Self) -> Self {
         Self::from_accesses(self.iter().chain(other.iter()).cloned())
     }
