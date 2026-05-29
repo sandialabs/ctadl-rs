@@ -114,6 +114,7 @@ pub fn index(
     models: &[std::path::PathBuf],
     strategy: CallResolutionStrategy,
     prune_unreachable_cfg_nodes: bool,
+    dump_index_graph: Option<&Path>,
 ) -> Result<(), Error> {
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -162,6 +163,14 @@ pub fn index(
             crate::codegen::flowy::index_check(&import, &result, &source_info.sites)?;
         }
     }
+
+    if let Some(dot_path) = dump_index_graph {
+        let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+        crate::graphviz::render_index_graph(&result.assign_like, &source_info.sites, &mut file)
+            .err_context(|| "rendering index graph")?;
+        eprintln!("Wrote index graph to '{}'", dot_path.display());
+    }
+
     let path = project.index_path()?;
     result
         .try_save(&path)
@@ -312,10 +321,8 @@ pub fn format(
             let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
             let ids = facts::IdMap::try_load(&index_path)
                 .err_context(|| "loading IdMap for taint graph")?;
-            query_engine::graphviz::render_taint_graph(
-                &nodes, &edges, &sources, &sinks, &ids, &mut file,
-            )
-            .err_context(|| "rendering taint graph")?;
+            crate::graphviz::render_taint_graph(&nodes, &edges, &sources, &sinks, &ids, &mut file)
+                .err_context(|| "rendering taint graph")?;
             eprintln!("Wrote taint graph to '{}'", dot_path.display());
         }
     };

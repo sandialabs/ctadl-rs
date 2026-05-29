@@ -2,7 +2,7 @@ use rustc_graphviz as dot;
 use std::collections::BTreeSet;
 use std::io::Write;
 
-use crate::facts::{FlowVariable, FunctionId, Path};
+use crate::facts::{FlowVariable, FunctionId, InsnId, Path};
 
 /// A wrapper around taint edges to implement Graphviz traits.
 pub struct TaintGraphViz<'a> {
@@ -152,5 +152,87 @@ pub fn render_taint_graph<W: Write>(
     writer: &mut W,
 ) -> std::io::Result<()> {
     let graph = TaintGraphViz::new(nodes, edges, sources, sinks, id_map);
+    dot::render(&graph, writer)
+}
+
+pub struct IndexGraphViz<'a> {
+    nodes: Vec<(FunctionId, FlowVariable, Path)>,
+    edges: &'a [(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)],
+    id_map: &'a crate::facts::IdMap,
+}
+
+impl<'a> IndexGraphViz<'a> {
+    fn node_to_string(&self, f: &FunctionId, v: &FlowVariable, p: &Path) -> String {
+        let func_name = self
+            .id_map
+            .get_function(*f)
+            .map(|f| f.to_string())
+            .unwrap_or_else(|| format!("func_{}", f.id));
+        format!("{}\\n{}{}", func_name, v, p.to_dot_string())
+    }
+}
+
+impl<'a> dot::Labeller<'a> for IndexGraphViz<'a> {
+    type Node = (FunctionId, FlowVariable, Path);
+    type Edge = &'a (FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path);
+
+    fn graph_id(&'a self) -> dot::Id<'a> {
+        dot::Id::new("index_graph").unwrap()
+    }
+
+    fn node_id(&'a self, n: &Self::Node) -> dot::Id<'a> {
+        let s = self.node_to_string(&n.0, &n.1, &n.2);
+        let safe_id = s
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect::<String>();
+        dot::Id::new(format!("node_{}", safe_id)).unwrap()
+    }
+
+    fn node_label(&self, n: &Self::Node) -> dot::LabelText<'a> {
+        dot::LabelText::EscStr(self.node_to_string(&n.0, &n.1, &n.2).into())
+    }
+
+    fn edge_label(&self, e: &Self::Edge) -> dot::LabelText<'a> {
+        dot::LabelText::label(format!("{}", e.1.id))
+    }
+}
+
+impl<'a> dot::GraphWalk<'a> for IndexGraphViz<'a> {
+    type Node = (FunctionId, FlowVariable, Path);
+    type Edge = &'a (FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path);
+
+    fn nodes(&'a self) -> dot::Nodes<'a, Self::Node> {
+        self.nodes.iter().cloned().collect()
+    }
+
+    fn edges(&'a self) -> dot::Edges<'a, Self::Edge> {
+        self.edges.iter().collect()
+    }
+
+    fn source(&'a self, e: &Self::Edge) -> Self::Node {
+        (e.0, e.4.clone(), e.5)
+    }
+
+    fn target(&'a self, e: &Self::Edge) -> Self::Node {
+        (e.0, e.2.clone(), e.3)
+    }
+}
+
+pub fn render_index_graph<W: Write>(
+    assign_like: &[(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)],
+    id_map: &crate::facts::IdMap,
+    writer: &mut W,
+) -> std::io::Result<()> {
+    let mut nodes = BTreeSet::new();
+    for (func_id, _insn_id, dst_var, dst_path, src_var, src_path) in assign_like {
+        nodes.insert((*func_id, dst_var.clone(), *dst_path));
+        nodes.insert((*func_id, src_var.clone(), *src_path));
+    }
+    let graph = IndexGraphViz {
+        nodes: nodes.into_iter().collect(),
+        edges: assign_like,
+        id_map,
+    };
     dot::render(&graph, writer)
 }
