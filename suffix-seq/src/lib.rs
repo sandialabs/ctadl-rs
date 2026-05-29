@@ -200,7 +200,7 @@ where
         matches!(self.0, Node::Nil)
     }
 
-    /// Returns the length of the sequence.
+    /// Returns the length of the sequence. Time complexity $O(n)
     pub fn len(&self) -> usize {
         let mut node = self;
         let mut len = 0;
