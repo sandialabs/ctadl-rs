@@ -14,7 +14,7 @@ where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
     Nil,
-    Cons(T, SuffixSeq<T>, usize),
+    Cons(T, SuffixSeq<T>),
 }
 
 #[cfg(feature = "serde")]
@@ -28,7 +28,7 @@ where
     {
         match self {
             Node::Nil => serializer.serialize_unit_variant("Node", 0, "Nil"),
-            Node::Cons(head, tail, _) => {
+            Node::Cons(head, tail) => {
                 use serde::ser::SerializeStruct;
                 let mut state = serializer.serialize_struct("Node", 2)?;
                 state.serialize_field("head", head)?;
@@ -60,10 +60,7 @@ where
         let data = NodeData::deserialize(deserializer)?;
         match data {
             NodeData::Nil => Ok(Node::Nil),
-            NodeData::Cons { head, tail } => {
-                let len = tail.len() + 1;
-                Ok(Node::Cons(head, tail, len))
-            }
+            NodeData::Cons { head, tail } => Ok(Node::Cons(head, tail)),
         }
     }
 }
@@ -168,15 +165,25 @@ where
 
     /// Returns a new `SuffixSeq` with `item` prepended to the current sequence.
     pub fn push_front(&self, item: T) -> Self {
-        let len = self.len() + 1;
-        Self::intern(Node::Cons(item, *self, len))
+        Self::intern(Node::Cons(item, *self))
     }
 
     /// Returns the head element of the sequence, if it's not empty.
     pub fn head(&self) -> Option<&T> {
         match self.0 {
             Node::Nil => None,
-            Node::Cons(head, _, _) => Some(head),
+            Node::Cons(head, _) => Some(head),
+        }
+    }
+
+    /// Maps a function over the head element, returning the new sequence
+    pub fn map_head<F>(&self, func: F) -> Self
+    where
+        F: FnOnce(Option<&T>) -> T,
+    {
+        match self.0 {
+            Node::Nil => self.push_front(func(None)),
+            Node::Cons(head, tail) => tail.push_front(func(Some(head))),
         }
     }
 
@@ -184,7 +191,7 @@ where
     pub fn tail(&self) -> Option<Self> {
         match self.0 {
             Node::Nil => None,
-            Node::Cons(_, tail, _) => Some(*tail),
+            Node::Cons(_, tail) => Some(*tail),
         }
     }
 
@@ -195,9 +202,18 @@ where
 
     /// Returns the length of the sequence.
     pub fn len(&self) -> usize {
-        match self.0 {
-            Node::Nil => 0,
-            Node::Cons(_, _, len) => *len,
+        let mut node = self;
+        let mut len = 0;
+        loop {
+            match node.0 {
+                Node::Nil => {
+                    return len;
+                }
+                Node::Cons(_, tail) => {
+                    len += 1;
+                    node = tail
+                }
+            }
         }
     }
 
@@ -373,7 +389,7 @@ where
                 self.current = None;
                 None
             }
-            Node::Cons(head, tail, _) => {
+            Node::Cons(head, tail) => {
                 self.current = Some(*tail);
                 Some(head)
             }
@@ -455,5 +471,21 @@ mod tests {
 
         assert_eq!(seq1, seq2);
         assert!(std::ptr::eq(seq1.0, seq2.0));
+    }
+
+    #[test]
+    fn test_map_head_or_default() {
+        let empty: SuffixSeq<i32> = SuffixSeq::new();
+        let seq = empty.map_head(|x| x.map_or(1, |x| x + 1));
+        assert_eq!(seq.head(), Some(&1));
+
+        let seq2 = seq.map_head(|x| x.map_or(10, |x| x + 5));
+        assert_eq!(seq2.head(), Some(&6));
+        assert_eq!(seq2.len(), 1);
+
+        let multi: SuffixSeq<i32> = vec![1, 2, 3].into_iter().collect();
+        let multi2 = multi.map_head(|x| x.map_or(10, |&x| x + 10));
+        let items: Vec<_> = multi2.iter().cloned().collect();
+        assert_eq!(items, vec![11, 2, 3]);
     }
 }
