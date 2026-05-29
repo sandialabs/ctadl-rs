@@ -612,7 +612,7 @@ impl ClassHierarchyAnalysis {
                 Self { java_resolvents }
             }
             _ => {
-                log::warn!("Unsupported virtual method table");
+                log::warn!("CHA: unsupported virtual method table");
                 Self::default()
             }
         }
