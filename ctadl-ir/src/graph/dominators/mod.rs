@@ -244,25 +244,25 @@ impl<N: IdxOrdered> DomImpl<N> {
     }
 }
 
-impl<N: IdxOrdered> DominatorTree<N> {
+impl<N: IdxOrdered> DominanceFrontier<N> {
     /// Dominance frontier computation.
-    pub fn compute_frontier<G>(&self, graph: &G) -> DominanceFrontier<N>
+    pub fn new<G>(graph: &G, dt: &DominatorTree<N>) -> DominanceFrontier<N>
     where
         G: DirectedGraph<Node = N> + Successors,
     {
         let mut df: IndexVec<N, BitSet> = IndexVec::from_elem_n(BitSet::new(), graph.num_nodes());
-        for x in self.iter_postorder() {
+        for x in dt.iter_postorder() {
             for y in graph.successors(x) {
                 // Local contribution
-                if self.idom(y) != x {
+                if dt.idom(y) != x {
                     df[x].insert(y.index());
                 }
             }
             // As we walk bottom up, lower nodes get filled and we use them to fill higher nodes.
-            for z in self.successors(x) {
+            for z in dt.successors(x) {
                 for y in df[z].clone().into_iter().map(N::new) {
                     // Up
-                    if self.idom(y) != x {
+                    if dt.idom(y) != x {
                         df[x].insert(y.index());
                     }
                 }
@@ -270,9 +270,7 @@ impl<N: IdxOrdered> DominatorTree<N> {
         }
         DominanceFrontier { df }
     }
-}
 
-impl<N: IdxOrdered> DominanceFrontier<N> {
     /// Iterate over the nodes of the dominanco frontier for `n`
     #[inline]
     pub fn iter(&self, n: N) -> impl Iterator<Item = N> {

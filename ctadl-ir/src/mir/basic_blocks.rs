@@ -4,10 +4,7 @@ use std::sync::{Arc, OnceLock};
 
 use smallvec::SmallVec;
 
-use crate::graph::{
-    DirectedGraph, Predecessors, StartNode, Successors,
-    dominators::{DominanceFrontier, DominatorTree},
-};
+use crate::graph::{DirectedGraph, Predecessors, StartNode, Successors};
 use crate::index::{idx::Idx, index_vec::IndexVec};
 pub use crate::mir::{BasicBlockData, BasicBlockIdx};
 
@@ -90,23 +87,9 @@ impl BasicBlocks {
         &mut self.basic_blocks
     }
 
-    /// Returns the dominator tree for the CFG.
-    #[inline]
-    pub fn dominators(&self) -> &DominatorTree<BasicBlockIdx> {
-        self.cache
-            .dominators
-            .get_or_init(|| DominatorTree::new(&self))
-    }
-
     /// Returns the dominance frontier. Dominance frontier computation depends on dominators, so
     /// this function also computes dominators.
     #[inline]
-    pub fn dominance_frontier(&self) -> &DominanceFrontier<BasicBlockIdx> {
-        self.cache.dominance_frontier.get_or_init(|| {
-            let dominators = self.dominators();
-            dominators.compute_frontier(&self)
-        })
-    }
 
     pub fn invalidate_cfg_cache(&mut self) {
         if let Some(cache) = Arc::get_mut(&mut self.cache) {
@@ -199,6 +182,4 @@ impl fmt::Display for BasicBlocks {
 #[derive(Clone, Debug, Default)]
 pub struct Cache {
     predecessors: OnceLock<IndexVec<BasicBlockIdx, SmallVec<[BasicBlockIdx; 4]>>>,
-    dominators: OnceLock<DominatorTree<BasicBlockIdx>>,
-    dominance_frontier: OnceLock<DominanceFrontier<BasicBlockIdx>>,
 }

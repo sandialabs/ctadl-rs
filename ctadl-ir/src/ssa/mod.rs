@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use internment::ArcIntern;
 use smallvec::{SmallVec, smallvec};
 
+use crate::graph::dominators::{DominanceFrontier, DominatorTree};
 use crate::graph::{DirectedGraph, Predecessors, StartNode, Successors, reachable};
 use crate::index::{idx::Idx, index_vec::IndexVec};
 use crate::mir::visit::MutVisitor;
@@ -24,6 +25,7 @@ mod tests;
 #[derive(Debug)]
 struct PhiPlace {
     variables: HashSet<ArcIntern<Variable>>,
+    dominators: DominatorTree<BasicBlockIdx>,
 }
 
 #[derive(Debug)]
@@ -241,8 +243,10 @@ impl PhiPlace {
     /// Place phi functions. Figure 11 in the Cytron et al paper. The returns are used to
     /// initialize variable sets.
     fn new(function: &mut FunctionData) -> Self {
+        let dominators = DominatorTree::new(&function.blocks);
         let mut phi_place = Self {
             variables: Default::default(),
+            dominators,
         };
         // Script-a in the paper. Maps variable to all the blocks that assign that variable.
         let mut a: HashMap<ArcIntern<Variable>, SmallVec<[BasicBlockIdx; 4]>> = Default::default();
@@ -280,6 +284,7 @@ impl PhiPlace {
             IndexVec::from_elem_n(0, function.blocks.num_nodes());
         let mut iter_count = 0;
 
+        let df = DominanceFrontier::new(&function.blocks, &phi_place.dominators);
         for v in variables.clone() {
             assert!(w.is_empty());
             iter_count += 1;
@@ -289,7 +294,7 @@ impl PhiPlace {
                 w.push(x);
             }
             while let Some(x) = w.pop() {
-                let df_y: SmallVec<[_; 4]> = function.blocks.dominance_frontier().iter(x).collect();
+                let df_y: SmallVec<[_; 4]> = df.iter(x).collect();
                 for y in df_y.into_iter() {
                     if has_already[y] < iter_count {
                         // Insert a phi func with placeholder copies of predecessor operand
@@ -331,11 +336,16 @@ impl SsaRename {
         }
         // Rewrite all the blocks
         let mut result = Self { s, c };
-        result.search(blocks, blocks.start_node());
+        result.search(blocks, blocks.start_node(), &place.dominators);
         result
     }
 
-    fn search(&mut self, blocks: &mut BasicBlocks, x: BasicBlockIdx) {
+    fn search(
+        &mut self,
+        blocks: &mut BasicBlocks,
+        x: BasicBlockIdx,
+        dominators: &DominatorTree<BasicBlockIdx>,
+    ) {
         use StatementKind::*;
 
         for (_z, stmt) in blocks[x].iter_enumerated_mut() {
@@ -379,12 +389,8 @@ impl SsaRename {
                 }
             }
         }
-        for y in blocks
-            .dominators()
-            .successors(x)
-            .collect::<SmallVec<[_; 4]>>()
-        {
-            self.search(blocks, y);
+        for y in dominators.successors(x).collect::<SmallVec<[_; 4]>>() {
+            self.search(blocks, y, dominators);
         }
         for (_z, stmt) in blocks[x].iter_enumerated() {
             for v in stmt.iter_dst_var() {

@@ -161,7 +161,7 @@ fn test_dominance_frontier_cytron_paper() {
         ],
     );
     let dt = DominatorTree::new(&g);
-    let df = dt.compute_frontier(&g);
+    let df = DominanceFrontier::new(&g, &dt);
     assert_eq!(df.frontier(1), &[13].into_iter().collect::<BitSet>());
     assert_eq!(df.frontier(2), &[2, 13].into_iter().collect::<BitSet>());
     assert_eq!(df.frontier(3), &[8].into_iter().collect::<BitSet>());
