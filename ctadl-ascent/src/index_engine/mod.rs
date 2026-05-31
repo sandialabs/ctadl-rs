@@ -250,6 +250,86 @@ impl Default for IndexConfig {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct IndexStats {
+    pub initial_assign: usize,
+    pub final_assign_like: usize,
+    pub initial_formals: usize,
+    pub final_locals: usize,
+    pub initial_java_obj_assign: usize,
+    pub final_java_obj_assign_like: usize,
+    pub initial_func_ptr_assign: usize,
+    pub final_func_ptr_assign_like: usize,
+    pub initial_summary: usize,
+    pub final_summary: usize,
+    pub num_functions: usize,
+    pub num_variables: usize,
+    pub hybrid_critical_summary: usize,
+    pub hybrid_resolvent: usize,
+    pub hybrid_context_assign: usize,
+    pub hybrid_context_locals: usize,
+    pub hybrid_context_summary: usize,
+}
+
+impl IndexStats {
+    pub fn log(&self) {
+        let ratio =
+            |final_val: usize, initial_val: usize| (final_val as f64) / (initial_val.max(1) as f64);
+
+        log::info!(
+            "relation increase: assign_like: {:.2} ({}/{})",
+            ratio(self.final_assign_like, self.initial_assign),
+            self.final_assign_like,
+            self.initial_assign
+        );
+        log::info!(
+            "relation increase: locals: {}, {} formals, {:.2} reached per formal, {:.2}% of variables reached",
+            self.final_locals,
+            self.initial_formals,
+            ratio(self.final_locals, self.initial_formals),
+            ratio(self.final_locals, self.num_variables)
+        );
+        log::info!(
+            "relation increase: java_obj_assign_like: {:.2} ({}/{})",
+            ratio(
+                self.final_java_obj_assign_like,
+                self.initial_java_obj_assign
+            ),
+            self.final_java_obj_assign_like,
+            self.initial_java_obj_assign
+        );
+        log::info!(
+            "relation increase: func_ptr_assign_like: {:.2} ({}/{})",
+            ratio(
+                self.final_func_ptr_assign_like,
+                self.initial_func_ptr_assign
+            ),
+            self.final_func_ptr_assign_like,
+            self.initial_func_ptr_assign
+        );
+        log::info!(
+            "relation increase: summary: {:.2} ({}/{}) (ratio over num_functions)",
+            ratio(self.final_summary, self.num_functions),
+            self.final_summary,
+            self.num_functions
+        );
+        log::info!(
+            "hybrid inlining: critical_summary: {:.2} ({}/{}), resolvent: {}, context_assign: {:.2} ({}/{}) (ratio over final assign_like), context_locals: {:.2} ({}/{}) (ratio over final locals), context_summary: {}",
+            ratio(self.hybrid_critical_summary, self.num_functions),
+            self.hybrid_critical_summary,
+            self.num_functions,
+            self.hybrid_resolvent,
+            ratio(self.hybrid_context_assign, self.final_assign_like),
+            self.hybrid_context_assign,
+            self.final_assign_like,
+            ratio(self.hybrid_context_locals, self.final_locals),
+            self.hybrid_context_locals,
+            self.final_locals,
+            self.hybrid_context_summary
+        );
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct IndexResult {
     /// Summary goes from formal parameter index to formal ret index.
@@ -258,6 +338,7 @@ pub struct IndexResult {
     pub java_obj_assign_like: Vec<(FunctionId, InsnId, FlowVariable, Path, Symbol)>,
     pub paths: Vec<(Path,)>,
     pub external_function: Vec<(FunctionId,)>,
+    pub stats: IndexStats,
 }
 
 impl IndexResult {
@@ -282,6 +363,7 @@ impl IndexResult {
             java_obj_assign_like: Vec::new(),
             paths,
             external_function,
+            stats: IndexStats::default(),
         })
     }
 }
@@ -586,8 +668,33 @@ pub fn taint_index_with_config(
     config: IndexConfig,
     id_map: Option<&IdMap>,
 ) -> IndexResult {
-    // Access paths may be introduced in summaries, so include those.
     use hashbrown::hash_set::HashSet;
+    let num_functions = facts
+        .formal_param
+        .iter()
+        .map(|(f, _, _)| *f)
+        .chain(facts.external_function.iter().map(|(f,)| *f))
+        .collect::<HashSet<_>>()
+        .len();
+
+    let num_variables = facts
+        .formal_param
+        .iter()
+        .map(|(f, v, _)| (*f, v.clone()))
+        .chain(facts.assign.iter().flat_map(|(site, v1, v2)| {
+            let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&**site).unwrap();
+            [(func_id, v1.0.clone()), (func_id, v2.0.clone())]
+        }))
+        .collect::<HashSet<_>>()
+        .len();
+
+    let initial_assign = facts.assign.len();
+    let initial_java_obj_assign = facts.java_obj_assign.len();
+    let initial_func_ptr_assign = facts.func_ptr_assign.len();
+    let initial_summary = facts.summary.len();
+    let initial_formals = facts.formal_param.len();
+
+    // Access paths may be introduced in summaries, so include those.
     let summary_paths: HashSet<_> = facts
         .summary
         .iter()
@@ -601,7 +708,7 @@ pub fn taint_index_with_config(
             (func_id, insn_id, *target)
         })
         .collect();
-    let config = vec![(config,)];
+    let config_val = vec![(config,)];
     let prog = ascent_run! {
         #![measure_rule_times]
         // Facts:
@@ -622,7 +729,7 @@ pub fn taint_index_with_config(
         // Set of syntactic access paths
         relation paths(Path);
         relation summary(FunctionId, FormalIndex, Path, FormalIndex, Path) = facts.summary;
-        relation config(IndexConfig) = config;
+        relation config(IndexConfig) = config_val;
 
         // Derived:
 
@@ -783,25 +890,25 @@ pub fn taint_index_with_config(
             context_assign(cs, func_id, _, v1, p1, v2, p2),
             locals(func_id, v2, p23, n, pn),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(p13.clone());
+            paths(&p13);
 
         context_locals(cs.clone(), func_id, v2.clone(), p23.clone(), n.clone(), pn.clone()) <--
             context_assign(cs, func_id, _, v1, p1, v2, p2),
             locals(func_id, v1, p13, n, pn),
             if let Some(p23) = p13.substitute_prefix(p1, p2),
-            paths(p23.clone());
+            paths(&p23);
 
         context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
             context_locals(cs, func_id, v2, p23, n, pn),
             assign_like(func_id, _, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(p13.clone());
+            paths(&p13);
 
         context_locals(cs.clone(), func_id, v1.clone(), p1.clone(), n.clone(), pn3.clone()) <--
             context_locals(cs, func_id, v2, p2, n, pn),
             assign_like(func_id, _, v1, p1, v2, p23),
             if let Some(pn3) = p23.substitute_prefix(p2, pn),
-            paths(pn3.clone());
+            paths(&pn3);
 
         // 3.3: Contextual Summary Creation
         context_summary(cs.clone(), func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
@@ -815,21 +922,21 @@ pub fn taint_index_with_config(
             context_locals(cs, func_id, v1, p1, n1, ap),
             locals(func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            paths(ap3.clone()),
+            paths(&ap3),
             if n1 != n2 || ap3 != *bp;
 
         context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
             locals(func_id, v1, p1, n1, ap),
             context_locals(cs, func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            paths(ap3.clone()),
+            paths(&ap3),
             if n1 != n2 || ap3 != *bp;
 
         context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
             context_locals(cs, func_id, v1, p1, n1, ap),
             context_locals(cs, func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            paths(ap3.clone()),
+            paths(&ap3),
             if n1 != n2 || ap3 != *bp;
 
         // 3.4: Instantiate Summaries and pop call string
@@ -860,7 +967,7 @@ pub fn taint_index_with_config(
             func_ptr_assign_like(func_id, _, v2, p_context, tgt),
             assign_like(func_id, insn_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
-            paths(p_new.clone());
+            paths(&p_new);
 
         // Java Object Propagation
         java_obj_assign_like(func_id, insn_id, v.clone(), p.clone(), tgt) <--
@@ -871,7 +978,7 @@ pub fn taint_index_with_config(
             java_obj_assign_like(func_id, _, v2, p_context, tgt),
             assign_like(func_id, insn_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
-            paths(p_new.clone());
+            paths(&p_new);
     };
     log::info!("index scc times: {}", prog.scc_times_summary());
     log::trace!(
@@ -886,12 +993,35 @@ pub fn taint_index_with_config(
             id_map,
         }
     );
+
+    let stats = IndexStats {
+        initial_assign,
+        final_assign_like: prog.assign_like.len(),
+        initial_formals,
+        final_locals: prog.locals.len(),
+        initial_java_obj_assign,
+        final_java_obj_assign_like: prog.java_obj_assign_like.len(),
+        initial_func_ptr_assign,
+        final_func_ptr_assign_like: prog.func_ptr_assign_like.len(),
+        initial_summary,
+        final_summary: prog.summary.len(),
+        num_functions,
+        num_variables,
+        hybrid_critical_summary: prog.critical_summary.len(),
+        hybrid_resolvent: prog.resolvent.len(),
+        hybrid_context_assign: prog.context_assign.len(),
+        hybrid_context_locals: prog.context_locals.len(),
+        hybrid_context_summary: prog.context_summary.len(),
+    };
+    stats.log();
+
     let result = IndexResult {
         summary: prog.summary,
         assign_like: prog.assign_like,
         java_obj_assign_like: prog.java_obj_assign_like,
         paths: prog.paths,
         external_function: facts.external_function,
+        stats,
     };
     log::trace!("index result: {}", result.display(id_map));
     result

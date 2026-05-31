@@ -28,14 +28,33 @@ lazy_static::lazy_static! {
 
 /// A sequence of field/array accesses
 ///
-/// The path dereferences go left to right
-/// ["foo", "bar", "baz"] represents .foo.bar.baz
+/// The access path is represented as a stack of accesses, innermost first. So an access path like
+/// x.foo.bar.baz is represented as `cons(.foo, cons(.bar, cons(.baz)))`. This representation allows
+/// common suffix sharing, something provided by the [`SuffixSeq`] datatype.
+///
+/// Access paths are composed of field and offset accesses. Contiguous runs of offset accesses are
+/// summed, so there is never more than one offset access in a row. In effect, the offsets are
+/// "addresses of" the containing field.
 #[derive(
     Clone, Copy, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord,
 )]
 pub struct Path(pub SuffixSeq<mir::FieldAccess>);
 
 impl Path {
+    /// Creates access path from a sequences of accesses
+    pub fn from_accesses(iter: impl IntoIterator<Item = mir::FieldAccess>) -> Self {
+        let mut items = Vec::new();
+        for item in iter {
+            match (items.last_mut(), &item) {
+                (Some(mir::FieldAccess::Offset(last_off)), mir::FieldAccess::Offset(new_off)) => {
+                    last_off.0 += new_off.0;
+                }
+                _ => items.push(item),
+            }
+        }
+        Path(items.into_iter().collect())
+    }
+
     /// Creates an empty path
     #[inline]
     pub fn empty() -> Self {
@@ -48,6 +67,7 @@ impl Path {
         self.0.is_empty()
     }
 
+    /// Len is O(n)
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -87,59 +107,22 @@ impl Path {
         }
     }
 
-    /// Concatenates two paths by combining their components, merging adjacent offsets.
-    #[inline]
-    pub fn concat(&self, other: &Path) -> Self {
-        // We can't use SuffixSeq::concat directly if we want to merge offsets.
-        // But if there are no offsets to merge, SuffixSeq::concat is O(self.len()).
-        // For simplicity and correctness with offset merging, we can just extend_merging.
-        let mut result = *self;
-        result.extend_merging(other.0.iter().cloned());
-        result
+    /// Iterates from the innermost access out
+    pub fn iter(&self) -> suffix_seq::Iter<mir::FieldAccess> {
+        self.0.iter()
     }
 
-    /// Pushes a new component to the path, merging offsets if possible.
-    pub fn push(&mut self, component: mir::FieldAccess) {
-        if let mir::FieldAccess::Offset(new_off) = &component
-            && let Some(mir::FieldAccess::Offset(last_off)) = self.0.last()
-        {
-            let mut last_off = last_off.clone();
-            last_off.0 += new_off.0;
-            self.0 = self
-                .0
-                .all_but_last()
-                .unwrap()
-                .push_back(mir::FieldAccess::Offset(last_off));
-            return;
-        }
-        self.0 = self.0.push_back(component);
-    }
-
-    pub fn pop(mut self) -> Option<Self> {
-        self.0.all_but_last().map(|s| {
-            self.0 = s;
-            self
-        })
-    }
-
-    /// Appends components from an iterator, merging offsets.
-    pub fn extend_merging(&mut self, iter: impl IntoIterator<Item = mir::FieldAccess>) {
-        for component in iter {
-            self.push(component);
-        }
+    /// Concatenates self onto other, returning new path
+    pub fn concat(&self, other: &Self) -> Self {
+        Self::from_accesses(self.iter().chain(other.iter()).cloned())
     }
 
     /// Substitutes given prefix of path with new_prefix and returns the new path.
-    /// self is ["p2", "p3"]
-    /// prefix is ["p2"]
-    /// new_prefix is ["p1"]
-    /// result is ["p1", "p3"] (if p2 matches prefix of self)
     #[inline(always)]
     pub fn substitute_prefix(&self, prefix: &Path, new_prefix: &Path) -> Option<Path> {
         match_prefix(self, prefix).map(|suffix| {
-            let mut result = *new_prefix;
-            result.extend_merging(suffix.iter().cloned());
-            result
+            let iter = new_prefix.0.iter().chain(suffix.iter()).cloned();
+            Path::from_accesses(iter)
         })
     }
 
@@ -154,9 +137,8 @@ impl Path {
         match_prefix(self, prefix)
             .filter(|s| !s.is_empty())
             .map(|suffix| {
-                let mut result = *new_prefix;
-                result.extend_merging(suffix.iter().cloned());
-                result
+                let iter = new_prefix.0.iter().chain(suffix.iter()).cloned();
+                Path::from_accesses(iter)
             })
     }
 }
@@ -269,13 +251,13 @@ impl Display for CallString {
 }
 
 /// Parses a path string into components, handling dot prefixes and escaped dots
-fn parse_path_string(s: &str) -> Vec<mir::FieldAccess> {
+fn parse_path_string(s: &str) -> Path {
     let s = s.trim_start_matches('.'); // Remove leading dot if present
     if s.is_empty() {
-        return Vec::new();
+        return Path::empty();
     }
 
-    let mut path = Path::empty();
+    let mut accesses = Vec::new();
     let mut current_component = String::new();
     let mut chars = s.chars().peekable();
 
@@ -292,15 +274,17 @@ fn parse_path_string(s: &str) -> Vec<mir::FieldAccess> {
         } else if ch == '[' {
             // Handle offset notation like [42]
             if !current_component.is_empty() {
-                path.push(mir::FieldAccess::Symbol(ArcIntern::from(current_component)));
-                current_component = String::new();
+                accesses.push(mir::FieldAccess::Symbol(ArcIntern::from(
+                    current_component.clone(),
+                )));
+                current_component.clear();
             }
             let mut offset_str = String::new();
             #[allow(clippy::while_let_on_iterator)]
             while let Some(ch) = chars.next() {
                 if ch == ']' {
                     if let Ok(offset) = offset_str.parse::<i64>() {
-                        path.push(mir::FieldAccess::Offset(Offset(offset)));
+                        accesses.push(mir::FieldAccess::Offset(Offset(offset)));
                     }
                     break;
                 }
@@ -309,8 +293,10 @@ fn parse_path_string(s: &str) -> Vec<mir::FieldAccess> {
         } else if ch == '.' {
             // This is a separator dot - end of component
             if !current_component.is_empty() {
-                path.push(mir::FieldAccess::Symbol(ArcIntern::from(current_component)));
-                current_component = String::new();
+                accesses.push(mir::FieldAccess::Symbol(ArcIntern::from(
+                    current_component.clone(),
+                )));
+                current_component.clear();
             }
         } else {
             current_component.push(ch);
@@ -319,10 +305,10 @@ fn parse_path_string(s: &str) -> Vec<mir::FieldAccess> {
 
     // Add the last component if it's not empty
     if !current_component.is_empty() {
-        path.push(mir::FieldAccess::Symbol(ArcIntern::from(current_component)));
+        accesses.push(mir::FieldAccess::Symbol(ArcIntern::from(current_component)));
     }
 
-    path.0.iter().cloned().collect()
+    Path::from_accesses(accesses)
 }
 
 impl Display for Path {
@@ -334,41 +320,33 @@ impl Display for Path {
 impl From<&mir::FieldAccesses> for Path {
     #[inline]
     fn from(path: &mir::FieldAccesses) -> Self {
-        let mut p = Path::empty();
-        p.extend_merging(path.iter().cloned());
-        p
+        Self::from_accesses(path.iter().cloned())
     }
 }
 
 impl From<&[&str]> for Path {
     #[inline]
     fn from(path: &[&str]) -> Self {
-        let mut p = Path::empty();
-        p.extend_merging(
+        Self::from_accesses(
             path.iter()
                 .map(|&fld| mir::FieldAccess::Symbol(ArcIntern::from(fld))),
-        );
-        p
+        )
     }
 }
 
 impl<S: AsRef<str>> FromIterator<S> for Path {
+    #[inline]
     fn from_iter<I: IntoIterator<Item = S>>(iter: I) -> Self {
-        let mut p = Path::empty();
-        p.extend_merging(
+        Self::from_accesses(
             iter.into_iter()
                 .map(|fld| mir::FieldAccess::Symbol(ArcIntern::from(fld.as_ref()))),
-        );
-        p
+        )
     }
 }
 
 impl From<&str> for Path {
     fn from(s: &str) -> Self {
-        let components = parse_path_string(s);
-        let mut p = Path::empty();
-        p.extend_merging(components);
-        p
+        parse_path_string(s)
     }
 }
 
@@ -376,9 +354,7 @@ impl FromStr for Path {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let components = parse_path_string(s);
-        let mut p = Path::empty();
-        p.extend_merging(components);
+        let p = parse_path_string(s);
         Ok(p)
     }
 }
@@ -913,43 +889,38 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> 
 /// the suffix is .[1].
 #[inline]
 pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<SuffixSeq<mir::FieldAccess>> {
-    use mir::FieldAccess;
-    use mir::Offset;
-    let ap_seq = ap.0;
-    let prefix_seq = prefix.0;
+    use mir::{FieldAccess, Offset};
+    let mut ap_seq = ap.0;
+    let mut prefix_seq = prefix.0;
 
     if prefix_seq.is_empty() {
         return Some(ap_seq);
     }
 
-    if ap_seq.len() < prefix_seq.len() {
-        return None;
-    }
-
     // Check that all components except the last one match exactly
-    let mut ap_iter = ap_seq.iter();
-    let mut prefix_iter = prefix_seq.iter();
-
-    for _ in 0..prefix_seq.len() - 1 {
-        if ap_iter.next() != prefix_iter.next() {
+    // Invariant: prefix_seq.tail() is a non-empty seq
+    while prefix_seq.tail().unwrap_or_default().head().is_some() {
+        if prefix_seq.head() != ap_seq.head() {
             return None;
         }
+        prefix_seq = prefix_seq.tail().unwrap();
+        ap_seq = ap_seq.tail().unwrap_or_default();
     }
+    // unwrap() safety follows from while condition
+    let prefix_last = prefix_seq.head().unwrap();
 
-    let ap_last = ap_iter.next().unwrap();
-    let prefix_last = prefix_iter.next().unwrap();
+    // There's one prefix component left. If there are no more ap components, we fail to match.
+    let ap_last = ap_seq.head()?;
 
     match (ap_last, prefix_last) {
+        // The last offsets match with an offset adjustment
         (FieldAccess::Offset(Offset(an)), FieldAccess::Offset(Offset(pn))) => {
-            let diff = an - pn;
-            // Include an Offset in the suffix
-            let rest = ap_seq.suffix(prefix_seq.len());
-            let result = rest.push_front(FieldAccess::Offset(Offset(diff)));
-            Some(result)
+            let adjust = an - pn;
+            Some(ap_seq.map_head(|_| FieldAccess::Offset(Offset(adjust))))
         }
         (a, p) if a == p => {
             // Exact match for the last prefix component
-            Some(ap_seq.suffix(prefix_seq.len()))
+            Some(ap_seq.tail().unwrap())
         }
         _ => None,
     }
@@ -1058,21 +1029,18 @@ mod tests {
         use ctadl_ir::mir::{FieldAccess, Offset};
 
         // Create p23 = .[1]
-        let mut p23 = Path::empty();
-        p23.push(FieldAccess::Offset(Offset(1)));
+        let p23 = Path::from_accesses([FieldAccess::Offset(Offset(1))]);
 
         // Create p2 = '' (empty path)
         let p2 = Path::empty();
 
         // Create p1 = .[1]
-        let mut p1 = Path::empty();
-        p1.push(FieldAccess::Offset(Offset(1)));
+        let p1 = Path::from_accesses([FieldAccess::Offset(Offset(1))]);
 
         let result = p23.substitute_prefix(&p2, &p1).unwrap();
 
         // Create expected = .[2]
-        let mut expected = Path::empty();
-        expected.push(FieldAccess::Offset(Offset(2)));
+        let expected = Path::from_accesses([FieldAccess::Offset(Offset(2))]);
 
         assert_eq!(result, expected);
 
@@ -1088,6 +1056,67 @@ mod tests {
         let r: Path = ".y".into();
         let e: Path = ".y.[1].f".into();
         assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
+    }
+
+    #[test]
+    fn test_substitute_prefix_comprehensive() {
+        // 1. Several offsets
+        let p: Path = ".x.[30]".into();
+        let q: Path = ".x.[10]".into();
+        let r: Path = ".y.[2]".into();
+        let expected: Path = ".y.[22]".into();
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        let p: Path = ".a.[100].b.[50]".into();
+        let q: Path = ".a.[60]".into();
+        let r: Path = ".c.[10]".into();
+        let expected: Path = ".c.[50].b.[50]".into(); // .c.[10] + ([100]-[60]) = .c.[50]
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        // 2. Empty prefix
+        let p: Path = ".x.[10]".into();
+        let q: Path = Path::empty();
+        let r: Path = ".y.[5]".into();
+        let expected: Path = ".y.[5].x.[10]".into();
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        let p: Path = ".[10]".into();
+        let q: Path = Path::empty();
+        let r: Path = ".[5]".into();
+        let expected: Path = ".[15]".into();
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        // 3. Empty new_prefix
+        let p: Path = ".x.y".into();
+        let q: Path = ".x".into();
+        let r: Path = Path::empty();
+        let expected: Path = ".y".into();
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        let p: Path = ".x.[10]".into();
+        let q: Path = ".x".into();
+        let r: Path = Path::empty();
+        let expected: Path = ".[10]".into();
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        // 4. Empty path
+        let p: Path = Path::empty();
+        let q: Path = Path::empty();
+        let r: Path = ".x.[10]".into();
+        let expected: Path = ".x.[10]".into();
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
+
+        let p: Path = Path::empty();
+        let q: Path = ".x".into();
+        let r: Path = ".y".into();
+        assert_eq!(p.substitute_prefix(&q, &r), None);
+
+        // Additional cases: Negative offsets
+        let p: Path = ".[10]".into();
+        let q: Path = ".[20]".into();
+        let r: Path = ".[5]".into();
+        let expected: Path = ".[-5]".into(); // [5] + ([10] - [20]) = [5] - [10] = [-5]
+        assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
     }
 
     #[test]
@@ -1115,10 +1144,11 @@ mod tests {
         // Test path with numeric offsets
         // Create a path manually with mixed FieldAccess types
         use ctadl_ir::mir::{FieldAccess, Offset};
-        let mut path = Path::empty();
-        path.push(FieldAccess::Symbol(ArcIntern::from("foo")));
-        path.push(FieldAccess::Offset(Offset(42)));
-        path.push(FieldAccess::Symbol(ArcIntern::from("bar")));
+        let path = Path::from_accesses([
+            FieldAccess::Symbol(ArcIntern::from("foo")),
+            FieldAccess::Offset(Offset(42)),
+            FieldAccess::Symbol(ArcIntern::from("bar")),
+        ]);
 
         let serialized = path.to_dot_string();
         assert_eq!(serialized, ".foo.[42].bar");

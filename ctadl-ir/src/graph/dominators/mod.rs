@@ -41,7 +41,7 @@ pub struct DominatorTree<N: Idx> {
 /// Dominance frontier.
 #[derive(Debug, Clone)]
 pub struct DominanceFrontier<N: Idx> {
-    df: IndexVec<N, BitSet>,
+    frontier: IndexVec<N, BitSet>,
 }
 
 #[derive(Debug, Clone)]
@@ -244,45 +244,44 @@ impl<N: IdxOrdered> DomImpl<N> {
     }
 }
 
-impl<N: IdxOrdered> DominatorTree<N> {
+impl<N: IdxOrdered> DominanceFrontier<N> {
     /// Dominance frontier computation.
-    pub fn compute_frontier<G>(&self, graph: &G) -> DominanceFrontier<N>
+    pub fn new<G>(graph: &G, dt: &DominatorTree<N>) -> DominanceFrontier<N>
     where
         G: DirectedGraph<Node = N> + Successors,
     {
-        let mut df: IndexVec<N, BitSet> = IndexVec::from_elem_n(BitSet::new(), graph.num_nodes());
-        for x in self.iter_postorder() {
+        let mut frontier: IndexVec<N, BitSet> =
+            IndexVec::from_elem_n(BitSet::new(), graph.num_nodes());
+        for x in dt.iter_postorder() {
             for y in graph.successors(x) {
                 // Local contribution
-                if self.idom(y) != x {
-                    df[x].insert(y.index());
+                if dt.idom(y) != x {
+                    frontier[x].insert(y.index());
                 }
             }
             // As we walk bottom up, lower nodes get filled and we use them to fill higher nodes.
-            for z in self.successors(x) {
-                for y in df[z].clone().into_iter().map(N::new) {
+            for z in dt.successors(x) {
+                for y in frontier[z].clone().into_iter().map(N::new) {
                     // Up
-                    if self.idom(y) != x {
-                        df[x].insert(y.index());
+                    if dt.idom(y) != x {
+                        frontier[x].insert(y.index());
                     }
                 }
             }
         }
-        DominanceFrontier { df }
+        DominanceFrontier { frontier }
     }
-}
 
-impl<N: IdxOrdered> DominanceFrontier<N> {
     /// Iterate over the nodes of the dominanco frontier for `n`
     #[inline]
     pub fn iter(&self, n: N) -> impl Iterator<Item = N> {
-        self.df[n].iter().map(N::new)
+        self.frontier[n].iter().map(N::new)
     }
 
     /// Return the dominance frontier set for `n`
     #[inline]
     pub fn frontier(&self, n: N) -> &BitSet {
-        &self.df[n]
+        &self.frontier[n]
     }
 }
 

@@ -202,6 +202,10 @@ pub struct IndexArgs {
     /// `--prune-unreachable-cfg-nodes=false` disables it explicitly.
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     pub prune_unreachable_cfg_nodes: Option<bool>,
+
+    /// Dump the index graph to a dot file
+    #[arg(long)]
+    pub dump_index_graph: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -262,6 +266,10 @@ pub struct GoArgs {
     /// Dump the taint graph to a dot file
     #[arg(long)]
     pub dump_taint_graph: Option<PathBuf>,
+
+    /// Dump the index graph to a dot file
+    #[arg(long)]
+    pub dump_index_graph: Option<PathBuf>,
 
     /// Call resolution strategy: cha, hi, mixed
     #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
@@ -331,6 +339,7 @@ fn main() -> anyhow::Result<()> {
                 models: args.models.clone(),
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
+                dump_index_graph: args.dump_index_graph.clone(),
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -466,6 +475,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 models: args.models.clone(),
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
+                dump_index_graph: None,
             };
             index_artifacts_to_store(&index_args)?;
         }
@@ -560,6 +570,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         &args.models,
         args.strategy,
         args.prune_unreachable_cfg_nodes.unwrap_or(false),
+        args.dump_index_graph.as_deref(),
     )?;
     Ok(())
 }

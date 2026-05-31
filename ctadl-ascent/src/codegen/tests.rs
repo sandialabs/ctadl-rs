@@ -1,5 +1,6 @@
 use super::*;
 
+use hashbrown::HashSet;
 use smallvec::smallvec;
 
 use super::GLOBALS_INDEX;

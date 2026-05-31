@@ -189,7 +189,7 @@ pub fn query_check(
 }
 
 /// Check a flowy program, running the ctadl index and query steps, and print errors.
-pub fn check<P: AsRef<Path>>(file: P) -> anyhow::Result<()> {
+pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow::Result<()> {
     let file = file.as_ref();
     let program = flowy::compile_program(file)?;
     let mut pass_count = 0;
@@ -222,6 +222,17 @@ pub fn check<P: AsRef<Path>>(file: P) -> anyhow::Result<()> {
         IndexConfig::default(),
         Some(&source_info.sites),
     );
+
+    if let Some(dot_path) = dump_index_graph {
+        let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+        crate::graphviz::render_index_graph(
+            &index_result.assign_like,
+            &source_info.sites,
+            &mut file,
+        )
+        .err_context(|| "rendering index graph")?;
+        eprintln!("Wrote index graph to '{}'", dot_path.display());
+    }
 
     let (ipass, ifail) = index_check_summaries(
         &index_result,

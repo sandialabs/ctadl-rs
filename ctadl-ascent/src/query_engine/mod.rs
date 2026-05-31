@@ -306,7 +306,6 @@ pub mod ascent_code {
 }
 
 pub mod formatter;
-pub mod graphviz;
 
 struct DisplayTaint<'a> {
     taint: &'a [(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)],
