@@ -263,6 +263,11 @@ pub struct IndexStats {
     pub initial_summary: usize,
     pub final_summary: usize,
     pub num_functions: usize,
+    pub hybrid_critical_summary: usize,
+    pub hybrid_resolvent: usize,
+    pub hybrid_context_assign: usize,
+    pub hybrid_context_locals: usize,
+    pub hybrid_context_summary: usize,
 }
 
 impl IndexStats {
@@ -305,6 +310,20 @@ impl IndexStats {
             ratio(self.final_summary, self.num_functions),
             self.final_summary,
             self.num_functions
+        );
+        log::info!(
+            "hybrid inlining: critical_summary: {:.2} ({}/{}), resolvent: {}, context_assign: {:.2} ({}/{}) (ratio over final assign_like), context_locals: {:.2} ({}/{}) (ratio over final locals), context_summary: {}",
+            ratio(self.hybrid_critical_summary, self.num_functions),
+            self.hybrid_critical_summary,
+            self.num_functions,
+            self.hybrid_resolvent,
+            ratio(self.hybrid_context_assign, self.final_assign_like),
+            self.hybrid_context_assign,
+            self.final_assign_like,
+            ratio(self.hybrid_context_locals, self.final_locals),
+            self.hybrid_context_locals,
+            self.final_locals,
+            self.hybrid_context_summary
         );
     }
 }
@@ -974,6 +993,11 @@ pub fn taint_index_with_config(
         initial_summary,
         final_summary: prog.summary.len(),
         num_functions,
+        hybrid_critical_summary: prog.critical_summary.len(),
+        hybrid_resolvent: prog.resolvent.len(),
+        hybrid_context_assign: prog.context_assign.len(),
+        hybrid_context_locals: prog.context_locals.len(),
+        hybrid_context_summary: prog.context_summary.len(),
     };
     stats.log();
 
