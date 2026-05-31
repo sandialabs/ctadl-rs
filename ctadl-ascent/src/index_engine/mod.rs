@@ -263,6 +263,7 @@ pub struct IndexStats {
     pub initial_summary: usize,
     pub final_summary: usize,
     pub num_functions: usize,
+    pub num_variables: usize,
     pub hybrid_critical_summary: usize,
     pub hybrid_resolvent: usize,
     pub hybrid_context_assign: usize,
@@ -282,10 +283,11 @@ impl IndexStats {
             self.initial_assign
         );
         log::info!(
-            "relation increase: locals: {}, {} formals, {:.2} reached per formal",
+            "relation increase: locals: {}, {} formals, {:.2} reached per formal, {:.2}% of variables reached",
             self.final_locals,
             self.initial_formals,
-            ratio(self.final_locals, self.initial_formals)
+            ratio(self.final_locals, self.initial_formals),
+            ratio(self.final_locals, self.num_variables)
         );
         log::info!(
             "relation increase: java_obj_assign_like: {:.2} ({}/{})",
@@ -675,6 +677,17 @@ pub fn taint_index_with_config(
         .collect::<HashSet<_>>()
         .len();
 
+    let num_variables = facts
+        .formal_param
+        .iter()
+        .map(|(f, v, _)| (*f, v.clone()))
+        .chain(facts.assign.iter().flat_map(|(site, v1, v2)| {
+            let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&**site).unwrap();
+            [(func_id, v1.0.clone()), (func_id, v2.0.clone())]
+        }))
+        .collect::<HashSet<_>>()
+        .len();
+
     let initial_assign = facts.assign.len();
     let initial_java_obj_assign = facts.java_obj_assign.len();
     let initial_func_ptr_assign = facts.func_ptr_assign.len();
@@ -993,6 +1006,7 @@ pub fn taint_index_with_config(
         initial_summary,
         final_summary: prog.summary.len(),
         num_functions,
+        num_variables,
         hybrid_critical_summary: prog.critical_summary.len(),
         hybrid_resolvent: prog.resolvent.len(),
         hybrid_context_assign: prog.context_assign.len(),
