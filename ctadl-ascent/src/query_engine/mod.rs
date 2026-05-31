@@ -16,6 +16,7 @@ use crate::error::Error;
 use crate::facts::{
     FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnSiteId, Label,
     PackedInsnSiteId, Path, TaintDirection, TaintEndpoint, TaintState, isout,
+    PackedCallArg, CallArgId,
 };
 
 // same as a TaintEndpoint but with a functionId
@@ -257,18 +258,22 @@ pub mod ascent_code {
             if (a.direction == TaintDirection::Forward && isout(n2, *formal_ty, p2)) ||
                 (a.direction == TaintDirection::Backward /* && isin(n2.0) */),
             call(site_id, infunc),
-            let InsnSiteId {func_id, insn_id: _} = InsnSiteId::unpack_from_slice(&**site_id).unwrap(),
-            let v1 = FlowVariable::CallArg { id: site_id.clone(), formal: n2.clone() };
+            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**site_id).unwrap(),
+            let call_arg_packed = PackedCallArg::try_from_parts(insn_id, n2.clone()).unwrap(),
+            let v1 = FlowVariable::CallArg(call_arg_packed);
 
         // Actual-to-formal (Call in forward mode, Return in backward mode).
         produce_taint!(func, TaintState::Restricted, formal_var.clone(), p2.clone(), a.clone(), infunc, v2.clone(), p2.clone()) <--
             taint(infunc, _, v2, p2, a),
-            if let FlowVariable::CallArg { id, formal } = v2,
-            call(id, func),
-            let formal_var = FlowVariable::Formal(formal.clone()),
+            if let FlowVariable::CallArg(packed) = v2,
+            let CallArgId { insn_id, formal: formal_raw } = CallArgId::try_from(packed).unwrap(),
+            let formal = FormalIndex::from(formal_raw),
+            let site_id = PackedInsnSiteId::try_from_parts(*infunc, insn_id).unwrap(),
+            call(site_id, func),
+            let formal_var = FlowVariable::Formal(formal),
             formal_param(func, formal_var, formal_ty),
             if a.direction == TaintDirection::Forward /* && isin(formal)) */ ||
-                (a.direction == TaintDirection::Backward && isout(formal, *formal_ty, p2));
+                (a.direction == TaintDirection::Backward && isout(&formal, *formal_ty, p2));
 
         alias_of_field(infunc, x.clone(), a.clone(), p.clone()) <--
             assign_like(infunc, x, Path::empty(), a, p),

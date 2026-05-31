@@ -464,7 +464,7 @@ impl Deref for FormalIndex {
     type Target = i16;
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &self.0
+        self.0.deref()
     }
 }
 
@@ -572,6 +572,58 @@ impl Display for PackedInsnSiteId {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct PackedCallArg(pub [u8; 8]);
+
+impl PackedCallArg {
+    pub fn try_from_parts(
+        insn_id: InsnId,
+        formal: FormalIndex,
+    ) -> Result<Self, packed_struct::PackingError> {
+        let call_arg = CallArgId::new(insn_id, formal);
+        CallArgId::pack(&call_arg).map(PackedCallArg)
+    }
+}
+
+impl Deref for PackedCallArg {
+    type Target = [u8; 8];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl TryFrom<CallArgId> for PackedCallArg {
+    type Error = packed_struct::PackingError;
+    fn try_from(call_arg: CallArgId) -> Result<PackedCallArg, Self::Error> {
+        CallArgId::pack(&call_arg).map(PackedCallArg)
+    }
+}
+
+impl TryFrom<PackedCallArg> for CallArgId {
+    type Error = packed_struct::PackingError;
+    fn try_from(packed: PackedCallArg) -> Result<CallArgId, Self::Error> {
+        CallArgId::unpack(&packed)
+    }
+}
+
+impl TryFrom<&PackedCallArg> for CallArgId {
+    type Error = packed_struct::PackingError;
+    fn try_from(packed: &PackedCallArg) -> Result<CallArgId, Self::Error> {
+        CallArgId::unpack(packed)
+    }
+}
+
+impl Display for PackedCallArg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Ok(call_arg) = CallArgId::try_from(self) {
+            write!(f, "{}:{}", call_arg.insn_id.id, call_arg.formal)
+        } else {
+            write!(f, "packed({:?})", self.0)
+        }
+    }
+}
+
 /// An instruction site represents an instruction and the function in which it is contained. We use
 /// a packed struct so we only need 64 bits for this information. The function id is stored in 28
 /// bits; the instruction id is stored in the remaining 36 bits.
@@ -590,6 +642,31 @@ impl InsnSiteId {
             func_id: function_id,
             insn_id,
         }
+    }
+}
+
+/// A call argument represents an instruction and the formal index of the argument. We use a packed
+/// struct so we only need 64 bits for this information. The instruction id is stored in 36 bits;
+/// the formal index is stored in 16 bits.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, PackedStruct)]
+#[packed_struct(bit_numbering = "msb0", size_bytes = "8")]
+pub struct CallArgId {
+    #[packed_field(bits = "0..36", endian = "msb")]
+    pub insn_id: InsnId,
+    #[packed_field(bits = "36..52", endian = "msb")]
+    pub formal: i16,
+}
+
+impl CallArgId {
+    pub fn new(insn_id: InsnId, formal: FormalIndex) -> Self {
+        Self {
+            insn_id,
+            formal: *formal,
+        }
+    }
+
+    pub fn formal(&self) -> FormalIndex {
+        FormalIndex::from(self.formal)
     }
 }
 
@@ -664,10 +741,7 @@ pub enum FlowVariable {
     Uninit,
     Local(Str),
     Formal(FormalIndex),
-    CallArg {
-        id: PackedInsnSiteId,
-        formal: FormalIndex,
-    },
+    CallArg(PackedCallArg),
 }
 
 impl FlowVariable {
@@ -690,9 +764,9 @@ impl Display for FlowVariable {
             Uninit => write!(f, "uninit"),
             Local(name) => write!(f, "local({name})"),
             Formal(index) => write!(f, "formal({index})"),
-            CallArg { id, formal } => {
-                let InsnSiteId { func_id, insn_id } = id.try_into().unwrap();
-                write!(f, "call-arg({}:{}, {formal})", func_id.id, insn_id.id)
+            CallArg(packed) => {
+                let CallArgId { insn_id, formal } = packed.try_into().unwrap();
+                write!(f, "call-arg({}, {formal})", insn_id.id)
             }
         }
     }

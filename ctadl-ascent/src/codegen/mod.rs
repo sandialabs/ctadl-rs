@@ -431,10 +431,12 @@ impl Visitor for CodegenVisitor<'_> {
                     if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = arg_exp {
                         let target = fx::Function(name.clone());
                         let target = self.source_info.sites.get_or_add_function(target);
-                        let call_arg_var = FlowVariable::CallArg {
-                            id: site,
-                            formal: formal_index,
-                        };
+                        let call_arg_packed = fx::PackedCallArg::try_from_parts(
+                            fx::InsnSiteId::try_from(site).unwrap().insn_id,
+                            formal_index,
+                        )
+                        .unwrap();
+                        let call_arg_var = FlowVariable::CallArg(call_arg_packed);
                         self.facts.func_ptr_assign.push((
                             site,
                             FlowVertex(call_arg_var, fx::Path::empty()),
@@ -443,10 +445,12 @@ impl Visitor for CodegenVisitor<'_> {
                     }
 
                     if let Exp::ObjectRef(CallObject::JavaObject(cls)) = arg_exp {
-                        let call_arg_var = FlowVariable::CallArg {
-                            id: site,
-                            formal: formal_index,
-                        };
+                        let call_arg_packed = fx::PackedCallArg::try_from_parts(
+                            fx::InsnSiteId::try_from(site).unwrap().insn_id,
+                            formal_index,
+                        )
+                        .unwrap();
+                        let call_arg_var = FlowVariable::CallArg(call_arg_packed);
                         self.facts.java_obj_assign.push((
                             site,
                             FlowVertex(call_arg_var, fx::Path::empty()),

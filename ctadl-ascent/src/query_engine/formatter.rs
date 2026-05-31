@@ -61,6 +61,7 @@ use crate::facts::schema;
 use crate::facts::{
     FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId, InsnSiteId, Label,
     PackedInsnSiteId, Path, TaintDirection, TaintState, isout,
+    PackedCallArg, CallArgId,
 };
 use crate::project::{AnalysisProject, ArtifactLanguage};
 use crate::query_engine::QueryEndpoint;
@@ -193,17 +194,22 @@ pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
         include_source!(crate::query_engine::ascent_code::taint_analysis_rules);
 
         absorbing_functions(target, src, formal.clone()) <--
-            taint(_, _, v, _, src),
-            if let FlowVariable::CallArg { id, formal } = v,
+            taint(infunc, _, v, _, src),
+            if let FlowVariable::CallArg(packed) = v,
+            let call_arg_id = CallArgId::try_from(packed).unwrap(),
+            let formal = call_arg_id.formal(),
+            let id = PackedInsnSiteId::try_from_parts(*infunc, call_arg_id.insn_id).unwrap(),
             call(id, target),
             external_function(target);
 
         // taint call sites
         tainted_var_at_insn(id, label, v2, p2) <--
-            taint(_, _, v2, p2, src),
+            taint(infunc, _, v2, p2, src),
             if !v2.is_globals(),
-            if let FlowVariable::CallArg { id, formal } = v2,
-            if **formal >= 0,
+            if let FlowVariable::CallArg(packed) = v2,
+            let call_arg_id = CallArgId::try_from(packed).unwrap(),
+            let id = PackedInsnSiteId::try_from_parts(*infunc, call_arg_id.insn_id).unwrap(),
+            if *call_arg_id.formal() >= 0,
             let label = src.label.clone();
     }
 

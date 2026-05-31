@@ -53,10 +53,9 @@ fn test_absorbing_functions() {
     // call(id, target),
     // external_function(target);
 
-    let call_arg = FlowVariable::CallArg {
-        id: packed_site,
-        formal: 0i16.into(),
-    };
+    let call_arg = FlowVariable::CallArg(
+        ctadl_ascent::facts::PackedCallArg::try_from_parts(site_id.insn_id, 0i16.into()).unwrap(),
+    );
 
     // Propagate taint from formal to CallArg
     facts.taint.push((

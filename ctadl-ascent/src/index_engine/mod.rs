@@ -46,8 +46,8 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId,
-    InsnSiteId, PackedInsnSiteId, Path, isout,
+    CallArgId, CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap,
+    InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, isout,
 };
 use ctadl_ir::Symbol;
 
@@ -792,18 +792,19 @@ pub fn taint_index_with_config(
         assign_like(func_id, cv.clone(), Path::empty(), v.clone(), p) <--
             actual_param(call_site_slice, n, vx),
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**call_site_slice).unwrap(),
-            let cv = FlowVariable::CallArg { id: call_site_slice.clone(), formal: n.clone() },
+            let call_arg_packed = PackedCallArg::try_from_parts(insn_id, n.clone()).unwrap(),
+            let cv = FlowVariable::CallArg(call_arg_packed),
             let FlowVertex(v, p) = vx;
 
         // Compute assignments from summaries
         assign_like(func_id, v1, p1, v2, p2) <--
             summary(tgt, n1, dst_path, n2, src_path),
             call(func_id, insn_id, tgt),
-            let site_id = InsnSiteId { func_id: *func_id, insn_id: *insn_id },
-            let call_site_id = PackedInsnSiteId::try_from(site_id).unwrap(),
-            let v1 = FlowVariable::CallArg { id: call_site_id, formal: n1.clone() },
+            let call_arg_packed1 = PackedCallArg::try_from_parts(*insn_id, n1.clone()).unwrap(),
+            let v1 = FlowVariable::CallArg(call_arg_packed1),
             let p1 = dst_path.clone(),
-            let v2 = FlowVariable::CallArg { id: call_site_id, formal: n2.clone() },
+            let call_arg_packed2 = PackedCallArg::try_from_parts(*insn_id, n2.clone()).unwrap(),
+            let v2 = FlowVariable::CallArg(call_arg_packed2),
             let p2 = src_path.clone();
 
         // Compute summaries from local reachability
@@ -847,8 +848,8 @@ pub fn taint_index_with_config(
         critical_summary(caller_func_id, n, p_n, critical_site_id) <--
             critical_summary(tgt, n_tgt, p_tgt, critical_site_id),
             call(caller_func_id, caller_insn_id, tgt),
-            let cs_id = PackedInsnSiteId::try_from_parts(*caller_func_id, *caller_insn_id).unwrap(),
-            let arg = FlowVariable::CallArg { id: cs_id, formal: *n_tgt },
+            let call_arg_packed = PackedCallArg::try_from_parts(*caller_insn_id, *n_tgt).unwrap(),
+            let arg = FlowVariable::CallArg(call_arg_packed),
             locals(caller_func_id, arg, p_tgt, n, p_n);
 
         // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
@@ -857,7 +858,8 @@ pub fn taint_index_with_config(
             critical_summary(tgt, n_tgt, p_tgt, critical_site_id),
             call(call_func_id, insn_id, tgt),
             let call_site_id = PackedInsnSiteId::try_from_parts(*call_func_id, *insn_id).unwrap(),
-            let arg = FlowVariable::CallArg { id: call_site_id, formal: *n_tgt },
+            let call_arg_packed = PackedCallArg::try_from_parts(*insn_id, *n_tgt).unwrap(),
+            let arg = FlowVariable::CallArg(call_arg_packed),
             (func_ptr_assign_like(call_func_id, arg, p_tgt, ptr_tgt) |
              (java_obj_assign_like(call_func_id, arg, p_tgt, cls),
               java_call(critical_site_id, _, method_name, method_desc),
@@ -872,7 +874,9 @@ pub fn taint_index_with_config(
             critical_summary(tgt, _, _, critical_site_id),
             let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
             locals(func_id, v_tgt, p_tgt, n, p),
-            if let FlowVariable::CallArg { id: tgt_site, formal: n_tgt } = v_tgt,
+            if let FlowVariable::CallArg(packed) = v_tgt,
+            let call_arg_id = CallArgId::try_from(packed).unwrap(),
+            let n_tgt = call_arg_id.formal(),
             if let Some(new_cs) = cs.push(call_site_id);
 
         // 3.1: Contextual Assignment (instantiate)
@@ -882,11 +886,13 @@ pub fn taint_index_with_config(
             let vx_rec = FlowVertex(v_rec.clone(), p_v.clone()),
             summary(ptr_tgt, n1, p1_sum, n2, p2_sum),
             (java_call(critical_site_id, vx_rec, _, _) | indirect_call(critical_site_id, vx_rec)),
-            let v1 = FlowVariable::CallArg { id: critical_site_id.clone(), formal: n1.clone() },
+            let InsnSiteId {insn_id, ..} = InsnSiteId::unpack_from_slice(&**critical_site_id).unwrap(),
+            let call_arg_packed1 = PackedCallArg::try_from_parts(insn_id, n1.clone()).unwrap(),
+            let v1 = FlowVariable::CallArg(call_arg_packed1),
             let p1 = p1_sum.clone(),
-            let v2 = FlowVariable::CallArg { id: critical_site_id.clone(), formal: n2.clone() },
-            let p2 = p2_sum.clone(),
-            let InsnSiteId {func_id: call_func_id, insn_id} = InsnSiteId::unpack_from_slice(&**critical_site_id).unwrap();
+            let call_arg_packed2 = PackedCallArg::try_from_parts(insn_id, n2.clone()).unwrap(),
+            let v2 = FlowVariable::CallArg(call_arg_packed2),
+            let p2 = p2_sum.clone();
 
         // 3.2: Contextual Locals Initialization and Propagation
         context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
@@ -949,9 +955,11 @@ pub fn taint_index_with_config(
             if let Some(call_site_id) = popped,
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
             call(func_id, insn_id, tgt),
-            let v1 = FlowVariable::CallArg { id: call_site_id.clone(), formal: n1.clone() },
+            let call_arg_packed1 = PackedCallArg::try_from_parts(insn_id, n1.clone()).unwrap(),
+            let v1 = FlowVariable::CallArg(call_arg_packed1),
             let p1 = p1_sum.clone(),
-            let v2 = FlowVariable::CallArg { id: call_site_id.clone(), formal: n2.clone() },
+            let call_arg_packed2 = PackedCallArg::try_from_parts(insn_id, n2.clone()).unwrap(),
+            let v2 = FlowVariable::CallArg(call_arg_packed2),
             let p2 = p2_sum.clone();
 
         // 3.5
@@ -1027,5 +1035,9 @@ pub fn taint_index_with_config(
         stats,
     };
     log::trace!("index result: {}", result.display(id_map));
+    log::info!(
+        "flow variable size: {}",
+        std::mem::size_of::<FlowVariable>()
+    );
     result
 }
