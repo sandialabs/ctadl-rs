@@ -181,7 +181,7 @@ impl<'a> CodegenVisitor<'a> {
     /// Gens the dedup'd paths to the facts
     fn finish(&mut self) {
         let paths = std::mem::take(&mut self.paths_dedup);
-        self.facts.paths.extend(paths.into_iter());
+        self.facts.paths.extend(paths);
     }
 
     /// Does finish and also runs a datalog modeling pass

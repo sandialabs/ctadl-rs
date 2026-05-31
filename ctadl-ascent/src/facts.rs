@@ -910,9 +910,7 @@ pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<SuffixSeq<mir::FieldAcce
     let prefix_last = prefix_seq.head().unwrap();
 
     // There's one prefix component left. If there are no more ap components, we fail to match.
-    let Some(ap_last) = ap_seq.head() else {
-        return None;
-    };
+    let ap_last = ap_seq.head()?;
 
     match (ap_last, prefix_last) {
         // The last offsets match with an offset adjustment

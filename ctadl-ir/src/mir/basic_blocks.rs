@@ -90,7 +90,6 @@ impl BasicBlocks {
     /// Returns the dominance frontier. Dominance frontier computation depends on dominators, so
     /// this function also computes dominators.
     #[inline]
-
     pub fn invalidate_cfg_cache(&mut self) {
         if let Some(cache) = Arc::get_mut(&mut self.cache) {
             // If we only have a single reference to this cache, clear it.
