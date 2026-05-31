@@ -450,12 +450,6 @@ impl_encode_column!(
     GenericStringArray<i64>,
     arrowd::DataType::LargeUtf8
 );
-impl_encode_column!(
-    facts::StringRef,
-    GenericStringArray::<i64>::from,
-    GenericStringArray<i64>,
-    arrowd::DataType::LargeUtf8
-);
 
 macro_rules! impl_encode_newtype {
     ($newty:path, $rustty:ty, $parquetty:ty) => {
@@ -976,7 +970,7 @@ impl DecodeColumn<Option<facts::PackedCallArg>> for DefaultDecoder {
 }
 
 type FlowVariableRefEncoding = (
-    Option<facts::StringRef>,
+    Option<Str>,
     Option<facts::FormalIndex>,
     Option<facts::PackedCallArg>,
 );

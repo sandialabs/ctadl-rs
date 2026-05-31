@@ -41,7 +41,6 @@ internment = { version = "0.8", features = ["arc", "serde"] }
 itertools = "0.14"
 json5 = "1.3"
 jvm-reader = { path = "../jvm-reader" }
-leaky-interner = { path = "../leaky-interner", features = ["serde"] }
 lazy_static = "1"
 log = "0.4"
 log-once = "0.4"
