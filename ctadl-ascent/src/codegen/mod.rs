@@ -491,6 +491,7 @@ impl Visitor for CodegenVisitor<'_> {
                 let value = self.trans_exp(value);
                 // dest_var <- source
                 let dest = FlowVertex(dest_var.clone(), dest_fields.into());
+                // Multiple field updates of the same src/dst cause duplicate assigns
                 self.facts.assign.push((
                     site,
                     FlowVertex(dest_var.clone(), fx::Path::empty()),

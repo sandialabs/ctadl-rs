@@ -250,6 +250,65 @@ impl Default for IndexConfig {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct IndexStats {
+    pub initial_assign: usize,
+    pub final_assign_like: usize,
+    pub initial_formals: usize,
+    pub final_locals: usize,
+    pub initial_java_obj_assign: usize,
+    pub final_java_obj_assign_like: usize,
+    pub initial_func_ptr_assign: usize,
+    pub final_func_ptr_assign_like: usize,
+    pub initial_summary: usize,
+    pub final_summary: usize,
+    pub num_functions: usize,
+}
+
+impl IndexStats {
+    pub fn log(&self) {
+        let ratio =
+            |final_val: usize, initial_val: usize| (final_val as f64) / (initial_val.max(1) as f64);
+
+        log::info!(
+            "relation increase: assign_like: {:.2} ({}/{})",
+            ratio(self.final_assign_like, self.initial_assign),
+            self.final_assign_like,
+            self.initial_assign
+        );
+        log::info!(
+            "relation increase: locals: {}, {} formals, {:.2} reached per formal",
+            self.final_locals,
+            self.initial_formals,
+            ratio(self.final_locals, self.initial_formals)
+        );
+        log::info!(
+            "relation increase: java_obj_assign_like: {:.2} ({}/{})",
+            ratio(
+                self.final_java_obj_assign_like,
+                self.initial_java_obj_assign
+            ),
+            self.final_java_obj_assign_like,
+            self.initial_java_obj_assign
+        );
+        log::info!(
+            "relation increase: func_ptr_assign_like: {:.2} ({}/{})",
+            ratio(
+                self.final_func_ptr_assign_like,
+                self.initial_func_ptr_assign
+            ),
+            self.final_func_ptr_assign_like,
+            self.initial_func_ptr_assign
+        );
+        log::info!(
+            "relation increase: summary: {:.2} ({}/{}) (ratio over num_functions)",
+            ratio(self.final_summary, self.num_functions),
+            self.final_summary,
+            self.num_functions
+        );
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct IndexResult {
     /// Summary goes from formal parameter index to formal ret index.
@@ -258,6 +317,7 @@ pub struct IndexResult {
     pub java_obj_assign_like: Vec<(FunctionId, InsnId, FlowVariable, Path, Symbol)>,
     pub paths: Vec<(Path,)>,
     pub external_function: Vec<(FunctionId,)>,
+    pub stats: IndexStats,
 }
 
 impl IndexResult {
@@ -282,6 +342,7 @@ impl IndexResult {
             java_obj_assign_like: Vec::new(),
             paths,
             external_function,
+            stats: IndexStats::default(),
         })
     }
 }
@@ -586,8 +647,22 @@ pub fn taint_index_with_config(
     config: IndexConfig,
     id_map: Option<&IdMap>,
 ) -> IndexResult {
-    // Access paths may be introduced in summaries, so include those.
     use hashbrown::hash_set::HashSet;
+    let num_functions = facts
+        .formal_param
+        .iter()
+        .map(|(f, _, _)| *f)
+        .chain(facts.external_function.iter().map(|(f,)| *f))
+        .collect::<HashSet<_>>()
+        .len();
+
+    let initial_assign = facts.assign.len();
+    let initial_java_obj_assign = facts.java_obj_assign.len();
+    let initial_func_ptr_assign = facts.func_ptr_assign.len();
+    let initial_summary = facts.summary.len();
+    let initial_formals = facts.formal_param.len();
+
+    // Access paths may be introduced in summaries, so include those.
     let summary_paths: HashSet<_> = facts
         .summary
         .iter()
@@ -601,7 +676,7 @@ pub fn taint_index_with_config(
             (func_id, insn_id, *target)
         })
         .collect();
-    let config = vec![(config,)];
+    let config_val = vec![(config,)];
     let prog = ascent_run! {
         #![measure_rule_times]
         // Facts:
@@ -622,7 +697,7 @@ pub fn taint_index_with_config(
         // Set of syntactic access paths
         relation paths(Path);
         relation summary(FunctionId, FormalIndex, Path, FormalIndex, Path) = facts.summary;
-        relation config(IndexConfig) = config;
+        relation config(IndexConfig) = config_val;
 
         // Derived:
 
@@ -886,12 +961,29 @@ pub fn taint_index_with_config(
             id_map,
         }
     );
+
+    let stats = IndexStats {
+        initial_assign,
+        final_assign_like: prog.assign_like.len(),
+        initial_formals,
+        final_locals: prog.locals.len(),
+        initial_java_obj_assign,
+        final_java_obj_assign_like: prog.java_obj_assign_like.len(),
+        initial_func_ptr_assign,
+        final_func_ptr_assign_like: prog.func_ptr_assign_like.len(),
+        initial_summary,
+        final_summary: prog.summary.len(),
+        num_functions,
+    };
+    stats.log();
+
     let result = IndexResult {
         summary: prog.summary,
         assign_like: prog.assign_like,
         java_obj_assign_like: prog.java_obj_assign_like,
         paths: prog.paths,
         external_function: facts.external_function,
+        stats,
     };
     log::trace!("index result: {}", result.display(id_map));
     result
