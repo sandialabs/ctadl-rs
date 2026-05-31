@@ -14,8 +14,8 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId,
-    Label, PackedInsnSiteId, Path, TaintDirection, TaintEndpoint, TaintState, isout,
+    FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnSiteId, Label,
+    PackedInsnSiteId, Path, TaintDirection, TaintEndpoint, TaintState, isout,
 };
 
 // same as a TaintEndpoint but with a functionId
@@ -74,7 +74,7 @@ pub struct QueryFacts {
     #[builder(default)]
     pub call: Vec<(PackedInsnSiteId, FunctionId)>,
     #[builder(default)]
-    pub assign: Vec<(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)>,
+    pub assign: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
     #[builder(default)]
     pub paths: Vec<(Path,)>,
     /// Sources and sinks for query. Data flow is followed forward from sources and backward from
@@ -221,7 +221,7 @@ pub mod ascent_code {
 
         relation formal_param(FunctionId, FlowVariable, FormalType);
         relation call(PackedInsnSiteId, FunctionId);
-        relation assign_like(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path);
+        relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
         relation paths(Path);
         relation sources(QueryEndpoint);
 
@@ -238,14 +238,14 @@ pub mod ascent_code {
         produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, v2.clone(), p23.clone()) <--
             taint(infunc, ts, v2, p23, a),
             if a.direction == TaintDirection::Forward,
-            assign_like(infunc, _, v1, p1, v2, p2),
+            assign_like(infunc, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(p13.clone());
 
         produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, v2.clone(), p23.clone()) <--
             taint(infunc, ts, v2, p23, a),
             if a.direction == TaintDirection::Backward,
-            assign_like(infunc, _, v2, p2, v1, p1),
+            assign_like(infunc, v2, p2, v1, p1),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(p13.clone());
 
@@ -271,11 +271,11 @@ pub mod ascent_code {
                 (a.direction == TaintDirection::Backward && isout(formal, *formal_ty, p2));
 
         alias_of_field(infunc, x.clone(), a.clone(), p.clone()) <--
-            assign_like(infunc, _, x, Path::empty(), a, p),
+            assign_like(infunc, x, Path::empty(), a, p),
             if !p.is_empty();
         alias_of_field(infunc, y.clone(), a.clone(), p.clone()) <--
             alias_of_field(infunc, x, a, p),
-            assign_like(infunc, _, y, Path::empty(), x, Path::empty());
+            assign_like(infunc, y, Path::empty(), x, Path::empty());
 
         // Propagates taint on a variable into its alias.
         produce_taint!(infunc, st, v1.clone(), p.clone(), a.clone(), infunc, v2.clone(), Path::empty()) <--

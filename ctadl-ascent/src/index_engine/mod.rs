@@ -334,8 +334,8 @@ impl IndexStats {
 pub struct IndexResult {
     /// Summary goes from formal parameter index to formal ret index.
     pub summary: Vec<FunctionSummary>,
-    pub assign_like: Vec<(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)>,
-    pub java_obj_assign_like: Vec<(FunctionId, InsnId, FlowVariable, Path, Symbol)>,
+    pub assign_like: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
+    pub java_obj_assign_like: Vec<(FunctionId, FlowVariable, Path, Symbol)>,
     pub paths: Vec<(Path,)>,
     pub external_function: Vec<(FunctionId,)>,
     pub stats: IndexStats,
@@ -394,7 +394,7 @@ impl<'a> std::fmt::Display for IndexResultDisplay<'a> {
             }
         }
         writeln!(f, "\nAssign-like:")?;
-        for (func_id, insn_id, dest_var, dest_path, src_var, src_path) in &self.result.assign_like {
+        for (func_id, dest_var, dest_path, src_var, src_path) in &self.result.assign_like {
             let dest_str = {
                 let var_str = match dest_var {
                     FlowVariable::Local(name) => name.to_string(),
@@ -418,8 +418,8 @@ impl<'a> std::fmt::Display for IndexResultDisplay<'a> {
 
             writeln!(
                 f,
-                "{}({}):{}: {} = {}",
-                func_name, func_id.id, insn_id.id, dest_str, src_str
+                "{}({}): {} = {}",
+                func_name, func_id.id, dest_str, src_str
             )?;
         }
         writeln!(f, "\nPaths:")?;
@@ -449,11 +449,10 @@ struct HybridInliningRelations<'a> {
         PackedInsnSiteId,
         FunctionId,
     )],
-    func_ptr_assign_like: &'a [(FunctionId, InsnId, FlowVariable, Path, FunctionId)],
+    func_ptr_assign_like: &'a [(FunctionId, FlowVariable, Path, FunctionId)],
     context_assign: &'a [(
         CallString,
         FunctionId,
-        InsnId,
         FlowVariable,
         Path,
         FlowVariable,
@@ -548,7 +547,7 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
             "\nFunc Ptr Assign-Like ({}):",
             self.func_ptr_assign_like.len()
         )?;
-        for (func_id, insn_id, var, path, tgt) in self.func_ptr_assign_like {
+        for (func_id, var, path, tgt) in self.func_ptr_assign_like {
             let var_str = match var {
                 FlowVariable::Local(name) => name.to_string(),
                 _ => format!("{}", var),
@@ -567,10 +566,9 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
 
             writeln!(
                 f,
-                "  {}({}):{}: {}{} = ptr {}({})",
+                "  {}({}): {}{} = ptr {}({})",
                 func_name,
                 func_id.id,
-                insn_id.id,
                 var_str,
                 path.to_dot_string(),
                 tgt_name,
@@ -579,7 +577,7 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Assign ({}):", self.context_assign.len())?;
-        for (cs, func_id, insn_id, dest_var, dest_path, src_var, src_path) in self.context_assign {
+        for (cs, func_id, dest_var, dest_path, src_var, src_path) in self.context_assign {
             let dest_str = {
                 let var_str = match dest_var {
                     FlowVariable::Local(name) => name.to_string(),
@@ -603,8 +601,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
 
             writeln!(
                 f,
-                "  {} {}({}):{}: {} = {}",
-                cs, func_name, func_id.id, insn_id.id, dest_str, src_str
+                "  {} {}({}): {} = {}",
+                cs, func_name, func_id.id, dest_str, src_str
             )?;
         }
 
@@ -694,6 +692,20 @@ pub fn taint_index_with_config(
     let initial_summary = facts.summary.len();
     let initial_formals = facts.formal_param.len();
 
+    let program_paths: Vec<_> = facts
+        .assign
+        .iter()
+        .flat_map(|(_, dst, src)| std::iter::once(dst.1).chain(std::iter::once(src.1)))
+        .map(|p| (p,))
+        .collect();
+    let assign_like: Vec<_> = facts
+        .assign
+        .into_iter()
+        .map(|(site, dst, src)| {
+            let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site).unwrap();
+            (func_id, dst.0, dst.1, src.0, src.1)
+        })
+        .collect();
     // Access paths may be introduced in summaries, so include those.
     let summary_paths: HashSet<_> = facts
         .summary
@@ -716,7 +728,6 @@ pub fn taint_index_with_config(
         relation formal_param(FunctionId, FlowVariable, FormalType) = facts.formal_param;
         relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex) = facts.actual_param;
         relation call(FunctionId, InsnId, FunctionId) = call;
-        relation assign(PackedInsnSiteId, FlowVertex, FlowVertex) = facts.assign;
         // func:insn: v = ptr<function_id>
         relation func_ptr_assign(PackedInsnSiteId, FlowVertex, FunctionId) = facts.func_ptr_assign;
         relation java_obj_assign(PackedInsnSiteId, FlowVertex, Symbol) = facts.java_obj_assign;
@@ -734,24 +745,23 @@ pub fn taint_index_with_config(
         // Derived:
 
         relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
-        relation assign_like(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path);
-        relation java_obj_assign_like(FunctionId, InsnId, FlowVariable, Path, Symbol);
+        relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path) = assign_like;
+        relation java_obj_assign_like(FunctionId, FlowVariable, Path, Symbol);
         relation model_paths(Path) = summary_paths.into_iter().collect();
-        relation program_paths(Path);
+        relation program_paths(Path) = program_paths;
 
         // Hybrid Inlining relations:
         relation critical_summary(FunctionId, FormalIndex, Path, PackedInsnSiteId);
         // Resolvent reaches the formals of Function.
         relation resolvent(CallString, FunctionId, FormalIndex, Path, PackedInsnSiteId, FunctionId);
-        relation func_ptr_assign_like(FunctionId, InsnId, FlowVariable, Path, FunctionId);
-        relation context_assign(CallString, FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path);
+        relation func_ptr_assign_like(FunctionId, FlowVariable, Path, FunctionId);
+        relation context_assign(CallString, FunctionId, FlowVariable, Path, FlowVariable, Path);
         relation context_locals(CallString, FunctionId, FlowVariable, Path, FormalIndex, Path);
         relation context_summary(CallString, FunctionId, FormalIndex, Path, FormalIndex, Path);
 
         // Sets up paths from input program with static info. Paths must remain finite so we
         // shouldn't add paths from constructed summaries directly.
         program_paths(p) <-- actual_param(_, _, vx), let FlowVertex(_, p) = vx;
-        program_paths(p1), program_paths(p2) <-- assign(_, vx, vy), let FlowVertex(_, p1) = vx, let FlowVertex(_, p2) = vy;
         paths(p) <-- program_paths(p);
         paths(p) <-- model_paths(p);
 
@@ -768,32 +778,25 @@ pub fn taint_index_with_config(
         // Propagate fields
         locals(infunc, v1, p13.clone(), a, p4) <--
             locals(infunc, v2, p23, a, p4),
-            assign_like(infunc, insn_id,  v1, p1, v2, p2),
+            assign_like(infunc, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
         locals(infunc, v1, p1, a, p43.clone()) <--
             locals(infunc, v2, p2, a, p4),
-            assign_like(infunc, _, v1, p1, v2, p23),
+            assign_like(infunc, v1, p1, v2, p23),
             if let Some(p43) = p23.substitute_prefix(p2, p4),
             paths(&p43);
 
-        // Initialize assigns from program
-        assign_like(func_id, insn_id, v1, p1, v2, p2) <--
-            assign(site_id_slice, dst, src),
-            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**site_id_slice).unwrap(),
-            let FlowVertex(v1, p1) = dst,
-            let FlowVertex(v2, p2) = src;
-
         // Compute assignments from call sites
-        assign_like(func_id, insn_id, v.clone(), p, cv.clone(), Path::empty()),
-        assign_like(func_id, insn_id, cv.clone(), Path::empty(), v.clone(), p) <--
+        assign_like(func_id, v.clone(), p, cv.clone(), Path::empty()),
+        assign_like(func_id, cv.clone(), Path::empty(), v.clone(), p) <--
             actual_param(call_site_slice, n, vx),
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**call_site_slice).unwrap(),
             let cv = FlowVariable::CallArg { id: call_site_slice.clone(), formal: n.clone() },
             let FlowVertex(v, p) = vx;
 
         // Compute assignments from summaries
-        assign_like(func_id, insn_id, v1, p1, v2, p2) <--
+        assign_like(func_id, v1, p1, v2, p2) <--
             summary(tgt, n1, dst_path, n2, src_path),
             call(func_id, insn_id, tgt),
             let site_id = InsnSiteId { func_id: *func_id, insn_id: *insn_id },
@@ -855,8 +858,8 @@ pub fn taint_index_with_config(
             call(call_func_id, insn_id, tgt),
             let call_site_id = PackedInsnSiteId::try_from_parts(*call_func_id, *insn_id).unwrap(),
             let arg = FlowVariable::CallArg { id: call_site_id, formal: *n_tgt },
-            (func_ptr_assign_like(call_func_id, _, arg, p_tgt, ptr_tgt) |
-             (java_obj_assign_like(call_func_id, _, arg, p_tgt, cls),
+            (func_ptr_assign_like(call_func_id, arg, p_tgt, ptr_tgt) |
+             (java_obj_assign_like(call_func_id, arg, p_tgt, cls),
               java_call(critical_site_id, _, method_name, method_desc),
               java_resolvents(cls, method_name, method_desc, ptr_tgt))),
             let cs = CallString::new(),
@@ -873,7 +876,7 @@ pub fn taint_index_with_config(
             if let Some(new_cs) = cs.push(call_site_id);
 
         // 3.1: Contextual Assignment (instantiate)
-        context_assign(cs.clone(), func_id, insn_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
+        context_assign(cs.clone(), func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
             resolvent(cs, func_id, n, p, critical_site_id, ptr_tgt),
             locals(func_id, v_rec, p_v, n, p),
             let vx_rec = FlowVertex(v_rec.clone(), p_v.clone()),
@@ -887,26 +890,26 @@ pub fn taint_index_with_config(
 
         // 3.2: Contextual Locals Initialization and Propagation
         context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
-            context_assign(cs, func_id, _, v1, p1, v2, p2),
+            context_assign(cs, func_id, v1, p1, v2, p2),
             locals(func_id, v2, p23, n, pn),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
 
         context_locals(cs.clone(), func_id, v2.clone(), p23.clone(), n.clone(), pn.clone()) <--
-            context_assign(cs, func_id, _, v1, p1, v2, p2),
+            context_assign(cs, func_id, v1, p1, v2, p2),
             locals(func_id, v1, p13, n, pn),
             if let Some(p23) = p13.substitute_prefix(p1, p2),
             paths(&p23);
 
         context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
             context_locals(cs, func_id, v2, p23, n, pn),
-            assign_like(func_id, _, v1, p1, v2, p2),
+            assign_like(func_id, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
 
         context_locals(cs.clone(), func_id, v1.clone(), p1.clone(), n.clone(), pn3.clone()) <--
             context_locals(cs, func_id, v2, p2, n, pn),
-            assign_like(func_id, _, v1, p1, v2, p23),
+            assign_like(func_id, v1, p1, v2, p23),
             if let Some(pn3) = p23.substitute_prefix(p2, pn),
             paths(&pn3);
 
@@ -940,7 +943,7 @@ pub fn taint_index_with_config(
             if n1 != n2 || ap3 != *bp;
 
         // 3.4: Instantiate Summaries and pop call string
-        context_assign(new_cs.clone(), func_id, insn_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
+        context_assign(new_cs.clone(), func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
             context_summary(cs, tgt, n1, p1_sum, n2, p2_sum),
             let (new_cs, popped) = cs.pop(),
             if let Some(call_site_id) = popped,
@@ -955,28 +958,28 @@ pub fn taint_index_with_config(
         summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
             context_summary(CallString::new(), func_id, n1, p1, n2, p2);
 
-        assign_like(func_id, insn_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
-            context_assign(CallString::new(), func_id, insn_id, v1, p1, v2, p2);
+        assign_like(func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
+            context_assign(CallString::new(), func_id, v1, p1, v2, p2);
 
         // Function Pointer Propagation
-        func_ptr_assign_like(func_id, insn_id, v.clone(), p.clone(), tgt) <--
+        func_ptr_assign_like(func_id, v.clone(), p.clone(), tgt) <--
             func_ptr_assign(site_id, vx, tgt), let FlowVertex(v, p) = vx,
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**site_id).unwrap();
 
-        func_ptr_assign_like(func_id, insn_id, v1.clone(), p_new.clone(), tgt) <--
-            func_ptr_assign_like(func_id, _, v2, p_context, tgt),
-            assign_like(func_id, insn_id, v1, p1, v2, p2),
+        func_ptr_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
+            func_ptr_assign_like(func_id, v2, p_context, tgt),
+            assign_like(func_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
             paths(&p_new);
 
         // Java Object Propagation
-        java_obj_assign_like(func_id, insn_id, v.clone(), p.clone(), tgt) <--
+        java_obj_assign_like(func_id, v.clone(), p.clone(), tgt) <--
             java_obj_assign(site_id, vx, tgt), let FlowVertex(v, p) = vx,
-            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**site_id).unwrap();
+            let InsnSiteId {func_id, ..} = InsnSiteId::unpack_from_slice(&**site_id).unwrap();
 
-        java_obj_assign_like(func_id, insn_id, v1.clone(), p_new.clone(), tgt) <--
-            java_obj_assign_like(func_id, _, v2, p_context, tgt),
-            assign_like(func_id, insn_id, v1, p1, v2, p2),
+        java_obj_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
+            java_obj_assign_like(func_id, v2, p_context, tgt),
+            assign_like(func_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
             paths(&p_new);
     };

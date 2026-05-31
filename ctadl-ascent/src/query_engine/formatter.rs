@@ -133,7 +133,7 @@ pub struct FormatFacts {
     #[builder(default)]
     pub call: Vec<(PackedInsnSiteId, FunctionId)>,
     #[builder(default)]
-    pub assign: Vec<(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)>,
+    pub assign: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
     #[builder(default)]
     pub paths: Vec<(Path,)>,
     #[builder(default)]
@@ -205,15 +205,6 @@ pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
             if let FlowVariable::CallArg { id, formal } = v2,
             if **formal >= 0,
             let label = src.label.clone();
-
-        // taint assigns
-        tainted_var_at_insn(id, label.clone(), v2, p2) <--
-            taint(func_id, _, v2, p2, src),
-            if !v2.is_globals(),
-            (assign_like(func_id, insn_id, _, _, v2, p2) | assign_like(func_id, insn_id, v2, p2, _, _)),
-            let site_id = InsnSiteId {func_id: *func_id, insn_id: *insn_id},
-            let id = InsnSiteId::pack(&site_id).map(PackedInsnSiteId).expect("pack error"),
-            let label = &src.label;
     }
 
     let mut engine = FormatterEngine {
@@ -895,14 +886,6 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     // Map each node to an instruction for location info
     let mut node_to_site: BTreeMap<(FunctionId, FlowVariable, Path), (FunctionId, InsnId)> =
         BTreeMap::new();
-    for (f, i, v1, p1, v2, p2) in &ctx.facts.assign {
-        node_to_site
-            .entry((*f, v1.clone(), *p1))
-            .or_insert((*f, *i));
-        node_to_site
-            .entry((*f, v2.clone(), *p2))
-            .or_insert((*f, *i));
-    }
     for (site, _, v, p) in &ctx.facts.actual_param {
         let site_unpacked = InsnSiteId::unpack(site).unwrap();
         node_to_site
