@@ -58,9 +58,17 @@ fn get_interner() -> &'static StringInterner {
 }
 
 /// A transparent wrapper around a `&'static str` that is interned.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct StringRef(&'static str);
+
+impl PartialEq for StringRef {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0)
+    }
+}
+
+impl Eq for StringRef {}
 
 impl StringRef {
     pub fn new(s: &str) -> Self {
