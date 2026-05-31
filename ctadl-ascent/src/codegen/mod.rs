@@ -17,7 +17,7 @@ Parameters in IR are mapped to the same indices in the Datalog. Return values ar
 */
 use std::collections::{BTreeMap, BTreeSet};
 
-use internment::ArcIntern;
+use leaky_interner::StringRef;
 use smallvec::SmallVec;
 
 use crate::facts as fx;
@@ -583,7 +583,7 @@ impl CodegenVisitor<'_> {
             (Variable::GlobalHeap, None) => FlowVariable::Formal(GLOBALS_INDEX.into()),
             // A versioned global heap is a local variable
             (Variable::GlobalHeap, Some(version)) => {
-                FlowVariable::Local(ArcIntern::from(format!("$globals_{}", version)))
+                FlowVariable::Local(StringRef::from(format!("$globals_{}", version)))
             }
             _ => v.try_into().unwrap(),
         }

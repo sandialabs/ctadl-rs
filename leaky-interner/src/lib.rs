@@ -98,6 +98,14 @@ impl From<String> for StringRef {
     }
 }
 
+impl std::str::FromStr for StringRef {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::new(s))
+    }
+}
+
 impl std::ops::Deref for StringRef {
     type Target = str;
 
@@ -115,6 +123,12 @@ impl AsRef<str> for StringRef {
 impl Borrow<str> for StringRef {
     fn borrow(&self) -> &str {
         self.0
+    }
+}
+
+impl Default for StringRef {
+    fn default() -> Self {
+        Self::new("")
     }
 }
 

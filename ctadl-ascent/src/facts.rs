@@ -7,6 +7,7 @@ use std::{fmt, fmt::Display};
 
 use derive_builder::Builder;
 use internment::ArcIntern;
+use leaky_interner::StringRef;
 use packed_struct::prelude::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -739,7 +740,7 @@ impl InsnId {
 pub enum FlowVariable {
     #[default]
     Uninit,
-    Local(Str),
+    Local(StringRef),
     Formal(FormalIndex),
     CallArg(PackedCallArg),
 }
@@ -798,7 +799,7 @@ impl TryFrom<&mir::Variable> for FlowVariable {
         match v {
             mir::Variable::Local(_) => {
                 let name = format!("{v}");
-                Ok(FlowVariable::Local(ArcIntern::<str>::from(name)))
+                Ok(FlowVariable::Local(StringRef::from(name)))
             }
             mir::Variable::Param(idx) => (*idx).try_into(),
             mir::Variable::GlobalHeap => Err(TryFromVariableError::Global),
@@ -817,7 +818,7 @@ impl TryFrom<&mir::VariableRef> for FlowVariable {
             None => variable.as_ref().try_into(),
             Some(version) => {
                 let name = format!("{variable}_{version}");
-                Ok(FlowVariable::Local(ArcIntern::<str>::from(name)))
+                Ok(FlowVariable::Local(StringRef::from(name)))
             }
         }
     }

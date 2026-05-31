@@ -1279,6 +1279,7 @@ dependencies = [
  "json5",
  "jvm-reader",
  "lazy_static",
+ "leaky-interner",
  "log",
  "log-once",
  "memmap",
