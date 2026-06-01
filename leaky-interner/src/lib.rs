@@ -58,9 +58,15 @@ fn get_interner() -> &'static StringInterner {
 }
 
 /// A transparent wrapper around a `&'static str` that is interned.
-#[derive(Debug, Clone, Copy, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct StringRef(&'static str);
+
+impl Hash for StringRef {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (self.0 as *const str).hash(state);
+    }
+}
 
 impl PartialEq for StringRef {
     fn eq(&self, other: &Self) -> bool {
@@ -155,6 +161,26 @@ mod tests {
         // Check pointer equality
         assert!(std::ptr::eq(s1.as_str(), s2.as_str()));
         assert!(!std::ptr::eq(s1.as_str(), s3.as_str()));
+    }
+
+    #[test]
+    fn test_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+
+        let s1 = StringRef::new("hello");
+        let s2 = StringRef::new("hello");
+
+        assert_eq!(s1, s2);
+
+        let mut h1 = DefaultHasher::new();
+        s1.hash(&mut h1);
+        let hash1 = h1.finish();
+
+        let mut h2 = DefaultHasher::new();
+        s2.hash(&mut h2);
+        let hash2 = h2.finish();
+
+        assert_eq!(hash1, hash2);
     }
 
     #[test]
