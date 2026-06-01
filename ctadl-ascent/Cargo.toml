@@ -68,6 +68,8 @@ tree-sitter = "0.26"
 tree-sitter-c = "0.24"
 tempfile = "3"
 which = "6"
+elsa = "1.11"
+leaky-interner = { path = "../leaky-interner" }
 
 [dev-dependencies]
 test-log = "0.2.19"

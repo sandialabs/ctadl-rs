@@ -14,7 +14,7 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnSiteId, Label,
+    FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnSiteId, Label,
     PackedInsnSiteId, Path, TaintDirection, TaintEndpoint, TaintState, isout,
     PackedCallArg, CallArgId,
 };
@@ -111,12 +111,14 @@ impl QueryResult {
         taint::try_save(&dir, self.taint)?;
         formal_param::try_save(
             &dir,
-            self.formal_param
-                .into_iter()
-                .filter_map(|(fid, v, ty)| match v {
-                    FlowVariable::Formal(i) => Some((fid, i, ty)),
-                    _ => None,
-                }),
+            self.formal_param.iter().filter_map(|(fid, v, ty)| {
+                if let Some(i) = v.as_formal() {
+                    Some((*fid, i, *ty))
+                } else {
+                    None
+                }
+            })
+
         )?;
         Ok(())
     }
@@ -127,7 +129,7 @@ impl QueryResult {
         let taint = taint::try_load(&dir)?;
         let formal_param = formal_param::try_load(&dir)?
             .into_iter()
-            .map(|(fid, idx, ty)| (fid, FlowVariable::Formal(idx), ty))
+            .map(|(fid, idx, ty)| (fid, FlowVariable::formal_index(idx), ty))
             .collect();
         Ok(QueryResult {
             taint,
@@ -151,8 +153,8 @@ impl<'a> std::fmt::Display for QueryResultDisplay<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (func_id, taint_state, flow_var, path, endpoint) in &self.result.taint {
             let var_path_str = {
-                let var_str = match flow_var {
-                    FlowVariable::Local(name) => name.to_string(),
+                let var_str = match flow_var.kind() {
+                    FlowVariableKind::Local(name) => name.to_string(),
                     _ => format!("{}", flow_var),
                 };
                 format!("{}{}", var_str, path.to_dot_string())
@@ -254,23 +256,23 @@ pub mod ascent_code {
         produce_taint!(func_id, TaintState::Free, v1.clone(), p2.clone(), a.clone(), infunc, v2.clone(), p2.clone()) <--
             taint(infunc, TaintState::Free, v2, p2, a),
             formal_param(infunc, v2, formal_ty),
-            if let FlowVariable::Formal(n2) = v2,
-            if (a.direction == TaintDirection::Forward && isout(n2, *formal_ty, p2)) ||
+            if let Some(n2) = v2.as_formal(),
+            if (a.direction == TaintDirection::Forward && isout(&n2, *formal_ty, p2)) ||
                 (a.direction == TaintDirection::Backward /* && isin(n2.0) */),
             call(site_id, infunc),
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**site_id).unwrap(),
-            let call_arg_packed = PackedCallArg::try_from_parts(insn_id, n2.clone()).unwrap(),
-            let v1 = FlowVariable::CallArg(call_arg_packed);
+            let call_arg_packed = PackedCallArg::try_from_parts(insn_id, n2).unwrap(),
+            let v1 = FlowVariable::call_arg_packed(call_arg_packed);
 
         // Actual-to-formal (Call in forward mode, Return in backward mode).
         produce_taint!(func, TaintState::Restricted, formal_var.clone(), p2.clone(), a.clone(), infunc, v2.clone(), p2.clone()) <--
             taint(infunc, _, v2, p2, a),
-            if let FlowVariable::CallArg(packed) = v2,
+            if let Some(packed) = v2.as_call_arg(),
             let CallArgId { insn_id, formal: formal_raw } = CallArgId::try_from(packed).unwrap(),
             let formal = FormalIndex::from(formal_raw),
             let site_id = PackedInsnSiteId::try_from_parts(*infunc, insn_id).unwrap(),
             call(site_id, func),
-            let formal_var = FlowVariable::Formal(formal),
+            let formal_var = FlowVariable::formal_index(formal),
             formal_param(func, formal_var, formal_ty),
             if a.direction == TaintDirection::Forward /* && isin(formal)) */ ||
                 (a.direction == TaintDirection::Backward && isout(&formal, *formal_ty, p2));

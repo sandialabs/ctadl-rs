@@ -55,17 +55,17 @@ fn build_query_endpoints(
         let vars = match selector_ty {
             FormalIndexTypeTag::Index => {
                 let i16_val = idx_opt.expect("index missing");
-                vec![FlowVariable::Formal(i16_val.into())]
+                vec![FlowVariable::formal_index(i16_val.into())]
             }
             FormalIndexTypeTag::Return => {
-                vec![FlowVariable::Formal(RETURN_INDEX.into())]
+                vec![FlowVariable::formal_index(RETURN_INDEX.into())]
             }
             FormalIndexTypeTag::Global => {
-                vec![FlowVariable::Formal(GLOBALS_INDEX.into())]
+                vec![FlowVariable::formal_index(GLOBALS_INDEX.into())]
             }
             FormalIndexTypeTag::AnyArgument => func_num_params
                 .get(&infunc)
-                .map(|n| (0..*n).map(|i| FlowVariable::Formal(i.into())).collect())
+                .map(|n| (0..*n).map(|i| FlowVariable::formal_index(i.into())).collect())
                 .unwrap_or_default(),
         };
 
@@ -77,11 +77,11 @@ fn build_query_endpoints(
         for var in vars {
             out_eps.push((crate::query_engine::QueryEndpoint {
                 infunc,
-                vertex: FlowVertex(var.clone(), ap),
+                vertex: FlowVertex(var.clone(), ap.clone()),
                 label: lbl.clone(),
                 direction,
             },));
-            if let FlowVariable::Formal(_) = var {
+            if var.is_formal() {
                 out_formals.push((infunc, var, facts::FormalType::ByRef));
             }
         }

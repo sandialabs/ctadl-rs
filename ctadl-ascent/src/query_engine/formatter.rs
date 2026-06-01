@@ -195,7 +195,7 @@ pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
 
         absorbing_functions(target, src, formal.clone()) <--
             taint(infunc, _, v, _, src),
-            if let FlowVariable::CallArg(packed) = v,
+            if let Some(packed) = v.as_call_arg(),
             let call_arg_id = CallArgId::try_from(packed).unwrap(),
             let formal = call_arg_id.formal(),
             let id = PackedInsnSiteId::try_from_parts(*infunc, call_arg_id.insn_id).unwrap(),
@@ -206,7 +206,7 @@ pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
         tainted_var_at_insn(id, label, v2, p2) <--
             taint(infunc, _, v2, p2, src),
             if !v2.is_globals(),
-            if let FlowVariable::CallArg(packed) = v2,
+            if let Some(packed) = v2.as_call_arg(),
             let call_arg_id = CallArgId::try_from(packed).unwrap(),
             let id = PackedInsnSiteId::try_from_parts(*infunc, call_arg_id.insn_id).unwrap(),
             if *call_arg_id.formal() >= 0,

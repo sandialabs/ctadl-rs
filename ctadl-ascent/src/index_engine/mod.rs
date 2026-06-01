@@ -46,8 +46,8 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallArgId, CallString, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap,
-    InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, isout,
+    CallArgId, CallString, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
+    FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, isout,
 };
 use ctadl_ir::Symbol;
 
@@ -98,7 +98,7 @@ impl IndexFacts {
         formal_param::try_save(
             &dir,
             self.formal_param.into_iter().map(|(func_id, var, ty)| {
-                let FlowVariable::Formal(i) = var else {
+                let Some(i) = var.as_formal() else {
                     panic!("formal_param variable is not a formal")
                 };
                 (func_id, i, ty)
@@ -160,7 +160,7 @@ impl IndexFacts {
                 formal_param::try_load(&dir)?
                     .into_iter()
                     .map(|(func_id, i, ty)| {
-                        let var = FlowVariable::Formal(i);
+                        let var = FlowVariable::formal_index(i);
                         (func_id, var, ty)
                     })
                     .collect(),
@@ -223,8 +223,8 @@ impl IndexFacts {
     pub fn compute_num_params(&self) -> HashMap<FunctionId, i16> {
         let mut func_num_params: HashMap<FunctionId, i16> = HashMap::new();
         for (func, var, _) in self.formal_param.iter() {
-            let i: i16 = match var {
-                FlowVariable::Formal(i) => **i,
+            let i: i16 = match var.kind() {
+                FlowVariableKind::Formal(i) => *i,
                 _ => {
                     //log::warn!("not a good formal: {:?}", var);
                     continue;
@@ -396,16 +396,18 @@ impl<'a> std::fmt::Display for IndexResultDisplay<'a> {
         writeln!(f, "\nAssign-like:")?;
         for (func_id, dest_var, dest_path, src_var, src_path) in &self.result.assign_like {
             let dest_str = {
-                let var_str = match dest_var {
-                    FlowVariable::Local(name) => name.to_string(),
-                    _ => format!("{}", dest_var),
+                let var_str = if let Some(name) = dest_var.as_local() {
+                    name.to_string()
+                } else {
+                    format!("{}", dest_var)
                 };
                 format!("{}{}", var_str, dest_path.to_dot_string())
             };
             let src_str = {
-                let var_str = match src_var {
-                    FlowVariable::Local(name) => name.to_string(),
-                    _ => format!("{}", src_var),
+                let var_str = if let Some(name) = src_var.as_local() {
+                    name.to_string()
+                } else {
+                    format!("{}", src_var)
                 };
                 format!("{}{}", var_str, src_path.to_dot_string())
             };
@@ -548,9 +550,10 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
             self.func_ptr_assign_like.len()
         )?;
         for (func_id, var, path, tgt) in self.func_ptr_assign_like {
-            let var_str = match var {
-                FlowVariable::Local(name) => name.to_string(),
-                _ => format!("{}", var),
+            let var_str = if let Some(name) = var.as_local() {
+                name.to_string()
+            } else {
+                format!("{}", var)
             };
 
             let func_name = self
@@ -579,16 +582,18 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         writeln!(f, "\nContext Assign ({}):", self.context_assign.len())?;
         for (cs, func_id, dest_var, dest_path, src_var, src_path) in self.context_assign {
             let dest_str = {
-                let var_str = match dest_var {
-                    FlowVariable::Local(name) => name.to_string(),
-                    _ => format!("{}", dest_var),
+                let var_str = if let Some(name) = dest_var.as_local() {
+                    name.to_string()
+                } else {
+                    format!("{}", dest_var)
                 };
                 format!("{}{}", var_str, dest_path.to_dot_string())
             };
             let src_str = {
-                let var_str = match src_var {
-                    FlowVariable::Local(name) => name.to_string(),
-                    _ => format!("{}", src_var),
+                let var_str = if let Some(name) = src_var.as_local() {
+                    name.to_string()
+                } else {
+                    format!("{}", src_var)
                 };
                 format!("{}{}", var_str, src_path.to_dot_string())
             };
@@ -608,9 +613,10 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
 
         writeln!(f, "\nContext Locals ({}):", self.context_locals.len())?;
         for (cs, func_id, var, path, formal_idx, formal_path) in self.context_locals {
-            let var_str = match var {
-                FlowVariable::Local(name) => name.to_string(),
-                _ => format!("{}", var),
+            let var_str = if let Some(name) = var.as_local() {
+                name.to_string()
+            } else {
+                format!("{}", var)
             };
 
             let func_name = self
@@ -772,7 +778,7 @@ pub fn taint_index_with_config(
         // Initialize locals with formals
         locals(infunc, v1, p1.clone(), i, p1.clone()) <--
             formal_param(infunc, v1, _),
-            if let FlowVariable::Formal(i) = v1,
+            if let Some(i) = v1.as_formal(),
             let p1 = Path::empty();
 
         // Propagate fields
@@ -793,7 +799,7 @@ pub fn taint_index_with_config(
             actual_param(call_site_slice, n, vx),
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**call_site_slice).unwrap(),
             let call_arg_packed = PackedCallArg::try_from_parts(insn_id, n.clone()).unwrap(),
-            let cv = FlowVariable::CallArg(call_arg_packed),
+            let cv = FlowVariable::call_arg_packed(call_arg_packed),
             let FlowVertex(v, p) = vx;
 
         // Compute assignments from summaries
@@ -801,10 +807,10 @@ pub fn taint_index_with_config(
             summary(tgt, n1, dst_path, n2, src_path),
             call(func_id, insn_id, tgt),
             let call_arg_packed1 = PackedCallArg::try_from_parts(*insn_id, n1.clone()).unwrap(),
-            let v1 = FlowVariable::CallArg(call_arg_packed1),
+            let v1 = FlowVariable::call_arg_packed(call_arg_packed1),
             let p1 = dst_path.clone(),
             let call_arg_packed2 = PackedCallArg::try_from_parts(*insn_id, n2.clone()).unwrap(),
-            let v2 = FlowVariable::CallArg(call_arg_packed2),
+            let v2 = FlowVariable::call_arg_packed(call_arg_packed2),
             let p2 = src_path.clone();
 
         // Compute summaries from local reachability
@@ -813,9 +819,9 @@ pub fn taint_index_with_config(
             // join with formal_param here instead of using if so that we don't have to traverse all of
             // locals
             formal_param(infunc, dst_var, formal_ty),
-            if let FlowVariable::Formal(n1) = dst_var,
-            if isout(n1, *formal_ty, p1),
-            if n1 != n2 || p1 != p2;
+            if let Some(n1) = dst_var.as_formal(),
+            if isout(&n1, *formal_ty, p1),
+            if n1 != *n2 || p1 != p2;
 
         // aliasing summary rule, see discussion above
         summary(infunc, n1, ap3.clone(), n2, bp) <--
@@ -849,7 +855,7 @@ pub fn taint_index_with_config(
             critical_summary(tgt, n_tgt, p_tgt, critical_site_id),
             call(caller_func_id, caller_insn_id, tgt),
             let call_arg_packed = PackedCallArg::try_from_parts(*caller_insn_id, *n_tgt).unwrap(),
-            let arg = FlowVariable::CallArg(call_arg_packed),
+            let arg = FlowVariable::call_arg_packed(call_arg_packed),
             locals(caller_func_id, arg, p_tgt, n, p_n);
 
         // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
@@ -859,7 +865,7 @@ pub fn taint_index_with_config(
             call(call_func_id, insn_id, tgt),
             let call_site_id = PackedInsnSiteId::try_from_parts(*call_func_id, *insn_id).unwrap(),
             let call_arg_packed = PackedCallArg::try_from_parts(*insn_id, *n_tgt).unwrap(),
-            let arg = FlowVariable::CallArg(call_arg_packed),
+            let arg = FlowVariable::call_arg_packed(call_arg_packed),
             (func_ptr_assign_like(call_func_id, arg, p_tgt, ptr_tgt) |
              (java_obj_assign_like(call_func_id, arg, p_tgt, cls),
               java_call(critical_site_id, _, method_name, method_desc),
@@ -874,7 +880,7 @@ pub fn taint_index_with_config(
             critical_summary(tgt, _, _, critical_site_id),
             let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
             locals(func_id, v_tgt, p_tgt, n, p),
-            if let FlowVariable::CallArg(packed) = v_tgt,
+            if let Some(packed) = v_tgt.as_call_arg(),
             let call_arg_id = CallArgId::try_from(packed).unwrap(),
             let n_tgt = call_arg_id.formal(),
             if let Some(new_cs) = cs.push(call_site_id);
@@ -888,10 +894,10 @@ pub fn taint_index_with_config(
             (java_call(critical_site_id, vx_rec, _, _) | indirect_call(critical_site_id, vx_rec)),
             let InsnSiteId {insn_id, ..} = InsnSiteId::unpack_from_slice(&**critical_site_id).unwrap(),
             let call_arg_packed1 = PackedCallArg::try_from_parts(insn_id, n1.clone()).unwrap(),
-            let v1 = FlowVariable::CallArg(call_arg_packed1),
+            let v1 = FlowVariable::call_arg_packed(call_arg_packed1),
             let p1 = p1_sum.clone(),
             let call_arg_packed2 = PackedCallArg::try_from_parts(insn_id, n2.clone()).unwrap(),
-            let v2 = FlowVariable::CallArg(call_arg_packed2),
+            let v2 = FlowVariable::call_arg_packed(call_arg_packed2),
             let p2 = p2_sum.clone();
 
         // 3.2: Contextual Locals Initialization and Propagation
@@ -923,9 +929,9 @@ pub fn taint_index_with_config(
         context_summary(cs.clone(), func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
             context_locals(cs, func_id, dst_var, p1, n2, p2),
             formal_param(func_id, dst_var, formal_ty),
-            if let FlowVariable::Formal(n1) = dst_var,
-            if isout(n1, *formal_ty, p1),
-            if n1 != n2 || p1 != p2;
+            if let Some(n1) = dst_var.as_formal(),
+            if isout(&n1, *formal_ty, p1),
+            if n1 != *n2 || p1 != p2;
 
         context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
             context_locals(cs, func_id, v1, p1, n1, ap),
@@ -956,10 +962,10 @@ pub fn taint_index_with_config(
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
             call(func_id, insn_id, tgt),
             let call_arg_packed1 = PackedCallArg::try_from_parts(insn_id, n1.clone()).unwrap(),
-            let v1 = FlowVariable::CallArg(call_arg_packed1),
+            let v1 = FlowVariable::call_arg_packed(call_arg_packed1),
             let p1 = p1_sum.clone(),
             let call_arg_packed2 = PackedCallArg::try_from_parts(insn_id, n2.clone()).unwrap(),
-            let v2 = FlowVariable::CallArg(call_arg_packed2),
+            let v2 = FlowVariable::call_arg_packed(call_arg_packed2),
             let p2 = p2_sum.clone();
 
         // 3.5
