@@ -296,9 +296,7 @@ impl Context {
 
                                     if succs.is_empty() {
                                         let throw_exp = Exp::new_access_path(
-                                            AccessPath::without_fields(reg_to_var(
-                                                &code, f.a,
-                                            )),
+                                            AccessPath::without_fields(reg_to_var(&code, f.a)),
                                         );
                                         let empty_exp = Exp::new_bytes(Vec::new());
                                         TerminatorKind::Return {
@@ -312,10 +310,9 @@ impl Context {
                                 Instruction::Return(reg)
                                 | Instruction::ReturnWide(reg)
                                 | Instruction::ReturnObject(reg) => {
-                                    let ret_exp =
-                                        Exp::new_access_path(AccessPath::without_fields(
-                                            reg_to_var(&code, reg.a),
-                                        ));
+                                    let ret_exp = Exp::new_access_path(AccessPath::without_fields(
+                                        reg_to_var(&code, reg.a),
+                                    ));
                                     let empty_exp = Exp::new_bytes(Vec::new());
                                     TerminatorKind::Return {
                                         args: smallvec![ret_exp, empty_exp],

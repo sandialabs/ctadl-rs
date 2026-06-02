@@ -345,7 +345,7 @@ pub fn save_program_info(
     let path = &import.program_path();
     let obj = std::mem::take(&mut program_info.program);
     for f in obj.functions.iter() {
-        if f.blocks.len() == 0 {
+        if f.blocks.is_empty() {
             continue;
         }
         assert!(
