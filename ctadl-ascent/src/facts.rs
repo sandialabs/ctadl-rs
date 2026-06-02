@@ -7,8 +7,8 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 
 use derive_builder::Builder;
+use immortal_intern::{Interner, StringRef};
 use internment::ArcIntern;
-use leaky_interner::{Interner, StringRef};
 use packed_struct::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
