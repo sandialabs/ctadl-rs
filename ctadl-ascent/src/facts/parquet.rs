@@ -929,7 +929,10 @@ impl DecodeColumn<query_engine::QueryEndpoint> for DefaultDecoder {
 
 impl EncodeColumn<facts::PackedCallArg> for DefaultEncoder {
     #[inline]
-    fn encode_column(name: &str, col: Vec<facts::PackedCallArg>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
+    fn encode_column(
+        name: &str,
+        col: Vec<facts::PackedCallArg>,
+    ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
         <Self as EncodeColumn<[u8; 8]>>::encode_column(
             name,
             col.into_iter().map(|s| *s).collect_vec(),

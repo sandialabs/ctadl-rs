@@ -65,7 +65,11 @@ fn build_query_endpoints(
             }
             FormalIndexTypeTag::AnyArgument => func_num_params
                 .get(&infunc)
-                .map(|n| (0..*n).map(|i| FlowVariable::formal_index(i.into())).collect())
+                .map(|n| {
+                    (0..*n)
+                        .map(|i| FlowVariable::formal_index(i.into()))
+                        .collect()
+                })
                 .unwrap_or_default(),
         };
 

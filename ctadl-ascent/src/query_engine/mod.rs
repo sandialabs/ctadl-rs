@@ -14,9 +14,9 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnSiteId, Label,
-    PackedInsnSiteId, Path, TaintDirection, TaintEndpoint, TaintState, isout,
-    PackedCallArg, CallArgId,
+    CallArgId, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType, FunctionId,
+    IdMap, InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintEndpoint,
+    TaintState, isout,
 };
 
 // same as a TaintEndpoint but with a functionId
@@ -111,10 +111,9 @@ impl QueryResult {
         taint::try_save(&dir, self.taint)?;
         formal_param::try_save(
             &dir,
-            self.formal_param.iter().filter_map(|(fid, v, ty)| {
-                v.as_formal().map(|i| (*fid, i, *ty))
-            })
-
+            self.formal_param
+                .iter()
+                .filter_map(|(fid, v, ty)| v.as_formal().map(|i| (*fid, i, *ty))),
         )?;
         Ok(())
     }

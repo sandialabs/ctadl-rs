@@ -59,9 +59,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::{Error, ErrorContext};
 use crate::facts::schema;
 use crate::facts::{
-    FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId, InsnSiteId, Label,
-    PackedInsnSiteId, Path, TaintDirection, TaintState, isout,
-    PackedCallArg, CallArgId,
+    CallArgId, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId, InsnSiteId,
+    Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintState, isout,
 };
 use crate::project::{AnalysisProject, ArtifactLanguage};
 use crate::query_engine::QueryEndpoint;
@@ -1232,11 +1231,7 @@ fn format_source_sink_results(
         let is_source = endpoint.direction == crate::facts::TaintDirection::Forward;
         let is_sink = endpoint.direction == crate::facts::TaintDirection::Backward;
 
-        let node = (
-            endpoint.infunc,
-            endpoint.vertex.0,
-            endpoint.vertex.1,
-        );
+        let node = (endpoint.infunc, endpoint.vertex.0, endpoint.vertex.1);
         // Use the logical location of the source, and use the physical location additionally if it's available
         if is_source || is_sink {
             let rule_id = if is_source {

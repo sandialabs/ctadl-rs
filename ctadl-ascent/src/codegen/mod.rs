@@ -525,9 +525,7 @@ impl Visitor for CodegenVisitor<'_> {
                 };
                 let dv = FlowVariable::formal_index(i.into());
                 let dpath = fx::Path::empty();
-                self.facts
-                    .assign
-                    .push((site, FlowVertex(dv, dpath), src));
+                self.facts.assign.push((site, FlowVertex(dv, dpath), src));
             }
         }
     }
