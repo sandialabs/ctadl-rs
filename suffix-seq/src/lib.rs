@@ -1,6 +1,6 @@
 use parking_lot::RwLock;
 use std::any::{Any, TypeId};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
@@ -65,60 +65,10 @@ where
     }
 }
 
-struct SuffixInterner<T>
-where
-    T: Hash + Eq + Clone + Send + Sync + 'static,
-{
-    shards: Box<[RwLock<HashSet<&'static Node<T>>>]>,
-}
-
-impl<T> SuffixInterner<T>
-where
-    T: Hash + Eq + Clone + Send + Sync + 'static,
-{
-    fn new(num_shards: usize) -> Self {
-        let mut shards = Vec::with_capacity(num_shards);
-        for _ in 0..num_shards {
-            shards.push(RwLock::new(HashSet::new()));
-        }
-        Self {
-            shards: shards.into_boxed_slice(),
-        }
-    }
-
-    fn shard_for(&self, node: &Node<T>) -> usize {
-        let mut s = std::collections::hash_map::DefaultHasher::new();
-        node.hash(&mut s);
-        let hash = s.finish();
-        (hash % self.shards.len() as u64) as usize
-    }
-
-    fn intern(&self, node: &Node<T>) -> &'static Node<T> {
-        let idx = self.shard_for(node);
-        let shard = &self.shards[idx];
-
-        {
-            let read = shard.read();
-            if let Some(&existing) = read.get(node) {
-                return existing;
-            }
-        }
-
-        let mut write = shard.write();
-        if let Some(&existing) = write.get(node) {
-            return existing;
-        }
-
-        let leaked: &'static Node<T> = Box::leak(Box::new(node.clone()));
-        write.insert(leaked);
-        leaked
-    }
-}
-
 static INTERNERS: OnceLock<RwLock<HashMap<TypeId, &'static (dyn Any + Send + Sync)>>> =
     OnceLock::new();
 
-fn get_interner<T>() -> &'static SuffixInterner<T>
+fn get_interner<T>() -> &'static immortal::Interner<Node<T>>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
@@ -127,19 +77,19 @@ where
 
     if let Some(&interner) = map_lock.read().get(&type_id) {
         return interner
-            .downcast_ref::<SuffixInterner<T>>()
+            .downcast_ref::<immortal::Interner<Node<T>>>()
             .expect("Type mismatch in interner registry");
     }
 
     let mut map = map_lock.write();
     let interner = map.entry(type_id).or_insert_with(|| {
-        let interner = SuffixInterner::<T>::new(64);
-        let leaked: &'static SuffixInterner<T> = Box::leak(Box::new(interner));
+        let interner = immortal::Interner::<Node<T>>::new(64);
+        let leaked: &'static immortal::Interner<Node<T>> = Box::leak(Box::new(interner));
         leaked as &'static (dyn Any + Send + Sync)
     });
 
     interner
-        .downcast_ref::<SuffixInterner<T>>()
+        .downcast_ref::<immortal::Interner<Node<T>>>()
         .expect("Type mismatch in interner registry")
 }
 

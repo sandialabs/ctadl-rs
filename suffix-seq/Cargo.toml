@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 parking_lot = "0.12"
 serde = { version = "1.0", features = ["derive"], optional = true }
+immortal = { path = "../immortal" }
 
 [features]
 serde = ["dep:serde"]
