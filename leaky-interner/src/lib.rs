@@ -1,5 +1,4 @@
 use parking_lot::RwLock;
-use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
@@ -7,12 +6,12 @@ use std::sync::OnceLock;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-struct StringInterner {
-    shards: Box<[RwLock<HashSet<&'static str>>]>,
+pub struct Interner<T: ?Sized + 'static> {
+    shards: Box<[RwLock<HashSet<&'static T>>]>,
 }
 
-impl StringInterner {
-    fn new(num_shards: usize) -> Self {
+impl<T: ?Sized + Hash + Eq + Send + Sync + 'static> Interner<T> {
+    pub fn new(num_shards: usize) -> Self {
         let mut shards = Vec::with_capacity(num_shards);
         for _ in 0..num_shards {
             shards.push(RwLock::new(HashSet::new()));
@@ -22,34 +21,42 @@ impl StringInterner {
         }
     }
 
-    fn shard_for(&self, s: &str) -> usize {
+    fn shard_for(&self, value: &T) -> usize {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        s.hash(&mut hasher);
+        value.hash(&mut hasher);
         let hash = hasher.finish();
         (hash % self.shards.len() as u64) as usize
     }
 
-    fn intern(&self, s: &str) -> &'static str {
-        let idx = self.shard_for(s);
+    pub fn intern(&self, value: &T) -> &'static T
+    where
+        T: ToOwned,
+        Box<T>: From<T::Owned>,
+    {
+        let idx = self.shard_for(value);
         let shard = &self.shards[idx];
 
         {
             let read = shard.read();
-            if let Some(&existing) = read.get(s) {
+            if let Some(&existing) = read.get(value) {
                 return existing;
             }
         }
 
         let mut write = shard.write();
-        if let Some(&existing) = write.get(s) {
+        if let Some(&existing) = write.get(value) {
             return existing;
         }
 
-        let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
+        let owned = value.to_owned();
+        let boxed = Box::<T>::from(owned);
+        let leaked = Box::leak(boxed);
         write.insert(leaked);
         leaked
     }
 }
+
+type StringInterner = Interner<str>;
 
 static INTERNER: OnceLock<StringInterner> = OnceLock::new();
 
@@ -118,12 +125,6 @@ impl AsRef<str> for StringRef {
     }
 }
 
-impl Borrow<str> for StringRef {
-    fn borrow(&self) -> &str {
-        self.0
-    }
-}
-
 #[cfg(feature = "serde")]
 impl Serialize for StringRef {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -181,6 +182,19 @@ mod tests {
         let hash2 = h2.finish();
 
         assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_generic_interning() {
+        let interner = Interner::<[u8]>::new(4);
+        let b1 = interner.intern(b"hello");
+        let b2 = interner.intern(b"hello");
+        assert!(std::ptr::eq(b1, b2));
+
+        let interner2 = Interner::<i32>::new(4);
+        let i1 = interner2.intern(&42);
+        let i2 = interner2.intern(&42);
+        assert!(std::ptr::eq(i1, i2));
     }
 
     #[test]

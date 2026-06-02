@@ -36,12 +36,12 @@ struct StringTable {
 
 impl StringTable {
     fn intern(&self, s: &str) -> u64 {
+        let string_ref = StringRef::new(s);
         let mut map = self.map.lock().unwrap();
-        if let Some(&idx) = map.get(s) {
+        if let Some(&idx) = map.get(&string_ref) {
             return idx;
         }
         let idx = self.vec.len() as u64;
-        let string_ref = StringRef::new(s);
         self.vec.push(Box::new(string_ref));
         map.insert(string_ref, idx);
         idx
