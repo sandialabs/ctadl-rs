@@ -1,10 +1,6 @@
 use parking_lot::RwLock;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
-use std::sync::OnceLock;
-
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub struct Interner<T: ?Sized + 'static> {
     shards: Box<[RwLock<HashSet<&'static T>>]>,
@@ -56,66 +52,84 @@ impl<T: ?Sized + Hash + Eq + Send + Sync + 'static> Interner<T> {
     }
 }
 
-type StringInterner = Interner<str>;
+/// Defines a new interned type.
+///
+/// This macro creates a transparent wrapper around a static reference to the interned type.
+/// It implements `Hash`, `PartialEq`, and `Eq` using pointer identity, which is safe
+/// because the interner ensures that equal values have the same address.
+#[macro_export]
+macro_rules! immortal {
+    ($(#[$meta:meta])* $vis:vis struct $name:ident($inner:ty)) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialOrd, Ord)]
+        #[repr(transparent)]
+        $vis struct $name(&'static $inner);
 
-static INTERNER: OnceLock<StringInterner> = OnceLock::new();
+        impl $name {
+            /// Interns a value into a thread-local static interner for this type.
+            #[inline]
+            $vis fn intern(val: &$inner) -> Self {
+                static INTERNER: ::std::sync::OnceLock<$crate::Interner<$inner>> = ::std::sync::OnceLock::new();
+                $name(INTERNER.get_or_init(|| $crate::Interner::new(64)).intern(val))
+            }
+        }
 
-fn get_interner() -> &'static StringInterner {
-    INTERNER.get_or_init(|| StringInterner::new(64))
+        impl ::std::hash::Hash for $name {
+            #[inline]
+            fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
+                (self.0 as *const $inner).hash(state);
+            }
+        }
+
+        impl ::std::cmp::PartialEq for $name {
+            #[inline]
+            fn eq(&self, other: &Self) -> bool {
+                ::std::ptr::eq(self.0, other.0)
+            }
+        }
+
+        impl ::std::cmp::Eq for $name {}
+
+        impl ::std::ops::Deref for $name {
+            type Target = $inner;
+            #[inline]
+            fn deref(&self) -> &Self::Target {
+                self.0
+            }
+        }
+    };
 }
 
-/// A transparent wrapper around a `&'static str` that is interned.
-#[derive(Debug, Clone, Copy, PartialOrd, Ord)]
-#[repr(transparent)]
-pub struct StringRef(&'static str);
-
-impl Hash for StringRef {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        (self.0 as *const str).hash(state);
-    }
+immortal! {
+    /// A transparent wrapper around a `&'static str` that is interned.
+    pub struct StringRef(str)
 }
-
-impl PartialEq for StringRef {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.0, other.0)
-    }
-}
-
-impl Eq for StringRef {}
 
 impl StringRef {
-    pub fn new(s: &str) -> Self {
-        StringRef(get_interner().intern(s))
-    }
-
     pub fn as_str(&self) -> &'static str {
         self.0
+    }
+
+    pub fn new(s: &str) -> Self {
+        Self::intern(s)
     }
 }
 
 impl std::fmt::Display for StringRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         f.write_str(self.0)
     }
 }
 
 impl From<&str> for StringRef {
     fn from(s: &str) -> Self {
-        Self::new(s)
+        Self::intern(s)
     }
 }
 
 impl From<String> for StringRef {
     fn from(s: String) -> Self {
-        Self::new(&s)
-    }
-}
-
-impl std::ops::Deref for StringRef {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        self.0
+        Self::intern(&s)
     }
 }
 
@@ -126,23 +140,24 @@ impl AsRef<str> for StringRef {
 }
 
 #[cfg(feature = "serde")]
-impl Serialize for StringRef {
+impl serde::Serialize for StringRef {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: Serializer,
+        S: serde::Serializer,
     {
         serializer.serialize_str(self.0)
     }
 }
 
 #[cfg(feature = "serde")]
-impl<'de> Deserialize<'de> for StringRef {
+impl<'de> serde::Deserialize<'de> for StringRef {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: Deserializer<'de>,
+        D: serde::Deserializer<'de>,
     {
+        use serde::Deserialize;
         let s = String::deserialize(deserializer)?;
-        Ok(StringRef::new(&s))
+        Ok(StringRef::intern(&s))
     }
 }
 
@@ -202,5 +217,17 @@ mod tests {
         let s = StringRef::new("hello");
         assert_eq!(&*s, "hello");
         assert_eq!(s.len(), 5);
+    }
+
+    #[test]
+    fn test_macro_custom_type() {
+        immortal! {
+            struct BytesRef([u8])
+        }
+
+        let b1 = BytesRef::intern(b"hello");
+        let b2 = BytesRef::intern(b"hello");
+        assert_eq!(b1, b2);
+        assert!(std::ptr::eq(&*b1, &*b2));
     }
 }

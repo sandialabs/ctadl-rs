@@ -4,10 +4,9 @@ use std::collections::BTreeMap;
 use std::fmt::{self, Debug, Display};
 use std::ops::Deref;
 use std::str::FromStr;
-use std::sync::OnceLock;
 
 use derive_builder::Builder;
-use immortal::{Interner, StringRef};
+use immortal::StringRef;
 use internment::ArcIntern;
 use packed_struct::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -27,12 +26,6 @@ use std::sync::Mutex;
 
 lazy_static::lazy_static! {
     static ref STRING_TABLE: StringTable = StringTable::default();
-}
-
-static CALL_STRING_INTERNER: OnceLock<Interner<[PackedInsnSiteId]>> = OnceLock::new();
-
-fn get_call_string_interner() -> &'static Interner<[PackedInsnSiteId]> {
-    CALL_STRING_INTERNER.get_or_init(|| Interner::new(64))
 }
 
 #[derive(Default)]
@@ -258,28 +251,16 @@ impl Heap {
     }
 }
 
-/// A sequence of call sites representing a calling context.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialOrd, Ord)]
-#[serde(from = "Vec<PackedInsnSiteId>")]
-pub struct CallString(&'static [PackedInsnSiteId]);
-
-impl PartialEq for CallString {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.0, other.0)
-    }
-}
-
-impl Eq for CallString {}
-
-impl std::hash::Hash for CallString {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.0 as *const [PackedInsnSiteId]).hash(state);
-    }
+immortal::immortal! {
+    /// A sequence of call sites representing a calling context.
+    #[derive(Serialize, Deserialize)]
+    #[serde(from = "Vec<PackedInsnSiteId>")]
+    pub struct CallString([PackedInsnSiteId])
 }
 
 impl From<Vec<PackedInsnSiteId>> for CallString {
     fn from(v: Vec<PackedInsnSiteId>) -> Self {
-        Self(get_call_string_interner().intern(&v))
+        Self::intern(&v)
     }
 }
 
@@ -292,7 +273,7 @@ impl Default for CallString {
 impl CallString {
     /// Creates an empty call string
     pub fn new() -> Self {
-        Self(get_call_string_interner().intern(&[]))
+        CallString::intern(&[])
     }
 
     /// Returns true if the call string is empty
@@ -317,7 +298,7 @@ impl CallString {
         }
         let popped = self.0.last().cloned();
         let new_slice = &self.0[..self.0.len() - 1];
-        (Self(get_call_string_interner().intern(new_slice)), popped)
+        (CallString::intern(new_slice), popped)
     }
 
     /// Pushes a new call site onto the call string.
@@ -334,7 +315,7 @@ impl CallString {
         }
         let mut new_vec = self.0.to_vec();
         new_vec.push(site);
-        Some(Self(get_call_string_interner().intern(&new_vec)))
+        Some(CallString::intern(&new_vec))
     }
 
     /// Returns true if the call string contains the given call site
