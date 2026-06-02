@@ -3,7 +3,6 @@
 Take encoded models and codegen them into the index facts
 */
 
-use internment::ArcIntern;
 
 use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
 use crate::facts;

@@ -4,10 +4,11 @@ use std::collections::BTreeMap;
 use std::fmt::{self, Debug, Display};
 use std::ops::Deref;
 use std::str::FromStr;
+use std::sync::OnceLock;
 
 use derive_builder::Builder;
 use internment::ArcIntern;
-use leaky_interner::StringRef;
+use leaky_interner::{Interner, StringRef};
 use packed_struct::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
@@ -26,6 +27,12 @@ use std::sync::Mutex;
 
 lazy_static::lazy_static! {
     static ref STRING_TABLE: StringTable = StringTable::default();
+}
+
+static CALL_STRING_INTERNER: OnceLock<Interner<[PackedInsnSiteId]>> = OnceLock::new();
+
+fn get_call_string_interner() -> &'static Interner<[PackedInsnSiteId]> {
+    CALL_STRING_INTERNER.get_or_init(|| Interner::new(64))
 }
 
 #[derive(Default)]
@@ -252,13 +259,27 @@ impl Heap {
 }
 
 /// A sequence of call sites representing a calling context.
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(from = "Vec<PackedInsnSiteId>")]
-pub struct CallString(ArcIntern<[PackedInsnSiteId]>);
+pub struct CallString(&'static [PackedInsnSiteId]);
+
+impl PartialEq for CallString {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0)
+    }
+}
+
+impl Eq for CallString {}
+
+impl std::hash::Hash for CallString {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.0 as *const [PackedInsnSiteId]).hash(state);
+    }
+}
 
 impl From<Vec<PackedInsnSiteId>> for CallString {
     fn from(v: Vec<PackedInsnSiteId>) -> Self {
-        Self(ArcIntern::from(v))
+        Self(get_call_string_interner().intern(&v))
     }
 }
 
@@ -271,7 +292,7 @@ impl Default for CallString {
 impl CallString {
     /// Creates an empty call string
     pub fn new() -> Self {
-        Self(ArcIntern::from(Vec::new()))
+        Self(get_call_string_interner().intern(&[]))
     }
 
     /// Returns true if the call string is empty
@@ -292,11 +313,11 @@ impl CallString {
     /// Pops the top frame, returning the new call string and the popped frame
     pub fn pop(&self) -> (Self, Option<PackedInsnSiteId>) {
         if self.0.is_empty() {
-            return (self.clone(), None);
+            return (*self, None);
         }
         let popped = self.0.last().cloned();
         let new_slice = &self.0[..self.0.len() - 1];
-        (Self(ArcIntern::from(new_slice)), popped)
+        (Self(get_call_string_interner().intern(new_slice)), popped)
     }
 
     /// Pushes a new call site onto the call string.
@@ -313,7 +334,7 @@ impl CallString {
         }
         let mut new_vec = self.0.to_vec();
         new_vec.push(site);
-        Some(Self(ArcIntern::from(new_vec)))
+        Some(Self(get_call_string_interner().intern(&new_vec)))
     }
 
     /// Returns true if the call string contains the given call site
@@ -1468,5 +1489,25 @@ mod tests {
 
         let parsed_back: Path = serialized.parse().unwrap();
         assert_eq!(path, parsed_back);
+    }
+
+    #[test]
+    fn test_call_string_interning() {
+        let cs1 = CallString::new();
+        let cs2 = CallString::new();
+        assert_eq!(cs1, cs2);
+        assert!(std::ptr::eq(cs1.0, cs2.0));
+
+        let site = PackedInsnSiteId([1, 2, 3, 4, 5, 6, 7, 8]);
+        // We need a valid site for push to work because of cycle detection and unpacking
+        let cs3 = cs1.push(site).expect("push failed");
+        let cs4 = cs2.push(site).expect("push failed");
+        assert_eq!(cs3, cs4);
+        assert!(std::ptr::eq(cs3.0, cs4.0));
+
+        let (cs5, popped) = cs3.pop();
+        assert_eq!(cs5, cs1);
+        assert!(std::ptr::eq(cs5.0, cs1.0));
+        assert_eq!(popped, Some(site));
     }
 }
