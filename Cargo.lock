@@ -1299,7 +1299,7 @@ dependencies = [
  "smallvec",
  "source-info",
  "streaming-iterator",
- "suffix-seq",
+ "tailshare",
  "tempfile",
  "test-log",
  "thiserror",
@@ -4094,15 +4094,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "suffix-seq"
-version = "0.1.0"
-dependencies = [
- "immortal",
- "parking_lot 0.12.5",
- "serde",
-]
-
-[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4133,6 +4124,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "tailshare"
+version = "0.1.0"
+dependencies = [
+ "immortal",
+ "parking_lot 0.12.5",
+ "serde",
 ]
 
 [[package]]

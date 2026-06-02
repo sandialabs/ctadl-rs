@@ -15,8 +15,6 @@ use thiserror::Error;
 use crate::error::{Error, ErrorContext};
 use ctadl_ir::{Idx, mir, mir::Offset};
 
-use suffix_seq::SuffixSeq;
-
 pub mod parquet;
 pub mod schema;
 
@@ -123,7 +121,7 @@ lazy_static::lazy_static! {
 #[derive(
     Clone, Copy, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord,
 )]
-pub struct Path(pub SuffixSeq<mir::FieldAccess>);
+pub struct Path(pub tailshare::Seq<mir::FieldAccess>);
 
 impl Path {
     /// Creates access path from a sequences of accesses
@@ -143,7 +141,7 @@ impl Path {
     /// Creates an empty path
     #[inline]
     pub fn empty() -> Self {
-        Path(SuffixSeq::new())
+        Path(tailshare::Seq::new())
     }
 
     /// Denotes the empty path
@@ -193,7 +191,7 @@ impl Path {
     }
 
     /// Iterates from the innermost access out
-    pub fn iter(&self) -> suffix_seq::Iter<mir::FieldAccess> {
+    pub fn iter(&self) -> tailshare::Iter<mir::FieldAccess> {
         self.0.iter()
     }
 
@@ -1143,7 +1141,7 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> 
 /// This supports offset arithmetic. For example, if ap = .x.[2] and prefix = .x.[1],
 /// the suffix is .[1].
 #[inline]
-pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<SuffixSeq<mir::FieldAccess>> {
+pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<tailshare::Seq<mir::FieldAccess>> {
     use mir::{FieldAccess, Offset};
     let mut ap_seq = ap.0;
     let mut prefix_seq = prefix.0;
