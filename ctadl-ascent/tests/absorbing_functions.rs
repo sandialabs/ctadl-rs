@@ -1,6 +1,6 @@
 use ctadl_ascent::facts::{
     FlowVariable, FunctionId, InsnId, InsnSiteId, Label, PackedInsnSiteId, Path, TaintDirection,
-    TaintEndpoint, TaintState,
+    TaintState,
 };
 use ctadl_ascent::query_engine::QueryEndpoint;
 use ctadl_ascent::query_engine::formatter::{FormatFacts, compute_taint_results};

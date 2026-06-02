@@ -3,7 +3,7 @@ use dex_reader::DexParser;
 use dex_reader::instructions::{
     Format11n, Format21h, Format21s, Format31i, Format51l, Instruction,
 };
-use dex_reader::types::{CatchHandlerList, CodeItem, EncodedCatchHandler, TryItem, TypeAddrPair};
+use dex_reader::types::CodeItem;
 use std::sync::OnceLock;
 
 fn dummy_parser() -> DexParser<'static> {
