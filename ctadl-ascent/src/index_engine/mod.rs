@@ -684,10 +684,10 @@ pub fn taint_index_with_config(
     let num_variables = facts
         .formal_param
         .iter()
-        .map(|(f, v, _)| (*f, v.clone()))
+        .map(|(f, v, _)| (*f, *v))
         .chain(facts.assign.iter().flat_map(|(site, v1, v2)| {
             let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&**site).unwrap();
-            [(func_id, v1.0.clone()), (func_id, v2.0.clone())]
+            [(func_id, v1.0), (func_id, v2.0)]
         }))
         .collect::<HashSet<_>>()
         .len();

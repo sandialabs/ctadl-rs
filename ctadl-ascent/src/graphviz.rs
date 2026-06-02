@@ -126,12 +126,12 @@ impl<'a> dot::GraphWalk<'a> for TaintGraphViz<'a> {
 
     fn source(&'a self, e: &Self::Edge) -> Self::Node {
         let (sf, sv, sp, _, _, _) = *e;
-        (*sf, sv.clone(), *sp)
+        (*sf, *sv, *sp)
     }
 
     fn target(&'a self, e: &Self::Edge) -> Self::Node {
         let (_, _, _, df, dv, dp) = *e;
-        (*df, dv.clone(), *dp)
+        (*df, *dv, *dp)
     }
 }
 
@@ -211,11 +211,11 @@ impl<'a> dot::GraphWalk<'a> for IndexGraphViz<'a> {
     }
 
     fn source(&'a self, e: &Self::Edge) -> Self::Node {
-        (e.0, e.3.clone(), e.4)
+        (e.0, e.3, e.4)
     }
 
     fn target(&'a self, e: &Self::Edge) -> Self::Node {
-        (e.0, e.1.clone(), e.2)
+        (e.0, e.1, e.2)
     }
 }
 
@@ -226,8 +226,8 @@ pub fn render_index_graph<W: Write>(
 ) -> std::io::Result<()> {
     let mut nodes = BTreeSet::new();
     for (func_id, dst_var, dst_path, src_var, src_path) in assign_like {
-        nodes.insert((*func_id, dst_var.clone(), *dst_path));
-        nodes.insert((*func_id, src_var.clone(), *src_path));
+        nodes.insert((*func_id, *dst_var, *dst_path));
+        nodes.insert((*func_id, *src_var, *src_path));
     }
     let graph = IndexGraphViz {
         nodes: nodes.into_iter().collect(),

@@ -112,11 +112,7 @@ impl QueryResult {
         formal_param::try_save(
             &dir,
             self.formal_param.iter().filter_map(|(fid, v, ty)| {
-                if let Some(i) = v.as_formal() {
-                    Some((*fid, i, *ty))
-                } else {
-                    None
-                }
+                v.as_formal().map(|i| (*fid, i, *ty))
             })
 
         )?;

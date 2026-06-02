@@ -77,7 +77,7 @@ fn build_query_endpoints(
         for var in vars {
             out_eps.push((crate::query_engine::QueryEndpoint {
                 infunc,
-                vertex: FlowVertex(var.clone(), ap.clone()),
+                vertex: FlowVertex(var, ap),
                 label: lbl.clone(),
                 direction,
             },));
@@ -293,7 +293,7 @@ pub fn format(
             let nodes: BTreeSet<_> = facts
                 .taint
                 .iter()
-                .map(|(func_id, _, var, path, _)| (*func_id, var.clone(), *path))
+                .map(|(func_id, _, var, path, _)| (*func_id, *var, *path))
                 .collect();
             let nodes: Vec<_> = nodes.into_iter().collect();
             let sources: BTreeSet<_> = facts
@@ -301,7 +301,7 @@ pub fn format(
                 .iter()
                 .filter_map(|(_, _, _, _, ep)| {
                     if ep.direction == crate::facts::TaintDirection::Forward {
-                        Some((ep.infunc, ep.vertex.0.clone(), ep.vertex.1))
+                        Some((ep.infunc, ep.vertex.0, ep.vertex.1))
                     } else {
                         None
                     }
@@ -312,7 +312,7 @@ pub fn format(
                 .iter()
                 .filter_map(|(_, _, _, _, ep)| {
                     if ep.direction == crate::facts::TaintDirection::Backward {
-                        Some((ep.infunc, ep.vertex.0.clone(), ep.vertex.1))
+                        Some((ep.infunc, ep.vertex.0, ep.vertex.1))
                     } else {
                         None
                     }

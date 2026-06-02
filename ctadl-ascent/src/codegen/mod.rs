@@ -271,7 +271,7 @@ impl Visitor for CodegenVisitor<'_> {
                         let target = self.source_info.sites.get_or_add_function(target);
                         self.facts.func_ptr_assign.push((
                             site,
-                            FlowVertex(dest.clone(), fx::Path::empty()),
+                            FlowVertex(dest, fx::Path::empty()),
                             target,
                         ));
                     }
@@ -279,7 +279,7 @@ impl Visitor for CodegenVisitor<'_> {
                         let dest = self.trans_variable_ref(dest);
                         self.facts.java_obj_assign.push((
                             site,
-                            FlowVertex(dest.clone(), fx::Path::empty()),
+                            FlowVertex(dest, fx::Path::empty()),
                             cls.0.clone(),
                         ));
                     }
@@ -296,10 +296,10 @@ impl Visitor for CodegenVisitor<'_> {
                 dest: out,
                 operands,
             } => {
-                let dst = FlowVertex(self.trans_variable_ref(out).clone(), fx::Path::empty());
+                let dst = FlowVertex(self.trans_variable_ref(out), fx::Path::empty());
                 let mut seen_phi = BTreeSet::new();
                 for (_, op) in operands {
-                    let src = FlowVertex(self.trans_variable_ref(op).clone(), fx::Path::empty());
+                    let src = FlowVertex(self.trans_variable_ref(op), fx::Path::empty());
                     if seen_phi.insert(src.clone()) {
                         self.facts.assign.push((site, dst.clone(), src));
                     }
@@ -312,7 +312,7 @@ impl Visitor for CodegenVisitor<'_> {
                     // data flow
                     let dst = FlowVariable::formal_index(i.try_into().unwrap());
                     let src = self.trans_variable_ref(op);
-                    if seen_param.insert((dst.clone(), src.clone())) {
+                    if seen_param.insert((dst, src)) {
                         let dst = FlowVertex(dst, fx::Path::empty());
                         let src = FlowVertex(src, fx::Path::empty());
                         self.facts.assign.push((site, dst, src));
@@ -321,7 +321,7 @@ impl Visitor for CodegenVisitor<'_> {
                 // assign current version of global back to the auxparam global
                 let dst = FlowVariable::formal_index(GLOBALS_INDEX.into());
                 let src = self.trans_variable_ref(global);
-                if seen_param.insert((dst.clone(), src.clone())) {
+                if seen_param.insert((dst, src)) {
                     let dst = FlowVertex(dst, fx::Path::empty());
                     let src = FlowVertex(src, fx::Path::empty());
                     self.facts.assign.push((site, dst, src));
@@ -371,7 +371,7 @@ impl Visitor for CodegenVisitor<'_> {
                             CallResolutionStrategy::Hi => {
                                 self.facts.java_call.push((
                                     site,
-                                    FlowVertex(recv_var.clone(), fx::Path::empty()),
+                                    FlowVertex(recv_var, fx::Path::empty()),
                                     simple_name.clone(),
                                     descriptor.clone(),
                                 ));
@@ -396,7 +396,7 @@ impl Visitor for CodegenVisitor<'_> {
                                 } else {
                                     self.facts.java_call.push((
                                         site,
-                                        FlowVertex(recv_var.clone(), fx::Path::empty()),
+                                        FlowVertex(recv_var, fx::Path::empty()),
                                         simple_name.clone(),
                                         descriptor.clone(),
                                     ));
@@ -489,12 +489,12 @@ impl Visitor for CodegenVisitor<'_> {
                 let source = self.trans_variable_ref(source);
                 let value = self.trans_exp(value);
                 // dest_var <- source
-                let dest = FlowVertex(dest_var.clone(), dest_fields.into());
+                let dest = FlowVertex(dest_var, dest_fields.into());
                 // Multiple field updates of the same src/dst cause duplicate assigns
                 self.facts.assign.push((
                     site,
-                    FlowVertex(dest_var.clone(), fx::Path::empty()),
-                    FlowVertex(source.clone(), fx::Path::empty()),
+                    FlowVertex(dest_var, fx::Path::empty()),
+                    FlowVertex(source, fx::Path::empty()),
                 ));
                 // dest_var.dest_fields <- value
                 if !dest_fields.is_empty()
@@ -527,7 +527,7 @@ impl Visitor for CodegenVisitor<'_> {
                 let dpath = fx::Path::empty();
                 self.facts
                     .assign
-                    .push((site, FlowVertex(dv.clone(), dpath), src));
+                    .push((site, FlowVertex(dv, dpath), src));
             }
         }
     }
@@ -568,7 +568,7 @@ impl CodegenVisitor<'_> {
     fn trans_access_path(&mut self, ap: &AccessPath) -> FlowVertex {
         let v = self.trans_variable_ref(&ap.variable_ref);
         let fields = &ap.path;
-        FlowVertex(v.clone(), fields.into())
+        FlowVertex(v, fields.into())
     }
 
     #[inline]

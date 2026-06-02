@@ -65,7 +65,7 @@ pub struct Str(u64);
 
 impl Default for Str {
     fn default() -> Self {
-        EMPTY_STR.clone()
+        *EMPTY_STR
     }
 }
 
@@ -848,7 +848,7 @@ impl FlowVariable {
 
     pub fn as_local(&self) -> Option<Str> {
         if self.is_local() {
-            let idx = (self.0 & DATA_MASK) as u64;
+            let idx = self.0 & DATA_MASK;
             Some(Str(idx))
         } else {
             None
@@ -872,7 +872,7 @@ impl FlowVariable {
         match self.0 & TAG_MASK {
             TAG_UNINIT => FlowVariableKind::Uninit,
             TAG_LOCAL => {
-                let idx = (self.0 & DATA_MASK) as u64;
+                let idx = self.0 & DATA_MASK;
                 FlowVariableKind::Local(Str(idx))
             }
             TAG_FORMAL => {
