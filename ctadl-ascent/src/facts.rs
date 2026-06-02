@@ -506,69 +506,16 @@ impl FromStr for Function {
     }
 }
 
-/// An index, like for formals.
-#[derive(
-    Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Default, Serialize, Deserialize,
-)]
-#[repr(transparent)]
-pub struct Index(i16);
-
-impl Index {
-    #[inline]
-    pub fn new(i: i16) -> Self {
-        Self(i)
-    }
-}
-
-impl Deref for Index {
-    type Target = i16;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Display for Index {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Index(i) = self;
-        write!(f, "{i}")
-    }
-}
-
-impl From<i8> for Index {
-    #[inline]
-    fn from(i: i8) -> Self {
-        Self(i.into())
-    }
-}
-
-impl From<i16> for Index {
-    #[inline]
-    fn from(i: i16) -> Self {
-        Self(i)
-    }
-}
-
-impl TryFrom<usize> for Index {
-    type Error = Error;
-    fn try_from(i: usize) -> Result<Self, Self::Error> {
-        match i.try_into() {
-            Ok(i) => Ok(Self(i)),
-            Err(_) => Err(Error::FactsConvert("usize too lang for Index".to_string())),
-        }
-    }
-}
-
 /// Index into the parameter list. Negative indices are reserved for the engine
 #[derive(
     Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Serialize, Deserialize, Default,
 )]
 #[repr(transparent)]
-pub struct FormalIndex(Index);
+pub struct FormalIndex(i16);
 
 impl FormalIndex {
     #[inline]
-    pub fn new(i: Index) -> Self {
+    pub fn new(i: i16) -> Self {
         Self(i)
     }
 }
@@ -577,14 +524,7 @@ impl Deref for FormalIndex {
     type Target = i16;
     #[inline]
     fn deref(&self) -> &Self::Target {
-        self.0.deref()
-    }
-}
-
-impl From<Index> for FormalIndex {
-    #[inline]
-    fn from(i: Index) -> Self {
-        Self(i)
+        &self.0
     }
 }
 
@@ -598,7 +538,7 @@ impl From<i8> for FormalIndex {
 impl From<i16> for FormalIndex {
     #[inline]
     fn from(i: i16) -> Self {
-        Self(i.into())
+        Self(i)
     }
 }
 

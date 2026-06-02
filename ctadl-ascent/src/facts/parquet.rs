@@ -542,8 +542,7 @@ impl DecodeColumn<facts::Path> for DefaultDecoder {
 }
 impl_encode_newtype!(facts::Function, Str, GenericStringArray<i64>);
 impl_encode_newtype!(facts::Label, Str, GenericStringArray<i64>);
-impl_encode_newtype!(facts::Index, i16, Int16Array);
-impl_encode_newtype!(facts::FormalIndex, facts::Index, Int16Array);
+impl_encode_newtype!(facts::FormalIndex, i16, Int16Array);
 impl_encode_newtype!(source_info::FileSpanId, u32, UInt32Array);
 
 macro_rules! impl_encode_newtype_field {
@@ -1032,7 +1031,6 @@ impl DecodeColumn<facts::FlowVariable> for DefaultDecoder {
         name: &str,
         batch: &RecordBatch,
     ) -> impl IntoIterator<Item = facts::FlowVariable> {
-        use facts::FlowVariableKind::*;
         let tag_column_name: &'static str = Box::leak(format!("{name}_tag").into_boxed_str());
         let ref_column_name = name.to_owned() + "_ref";
         let ref_col_names = [
