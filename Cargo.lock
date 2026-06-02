@@ -1275,7 +1275,7 @@ dependencies = [
  "elsa",
  "env_logger",
  "hashbrown 0.16.1",
- "immortal-intern",
+ "immortal",
  "internment",
  "itertools 0.14.0",
  "json5",
@@ -2724,7 +2724,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "immortal-intern"
+name = "immortal"
 version = "0.1.0"
 dependencies = [
  "parking_lot 0.12.5",
