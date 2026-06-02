@@ -9,9 +9,10 @@ all the intermediate files should be stored; the API below this should be writte
 as parameters.
 */
 
-use itertools::Itertools;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
+
+use itertools::Itertools;
 
 use crate::codegen::models::codegen_summary;
 use crate::codegen::{CallResolutionStrategy, codegen_program};
@@ -26,6 +27,7 @@ use crate::languages::{dex, jvm, pcode};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, QueryResult, taint_analysis};
+use ctadl_ir::graph::is_connected;
 use ctadl_ir::ssa;
 use ctadl_ir::{ProgramInfo, encode};
 
@@ -342,6 +344,16 @@ pub fn save_program_info(
 ) -> Result<(), Error> {
     let path = &import.program_path();
     let obj = std::mem::take(&mut program_info.program);
+    for f in obj.functions.iter() {
+        if f.blocks.len() == 0 {
+            continue;
+        }
+        assert!(
+            is_connected(&f.blocks),
+            "Function has unreachable blocks: {}",
+            f.name
+        );
+    }
     let data = encode::encode_program(&obj).map_err(Error::Bitcode)?;
     std::fs::write(path, data)
         .map_err(Error::Io)
