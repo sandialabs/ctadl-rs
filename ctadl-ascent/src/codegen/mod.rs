@@ -364,7 +364,7 @@ impl Visitor for CodegenVisitor<'_> {
                         match self.strategy {
                             CallResolutionStrategy::Cha => {
                                 log::trace!(
-                                    "java: CHA resolve {cls}.{simple_name}({descriptor}) with {} targets",
+                                    "java: CHA resolve {cls}.{simple_name}{descriptor} with {} targets",
                                     resolvents.len()
                                 );
                                 for target in resolvents {
@@ -381,7 +381,7 @@ impl Visitor for CodegenVisitor<'_> {
                                     descriptor.clone(),
                                 ));
                                 log::trace!(
-                                    "java: HI resolve {cls}.{simple_name}({descriptor}) (deferred)"
+                                    "java: HI resolve {cls}.{simple_name}{descriptor} (deferred)"
                                 );
                             }
                             CallResolutionStrategy::Mixed => {
@@ -389,14 +389,14 @@ impl Visitor for CodegenVisitor<'_> {
                                     let mut resolvents = resolvents;
                                     let target = resolvents.next().unwrap();
                                     log::trace!(
-                                        "java: exact resolve {cls}.{simple_name}({descriptor}) to {target}"
+                                        "java: exact resolve {cls}.{simple_name}{descriptor} to {target}"
                                     );
                                     let target = fx::Function(target);
                                     let target = self.source_info.sites.get_or_add_function(target);
                                     self.facts.call.push((site, target));
                                 } else if resolvents.len() == 0 {
                                     log::trace!(
-                                        "java: no resolvents {cls}.{simple_name}({descriptor})",
+                                        "java: no resolvents {cls}.{simple_name}{descriptor}",
                                     );
                                 } else {
                                     self.facts.java_call.push((
@@ -406,7 +406,7 @@ impl Visitor for CodegenVisitor<'_> {
                                         descriptor.clone(),
                                     ));
                                     log::trace!(
-                                        "java: hybrid resolve {cls}.{simple_name}({descriptor}) with {} targets",
+                                        "java: hybrid resolve {cls}.{simple_name}{descriptor} with {} targets",
                                         resolvents.len()
                                     );
                                 }
@@ -698,6 +698,7 @@ fn run_cha(
     };
     let mut result: BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>> = BTreeMap::new();
     for (c, n, d, id) in prog.cha_resolve.into_iter() {
+        log::trace!("Adding entry: {c}, {n}, {d} -> {id}");
         result.entry((c, n, d)).or_default().push(id);
     }
     result

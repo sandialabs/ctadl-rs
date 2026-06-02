@@ -22,6 +22,7 @@ undocumented_unsafe_blocks = "deny"
 
 # Ignore a couple Clippy warnings that aren't important IMO
 type_complexity = "allow"
+too_many_arguments = "allow"
 large_enum_variant = "allow"
 result_large_err = "allow"
 # Our Ascent code uses _ as a name all the time

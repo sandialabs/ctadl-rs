@@ -682,10 +682,8 @@ fn format_class_header(cf: &ClassFile) -> Result<String, ClassFileError> {
         if flags & 0x4000 != 0 {
             mods.push("enum");
         }
-    } else {
-        if flags & 0x1000 != 0 {
-            mods.push("synthetic");
-        }
+    } else if flags & 0x1000 != 0 {
+        mods.push("synthetic");
     }
     let mod_str = if mods.is_empty() {
         "".to_string()
@@ -763,7 +761,7 @@ pub fn disassemble_class_file(path: &Path) -> String {
             continue;
         }
         if !first {
-            out.push_str("\n");
+            out.push('\n');
         }
         first = false;
         if let Ok(sig) = format_field_signature(cf, f) {
@@ -775,7 +773,7 @@ pub fn disassemble_class_file(path: &Path) -> String {
             continue;
         }
         if !first {
-            out.push_str("\n");
+            out.push('\n');
         }
         first = false;
         if let Some(ref code) = m.code {
@@ -801,7 +799,7 @@ pub fn disassemble_jar_file(path: &Path) -> String {
         let cf = parser.class_file();
         if let Ok(header) = format_class_header(cf) {
             if !out.is_empty() {
-                out.push_str("\n");
+                out.push('\n');
             }
             out.push_str(&header);
             out.push('\n');
@@ -815,7 +813,7 @@ pub fn disassemble_jar_file(path: &Path) -> String {
                 continue;
             }
             if !first {
-                out.push_str("\n");
+                out.push('\n');
             }
             first = false;
             if let Ok(sig) = format_field_signature(cf, f) {
@@ -827,7 +825,7 @@ pub fn disassemble_jar_file(path: &Path) -> String {
                 continue;
             }
             if !first {
-                out.push_str("\n");
+                out.push('\n');
             }
             first = false;
             if let Some(ref code) = m.code {

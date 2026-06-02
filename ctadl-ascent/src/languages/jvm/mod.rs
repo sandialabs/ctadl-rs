@@ -76,7 +76,17 @@ impl Builders {
 #[derive(Debug)]
 struct Context {
     // vmt entries for externs so far
-    ext: HashMap<String, (JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
+    ext: HashMap<
+        String,
+        (
+            JavaClass,
+            JavaSimpleName,
+            JavaSignature,
+            JavaMethod,
+            Vec<ParameterType>,
+            ReturnType,
+        ),
+    >,
 }
 
 impl Context {
@@ -94,7 +104,7 @@ impl Context {
     ) -> Result<(), Error> {
         // Iterate over all classes (no artificial limit).
         for class_def in parser.classes() {
-            let class_name = parser.class_name()?;
+            let class_name = "L".to_owned() + parser.class_name()? + ";";
             log::trace!("Class: {}", class_name);
             // Populate class hierarchy information for the VMT.
             // Immediate superclass (if any) and immediate super‑interfaces.
@@ -142,8 +152,6 @@ impl Context {
                 let fidx = builders.program.new_function();
                 // Reset temporaries per function.
                 let fdat = &mut builders.program[fidx];
-                fdat.name = sig.clone();
-                //self.ext.remove(&sig);
 
                 // ---------------------------------------------------------------------
                 // Collect Java virtual method information for the VMT.
@@ -152,13 +160,38 @@ impl Context {
                 // The full method signature (`sig`) includes the enclosing class; we want the proto
                 // pretty‑signature, e.g. "(I)I". Use the parser's `proto_signature` helper.
                 let java_sig = parser.method_proto(enc)?;
+                let full_name: String = class_name.to_owned() + "->" + &sig;
+                fdat.name = full_name.clone();
+
+                let params = jvm_reader::descriptor_parameter_info(&java_sig);
+                for p in params {
+                    match p.kind {
+                        jvm_reader::MethodParameterKind::Primitive => {
+                            fdat.params.push(ParameterType::ByVal)
+                        }
+                        jvm_reader::MethodParameterKind::Reference => {
+                            fdat.params.push(ParameterType::ByRef)
+                        }
+                    };
+                }
+
+                // TODO: might need this to be always arity 2 (ret val + exception)
+                // regardless of whether void or not; this won't mess up our stack accounting
+                // because we already finished that phase
+                let return_arity = match jvm_reader::descriptor_returns_value(&java_sig) {
+                    true => 1,
+                    false => 0,
+                };
+                fdat.return_type = ReturnType {
+                    arity: return_arity,
+                };
 
                 if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
                     methods.push((
                         JavaClass(class_name.to_string().into()),
                         JavaSimpleName(method_name.clone().into()),
                         JavaSignature(java_sig.clone().into()),
-                        JavaMethod(sig.clone().into()),
+                        JavaMethod(full_name.clone().into()),
                     ));
                 }
 
@@ -195,15 +228,12 @@ impl Context {
                                         bb_data.push_back(stmt);
                                     }
                                 }
-                                match &instr.dataflow {
-                                    None => {}
-                                    Some(data_info) => {
-                                        let mut stmt = self
-                                            .dataflow_to_assign(parser, data_info)
-                                            .expect("Dataflow should be there");
-                                        stmt.source_info = source_info;
-                                        bb_data.push_back(stmt);
-                                    }
+                                for df in &instr.dataflow {
+                                    let mut stmt = self
+                                        .dataflow_to_assign(parser, df)
+                                        .expect("Dataflow should be there");
+                                    stmt.source_info = source_info;
+                                    bb_data.push_back(stmt);
                                 }
                             }
 
@@ -212,7 +242,12 @@ impl Context {
                             let term = match bb.successors.is_empty() {
                                 // returns are treated as empty successors, no fallthrough / no branch targets
                                 true => TerminatorKind::Return {
-                                    args: SmallVec::new(),
+                                    args: match return_arity {
+                                        1 => smallvec![
+                                            self.convert_location_to_exp(&Location::StackSlot(0))
+                                        ],
+                                        _ => SmallVec::new(),
+                                    },
                                 },
                                 // any other control flows will be present here
                                 false => TerminatorKind::Goto {
@@ -235,15 +270,42 @@ impl Context {
     }
 
     fn finish(&mut self, mut builders: Builders) -> Result<ProgramInfo, Error> {
-        let program = builders.program;
+        let mut program = builders.program;
+        for (_sig, entry) in self.ext.drain() {
+            if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
+                if !methods
+                    .iter()
+                    .any(|(_class_name, _simple_name, _signature, defined_method)| {
+                        &entry.3 == defined_method
+                    })
+                {
+                    log::trace!("adding external method: {}", &entry.3);
+                    methods.push((
+                        entry.0.clone(),
+                        entry.1.clone(),
+                        entry.2.clone(),
+                        entry.3.clone(),
+                    ));
+
+                    // Add empty definition
+                    let fidx = program.new_function();
+                    let fdat = &mut program.functions[fidx];
+                    let JavaMethod(name) = entry.3.clone();
+                    fdat.name = name.to_string();
+                    for p in entry.4 {
+                        fdat.params.push(p);
+                    }
+                    fdat.return_type = entry.5;
+                } else {
+                    log::trace!("skipping defined method: {}", &entry.3);
+                }
+            }
+        }
+
         log::trace!("program: {program}");
         // Verify the generated program.
         program.verify()?;
-        for (_sig, entry) in self.ext.drain() {
-            if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
-                methods.push(entry);
-            }
-        }
+
         let source_info = builders.source_info_builder.finish();
         log::trace!("source_info: {source_info}");
         let vmt = builders.vmt;
@@ -255,33 +317,186 @@ impl Context {
     }
 
     fn decode_call(&mut self, _parser: &ClassFileParser, call: &CallInfo) -> Option<Statement> {
-        // TODO: some of these are probably direct calls, right? We should use a direct call style instead?
         // Get call target
         let style = match &call.receiver {
-            None => CallStyle::Unknown,
+            None => {
+                match call.call_kind {
+                    CallKind::Dynamic => {
+                        // I don't know why dynamic calls with no reciever exist, but apparently makeConcatWithContants does this
+                        let class_name = "?unknown";
+                        let method_name = call.dynamic_name.as_ref().unwrap();
+                        let descr = call.dynamic_type.as_ref().unwrap();
+                        let java_sig = "L".to_owned() + class_name + ";->" + method_name + descr;
+                        let in_params = jvm_reader::descriptor_parameter_info(descr);
+                        let mut out_params = Vec::new();
+                        for p in in_params {
+                            match p.kind {
+                                jvm_reader::MethodParameterKind::Primitive => {
+                                    out_params.push(ParameterType::ByVal)
+                                }
+                                jvm_reader::MethodParameterKind::Reference => {
+                                    out_params.push(ParameterType::ByRef)
+                                }
+                            };
+                        }
+                        // All functions return 2 values: (normal_return, exception_return)
+                        let return_arity = match jvm_reader::descriptor_returns_value(descr) {
+                            true => 1,
+                            false => 0,
+                        };
+                        self.ext.insert(
+                            java_sig.clone(),
+                            (
+                                JavaClass(class_name.into()),
+                                JavaSimpleName(method_name.clone().into()),
+                                JavaSignature(descr.clone().into()),
+                                JavaMethod(java_sig.clone().into()),
+                                out_params,
+                                ReturnType {
+                                    arity: return_arity,
+                                },
+                            ),
+                        );
+                        CallStyle::DirectCall {
+                            call_edges: CallEdges::Explicit([java_sig].into_iter().collect()),
+                        }
+                    }
+                    CallKind::Interface => CallStyle::Unknown,
+                    CallKind::Special => CallStyle::Unknown,
+                    CallKind::Virtual => CallStyle::Unknown,
+                    CallKind::Static => {
+                        let class_name =
+                            "L".to_owned() + &call.target.as_ref().unwrap().class_name + ";";
+                        let method_name = &call.target.as_ref().unwrap().method_name;
+                        let descr = &call.target.as_ref().unwrap().descriptor;
+                        let java_sig = class_name.to_owned() + "->" + method_name + descr;
+                        let in_params = jvm_reader::descriptor_parameter_info(descr);
+                        let mut out_params = Vec::new();
+                        for p in in_params {
+                            match p.kind {
+                                jvm_reader::MethodParameterKind::Primitive => {
+                                    out_params.push(ParameterType::ByVal)
+                                }
+                                jvm_reader::MethodParameterKind::Reference => {
+                                    out_params.push(ParameterType::ByRef)
+                                }
+                            };
+                        }
+                        // All functions return 2 values: (normal_return, exception_return)
+                        let return_arity = match jvm_reader::descriptor_returns_value(descr) {
+                            true => 1,
+                            false => 0,
+                        };
+                        self.ext.insert(
+                            java_sig.clone(),
+                            (
+                                JavaClass(class_name.clone().into()),
+                                JavaSimpleName(method_name.clone().into()),
+                                JavaSignature(descr.clone().into()),
+                                JavaMethod(java_sig.clone().into()),
+                                out_params,
+                                ReturnType {
+                                    arity: return_arity,
+                                },
+                            ),
+                        );
+                        CallStyle::DirectCall {
+                            call_edges: CallEdges::Explicit([java_sig].into_iter().collect()),
+                        }
+                    }
+                }
+            }
             Some(recv) => {
                 match call.call_kind {
                     // Java invokedynamic calls have a bootstrap method index and dynamic name/type
                     // I'm not entirely sure what these are supposed to look like
-                    CallKind::Dynamic => CallStyle::JavaCall {
-                        receiver: self.convert_location_to_var_ref(recv),
-                        cls: call.target.as_ref().unwrap().class_name.clone().into(),
-                        simple_name: call.target.as_ref().unwrap().method_name.clone().into(),
-                        descriptor: call
-                            .dynamic_name_and_type
-                            .as_ref()
-                            .unwrap()
-                            .to_string()
-                            .clone()
-                            .into(),
-                    },
+                    CallKind::Dynamic => {
+                        let class_name =
+                            "L".to_owned() + &call.target.as_ref().unwrap().class_name + ";";
+                        let method_name = &call.target.as_ref().unwrap().method_name;
+                        let descr = call.dynamic_type.as_ref().unwrap();
+                        let java_sig = class_name.to_owned() + "->" + method_name + descr;
+                        let in_params = jvm_reader::descriptor_parameter_info(descr);
+                        let mut out_params = Vec::new();
+                        for p in in_params {
+                            match p.kind {
+                                jvm_reader::MethodParameterKind::Primitive => {
+                                    out_params.push(ParameterType::ByVal)
+                                }
+                                jvm_reader::MethodParameterKind::Reference => {
+                                    out_params.push(ParameterType::ByRef)
+                                }
+                            };
+                        }
+                        // All functions return 2 values: (normal_return, exception_return)
+                        let return_arity = match jvm_reader::descriptor_returns_value(descr) {
+                            true => 1,
+                            false => 0,
+                        };
+                        self.ext.insert(
+                            java_sig.clone(),
+                            (
+                                JavaClass(class_name.clone().into()),
+                                JavaSimpleName(method_name.clone().into()),
+                                JavaSignature(descr.clone().into()),
+                                JavaMethod(java_sig.clone().into()),
+                                out_params,
+                                ReturnType {
+                                    arity: return_arity,
+                                },
+                            ),
+                        );
+                        CallStyle::JavaCall {
+                            receiver: self.convert_location_to_var_ref(recv),
+                            cls: class_name.clone().into(),
+                            simple_name: method_name.clone().into(),
+                            descriptor: descr.clone().into(),
+                        }
+                    }
                     // other calls have a class name, method name, and descriptor
-                    _ => CallStyle::JavaCall {
-                        receiver: self.convert_location_to_var_ref(recv),
-                        cls: call.target.as_ref().unwrap().class_name.clone().into(),
-                        simple_name: call.target.as_ref().unwrap().method_name.clone().into(),
-                        descriptor: call.target.as_ref().unwrap().descriptor.clone().into(),
-                    },
+                    _ => {
+                        let class_name =
+                            "L".to_owned() + &call.target.as_ref().unwrap().class_name + ";";
+                        let method_name = &call.target.as_ref().unwrap().method_name;
+                        let descr = &call.target.as_ref().unwrap().descriptor;
+                        let java_sig = class_name.to_owned() + "->" + method_name + descr;
+                        let in_params = jvm_reader::descriptor_parameter_info(descr);
+                        let mut out_params = Vec::new();
+                        for p in in_params {
+                            match p.kind {
+                                jvm_reader::MethodParameterKind::Primitive => {
+                                    out_params.push(ParameterType::ByVal)
+                                }
+                                jvm_reader::MethodParameterKind::Reference => {
+                                    out_params.push(ParameterType::ByRef)
+                                }
+                            };
+                        }
+                        // All functions return 2 values: (normal_return, exception_return)
+                        let return_arity = match jvm_reader::descriptor_returns_value(descr) {
+                            true => 1,
+                            false => 0,
+                        };
+                        self.ext.insert(
+                            java_sig.clone(),
+                            (
+                                JavaClass(class_name.clone().into()),
+                                JavaSimpleName(method_name.clone().into()),
+                                JavaSignature(descr.clone().into()),
+                                JavaMethod(java_sig.clone().into()),
+                                out_params,
+                                ReturnType {
+                                    arity: return_arity,
+                                },
+                            ),
+                        );
+                        CallStyle::JavaCall {
+                            receiver: self.convert_location_to_var_ref(recv),
+                            cls: class_name.clone().into(),
+                            simple_name: method_name.clone().into(),
+                            descriptor: descr.clone().into(),
+                        }
+                    }
                 }
             }
         };
@@ -315,17 +530,10 @@ impl Context {
         for source_loc in data.sources.iter() {
             sources.push(self.convert_location_to_exp(source_loc));
         }
-        match data.destinations.as_slice() {
-            [] => None,
-            [x] => Some(Statement::new_kind(StatementKind::Assign {
-                dest: self.convert_location_to_var_ref(x),
-                sources,
-            })),
-            [_x, _y, ..] => {
-                log::trace!("Multiple destinations in dataflow, skipping");
-                None
-            }
-        }
+        Some(Statement::new_kind(StatementKind::Assign {
+            dest: self.convert_location_to_var_ref(&data.destination),
+            sources,
+        }))
     }
 
     fn convert_location_to_exp(&mut self, loc: &Location) -> Exp {
@@ -336,9 +544,11 @@ impl Context {
             Location::Constant(ConstantValue::Integer(n)) => {
                 Exp::new_bytes(n.to_be_bytes().to_vec())
             }
-            /*Location::FieldRef(f) => {
-                Exp::new_access_path(AccessPath::new(, f.field_name))
-            },*/
+            Location::Constant(ConstantValue::String(s)) => Exp::new_str(s),
+            Location::FieldRef(f) => Exp::new_access_path(AccessPath::new(
+                self.convert_location_to_var_ref(loc),
+                [mir::FieldAccess::Symbol(f.field_name.clone().into())],
+            )),
             _ => Exp::new_access_path(AccessPath::without_fields(
                 self.convert_location_to_var_ref(loc),
             )),
@@ -352,14 +562,17 @@ impl Context {
                 VariableRef::new_local("Stack Local?".to_string())
             }
             Location::Register(n) => VariableRef::new_local(format!("reg{}", n)),
-            Location::Parameter(n) => VariableRef::new_local(format!("param{}", n)),
-            // TODO: this needs to become an acess path
-            Location::FieldRef(f) => {
-                VariableRef::new_local(format!("field{}.{}", f.class_name, f.field_name))
-            }
+            Location::Parameter(n) => VariableRef::new_parameter((*n).into()),
+            // Just the var ref part - field will be put in later
+            Location::FieldRef(f) => VariableRef::new_local(f.class_name.to_string()),
             // TODO: not sure what is going on with this one, why is there no base/index?
-            Location::ArrayElement => VariableRef::new_local("arrayElement".to_string()),
-            _ => VariableRef::new_local("Unknown".to_string()),
+            Location::ArrayElement { base, offset } => match (base.as_ref(), offset.as_ref()) {
+                (Location::StackSlot(n), Location::StackSlot(m)) => {
+                    VariableRef::new_local(format!("stack{}[stack{}]", n, m))
+                }
+                _ => VariableRef::new_local("unknownArrayOp".to_string()),
+            },
+            _ => VariableRef::new_local("unknownLocationType".to_string()),
         }
     }
 }

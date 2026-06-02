@@ -10,13 +10,17 @@ pub enum ClassFileError {
     },
     InvalidUtf8,
     InvalidClassFile(&'static str),
+    InvalidClassFileMessage(String),
     Io(std::io::Error),
     InvalidZip(String),
 }
 
 impl fmt::Display for ClassFileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            ClassFileError::InvalidClassFileMessage(msg) => write!(f, "{}", msg),
+            _ => write!(f, "{:?}", self),
+        }
     }
 }
 
