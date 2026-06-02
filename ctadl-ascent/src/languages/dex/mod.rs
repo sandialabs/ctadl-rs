@@ -246,13 +246,6 @@ impl Context {
                         offset_to_bb.insert(offset, BasicBlockIdx::new(i));
                     }
 
-                    // Parse exception handlers and map them to basic blocks
-                    let exception_handlers =
-                        parse_exception_handlers(&code, &bb_vec, &offset_to_bb);
-
-                    // Track which blocks contain calls and need exception handling
-                    let mut call_blocks = HashSet::new();
-
                     // All Java functions return 2 values: (normal_return, exception_return)
                     fdat.return_type = ReturnType { arity: 2 };
 
@@ -272,8 +265,6 @@ impl Context {
                                 if let Some(mut stmt) = self.decode_call(parser, &code, inst) {
                                     stmt.source_info = source_info;
                                     fdat.blocks[block_idx].push_back(stmt);
-                                    // Mark this block as containing a call
-                                    call_blocks.insert(block_idx);
                                 } else {
                                     for mut stmt in self.dataflow_to_assign(parser, &code, inst)? {
                                         stmt.source_info = source_info;
@@ -283,97 +274,81 @@ impl Context {
                             }
                         }
 
-                        // Determine the terminator for this block using a helper that re‑uses `control_flow_targets` logic.
-                        let term = if let Some(last) = range.last() {
-                            match last {
-                                DecodedCodeItem::Instruction { inst, .. } => {
-                                    // Return instructions end the function.
-                                    match inst {
-                                        // Throw instruction - jump to handlers if protected, else return exception
-                                        Instruction::Throw(f) => {
-                                            let succ_usizes = &block_successors_vec[i];
-                                            let succs = succ_usizes
-                                                .iter()
-                                                .map(|&b| BasicBlockIdx::new(b))
-                                                .collect::<SmallVec<[BasicBlockIdx; 4]>>();
+                        // Determine the terminator for this block using the last instruction in the block.
+                        let last_inst = range.iter().rev().find_map(|dci| {
+                            if let DecodedCodeItem::Instruction { inst, .. } = dci {
+                                Some(inst)
+                            } else {
+                                None
+                            }
+                        });
 
-                                            if succs.is_empty() {
-                                                let throw_exp = Exp::new_access_path(
-                                                    AccessPath::without_fields(reg_to_var(
-                                                        &code, f.a,
-                                                    )),
-                                                );
-                                                let empty_exp = Exp::new_bytes(Vec::new());
-                                                TerminatorKind::Return {
-                                                    args: smallvec![empty_exp, throw_exp],
-                                                }
-                                            } else {
-                                                TerminatorKind::Goto { targets: succs }
-                                            }
-                                        }
-                                        // Return with a value (register)
-                                        Instruction::Return(reg)
-                                        | Instruction::ReturnWide(reg)
-                                        | Instruction::ReturnObject(reg) => {
-                                            let ret_exp =
-                                                Exp::new_access_path(AccessPath::without_fields(
-                                                    reg_to_var(&code, reg.a),
-                                                ));
-                                            let empty_exp = Exp::new_bytes(Vec::new());
-                                            TerminatorKind::Return {
-                                                args: smallvec![ret_exp, empty_exp],
-                                            }
-                                        }
-                                        // Void return
-                                        Instruction::ReturnVoid(_) => {
-                                            let empty_exp = Exp::new_bytes(Vec::new());
-                                            TerminatorKind::Return {
-                                                args: smallvec![empty_exp.clone(), empty_exp],
-                                            }
-                                        }
-                                        // Compute successors for this block using the precalculated vector.
-                                        _ => {
-                                            let succ_usizes = &block_successors_vec[i];
-                                            let mut succs = succ_usizes
-                                                .iter()
-                                                .map(|&b| BasicBlockIdx::new(b))
-                                                .collect::<SmallVec<[BasicBlockIdx; 4]>>();
+                        let term = if let Some(inst) = last_inst {
+                            // Return instructions end the function.
+                            match inst {
+                                // Throw instruction - jump to handlers if protected, else return exception
+                                Instruction::Throw(f) => {
+                                    let succ_usizes = &block_successors_vec[i];
+                                    let succs = succ_usizes
+                                        .iter()
+                                        .map(|&b| BasicBlockIdx::new(b))
+                                        .collect::<SmallVec<[BasicBlockIdx; 4]>>();
 
-                                            // If this block contains a call and there are exception handlers,
-                                            // add exception handlers as additional targets
-                                            if call_blocks.contains(&block_idx)
-                                                && !exception_handlers.is_empty()
-                                            {
-                                                // Add all exception handler blocks as potential targets
-                                                for &handler_block in &exception_handlers {
-                                                    if !succs.contains(&handler_block) {
-                                                        succs.push(handler_block);
-                                                    }
-                                                }
-                                            }
-
-                                            if succs.is_empty() {
-                                                // No successors - this block should return
-                                                let empty_exp = Exp::new_bytes(Vec::new());
-                                                TerminatorKind::Return {
-                                                    args: smallvec![empty_exp.clone(), empty_exp],
-                                                }
-                                            } else {
-                                                TerminatorKind::Goto { targets: succs }
-                                            }
+                                    if succs.is_empty() {
+                                        let throw_exp = Exp::new_access_path(
+                                            AccessPath::without_fields(reg_to_var(
+                                                &code, f.a,
+                                            )),
+                                        );
+                                        let empty_exp = Exp::new_bytes(Vec::new());
+                                        TerminatorKind::Return {
+                                            args: smallvec![empty_exp, throw_exp],
                                         }
+                                    } else {
+                                        TerminatorKind::Goto { targets: succs }
                                     }
                                 }
-                                _ => {
-                                    // No instruction in block - create a return
+                                // Return with a value (register)
+                                Instruction::Return(reg)
+                                | Instruction::ReturnWide(reg)
+                                | Instruction::ReturnObject(reg) => {
+                                    let ret_exp =
+                                        Exp::new_access_path(AccessPath::without_fields(
+                                            reg_to_var(&code, reg.a),
+                                        ));
+                                    let empty_exp = Exp::new_bytes(Vec::new());
+                                    TerminatorKind::Return {
+                                        args: smallvec![ret_exp, empty_exp],
+                                    }
+                                }
+                                // Void return
+                                Instruction::ReturnVoid(_) => {
                                     let empty_exp = Exp::new_bytes(Vec::new());
                                     TerminatorKind::Return {
                                         args: smallvec![empty_exp.clone(), empty_exp],
                                     }
                                 }
+                                // Compute successors for this block using the precalculated vector.
+                                _ => {
+                                    let succ_usizes = &block_successors_vec[i];
+                                    let succs = succ_usizes
+                                        .iter()
+                                        .map(|&b| BasicBlockIdx::new(b))
+                                        .collect::<SmallVec<[BasicBlockIdx; 4]>>();
+
+                                    if succs.is_empty() {
+                                        // No successors - this block should return
+                                        let empty_exp = Exp::new_bytes(Vec::new());
+                                        TerminatorKind::Return {
+                                            args: smallvec![empty_exp.clone(), empty_exp],
+                                        }
+                                    } else {
+                                        TerminatorKind::Goto { targets: succs }
+                                    }
+                                }
                             }
                         } else {
-                            // Empty block – create a return.
+                            // Empty block or block with only payloads – create a return.
                             let empty_exp = Exp::new_bytes(Vec::new());
                             TerminatorKind::Return {
                                 args: smallvec![empty_exp.clone(), empty_exp],
@@ -860,40 +835,6 @@ fn reg_to_var(code_item: &CodeItem, reg: Reg) -> VariableRef {
     } else {
         VariableRef::new_local(format!("v{}", reg.0))
     }
-}
-
-/// Parse exception handlers from Dex code and map them to basic blocks
-fn parse_exception_handlers(
-    code: &CodeItem,
-    _bb_vec: &[dex_reader::basic_blocks::BasicBlock],
-    offset_to_bb: &HashMap<usize, BasicBlockIdx>,
-) -> Vec<BasicBlockIdx> {
-    let mut handlers = Vec::new();
-
-    if let Some(handler_list) = &code.handlers {
-        // Process each try-catch block
-        for try_item in &code.tries {
-            if let Some(handler) = handler_list.get_by_off(try_item.handler_off) {
-                // Add all handler addresses for this try block
-                for pair in &handler.pairs {
-                    if let Some(&handler_block) = offset_to_bb.get(&(pair.addr as usize))
-                        && !handlers.contains(&handler_block)
-                    {
-                        handlers.push(handler_block);
-                    }
-                }
-                // Add catch-all handler if present
-                if let Some(catch_all_addr) = handler.catch_all_addr
-                    && let Some(&handler_block) = offset_to_bb.get(&(catch_all_addr as usize))
-                    && !handlers.contains(&handler_block)
-                {
-                    handlers.push(handler_block);
-                }
-            }
-        }
-    }
-
-    handlers
 }
 
 fn read_file_bytes<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
