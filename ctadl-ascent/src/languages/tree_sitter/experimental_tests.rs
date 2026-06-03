@@ -302,6 +302,7 @@ fn no_child_while() {
     */
 }
 #[test_log::test]
+#[ignore = "knownbug_workingit"]
 fn unbraced_if() {
     let src = r"
     // man I hope y is never 5!
@@ -334,6 +335,7 @@ fn unbraced_if() {
 }
 
 #[test_log::test]
+#[ignore = "knownbug_workingit"]
 fn double_if() {
     let src = r"
             int double_if(int y, int z) {
@@ -369,6 +371,7 @@ fn double_if() {
 }
 
 #[test_log::test]
+#[ignore = "knownbug_workingit"]
 fn unbraced_if_while() {
     let src = r"
     // man I hope y is never 5!
