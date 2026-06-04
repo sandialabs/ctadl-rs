@@ -296,7 +296,7 @@ impl From<&flowy::Endpoint> for fx::TaintEndpoint {
             FlowVertex(var.try_into().unwrap(), fields.into())
         };
         Self {
-            infunc: Function(e.infunc.clone()),
+            infunc: Function(e.infunc.clone().into()),
             vertex,
             label: Label(e.label.clone().into()),
             direction: match e.direction {

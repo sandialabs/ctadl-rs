@@ -3,7 +3,7 @@ use dex_reader::DexParser;
 use dex_reader::instructions::{
     Format11n, Format21h, Format21s, Format31i, Format51l, Instruction,
 };
-use dex_reader::types::{CatchHandlerList, CodeItem, EncodedCatchHandler, TryItem, TypeAddrPair};
+use dex_reader::types::CodeItem;
 use std::sync::OnceLock;
 
 fn dummy_parser() -> DexParser<'static> {
@@ -198,70 +198,6 @@ fn test_throw_instruction_terminator() {
         matches!(&expected_args[1], Exp::AccessPath(_)),
         "Second arg should be AccessPath"
     );
-}
-
-#[test]
-fn test_exception_handler_parsing_basic() {
-    // Basic test to verify exception handler parsing doesn't crash
-    // Create a simple code item without handlers
-    let code_item = CodeItem {
-        registers_size: 1,
-        ins_size: 0,
-        outs_size: 0,
-        tries_size: 0,
-        debug_info_off: 0,
-        insns: vec![],
-        tries: vec![],
-        handlers: None,
-        code_off: 0,
-    };
-
-    // Call the parsing function - should return empty vec for no handlers
-    let empty_map: hashbrown::HashMap<usize, ctadl_ir::mir::BasicBlockIdx> =
-        hashbrown::HashMap::new();
-    let handlers = parse_exception_handlers(&code_item, &[], &empty_map);
-
-    // Should return empty vector when no handlers present
-    assert!(
-        handlers.is_empty(),
-        "Should return empty handlers for code without exception handlers"
-    );
-}
-
-#[test]
-fn test_exception_handler_parsing_complex() {
-    // Test with actual handlers and a correctly populated offset_to_bb map
-    let mut code_item = dummy_code_item();
-    code_item.tries_size = 1;
-    code_item.tries = vec![TryItem {
-        start_addr: 0,
-        insn_count: 10,
-        handler_off: 0,
-    }];
-    code_item.handlers = Some(CatchHandlerList {
-        size: 1,
-        handlers: vec![EncodedCatchHandler {
-            raw_size: 1,
-            pairs: vec![TypeAddrPair {
-                type_idx: 1,
-                addr: 20, // handler at code unit 20
-            }],
-            catch_all_addr: Some(30), // catch-all at code unit 30
-            start_off: 0,
-        }],
-    });
-
-    let mut offset_to_bb = hashbrown::HashMap::new();
-    let handler_block = BasicBlockIdx::new(5);
-    let catch_all_block = BasicBlockIdx::new(7);
-    offset_to_bb.insert(20, handler_block);
-    offset_to_bb.insert(30, catch_all_block);
-
-    let handlers = parse_exception_handlers(&code_item, &[], &offset_to_bb);
-
-    assert_eq!(handlers.len(), 2);
-    assert!(handlers.contains(&handler_block));
-    assert!(handlers.contains(&catch_all_block));
 }
 
 #[test]

@@ -14,8 +14,9 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId,
-    Label, PackedInsnSiteId, Path, TaintDirection, TaintEndpoint, TaintState, isout,
+    CallArgId, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType, FunctionId,
+    IdMap, InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintEndpoint,
+    TaintState, isout,
 };
 
 // same as a TaintEndpoint but with a functionId
@@ -74,7 +75,7 @@ pub struct QueryFacts {
     #[builder(default)]
     pub call: Vec<(PackedInsnSiteId, FunctionId)>,
     #[builder(default)]
-    pub assign: Vec<(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)>,
+    pub assign: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
     #[builder(default)]
     pub paths: Vec<(Path,)>,
     /// Sources and sinks for query. Data flow is followed forward from sources and backward from
@@ -111,11 +112,8 @@ impl QueryResult {
         formal_param::try_save(
             &dir,
             self.formal_param
-                .into_iter()
-                .filter_map(|(fid, v, ty)| match v {
-                    FlowVariable::Formal(i) => Some((fid, i, ty)),
-                    _ => None,
-                }),
+                .iter()
+                .filter_map(|(fid, v, ty)| v.as_formal().map(|i| (*fid, i, *ty))),
         )?;
         Ok(())
     }
@@ -126,7 +124,7 @@ impl QueryResult {
         let taint = taint::try_load(&dir)?;
         let formal_param = formal_param::try_load(&dir)?
             .into_iter()
-            .map(|(fid, idx, ty)| (fid, FlowVariable::Formal(idx), ty))
+            .map(|(fid, idx, ty)| (fid, FlowVariable::formal_index(idx), ty))
             .collect();
         Ok(QueryResult {
             taint,
@@ -150,8 +148,8 @@ impl<'a> std::fmt::Display for QueryResultDisplay<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (func_id, taint_state, flow_var, path, endpoint) in &self.result.taint {
             let var_path_str = {
-                let var_str = match flow_var {
-                    FlowVariable::Local(name) => name.to_string(),
+                let var_str = match flow_var.kind() {
+                    FlowVariableKind::Local(name) => name.to_string(),
                     _ => format!("{}", flow_var),
                 };
                 format!("{}{}", var_str, path.to_dot_string())
@@ -221,7 +219,7 @@ pub mod ascent_code {
 
         relation formal_param(FunctionId, FlowVariable, FormalType);
         relation call(PackedInsnSiteId, FunctionId);
-        relation assign_like(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path);
+        relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
         relation paths(Path);
         relation sources(QueryEndpoint);
 
@@ -238,14 +236,14 @@ pub mod ascent_code {
         produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, v2.clone(), p23.clone()) <--
             taint(infunc, ts, v2, p23, a),
             if a.direction == TaintDirection::Forward,
-            assign_like(infunc, _, v1, p1, v2, p2),
+            assign_like(infunc, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(p13.clone());
 
         produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, v2.clone(), p23.clone()) <--
             taint(infunc, ts, v2, p23, a),
             if a.direction == TaintDirection::Backward,
-            assign_like(infunc, _, v2, p2, v1, p1),
+            assign_like(infunc, v2, p2, v1, p1),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(p13.clone());
 
@@ -253,29 +251,33 @@ pub mod ascent_code {
         produce_taint!(func_id, TaintState::Free, v1.clone(), p2.clone(), a.clone(), infunc, v2.clone(), p2.clone()) <--
             taint(infunc, TaintState::Free, v2, p2, a),
             formal_param(infunc, v2, formal_ty),
-            if let FlowVariable::Formal(n2) = v2,
-            if (a.direction == TaintDirection::Forward && isout(n2, *formal_ty, p2)) ||
+            if let Some(n2) = v2.as_formal(),
+            if (a.direction == TaintDirection::Forward && isout(&n2, *formal_ty, p2)) ||
                 (a.direction == TaintDirection::Backward /* && isin(n2.0) */),
             call(site_id, infunc),
-            let InsnSiteId {func_id, insn_id: _} = InsnSiteId::unpack_from_slice(&**site_id).unwrap(),
-            let v1 = FlowVariable::CallArg { id: site_id.clone(), formal: n2.clone() };
+            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**site_id).unwrap(),
+            let call_arg_packed = PackedCallArg::try_from_parts(insn_id, n2).unwrap(),
+            let v1 = FlowVariable::call_arg_packed(call_arg_packed);
 
         // Actual-to-formal (Call in forward mode, Return in backward mode).
         produce_taint!(func, TaintState::Restricted, formal_var.clone(), p2.clone(), a.clone(), infunc, v2.clone(), p2.clone()) <--
             taint(infunc, _, v2, p2, a),
-            if let FlowVariable::CallArg { id, formal } = v2,
-            call(id, func),
-            let formal_var = FlowVariable::Formal(formal.clone()),
+            if let Some(packed) = v2.as_call_arg(),
+            let CallArgId { insn_id, formal: formal_raw } = CallArgId::try_from(packed).unwrap(),
+            let formal = FormalIndex::from(formal_raw),
+            let site_id = PackedInsnSiteId::try_from_parts(*infunc, insn_id).unwrap(),
+            call(site_id, func),
+            let formal_var = FlowVariable::formal_index(formal),
             formal_param(func, formal_var, formal_ty),
             if a.direction == TaintDirection::Forward /* && isin(formal)) */ ||
-                (a.direction == TaintDirection::Backward && isout(formal, *formal_ty, p2));
+                (a.direction == TaintDirection::Backward && isout(&formal, *formal_ty, p2));
 
         alias_of_field(infunc, x.clone(), a.clone(), p.clone()) <--
-            assign_like(infunc, _, x, Path::empty(), a, p),
+            assign_like(infunc, x, Path::empty(), a, p),
             if !p.is_empty();
         alias_of_field(infunc, y.clone(), a.clone(), p.clone()) <--
             alias_of_field(infunc, x, a, p),
-            assign_like(infunc, _, y, Path::empty(), x, Path::empty());
+            assign_like(infunc, y, Path::empty(), x, Path::empty());
 
         // Propagates taint on a variable into its alias.
         produce_taint!(infunc, st, v1.clone(), p.clone(), a.clone(), infunc, v2.clone(), Path::empty()) <--

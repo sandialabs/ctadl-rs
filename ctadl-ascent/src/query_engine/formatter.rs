@@ -59,8 +59,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::{Error, ErrorContext};
 use crate::facts::schema;
 use crate::facts::{
-    FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId, InsnSiteId, Label,
-    PackedInsnSiteId, Path, TaintDirection, TaintState, isout,
+    CallArgId, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId, InsnSiteId,
+    Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintState, isout,
 };
 use crate::project::{AnalysisProject, ArtifactLanguage};
 use crate::query_engine::QueryEndpoint;
@@ -133,7 +133,7 @@ pub struct FormatFacts {
     #[builder(default)]
     pub call: Vec<(PackedInsnSiteId, FunctionId)>,
     #[builder(default)]
-    pub assign: Vec<(FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path)>,
+    pub assign: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
     #[builder(default)]
     pub paths: Vec<(Path,)>,
     #[builder(default)]
@@ -193,27 +193,23 @@ pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
         include_source!(crate::query_engine::ascent_code::taint_analysis_rules);
 
         absorbing_functions(target, src, formal.clone()) <--
-            taint(_, _, v, _, src),
-            if let FlowVariable::CallArg { id, formal } = v,
+            taint(infunc, _, v, _, src),
+            if let Some(packed) = v.as_call_arg(),
+            let call_arg_id = CallArgId::try_from(packed).unwrap(),
+            let formal = call_arg_id.formal(),
+            let id = PackedInsnSiteId::try_from_parts(*infunc, call_arg_id.insn_id).unwrap(),
             call(id, target),
             external_function(target);
 
         // taint call sites
         tainted_var_at_insn(id, label, v2, p2) <--
-            taint(_, _, v2, p2, src),
+            taint(infunc, _, v2, p2, src),
             if !v2.is_globals(),
-            if let FlowVariable::CallArg { id, formal } = v2,
-            if **formal >= 0,
+            if let Some(packed) = v2.as_call_arg(),
+            let call_arg_id = CallArgId::try_from(packed).unwrap(),
+            let id = PackedInsnSiteId::try_from_parts(*infunc, call_arg_id.insn_id).unwrap(),
+            if *call_arg_id.formal() >= 0,
             let label = src.label.clone();
-
-        // taint assigns
-        tainted_var_at_insn(id, label.clone(), v2, p2) <--
-            taint(func_id, _, v2, p2, src),
-            if !v2.is_globals(),
-            (assign_like(func_id, insn_id, _, _, v2, p2) | assign_like(func_id, insn_id, v2, p2, _, _)),
-            let site_id = InsnSiteId {func_id: *func_id, insn_id: *insn_id},
-            let id = InsnSiteId::pack(&site_id).map(PackedInsnSiteId).expect("pack error"),
-            let label = &src.label;
     }
 
     let mut engine = FormatterEngine {
@@ -341,7 +337,7 @@ async fn async_format_sarif(
         instr_to_details
             .entry(key)
             .or_default()
-            .push((label.clone(), var.clone(), *pth));
+            .push((label.clone(), *var, *pth));
     }
     // Build a map from each file span to its associated taint details.
     let mut details_by_span: BTreeMap<u32, Vec<(Label, FunctionId, FlowVariable, Path)>> =
@@ -353,7 +349,7 @@ async fn async_format_sarif(
                 details_by_span.entry(fs.0).or_default().push((
                     label.clone(),
                     *func_id,
-                    var.clone(),
+                    *var,
                     *pth,
                 ));
             }
@@ -841,26 +837,26 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         let taint_edge = &ctx.taint_results.edges;
         // Collect all nodes into node_to_id first
         for (f, _, v, p, src) in &ctx.facts.taint {
-            let n = (*f, v.clone(), *p);
-            if !node_to_id.contains_key(&n) {
-                node_to_id.insert(n.clone(), id_to_node.len() as u32);
+            let n = (*f, *v, *p);
+            if let std::collections::btree_map::Entry::Vacant(e) = node_to_id.entry(n) {
+                e.insert(id_to_node.len() as u32);
                 id_to_node.push(n);
             }
-            let src_n = (src.infunc, src.vertex.0.clone(), src.vertex.1);
-            if !node_to_id.contains_key(&src_n) {
-                node_to_id.insert(src_n.clone(), id_to_node.len() as u32);
+            let src_n = (src.infunc, src.vertex.0, src.vertex.1);
+            if let std::collections::btree_map::Entry::Vacant(e) = node_to_id.entry(src_n) {
+                e.insert(id_to_node.len() as u32);
                 id_to_node.push(src_n);
             }
         }
         for (df, dv, dp, sf, sv, sp) in taint_edge {
-            let src_n = (*sf, sv.clone(), *sp);
-            if !node_to_id.contains_key(&src_n) {
-                node_to_id.insert(src_n.clone(), id_to_node.len() as u32);
+            let src_n = (*sf, *sv, *sp);
+            if let std::collections::btree_map::Entry::Vacant(e) = node_to_id.entry(src_n) {
+                e.insert(id_to_node.len() as u32);
                 id_to_node.push(src_n);
             }
-            let dst_n = (*df, dv.clone(), *dp);
-            if !node_to_id.contains_key(&dst_n) {
-                node_to_id.insert(dst_n.clone(), id_to_node.len() as u32);
+            let dst_n = (*df, *dv, *dp);
+            if let std::collections::btree_map::Entry::Vacant(e) = node_to_id.entry(dst_n) {
+                e.insert(id_to_node.len() as u32);
                 id_to_node.push(dst_n);
             }
         }
@@ -868,8 +864,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         let edges: Vec<(u32, u32)> = taint_edge
             .iter()
             .map(|(df, dv, dp, sf, sv, sp)| {
-                let src_n = (*sf, sv.clone(), *sp);
-                let dst_n = (*df, dv.clone(), *dp);
+                let src_n = (*sf, *sv, *sp);
+                let dst_n = (*df, *dv, *dp);
                 let src_id = *node_to_id.get(&src_n).unwrap();
                 let dst_id = *node_to_id.get(&dst_n).unwrap();
                 (src_id, dst_id)
@@ -885,7 +881,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         BTreeMap::new();
     for (f, _, v, p, src) in &ctx.facts.taint {
         node_to_endpoint
-            .entry((*f, v.clone(), *p))
+            .entry((*f, *v, *p))
             .or_default()
             .push(src.clone());
     }
@@ -895,18 +891,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     // Map each node to an instruction for location info
     let mut node_to_site: BTreeMap<(FunctionId, FlowVariable, Path), (FunctionId, InsnId)> =
         BTreeMap::new();
-    for (f, i, v1, p1, v2, p2) in &ctx.facts.assign {
-        node_to_site
-            .entry((*f, v1.clone(), *p1))
-            .or_insert((*f, *i));
-        node_to_site
-            .entry((*f, v2.clone(), *p2))
-            .or_insert((*f, *i));
-    }
     for (site, _, v, p) in &ctx.facts.actual_param {
         let site_unpacked = InsnSiteId::unpack(site).unwrap();
         node_to_site
-            .entry((site_unpacked.func_id, v.clone(), *p))
+            .entry((site_unpacked.func_id, *v, *p))
             .or_insert((site_unpacked.func_id, site_unpacked.insn_id));
     }
 
@@ -924,7 +912,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         for (fs_id, details) in ctx.details_by_span {
             let mut seen_pairs = BTreeSet::new();
             for (lbl, func_id, var, pth) in details {
-                let node = (*func_id, var.clone(), *pth);
+                let node = (*func_id, *var, *pth);
                 if let Some(sources) = node_to_endpoint.get(&node) {
                     let (fwd_sources, bwd_sinks): (Vec<_>, Vec<_>) = sources
                         .iter()
@@ -933,8 +921,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     if has_sinks {
                         for sink in &bwd_sinks {
                             for src in &fwd_sources {
-                                let start_node = (src.infunc, src.vertex.0.clone(), src.vertex.1);
-                                let end_node = (sink.infunc, sink.vertex.0.clone(), sink.vertex.1);
+                                let start_node = (src.infunc, src.vertex.0, src.vertex.1);
+                                let end_node = (sink.infunc, sink.vertex.0, sink.vertex.1);
                                 if let (Some(&start_id), Some(&end_id)) =
                                     (node_to_id.get(&start_node), node_to_id.get(&end_node))
                                     && seen_pairs.insert((start_id, end_id))
@@ -980,7 +968,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 .map(|(f, i)| {
                     (
                         InsnSiteId::new(f, i).try_into().unwrap(),
-                        Label(crate::facts::EMPTY_STR.clone()),
+                        Label(*crate::facts::EMPTY_STR),
                         FlowVariable::default(),
                         Path::default(),
                     )
@@ -1243,11 +1231,7 @@ fn format_source_sink_results(
         let is_source = endpoint.direction == crate::facts::TaintDirection::Forward;
         let is_sink = endpoint.direction == crate::facts::TaintDirection::Backward;
 
-        let node = (
-            endpoint.infunc,
-            endpoint.vertex.0.clone(),
-            endpoint.vertex.1,
-        );
+        let node = (endpoint.infunc, endpoint.vertex.0, endpoint.vertex.1);
         // Use the logical location of the source, and use the physical location additionally if it's available
         if is_source || is_sink {
             let rule_id = if is_source {

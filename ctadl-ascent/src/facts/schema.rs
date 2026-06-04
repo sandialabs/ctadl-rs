@@ -63,10 +63,8 @@ pub mod call {
 
 pub mod assign {
     use super::*;
-    pub type Record = (FunctionId, InsnId, FlowVariable, Path, FlowVariable, Path);
-    pub const COLUMNS: [&str; 6] = [
-        "func_id", "insn_id", "dst_var", "dst_path", "src_var", "src_path",
-    ];
+    pub type Record = (FunctionId, FlowVariable, Path, FlowVariable, Path);
+    pub const COLUMNS: [&str; 5] = ["func_id", "dst_var", "dst_path", "src_var", "src_path"];
     pub const FILENAME: &str = "assign.parquet";
     save_load!();
 }

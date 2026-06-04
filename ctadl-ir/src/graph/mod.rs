@@ -61,6 +61,11 @@ pub trait ControlFlowGraph: DirectedGraph + StartNode + Predecessors + Successor
 
 impl<T> ControlFlowGraph for T where T: DirectedGraph + StartNode + Predecessors + Successors {}
 
+/// Find a path from start to end.
+///
+/// # Preconditions
+///
+/// - `start` and `end` exist in the graph.
 pub fn find_path<G: Successors>(graph: &G, start: G::Node, end: G::Node) -> Option<Vec<G::Node>> {
     use hashbrown::hash_set::HashSet;
     let mut visited = HashSet::new();
@@ -96,7 +101,11 @@ pub fn find_path<G: Successors>(graph: &G, start: G::Node, end: G::Node) -> Opti
 }
 
 /// Assigns a depth-first numbering to each graph node and returns the nodes in dfs numbered order.
-pub fn reachable<G>(graph: &G) -> impl Iterator<Item = G::Node>
+///
+/// # Preconditions
+///
+/// The graph is non-empty.
+pub fn reachable<G>(graph: &G) -> IndexVec<G::Node, G::Node>
 where
     G: DirectedGraph + StartNode + Predecessors + Successors,
 {
@@ -114,5 +123,31 @@ where
         }
     }
 
-    reach.into_iter()
+    reach
+}
+
+/// Returns true if every node is reachable from the start node
+///
+/// # Preconditions
+///
+/// The graph is non-empty.
+pub fn is_connected<G>(graph: &G) -> bool
+where
+    G: DirectedGraph + StartNode + Predecessors + Successors,
+{
+    let mut nodes = vec![graph.start_node()];
+    let mut seen = BitSet::new();
+    let mut dfs_counter = G::Node::new(0);
+
+    while let Some(n) = nodes.pop() {
+        if seen.insert(n.index()) {
+            dfs_counter = dfs_counter.plus(1);
+
+            for w in graph.successors(n) {
+                nodes.push(w);
+            }
+        }
+    }
+
+    dfs_counter.index() == graph.num_nodes()
 }
