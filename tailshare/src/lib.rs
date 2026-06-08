@@ -1,6 +1,6 @@
 use parking_lot::RwLock;
 use std::any::{Any, TypeId};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
@@ -14,7 +14,7 @@ where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
     Nil,
-    Cons(T, SuffixSeq<T>),
+    Cons(T, Seq<T>),
 }
 
 #[cfg(feature = "serde")]
@@ -55,7 +55,7 @@ where
             T: Hash + Eq + Clone + Send + Sync + 'static,
         {
             Nil,
-            Cons { head: T, tail: SuffixSeq<T> },
+            Cons { head: T, tail: Seq<T> },
         }
         let data = NodeData::deserialize(deserializer)?;
         match data {
@@ -65,60 +65,10 @@ where
     }
 }
 
-struct SuffixInterner<T>
-where
-    T: Hash + Eq + Clone + Send + Sync + 'static,
-{
-    shards: Box<[RwLock<HashSet<&'static Node<T>>>]>,
-}
-
-impl<T> SuffixInterner<T>
-where
-    T: Hash + Eq + Clone + Send + Sync + 'static,
-{
-    fn new(num_shards: usize) -> Self {
-        let mut shards = Vec::with_capacity(num_shards);
-        for _ in 0..num_shards {
-            shards.push(RwLock::new(HashSet::new()));
-        }
-        Self {
-            shards: shards.into_boxed_slice(),
-        }
-    }
-
-    fn shard_for(&self, node: &Node<T>) -> usize {
-        let mut s = std::collections::hash_map::DefaultHasher::new();
-        node.hash(&mut s);
-        let hash = s.finish();
-        (hash % self.shards.len() as u64) as usize
-    }
-
-    fn intern(&self, node: &Node<T>) -> &'static Node<T> {
-        let idx = self.shard_for(node);
-        let shard = &self.shards[idx];
-
-        {
-            let read = shard.read();
-            if let Some(&existing) = read.get(node) {
-                return existing;
-            }
-        }
-
-        let mut write = shard.write();
-        if let Some(&existing) = write.get(node) {
-            return existing;
-        }
-
-        let leaked: &'static Node<T> = Box::leak(Box::new(node.clone()));
-        write.insert(leaked);
-        leaked
-    }
-}
-
 static INTERNERS: OnceLock<RwLock<HashMap<TypeId, &'static (dyn Any + Send + Sync)>>> =
     OnceLock::new();
 
-fn get_interner<T>() -> &'static SuffixInterner<T>
+fn get_interner<T>() -> &'static immortal::Interner<Node<T>>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
@@ -127,35 +77,35 @@ where
 
     if let Some(&interner) = map_lock.read().get(&type_id) {
         return interner
-            .downcast_ref::<SuffixInterner<T>>()
+            .downcast_ref::<immortal::Interner<Node<T>>>()
             .expect("Type mismatch in interner registry");
     }
 
     let mut map = map_lock.write();
     let interner = map.entry(type_id).or_insert_with(|| {
-        let interner = SuffixInterner::<T>::new(64);
-        let leaked: &'static SuffixInterner<T> = Box::leak(Box::new(interner));
+        let interner = immortal::Interner::<Node<T>>::new(64);
+        let leaked: &'static immortal::Interner<Node<T>> = Box::leak(Box::new(interner));
         leaked as &'static (dyn Any + Send + Sync)
     });
 
     interner
-        .downcast_ref::<SuffixInterner<T>>()
+        .downcast_ref::<immortal::Interner<Node<T>>>()
         .expect("Type mismatch in interner registry")
 }
 
 /// A suffix-compressed sequence of elements of type `T`.
 /// Interned for memory efficiency and fast equality checks.
 #[derive(Debug)]
-pub struct SuffixSeq<T>(&'static Node<T>)
+pub struct Seq<T>(&'static Node<T>)
 where
     T: Hash + Eq + Clone + Send + Sync + 'static;
 
-impl<T> SuffixSeq<T>
+impl<T> Seq<T>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
     pub fn intern(node: Node<T>) -> Self {
-        SuffixSeq(get_interner::<T>().intern(&node))
+        Seq(get_interner::<T>().intern(&node))
     }
 
     /// Creates an empty `SuffixSeq`.
@@ -277,7 +227,7 @@ where
     }
 }
 
-impl<T> Clone for SuffixSeq<T>
+impl<T> Clone for Seq<T>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
@@ -286,9 +236,9 @@ where
     }
 }
 
-impl<T> Copy for SuffixSeq<T> where T: Hash + Eq + Clone + Send + Sync + 'static {}
+impl<T> Copy for Seq<T> where T: Hash + Eq + Clone + Send + Sync + 'static {}
 
-impl<T> PartialEq for SuffixSeq<T>
+impl<T> PartialEq for Seq<T>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
@@ -297,9 +247,9 @@ where
     }
 }
 
-impl<T> Eq for SuffixSeq<T> where T: Hash + Eq + Clone + Send + Sync + 'static {}
+impl<T> Eq for Seq<T> where T: Hash + Eq + Clone + Send + Sync + 'static {}
 
-impl<T> PartialOrd for SuffixSeq<T>
+impl<T> PartialOrd for Seq<T>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static + PartialOrd,
 {
@@ -311,7 +261,7 @@ where
     }
 }
 
-impl<T> Ord for SuffixSeq<T>
+impl<T> Ord for Seq<T>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static + Ord,
 {
@@ -323,7 +273,7 @@ where
     }
 }
 
-impl<T> Hash for SuffixSeq<T>
+impl<T> Hash for Seq<T>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
@@ -333,7 +283,7 @@ where
 }
 
 #[cfg(feature = "serde")]
-impl<T> Serialize for SuffixSeq<T>
+impl<T> Serialize for Seq<T>
 where
     T: Serialize + Hash + Eq + Clone + Send + Sync + 'static,
 {
@@ -346,7 +296,7 @@ where
 }
 
 #[cfg(feature = "serde")]
-impl<'de, T> Deserialize<'de> for SuffixSeq<T>
+impl<'de, T> Deserialize<'de> for Seq<T>
 where
     T: Deserialize<'de> + Hash + Eq + Clone + Send + Sync + 'static,
 {
@@ -359,7 +309,7 @@ where
     }
 }
 
-impl<T> Default for SuffixSeq<T>
+impl<T> Default for Seq<T>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
@@ -373,7 +323,7 @@ pub struct Iter<T>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
-    current: Option<SuffixSeq<T>>,
+    current: Option<Seq<T>>,
 }
 
 impl<T> Iterator for Iter<T>
@@ -397,13 +347,13 @@ where
     }
 }
 
-impl<T> FromIterator<T> for SuffixSeq<T>
+impl<T> FromIterator<T> for Seq<T>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let items: Vec<T> = iter.into_iter().collect();
-        let mut seq = SuffixSeq::new();
+        let mut seq = Seq::new();
         for item in items.into_iter().rev() {
             seq = seq.push_front(item);
         }
@@ -417,14 +367,14 @@ mod tests {
 
     #[test]
     fn test_push_front_and_iter() {
-        let seq = SuffixSeq::new().push_front(3).push_front(2).push_front(1);
+        let seq = Seq::new().push_front(3).push_front(2).push_front(1);
         let items: Vec<_> = seq.iter().cloned().collect();
         assert_eq!(items, vec![1, 2, 3]);
     }
 
     #[test]
     fn test_sharing() {
-        let suffix = SuffixSeq::new().push_front('c').push_front('b');
+        let suffix = Seq::new().push_front('c').push_front('b');
         let seq1 = suffix.push_front('a');
         let seq2 = suffix.push_front('x');
 
@@ -434,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_from_iter() {
-        let seq: SuffixSeq<i32> = vec![1, 2, 3].into_iter().collect();
+        let seq: Seq<i32> = vec![1, 2, 3].into_iter().collect();
         let items: Vec<_> = seq.iter().cloned().collect();
         assert_eq!(items, vec![1, 2, 3]);
     }
@@ -442,7 +392,7 @@ mod tests {
     #[test]
     fn test_abc_example() {
         // .a.b.c
-        let c = SuffixSeq::new().push_front('c');
+        let c = Seq::new().push_front('c');
         let b_c = c.push_front('b');
         let a_b_c = b_c.push_front('a');
 
@@ -459,12 +409,12 @@ mod tests {
 
     #[test]
     fn test_deep_sharing() {
-        let mut seq1 = SuffixSeq::new();
+        let mut seq1 = Seq::new();
         for i in (0..100).rev() {
             seq1 = seq1.push_front(i);
         }
 
-        let mut seq2 = SuffixSeq::new();
+        let mut seq2 = Seq::new();
         for i in (0..100).rev() {
             seq2 = seq2.push_front(i);
         }
@@ -475,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_map_head_or_default() {
-        let empty: SuffixSeq<i32> = SuffixSeq::new();
+        let empty: Seq<i32> = Seq::new();
         let seq = empty.map_head(|x| x.map_or(1, |x| x + 1));
         assert_eq!(seq.head(), Some(&1));
 
@@ -483,7 +433,7 @@ mod tests {
         assert_eq!(seq2.head(), Some(&6));
         assert_eq!(seq2.len(), 1);
 
-        let multi: SuffixSeq<i32> = vec![1, 2, 3].into_iter().collect();
+        let multi: Seq<i32> = vec![1, 2, 3].into_iter().collect();
         let multi2 = multi.map_head(|x| x.map_or(10, |&x| x + 10));
         let items: Vec<_> = multi2.iter().cloned().collect();
         assert_eq!(items, vec![11, 2, 3]);

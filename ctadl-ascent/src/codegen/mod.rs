@@ -17,11 +17,10 @@ Parameters in IR are mapped to the same indices in the Datalog. Return values ar
 */
 use std::collections::{BTreeMap, BTreeSet};
 
-use internment::ArcIntern;
 use smallvec::SmallVec;
 
 use crate::facts as fx;
-use crate::facts::{FlowVariable, FlowVertex, FormalIndex};
+use crate::facts::{FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, Str};
 use crate::index_engine::{IndexFacts, source_info::IndexSourceInfo};
 use ctadl_ir::index::idx::Idx;
 use ctadl_ir::mir::{call::VirtualMethodTable, visit::Visitor, *};
@@ -65,7 +64,7 @@ pub fn codegen_program(
         for target in targets {
             let func_id = source_info
                 .sites
-                .get_or_add_function(fx::Function(target.clone()));
+                .get_or_add_function(fx::Function(target.clone().into()));
             facts
                 .java_resolvents
                 .push((cls.clone(), name.clone(), desc.clone(), func_id));
@@ -101,7 +100,7 @@ pub fn codegen_function(
         for target in targets {
             let func_id = source_info
                 .sites
-                .get_or_add_function(fx::Function(target.clone()));
+                .get_or_add_function(fx::Function(target.clone().into()));
             facts
                 .java_resolvents
                 .push((cls.clone(), name.clone(), desc.clone(), func_id));
@@ -120,14 +119,10 @@ pub const GLOBALS_INDEX: i16 = i16::MIN;
 pub const RETURN_INDEX: i16 = -1i16;
 
 pub fn variable_is_globals(v: &FlowVariable) -> bool {
-    match v {
-        FlowVariable::Formal(idx) => {
-            // *this* is how you get it to deref?
-            let idx: &i16 = idx;
-            *idx == GLOBALS_INDEX
-        }
+    match v.kind() {
+        FlowVariableKind::Formal(idx) => *idx == GLOBALS_INDEX,
         // This has to be kept in sync with the name given to globals in the CodegenVisitor
-        FlowVariable::Local(name) => name.starts_with("$globals_"),
+        FlowVariableKind::Local(name) => name.starts_with("$globals_"),
         _ => false,
     }
 }
@@ -204,13 +199,13 @@ impl Visitor for CodegenVisitor<'_> {
         // Gens global param
         self.facts.formal_param.push((
             self.function.unwrap(),
-            FlowVariable::Formal(GLOBALS_INDEX.into()),
+            FlowVariable::formal_index(GLOBALS_INDEX.into()),
             fx::FormalType::ByRef,
         ));
         // Gens return parameter
         self.facts.formal_param.push((
             self.function.unwrap(),
-            FlowVariable::Formal(RETURN_INDEX.into()),
+            FlowVariable::formal_index(RETURN_INDEX.into()),
             fx::FormalType::ByRef,
         ));
         self.super_function_data(idx, function);
@@ -272,11 +267,11 @@ impl Visitor for CodegenVisitor<'_> {
                 for src in sources {
                     if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = src {
                         let dest = self.trans_variable_ref(dest);
-                        let target = fx::Function(name.clone());
+                        let target = fx::Function(name.clone().into());
                         let target = self.source_info.sites.get_or_add_function(target);
                         self.facts.func_ptr_assign.push((
                             site,
-                            FlowVertex(dest.clone(), fx::Path::empty()),
+                            FlowVertex(dest, fx::Path::empty()),
                             target,
                         ));
                     }
@@ -284,7 +279,7 @@ impl Visitor for CodegenVisitor<'_> {
                         let dest = self.trans_variable_ref(dest);
                         self.facts.java_obj_assign.push((
                             site,
-                            FlowVertex(dest.clone(), fx::Path::empty()),
+                            FlowVertex(dest, fx::Path::empty()),
                             cls.0.clone(),
                         ));
                     }
@@ -301,10 +296,10 @@ impl Visitor for CodegenVisitor<'_> {
                 dest: out,
                 operands,
             } => {
-                let dst = FlowVertex(self.trans_variable_ref(out).clone(), fx::Path::empty());
+                let dst = FlowVertex(self.trans_variable_ref(out), fx::Path::empty());
                 let mut seen_phi = BTreeSet::new();
                 for (_, op) in operands {
-                    let src = FlowVertex(self.trans_variable_ref(op).clone(), fx::Path::empty());
+                    let src = FlowVertex(self.trans_variable_ref(op), fx::Path::empty());
                     if seen_phi.insert(src.clone()) {
                         self.facts.assign.push((site, dst.clone(), src));
                     }
@@ -315,18 +310,18 @@ impl Visitor for CodegenVisitor<'_> {
                 for (i, op) in params.iter().enumerate() {
                     // assign current version of formal back to the formal itself so we can track
                     // data flow
-                    let dst = FlowVariable::Formal(i.try_into().unwrap());
+                    let dst = FlowVariable::formal_index(i.try_into().unwrap());
                     let src = self.trans_variable_ref(op);
-                    if seen_param.insert((dst.clone(), src.clone())) {
+                    if seen_param.insert((dst, src)) {
                         let dst = FlowVertex(dst, fx::Path::empty());
                         let src = FlowVertex(src, fx::Path::empty());
                         self.facts.assign.push((site, dst, src));
                     }
                 }
                 // assign current version of global back to the auxparam global
-                let dst = FlowVariable::Formal(GLOBALS_INDEX.into());
+                let dst = FlowVariable::formal_index(GLOBALS_INDEX.into());
                 let src = self.trans_variable_ref(global);
-                if seen_param.insert((dst.clone(), src.clone())) {
+                if seen_param.insert((dst, src)) {
                     let dst = FlowVertex(dst, fx::Path::empty());
                     let src = FlowVertex(src, fx::Path::empty());
                     self.facts.assign.push((site, dst, src));
@@ -368,7 +363,7 @@ impl Visitor for CodegenVisitor<'_> {
                                     resolvents.len()
                                 );
                                 for target in resolvents {
-                                    let target = fx::Function(target);
+                                    let target = fx::Function(target.into());
                                     let target = self.source_info.sites.get_or_add_function(target);
                                     self.facts.call.push((site, target));
                                 }
@@ -376,7 +371,7 @@ impl Visitor for CodegenVisitor<'_> {
                             CallResolutionStrategy::Hi => {
                                 self.facts.java_call.push((
                                     site,
-                                    FlowVertex(recv_var.clone(), fx::Path::empty()),
+                                    FlowVertex(recv_var, fx::Path::empty()),
                                     simple_name.clone(),
                                     descriptor.clone(),
                                 ));
@@ -391,7 +386,7 @@ impl Visitor for CodegenVisitor<'_> {
                                     log::trace!(
                                         "java: exact resolve {cls}.{simple_name}{descriptor} to {target}"
                                     );
-                                    let target = fx::Function(target);
+                                    let target = fx::Function(target.into());
                                     let target = self.source_info.sites.get_or_add_function(target);
                                     self.facts.call.push((site, target));
                                 } else if resolvents.len() == 0 {
@@ -401,7 +396,7 @@ impl Visitor for CodegenVisitor<'_> {
                                 } else {
                                     self.facts.java_call.push((
                                         site,
-                                        FlowVertex(recv_var.clone(), fx::Path::empty()),
+                                        FlowVertex(recv_var, fx::Path::empty()),
                                         simple_name.clone(),
                                         descriptor.clone(),
                                     ));
@@ -429,12 +424,14 @@ impl Visitor for CodegenVisitor<'_> {
                     let formal_index = FormalIndex::new(idx_i8.into());
 
                     if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = arg_exp {
-                        let target = fx::Function(name.clone());
+                        let target = fx::Function(name.clone().into());
                         let target = self.source_info.sites.get_or_add_function(target);
-                        let call_arg_var = FlowVariable::CallArg {
-                            id: site,
-                            formal: formal_index,
-                        };
+                        let call_arg_packed = fx::PackedCallArg::try_from_parts(
+                            fx::InsnSiteId::try_from(site).unwrap().insn_id,
+                            formal_index,
+                        )
+                        .unwrap();
+                        let call_arg_var = FlowVariable::call_arg_packed(call_arg_packed);
                         self.facts.func_ptr_assign.push((
                             site,
                             FlowVertex(call_arg_var, fx::Path::empty()),
@@ -443,10 +440,12 @@ impl Visitor for CodegenVisitor<'_> {
                     }
 
                     if let Exp::ObjectRef(CallObject::JavaObject(cls)) = arg_exp {
-                        let call_arg_var = FlowVariable::CallArg {
-                            id: site,
-                            formal: formal_index,
-                        };
+                        let call_arg_packed = fx::PackedCallArg::try_from_parts(
+                            fx::InsnSiteId::try_from(site).unwrap().insn_id,
+                            formal_index,
+                        )
+                        .unwrap();
+                        let call_arg_var = FlowVariable::call_arg_packed(call_arg_packed);
                         self.facts.java_obj_assign.push((
                             site,
                             FlowVertex(call_arg_var, fx::Path::empty()),
@@ -476,7 +475,7 @@ impl Visitor for CodegenVisitor<'_> {
                     site,
                     GLOBALS_INDEX.into(),
                     FlowVertex(
-                        FlowVariable::Formal(GLOBALS_INDEX.into()),
+                        FlowVariable::formal_index(GLOBALS_INDEX.into()),
                         fx::Path::empty(),
                     ),
                 ));
@@ -490,12 +489,12 @@ impl Visitor for CodegenVisitor<'_> {
                 let source = self.trans_variable_ref(source);
                 let value = self.trans_exp(value);
                 // dest_var <- source
-                let dest = FlowVertex(dest_var.clone(), dest_fields.into());
+                let dest = FlowVertex(dest_var, dest_fields.into());
                 // Multiple field updates of the same src/dst cause duplicate assigns
                 self.facts.assign.push((
                     site,
-                    FlowVertex(dest_var.clone(), fx::Path::empty()),
-                    FlowVertex(source.clone(), fx::Path::empty()),
+                    FlowVertex(dest_var, fx::Path::empty()),
+                    FlowVertex(source, fx::Path::empty()),
                 ));
                 // dest_var.dest_fields <- value
                 if !dest_fields.is_empty()
@@ -524,11 +523,9 @@ impl Visitor for CodegenVisitor<'_> {
                 let Some(src) = self.trans_exp(arg) else {
                     continue;
                 };
-                let dv = FlowVariable::Formal(i.into());
+                let dv = FlowVariable::formal_index(i.into());
                 let dpath = fx::Path::empty();
-                self.facts
-                    .assign
-                    .push((site, FlowVertex(dv.clone(), dpath), src));
+                self.facts.assign.push((site, FlowVertex(dv, dpath), src));
             }
         }
     }
@@ -569,17 +566,17 @@ impl CodegenVisitor<'_> {
     fn trans_access_path(&mut self, ap: &AccessPath) -> FlowVertex {
         let v = self.trans_variable_ref(&ap.variable_ref);
         let fields = &ap.path;
-        FlowVertex(v.clone(), fields.into())
+        FlowVertex(v, fields.into())
     }
 
     #[inline]
     fn trans_variable_ref(&mut self, v: &VariableRef) -> FlowVariable {
         match (v.variable.as_ref(), v.version) {
             // The one global heap maps to the globals index
-            (Variable::GlobalHeap, None) => FlowVariable::Formal(GLOBALS_INDEX.into()),
+            (Variable::GlobalHeap, None) => FlowVariable::formal_index(GLOBALS_INDEX.into()),
             // A versioned global heap is a local variable
             (Variable::GlobalHeap, Some(version)) => {
-                FlowVariable::Local(ArcIntern::from(format!("$globals_{}", version)))
+                FlowVariable::local(Str::from(format!("$globals_{}", version)))
             }
             _ => v.try_into().unwrap(),
         }

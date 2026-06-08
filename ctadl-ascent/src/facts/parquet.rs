@@ -24,7 +24,7 @@ use crate::error::Error;
 use crate::facts;
 use crate::query_engine;
 
-type Str = ArcIntern<str>;
+type Str = facts::Str;
 
 // maybe move to these
 pub trait Encoder<T> {
@@ -445,6 +445,12 @@ impl_encode_column!(
     arrowd::DataType::LargeUtf8
 );
 impl_encode_column!(
+    ArcIntern<str>,
+    GenericStringArray::<i64>::from,
+    GenericStringArray<i64>,
+    arrowd::DataType::LargeUtf8
+);
+impl_encode_column!(
     Str,
     GenericStringArray::<i64>::from,
     GenericStringArray<i64>,
@@ -536,8 +542,7 @@ impl DecodeColumn<facts::Path> for DefaultDecoder {
 }
 impl_encode_newtype!(facts::Function, Str, GenericStringArray<i64>);
 impl_encode_newtype!(facts::Label, Str, GenericStringArray<i64>);
-impl_encode_newtype!(facts::Index, i16, Int16Array);
-impl_encode_newtype!(facts::FormalIndex, facts::Index, Int16Array);
+impl_encode_newtype!(facts::FormalIndex, i16, Int16Array);
 impl_encode_newtype!(source_info::FileSpanId, u32, UInt32Array);
 
 macro_rules! impl_encode_newtype_field {
@@ -922,11 +927,60 @@ impl DecodeColumn<query_engine::QueryEndpoint> for DefaultDecoder {
     }
 }
 
+impl EncodeColumn<facts::PackedCallArg> for DefaultEncoder {
+    #[inline]
+    fn encode_column(
+        name: &str,
+        col: Vec<facts::PackedCallArg>,
+    ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
+        <Self as EncodeColumn<[u8; 8]>>::encode_column(
+            name,
+            col.into_iter().map(|s| *s).collect_vec(),
+        )
+    }
+}
+
+impl EncodeColumn<Option<facts::PackedCallArg>> for DefaultEncoder {
+    #[inline]
+    fn encode_column(
+        name: &str,
+        col: Vec<Option<facts::PackedCallArg>>,
+    ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
+        <Self as EncodeColumn<Option<[u8; 8]>>>::encode_column(
+            name,
+            col.into_iter().map(|s| s.map(|s| *s)).collect_vec(),
+        )
+    }
+}
+
+impl DecodeColumn<facts::PackedCallArg> for DefaultDecoder {
+    #[inline]
+    fn into_decode_array(
+        name: &str,
+        batch: &RecordBatch,
+    ) -> impl IntoIterator<Item = facts::PackedCallArg> {
+        <Self as DecodeColumn<[u8; 8]>>::into_decode_array(name, batch)
+            .into_iter()
+            .map(facts::PackedCallArg)
+    }
+}
+
+impl DecodeColumn<Option<facts::PackedCallArg>> for DefaultDecoder {
+    #[inline]
+    fn into_decode_array(
+        name: &str,
+        batch: &RecordBatch,
+    ) -> impl IntoIterator<Item = Option<facts::PackedCallArg>> {
+        <Self as DecodeColumn<Option<[u8; 8]>>>::into_decode_array(name, batch)
+            .into_iter()
+            .map(|o| o.map(facts::PackedCallArg))
+    }
+}
+
 type FlowVariableRefEncoding = (
     Option<Str>,
     Option<facts::FormalIndex>,
-    Option<facts::PackedInsnSiteId>,
-    Option<facts::FormalIndex>,
+    Option<facts::PackedCallArg>,
 );
 
 impl EncodeColumn<facts::FlowVariable> for DefaultEncoder {
@@ -935,25 +989,24 @@ impl EncodeColumn<facts::FlowVariable> for DefaultEncoder {
         name: &str,
         col: Vec<facts::FlowVariable>,
     ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
-        use facts::FlowVariable::{CallArg, Formal, Local};
+        use facts::FlowVariableKind::*;
         let tag_column_name = name.to_owned() + "_tag";
         let ref_column_name = name.to_owned() + "_ref";
         let ref_col_names = [
             (ref_column_name.to_owned() + "_name"),
             (ref_column_name.to_owned() + "_ind"),
-            (ref_column_name.to_owned() + "_arg_site_id"),
-            (ref_column_name.to_owned() + "_arg_ind"),
+            (ref_column_name.to_owned() + "_arg"),
         ];
         let ref_col_names = ref_col_names.iter().map(|s| s.as_ref()).collect_vec();
 
         let (mut fields, mut arrays) = <Self as EncodeColumn<u8>>::encode_column(
             &tag_column_name,
             col.iter()
-                .map(|r| match r {
+                .map(|r| match r.kind() {
                     Local(_) => 0,
                     Formal(_) => 1,
-                    CallArg { .. } => 2,
-                    _ => panic!("Invalid flow variable: {r:?}"),
+                    CallArg(_) => 2,
+                    Uninit => 3,
                 })
                 .collect_vec(),
         );
@@ -961,11 +1014,11 @@ impl EncodeColumn<facts::FlowVariable> for DefaultEncoder {
             <Self as EncodeColumns<FlowVariableRefEncoding>>::encode_all(
                 &ref_col_names,
                 col.into_iter()
-                    .map(|r| match r {
-                        Local(name) => (Some(name), None, None, None),
-                        Formal(ind) => (None, Some(ind), None, None),
-                        CallArg { id, formal } => (None, None, Some(id), Some(formal)),
-                        _ => panic!("Invalid flow variable: {r:?}"),
+                    .map(|r| match r.kind() {
+                        Local(name) => (Some(name), None, None),
+                        Formal(ind) => (None, Some(ind), None),
+                        CallArg(packed) => (None, None, Some(packed)),
+                        Uninit => (None, None, None),
                     })
                     .collect_vec(),
             );
@@ -981,26 +1034,22 @@ impl DecodeColumn<facts::FlowVariable> for DefaultDecoder {
         name: &str,
         batch: &RecordBatch,
     ) -> impl IntoIterator<Item = facts::FlowVariable> {
-        use facts::FlowVariable::{CallArg, Formal, Local};
         let tag_column_name: &'static str = Box::leak(format!("{name}_tag").into_boxed_str());
         let ref_column_name = name.to_owned() + "_ref";
         let ref_col_names = [
             (ref_column_name.to_owned() + "_name"),
             (ref_column_name.to_owned() + "_ind"),
-            (ref_column_name.to_owned() + "_arg_site_id"),
-            (ref_column_name.to_owned() + "_arg_ind"),
+            (ref_column_name.to_owned() + "_arg"),
         ];
         let ref_col_names = ref_col_names.iter().map(|s| s.as_ref()).collect_vec();
         let tag_iter = <Self as DecodeColumn<u8>>::into_decode_array(tag_column_name, batch);
         let val_iter =
             <Self as DecodeColumns<FlowVariableRefEncoding>>::decode_tuples(&ref_col_names, batch);
         izip![tag_iter, val_iter].map(|(tag, val)| match (tag, val) {
-            (0, cols) => Local(cols.0.unwrap()),
-            (1, cols) => Formal(cols.1.unwrap()),
-            (2, cols) => CallArg {
-                id: cols.2.expect("site_id"),
-                formal: cols.3.unwrap(),
-            },
+            (0, cols) => facts::FlowVariable::local(cols.0.unwrap()),
+            (1, cols) => facts::FlowVariable::formal_index(cols.1.unwrap()),
+            (2, cols) => facts::FlowVariable::call_arg_packed(cols.2.expect("call_arg")),
+            (3, _) => facts::FlowVariable::default(),
             _ => panic!("Bad flow variable"),
         })
     }

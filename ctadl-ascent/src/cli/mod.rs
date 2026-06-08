@@ -9,9 +9,10 @@ all the intermediate files should be stored; the API below this should be writte
 as parameters.
 */
 
-use itertools::Itertools;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
+
+use itertools::Itertools;
 
 use crate::codegen::models::codegen_summary;
 use crate::codegen::{CallResolutionStrategy, codegen_program};
@@ -26,6 +27,7 @@ use crate::languages::{dex, jvm, pcode};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, QueryResult, taint_analysis};
+use ctadl_ir::graph::is_connected;
 use ctadl_ir::ssa;
 use ctadl_ir::{ProgramInfo, encode};
 
@@ -55,17 +57,21 @@ fn build_query_endpoints(
         let vars = match selector_ty {
             FormalIndexTypeTag::Index => {
                 let i16_val = idx_opt.expect("index missing");
-                vec![FlowVariable::Formal(i16_val.into())]
+                vec![FlowVariable::formal_index(i16_val.into())]
             }
             FormalIndexTypeTag::Return => {
-                vec![FlowVariable::Formal(RETURN_INDEX.into())]
+                vec![FlowVariable::formal_index(RETURN_INDEX.into())]
             }
             FormalIndexTypeTag::Global => {
-                vec![FlowVariable::Formal(GLOBALS_INDEX.into())]
+                vec![FlowVariable::formal_index(GLOBALS_INDEX.into())]
             }
             FormalIndexTypeTag::AnyArgument => func_num_params
                 .get(&infunc)
-                .map(|n| (0..*n).map(|i| FlowVariable::Formal(i.into())).collect())
+                .map(|n| {
+                    (0..*n)
+                        .map(|i| FlowVariable::formal_index(i.into()))
+                        .collect()
+                })
                 .unwrap_or_default(),
         };
 
@@ -77,11 +83,11 @@ fn build_query_endpoints(
         for var in vars {
             out_eps.push((crate::query_engine::QueryEndpoint {
                 infunc,
-                vertex: FlowVertex(var.clone(), ap),
+                vertex: FlowVertex(var, ap),
                 label: lbl.clone(),
                 direction,
             },));
-            if let FlowVariable::Formal(_) = var {
+            if var.is_formal() {
                 out_formals.push((infunc, var, facts::FormalType::ByRef));
             }
         }
@@ -293,7 +299,7 @@ pub fn format(
             let nodes: BTreeSet<_> = facts
                 .taint
                 .iter()
-                .map(|(func_id, _, var, path, _)| (*func_id, var.clone(), *path))
+                .map(|(func_id, _, var, path, _)| (*func_id, *var, *path))
                 .collect();
             let nodes: Vec<_> = nodes.into_iter().collect();
             let sources: BTreeSet<_> = facts
@@ -301,7 +307,7 @@ pub fn format(
                 .iter()
                 .filter_map(|(_, _, _, _, ep)| {
                     if ep.direction == crate::facts::TaintDirection::Forward {
-                        Some((ep.infunc, ep.vertex.0.clone(), ep.vertex.1))
+                        Some((ep.infunc, ep.vertex.0, ep.vertex.1))
                     } else {
                         None
                     }
@@ -312,7 +318,7 @@ pub fn format(
                 .iter()
                 .filter_map(|(_, _, _, _, ep)| {
                     if ep.direction == crate::facts::TaintDirection::Backward {
-                        Some((ep.infunc, ep.vertex.0.clone(), ep.vertex.1))
+                        Some((ep.infunc, ep.vertex.0, ep.vertex.1))
                     } else {
                         None
                     }
@@ -338,6 +344,16 @@ pub fn save_program_info(
 ) -> Result<(), Error> {
     let path = &import.program_path();
     let obj = std::mem::take(&mut program_info.program);
+    for f in obj.functions.iter() {
+        if f.blocks.is_empty() {
+            continue;
+        }
+        assert!(
+            is_connected(&f.blocks),
+            "Function has unreachable blocks: {}",
+            f.name
+        );
+    }
     let data = encode::encode_program(&obj).map_err(Error::Bitcode)?;
     std::fs::write(path, data)
         .map_err(Error::Io)

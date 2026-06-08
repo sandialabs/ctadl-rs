@@ -3,8 +3,6 @@
 Take encoded models and codegen them into the index facts
 */
 
-use internment::ArcIntern;
-
 use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
 use crate::facts;
 use crate::index_engine::IndexFacts;
@@ -38,7 +36,7 @@ pub fn codegen_summary(
         let dst_ap: facts::Path = ap_map[&dst_ap].iter().cloned().collect();
         let Some(func_id) = source_info
             .sites
-            .get_function_id(facts::Function(ArcIntern::from(func)))
+            .get_function_id(facts::Function(facts::Str::from(func)))
         else {
             // skip functions that don't occur in the facts
             continue;
@@ -76,14 +74,14 @@ pub fn codegen_summary(
             // Ensure formal_param exists for the indices used in summaries
             facts.formal_param.push((
                 func_id,
-                facts::FlowVariable::Formal(*dst_index),
+                facts::FlowVariable::formal_index(*dst_index),
                 facts::FormalType::ByRef,
             ));
             for src_index in &src_index {
                 // Ensure formal_param exists for the indices used in summaries
                 facts.formal_param.push((
                     func_id,
-                    facts::FlowVariable::Formal(*src_index),
+                    facts::FlowVariable::formal_index(*src_index),
                     facts::FormalType::ByRef,
                 ));
                 if dst_index == src_index {

@@ -1,29 +1,112 @@
 //! Data types for facts
 
 use std::collections::BTreeMap;
+use std::fmt::{self, Debug, Display};
 use std::ops::Deref;
 use std::str::FromStr;
-use std::{fmt, fmt::Display};
 
 use derive_builder::Builder;
+use immortal::StringRef;
 use internment::ArcIntern;
 use packed_struct::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 use crate::error::{Error, ErrorContext};
 use ctadl_ir::{Idx, mir, mir::Offset};
 
-use suffix_seq::SuffixSeq;
-
 pub mod parquet;
 pub mod schema;
 
-pub type Str = ArcIntern<str>;
+use elsa::sync::FrozenVec;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+lazy_static::lazy_static! {
+    static ref STRING_TABLE: StringTable = StringTable::default();
+}
+
+#[derive(Default)]
+struct StringTable {
+    map: Mutex<HashMap<StringRef, u64>>,
+    vec: FrozenVec<Box<StringRef>>,
+}
+
+impl StringTable {
+    fn intern(&self, s: &str) -> u64 {
+        let string_ref = StringRef::new(s);
+        let mut map = self.map.lock().unwrap();
+        if let Some(&idx) = map.get(&string_ref) {
+            return idx;
+        }
+        let idx = self.vec.len() as u64;
+        self.vec.push(Box::new(string_ref));
+        map.insert(string_ref, idx);
+        idx
+    }
+
+    fn get(&self, idx: u64) -> &str {
+        self.vec.get(idx as usize).unwrap().as_str()
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct Str(u64);
+
+impl Default for Str {
+    fn default() -> Self {
+        *EMPTY_STR
+    }
+}
+
+impl Display for Str {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl From<&str> for Str {
+    fn from(s: &str) -> Self {
+        Str(STRING_TABLE.intern(s))
+    }
+}
+
+impl From<String> for Str {
+    fn from(s: String) -> Self {
+        Str(STRING_TABLE.intern(&s))
+    }
+}
+
+impl From<ArcIntern<str>> for Str {
+    fn from(s: ArcIntern<str>) -> Self {
+        Str(STRING_TABLE.intern(&s))
+    }
+}
+
+impl Str {
+    pub fn as_str(&self) -> &'static str {
+        STRING_TABLE.get(self.0)
+    }
+}
+
+impl Deref for Str {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for Str {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
 type EltId = Str;
 
 lazy_static::lazy_static! {
-    pub static ref EMPTY_STR: Str = ArcIntern::<str>::from("");
+    pub static ref EMPTY_STR: Str = Str::from("");
 }
 
 /// A sequence of field/array accesses
@@ -38,7 +121,7 @@ lazy_static::lazy_static! {
 #[derive(
     Clone, Copy, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord,
 )]
-pub struct Path(pub SuffixSeq<mir::FieldAccess>);
+pub struct Path(pub tailshare::Seq<mir::FieldAccess>);
 
 impl Path {
     /// Creates access path from a sequences of accesses
@@ -58,7 +141,7 @@ impl Path {
     /// Creates an empty path
     #[inline]
     pub fn empty() -> Self {
-        Path(SuffixSeq::new())
+        Path(tailshare::Seq::new())
     }
 
     /// Denotes the empty path
@@ -108,7 +191,7 @@ impl Path {
     }
 
     /// Iterates from the innermost access out
-    pub fn iter(&self) -> suffix_seq::Iter<mir::FieldAccess> {
+    pub fn iter(&self) -> tailshare::Iter<mir::FieldAccess> {
         self.0.iter()
     }
 
@@ -166,14 +249,16 @@ impl Heap {
     }
 }
 
-/// A sequence of call sites representing a calling context.
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Serialize, Deserialize, PartialOrd, Ord)]
-#[serde(from = "Vec<PackedInsnSiteId>")]
-pub struct CallString(ArcIntern<[PackedInsnSiteId]>);
+immortal::immortal! {
+    /// A sequence of call sites representing a calling context.
+    #[derive(Serialize, Deserialize)]
+    #[serde(from = "Vec<PackedInsnSiteId>")]
+    pub struct CallString([PackedInsnSiteId])
+}
 
 impl From<Vec<PackedInsnSiteId>> for CallString {
     fn from(v: Vec<PackedInsnSiteId>) -> Self {
-        Self(ArcIntern::from(v))
+        Self::intern(&v)
     }
 }
 
@@ -186,7 +271,7 @@ impl Default for CallString {
 impl CallString {
     /// Creates an empty call string
     pub fn new() -> Self {
-        Self(ArcIntern::from(Vec::new()))
+        CallString::intern(&[])
     }
 
     /// Returns true if the call string is empty
@@ -207,11 +292,11 @@ impl CallString {
     /// Pops the top frame, returning the new call string and the popped frame
     pub fn pop(&self) -> (Self, Option<PackedInsnSiteId>) {
         if self.0.is_empty() {
-            return (self.clone(), None);
+            return (*self, None);
         }
         let popped = self.0.last().cloned();
         let new_slice = &self.0[..self.0.len() - 1];
-        (Self(ArcIntern::from(new_slice)), popped)
+        (CallString::intern(new_slice), popped)
     }
 
     /// Pushes a new call site onto the call string.
@@ -228,7 +313,7 @@ impl CallString {
         }
         let mut new_vec = self.0.to_vec();
         new_vec.push(site);
-        Some(Self(ArcIntern::from(new_vec)))
+        Some(CallString::intern(&new_vec))
     }
 
     /// Returns true if the call string contains the given call site
@@ -385,6 +470,13 @@ impl From<Str> for Function {
     }
 }
 
+impl From<ArcIntern<str>> for Function {
+    #[inline]
+    fn from(s: ArcIntern<str>) -> Self {
+        Function(Str::from(s))
+    }
+}
+
 impl FromStr for Function {
     type Err = ();
 
@@ -393,69 +485,16 @@ impl FromStr for Function {
     }
 }
 
-/// An index, like for formals.
-#[derive(
-    Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Default, Serialize, Deserialize,
-)]
-#[repr(transparent)]
-pub struct Index(i16);
-
-impl Index {
-    #[inline]
-    pub fn new(i: i16) -> Self {
-        Self(i)
-    }
-}
-
-impl Deref for Index {
-    type Target = i16;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Display for Index {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Index(i) = self;
-        write!(f, "{i}")
-    }
-}
-
-impl From<i8> for Index {
-    #[inline]
-    fn from(i: i8) -> Self {
-        Self(i.into())
-    }
-}
-
-impl From<i16> for Index {
-    #[inline]
-    fn from(i: i16) -> Self {
-        Self(i)
-    }
-}
-
-impl TryFrom<usize> for Index {
-    type Error = Error;
-    fn try_from(i: usize) -> Result<Self, Self::Error> {
-        match i.try_into() {
-            Ok(i) => Ok(Self(i)),
-            Err(_) => Err(Error::FactsConvert("usize too lang for Index".to_string())),
-        }
-    }
-}
-
 /// Index into the parameter list. Negative indices are reserved for the engine
 #[derive(
     Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Serialize, Deserialize, Default,
 )]
 #[repr(transparent)]
-pub struct FormalIndex(Index);
+pub struct FormalIndex(i16);
 
 impl FormalIndex {
     #[inline]
-    pub fn new(i: Index) -> Self {
+    pub fn new(i: i16) -> Self {
         Self(i)
     }
 }
@@ -465,13 +504,6 @@ impl Deref for FormalIndex {
     #[inline]
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-impl From<Index> for FormalIndex {
-    #[inline]
-    fn from(i: Index) -> Self {
-        Self(i)
     }
 }
 
@@ -485,7 +517,7 @@ impl From<i8> for FormalIndex {
 impl From<i16> for FormalIndex {
     #[inline]
     fn from(i: i16) -> Self {
-        Self(i.into())
+        Self(i)
     }
 }
 
@@ -572,6 +604,58 @@ impl Display for PackedInsnSiteId {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct PackedCallArg(pub [u8; 8]);
+
+impl PackedCallArg {
+    pub fn try_from_parts(
+        insn_id: InsnId,
+        formal: FormalIndex,
+    ) -> Result<Self, packed_struct::PackingError> {
+        let call_arg = CallArgId::new(insn_id, formal);
+        CallArgId::pack(&call_arg).map(PackedCallArg)
+    }
+}
+
+impl Deref for PackedCallArg {
+    type Target = [u8; 8];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl TryFrom<CallArgId> for PackedCallArg {
+    type Error = packed_struct::PackingError;
+    fn try_from(call_arg: CallArgId) -> Result<PackedCallArg, Self::Error> {
+        CallArgId::pack(&call_arg).map(PackedCallArg)
+    }
+}
+
+impl TryFrom<PackedCallArg> for CallArgId {
+    type Error = packed_struct::PackingError;
+    fn try_from(packed: PackedCallArg) -> Result<CallArgId, Self::Error> {
+        CallArgId::unpack(&packed)
+    }
+}
+
+impl TryFrom<&PackedCallArg> for CallArgId {
+    type Error = packed_struct::PackingError;
+    fn try_from(packed: &PackedCallArg) -> Result<CallArgId, Self::Error> {
+        CallArgId::unpack(packed)
+    }
+}
+
+impl Display for PackedCallArg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Ok(call_arg) = CallArgId::try_from(self) {
+            write!(f, "{}:{}", call_arg.insn_id.id, call_arg.formal)
+        } else {
+            write!(f, "packed({:?})", self.0)
+        }
+    }
+}
+
 /// An instruction site represents an instruction and the function in which it is contained. We use
 /// a packed struct so we only need 64 bits for this information. The function id is stored in 28
 /// bits; the instruction id is stored in the remaining 36 bits.
@@ -590,6 +674,31 @@ impl InsnSiteId {
             func_id: function_id,
             insn_id,
         }
+    }
+}
+
+/// A call argument represents an instruction and the formal index of the argument. We use a packed
+/// struct so we only need 64 bits for this information. The instruction id is stored in 36 bits;
+/// the formal index is stored in 16 bits.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, PackedStruct)]
+#[packed_struct(bit_numbering = "msb0", size_bytes = "8")]
+pub struct CallArgId {
+    #[packed_field(bits = "0..36", endian = "msb")]
+    pub insn_id: InsnId,
+    #[packed_field(bits = "36..52", endian = "msb")]
+    pub formal: i16,
+}
+
+impl CallArgId {
+    pub fn new(insn_id: InsnId, formal: FormalIndex) -> Self {
+        Self {
+            insn_id,
+            formal: *formal,
+        }
+    }
+
+    pub fn formal(&self) -> FormalIndex {
+        FormalIndex::from(self.formal)
     }
 }
 
@@ -658,23 +767,154 @@ impl InsnId {
 }
 
 /// A variable with metadata that relates it to functions and call sites
-#[derive(Clone, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Default, Serialize, Deserialize)]
-pub enum FlowVariable {
-    #[default]
+///
+/// Flow variables are crafted to be 8 bytes. There are four variants, requiring 2 bits to
+/// represent. The Local variable is represented with a string ID, a compact index into a string
+/// table, which will be under 62 bits. The Formal is an i16. And the Packed Call Arg similarly only
+/// requires 62 bits.
+#[derive(Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Default)]
+pub struct FlowVariable(u64);
+
+const TAG_UNINIT: u64 = 0 << 62;
+const TAG_LOCAL: u64 = 1 << 62;
+const TAG_FORMAL: u64 = 2 << 62;
+const TAG_CALL_ARG: u64 = 3 << 62;
+const TAG_MASK: u64 = 3 << 62;
+const DATA_MASK: u64 = !TAG_MASK;
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Serialize, Deserialize)]
+pub enum FlowVariableKind {
     Uninit,
     Local(Str),
     Formal(FormalIndex),
-    CallArg {
-        id: PackedInsnSiteId,
-        formal: FormalIndex,
-    },
+    CallArg(PackedCallArg),
+}
+
+impl From<FlowVariableKind> for FlowVariable {
+    fn from(kind: FlowVariableKind) -> Self {
+        match kind {
+            FlowVariableKind::Uninit => FlowVariable(TAG_UNINIT),
+            FlowVariableKind::Local(s) => {
+                let val = s.0;
+                debug_assert!((val & TAG_MASK) == 0, "Local top bits must be 0");
+                FlowVariable(val | TAG_LOCAL)
+            }
+            FlowVariableKind::Formal(f) => {
+                let val = (*f as u16) as u64;
+                FlowVariable(val | TAG_FORMAL)
+            }
+            FlowVariableKind::CallArg(c) => {
+                let val = u64::from_be_bytes(c.0);
+                debug_assert!((val & TAG_MASK) == 0, "CallArg top bits must be 0");
+                FlowVariable(val | TAG_CALL_ARG)
+            }
+        }
+    }
+}
+
+impl FlowVariable {
+    pub fn local(s: Str) -> Self {
+        FlowVariableKind::Local(s).into()
+    }
+
+    pub fn formal_index(f: FormalIndex) -> Self {
+        FlowVariableKind::Formal(f).into()
+    }
+
+    pub fn call_arg_packed(c: PackedCallArg) -> Self {
+        FlowVariableKind::CallArg(c).into()
+    }
+
+    pub fn as_local(&self) -> Option<Str> {
+        if self.is_local() {
+            let idx = self.0 & DATA_MASK;
+            Some(Str(idx))
+        } else {
+            None
+        }
+    }
+
+    pub fn as_formal(&self) -> Option<FormalIndex> {
+        self.formal()
+    }
+
+    pub fn as_call_arg(&self) -> Option<PackedCallArg> {
+        if self.is_call_arg() {
+            let val = self.0 & DATA_MASK;
+            Some(PackedCallArg(val.to_be_bytes()))
+        } else {
+            None
+        }
+    }
+
+    pub fn kind(&self) -> FlowVariableKind {
+        match self.0 & TAG_MASK {
+            TAG_UNINIT => FlowVariableKind::Uninit,
+            TAG_LOCAL => {
+                let idx = self.0 & DATA_MASK;
+                FlowVariableKind::Local(Str(idx))
+            }
+            TAG_FORMAL => {
+                let val = (self.0 & DATA_MASK) as i16;
+                FlowVariableKind::Formal(FormalIndex::from(val))
+            }
+            TAG_CALL_ARG => {
+                let val = self.0 & DATA_MASK;
+                FlowVariableKind::CallArg(PackedCallArg(val.to_be_bytes()))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn is_uninit(&self) -> bool {
+        (self.0 & TAG_MASK) == TAG_UNINIT
+    }
+
+    pub fn is_local(&self) -> bool {
+        (self.0 & TAG_MASK) == TAG_LOCAL
+    }
+
+    pub fn is_formal(&self) -> bool {
+        (self.0 & TAG_MASK) == TAG_FORMAL
+    }
+
+    pub fn is_call_arg(&self) -> bool {
+        (self.0 & TAG_MASK) == TAG_CALL_ARG
+    }
+}
+
+impl Debug for FlowVariable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.kind())
+    }
+}
+
+impl Serialize for FlowVariable {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.kind().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for FlowVariable {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let kind = FlowVariableKind::deserialize(deserializer)?;
+        Ok(FlowVariable::from(kind))
+    }
 }
 
 impl FlowVariable {
     pub fn formal(&self) -> Option<FormalIndex> {
-        match self {
-            FlowVariable::Formal(i) => Some(*i),
-            _ => None,
+        if self.is_formal() {
+            let val = (self.0 & DATA_MASK) as i16;
+            Some(FormalIndex::from(val))
+        } else {
+            None
         }
     }
 
@@ -685,14 +925,13 @@ impl FlowVariable {
 
 impl Display for FlowVariable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use FlowVariable::*;
-        match self {
-            Uninit => write!(f, "uninit"),
-            Local(name) => write!(f, "local({name})"),
-            Formal(index) => write!(f, "formal({index})"),
-            CallArg { id, formal } => {
-                let InsnSiteId { func_id, insn_id } = id.try_into().unwrap();
-                write!(f, "call-arg({}:{}, {formal})", func_id.id, insn_id.id)
+        match self.kind() {
+            FlowVariableKind::Uninit => write!(f, "uninit"),
+            FlowVariableKind::Local(name) => write!(f, "local({name})"),
+            FlowVariableKind::Formal(index) => write!(f, "formal({index})"),
+            FlowVariableKind::CallArg(packed) => {
+                let CallArgId { insn_id, formal } = packed.try_into().unwrap();
+                write!(f, "call-arg({}, {formal})", insn_id.id)
             }
         }
     }
@@ -703,7 +942,7 @@ impl TryFrom<mir::ParameterIdx> for FlowVariable {
     #[inline]
     fn try_from(idx: mir::ParameterIdx) -> Result<FlowVariable, Self::Error> {
         match idx.try_into() {
-            Ok(i) => Ok(FlowVariable::Formal(i)),
+            Ok(i) => Ok(FlowVariableKind::Formal(i).into()),
             Err(_) => Err(TryFromVariableError::Param),
         }
     }
@@ -724,7 +963,7 @@ impl TryFrom<&mir::Variable> for FlowVariable {
         match v {
             mir::Variable::Local(_) => {
                 let name = format!("{v}");
-                Ok(FlowVariable::Local(ArcIntern::<str>::from(name)))
+                Ok(FlowVariableKind::Local(Str::from(name)).into())
             }
             mir::Variable::Param(idx) => (*idx).try_into(),
             mir::Variable::GlobalHeap => Err(TryFromVariableError::Global),
@@ -743,7 +982,7 @@ impl TryFrom<&mir::VariableRef> for FlowVariable {
             None => variable.as_ref().try_into(),
             Some(version) => {
                 let name = format!("{variable}_{version}");
-                Ok(FlowVariable::Local(ArcIntern::<str>::from(name)))
+                Ok(FlowVariableKind::Local(Str::from(name)).into())
             }
         }
     }
@@ -773,6 +1012,20 @@ pub enum TaintState {
 /// Taint label
 #[derive(Clone, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Default, Serialize, Deserialize)]
 pub struct Label(pub Str);
+
+impl From<Str> for Label {
+    #[inline]
+    fn from(s: Str) -> Self {
+        Label(s)
+    }
+}
+
+impl From<ArcIntern<str>> for Label {
+    #[inline]
+    fn from(s: ArcIntern<str>) -> Self {
+        Label(Str::from(s))
+    }
+}
 
 impl Display for Label {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -888,7 +1141,7 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> 
 /// This supports offset arithmetic. For example, if ap = .x.[2] and prefix = .x.[1],
 /// the suffix is .[1].
 #[inline]
-pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<SuffixSeq<mir::FieldAccess>> {
+pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<tailshare::Seq<mir::FieldAccess>> {
     use mir::{FieldAccess, Offset};
     let mut ap_seq = ap.0;
     let mut prefix_seq = prefix.0;
@@ -1155,5 +1408,25 @@ mod tests {
 
         let parsed_back: Path = serialized.parse().unwrap();
         assert_eq!(path, parsed_back);
+    }
+
+    #[test]
+    fn test_call_string_interning() {
+        let cs1 = CallString::new();
+        let cs2 = CallString::new();
+        assert_eq!(cs1, cs2);
+        assert!(std::ptr::eq(cs1.0, cs2.0));
+
+        let site = PackedInsnSiteId([1, 2, 3, 4, 5, 6, 7, 8]);
+        // We need a valid site for push to work because of cycle detection and unpacking
+        let cs3 = cs1.push(site).expect("push failed");
+        let cs4 = cs2.push(site).expect("push failed");
+        assert_eq!(cs3, cs4);
+        assert!(std::ptr::eq(cs3.0, cs4.0));
+
+        let (cs5, popped) = cs3.pop();
+        assert_eq!(cs5, cs1);
+        assert!(std::ptr::eq(cs5.0, cs1.0));
+        assert_eq!(popped, Some(site));
     }
 }

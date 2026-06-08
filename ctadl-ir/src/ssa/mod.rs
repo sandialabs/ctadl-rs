@@ -92,7 +92,7 @@ pub fn transform(function: &mut FunctionData, prune: bool) {
 }
 
 fn prune_unreachable_nodes(function: &mut FunctionData) {
-    let reachable_indices: Vec<BasicBlockIdx> = reachable(&function.blocks).collect();
+    let reachable_indices = reachable(&function.blocks);
     if reachable_indices.len() == function.blocks.num_nodes() {
         return;
     }

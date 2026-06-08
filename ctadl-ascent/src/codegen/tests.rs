@@ -347,13 +347,13 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     let ss = SourceSinkQuery {
         source: TaintEndpoint {
             infunc: fx::Function(f.name.clone().into()),
-            vertex: FlowVertex(FlowVariable::Formal(1i8.into()), fx::Path::empty()),
+            vertex: FlowVertex(FlowVariable::formal_index(1i8.into()), fx::Path::empty()),
             label: fx::Label("Net".into()),
             direction: fx::TaintDirection::Forward,
         },
         sink: TaintEndpoint {
             infunc: fx::Function(f.name.clone().into()),
-            vertex: FlowVertex(FlowVariable::Formal(0i8.into()), fx::Path::empty()),
+            vertex: FlowVertex(FlowVariable::formal_index(0i8.into()), fx::Path::empty()),
             label: fx::Label("Net".into()),
             direction: fx::TaintDirection::Backward,
         },

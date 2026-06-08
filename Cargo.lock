@@ -1272,8 +1272,10 @@ dependencies = [
  "datafusion",
  "derive_builder",
  "dex-reader",
+ "elsa",
  "env_logger",
  "hashbrown 0.16.1",
+ "immortal",
  "internment",
  "itertools 0.14.0",
  "json5",
@@ -1297,7 +1299,7 @@ dependencies = [
  "smallvec",
  "source-info",
  "streaming-iterator",
- "suffix-seq",
+ "tailshare",
  "tempfile",
  "test-log",
  "thiserror",
@@ -2192,6 +2194,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
+name = "elsa"
+version = "1.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9abf33c656a7256451ebb7d0082c5a471820c31269e49d807c538c252352186e"
+dependencies = [
+ "stable_deref_trait",
+]
+
+[[package]]
 name = "env_filter"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2710,6 +2721,14 @@ checksum = "3acae9609540aa318d1bc588455225fb2085b9ed0c4f6bd0d9d5bcd86f1a0344"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
+]
+
+[[package]]
+name = "immortal"
+version = "0.1.0"
+dependencies = [
+ "parking_lot 0.12.5",
+ "serde",
 ]
 
 [[package]]
@@ -4075,14 +4094,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "suffix-seq"
-version = "0.1.0"
-dependencies = [
- "parking_lot 0.12.5",
- "serde",
-]
-
-[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4113,6 +4124,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "tailshare"
+version = "0.1.0"
+dependencies = [
+ "immortal",
+ "parking_lot 0.12.5",
+ "serde",
 ]
 
 [[package]]
