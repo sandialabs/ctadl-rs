@@ -1,30 +1,93 @@
-use crate::languages::tree_sitter::tests::get_full_path;
-use crate::languages::tree_sitter::tests::get_summary;
-use crate::languages::tree_sitter::tests::program_from_file;
-use crate::languages::tree_sitter::tests::program_from_string;
-use crate::languages::tree_sitter::tests::summary_returns_param;
+use crate::languages::tree_sitter::test_utils::*;
 
 use ctadl_ir::ProgramInfo;
-
-fn janky_expected(dump: &str, needle: &str) -> bool {
-    let res = dump.contains(needle);
-    if !res {
-        log::error!("TEST FAIL: expected {needle}");
-        log::error!("\t{dump}");
-    }
-    res
-}
-fn init() {
-    let _ = env_logger::builder()
-        .filter_level(log::LevelFilter::Debug) // This forces it to Debug
-        .is_test(true)
-        .try_init();
-}
 
 #[test_log::test]
 #[should_panic]
 fn test_janky_assert() {
-    assert!(janky_expected("return a", "return asdf%a"), "has return a");
+    assert!(check_match("return a", "return asdf%a"), "has return a");
+}
+#[test_log::test]
+#[ignore = "aspirational"]
+fn type_def_func_params() {
+    let src = r#"
+        typedef void (*HelloCallback)(char*);
+
+        HelloCallback execute_callback(HelloCallback callback, char* name) {
+            callback(name);
+            
+            // Returning the pointer is now as simple as returning an int
+            return callback;
+        }
+            "#;
+    let (_, dump) = program_from_string(src);
+    log::info!("{}", dump);
+}
+
+#[test_log::test]
+fn simplest_indirect() {
+    let src = r#"
+                    #include <stdio.h>
+
+                    int main() {
+                        int (*X)(const char *, ...) = printf;
+                        X("Hello, %s!\n", "world");
+                        return 0;
+                    }
+                    "#;
+
+    let (_, dump) = program_from_string(src);
+    log::info!("{}", dump);
+    assert!(check_match(&dump, "funcptr-call"));
+}
+
+#[test_log::test]
+fn func_params() {
+    let src = r#"
+
+
+    void function_param(void (*callback)(char*)) {
+        return callback("I once had a dog name foo, he was a great boy");
+    }
+
+"#;
+
+    let (_, dump) = program_from_string(src);
+    log::info!("{}", dump);
+    assert!(check_match(&dump, "direct-call callback"));
+}
+
+#[test_log::test]
+fn indirect_call1() {
+    let src = r#"
+    #include <stdio.h>
+
+// 1. The callback now expects a string
+void say_hello(char* name) {
+    printf("Hello, %s! (from inside the callback)\n", name);
+}
+
+// 2. The wrapper now takes the function pointer AND the data to pass to it
+void execute_callback(void (*callback)(char*), char* name_to_pass) {
+    printf("Wrapper: Preparing to call the function...\n");
+
+    // 3. Assigning the callback to a local variable
+    // Note how the (char*) signature must match exactly
+    void (*local_ptr)(char*) = callback;
+
+    // 4. Execute the local pointer with the argument
+    local_ptr(name_to_pass);
+}
+
+int main() {
+    execute_callback(say_hello, "Gemini");
+    return 0;
+}
+ 
+"#;
+
+    let (_, dump) = program_from_string(src);
+    log::info!("{}", dump);
 }
 
 #[test_log::test]
@@ -53,87 +116,38 @@ fn shadowing() {
             int y = 4;
 }
         "#;
-    let dump = program_from_string(src).to_string();
+    let (_, dump) = program_from_string(src);
     log::info!("{}", dump);
 }
 
 #[test_log::test]
-#[ignore = "Aspriational, needs unbraced consequences. "]
 fn if_no_scope() {
     let src = r#"
-
     int if_no_scope(Foobar *fb){
       if(fb->ct ==3)
-        return fb->unbraced
+        return fb->unbraced;
       return x; // this should grab a global
     }
-
     "#;
-    let dump = program_from_string(src).to_string();
+    let (_, dump) = program_from_string(src);
 
     log::info!("{}", dump);
-    assert!(janky_expected("return a", "return asdf%a"), "NOT COMPLETE");
-}
-
-#[test_log::test]
-#[ignore = "Aspriational needs proper else, elseif handling"]
-fn scopes_and_blocks() {
-    let src = r#"
-        void main(){
-            //before a compound statement
-            {
-                int x = 5;
-            }
-
-            foo(5);
-            foo(10);
-            int y = 7;
-            int z = foo(10);
-            if(z == 10){
-                int v = 33;
-                return;
-            }
-            if(y == 7){
-                printf("Here i am!\n");
-            }
-            else if (v == 7){
-                callme(blondie);
-            } else{
-                printf("Final countdown!");
-            }
-
-            for(int y=0, z = foo();y<5;y++){
-                printf("Do you see that?");
-            }
-
-            printf("more statements");
-            {
-                exogenou();
-            }
-
-            }
-       }"#;
-    let dump = program_from_string(src).to_string();
-
-    log::info!("{}", dump);
+    assert!(check_match(&dump, "return @p0.unbraced"));
 }
 
 #[test_log::test]
 fn empty_param_list() {
     let src = r"
-            int complex_expressions_1() {
+            int empty_param_list() {
                 int a = 5;
                 int b;
                 b = a;
                 return b;
             }
         ";
-    let dump = program_from_string(src).to_string();
+    let (_, dump) = program_from_string(src);
 
-    assert!(
-        janky_expected(&dump, "assign %b = %a"),
-        "FAIL: dump\n{dump}"
-    );
+    assert!(check_match(&dump, "assign %b = %a"), "FAIL: dump\n{dump}");
 }
 
 #[test_log::test]
@@ -145,66 +159,80 @@ fn declare_assign() {
                 return b;
             }
         ";
-    let dump = program_from_string(src).to_string();
+    let (_, dump) = program_from_string(src);
     log::info!("{}", dump);
-    assert!(janky_expected(&dump, "assign %b = $globals.a"));
-    assert!(janky_expected(&dump, "assign %<t0> = %b"));
-    assert!(janky_expected(&dump, "assign %c = %<t0>"));
+    assert!(check_match(&dump, "assign %b = $globals.a"));
+    assert!(check_match(&dump, "assign %<t0> = %b"));
+    assert!(check_match(&dump, "assign %c = %<t0>"));
 }
 
 #[test_log::test]
-fn parameter_lists_janky() {
+fn comma_list_declarations() {
     let src = r"
-             int parameter_what(int x, int *y) {
-                
-                int b = x;
-                return b;                
-            }            
-        ";
-    let dump = program_from_string(src).to_string();
+        int comma_sep_decl() {
+        int a,b,c,d;
+        int x =a, y=b, z=7;
+        
+        return x+y;        
+}";
+    let (program, dump) = program_from_string(src);
 
     log::info!("{}", dump);
-    assert!(janky_expected(&dump, "assign %b = @p0"));
-    assert!(janky_expected(&dump, "what(@p0[byval], @p1[byref])"));
+    assert!(check_assign(&program, "x", ["a"], None));
+    assert!(check_assign(&program, "y", ["b"], None));
+    assert!(check_match(&dump, "assign %z = <const: \"7\""));
+
+    //assert!(check_match(&dump, "assign %b = @p0"));
+    //assert!(check_match(&dump, "what(@p0[byval], @p1[byref])"));
 }
 
-/*
-int simple_else(int x, int *y, int z) {
-                if(x){
-                    y->v_if = x;
-                } else if(z){
-                    y->v_else_if = z;
-                } else
-                    y->v_else = 5;
+#[test_log::test]
+fn simple_for() {
+    let src = r"
+             int simple_for(int x, int *y) {
+                int x;
+                for (int a = 0, x = 9; a < 10; a++,x++,y++){
+                int b = a;    
                 }
                 return 0;
-            }
-             */
-
-#[test_log::test]
-fn simple_else() {
-    let src = r"
-             int simple_else(int x, int *y, int z) {
-                if(x){
-                    y->v_if = x;
-                } else {
-                    y->v_else = 5;
-                }
-                return 0;               
             }            
         ";
-    let dump = program_from_string(src).to_string();
+    let (_, dump) = program_from_string(src);
 
     log::info!("{}", dump);
-    assert!(janky_expected(
-        &dump,
-        "begin block_1:\n@p1 = update (@p1.v_if := @p0"
-    ));
-    assert!(janky_expected(
-        &dump,
-        "begin block_3:\n@p1 = update (@p1.v_else := <const"
-    ));
-    //todo add block
+    //assert!(check_match(&dump, "assign %b = @p0"));
+    //assert!(check_match(&dump, "what(@p0[byval], @p1[byref])"));
+}
+//todo:  comma operator
+//
+
+#[test_log::test]
+fn simple_elif() {
+    let src = r"
+             int simple_elif() {
+
+                int x = 5;
+                int v_if;
+                int v_elif;
+                int v_else;
+                if(x){
+                    v_if = x;
+                }
+                else if(!z)
+                 {
+                    v_elif = x;                    
+                } else {
+                    v_else = x;
+                }                
+                return 0;  
+            }            
+        ";
+    let (program, dump) = program_from_string(src);
+
+    log::info!("{}", dump);
+    assert!(check_assign(&program, "v_if", ["x"], Some(1)));
+    assert!(check_assign(&program, "v_elif", ["x"], Some(4)));
+    assert!(check_assign(&program, "v_else", ["x"], Some(6)));
 }
 
 #[test_log::test]
@@ -215,15 +243,14 @@ fn parameter_lists_query() {
                 return b;                
             }            
         ";
-    let program = program_from_string(src);
+    let (program, dump) = program_from_string(src);
     let program_info = ProgramInfo {
         program,
         ..Default::default()
     };
-    let dump = program_info.program.to_string();
     log::info!("{}", dump);
-    assert!(janky_expected(&dump, "assign %b = @p0"));
-    assert!(janky_expected(&dump, "what(@p0[byval], @p1[byref])"));
+    assert!(check_match(&dump, "assign %b = @p0"));
+    assert!(check_match(&dump, "what(@p0[byval], @p1[byref])"));
     let (summary, source_info) = get_summary(program_info).unwrap();
     //log::info!("SUMMARY: {:?}", summary);
     //[(Function("parameter_what"), AuxParam(1), Path(""), Param(Index(0)), Path(""))]
@@ -244,10 +271,282 @@ fn pointer_expression() {
                 return b;                
             }            
         ";
-    let dump = program_from_string(src).to_string();
+    let (_program, dump) = program_from_string(src);
     log::info!("{}", dump);
-    assert!(janky_expected(&dump, "assign %b = @p0")); //?
-    assert!(janky_expected(&dump, "what(@p0[byref])"))
+    assert!(check_match(&dump, "assign %b = @p0")); //?
+    assert!(check_match(&dump, "what(@p0[byref])"))
+}
+
+//this tests whether we die on this unchilded expression_statement
+// while(y==5);  <--- just a semi colon. sounds like a good way to
+// spin the processor ;)
+#[test_log::test]
+fn no_child_while() {
+    let src = r"
+    // man I hope y is never 5!
+            int no_child_while(int y) {
+                int x = 5;
+                while(x == 5);                    
+                return x;
+            }            
+        ";
+    let (_program, dump) = program_from_string(src);
+    log::info!("{}", dump);
+    /*
+    let program_info = ProgramInfo {
+        program,
+        ..Default::default()
+    };
+
+    let (summary, source_info) = get_summary(program_info).unwrap();
+    */
+}
+#[test_log::test]
+fn unbraced_if() {
+    let src = r"
+    // man I hope y is never 5!
+            int unbraced_if(int y, int z) {
+                int x = 5;
+                if(x == 3)
+                    x = z;
+                return x;
+            }            
+        ";
+    let (program, dump) = program_from_string(src);
+    let program_info = ProgramInfo {
+        program,
+        ..Default::default()
+    };
+
+    let (summary, source_info) = get_summary(program_info).unwrap();
+    assert!(summary_returns_param(
+        &summary,
+        &source_info,
+        "unbraced_if",
+        1
+    ));
+    log::info!("{}", dump);
+}
+
+#[test_log::test]
+#[ignore = "known_wip"]
+fn double_if() {
+    let src = r"
+            int double_if(int y, int z) {
+                int x = 5;
+                  if(x == 3)
+                    x = z;
+                  if(y == z)
+                    x = y;                
+                //return x; //ah it's not that there are two if's, it's that the if isn't followed by a return to overwrite the gotos.
+            }            
+        ";
+    let (_program, dump) = program_from_string(src);
+    log::info!("{}", dump);
+    assert!(!check_match(&dump, "goto 0"), "contains errant goto 0")
+    /*
+    let program_info = ProgramInfo {
+        program,
+        ..Default::default()
+    };
+
+    let (summary, source_info) = get_summary(program_info).unwrap();
+
+    assert!(summary_returns_param(
+        &summary,
+        &source_info,
+        "unbraced_while",
+        0
+    ));*/
+}
+
+#[test_log::test]
+#[ignore = "knownbug_workingit"]
+fn unbraced_if_while() {
+    let src = r"
+    // man I hope y is never 5!
+            int unbraced_if_while(int y, int z) {
+                int x = 5;
+                  if(x == 3)
+                    x = z;                  
+                while(x == 5) 
+                    x = y;
+                return x;
+            }            
+        ";
+    let (_program, dump) = program_from_string(src);
+    log::info!("{}", dump);
+    assert!(
+        false,
+        "You need to fix, 2.Continuation goes to 0, how does the if,while cause this?????WTH!"
+    )
+    /*
+    let program_info = ProgramInfo {
+        program,
+        ..Default::default()
+    };
+
+    let (summary, source_info) = get_summary(program_info).unwrap();
+
+    assert!(summary_returns_param(
+        &summary,
+        &source_info,
+        "unbraced_while",
+        0
+    ));*/
+}
+
+#[test_log::test]
+fn unbraced_while() {
+    let src = r"
+    // man I hope y is never 5!
+            int unbraced_while(int y, int z) {
+                int x = 5;
+                  if(x == 3)
+                    x = z;
+                while(x == 5) 
+                    x = y;
+                return x;
+            }            
+        ";
+    let (_program, dump) = program_from_string(src);
+    log::info!("{}", dump);
+    /*
+    let program_info = ProgramInfo {
+        program,
+        ..Default::default()
+    };
+
+    let (summary, source_info) = get_summary(program_info).unwrap();
+
+    assert!(summary_returns_param(
+        &summary,
+        &source_info,
+        "unbraced_while",
+        0
+    ));*/
+}
+
+#[test_log::test]
+#[ignore = "Not done yet"]
+fn do_while() {
+    let src = r"
+            int do_while() {
+                int b = 2;  
+                int x = 5;
+                do{
+                    x = b;
+                } while(b = b + x);
+                int y = x;
+                return y;
+            }            
+        ";
+    let (prog, dump) = program_from_string(src);
+    log::info!("{}", dump);
+    assert!(check_block_count(&prog, 4));
+    //assert!(check_assign(&program, "x", ["b"], Some(1)));
+    //assert!(check_assign(&program, "y", ["x"], Some(2)));
+}
+
+#[test_log::test]
+fn extra_parens() {
+    let src = r"
+        int extra_parens(Field myParm){
+        int z = 55;
+        int x,y;
+        int y;
+            if((x = z)) {
+                //empty
+            }
+            while((((y = z)))) {
+                //empty
+            }
+            return 0;
+        }
+    ";
+    let (program, dump) = program_from_string(src);
+    log::info!("{}", dump);
+    assert!(check_assign(&program, "x", ["z"], None));
+    assert!(check_assign(&program, "y", ["z"], None));
+}
+
+#[test_log::test]
+fn plus_equals() {
+    let src = r"
+        int update_expression_2(){
+            int x = 5;
+            int y = 11;
+            y = 99;
+            y+=10;
+            y+=x*2;
+            return 0;
+        }
+    ";
+    let (_prog, dump) = program_from_string(src);
+    log::info!("{}", dump);
+}
+
+#[test_log::test]
+fn update_expression() {
+    let src = r"
+        int update_expression(Field myParm){
+            int x = 5;
+            int y = 11;
+
+            x++;        
+            y+=x*2;
+            
+            --x;
+            myParm->x++;
+            
+            return myParm->x;
+        }
+    ";
+    let (_prog, dump) = program_from_string(src);
+    //assert(check_match(&dump,""))
+    assert!(check_match(&dump, "@p0 = update (@p0.x :="));
+}
+
+#[test_log::test]
+fn simple_while() {
+    let src = r" 
+            int simple_while(Field my_parm, int parB) {
+                int b = 2;  // block 0
+                int x = 5;
+                while(my_parm->x = parB){ //block 1
+                    x = b; //block 3
+                }
+                int y = x; //block 2
+                return y;
+            }            
+        ";
+    let (program, dump) = program_from_string(src);
+    log::info!("{}", dump);
+    assert!(check_assign(&program, "x", ["b"], Some(3)));
+    assert!(check_assign(&program, "y", ["x"], Some(2)));
+    assert!(janky_goto(&dump.as_str(), 1, "2, 3"));
+    assert!(janky_goto(&dump.as_str(), 3, "1")); //the condition goes to 3, not the body.*/
+}
+
+//this tests unbraced if/else consequents
+
+#[test_log::test]
+fn unbraced_if_else() {
+    let src = r"
+            int simple_while(int y, int z) {
+                int x = 1;
+                if(x == 1)
+                    x = y;
+/*
+                else if(x == 2)
+                    x = 0;
+*/
+                else
+                x = z;
+            }            
+        ";
+    let (_program, dump) = program_from_string(src);
+    log::info!("{}", dump);
 }
 
 #[test_log::test]
@@ -267,10 +566,10 @@ fn ascending_temps_per_function() {
         
         ";
 
-    let dump = program_from_string(src).to_string();
+    let (_program, dump) = program_from_string(src);
     log::info!("{}", dump);
-    assert!(janky_expected(&dump, "%<t4>"));
-    assert!(!janky_expected(&dump, "%<t5>"));
+    assert!(check_match(&dump, "%<t4>"));
+    assert!(!check_match(&dump, "%<t5>"));
 }
 
 #[test_log::test]
@@ -282,11 +581,11 @@ fn brackets_commutative() {
             }   
         }
         ";
-    let dump = program_from_string(src).to_string();
+    let (_, dump) = program_from_string(src);
     log::info!("{}", dump);
     //let summary = get_summary(program);
     //log::info!("SUMMARY {:#?}", summary);
-    assert!(janky_expected(
+    assert!(check_match(
         &dump,
         "TODO: we need to check whether the index/lhs are swapped"
     ));
@@ -308,12 +607,12 @@ fn brackets_simple() {
             }   
     
         "#;
-    let dump = program_from_string(src).to_string();
+    let (_, dump) = program_from_string(src);
     log::info!("{}", dump);
     //let summary = get_summary(program);
     //log::info!("SUMMARY {:#?}", summary);
-    assert!(janky_expected(&dump, "%f.[3]"));
-    assert!(janky_expected(&dump, "%f.[4]"));
+    assert!(check_match(&dump, "%f.[3]"));
+    assert!(check_match(&dump, "%f.[4]"));
 }
 
 #[test_log::test]
@@ -329,27 +628,27 @@ fn field_access_values() {
                return v.f1;
             }   
         ";
-    let dump = program_from_string(src).to_string();
+    let (_, dump) = program_from_string(src);
     log::info!("{}", dump);
     //let summary = get_summary(program);
     //log::info!("SUMMARY {:#?}", summary);
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f2 := @p2)"));
+    assert!(check_match(&dump, "@p0 = update (@p0.f2 := @p2)"));
 
-    assert!(janky_expected(
+    assert!(check_match(
         &dump,
         "@p0 = update (@p0.f2.nf1.y := @p1.f2.f3.f4)"
     ));
 
-    assert!(janky_expected(
+    assert!(check_match(
         &dump,
         "@p0 = update (@p0.f2.nf1.y := @p1.f2.f3.f4)"
     ));
 
-    assert!(janky_expected(&dump, "assign %<t1> = @p2, @p3"));
+    assert!(check_match(&dump, "assign %<t1> = @p2, @p3"));
 
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f3 := %<t2>)"));
+    assert!(check_match(&dump, "@p0 = update (@p0.f3 := %<t2>)"));
 
-    assert!(janky_expected(&dump, "return @p0.f1"));
+    assert!(check_match(&dump, "return @p0.f1"));
 }
 
 #[test_log::test]
@@ -367,14 +666,13 @@ fn literals_in_expressions() {
                 return (x + 25);
             }
         ";
-    let dump = program_from_string(src).to_string();
-    assert!(janky_expected(&dump, "assign %b = %a"));
-    assert!(janky_expected(&dump, "assign %b = <const: "));
-    assert!(janky_expected(&dump, "assign %c = %<t1>"));
-    assert!(janky_expected(&dump, "assign %<t0> = %a, %b"));
-    assert!(janky_expected(&dump, "return <const: "));
-
-    assert!(janky_expected(&dump, "assign %x = <const: "));
+    let dump = program_from_string(src).1;
+    assert!(check_match(&dump, "assign %b = %a"));
+    assert!(check_match(&dump, "assign %b = <const: "));
+    assert!(check_match(&dump, "assign %c = %<t1>"));
+    assert!(check_match(&dump, "assign %<t0> = %a, %b"));
+    assert!(check_match(&dump, "return <const: "));
+    assert!(check_match(&dump, "assign %x = <const: "));
 }
 
 #[test_log::test]
@@ -392,13 +690,13 @@ fn complex_expressions() {
             }
         ";
 
-    let dump = program_from_string(src).to_string();
+    let (_, dump) = program_from_string(src);
     log::info!("{}", dump);
 
-    assert!(janky_expected(&dump, "assign %<t0> = %a, %b"));
-    assert!(janky_expected(&dump, "assign %<t1> = %<t0>, %c"));
-    assert!(janky_expected(&dump, "assign %b = %<t3>"));
-    assert!(janky_expected(&dump, "assign %c = <const:"));
+    assert!(check_match(&dump, "assign %<t0> = %a, %b"));
+    assert!(check_match(&dump, "assign %<t1> = %<t0>, %c"));
+    assert!(check_match(&dump, "assign %b = %<t3>"));
+    assert!(check_match(&dump, "assign %c = <const:"));
 }
 
 #[test_log::test]
@@ -419,12 +717,12 @@ fn compound_return() {
             return a + b + 55 + d + e;
             }
         ";
-    let dump = program_from_string(src).to_string();
+    let (_, dump) = program_from_string(src);
 
-    assert!(janky_expected(&dump, "assign %a = <const:"));
-    assert!(janky_expected(&dump, "assign %<t0> = %a, %x"));
-    assert!(janky_expected(&dump, "return %<t0>"));
-    assert!(janky_expected(&dump, "return %<t3>"));
+    assert!(check_match(&dump, "assign %a = <const:"));
+    assert!(check_match(&dump, "assign %<t0> = %a, %x"));
+    assert!(check_match(&dump, "return %<t0>"));
+    assert!(check_match(&dump, "return %<t3>"));
 }
 
 #[test_log::test]
@@ -436,30 +734,30 @@ fn return_arity() {
             void none(){return;}
             void really_void(void){return;}
         ";
-    let dump = program_from_string(src).to_string();
+    let (_, dump) = program_from_string(src);
 
-    //assert!(janky_expected(&dump, "define implicit_int() -> 1"));
-    assert!(janky_expected(&dump, "define explicit() -> 1"));
-    assert!(janky_expected(&dump, "define none() -> 0"));
-    assert!(janky_expected(&dump, "define really_void() -> 0"));
+    //assert!(check_match(&dump, "define implicit_int() -> 1"));
+    assert!(check_match(&dump, "define explicit() -> 1"));
+    assert!(check_match(&dump, "define none() -> 0"));
+    assert!(check_match(&dump, "define really_void() -> 0"));
 }
 
 #[test_log::test]
 fn params_and_simple_assign_in_example_2() {
-    init();
+    init_test_logging();
     let fp =
         get_full_path("example2.c").expect("Test Sources are expected in .../tests/c/<filename>");
     let program = program_from_file(fp).expect("example2.c Program parsed");
     let dump = program.to_string();
     log::info!("dump: {dump}");
 
-    assert!(janky_expected(&dump, "return %a"), "has return a");
+    assert!(check_match(&dump, "return %a"), "has return a");
     assert!(
-        janky_expected(&dump, "assign %a = @p1"),
+        check_match(&dump, "assign %a = @p1"),
         "has the simplest assign, a=b"
     );
     assert!(
-        janky_expected(&dump, "assign %a = $globals.d"),
+        check_match(&dump, "assign %a = $globals.d"),
         "has 2nd simple a=d"
     );
 }
@@ -474,12 +772,12 @@ fn passthrough_assignment() {
             return c;
         }
         ";
-    let dump = program_from_string(src).to_string();
-    assert!(janky_expected(&dump, "assign %a = <const"));
-    assert!(janky_expected(&dump, "assign %b = %a"));
-    assert!(janky_expected(&dump, "assign %<t0> = %a, %b"));
+    let dump = program_from_string(src).1;
+    assert!(check_match(&dump, "assign %a = <const"));
+    assert!(check_match(&dump, "assign %b = %a"));
+    assert!(check_match(&dump, "assign %<t0> = %a, %b"));
     assert!(
-        janky_expected(&dump, "assign %c = %<t0>"),
+        check_match(&dump, "assign %c = %<t0>"),
         "Expected to see c receive the blend"
     );
 }
@@ -492,10 +790,10 @@ fn compound_declaration_with_fields() {
             int x = v->f4 = v->f5 + b;
         }
         ";
-    let dump = program_from_string(src).to_string();
-    assert!(janky_expected(&dump, "assign %<t0> = @p0.f1, @p0.f3"));
-    assert!(janky_expected(&dump, "assign %<t1> = @p0.f5, $globals.b"));
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f4 := %<t1>)"));
+    let dump = program_from_string(src).1;
+    assert!(check_match(&dump, "assign %<t0> = @p0.f1, @p0.f3"));
+    assert!(check_match(&dump, "assign %<t1> = @p0.f5, $globals.b"));
+    assert!(check_match(&dump, "@p0 = update (@p0.f4 := %<t1>)"));
 }
 
 #[test_log::test]
@@ -509,9 +807,9 @@ fn param_by_reference() {
             return a.field + b.field;
         }
         ";
-    let dump = program_from_string(src).to_string();
+    let (_, dump) = program_from_string(src);
 
-    assert!(janky_expected(&dump, "assign %b = @p1"));
+    assert!(check_match(&dump, "assign %b = @p1"));
 }
 
 #[test_log::test]
@@ -527,17 +825,15 @@ fn simplest_calls() {
     }
 ";
 
-    let program = program_from_string(src);
+    let (program, dump) = program_from_string(src);
     let program_info = ProgramInfo {
         program,
         ..Default::default()
     };
-    let dump = program_info.program.to_string();
     log::info!("{}", dump);
-
     let (summary, _source_info) = get_summary(program_info).unwrap();
     log::info!("{:?}", summary);
-    assert!(janky_expected(&dump, "direct-call tgt"));
+    assert!(check_match(&dump, "direct-call tgt"));
 }
 #[test_log::test]
 fn params_into_calls() {
@@ -556,29 +852,29 @@ fn params_into_calls() {
             return y;
         }
         ";
-    let program = program_from_string(src);
+    let (program, dump) = program_from_string(src);
     let program_info = ProgramInfo {
         program,
         ..Default::default()
     };
-    let dump = program_info.program.to_string();
+
     log::info!("{}", dump);
 
     let (summary, _source_info) = get_summary(program_info).unwrap();
     log::info!("{:?}", summary);
     assert!(
-        janky_expected(&dump, "assign %x = @p0"),
+        check_match(&dump, "assign %x = @p0"),
         "picked up assign in parameter list"
     );
     assert!(
-        janky_expected(&dump, "%<t0> = direct-call foo(%x)"),
+        check_match(&dump, "%<t0> = direct-call foo(%x)"),
         "picked up assign in parameter list"
     );
-    assert!(janky_expected(&dump, "direct-call foo(@p0)"));
-    assert!(janky_expected(&dump, "assign %<t3> = @p0, @p0"));
-    assert!(janky_expected(&dump, "%<t2> = direct-call foo(%<t3>)"));
+    assert!(check_match(&dump, "direct-call foo(@p0)"));
+    assert!(check_match(&dump, "assign %<t3> = @p0, @p0"));
+    assert!(check_match(&dump, "%<t2> = direct-call foo(%<t3>)"));
     //TOOD_JDB: do summary queries, not these janks
-    //assert!(janky_expected(&dump, "TODO: write param queries");
+    //assert!(check_match(&dump, "TODO: write param queries");
 }
 
 #[test_log::test]
@@ -595,28 +891,27 @@ fn call_not_assign() {
             return y;
         }
         ";
-    let program = program_from_string(src);
+    let (program, dump) = program_from_string(src);
     let program_info = ProgramInfo {
         program,
         ..Default::default()
     };
-    let dump = program_info.program.to_string();
     log::info!("{}", dump);
 
     let (summary, _source_info) = get_summary(program_info).unwrap();
     log::info!("{:?}", summary);
 
-    assert!(janky_expected(&dump, "direct-call foo"));
+    assert!(check_match(&dump, "direct-call foo"));
 }
 
 fn janky_goto(dump: &str, from_block: usize, to_block: &str) -> bool {
-    janky_expected(
+    check_match(
         dump,
         format!("goto {}\nend block_{}", to_block, from_block).as_str(),
     )
 }
 fn janky_return(dump: &str, from_block: usize, ret_val: &str) -> bool {
-    janky_expected(
+    check_match(
         dump,
         format!("return {}\nend block_{}", ret_val, from_block).as_str(),
     )
@@ -635,8 +930,8 @@ fn simplest_if_no_return() {
                 return y;
             }
         ";
-    let program = program_from_string(src); //.expect("always");
-    let dump = program.to_string();
+    let (_program, dump) = program_from_string(src);
+    log::info!("{}", dump);
     assert!(janky_goto(&dump.as_str(), 0, "1, 2"));
     assert!(janky_goto(&dump.as_str(), 1, "2"));
     assert!(janky_return(&dump.as_str(), 2, "@p1")); //returns
@@ -655,8 +950,8 @@ fn simplest_if_with_return() {
                 return y;
             }
         ";
-    let program = program_from_string(src); //.expect("always");
-    let dump = program.to_string();
+    let (_program, dump) = program_from_string(src);
+
     /*
     let program_info = ProgramInfo {
         program,
@@ -696,12 +991,11 @@ fn shadow_block() {
             return x;
         }
         ";
-    let program = program_from_string(src);
+    let (program, dump) = program_from_string(src);
     let program_info = ProgramInfo {
         program,
         ..Default::default()
     };
-    let dump = program_info.program.to_string();
     log::info!("{}", dump);
 
     let (summary, source_info) = get_summary(program_info).unwrap();
@@ -736,18 +1030,17 @@ fn indirect_call_1() {
             return 0;
         }"#;
 
-    let program = program_from_string(src);
+    let (program, dump) = program_from_string(src);
     let program_info = ProgramInfo {
         program,
         ..Default::default()
     };
-    let dump = program_info.program.to_string();
     log::info!("{}", dump);
 
     let (summary, _source_info) = get_summary(program_info).unwrap();
     log::info!("{:?}", summary);
 
-    assert!(janky_expected(&dump, "indirect-call"));
+    assert!(check_match(&dump, "indirect-call"));
     //assert!(summary_returns_param(&summary, &source_info, "bar", 0));
 }
 
@@ -759,18 +1052,17 @@ fn block_without_return() {
             int x = 5;            
         }
         ";
-    let program = program_from_string(src);
+    let (program, dump) = program_from_string(src);
     let program_info = ProgramInfo {
         program,
         ..Default::default()
     };
-    let dump = program_info.program.to_string();
     log::info!("{}", dump);
 
     let (summary, _source_info) = get_summary(program_info).unwrap();
     log::info!("{:?}", summary);
 
-    assert!(janky_expected(&dump, "assign %x"));
+    assert!(check_match(&dump, "assign %x"));
 }
 
 //msvc has an extension for try/catch, tree-sitter
@@ -791,12 +1083,8 @@ fn try_catch() {
         }
     }
 "#;
-    let program = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    let dump = program_info.program.to_string();
+    let (_program, dump) = program_from_string(src);
+
     log::info!("{}", dump);
-    assert!(janky_expected(&dump, "exceptions not implemented"));
+    assert!(check_match(&dump, "exceptions not implemented"));
 }
