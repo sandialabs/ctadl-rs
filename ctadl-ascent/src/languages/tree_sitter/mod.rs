@@ -228,18 +228,17 @@ impl<'a> CompoundProxy<'a> {
             },
             "expression_statement" => {
                 let child = body_node.child(0);
-                if let Some(c) = child {
-                    if _is_empty(&c) {
+                if let Some(c) = child
+                    && _is_empty(&c) {
                         return Self {
                             nodes: vec![],
                             was_compound: false,
                         };
                     }
-                }
-                return Self {
+                Self {
                     nodes: vec![body_node],
                     was_compound: false,
-                };
+                }
             }
 
             // If it's a naked statement, wrap it in a single-element vector
@@ -256,7 +255,7 @@ fn _is_empty(node: &Node<'_>) -> bool {
 }
 
 fn get_line_num(node: &Node<'_>) -> usize {
-    return node.start_position().row; //hmm our tests always start w/ a lf.
+    node.start_position().row//hmm our tests always start w/ a lf.
 }
 
 fn link_blocks(
@@ -368,16 +367,16 @@ fn add_scope(
 ) -> ScopeView {
     let scope_label = format!("{}.cs", scope_view.func_name);
     let sidx = scope_tree.add_scope(scope_label, Some(scope_view.sidx));
-    let result = ScopeView {
+    
+
+    ScopeView {
         func_name: scope_view.func_name.clone(),
         fidx: scope_view.fidx,
         blidx: scope_view.blidx,
         sidx,
         continuation_blidx: scope_view.continuation_blidx,
         explainer: format!("{}.{}", scope_view.blidx.get(), debug_explainer),
-    };
-
-    result
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -616,12 +615,11 @@ impl<'a> Context<'a> {
         let rhs_var = self.flatten_expr(program, expr_node, source, scope_view)?;
         let mut right_op = None;
 
-        if let Some(oper_node) = operator_node {
-            if oper_node.kind() != "=" {
+        if let Some(oper_node) = operator_node
+            && oper_node.kind() != "=" {
                 //these are y+= expr type things.
                 right_op = Some(&target_var);
             }
-        }
 
         self.add_assign_to_program(program, scope_view, &target_var, &rhs_var, right_op);
         Ok(target_var)
@@ -643,7 +641,7 @@ impl<'a> Context<'a> {
         match block_type {
             BlockTypeRequest::NewBlockOrScopedBlock => {
                 if cp.was_compound {
-                    return Ok((
+                    Ok((
                         add_scoped_block(
                             program,
                             scope_view,
@@ -652,9 +650,9 @@ impl<'a> Context<'a> {
                             explainer,
                         )?,
                         cp,
-                    ));
+                    ))
                 } else {
-                    return Ok((
+                    Ok((
                         add_block(
                             program,
                             scope_view,
@@ -663,20 +661,20 @@ impl<'a> Context<'a> {
                             explainer,
                         )?,
                         cp,
-                    ));
+                    ))
                 }
             } //end BTR::NewBLock
             BlockTypeRequest::JustScope => {
                 if cp.was_compound {
-                    return Ok((add_scope(scope_view, &mut self.scope_tree, explainer), cp));
+                    Ok((add_scope(scope_view, &mut self.scope_tree, explainer), cp))
                 } else {
-                    return Err(Error::TreeSitterParse(
+                    Err(Error::TreeSitterParse(
                         "Requested JustScope on a non-compound node".to_string(),
-                    ));
+                    ))
                 }
             } // end BTR::JustScope
             BlockTypeRequest::JustBlock => {
-                return Ok((
+                Ok((
                     add_block(
                         program,
                         scope_view,
@@ -685,7 +683,7 @@ impl<'a> Context<'a> {
                         explainer,
                     )?,
                     cp,
-                ));
+                ))
             }
         }
     }
@@ -1054,7 +1052,7 @@ impl<'a> Context<'a> {
             consequence,
             BlockTypeRequest::NewBlockOrScopedBlock,
             true,
-            &format!("if_consequence(of)::{}", get_line_num(&child)).as_str(),
+            format!("if_consequence(of)::{}", get_line_num(&child)).as_str(),
         )?;
 
         let mut continuation = add_block(
@@ -1062,7 +1060,7 @@ impl<'a> Context<'a> {
             &*scope_view,
             &mut self.scope_tree,
             true,
-            &format!("if_continuation(of)::{}", get_line_num(&child)).as_str(),
+            format!("if_continuation(of)::{}", get_line_num(&child)).as_str(),
         )?;
 
         continuation.continuation_blidx = scope_view.continuation_blidx;
@@ -1355,14 +1353,14 @@ impl<'a> Context<'a> {
                     None,
                     None,
                 );
-                return Ok(Exp::AccessPath(self.build_access_path(
+                Ok(Exp::AccessPath(self.build_access_path(
                     symbol,
                     Default::default(),
                     scope_view,
-                )));
+                )))
             } else {
                 //iden was something nested
-                return self.flatten_expr(program, iden, source, scope_view);
+                self.flatten_expr(program, iden, source, scope_view)
             }
         } else {
             debug_print_tree(node, 0, None, None);
