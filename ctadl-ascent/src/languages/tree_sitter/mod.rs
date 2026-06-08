@@ -229,12 +229,13 @@ impl<'a> CompoundProxy<'a> {
             "expression_statement" => {
                 let child = body_node.child(0);
                 if let Some(c) = child
-                    && _is_empty(&c) {
-                        return Self {
-                            nodes: vec![],
-                            was_compound: false,
-                        };
-                    }
+                    && _is_empty(&c)
+                {
+                    return Self {
+                        nodes: vec![],
+                        was_compound: false,
+                    };
+                }
                 Self {
                     nodes: vec![body_node],
                     was_compound: false,
@@ -255,7 +256,7 @@ fn _is_empty(node: &Node<'_>) -> bool {
 }
 
 fn get_line_num(node: &Node<'_>) -> usize {
-    node.start_position().row//hmm our tests always start w/ a lf.
+    node.start_position().row //hmm our tests always start w/ a lf.
 }
 
 fn link_blocks(
@@ -264,7 +265,7 @@ fn link_blocks(
     to_sv: &ScopeView,
     continuation: bool,
 ) -> Result<(), Error> {
-    if 1 == 1 {
+    /*
         //from_sv.explainer == "2.if_continuation(of)::4" {
         log::debug!(
             "linking (continuation={},\n{:?} -> \n{:?}",
@@ -272,7 +273,7 @@ fn link_blocks(
             from_sv,
             to_sv
         );
-    }
+    */
 
     let fdat = &mut program.functions[from_sv.fidx];
     let target_val = if continuation {
@@ -367,7 +368,6 @@ fn add_scope(
 ) -> ScopeView {
     let scope_label = format!("{}.cs", scope_view.func_name);
     let sidx = scope_tree.add_scope(scope_label, Some(scope_view.sidx));
-    
 
     ScopeView {
         func_name: scope_view.func_name.clone(),
@@ -616,10 +616,11 @@ impl<'a> Context<'a> {
         let mut right_op = None;
 
         if let Some(oper_node) = operator_node
-            && oper_node.kind() != "=" {
-                //these are y+= expr type things.
-                right_op = Some(&target_var);
-            }
+            && oper_node.kind() != "="
+        {
+            //these are y+= expr type things.
+            right_op = Some(&target_var);
+        }
 
         self.add_assign_to_program(program, scope_view, &target_var, &rhs_var, right_op);
         Ok(target_var)
@@ -673,18 +674,16 @@ impl<'a> Context<'a> {
                     ))
                 }
             } // end BTR::JustScope
-            BlockTypeRequest::JustBlock => {
-                Ok((
-                    add_block(
-                        program,
-                        scope_view,
-                        &mut self.scope_tree,
-                        link_the_blocks,
-                        explainer,
-                    )?,
-                    cp,
-                ))
-            }
+            BlockTypeRequest::JustBlock => Ok((
+                add_block(
+                    program,
+                    scope_view,
+                    &mut self.scope_tree,
+                    link_the_blocks,
+                    explainer,
+                )?,
+                cp,
+            )),
         }
     }
 
