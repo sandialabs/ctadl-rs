@@ -194,8 +194,8 @@ pub(crate) fn summary_returns_param(
         .unwrap();
     summary.iter().any(|r| {
         r.0 == id
-            && r.1 == fx::FormalIndex::new(RETURN_INDEX.into())
-            && r.3 == fx::FormalIndex::new(param_num.into())
+            && r.1 == fx::FormalIndex::new(RETURN_INDEX)
+            && r.3 == fx::FormalIndex::new(param_num)
     })
 }
 
@@ -211,9 +211,9 @@ pub(crate) fn summary_search(
     to_path: &str,
 ) -> bool {
     summary.iter().any(|r| {
-        r.1 == fx::FormalIndex::new(to_index.into())
+        r.1 == fx::FormalIndex::new(to_index)
             && r.2.to_string() == to_path
-            && r.3 == fx::FormalIndex::new(from_index.into())
+            && r.3 == fx::FormalIndex::new(from_index)
             && r.4.to_string() == from_path
     })
 }
