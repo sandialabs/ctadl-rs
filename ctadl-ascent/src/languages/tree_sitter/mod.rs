@@ -256,7 +256,7 @@ fn _is_empty(node: &Node<'_>) -> bool {
 }
 
 fn get_line_num(node: &Node<'_>) -> usize {
-    return node.start_position().row;//hmm our tests always start w/ a lf.
+    return node.start_position().row; //hmm our tests always start w/ a lf.
 }
 
 fn link_blocks(
@@ -771,7 +771,7 @@ impl<'a> Context<'a> {
         }
 
         //walked off a compound_statement
-        //log::info!("EOF linking blocks: ");
+        log::info!("EOCS linking blocks: ");
         link_blocks(program, &scope_view, scope_view_meowsers, true)?;
 
         Ok(())
@@ -1070,7 +1070,7 @@ impl<'a> Context<'a> {
         //the problem is we don't walk the continuation, so we don't pickup the "goto at the end of the CS"
         //we have to do this manually because there is no Compound statement to walk in the else if's continuation.
         log::info!("About to commit mortal sin of linking 2->0");
-        link_blocks(program, &continuation, &continuation, true)?;
+        //link_blocks(program, &continuation, &continuation, true)?;
         consequence_sv.continuation_blidx = continuation.blidx;
         self.walk_compound_statement(source, program, &consequence_sv, &if_cond_cp)?;
         //the else block

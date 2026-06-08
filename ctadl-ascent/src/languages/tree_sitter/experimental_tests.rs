@@ -302,7 +302,6 @@ fn no_child_while() {
     */
 }
 #[test_log::test]
-#[ignore = "knownbug_workingit"]
 fn unbraced_if() {
     let src = r"
     // man I hope y is never 5!
@@ -314,8 +313,6 @@ fn unbraced_if() {
             }            
         ";
     let (program, dump) = program_from_string(src);
-    log::info!("{}", dump);
-
     let program_info = ProgramInfo {
         program,
         ..Default::default()
@@ -325,35 +322,28 @@ fn unbraced_if() {
     assert!(summary_returns_param(
         &summary,
         &source_info,
-        "unbraced_while",
+        "unbraced_if",
         1
     ));
-    assert!(
-        false,
-        "You need to fix, 2.Continuation goes to 0, braced or unbraced no matter!"
-    )
+    log::info!("{}", dump);
 }
 
 #[test_log::test]
-#[ignore = "knownbug_workingit"]
+#[ignore = "known_wip"]
 fn double_if() {
     let src = r"
             int double_if(int y, int z) {
                 int x = 5;
                   if(x == 3)
                     x = z;
-                /*  if(y == z)
-                    x = y;
-                    */
+                  if(y == z)
+                    x = y;                
                 //return x; //ah it's not that there are two if's, it's that the if isn't followed by a return to overwrite the gotos.
             }            
         ";
     let (_program, dump) = program_from_string(src);
     log::info!("{}", dump);
-    assert!(
-        false,
-        "//return x; //ah it's not that there are two if's, it's that the if isn't followed by a return to overwrite the gotos.",
-    )
+    assert!(!check_match(&dump, "goto 0"), "contains errant goto 0")
     /*
     let program_info = ProgramInfo {
         program,
