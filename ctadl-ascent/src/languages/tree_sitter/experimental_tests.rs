@@ -235,6 +235,15 @@ fn simple_elif() {
     assert!(check_assign(&program, "v_elif", ["x"], Some(4)));
     assert!(check_assign(&program, "v_else", ["x"], Some(6)));
     assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
+    // Neither the outer if nor the inner else-if condition reaches the join directly.
+    assert!(
+        janky_goto(&dump, 0, "1, 3"),
+        "outer condition branches to consequence + else-if"
+    );
+    assert!(
+        janky_goto(&dump, 3, "4, 6"),
+        "inner condition branches to consequence + else"
+    );
 }
 
 #[test_log::test]
@@ -331,7 +340,6 @@ fn unbraced_if() {
 }
 
 #[test_log::test]
-//#[ignore = "known_wip"]
 fn if_in_while() {
     let src = r"
             int if_in_while(int y, int z) {
@@ -351,7 +359,6 @@ fn if_in_while() {
 }
 
 #[test_log::test]
-//#[ignore = "known_wip"]
 fn double_if() {
     let src = r"
             int double_if(int y, int z) {
@@ -568,6 +575,16 @@ fn unbraced_if_else() {
         "unbraced else body was dropped"
     );
     assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
+    // The condition branches to consequence + else only, never directly to the join.
+    assert!(
+        janky_goto(&dump, 0, "1, 3"),
+        "condition must branch to consequence and else, not the join"
+    );
+    assert!(
+        janky_goto(&dump, 1, "2"),
+        "consequence joins the continuation"
+    );
+    assert!(janky_goto(&dump, 3, "2"), "else joins the continuation");
 }
 
 #[test_log::test]
@@ -1006,7 +1023,6 @@ fn simplest_if_with_return() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational"]
 fn shadow_block() {
     let src = r"
         int bar(int false_return, int ac_return){
@@ -1070,7 +1086,6 @@ fn indirect_call_1() {
 }
 
 #[test_log::test]
-#[ignore = "issue #40"]
 fn block_without_return() {
     let src = r"
         void bar(){

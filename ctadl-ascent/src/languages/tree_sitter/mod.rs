@@ -1080,11 +1080,13 @@ impl<'a> Context<'a> {
             format!("if_consequence(of)::{}", get_line_num(&child)).as_str(),
         )?;
 
+        // Created without auto-linking: the condition only falls through to the
+        // continuation when there is no `else` (added in the `else` arm below).
         let mut continuation = add_block(
             program,
             &*scope_view,
             &mut self.scope_tree,
-            true,
+            false,
             format!("if_continuation(of)::{}", get_line_num(&child)).as_str(),
         )?;
 
@@ -1138,6 +1140,11 @@ impl<'a> Context<'a> {
                     }
                 }
             }
+        } else {
+            // No `else`: the condition's false path falls through to the
+            // continuation. (With an `else` the false path goes to the alternative,
+            // which is linked above, so the condition must not also reach the join.)
+            link_blocks(program, scope_view, &continuation, false)?;
         }
         *scope_view = continuation;
         Ok(())
