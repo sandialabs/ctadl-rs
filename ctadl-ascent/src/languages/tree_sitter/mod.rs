@@ -275,13 +275,34 @@ fn link_blocks(
         );
     */
 
-    let fdat = &mut program.functions[from_sv.fidx];
     let target_val = if continuation {
-        to_sv.continuation_blidx
+        match to_sv.continuation_blidx {
+            Some(idx) => idx,
+            None => {
+                // Falls off the end of the function body: emit an implicit empty
+                // `return` (SSA `complete()` rewrites it into a goto-to-exit).
+                // Mirrors the empty-return shape produced by `walk_return`.
+                if let Some(block) =
+                    program.functions[from_sv.fidx].blocks.get_mut(from_sv.blidx)
+                {
+                    if block.terminator.is_none() {
+                        block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
+                            args: vec![].into(),
+                        }));
+                    }
+                    return Ok(());
+                }
+                return Err(Error::TreeSitterParse(format!(
+                    "attempt to link a non existing from block: {:?}",
+                    from_sv
+                )));
+            }
+        }
     } else {
         to_sv.blidx
     };
 
+    let fdat = &mut program.functions[from_sv.fidx];
     if let Some(block) = fdat.blocks.get_mut(from_sv.blidx) {
         if let Some(termy) = &mut block.terminator {
             match &mut termy.kind {
@@ -588,7 +609,9 @@ pub struct ScopeView {
     pub fidx: FunctionIdx,
     pub blidx: BasicBlockIdx,
     pub sidx: usize, // i tried to make my own idx like the blockidx, and fidx, but couldn't figure out how ot import newindex_type. or wahtever
-    pub continuation_blidx: BasicBlockIdx,
+    // `None` is the fall-off-the-end sentinel: a continuation link to `None` becomes
+    // an implicit `return` rather than a `goto` back to the entry block.
+    pub continuation_blidx: Option<BasicBlockIdx>,
     pub explainer: String,
 }
 
@@ -909,17 +932,17 @@ impl<'a> Context<'a> {
             "for_Continuation",
         )?;
 
-        condition_scope.continuation_blidx = body_scope.blidx;
-        init_scope.continuation_blidx = condition_scope.blidx;
-        body_scope.continuation_blidx = update_scope.blidx;
-        update_scope.continuation_blidx = condition_scope.blidx;
+        condition_scope.continuation_blidx = Some(body_scope.blidx);
+        init_scope.continuation_blidx = Some(condition_scope.blidx);
+        body_scope.continuation_blidx = Some(update_scope.blidx);
+        update_scope.continuation_blidx = Some(condition_scope.blidx);
         //        self.flatten_expr(program, condition, source, &condition_sv)?; // gather field accesses and what not but we don't care about the condition result,etc.
         self.walk_compound_statement(source, program, &init_scope, &init_cp)?;
         self.walk_compound_statement(source, program, &condition_scope, &condition_cp)?;
         //add 'sad edge'
         link_blocks(program, &condition_scope, &continuation, false)?;
         //what is the difference between walk_compound_statemnet and walk_compound_statement?
-        body_scope.continuation_blidx = update_scope.blidx;
+        body_scope.continuation_blidx = Some(update_scope.blidx);
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
         self.walk_compound_statement(source, program, &update_scope, &update_cp)?;
         *scope_view = continuation;
@@ -967,11 +990,14 @@ impl<'a> Context<'a> {
             "Continuation",
         )?;
 
-        condition_sv.continuation_blidx = continuation.blidx;
+        condition_sv.continuation_blidx = Some(continuation.blidx);
         //        self.flatten_expr(program, condition, source, &condition_sv)?; // gather field accesses and what not but we don't care about the condition result,etc.
         self.walk_compound_statement(source, program, &condition_sv, &cp)?;
-        //what is the difference between walk_compound_statemnet and walk_compound_statement?
-        body_scope.continuation_blidx = condition_sv.blidx;
+        // A do-while tests *after* the body, then loops back into it: add the
+        // back-edge from the condition to the body. The exit edge to the
+        // continuation was already added by the condition's end-of-compound link.
+        link_blocks(program, &condition_sv, &body_scope, false)?;
+        body_scope.continuation_blidx = Some(condition_sv.blidx);
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
         *scope_view = continuation;
         Ok(())
@@ -1008,7 +1034,7 @@ impl<'a> Context<'a> {
             "Continuation",
         )?;
 
-        condition_sv.continuation_blidx = continuation.blidx;
+        condition_sv.continuation_blidx = Some(continuation.blidx);
         //        self.flatten_expr(program, condition, source, &condition_sv)?; // gather field accesses and what not but we don't care about the condition result,etc.
         self.walk_compound_statement(source, program, &condition_sv, &cp)?;
 
@@ -1023,7 +1049,7 @@ impl<'a> Context<'a> {
             "while_body",
         )?;
 
-        body_scope.continuation_blidx = condition_sv.blidx;
+        body_scope.continuation_blidx = Some(condition_sv.blidx);
         self.walk_compound_statement(source, program, &body_scope, &cp)?;
         *scope_view = continuation;
         Ok(())
@@ -1062,33 +1088,38 @@ impl<'a> Context<'a> {
             format!("if_continuation(of)::{}", get_line_num(&child)).as_str(),
         )?;
 
+        // The if-continuation inherits the enclosing scope's continuation (which may be
+        // the `None` fall-off-the-end sentinel); the consequence flows into it.
         continuation.continuation_blidx = scope_view.continuation_blidx;
-
-        //the problem is we don't walk the continuation, so we don't pickup the "goto at the end of the CS"
-        //we have to do this manually because there is no Compound statement to walk in the else if's continuation.
-        log::info!("About to commit mortal sin of linking 2->0");
-        //link_blocks(program, &continuation, &continuation, true)?;
-        consequence_sv.continuation_blidx = continuation.blidx;
+        consequence_sv.continuation_blidx = Some(continuation.blidx);
         self.walk_compound_statement(source, program, &consequence_sv, &if_cond_cp)?;
         //the else block
         if let Some(alternative) = child.child_by_field_name("alternative") {
-            //braced block:
             //debug_print_tree(alternative, 0, Some("alternative"), Some(20));
 
             let mut cursor = alternative.walk();
+            // The else clause's body is its first non-comment child: an `if_statement`
+            // for `else if`, a `compound_statement` for a braced else, or a bare
+            // statement for an unbraced else (e.g. `else x = z;`).
             if let Some(cs) = alternative
                 .named_children(&mut cursor)
-                .find(|c| c.kind() == "compound_statement" || c.kind() == "if_statement")
+                .find(|c| c.kind() != "comment")
             {
                 match cs.kind() {
                     "if_statement" => {
                         //it's an else if
                         let mut if_block =
                             add_block(program, scope_view, &mut self.scope_tree, true, "if")?;
-                        if_block.continuation_blidx = continuation.blidx;
+                        if_block.continuation_blidx = Some(continuation.blidx);
                         self.walk_if(source, program, &mut if_block, cs)?;
+                        // `if_block` is now the else-if's own continuation block. Nobody
+                        // walks it, so without this it ends up with no terminator (an
+                        // orphaned join). Tie it to our continuation.
+                        link_blocks(program, &if_block, &if_block, true)?;
                     }
-                    &_ => {
+                    _ => {
+                        // A braced `{ ... }` or an unbraced single statement; both are
+                        // handled by setup_compound / CompoundProxy::from_node.
                         let (mut alternative_sv, alternative_cp) = self.setup_compound(
                             program,
                             scope_view,
@@ -1097,7 +1128,7 @@ impl<'a> Context<'a> {
                             true,
                             "alternative",
                         )?;
-                        alternative_sv.continuation_blidx = continuation.blidx;
+                        alternative_sv.continuation_blidx = Some(continuation.blidx);
                         self.walk_compound_statement(
                             source,
                             program,
@@ -1634,7 +1665,7 @@ impl<'a> Context<'a> {
                 fidx,
                 blidx,
                 sidx: param_sidx,
-                continuation_blidx: blidx,
+                continuation_blidx: None,
                 explainer: "params".to_string(),
             };
 
@@ -1648,7 +1679,7 @@ impl<'a> Context<'a> {
                 fidx,
                 blidx,
                 sidx: block_scope,
-                continuation_blidx: blidx,
+                continuation_blidx: None,
                 explainer: "initial_block".to_string(),
             };
             self.scope_tree.blocks.push(block_scope_view.clone());

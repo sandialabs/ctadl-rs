@@ -127,10 +127,24 @@ struct FlowBlock {
     terminator: String,
 }
 
+/// Master switch for the test IR/CFG dumps. Flip to `false` to silence every
+/// `dump_ir` call at once when the tests are settled.
+const DUMP_IR: bool = true;
+
+/// Test-only helper: log the raw IR dump and its ASCII block-flow diagram,
+/// gated by [`DUMP_IR`]. Call this in every test that parses a C program so the
+/// resulting control-flow graph can be eyeballed, then turn `DUMP_IR` off.
+pub(crate) fn dump_ir(dump: &str) {
+    if DUMP_IR {
+        log::info!("IR dump:\n{dump}");
+        log::info!("BCFG:{}", ascii_block_flow(dump));
+    }
+}
+
 /// Parses a marked-up `ctadl-ir` dump (as produced by the test logging) and
 /// renders an ASCII block-flow diagram: one box per basic block followed by
 /// arrows to its `goto` successors.
-pub(crate) fn ascii_block_flow(dump: &String) -> String {
+pub(crate) fn ascii_block_flow(dump: &str) -> String {
     let blocks = parse_flow_blocks(dump);
     if blocks.is_empty() {
         return "\n(no basic blocks found in dump)\n".to_string();
@@ -138,7 +152,7 @@ pub(crate) fn ascii_block_flow(dump: &String) -> String {
     render_flow_blocks(&blocks)
 }
 
-fn parse_flow_blocks(dump: &String) -> Vec<FlowBlock> {
+fn parse_flow_blocks(dump: &str) -> Vec<FlowBlock> {
     let mut blocks: Vec<FlowBlock> = Vec::new();
     let mut current: Option<FlowBlock> = None;
 
@@ -202,6 +216,7 @@ struct FlowEdge {
     src_row: usize, // canvas row where the edge leaves the source box
     dst_row: usize, // canvas row where the edge enters the destination box
     lane: usize,    // gutter lane (0 = nearest the boxes)
+    succ_idx: usize, // which successor of the source block (== its `goto` line index)
 }
 
 fn block_header(b: &FlowBlock) -> String {
@@ -340,7 +355,7 @@ fn render_flow_blocks(blocks: &[FlowBlock]) -> String {
     // Build edges; forward edges route right, back-edges / self-loops route left.
     let mut edges: Vec<FlowEdge> = Vec::new();
     for (si, b) in blocks.iter().enumerate() {
-        for s in &b.successors {
+        for (k, s) in b.successors.iter().enumerate() {
             if let Some(&di) = pos_of.get(s) {
                 let side = if di > si { Side::Right } else { Side::Left };
                 edges.push(FlowEdge {
@@ -350,33 +365,57 @@ fn render_flow_blocks(blocks: &[FlowBlock]) -> String {
                     src_row: 0,
                     dst_row: 0,
                     lane: 0,
+                    succ_idx: k,
                 });
             }
         }
     }
 
-    // Assign each edge endpoint a distinct port row inside its block, per side.
+    // Assign port rows inside each block. Outgoing edges originate from their matching
+    // `goto block_X` line; incoming edges land on the remaining content rows.
     for i in 0..blocks.len() {
         let top = box_top[i];
-        // Only attach edges to content rows ("| ... |"), never the "+--+" borders.
-        let interior: Vec<usize> = box_lines[i]
-            .iter()
-            .enumerate()
-            .filter(|(_, line)| line.starts_with('|'))
-            .map(|(li, _)| top + li)
-            .collect();
+        let len = box_lines[i].len();
+        // Terminator lines are the last `n_term` content rows before the bottom border,
+        // one per successor and in successor order.
+        let n_term = blocks[i].successors.len();
+        let goto_lo = top + len - 1 - n_term; // row of `goto` line for successor 0
+        let goto_hi = top + len - 2; // row of the last `goto` line
+
+        // Each outgoing edge leaves from the `goto` line that names its target.
+        for e in edges.iter_mut() {
+            if e.src == i {
+                e.src_row = goto_lo + e.succ_idx;
+            }
+        }
+
+        // Incoming arrows land on content rows that aren't `goto` lines (so they don't
+        // collide with the outgoing stubs); fall back to all content rows if needed.
+        let mut dst_pool: Vec<usize> = Vec::new();
+        for (li, line) in box_lines[i].iter().enumerate() {
+            if !line.starts_with('|') {
+                continue;
+            }
+            let r = top + li;
+            if n_term == 0 || r < goto_lo || r > goto_hi {
+                dst_pool.push(r);
+            }
+        }
+        if dst_pool.is_empty() {
+            for (li, line) in box_lines[i].iter().enumerate() {
+                if line.starts_with('|') {
+                    dst_pool.push(top + li);
+                }
+            }
+        }
         for want_right in [false, true] {
             let mut k = 0usize;
             for e in edges.iter_mut() {
                 if (e.side == Side::Right) != want_right {
                     continue;
                 }
-                if e.src == i {
-                    e.src_row = interior[k.min(interior.len() - 1)];
-                    k += 1;
-                }
                 if e.dst == i {
-                    e.dst_row = interior[k.min(interior.len() - 1)];
+                    e.dst_row = dst_pool[k.min(dst_pool.len() - 1)];
                     k += 1;
                 }
             }

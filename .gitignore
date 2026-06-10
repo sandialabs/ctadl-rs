@@ -7,3 +7,4 @@ ascent/**
 /.opencode
 /results.sarif
 *.o
+.scratch/**
