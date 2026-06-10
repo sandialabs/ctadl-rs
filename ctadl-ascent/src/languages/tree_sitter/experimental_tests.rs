@@ -329,7 +329,28 @@ fn unbraced_if() {
 }
 
 #[test_log::test]
-#[ignore = "known_wip"]
+//#[ignore = "known_wip"]
+fn if_in_while() {
+    let src = r"
+            int if_in_while(int y, int z) {
+                int x = 5;
+                while(x<50){
+                  x = z;
+                  if(y == z)
+                    x = y;
+                  x = x + z;
+                 }                
+                return x; //ah it's not that there are two if's, it's that the if isn't followed by a return to overwrite the gotos.
+            }            
+        ";
+    let (_program, dump) = program_from_string(src);
+    log::info!("{}", dump);
+    log::info!("BCFG: {}", ascii_block_flow(&dump));
+    assert!(!check_match(&dump, "goto 0"), "contains errant goto 0")
+}
+
+#[test_log::test]
+//#[ignore = "known_wip"]
 fn double_if() {
     let src = r"
             int double_if(int y, int z) {
@@ -343,6 +364,7 @@ fn double_if() {
         ";
     let (_program, dump) = program_from_string(src);
     log::info!("{}", dump);
+    log::info!("BCFG: {}", ascii_block_flow(&dump));
     assert!(!check_match(&dump, "goto 0"), "contains errant goto 0")
     /*
     let program_info = ProgramInfo {
@@ -367,7 +389,7 @@ fn unbraced_if_while() {
     // man I hope y is never 5!
             int unbraced_if_while(int y, int z) {
                 int x = 5;
-                  if(x == 3)
+                if(x == 3)
                     x = z;                  
                 while(x == 5) 
                     x = y;
