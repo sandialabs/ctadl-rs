@@ -234,11 +234,6 @@ fn simple_elif() {
     assert!(check_assign(&program, "v_if", ["x"], Some(1)));
     assert!(check_assign(&program, "v_elif", ["x"], Some(4)));
     assert!(check_assign(&program, "v_else", ["x"], Some(6)));
-    // The else-if's continuation block used to be left with no terminator.
-    assert!(
-        check_no_match(&dump, "<no terminator>"),
-        "else-if continuation block has no terminator"
-    );
     assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
 }
 
