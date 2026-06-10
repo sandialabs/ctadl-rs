@@ -62,6 +62,7 @@ use streaming_iterator::{IntoStreamingIterator, StreamingIterator};
 use tree_sitter::{Parser, Query, QueryCapture, QueryCursor, QueryMatch, Tree};
 
 mod test_utils;
+mod testing_block_flow_ascii;
 
 #[cfg(test)]
 mod tests;
