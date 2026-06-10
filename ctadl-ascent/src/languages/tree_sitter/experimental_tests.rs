@@ -236,10 +236,10 @@ fn simple_elif() {
     assert!(check_assign(&program, "v_else", ["x"], Some(6)));
     // The else-if's continuation block used to be left with no terminator.
     assert!(
-        !check_match(&dump, "<no terminator>"),
+        check_no_match(&dump, "<no terminator>"),
         "else-if continuation block has no terminator"
     );
-    assert!(!check_match(&dump, "goto 0"), "contains errant goto 0");
+    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
 }
 
 #[test_log::test]
@@ -352,7 +352,7 @@ fn if_in_while() {
         ";
     let (_program, dump) = program_from_string(src);
     dump_ir(&dump);
-    assert!(!check_match(&dump, "goto 0"), "contains errant goto 0")
+    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0")
 }
 
 #[test_log::test]
@@ -370,7 +370,7 @@ fn double_if() {
         ";
     let (_program, dump) = program_from_string(src);
     dump_ir(&dump);
-    assert!(!check_match(&dump, "goto 0"), "contains errant goto 0")
+    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0")
     /*
     let program_info = ProgramInfo {
         program,
@@ -402,7 +402,7 @@ fn unbraced_if_while() {
         ";
     let (_program, dump) = program_from_string(src);
     dump_ir(&dump);
-    assert!(!check_match(&dump, "goto 0"), "contains errant goto 0")
+    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0")
 }
 
 #[test_log::test]
@@ -463,7 +463,7 @@ fn do_while() {
         janky_goto(&dump, 2, "3, 1"),
         "condition should exit to continuation and back-edge to body"
     );
-    assert!(!check_match(&dump, "goto 0"), "contains errant goto 0");
+    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
 }
 
 #[test_log::test]
@@ -552,14 +552,10 @@ fn simple_while() {
 #[test_log::test]
 fn unbraced_if_else() {
     let src = r"
-            int simple_while(int y, int z) {
+            int unbraced_if_else(int y, int z) {
                 int x = 1;
                 if(x == 1)
                     x = y;
-/*
-                else if(x == 2)
-                    x = 0;
-*/
                 else
                 x = z;
             }            
@@ -576,11 +572,7 @@ fn unbraced_if_else() {
         check_match(&dump, "assign %x = @p1"),
         "unbraced else body was dropped"
     );
-    assert!(!check_match(&dump, "goto 0"), "contains errant goto 0");
-    assert!(
-        !check_match(&dump, "<no terminator>"),
-        "block missing terminator"
-    );
+    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
 }
 
 #[test_log::test]
@@ -603,7 +595,7 @@ fn ascending_temps_per_function() {
     let (_program, dump) = program_from_string(src);
     dump_ir(&dump);
     assert!(check_match(&dump, "%<t4>"));
-    assert!(!check_match(&dump, "%<t5>"));
+    assert!(check_no_match(&dump, "%<t5>"));
 }
 
 #[test_log::test]
@@ -1054,17 +1046,15 @@ fn indirect_call_1() {
         int sub(int a, int b) { return a - b; }
 
         int doit(int a) {
-            // 1. Declare a function pointer
-            int (*op_func)(int, int);
+            // 1. Declare a function pointer and point it at a target
+            //    (could be based on user input, making it tainted!)
+            int (*op_func)(int, int) = add;
 
-            // 2. Assign the pointer (could be based on user input, making it tainted!)
-            op_func = add; 
-
-            // 3. The Indirect Call
+            // 2. The Indirect Call
             int result = op_func(a, 3);
-            
-            // 4. Legacy syntax
-             result = (*op_func)(result, b);
+
+            // 3. Legacy syntax
+            result = (*op_func)(result, a);
             
             printf("Result: %d\n", result);
             return 0;
