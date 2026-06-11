@@ -443,13 +443,11 @@ impl IndexResult {
 }
 
 struct HybridInliningRelations<'a> {
-    critical_summary: &'a [(FunctionId, FormalIndex, Path, FunctionId, InsnId)],
+    critical_summary: &'a [(FunctionId, FormalIndex, Path)],
     resolvent: &'a [(
         FunctionId,
         FormalIndex,
         Path,
-        FunctionId,
-        InsnId,
         FunctionId,
         Consistent<CallString>,
     )],
@@ -477,41 +475,28 @@ struct HybridInliningRelations<'a> {
 impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Critical Summary ({}):", self.critical_summary.len())?;
-        for (func_id, formal_index, path, site_func_id, site_insn_id) in self.critical_summary {
+        for (func_id, formal_index, path) in self.critical_summary {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
-            let site_func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*site_func_id))
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
 
             writeln!(
                 f,
-                "  {}({}): arg{} {} -> site {}({}):{}",
+                "  {}({}): arg{} {}",
                 func_name,
                 func_id.id,
                 formal_index,
                 path.to_dot_string(),
-                site_func_name,
-                site_func_id.id,
-                site_insn_id.id
             )?;
         }
 
         writeln!(f, "\nResolvent ({}):", self.resolvent.len())?;
-        for (func_id, formal_index, path, site_func_id, site_insn_id, tgt, cs) in self.resolvent {
+        for (func_id, formal_index, path, tgt, cs) in self.resolvent {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
-            let site_func_name = self
-                .id_map
-                .and_then(|m| m.get_function(*site_func_id))
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
             let tgt_name = self
@@ -526,15 +511,12 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
 
             writeln!(
                 f,
-                "  {} {}({}): arg{} {} -> site {}({}):{} resolves to {}({})",
+                "  {} {}({}): arg{} {} resolves to {}({})",
                 cs,
                 func_name,
                 func_id.id,
                 formal_index,
                 path.to_dot_string(),
-                site_func_name,
-                site_func_id.id,
-                site_insn_id.id,
                 tgt_name,
                 tgt.id
             )?;
@@ -767,15 +749,16 @@ pub fn taint_index_with_config(
         relation program_paths(Path) = program_paths;
 
         // Hybrid Inlining relations:
-        // critical_summary(f, n, p, site_func, site_id). f(n.p = obj) invokes obj at call site
-        relation critical_summary(FunctionId, FormalIndex, Path, FunctionId, InsnId);
+        // critical_summary(f, n, p). f(n.p = obj) invokes obj at some critical
+        // call site. The critical site itself is not tracked here; it can be
+        // recovered in rule 3.1 (Contextual Assignment).
+        relation critical_summary(FunctionId, FormalIndex, Path);
         // Critical call occurs inside this function
         relation critical_call(FunctionId);
         // Resolvent reaches the formals of Function. The call string is a lattice
         // value so the remaining columns functionally determine at most one call
-        // string: (func_id, formal_index, path, critical_func_id, critical_insn_id,
-        // object) -> call-string.
-        lattice resolvent(FunctionId, FormalIndex, Path, FunctionId, InsnId, FunctionId, Consistent<CallString>);
+        // string: (func_id, formal_index, path, object) -> call-string.
+        lattice resolvent(FunctionId, FormalIndex, Path, FunctionId, Consistent<CallString>);
         relation func_ptr_assign_like(FunctionId, FlowVariable, Path, FunctionId);
         relation context_assign(CallString, FunctionId, FlowVariable, Path, FlowVariable, Path);
         relation context_locals(CallString, FunctionId, FlowVariable, Path, FormalIndex, Path);
@@ -860,13 +843,13 @@ pub fn taint_index_with_config(
         // Phase 3: propagate conditional summaries up till they're unconditional
 
         // 1.1: Base Critical Summary. Indirect call or Java Call found.
-        critical_summary(func_id, n, p_n, func_id, insn_id) <--
-            (indirect_call(func_id, insn_id, v, p_call) | java_call(func_id, insn_id, v, p_call, _, _)),
+        critical_summary(func_id, n, p_n) <--
+            (indirect_call(func_id, _, v, p_call) | java_call(func_id, _, v, p_call, _, _)),
             locals(func_id, v, p_call, n, p_n);
 
         // 1.2: Propagate Critical Summary
-        critical_summary(caller_func_id, n, p_n, cfunc, cinsn) <--
-            critical_summary(tgt, n_tgt, p_tgt, cfunc, cinsn),
+        critical_summary(caller_func_id, n, p_n) <--
+            critical_summary(tgt, n_tgt, p_tgt),
             call(caller_func_id, caller_insn_id, tgt),
             let call_arg_packed = PackedCallArg::try_from_parts(*caller_insn_id, *n_tgt).unwrap(),
             let arg = FlowVariable::call_arg_packed(call_arg_packed),
@@ -874,26 +857,24 @@ pub fn taint_index_with_config(
 
         // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
         //   resolvent in parameters of summary
-        resolvent(tgt, n_tgt, p_tgt.clone(), critical_func_id, critical_insn_id, ptr_tgt, Consistent::Value(new_cs)) <--
-            if false,
-            critical_summary(tgt, n_tgt, p_tgt, critical_func_id, critical_insn_id),
+        resolvent(tgt, n_tgt, p_tgt.clone(), ptr_tgt, Consistent::Value(new_cs)) <--
+            // if false,
+            critical_summary(tgt, n_tgt, p_tgt),
             call(call_func_id, insn_id, tgt),
             let call_site_id = PackedInsnSiteId::try_from_parts(*call_func_id, *insn_id).unwrap(),
             let call_arg_packed = PackedCallArg::try_from_parts(*insn_id, *n_tgt).unwrap(),
             let arg = FlowVariable::call_arg_packed(call_arg_packed),
             java_obj_assign_like(call_func_id, arg, p_tgt, cls),
-              java_call(critical_func_id, critical_insn_id, _, _, method_name, method_desc),
+              java_call(_, _, _, _, method_name, method_desc),
               java_resolvents(cls, method_name, method_desc, ptr_tgt),
-            if let Some(new_cs) = CallString::new().push(call_site_id),
-            let _ = eprintln!("Object {cls} resolves summary in {}", tgt.id);
+            if let Some(new_cs) = CallString::new().push(call_site_id);
 
         // 2.2: Propagate Resolvent
-        resolvent(tgt, n_tgt, p_tgt.clone(), cfunc, cinsn, ptr_tgt, Consistent::Value(new_cs)) <--
-            if false,
-            resolvent(func_id, n, p, cfunc, cinsn, ptr_tgt, cs_lat),
+        resolvent(tgt, n_tgt, p_tgt.clone(), ptr_tgt, Consistent::Value(new_cs)) <--
+            resolvent(func_id, n, p, ptr_tgt, cs_lat),
             if let Consistent::Value(cs) = cs_lat,
             call(func_id, insn_id, tgt),
-            critical_summary(tgt, _, _, cfunc, cinsn),
+            critical_summary(tgt, _, _),
             let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
             locals(func_id, v_tgt, p_tgt, n, p),
             if let Some(packed) = v_tgt.as_call_arg(),
@@ -902,11 +883,14 @@ pub fn taint_index_with_config(
             if let Some(new_cs) = cs.push(call_site_id);
 
         // 3.1: Contextual Assignment (instantiate)
+        // The critical call site is recovered here by joining the resolvent's
+        // reached formal (n.p) back to a java_call receiver in func_id, rather
+        // than carrying the site through critical_summary/resolvent.
         context_assign(cs.clone(), func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
             if false,
-            resolvent(func_id, n, p, critical_func_id, insn_id, ptr_tgt, cs_lat),
+            resolvent(func_id, n, p, ptr_tgt, cs_lat),
             if let Consistent::Value(cs) = cs_lat,
-            java_call(critical_func_id, insn_id, v_rec, p_v, _, _),
+            java_call(_, insn_id, v_rec, p_v, _, _),
             locals(func_id, v_rec, p_v, n, p),
             summary(ptr_tgt, n1, p1_sum, n2, p2_sum),
             let call_arg_packed1 = PackedCallArg::try_from_parts(*insn_id, n1.clone()).unwrap(),
@@ -1040,7 +1024,7 @@ pub fn taint_index_with_config(
 
         critical_call(func_id) <-- (java_call(func_id, _, _, _, _, _) | indirect_call(func_id, _, _, _));
         critical_call(func_id) <--
-            critical_summary(tgt, _, _, _, _),
+            critical_summary(tgt, _, _),
             call(func_id, _, tgt);
     };
     log::info!("index scc times: {}", prog.scc_times_summary());
