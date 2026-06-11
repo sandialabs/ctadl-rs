@@ -442,13 +442,14 @@ impl IndexResult {
 }
 
 struct HybridInliningRelations<'a> {
-    critical_summary: &'a [(FunctionId, FormalIndex, Path, PackedInsnSiteId)],
+    critical_summary: &'a [(FunctionId, FormalIndex, Path, FunctionId, InsnId)],
     resolvent: &'a [(
         CallString,
         FunctionId,
         FormalIndex,
         Path,
-        PackedInsnSiteId,
+        FunctionId,
+        InsnId,
         FunctionId,
     )],
     func_ptr_assign_like: &'a [(FunctionId, FlowVariable, Path, FunctionId)],
@@ -475,12 +476,7 @@ struct HybridInliningRelations<'a> {
 impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Critical Summary ({}):", self.critical_summary.len())?;
-        for (func_id, formal_index, path, site_id) in self.critical_summary {
-            let InsnSiteId {
-                func_id: site_func_id,
-                insn_id: site_insn_id,
-            } = InsnSiteId::unpack_from_slice(&**site_id).unwrap();
-
+        for (func_id, formal_index, path, site_func_id, site_insn_id) in self.critical_summary {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
@@ -488,7 +484,7 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
                 .unwrap_or("unknown");
             let site_func_name = self
                 .id_map
-                .and_then(|m| m.get_function(site_func_id))
+                .and_then(|m| m.get_function(*site_func_id))
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
 
@@ -506,12 +502,7 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nResolvent ({}):", self.resolvent.len())?;
-        for (cs, func_id, formal_index, path, site_id, tgt) in self.resolvent {
-            let InsnSiteId {
-                func_id: site_func_id,
-                insn_id: site_insn_id,
-            } = InsnSiteId::unpack_from_slice(&**site_id).unwrap();
-
+        for (cs, func_id, formal_index, path, site_func_id, site_insn_id, tgt) in self.resolvent {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
@@ -519,7 +510,7 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
                 .unwrap_or("unknown");
             let site_func_name = self
                 .id_map
-                .and_then(|m| m.get_function(site_func_id))
+                .and_then(|m| m.get_function(*site_func_id))
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
             let tgt_name = self
