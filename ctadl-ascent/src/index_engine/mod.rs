@@ -49,6 +49,7 @@ use crate::facts::{
     CallArgId, CallString, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
     FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, isout,
 };
+use crate::lattice::Consistent;
 use ctadl_ir::Symbol;
 
 pub mod source_info;
@@ -444,13 +445,13 @@ impl IndexResult {
 struct HybridInliningRelations<'a> {
     critical_summary: &'a [(FunctionId, FormalIndex, Path, FunctionId, InsnId)],
     resolvent: &'a [(
-        CallString,
         FunctionId,
         FormalIndex,
         Path,
         FunctionId,
         InsnId,
         FunctionId,
+        Consistent<CallString>,
     )],
     func_ptr_assign_like: &'a [(FunctionId, FlowVariable, Path, FunctionId)],
     context_assign: &'a [(
@@ -502,7 +503,7 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nResolvent ({}):", self.resolvent.len())?;
-        for (cs, func_id, formal_index, path, site_func_id, site_insn_id, tgt) in self.resolvent {
+        for (func_id, formal_index, path, site_func_id, site_insn_id, tgt, cs) in self.resolvent {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
@@ -518,6 +519,10 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
                 .and_then(|m| m.get_function(*tgt))
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
+            let cs = match cs {
+                Consistent::Value(cs) => cs.to_string(),
+                Consistent::Bottom => "⊥".to_string(),
+            };
 
             writeln!(
                 f,
@@ -766,8 +771,11 @@ pub fn taint_index_with_config(
         relation critical_summary(FunctionId, FormalIndex, Path, FunctionId, InsnId);
         // Critical call occurs inside this function
         relation critical_call(FunctionId);
-        // Resolvent reaches the formals of Function.
-        relation resolvent(CallString, FunctionId, FormalIndex, Path, FunctionId, InsnId, FunctionId);
+        // Resolvent reaches the formals of Function. The call string is a lattice
+        // value so the remaining columns functionally determine at most one call
+        // string: (func_id, formal_index, path, critical_func_id, critical_insn_id,
+        // object) -> call-string.
+        lattice resolvent(FunctionId, FormalIndex, Path, FunctionId, InsnId, FunctionId, Consistent<CallString>);
         relation func_ptr_assign_like(FunctionId, FlowVariable, Path, FunctionId);
         relation context_assign(CallString, FunctionId, FlowVariable, Path, FlowVariable, Path);
         relation context_locals(CallString, FunctionId, FlowVariable, Path, FormalIndex, Path);
@@ -866,7 +874,7 @@ pub fn taint_index_with_config(
 
         // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
         //   resolvent in parameters of summary
-        resolvent(new_cs.clone(), tgt, n_tgt, p_tgt.clone(), critical_func_id, critical_insn_id, ptr_tgt) <--
+        resolvent(tgt, n_tgt, p_tgt.clone(), critical_func_id, critical_insn_id, ptr_tgt, Consistent::Value(new_cs)) <--
             if false,
             critical_summary(tgt, n_tgt, p_tgt, critical_func_id, critical_insn_id),
             call(call_func_id, insn_id, tgt),
@@ -880,9 +888,10 @@ pub fn taint_index_with_config(
             let _ = eprintln!("Object {cls} resolves summary in {}", tgt.id);
 
         // 2.2: Propagate Resolvent
-        resolvent(new_cs.clone(), tgt, n_tgt, p_tgt.clone(), cfunc, cinsn, ptr_tgt) <--
+        resolvent(tgt, n_tgt, p_tgt.clone(), cfunc, cinsn, ptr_tgt, Consistent::Value(new_cs)) <--
             if false,
-            resolvent(cs, func_id, n, p, cfunc, cinsn, ptr_tgt),
+            resolvent(func_id, n, p, cfunc, cinsn, ptr_tgt, cs_lat),
+            if let Consistent::Value(cs) = cs_lat,
             call(func_id, insn_id, tgt),
             critical_summary(tgt, _, _, cfunc, cinsn),
             let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
@@ -895,7 +904,8 @@ pub fn taint_index_with_config(
         // 3.1: Contextual Assignment (instantiate)
         context_assign(cs.clone(), func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
             if false,
-            resolvent(cs, func_id, n, p, critical_func_id, insn_id, ptr_tgt),
+            resolvent(func_id, n, p, critical_func_id, insn_id, ptr_tgt, cs_lat),
+            if let Consistent::Value(cs) = cs_lat,
             java_call(critical_func_id, insn_id, v_rec, p_v, _, _),
             locals(func_id, v_rec, p_v, n, p),
             summary(ptr_tgt, n1, p1_sum, n2, p2_sum),

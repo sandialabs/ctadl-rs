@@ -7,6 +7,7 @@ pub mod error;
 pub mod facts;
 pub mod graphviz;
 pub mod index_engine;
+pub mod lattice;
 pub mod languages;
 pub mod models;
 pub mod project;
