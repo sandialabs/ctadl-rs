@@ -871,8 +871,9 @@ pub fn taint_index_with_config(
 
         // 2.2: Propagate Resolvent
         resolvent(tgt, n_tgt, p_tgt.clone(), ptr_tgt, Consistent::Value(new_cs)) <--
-            resolvent(func_id, n, p, ptr_tgt, cs_lat),
-            if let Consistent::Value(cs) = cs_lat,
+            // Reordered so the fixed-size call graph drives the outer loop instead
+            // of full-scanning the growing `resolvent` relation every iteration.
+            // Every join below hits an index (resolvent probed by (func_id,n,p)).
             call(func_id, insn_id, tgt),
             critical_summary(tgt, _, _),
             let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
@@ -880,6 +881,9 @@ pub fn taint_index_with_config(
             if let Some(packed) = v_tgt.as_call_arg(),
             let call_arg_id = CallArgId::try_from(packed).unwrap(),
             let n_tgt = call_arg_id.formal(),
+            resolvent(func_id, n, p, ptr_tgt, cs_lat),
+            if let Consistent::Value(cs) = cs_lat,
+            let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
             if let Some(new_cs) = cs.push(call_site_id);
 
         // 3.1: Contextual Assignment (instantiate)
