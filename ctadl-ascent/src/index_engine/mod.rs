@@ -762,7 +762,7 @@ pub fn taint_index_with_config(
         relation program_paths(Path) = program_paths;
 
         // Hybrid Inlining relations:
-        // critical_summary(f, n, p, site_func, site_id). f eventually calls the critical site through formal n, path p
+        // critical_summary(f, n, p, site_func, site_id). f(n.p = obj) invokes obj at call site
         relation critical_summary(FunctionId, FormalIndex, Path, FunctionId, InsnId);
         // Critical call occurs inside this function
         relation critical_call(FunctionId);
@@ -864,22 +864,10 @@ pub fn taint_index_with_config(
             let arg = FlowVariable::call_arg_packed(call_arg_packed),
             locals(caller_func_id, arg, p_tgt, n, p_n);
 
-        // Local virtual call and resolvent, bypassing the summary machinery.
-        // assign_like() <--
-        //     (java_call(func_id, _, v_rec, p_v, _, _) | indirect_call(func_id, _, v_rec, p_v)),
-        //     locals(func_id, v_rec, p_v, n, p),
-        //     summary(ptr_tgt, n1, p1_sum, n2, p2_sum),
-        //     let InsnSiteId {insn_id, ..} = InsnSiteId::unpack_from_slice(&**critical_site_id).unwrap(),
-        //     let call_arg_packed1 = PackedCallArg::try_from_parts(insn_id, n1.clone()).unwrap(),
-        //     let v1 = FlowVariable::call_arg_packed(call_arg_packed1),
-        //     let p1 = p1_sum.clone(),
-        //     let call_arg_packed2 = PackedCallArg::try_from_parts(insn_id, n2.clone()).unwrap(),
-        //     let v2 = FlowVariable::call_arg_packed(call_arg_packed2),
-        //     let p2 = p2_sum.clone();
-
         // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
         //   resolvent in parameters of summary
         resolvent(new_cs.clone(), tgt, n_tgt, p_tgt.clone(), critical_func_id, critical_insn_id, ptr_tgt) <--
+            if false,
             critical_summary(tgt, n_tgt, p_tgt, critical_func_id, critical_insn_id),
             call(call_func_id, insn_id, tgt),
             let call_site_id = PackedInsnSiteId::try_from_parts(*call_func_id, *insn_id).unwrap(),
@@ -888,12 +876,12 @@ pub fn taint_index_with_config(
             java_obj_assign_like(call_func_id, arg, p_tgt, cls),
               java_call(critical_func_id, critical_insn_id, _, _, method_name, method_desc),
               java_resolvents(cls, method_name, method_desc, ptr_tgt),
-            let cs = CallString::new(),
-            if let Some(new_cs) = cs.push(call_site_id);
+            if let Some(new_cs) = CallString::new().push(call_site_id),
+            let _ = eprintln!("Object {cls} resolves summary in {}", tgt.id);
 
         // 2.2: Propagate Resolvent
         resolvent(new_cs.clone(), tgt, n_tgt, p_tgt.clone(), cfunc, cinsn, ptr_tgt) <--
-            // if false,
+            if false,
             resolvent(cs, func_id, n, p, cfunc, cinsn, ptr_tgt),
             call(func_id, insn_id, tgt),
             critical_summary(tgt, _, _, cfunc, cinsn),
@@ -906,6 +894,7 @@ pub fn taint_index_with_config(
 
         // 3.1: Contextual Assignment (instantiate)
         context_assign(cs.clone(), func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
+            if false,
             resolvent(cs, func_id, n, p, critical_func_id, insn_id, ptr_tgt),
             java_call(critical_func_id, insn_id, v_rec, p_v, _, _),
             locals(func_id, v_rec, p_v, n, p),
@@ -992,15 +981,39 @@ pub fn taint_index_with_config(
         assign_like(func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
             context_assign(CallString::new(), func_id, v1, p1, v2, p2);
 
-        // Function Pointer Propagation
-        // func_ptr_assign_like(func_id, v.clone(), p.clone(), tgt) <--
-        //     func_ptr_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx;
+        // Local virtual call and resolvent, bypassing the summary machinery.
+        assign_like(func_id, v2.into(), p1, v1.into(), p2) <--
+            java_call(func_id, insn_id, arg, arg_p, mname, mdesc),
+            java_obj_assign_like(func_id, arg, arg_p, cls),
+            java_resolvents(cls, mname, mdesc, resolve_tgt),
+            let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
+            summary(resolve_tgt, n1, p1, n2, p2),
+            let n2_id = PackedCallArg::try_from_parts(*insn_id, *n2).unwrap(),
+            let n1_id = PackedCallArg::try_from_parts(*insn_id, *n1).unwrap(),
+            let v2 = FlowVariableKind::CallArg(n2_id),
+            let v1 = FlowVariableKind::CallArg(n1_id);
 
-        // func_ptr_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
-        //     func_ptr_assign_like(func_id, v2, p_context, tgt),
-        //     assign_like(func_id, v1, p1, v2, p2),
-        //     if let Some(p_new) = p_context.substitute_prefix(p2, p1),
-        //     paths(&p_new);
+        assign_like(func_id, v2.into(), p1, v1.into(), p2) <--
+            indirect_call(func_id, insn_id, arg, arg_p),
+            func_ptr_assign_like(func_id, arg, arg_p, funcptr),
+            let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
+            summary(resolve_tgt, n1, p1, n2, p2),
+            let n2_id = PackedCallArg::try_from_parts(*insn_id, *n2).unwrap(),
+            let n1_id = PackedCallArg::try_from_parts(*insn_id, *n1).unwrap(),
+            let v2 = FlowVariableKind::CallArg(n2_id),
+            let v1 = FlowVariableKind::CallArg(n1_id);
+
+        // Function Pointer Propagation
+        func_ptr_assign_like(func_id, v.clone(), p.clone(), tgt) <--
+            func_ptr_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
+            critical_call(func_id);
+
+        func_ptr_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
+            critical_call(func_id),
+            func_ptr_assign_like(func_id, v2, p_context, tgt),
+            assign_like(func_id, v1, p1, v2, p2),
+            if let Some(p_new) = p_context.substitute_prefix(p2, p1),
+            paths(&p_new);
 
         // Local Java Object Propagation
         java_obj_assign_like(func_id, v.clone(), p.clone(), tgt) <--
@@ -1015,6 +1028,7 @@ pub fn taint_index_with_config(
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
             paths(&p_new);
 
+        critical_call(func_id) <-- (java_call(func_id, _, _, _, _, _) | indirect_call(func_id, _, _, _));
         critical_call(func_id) <--
             critical_summary(tgt, _, _, _, _),
             call(func_id, _, tgt);
