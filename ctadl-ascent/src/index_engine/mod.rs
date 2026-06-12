@@ -915,16 +915,15 @@ pub fn taint_index_with_config(
             let v2 = call_arg!(*call_insn, *n2_sum),
             let v1 = call_arg!(*call_insn, *n1_sum);
 
-        // 3.2: Contextual Locals Initialization and Propagation
+        // 3.2: Contextual Locals Initialization and Propagation. The local propagation rules, but
+        // formulated over a call-string context.
         context_locals(func_id, v1.clone(), p13.clone(), n.clone(), pn.clone(), cs_lat.clone()) <--
-            if false,
             context_assign(func_id, v1, p1, v2, p2, cs_lat),
             locals(func_id, v2, p23, n, pn),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
 
         context_locals(func_id, v2.clone(), p23.clone(), n.clone(), pn.clone(), cs_lat.clone()) <--
-            if false,
             context_assign(func_id, v1, p1, v2, p2, cs_lat),
             locals(func_id, v1, p13, n, pn),
             if let Some(p23) = p13.substitute_prefix(p1, p2),
@@ -944,6 +943,7 @@ pub fn taint_index_with_config(
 
         // 3.3: Contextual Summary Creation
         context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), cs_lat.clone()) <--
+            if false,
             context_locals(func_id, dst_var, p1, n2, p2, cs_lat),
             formal_param(func_id, dst_var, formal_ty),
             if let Some(n1) = dst_var.as_formal(),
@@ -951,6 +951,7 @@ pub fn taint_index_with_config(
             if n1 != *n2 || p1 != p2;
 
         context_summary(func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone(), cs_lat.clone()) <--
+            if false,
             context_locals(func_id, v1, p1, n1, ap, cs_lat),
             locals(func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
@@ -958,6 +959,7 @@ pub fn taint_index_with_config(
             if n1 != n2 || ap3 != *bp;
 
         context_summary(func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone(), cs_lat.clone()) <--
+        if false,
             locals(func_id, v1, p1, n1, ap),
             context_locals(func_id, v1, p13, n2, bp, cs_lat),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
@@ -967,6 +969,7 @@ pub fn taint_index_with_config(
         // Both sides carry their own call string now that it is a lattice column;
         // require them to match to preserve the original shared-`cs` join.
         context_summary(func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone(), cs_lat.clone()) <--
+        if false,
             context_locals(func_id, v1, p1, n1, ap, cs_lat),
             context_locals(func_id, v1, p13, n2, bp, cs_lat2),
             if cs_lat == cs_lat2,
@@ -976,6 +979,7 @@ pub fn taint_index_with_config(
 
         // 3.4: Instantiate Summaries and pop call string
         context_assign(func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone(), Consistent::Value(new_cs.clone())) <--
+        if false,
             context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
             if let Consistent::Value(cs) = cs_lat,
             let (new_cs, popped) = cs.pop(),
@@ -991,6 +995,7 @@ pub fn taint_index_with_config(
 
         // 3.5
         summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
+        if false,
             context_summary(func_id, n1, p1, n2, p2, cs_lat),
             if let Consistent::Value(cs) = cs_lat,
             if cs.is_empty();
