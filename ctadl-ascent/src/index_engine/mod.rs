@@ -640,6 +640,15 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
     }
 }
 
+/// Returns a FlowVariable for the call argument from the instruction side ID and the formal number
+macro_rules! call_arg {
+    ($insn:expr, $n:expr) => {
+        crate::facts::FlowVariable::call_arg_packed(
+            crate::facts::PackedCallArg::try_from_parts($insn, $n).unwrap(),
+        )
+    };
+}
+
 /// Creates a data flow graph for taint analysis.
 pub fn taint_index(facts: IndexFacts) -> IndexResult {
     taint_index_with_config(facts, IndexConfig::default(), None)
@@ -797,19 +806,16 @@ pub fn taint_index_with_config(
         assign_like(func_id, cv.clone(), Path::empty(), v.clone(), p) <--
             actual_param(call_site_slice, n, vx),
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**call_site_slice).unwrap(),
-            let call_arg_packed = PackedCallArg::try_from_parts(insn_id, n.clone()).unwrap(),
-            let cv = FlowVariable::call_arg_packed(call_arg_packed),
+            let cv = call_arg!(insn_id, *n),
             let FlowVertex(v, p) = vx;
 
         // Compute assignments from summaries
         assign_like(func_id, v1, p1, v2, p2) <--
             summary(tgt, n1, dst_path, n2, src_path),
             call(func_id, insn_id, tgt),
-            let call_arg_packed1 = PackedCallArg::try_from_parts(*insn_id, n1.clone()).unwrap(),
-            let v1 = FlowVariable::call_arg_packed(call_arg_packed1),
+            let v1 = call_arg!(*insn_id, *n1),
             let p1 = dst_path.clone(),
-            let call_arg_packed2 = PackedCallArg::try_from_parts(*insn_id, n2.clone()).unwrap(),
-            let v2 = FlowVariable::call_arg_packed(call_arg_packed2),
+            let v2 = call_arg!(*insn_id, *n2),
             let p2 = src_path.clone();
 
         // Compute summaries from local reachability
@@ -849,63 +855,56 @@ pub fn taint_index_with_config(
 
         // 1.2: Propagate Critical Summary
         critical_summary(caller_func_id, n, p_n) <--
-            critical_summary(tgt, n_tgt, p_tgt),
             call(caller_func_id, caller_insn_id, tgt),
-            let call_arg_packed = PackedCallArg::try_from_parts(*caller_insn_id, *n_tgt).unwrap(),
-            let arg = FlowVariable::call_arg_packed(call_arg_packed),
+            critical_summary(tgt, n_tgt, p_tgt),
+            let arg = call_arg!(*caller_insn_id, *n_tgt),
             locals(caller_func_id, arg, p_tgt, n, p_n);
 
         // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
         //   resolvent in parameters of summary
-        resolvent(tgt, n_tgt, p_tgt.clone(), ptr_tgt, Consistent::Value(new_cs)) <--
-            // if false,
-            critical_summary(tgt, n_tgt, p_tgt),
-            call(call_func_id, insn_id, tgt),
-            let call_site_id = PackedInsnSiteId::try_from_parts(*call_func_id, *insn_id).unwrap(),
-            let call_arg_packed = PackedCallArg::try_from_parts(*insn_id, *n_tgt).unwrap(),
-            let arg = FlowVariable::call_arg_packed(call_arg_packed),
-            java_obj_assign_like(call_func_id, arg, p_tgt, cls),
+        resolvent(f, n, p.clone(), resolvent_func, Consistent::Value(new_cs)) <--
+            critical_summary(f, n, p),
+            call(caller, call_insn, f),
+            let arg = call_arg!(*call_insn, *n),
+            // Look up the method info to get the resolvent func
+            java_obj_assign_like(caller, arg, p, cls),
               java_call(_, _, _, _, method_name, method_desc),
-              java_resolvents(cls, method_name, method_desc, ptr_tgt),
+              java_resolvents(cls, method_name, method_desc, resolvent_func),
+            // Resolvent func has a summary
+            summary(resolvent_func, _, _, _, _),
+            let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
             if let Some(new_cs) = CallString::new().push(call_site_id);
 
         // 2.2: Propagate Resolvent
-        resolvent(tgt, n_tgt, p_tgt.clone(), ptr_tgt, Consistent::Value(new_cs)) <--
+        resolvent(f, n2, p2.clone(), resolvent_func, Consistent::Value(new_cs)) <--
             // Reordered so the fixed-size call graph drives the outer loop instead
             // of full-scanning the growing `resolvent` relation every iteration.
             // Every join below hits an index (resolvent probed by (func_id,n,p)).
-            call(func_id, insn_id, tgt),
-            critical_summary(tgt, _, _),
-            let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
-            locals(func_id, v_tgt, p_tgt, n, p),
-            if let Some(packed) = v_tgt.as_call_arg(),
-            let call_arg_id = CallArgId::try_from(packed).unwrap(),
-            let n_tgt = call_arg_id.formal(),
-            resolvent(func_id, n, p, ptr_tgt, cs_lat),
+            call(caller, call_insn, f),
+            resolvent(caller, n, p, resolvent_func, cs_lat),
+            locals(caller, v2, p2, n, p),
+            critical_summary(f, n2, p2),
             if let Consistent::Value(cs) = cs_lat,
-            let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
+            let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
             if let Some(new_cs) = cs.push(call_site_id);
 
         // 3.1: Contextual Assignment (instantiate)
         // The critical call site is recovered here by joining the resolvent's
         // reached formal (n.p) back to a java_call receiver in func_id, rather
         // than carrying the site through critical_summary/resolvent.
-        context_assign(cs.clone(), func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
+        context_assign(cs.clone(), caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone()) <--
             if false,
-            resolvent(func_id, n, p, ptr_tgt, cs_lat),
+            java_call(caller, call_insn, v_rec, p_rec, _, _),
+            locals(caller, v_rec, p_rec, n, p),
+            resolvent(caller, n, p, resolvent_func, cs_lat),
             if let Consistent::Value(cs) = cs_lat,
-            java_call(_, insn_id, v_rec, p_v, _, _),
-            locals(func_id, v_rec, p_v, n, p),
-            summary(ptr_tgt, n1, p1_sum, n2, p2_sum),
-            let call_arg_packed1 = PackedCallArg::try_from_parts(*insn_id, n1.clone()).unwrap(),
-            let v1 = FlowVariable::call_arg_packed(call_arg_packed1),
-            let p1 = p1_sum.clone(),
-            let call_arg_packed2 = PackedCallArg::try_from_parts(*insn_id, n2.clone()).unwrap(),
-            let v2 = FlowVariable::call_arg_packed(call_arg_packed2),
-            let p2 = p2_sum.clone();
+            summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
+            let v2 = call_arg!(*call_insn, *n2_sum),
+            let v1 = call_arg!(*call_insn, *n1_sum);
 
         // 3.2: Contextual Locals Initialization and Propagation
         context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
+            if false,
             context_assign(cs, func_id, v1, p1, v2, p2),
             locals(func_id, v2, p23, n, pn),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
