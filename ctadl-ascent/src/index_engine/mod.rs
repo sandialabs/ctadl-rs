@@ -916,24 +916,28 @@ pub fn taint_index_with_config(
         // formulated over a call-string context.
         context_locals(func_id, v1.clone(), p13.clone(), n.clone(), pn.clone(), cs_lat.clone()) <--
             context_assign(func_id, v1, p1, v2, p2, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat && !cs.is_empty(),
             locals(func_id, v2, p23, n, pn),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
 
         context_locals(func_id, v2.clone(), p23.clone(), n.clone(), pn.clone(), cs_lat.clone()) <--
             context_assign(func_id, v1, p1, v2, p2, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat && !cs.is_empty(),
             locals(func_id, v1, p13, n, pn),
             if let Some(p23) = p13.substitute_prefix(p1, p2),
             paths(&p23);
 
         context_locals(func_id, v1.clone(), p13.clone(), n.clone(), pn.clone(), cs_lat.clone()) <--
             context_locals(func_id, v2, p23, n, pn, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat && !cs.is_empty(),
             assign_like(func_id, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
 
         context_locals(func_id, v1.clone(), p1.clone(), n.clone(), pn3.clone(), cs_lat.clone()) <--
             context_locals(func_id, v2, p2, n, pn, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat && !cs.is_empty(),
             assign_like(func_id, v1, p1, v2, p23),
             if let Some(pn3) = p23.substitute_prefix(p2, pn),
             paths(&pn3);
@@ -944,6 +948,7 @@ pub fn taint_index_with_config(
         context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), cs_lat.clone()) <--
         // if false,
             context_locals(func_id, dst_var, p1, n2, p2, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat && !cs.is_empty(),
             formal_param(func_id, dst_var, formal_ty),
             if let Some(n1) = dst_var.as_formal(),
             if isout(&n1, *formal_ty, p1),
@@ -952,6 +957,7 @@ pub fn taint_index_with_config(
         context_summary(func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone(), cs_lat.clone()) <--
         if false,
             context_locals(func_id, v1, p1, n1, ap, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat && !cs.is_empty(),
             locals(func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
             paths(&ap3),
@@ -975,27 +981,39 @@ pub fn taint_index_with_config(
             paths(&ap3),
             if n1 != n2 || ap3 != *bp;
 
-        // 3.4: Instantiate Summaries and pop call string
+        // 3.4: Instantiate Summaries and pop call string, either creating a new contextual assign
+        // or a bare, uncontextual assign
         context_assign(func_id, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(new_cs)) <--
-            if false,
+            // if false,
             context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
             if let SmallestCallString::Value(cs) = cs_lat,
-            if let (new_cs, Some(call_site_id)) = cs.pop(),
+            if let (new_cs, Some(call_site_id)) = cs.pop() && !new_cs.is_empty(),
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
             call(func_id, insn_id, tgt),
             let v1 = call_arg!(insn_id, *n1),
             let v2 = call_arg!(insn_id, *n2);
 
-        // 3.5
-        summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
-        if false,
-            let cs_lat = SmallestCallString::Value(CallString::new()),
-            context_summary(func_id, n1, p1, n2, p2, cs_lat);
+        assign_like(func_id, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone()) <--
+            if false,
+            context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat,
+            if let (new_cs, Some(call_site_id)) = cs.pop() && new_cs.is_empty(),
+            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
+            call(func_id, insn_id, tgt),
+            let v1 = call_arg!(insn_id, *n1),
+            let v2 = call_arg!(insn_id, *n2);
 
-        assign_like(func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
-        if false,
-            let cs_lat = SmallestCallString::Value(CallString::new()),
-            context_assign(func_id, v1, p1, v2, p2, cs_lat);
+
+        // 3.5
+        // summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
+        // if false,
+        //     let cs_lat = SmallestCallString::Value(CallString::new()),
+        //     context_summary(func_id, n1, p1, n2, p2, cs_lat);
+
+        // assign_like(func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
+        // if false,
+        //     let cs_lat = SmallestCallString::Value(CallString::new()),
+        //     context_assign(func_id, v1, p1, v2, p2, cs_lat);
 
         // Local virtual call and resolvent, bypassing the summary machinery.
         assign_like(func_id, v2.into(), p1, v1.into(), p2) <--
