@@ -883,7 +883,6 @@ pub fn taint_index_with_config(
         // reached formal (n.p) back to a java_call receiver in func_id, rather
         // than carrying the site through critical_summary/resolvent.
         context_assign(cs.clone(), caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone()) <--
-            if false,
             java_call(caller, call_insn, v_rec, p_rec, meth_name, meth_desc),
             locals(caller, v_rec, p_rec, n, p),
             resolvent(caller, n, p, resolvent_obj, cs_lat),
