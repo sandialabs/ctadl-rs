@@ -984,7 +984,7 @@ pub fn taint_index_with_config(
         // 3.4: Instantiate Summaries and pop call string, either creating a new contextual assign
         // or a bare, uncontextual assign
         context_assign(func_id, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(new_cs)) <--
-            // if false,
+            if false,
             context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
             if let SmallestCallString::Value(cs) = cs_lat,
             if let (new_cs, Some(call_site_id)) = cs.pop() && !new_cs.is_empty(),
