@@ -5,6 +5,7 @@ use std::fmt::{self, Debug, Display};
 use std::ops::Deref;
 use std::str::FromStr;
 
+use ctadl_ir::Symbol;
 use derive_builder::Builder;
 use immortal::StringRef;
 use internment::ArcIntern;
@@ -996,6 +997,24 @@ impl Display for FlowVertex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let FlowVertex(var, path) = self;
         write!(f, "{var}{path}")
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Serialize, Deserialize)]
+pub enum Resolvent {
+    #[default]
+    Unresolved,
+    Function(FunctionId),
+    Object(Symbol),
+}
+
+impl Display for Resolvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Resolvent::Unresolved => write!(f, "unresolved"),
+            Resolvent::Function(func_id) => write!(f, "function({})", func_id.id),
+            Resolvent::Object(cls) => write!(f, "object({cls})"),
+        }
     }
 }
 

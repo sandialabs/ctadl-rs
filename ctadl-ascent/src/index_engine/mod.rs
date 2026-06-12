@@ -46,8 +46,8 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallArgId, CallString, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
-    FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, isout,
+    CallString, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType, FunctionId,
+    IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, Resolvent, isout,
 };
 use crate::lattice::Consistent;
 use ctadl_ir::Symbol;
@@ -448,7 +448,7 @@ struct HybridInliningRelations<'a> {
         FunctionId,
         FormalIndex,
         Path,
-        FunctionId,
+        Resolvent,
         Consistent<CallString>,
     )],
     func_ptr_assign_like: &'a [(FunctionId, FlowVariable, Path, FunctionId)],
@@ -493,15 +493,10 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nResolvent ({}):", self.resolvent.len())?;
-        for (func_id, formal_index, path, tgt, cs) in self.resolvent {
+        for (func_id, formal_index, path, resolvent, cs) in self.resolvent {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
-            let tgt_name = self
-                .id_map
-                .and_then(|m| m.get_function(*tgt))
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
             let cs = match cs {
@@ -511,14 +506,13 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
 
             writeln!(
                 f,
-                "  {} {}({}): arg{} {} resolves to {}({})",
+                "  {} {}({}): arg{} {} resolves to {}",
                 cs,
                 func_name,
                 func_id.id,
                 formal_index,
                 path.to_dot_string(),
-                tgt_name,
-                tgt.id
+                resolvent
             )?;
         }
 
@@ -767,7 +761,7 @@ pub fn taint_index_with_config(
         // Resolvent reaches the formals of Function. The call string is a lattice
         // value so the remaining columns functionally determine at most one call
         // string: (func_id, formal_index, path, object) -> call-string.
-        lattice resolvent(FunctionId, FormalIndex, Path, FunctionId, Consistent<CallString>);
+        lattice resolvent(FunctionId, FormalIndex, Path, Resolvent, Consistent<CallString>);
         relation func_ptr_assign_like(FunctionId, FlowVariable, Path, FunctionId);
         relation context_assign(CallString, FunctionId, FlowVariable, Path, FlowVariable, Path);
         relation context_locals(CallString, FunctionId, FlowVariable, Path, FormalIndex, Path);
@@ -862,26 +856,22 @@ pub fn taint_index_with_config(
 
         // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
         //   resolvent in parameters of summary
-        resolvent(f, n, p.clone(), resolvent_func, Consistent::Value(new_cs)) <--
+        resolvent(f, n, p.clone(), resolvent_obj, Consistent::Value(new_cs)) <--
             critical_summary(f, n, p),
             call(caller, call_insn, f),
             let arg = call_arg!(*call_insn, *n),
-            // Look up the method info to get the resolvent func
             java_obj_assign_like(caller, arg, p, cls),
-              java_call(_, _, _, _, method_name, method_desc),
-              java_resolvents(cls, method_name, method_desc, resolvent_func),
-            // Resolvent func has a summary
-            summary(resolvent_func, _, _, _, _),
+            let resolvent_obj = Resolvent::Object(cls.clone()),
             let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
             if let Some(new_cs) = CallString::new().push(call_site_id);
 
         // 2.2: Propagate Resolvent
-        resolvent(f, n2, p2.clone(), resolvent_func, Consistent::Value(new_cs)) <--
-            // Reordered so the fixed-size call graph drives the outer loop instead
-            // of full-scanning the growing `resolvent` relation every iteration.
-            // Every join below hits an index (resolvent probed by (func_id,n,p)).
+        resolvent(f, n2, p2.clone(), resolvent_obj, Consistent::Value(new_cs)) <--
+            // Ordered so the fixed-size call graph drives the outer loop instead of full-scanning
+            // the growing `resolvent` relation every iteration. Every join below hits an index
+            // (resolvent probed by (func_id,n,p)).
             call(caller, call_insn, f),
-            resolvent(caller, n, p, resolvent_func, cs_lat),
+            resolvent(caller, n, p, resolvent_obj, cs_lat),
             locals(caller, v2, p2, n, p),
             critical_summary(f, n2, p2),
             if let Consistent::Value(cs) = cs_lat,
@@ -894,10 +884,12 @@ pub fn taint_index_with_config(
         // than carrying the site through critical_summary/resolvent.
         context_assign(cs.clone(), caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone()) <--
             if false,
-            java_call(caller, call_insn, v_rec, p_rec, _, _),
+            java_call(caller, call_insn, v_rec, p_rec, meth_name, meth_desc),
             locals(caller, v_rec, p_rec, n, p),
-            resolvent(caller, n, p, resolvent_func, cs_lat),
+            resolvent(caller, n, p, resolvent_obj, cs_lat),
+            if let Resolvent::Object(cls) = resolvent_obj,
             if let Consistent::Value(cs) = cs_lat,
+            java_resolvents(cls, meth_name, meth_desc, resolvent_func),
             summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
             let v2 = call_arg!(*call_insn, *n2_sum),
             let v1 = call_arg!(*call_insn, *n1_sum);
@@ -911,6 +903,7 @@ pub fn taint_index_with_config(
             paths(&p13);
 
         context_locals(cs.clone(), func_id, v2.clone(), p23.clone(), n.clone(), pn.clone()) <--
+            if false,
             context_assign(cs, func_id, v1, p1, v2, p2),
             locals(func_id, v1, p13, n, pn),
             if let Some(p23) = p13.substitute_prefix(p1, p2),
