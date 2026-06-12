@@ -882,6 +882,14 @@ pub fn taint_index_with_config(
             let resolvent_obj = Resolvent::Object(cls.clone()),
             let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
             if let Some(new_cs) = CallString::new().push(call_site_id);
+        resolvent(f, n, p.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
+            critical_summary(f, n, p),
+            call(caller, call_insn, f),
+            let arg = call_arg!(*call_insn, *n),
+            func_ptr_assign_like(caller, arg, p, tgt),
+            let resolvent_obj = Resolvent::Function(*tgt),
+            let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
+            if let Some(new_cs) = CallString::new().push(call_site_id);
 
         // 2.2: Propagate Resolvent
         resolvent(f, n2, p2.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
@@ -908,6 +916,16 @@ pub fn taint_index_with_config(
             if let SmallestCallString::Value(cs) = cs_lat,
             if !cs.is_empty(),
             java_resolvents(cls, meth_name, meth_desc, resolvent_func),
+            summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
+            let v2 = call_arg!(*call_insn, *n2_sum),
+            let v1 = call_arg!(*call_insn, *n1_sum);
+        context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(cs.clone())) <--
+            indirect_call(caller, call_insn, v_rec, p_rec),
+            locals(caller, v_rec, p_rec, n, p),
+            resolvent(caller, n, p, resolvent_obj, cs_lat),
+            if let Resolvent::Function(resolvent_func) = resolvent_obj,
+            if let SmallestCallString::Value(cs) = cs_lat,
+            if !cs.is_empty(),
             summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
             let v2 = call_arg!(*call_insn, *n2_sum),
             let v1 = call_arg!(*call_insn, *n1_sum);
@@ -983,13 +1001,13 @@ pub fn taint_index_with_config(
 
         // 3.4: Instantiate Summaries and pop call string, either creating a new contextual assign
         // or a bare, uncontextual assign
-        context_assign(func_id, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(new_cs)) <--
+        context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(new_cs)) <--
             if false,
-            context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
+            context_summary(f, n1, p1_sum, n2, p2_sum, cs_lat),
             if let SmallestCallString::Value(cs) = cs_lat,
             if let (new_cs, Some(call_site_id)) = cs.pop() && !new_cs.is_empty(),
-            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
-            call(func_id, insn_id, tgt),
+            let InsnSiteId {func_id: caller, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
+            call(caller, insn_id, f),
             let v1 = call_arg!(insn_id, *n1),
             let v2 = call_arg!(insn_id, *n2);
 
