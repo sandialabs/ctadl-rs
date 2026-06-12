@@ -943,7 +943,7 @@ pub fn taint_index_with_config(
 
         // 3.3: Contextual Summary Creation
         context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), cs_lat.clone()) <--
-            if false,
+        if false,
             context_locals(func_id, dst_var, p1, n2, p2, cs_lat),
             formal_param(func_id, dst_var, formal_ty),
             if let Some(n1) = dst_var.as_formal(),
@@ -951,7 +951,7 @@ pub fn taint_index_with_config(
             if n1 != *n2 || p1 != p2;
 
         context_summary(func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone(), cs_lat.clone()) <--
-            if false,
+        if false,
             context_locals(func_id, v1, p1, n1, ap, cs_lat),
             locals(func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
@@ -971,39 +971,29 @@ pub fn taint_index_with_config(
         context_summary(func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone(), cs_lat.clone()) <--
         if false,
             context_locals(func_id, v1, p1, n1, ap, cs_lat),
-            context_locals(func_id, v1, p13, n2, bp, cs_lat2),
-            if cs_lat == cs_lat2,
+            context_locals(func_id, v1, p13, n2, bp, cs_lat),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
             paths(&ap3),
             if n1 != n2 || ap3 != *bp;
 
         // 3.4: Instantiate Summaries and pop call string
-        context_assign(func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone(), Consistent::Value(new_cs.clone())) <--
-        if false,
+        context_assign(func_id, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), Consistent::Value(new_cs)) <--
             context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
             if let Consistent::Value(cs) = cs_lat,
-            let (new_cs, popped) = cs.pop(),
-            if let Some(call_site_id) = popped,
+            if let (new_cs, Some(call_site_id)) = cs.pop(),
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
             call(func_id, insn_id, tgt),
-            let call_arg_packed1 = PackedCallArg::try_from_parts(insn_id, n1.clone()).unwrap(),
-            let v1 = FlowVariable::call_arg_packed(call_arg_packed1),
-            let p1 = p1_sum.clone(),
-            let call_arg_packed2 = PackedCallArg::try_from_parts(insn_id, n2.clone()).unwrap(),
-            let v2 = FlowVariable::call_arg_packed(call_arg_packed2),
-            let p2 = p2_sum.clone();
+            let v1 = call_arg!(insn_id, *n1),
+            let v2 = call_arg!(insn_id, *n2);
 
         // 3.5
         summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
-        if false,
-            context_summary(func_id, n1, p1, n2, p2, cs_lat),
-            if let Consistent::Value(cs) = cs_lat,
-            if cs.is_empty();
+            let cs_lat = Consistent::Value(CallString::new()),
+            context_summary(func_id, n1, p1, n2, p2, cs_lat);
 
         assign_like(func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
-            context_assign(func_id, v1, p1, v2, p2, cs_lat),
-            if let Consistent::Value(cs) = cs_lat,
-            if cs.is_empty();
+            let cs_lat = Consistent::Value(CallString::new()),
+            context_assign(func_id, v1, p1, v2, p2, cs_lat);
 
         // Local virtual call and resolvent, bypassing the summary machinery.
         assign_like(func_id, v2.into(), p1, v1.into(), p2) <--
