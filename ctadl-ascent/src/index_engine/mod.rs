@@ -453,22 +453,29 @@ struct HybridInliningRelations<'a> {
     )],
     func_ptr_assign_like: &'a [(FunctionId, FlowVariable, Path, FunctionId)],
     context_assign: &'a [(
-        CallString,
         FunctionId,
         FlowVariable,
         Path,
         FlowVariable,
         Path,
+        Consistent<CallString>,
     )],
     context_locals: &'a [(
-        CallString,
         FunctionId,
         FlowVariable,
         Path,
         FormalIndex,
         Path,
+        Consistent<CallString>,
     )],
-    context_summary: &'a [(CallString, FunctionId, FormalIndex, Path, FormalIndex, Path)],
+    context_summary: &'a [(
+        FunctionId,
+        FormalIndex,
+        Path,
+        FormalIndex,
+        Path,
+        Consistent<CallString>,
+    )],
     id_map: Option<&'a IdMap>,
 }
 
@@ -552,7 +559,11 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Assign ({}):", self.context_assign.len())?;
-        for (cs, func_id, dest_var, dest_path, src_var, src_path) in self.context_assign {
+        for (func_id, dest_var, dest_path, src_var, src_path, cs) in self.context_assign {
+            let cs = match cs {
+                Consistent::Value(cs) => cs.to_string(),
+                Consistent::Bottom => "⊥".to_string(),
+            };
             let dest_str = {
                 let var_str = if let Some(name) = dest_var.as_local() {
                     name.to_string()
@@ -584,7 +595,11 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Locals ({}):", self.context_locals.len())?;
-        for (cs, func_id, var, path, formal_idx, formal_path) in self.context_locals {
+        for (func_id, var, path, formal_idx, formal_path, cs) in self.context_locals {
+            let cs = match cs {
+                Consistent::Value(cs) => cs.to_string(),
+                Consistent::Bottom => "⊥".to_string(),
+            };
             let var_str = if let Some(name) = var.as_local() {
                 name.to_string()
             } else {
@@ -611,7 +626,11 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Summary ({}):", self.context_summary.len())?;
-        for (cs, func_id, dest_idx, dest_path, src_idx, src_path) in self.context_summary {
+        for (func_id, dest_idx, dest_path, src_idx, src_path, cs) in self.context_summary {
+            let cs = match cs {
+                Consistent::Value(cs) => cs.to_string(),
+                Consistent::Bottom => "⊥".to_string(),
+            };
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
@@ -763,9 +782,12 @@ pub fn taint_index_with_config(
         // string: (func_id, formal_index, path, object) -> call-string.
         lattice resolvent(FunctionId, FormalIndex, Path, Resolvent, Consistent<CallString>);
         relation func_ptr_assign_like(FunctionId, FlowVariable, Path, FunctionId);
-        relation context_assign(CallString, FunctionId, FlowVariable, Path, FlowVariable, Path);
-        relation context_locals(CallString, FunctionId, FlowVariable, Path, FormalIndex, Path);
-        relation context_summary(CallString, FunctionId, FormalIndex, Path, FormalIndex, Path);
+        // Like `resolvent`, the call string is a `Consistent` lattice value in the
+        // last column, so the remaining (key) columns functionally determine at most
+        // one call string per tuple (sticky: first call string observed wins).
+        lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, Consistent<CallString>);
+        lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, Consistent<CallString>);
+        lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, Consistent<CallString>);
 
         // Sets up paths from input program with static info. Paths must remain finite so we
         // shouldn't add paths from constructed summaries directly.
@@ -882,7 +904,7 @@ pub fn taint_index_with_config(
         // The critical call site is recovered here by joining the resolvent's
         // reached formal (n.p) back to a java_call receiver in func_id, rather
         // than carrying the site through critical_summary/resolvent.
-        context_assign(cs.clone(), caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone()) <--
+        context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), Consistent::Value(cs.clone())) <--
             java_call(caller, call_insn, v_rec, p_rec, meth_name, meth_desc),
             locals(caller, v_rec, p_rec, n, p),
             resolvent(caller, n, p, resolvent_obj, cs_lat),
@@ -894,64 +916,68 @@ pub fn taint_index_with_config(
             let v1 = call_arg!(*call_insn, *n1_sum);
 
         // 3.2: Contextual Locals Initialization and Propagation
-        context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
+        context_locals(func_id, v1.clone(), p13.clone(), n.clone(), pn.clone(), cs_lat.clone()) <--
             if false,
-            context_assign(cs, func_id, v1, p1, v2, p2),
+            context_assign(func_id, v1, p1, v2, p2, cs_lat),
             locals(func_id, v2, p23, n, pn),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
 
-        context_locals(cs.clone(), func_id, v2.clone(), p23.clone(), n.clone(), pn.clone()) <--
+        context_locals(func_id, v2.clone(), p23.clone(), n.clone(), pn.clone(), cs_lat.clone()) <--
             if false,
-            context_assign(cs, func_id, v1, p1, v2, p2),
+            context_assign(func_id, v1, p1, v2, p2, cs_lat),
             locals(func_id, v1, p13, n, pn),
             if let Some(p23) = p13.substitute_prefix(p1, p2),
             paths(&p23);
 
-        context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
-            context_locals(cs, func_id, v2, p23, n, pn),
+        context_locals(func_id, v1.clone(), p13.clone(), n.clone(), pn.clone(), cs_lat.clone()) <--
+            context_locals(func_id, v2, p23, n, pn, cs_lat),
             assign_like(func_id, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
 
-        context_locals(cs.clone(), func_id, v1.clone(), p1.clone(), n.clone(), pn3.clone()) <--
-            context_locals(cs, func_id, v2, p2, n, pn),
+        context_locals(func_id, v1.clone(), p1.clone(), n.clone(), pn3.clone(), cs_lat.clone()) <--
+            context_locals(func_id, v2, p2, n, pn, cs_lat),
             assign_like(func_id, v1, p1, v2, p23),
             if let Some(pn3) = p23.substitute_prefix(p2, pn),
             paths(&pn3);
 
         // 3.3: Contextual Summary Creation
-        context_summary(cs.clone(), func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
-            context_locals(cs, func_id, dst_var, p1, n2, p2),
+        context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), cs_lat.clone()) <--
+            context_locals(func_id, dst_var, p1, n2, p2, cs_lat),
             formal_param(func_id, dst_var, formal_ty),
             if let Some(n1) = dst_var.as_formal(),
             if isout(&n1, *formal_ty, p1),
             if n1 != *n2 || p1 != p2;
 
-        context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
-            context_locals(cs, func_id, v1, p1, n1, ap),
+        context_summary(func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone(), cs_lat.clone()) <--
+            context_locals(func_id, v1, p1, n1, ap, cs_lat),
             locals(func_id, v1, p13, n2, bp),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
             paths(&ap3),
             if n1 != n2 || ap3 != *bp;
 
-        context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
+        context_summary(func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone(), cs_lat.clone()) <--
             locals(func_id, v1, p1, n1, ap),
-            context_locals(cs, func_id, v1, p13, n2, bp),
+            context_locals(func_id, v1, p13, n2, bp, cs_lat),
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
             paths(&ap3),
             if n1 != n2 || ap3 != *bp;
 
-        context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
-            context_locals(cs, func_id, v1, p1, n1, ap),
-            context_locals(cs, func_id, v1, p13, n2, bp),
+        // Both sides carry their own call string now that it is a lattice column;
+        // require them to match to preserve the original shared-`cs` join.
+        context_summary(func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone(), cs_lat.clone()) <--
+            context_locals(func_id, v1, p1, n1, ap, cs_lat),
+            context_locals(func_id, v1, p13, n2, bp, cs_lat2),
+            if cs_lat == cs_lat2,
             if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
             paths(&ap3),
             if n1 != n2 || ap3 != *bp;
 
         // 3.4: Instantiate Summaries and pop call string
-        context_assign(new_cs.clone(), func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
-            context_summary(cs, tgt, n1, p1_sum, n2, p2_sum),
+        context_assign(func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone(), Consistent::Value(new_cs.clone())) <--
+            context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
+            if let Consistent::Value(cs) = cs_lat,
             let (new_cs, popped) = cs.pop(),
             if let Some(call_site_id) = popped,
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
@@ -965,10 +991,14 @@ pub fn taint_index_with_config(
 
         // 3.5
         summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
-            context_summary(CallString::new(), func_id, n1, p1, n2, p2);
+            context_summary(func_id, n1, p1, n2, p2, cs_lat),
+            if let Consistent::Value(cs) = cs_lat,
+            if cs.is_empty();
 
         assign_like(func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
-            context_assign(CallString::new(), func_id, v1, p1, v2, p2);
+            context_assign(func_id, v1, p1, v2, p2, cs_lat),
+            if let Consistent::Value(cs) = cs_lat,
+            if cs.is_empty();
 
         // Local virtual call and resolvent, bypassing the summary machinery.
         assign_like(func_id, v2.into(), p1, v1.into(), p2) <--
