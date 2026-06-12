@@ -47,9 +47,9 @@ use packed_struct::prelude::*;
 use crate::error::Error;
 use crate::facts::{
     CallString, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType, FunctionId,
-    IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, Resolvent, isout,
+    IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, Resolvent,
+    SmallestCallString, isout,
 };
-use crate::lattice::Consistent;
 use ctadl_ir::Symbol;
 
 pub mod source_info;
@@ -444,13 +444,7 @@ impl IndexResult {
 
 struct HybridInliningRelations<'a> {
     critical_summary: &'a [(FunctionId, FormalIndex, Path)],
-    resolvent: &'a [(
-        FunctionId,
-        FormalIndex,
-        Path,
-        Resolvent,
-        Consistent<CallString>,
-    )],
+    resolvent: &'a [(FunctionId, FormalIndex, Path, Resolvent, SmallestCallString)],
     func_ptr_assign_like: &'a [(FunctionId, FlowVariable, Path, FunctionId)],
     context_assign: &'a [(
         FunctionId,
@@ -458,7 +452,7 @@ struct HybridInliningRelations<'a> {
         Path,
         FlowVariable,
         Path,
-        Consistent<CallString>,
+        SmallestCallString,
     )],
     context_locals: &'a [(
         FunctionId,
@@ -466,7 +460,7 @@ struct HybridInliningRelations<'a> {
         Path,
         FormalIndex,
         Path,
-        Consistent<CallString>,
+        SmallestCallString,
     )],
     context_summary: &'a [(
         FunctionId,
@@ -474,7 +468,7 @@ struct HybridInliningRelations<'a> {
         Path,
         FormalIndex,
         Path,
-        Consistent<CallString>,
+        SmallestCallString,
     )],
     id_map: Option<&'a IdMap>,
 }
@@ -507,8 +501,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
             let cs = match cs {
-                Consistent::Value(cs) => cs.to_string(),
-                Consistent::Bottom => "⊥".to_string(),
+                SmallestCallString::Value(cs) => cs.to_string(),
+                SmallestCallString::Bottom => "⊥".to_string(),
             };
 
             writeln!(
@@ -561,8 +555,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         writeln!(f, "\nContext Assign ({}):", self.context_assign.len())?;
         for (func_id, dest_var, dest_path, src_var, src_path, cs) in self.context_assign {
             let cs = match cs {
-                Consistent::Value(cs) => cs.to_string(),
-                Consistent::Bottom => "⊥".to_string(),
+                SmallestCallString::Value(cs) => cs.to_string(),
+                SmallestCallString::Bottom => "⊥".to_string(),
             };
             let dest_str = {
                 let var_str = if let Some(name) = dest_var.as_local() {
@@ -597,8 +591,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         writeln!(f, "\nContext Locals ({}):", self.context_locals.len())?;
         for (func_id, var, path, formal_idx, formal_path, cs) in self.context_locals {
             let cs = match cs {
-                Consistent::Value(cs) => cs.to_string(),
-                Consistent::Bottom => "⊥".to_string(),
+                SmallestCallString::Value(cs) => cs.to_string(),
+                SmallestCallString::Bottom => "⊥".to_string(),
             };
             let var_str = if let Some(name) = var.as_local() {
                 name.to_string()
@@ -628,8 +622,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         writeln!(f, "\nContext Summary ({}):", self.context_summary.len())?;
         for (func_id, dest_idx, dest_path, src_idx, src_path, cs) in self.context_summary {
             let cs = match cs {
-                Consistent::Value(cs) => cs.to_string(),
-                Consistent::Bottom => "⊥".to_string(),
+                SmallestCallString::Value(cs) => cs.to_string(),
+                SmallestCallString::Bottom => "⊥".to_string(),
             };
             let func_name = self
                 .id_map
@@ -780,14 +774,16 @@ pub fn taint_index_with_config(
         // Resolvent reaches the formals of Function. The call string is a lattice
         // value so the remaining columns functionally determine at most one call
         // string: (func_id, formal_index, path, object) -> call-string.
-        lattice resolvent(FunctionId, FormalIndex, Path, Resolvent, Consistent<CallString>);
+        lattice resolvent(FunctionId, FormalIndex, Path, Resolvent, SmallestCallString);
         relation func_ptr_assign_like(FunctionId, FlowVariable, Path, FunctionId);
-        // Like `resolvent`, the call string is a `Consistent` lattice value in the
-        // last column, so the remaining (key) columns functionally determine at most
-        // one call string per tuple (sticky: first call string observed wins).
-        lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, Consistent<CallString>);
-        lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, Consistent<CallString>);
-        lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, Consistent<CallString>);
+        // Like `resolvent`, the call string is a `SmallestCallString` lattice value in
+        // the last column, so the remaining (key) columns determine one call string per
+        // tuple — the *smallest* one (shortest, then lexicographically least). The empty
+        // call string is the lattice top, so a key converges to the empty context
+        // whenever it is derivable, which keeps rule 3.5's `is_empty()` feedback exact.
+        lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, SmallestCallString);
+        lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
+        lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, SmallestCallString);
 
         // Sets up paths from input program with static info. Paths must remain finite so we
         // shouldn't add paths from constructed summaries directly.
@@ -878,7 +874,7 @@ pub fn taint_index_with_config(
 
         // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
         //   resolvent in parameters of summary
-        resolvent(f, n, p.clone(), resolvent_obj, Consistent::Value(new_cs)) <--
+        resolvent(f, n, p.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
             critical_summary(f, n, p),
             call(caller, call_insn, f),
             let arg = call_arg!(*call_insn, *n),
@@ -888,7 +884,7 @@ pub fn taint_index_with_config(
             if let Some(new_cs) = CallString::new().push(call_site_id);
 
         // 2.2: Propagate Resolvent
-        resolvent(f, n2, p2.clone(), resolvent_obj, Consistent::Value(new_cs)) <--
+        resolvent(f, n2, p2.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
             // Ordered so the fixed-size call graph drives the outer loop instead of full-scanning
             // the growing `resolvent` relation every iteration. Every join below hits an index
             // (resolvent probed by (func_id,n,p)).
@@ -896,7 +892,7 @@ pub fn taint_index_with_config(
             resolvent(caller, n, p, resolvent_obj, cs_lat),
             locals(caller, v2, p2, n, p),
             critical_summary(f, n2, p2),
-            if let Consistent::Value(cs) = cs_lat,
+            if let SmallestCallString::Value(cs) = cs_lat,
             let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
             if let Some(new_cs) = cs.push(call_site_id);
 
@@ -904,12 +900,13 @@ pub fn taint_index_with_config(
         // The critical call site is recovered here by joining the resolvent's
         // reached formal (n.p) back to a java_call receiver in func_id, rather
         // than carrying the site through critical_summary/resolvent.
-        context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), Consistent::Value(cs.clone())) <--
+        context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(cs.clone())) <--
             java_call(caller, call_insn, v_rec, p_rec, meth_name, meth_desc),
             locals(caller, v_rec, p_rec, n, p),
             resolvent(caller, n, p, resolvent_obj, cs_lat),
             if let Resolvent::Object(cls) = resolvent_obj,
-            if let Consistent::Value(cs) = cs_lat,
+            if let SmallestCallString::Value(cs) = cs_lat,
+            if !cs.is_empty(),
             java_resolvents(cls, meth_name, meth_desc, resolvent_func),
             summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
             let v2 = call_arg!(*call_insn, *n2_sum),
@@ -941,9 +938,11 @@ pub fn taint_index_with_config(
             if let Some(pn3) = p23.substitute_prefix(p2, pn),
             paths(&pn3);
 
-        // 3.3: Contextual Summary Creation
+        // 3.3: Contextual Summary Creation. To keep these rules from exploding, we need to ensure
+        // that they don't become a copy of locals() -- these should just keep track of some
+        // context-sensitive flows.
         context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), cs_lat.clone()) <--
-        if false,
+        // if false,
             context_locals(func_id, dst_var, p1, n2, p2, cs_lat),
             formal_param(func_id, dst_var, formal_ty),
             if let Some(n1) = dst_var.as_formal(),
@@ -977,9 +976,10 @@ pub fn taint_index_with_config(
             if n1 != n2 || ap3 != *bp;
 
         // 3.4: Instantiate Summaries and pop call string
-        context_assign(func_id, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), Consistent::Value(new_cs)) <--
+        context_assign(func_id, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(new_cs)) <--
+            if false,
             context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
-            if let Consistent::Value(cs) = cs_lat,
+            if let SmallestCallString::Value(cs) = cs_lat,
             if let (new_cs, Some(call_site_id)) = cs.pop(),
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
             call(func_id, insn_id, tgt),
@@ -988,11 +988,13 @@ pub fn taint_index_with_config(
 
         // 3.5
         summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
-            let cs_lat = Consistent::Value(CallString::new()),
+        if false,
+            let cs_lat = SmallestCallString::Value(CallString::new()),
             context_summary(func_id, n1, p1, n2, p2, cs_lat);
 
         assign_like(func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
-            let cs_lat = Consistent::Value(CallString::new()),
+        if false,
+            let cs_lat = SmallestCallString::Value(CallString::new()),
             context_assign(func_id, v1, p1, v2, p2, cs_lat);
 
         // Local virtual call and resolvent, bypassing the summary machinery.
