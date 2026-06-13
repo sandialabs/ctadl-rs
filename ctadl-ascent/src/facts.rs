@@ -375,6 +375,11 @@ impl SmallestCallString {
             SmallestCallString::Bottom => None,
         }
     }
+
+    /// Empty call string is top
+    pub fn top() -> Self {
+        SmallestCallString::Value(CallString::new())
+    }
 }
 
 impl PartialOrd for SmallestCallString {
