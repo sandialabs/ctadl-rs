@@ -22,17 +22,7 @@
         ctadl-souffle-wrapper = pkgs.writeShellScriptBin "ctadl-souffle" ''
           exec ${ctadl-souffle.packages.${system}.ctadlPackages.ctadl-full}/bin/ctadl "$@"
         '';
-        checksarif =
-          # Use x86_64 version on aarch because aarch version doesn't work
-          (import nixpkgs {
-            system =
-              if system == "aarch64-darwin"
-              then "x86_64-darwin"
-              else system;
-          })
-          .callPackage
-          ./nix/sarif-multitool/checksarif.nix {
-          };
+        checksarif = pkgs.callPackage ./nix/sarif-multitool/checksarif.nix { };
       in
       {
         packages.default = naersk-lib.buildPackage ./.;
@@ -47,7 +37,13 @@
           in
           ctadl;
         packages.checksarif = checksarif;
-        packages.examples.nginx = pkgs.pkgsCross.gnu64.enableDebugging (pkgs.pkgsCross.gnu64.nginx.override { withDebug = true; withPerl = false; perl = null; });
+        packages.examples.nginx = pkgs.pkgsCross.gnu64.enableDebugging (
+          pkgs.pkgsCross.gnu64.nginx.override {
+            withDebug = true;
+            withPerl = false;
+            perl = null;
+          }
+        );
 
         formatter = pkgs.nixfmt;
         devShell =
