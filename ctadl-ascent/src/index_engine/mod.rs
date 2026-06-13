@@ -939,26 +939,25 @@ pub fn taint_index_with_config(
             let v2 = call_arg!(*call_insn, *n2_sum),
             let v1 = call_arg!(*call_insn, *n1_sum);
 
-        // 3.2: Seed `locals` with the context-specific flow from an instantiated callee
-        // summary (`context_assign`), with the call string. The base `locals` propagation
-        // rules then carry the context forward THROUGH locals. No `reaches_out` gate.
-        // Guards kept AFTER both relations so `context_assign` and `locals` are adjacent
-        // first-two clauses => Ascent treats it as a SIMPLE JOIN and drives by the smaller
-        // (delta) side instead of full-scanning `context_assign`.
-        locals(func_id, v1.clone(), p13.clone(), n.clone(), pn.clone(), cs_lat.clone()) <--
+        // 3.2: Seed `locals` with the context-specific flow from an instantiated callee summary
+        // (`context_assign`), with the call string. The base `locals` propagation rules then carry
+        // the context forward THROUGH locals. Guards kept AFTER both relations so `context_assign`
+        // and `locals` are adjacent first-two clauses => Ascent treats it as a SIMPLE JOIN and
+        // drives by the smaller (delta) side instead of full-scanning `context_assign`.
+        locals(func_id, v1.clone(), p13.clone(), a.clone(), p4.clone(), cs_lat.clone()) <--
             context_assign(func_id, v1, p1, v2, p2, cs_lat),
-            locals(func_id, v2, p23, n, pn, SmallestCallString::top()),
+            locals(func_id, v2, p23, a, p4, SmallestCallString::top()),
             if let SmallestCallString::Value(cs) = cs_lat,
             if !cs.is_empty(),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
-        locals(func_id, v2.clone(), p23.clone(), n.clone(), pn.clone(), cs_lat.clone()) <--
-            context_assign(func_id, v1, p1, v2, p2, cs_lat),
-            locals(func_id, v1, p13, n, pn, SmallestCallString::top()),
+        locals(func_id, v1.clone(), p1.clone(), a.clone(), p43.clone(), cs_lat.clone()) <--
+            context_assign(func_id, v1, p1, v2, p23, cs_lat),
+            locals(func_id, v2, p2, a, p4, SmallestCallString::top()),
             if let SmallestCallString::Value(cs) = cs_lat,
             if !cs.is_empty(),
-            if let Some(p23) = p13.substitute_prefix(p1, p2),
-            paths(&p23);
+            if let Some(p43) = p23.substitute_prefix(p2, p4),
+            paths(&p43);
 
         // 3.3: a context-specific flow (non-empty cs) that reaches an out-formal becomes a
         // conditional summary tagged with its call string; 3.4 pops it back to the caller.
