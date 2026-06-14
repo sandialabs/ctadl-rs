@@ -846,23 +846,23 @@ pub fn taint_index_with_config(
             if n1 != *n2 || p1 != p2;
 
         // aliasing summary rule (context-free flows only).
-        // summary(infunc, n1, ap3.clone(), n2, bp) <--
-        //     config(c),
-        //     if c.alias_rule,
-        //     // this is the alias: v1.p1 <- n1.ap
-        //     locals(infunc, v1, p1, n1, ap, cs_lat1),
-        //     if let SmallestCallString::Value(cs1) = cs_lat1,
-        //     if cs1.is_empty(),
-        //     // v1.p13 <- n2.bp
-        //     locals(infunc, v1, p13, n2, bp, cs_lat2),
-        //     if let SmallestCallString::Value(cs2) = cs_lat2,
-        //     if cs2.is_empty(),
-        //     if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-        //     // if let Some(p3) = match_prefix(p13, p1),
-        //     // if !p3.is_empty(),
-        //     // let ap3 = ap.concat_str(p3),
-        //     paths(&ap3),
-        //     if n1 != n2 || ap3 != *bp;
+        summary(infunc, n1, ap3.clone(), n2, bp) <--
+            config(c),
+            if c.alias_rule,
+            // this is the alias: v1.p1 <- n1.ap
+            locals(infunc, v1, p1, n1, ap, cs_lat1),
+            if let SmallestCallString::Value(cs1) = cs_lat1,
+            if cs1.is_empty(),
+            // v1.p13 <- n2.bp
+            locals(infunc, v1, p13, n2, bp, cs_lat2),
+            if let SmallestCallString::Value(cs2) = cs_lat2,
+            if cs2.is_empty(),
+            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
+            // if let Some(p3) = match_prefix(p13, p1),
+            // if !p3.is_empty(),
+            // let ap3 = ap.concat_str(p3),
+            paths(&ap3),
+            if n1 != n2 || ap3 != *bp;
 
         // Hybrid Inlining Rules:
         // Phase 1: propagate up the stack from indirect calls
