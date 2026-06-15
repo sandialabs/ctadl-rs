@@ -51,6 +51,7 @@ use crate::facts::{
     SmallestCallString, isout,
 };
 use ctadl_ir::Symbol;
+use ctadl_ir::mir::FieldAccess;
 
 pub mod source_info;
 
@@ -73,6 +74,14 @@ pub struct IndexFacts {
     /// Assignments from source to destination vertices
     #[builder(default)]
     pub assign: Vec<AssignFlow>,
+    /// A load `x = y.f`: reads field `f` of `y` into `x`. Emitted (in place of `assign`)
+    /// after access-path lowering, which makes every field read a single hop.
+    #[builder(default)]
+    pub load: Vec<(FunctionId, FlowVariable, FlowVariable, FieldAccess)>,
+    /// A store `x.f = y`: writes `y` into field `f` of `x`. Emitted (in place of `assign`)
+    /// after access-path lowering, which makes every field write a single hop.
+    #[builder(default)]
+    pub store: Vec<(FunctionId, FlowVariable, FieldAccess, FlowVariable)>,
     #[builder(default)]
     pub func_ptr_assign: Vec<(PackedInsnSiteId, FlowVertex, FunctionId)>,
     #[builder(default)]

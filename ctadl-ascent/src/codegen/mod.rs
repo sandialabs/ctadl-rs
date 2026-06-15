@@ -302,6 +302,21 @@ impl Visitor for CodegenVisitor<'_> {
                             cls.0.clone(),
                         ));
                     }
+                    // `x = y.f`: a single-field read becomes a `load` fact. Access-path
+                    // lowering reduces field reads to single hops, so a longer path here is
+                    // an offset-bearing path that lowering left intact; those fall back to
+                    // `assign`. An empty path is a move (`x = y`) and also stays `assign`.
+                    if let Exp::AccessPath(ap) = src
+                        && ap.path.fields.len() == 1
+                    {
+                        let dest = self.trans_variable_ref(dest);
+                        let base = self.trans_variable_ref(&ap.variable_ref);
+                        let field = ap.path.fields[0].clone();
+                        self.facts
+                            .load
+                            .push((self.function.unwrap(), dest, base, field));
+                        continue;
+                    }
                     let Some(src) = self.trans_exp(src) else {
                         continue;
                     };
@@ -507,8 +522,7 @@ impl Visitor for CodegenVisitor<'_> {
                 let dest_var = self.trans_variable_ref(dest_var);
                 let source = self.trans_variable_ref(source);
                 let value = self.trans_exp(value);
-                // dest_var <- source
-                let dest = FlowVertex(dest_var, dest_fields.into());
+                // dest_var <- source (structure copy that SSA renaming relies on)
                 // Multiple field updates of the same src/dst cause duplicate assigns
                 self.facts.assign.push((
                     site,
@@ -519,7 +533,18 @@ impl Visitor for CodegenVisitor<'_> {
                 if !dest_fields.is_empty()
                     && let Some(value) = value
                 {
-                    self.facts.assign.push((site, dest, value));
+                    // `x.f = y`: a single-field write of a plain value becomes a `store`
+                    // fact. A longer destination path (offsets left intact by lowering) or
+                    // a value that is itself a field read falls back to `assign`.
+                    if dest_fields.fields.len() == 1 && value.1.is_empty() {
+                        let field = dest_fields.fields[0].clone();
+                        self.facts
+                            .store
+                            .push((self.function.unwrap(), dest_var, field, value.0));
+                    } else {
+                        let dest = FlowVertex(dest_var, dest_fields.into());
+                        self.facts.assign.push((site, dest, value));
+                    }
                 }
             }
             Nop => (),
