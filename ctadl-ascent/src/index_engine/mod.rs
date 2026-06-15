@@ -692,11 +692,17 @@ pub fn taint_index_with_config(
     let initial_summary = facts.summary.len();
     let initial_formals = facts.formal_param.len();
 
+    // The whitelist of syntactic access paths. Access-path lowering splits a deep read
+    // into single-field hops, so `facts.assign` only carries shallow paths; the cap
+    // algorithm reconstructs the deep paths (and the suffixes the lowered temporaries
+    // hold) into `facts.paths`. Include both so that `substitute_prefix`-based
+    // propagation can reconstruct the deep paths the program actually mentions.
     let program_paths: Vec<_> = facts
         .assign
         .iter()
         .flat_map(|(_, dst, src)| std::iter::once(dst.1).chain(std::iter::once(src.1)))
         .map(|p| (p,))
+        .chain(facts.paths.iter().copied())
         .collect();
     let assign_like: Vec<_> = facts
         .assign

@@ -69,6 +69,17 @@ impl LowerAccessPaths {
             return;
         }
 
+        // Leave offset-bearing paths intact. Lowering a deep read into single-field hops
+        // makes each temporary carry a *suffix* of the original path (e.g. `__ap0` holding
+        // `.[50].b.[50]`), but the cap algorithm only reconstructs the full prefixed paths
+        // into the `paths` whitelist, never those suffixes. With offsets the read itself
+        // carries the flow through those temporaries, so the suffix paths get filtered out
+        // by the whitelist and the offset arithmetic (`substitute_prefix`) silently drops
+        // the flow. Keeping the whole path lets the offsets merge as before.
+        if ap.path.fields.iter().any(FieldAccess::is_offset) {
+            return;
+        }
+
         let mut base = ap.variable_ref;
         let path = ap.path.fields;
         for field in path.iter().take(path.len() - 1).cloned() {

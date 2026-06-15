@@ -182,6 +182,19 @@ impl<'a> CodegenVisitor<'a> {
     /// Gens the dedup'd paths to the facts
     fn finish(&mut self) {
         let paths = std::mem::take(&mut self.paths_dedup);
+        // Close the path set under suffixes. The cap algorithm reconstructs the deep
+        // (prefix) access paths a program mentions, but access-path lowering splits a deep
+        // read into single-field hops whose temporaries each hold a *suffix* of the
+        // original path (lowering `a.b.c.d` leaves a temporary at `.c.d`). The
+        // `substitute_prefix` propagation in both the index and query engines is gated by
+        // this whitelist, so without the suffixes the flow is dropped at the first hop.
+        for (path,) in &paths {
+            let mut seq = path.0;
+            while let Some(tail) = seq.tail() {
+                seq = tail;
+                self.facts.paths.push((fx::Path(seq),));
+            }
+        }
         self.facts.paths.extend(paths);
     }
 

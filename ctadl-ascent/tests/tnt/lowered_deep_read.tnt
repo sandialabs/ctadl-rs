@@ -1,0 +1,19 @@
+// Access-path lowering rewrites a single-statement deep read (`out = a.b.c.d`) into a
+// chain of single-field hops through fresh temporaries. Each temporary holds a *suffix*
+// of the original path (e.g. `.c.d` after `.b` is stripped), and the cap algorithm only
+// reconstructs the deep *prefix* paths -- so without closing the `paths` whitelist under
+// suffixes the flow is dropped at the first hop. This is a regression test for that
+// suffix closure: a depth-4 deep read must still carry taint end to end. The errsink
+// check confirms field sensitivity survives lowering: a sibling field stays untainted.
+def DeepRead() {
+start:
+  s = source(Secret);
+  a.b.c.d = s;
+  out = a.b.c.d;
+  sink(out, Secret);
+
+  a.b.c.e = "safe";
+  other = a.b.c.e;
+  errsink(other, Secret);
+  return;
+}
