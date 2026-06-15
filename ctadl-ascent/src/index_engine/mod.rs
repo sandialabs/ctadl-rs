@@ -758,10 +758,9 @@ pub fn taint_index_with_config(
 
         // Derived:
 
-        // LOCALS-LATTICE VARIANT (no backward `reaches_out`): `locals` carries the
-        // call-string context as a SmallestCallString lattice value (empty cs =
-        // context-free = lattice top). Context flows propagate THROUGH locals; there is no
-        // backward reachability relation.
+        // LOCALS-LATTICE VARIANT: `locals` carries the call-string context as a SmallestCallString
+        // lattice value (empty cs = context-free = lattice top). Context flows propagate through
+        // locals.
         lattice locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path) = assign_like;
         relation java_obj_assign_like(FunctionId, FlowVariable, Path, Symbol);
@@ -775,16 +774,15 @@ pub fn taint_index_with_config(
         relation critical_summary(FunctionId, FormalIndex, Path);
         // Critical call occurs inside this function
         relation critical_call(FunctionId);
-        // Resolvent reaches the formals of Function. The call string is a lattice
-        // value so the remaining columns functionally determine at most one call
-        // string: (func_id, formal_index, path, object) -> call-string.
+        // Resolvent reaches the formals of Function. The call string is a lattice value so the
+        // remaining columns functionally determine at most one call string: (func_id, formal_index,
+        // path, object) -> call-string. This way we don't get the same object resolved through
+        // multiple stack configuration paths.
         lattice resolvent(FunctionId, FormalIndex, Path, Resolvent, SmallestCallString);
         relation func_ptr_assign_like(FunctionId, FlowVariable, Path, FunctionId);
         // Like `resolvent`, the call string is a `SmallestCallString` lattice value in
         // the last column, so the remaining (key) columns determine one call string per
-        // tuple — the *smallest* one (shortest, then lexicographically least). The empty
-        // call string is the lattice top, so a key converges to the empty context
-        // whenever it is derivable, which keeps rule 3.5's `is_empty()` feedback exact.
+        // tuple — the *smallest* one (shortest, then lexicographically least).
         lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, SmallestCallString);
         lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
         lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, SmallestCallString);
@@ -983,18 +981,6 @@ pub fn taint_index_with_config(
             call(func_id, insn_id, tgt),
             let v1 = call_arg!(insn_id, *n1),
             let v2 = call_arg!(insn_id, *n2);
-
-
-        // 3.5
-        // summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
-        // if false,
-        //     let cs_lat = SmallestCallString::Value(CallString::new()),
-        //     context_summary(func_id, n1, p1, n2, p2, cs_lat);
-
-        // assign_like(func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
-        // if false,
-        //     let cs_lat = SmallestCallString::Value(CallString::new()),
-        //     context_assign(func_id, v1, p1, v2, p2, cs_lat);
 
         // Local virtual call and resolvent, bypassing the summary machinery.
         assign_like(func_id, v2.into(), p1, v1.into(), p2) <--
