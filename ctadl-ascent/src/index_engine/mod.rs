@@ -763,6 +763,8 @@ pub fn taint_index_with_config(
             (func_id, insn_id, vx.0, vx.1)
         }).collect();
         relation java_resolvents(Symbol, Symbol, Symbol, FunctionId) = facts.java_resolvents;
+        relation load(FunctionId, FlowVariable, FlowVariable, FieldAccess) = facts.load;
+        relation store(FunctionId, FlowVariable, FieldAccess, FlowVariable) = facts.store;
 
         // Analysis drivers:
 
