@@ -8,7 +8,9 @@ start:
     tmp = this;
     tmp.field = p;
 
-    tmp2.g = tmp.g;
-    tmp2.g.h = p.j;
+    this.g.h = p.j;
+    // Once fully field-sensitive aliasing is in place, we can replace the previous line with the following two. Until then, this test is aspirational.
+    // tmp2.g = tmp.g;
+    // tmp2.g.h = p.j;
     return;
 }
