@@ -1092,6 +1092,9 @@ impl Display for FlowVertex {
     }
 }
 
+/// Resolvents represent target information for a virtual function call or indirect call. They con
+/// be either a function ID or an object. The function ID can be used directly. Typically the object
+/// is used in conjunction with virtual method table information to resolve the call.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Serialize, Deserialize)]
 pub enum Resolvent {
     #[default]
