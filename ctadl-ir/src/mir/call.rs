@@ -151,11 +151,11 @@ impl Display for VirtualMethodTable {
             VirtualMethodTable::Java { methods, hierarchy } => {
                 writeln!(f, "java virtual method table")?;
                 for (cls, name, sig, method) in methods {
-                    write!(f, "{cls}.{name} has {sig}: {method}")?;
+                    writeln!(f, "{cls}.{name} has signature {sig}: {method}")?;
                 }
                 for (subclass, superclasses) in hierarchy {
                     for superclass in superclasses {
-                        write!(f, "{subclass} extends {superclass}")?;
+                        writeln!(f, "{subclass} extends {superclass}")?;
                     }
                 }
                 writeln!(f, "end java virtual method table")?;

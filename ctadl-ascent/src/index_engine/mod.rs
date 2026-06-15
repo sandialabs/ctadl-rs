@@ -46,8 +46,9 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallArgId, CallString, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
-    FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, isout,
+    CallString, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType, FunctionId,
+    IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, Resolvent,
+    SmallestCallString, isout,
 };
 use ctadl_ir::Symbol;
 
@@ -442,105 +443,77 @@ impl IndexResult {
 }
 
 struct HybridInliningRelations<'a> {
-    critical_summary: &'a [(FunctionId, FormalIndex, Path, PackedInsnSiteId)],
-    resolvent: &'a [(
-        CallString,
-        FunctionId,
-        FormalIndex,
-        Path,
-        PackedInsnSiteId,
-        FunctionId,
-    )],
+    critical_summary: &'a [(FunctionId, FormalIndex, Path)],
+    resolvent: &'a [(FunctionId, FormalIndex, Path, Resolvent, SmallestCallString)],
     func_ptr_assign_like: &'a [(FunctionId, FlowVariable, Path, FunctionId)],
     context_assign: &'a [(
-        CallString,
         FunctionId,
         FlowVariable,
         Path,
         FlowVariable,
         Path,
+        SmallestCallString,
     )],
     context_locals: &'a [(
-        CallString,
         FunctionId,
         FlowVariable,
         Path,
         FormalIndex,
         Path,
+        SmallestCallString,
     )],
-    context_summary: &'a [(CallString, FunctionId, FormalIndex, Path, FormalIndex, Path)],
+    context_summary: &'a [(
+        FunctionId,
+        FormalIndex,
+        Path,
+        FormalIndex,
+        Path,
+        SmallestCallString,
+    )],
     id_map: Option<&'a IdMap>,
 }
 
 impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Critical Summary ({}):", self.critical_summary.len())?;
-        for (func_id, formal_index, path, site_id) in self.critical_summary {
-            let InsnSiteId {
-                func_id: site_func_id,
-                insn_id: site_insn_id,
-            } = InsnSiteId::unpack_from_slice(&**site_id).unwrap();
-
+        for (func_id, formal_index, path) in self.critical_summary {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
-            let site_func_name = self
-                .id_map
-                .and_then(|m| m.get_function(site_func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
 
             writeln!(
                 f,
-                "  {}({}): arg{} {} -> site {}({}):{}",
+                "  {}({}): arg{} {}",
                 func_name,
                 func_id.id,
                 formal_index,
                 path.to_dot_string(),
-                site_func_name,
-                site_func_id.id,
-                site_insn_id.id
             )?;
         }
 
         writeln!(f, "\nResolvent ({}):", self.resolvent.len())?;
-        for (cs, func_id, formal_index, path, site_id, tgt) in self.resolvent {
-            let InsnSiteId {
-                func_id: site_func_id,
-                insn_id: site_insn_id,
-            } = InsnSiteId::unpack_from_slice(&**site_id).unwrap();
-
+        for (func_id, formal_index, path, resolvent, cs) in self.resolvent {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
-            let site_func_name = self
-                .id_map
-                .and_then(|m| m.get_function(site_func_id))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
-            let tgt_name = self
-                .id_map
-                .and_then(|m| m.get_function(*tgt))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let cs = match cs {
+                SmallestCallString::Value(cs) => cs.to_string(),
+                SmallestCallString::Bottom => "⊥".to_string(),
+            };
 
             writeln!(
                 f,
-                "  {} {}({}): arg{} {} -> site {}({}):{} resolves to {}({})",
+                "  {} {}({}): arg{} {} resolves to {}",
                 cs,
                 func_name,
                 func_id.id,
                 formal_index,
                 path.to_dot_string(),
-                site_func_name,
-                site_func_id.id,
-                site_insn_id.id,
-                tgt_name,
-                tgt.id
+                resolvent
             )?;
         }
 
@@ -580,7 +553,11 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Assign ({}):", self.context_assign.len())?;
-        for (cs, func_id, dest_var, dest_path, src_var, src_path) in self.context_assign {
+        for (func_id, dest_var, dest_path, src_var, src_path, cs) in self.context_assign {
+            let cs = match cs {
+                SmallestCallString::Value(cs) => cs.to_string(),
+                SmallestCallString::Bottom => "⊥".to_string(),
+            };
             let dest_str = {
                 let var_str = if let Some(name) = dest_var.as_local() {
                     name.to_string()
@@ -612,7 +589,11 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Locals ({}):", self.context_locals.len())?;
-        for (cs, func_id, var, path, formal_idx, formal_path) in self.context_locals {
+        for (func_id, var, path, formal_idx, formal_path, cs) in self.context_locals {
+            let cs = match cs {
+                SmallestCallString::Value(cs) => cs.to_string(),
+                SmallestCallString::Bottom => "⊥".to_string(),
+            };
             let var_str = if let Some(name) = var.as_local() {
                 name.to_string()
             } else {
@@ -639,7 +620,11 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Summary ({}):", self.context_summary.len())?;
-        for (cs, func_id, dest_idx, dest_path, src_idx, src_path) in self.context_summary {
+        for (func_id, dest_idx, dest_path, src_idx, src_path, cs) in self.context_summary {
+            let cs = match cs {
+                SmallestCallString::Value(cs) => cs.to_string(),
+                SmallestCallString::Bottom => "⊥".to_string(),
+            };
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
@@ -660,6 +645,15 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
         Ok(())
     }
+}
+
+/// Returns a FlowVariable for the call argument from the instruction side ID and the formal number
+macro_rules! call_arg {
+    ($insn:expr, $n:expr) => {
+        crate::facts::FlowVariable::call_arg_packed(
+            crate::facts::PackedCallArg::try_from_parts($insn, $n).unwrap(),
+        )
+    };
 }
 
 /// Creates a data flow graph for taint analysis.
@@ -735,11 +729,25 @@ pub fn taint_index_with_config(
         relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex) = facts.actual_param;
         relation call(FunctionId, InsnId, FunctionId) = call;
         // func:insn: v = ptr<function_id>
-        relation func_ptr_assign(PackedInsnSiteId, FlowVertex, FunctionId) = facts.func_ptr_assign;
-        relation java_obj_assign(PackedInsnSiteId, FlowVertex, Symbol) = facts.java_obj_assign;
-        relation java_call(PackedInsnSiteId, FlowVertex, Symbol, Symbol) = facts.java_call;
+        relation func_ptr_assign(FunctionId, FlowVertex, FunctionId) = facts.func_ptr_assign.into_iter().map(|(site_id, vx, obj)| {
+            let InsnSiteId {func_id, ..} = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+            (func_id, vx, obj)
+        }).collect();
+        // x = new Foo();
+        relation java_obj_assign(FunctionId, FlowVertex, Symbol) = facts.java_obj_assign.into_iter().map(|(site_id, vx, obj)| {
+            let InsnSiteId {func_id, ..} = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+            (func_id, vx, obj)
+        }).collect();
+        // x.virtual_call(args)
+        relation java_call(FunctionId, InsnId, FlowVariable, Path, Symbol, Symbol) = facts.java_call.into_iter().map(|(site_id, vx, a, b)| {
+            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+            (func_id, insn_id, vx.0, vx.1, a, b)
+        }).collect();
+        relation indirect_call(FunctionId, InsnId, FlowVariable, Path) = facts.indirect_call.into_iter().map(|(site_id, vx)| {
+            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+            (func_id, insn_id, vx.0, vx.1)
+        }).collect();
         relation java_resolvents(Symbol, Symbol, Symbol, FunctionId) = facts.java_resolvents;
-        relation indirect_call(PackedInsnSiteId, FlowVertex) = facts.indirect_call;
 
         // Analysis drivers:
 
@@ -750,20 +758,34 @@ pub fn taint_index_with_config(
 
         // Derived:
 
-        relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
+        // LOCALS-LATTICE VARIANT: `locals` carries the call-string context as a SmallestCallString
+        // lattice value (empty cs = context-free = lattice top). Context flows propagate through
+        // locals.
+        lattice locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path) = assign_like;
         relation java_obj_assign_like(FunctionId, FlowVariable, Path, Symbol);
         relation model_paths(Path) = summary_paths.into_iter().collect();
         relation program_paths(Path) = program_paths;
 
         // Hybrid Inlining relations:
-        relation critical_summary(FunctionId, FormalIndex, Path, PackedInsnSiteId);
-        // Resolvent reaches the formals of Function.
-        relation resolvent(CallString, FunctionId, FormalIndex, Path, PackedInsnSiteId, FunctionId);
+        // critical_summary(f, n, p). f(n.p = obj) invokes obj at some critical
+        // call site. The critical site itself is not tracked here; it can be
+        // recovered in rule 3.1 (Contextual Assignment).
+        relation critical_summary(FunctionId, FormalIndex, Path);
+        // Critical call occurs inside this function
+        relation critical_call(FunctionId);
+        // Resolvent reaches the formals of Function. The call string is a lattice value so the
+        // remaining columns functionally determine at most one call string: (func_id, formal_index,
+        // path, object) -> call-string. This way we don't get the same object resolved through
+        // multiple stack configuration paths.
+        lattice resolvent(FunctionId, FormalIndex, Path, Resolvent, SmallestCallString);
         relation func_ptr_assign_like(FunctionId, FlowVariable, Path, FunctionId);
-        relation context_assign(CallString, FunctionId, FlowVariable, Path, FlowVariable, Path);
-        relation context_locals(CallString, FunctionId, FlowVariable, Path, FormalIndex, Path);
-        relation context_summary(CallString, FunctionId, FormalIndex, Path, FormalIndex, Path);
+        // Like `resolvent`, the call string is a `SmallestCallString` lattice value in
+        // the last column, so the remaining (key) columns determine one call string per
+        // tuple — the *smallest* one (shortest, then lexicographically least).
+        lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, SmallestCallString);
+        lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
+        lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, SmallestCallString);
 
         // Sets up paths from input program with static info. Paths must remain finite so we
         // shouldn't add paths from constructed summaries directly.
@@ -775,20 +797,20 @@ pub fn taint_index_with_config(
         paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
         paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
 
-        // Initialize locals with formals
-        locals(infunc, v1, p1.clone(), i, p1.clone()) <--
+        // Initialize locals with formals (context-free: empty call string)
+        locals(infunc, v1, p1.clone(), i, p1.clone(), SmallestCallString::top()) <--
             formal_param(infunc, v1, _),
             if let Some(i) = v1.as_formal(),
             let p1 = Path::empty();
 
-        // Propagate fields
-        locals(infunc, v1, p13.clone(), a, p4) <--
-            locals(infunc, v2, p23, a, p4),
+        // Forward field propagation, carrying the call-string context.
+        locals(infunc, v1, p13.clone(), a, p4, cs_lat.clone()) <--
+            locals(infunc, v2, p23, a, p4, cs_lat),
             assign_like(infunc, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
-        locals(infunc, v1, p1, a, p43.clone()) <--
-            locals(infunc, v2, p2, a, p4),
+        locals(infunc, v1, p1, a, p43.clone(), cs_lat.clone()) <--
+            locals(infunc, v2, p2, a, p4, cs_lat),
             assign_like(infunc, v1, p1, v2, p23),
             if let Some(p43) = p23.substitute_prefix(p2, p4),
             paths(&p43);
@@ -798,24 +820,22 @@ pub fn taint_index_with_config(
         assign_like(func_id, cv.clone(), Path::empty(), v.clone(), p) <--
             actual_param(call_site_slice, n, vx),
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**call_site_slice).unwrap(),
-            let call_arg_packed = PackedCallArg::try_from_parts(insn_id, n.clone()).unwrap(),
-            let cv = FlowVariable::call_arg_packed(call_arg_packed),
+            let cv = call_arg!(insn_id, *n),
             let FlowVertex(v, p) = vx;
 
         // Compute assignments from summaries
         assign_like(func_id, v1, p1, v2, p2) <--
             summary(tgt, n1, dst_path, n2, src_path),
             call(func_id, insn_id, tgt),
-            let call_arg_packed1 = PackedCallArg::try_from_parts(*insn_id, n1.clone()).unwrap(),
-            let v1 = FlowVariable::call_arg_packed(call_arg_packed1),
+            let v1 = call_arg!(*insn_id, *n1),
             let p1 = dst_path.clone(),
-            let call_arg_packed2 = PackedCallArg::try_from_parts(*insn_id, n2.clone()).unwrap(),
-            let v2 = FlowVariable::call_arg_packed(call_arg_packed2),
+            let v2 = call_arg!(*insn_id, *n2),
             let p2 = src_path.clone();
 
-        // Compute summaries from local reachability
+        // Compute summaries from local reachability. Context-free flows (empty cs) only;
+        // context-specific flows feed `context_summary` and are popped back to callers.
         summary(infunc, n1, p1, n2, p2) <--
-            locals(infunc, dst_var, p1, n2, p2),
+            locals(infunc, dst_var, p1, n2, p2, SmallestCallString::top()),
             // join with formal_param here instead of using if so that we don't have to traverse all of
             // locals
             formal_param(infunc, dst_var, formal_ty),
@@ -823,179 +843,196 @@ pub fn taint_index_with_config(
             if isout(&n1, *formal_ty, p1),
             if n1 != *n2 || p1 != p2;
 
-        // aliasing summary rule, see discussion above
-        summary(infunc, n1, ap3.clone(), n2, bp) <--
+        // aliasing summary rule (context-free flows only).
+        summary(infunc, n1, p1.clone(), n2, bp) <--
             config(c),
             if c.alias_rule,
-            // this is the alias: v1.p1 <- n1.ap
-            locals(infunc, v1, p1, n1, ap),
-            // v1.p13 <- n2.bp
-            locals(infunc, v1, p13, n2, bp),
-            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            // if let Some(p3) = match_prefix(p13, p1),
-            // if !p3.is_empty(),
-            // let ap3 = ap.concat_str(p3),
-            paths(&ap3),
-            if n1 != n2 || ap3 != *bp;
+            // this is the alias: v1 <- n1
+            locals(infunc, v1, Path::empty(), n1, Path::empty(), SmallestCallString::top()),
+            // v1.p1 <- n2.bp
+            locals(infunc, v1, p1, n2, bp, SmallestCallString::top()),
+            if !p1.is_empty(),
+            if n1 != n2 || *p1 != *bp;
 
         // Hybrid Inlining Rules:
         // Phase 1: propagate up the stack from indirect calls
         // Phase 2: propagate resolvents back down (this requires call strings)
         // Phase 3: propagate conditional summaries up till they're unconditional
 
-        // 1.1: Base Critical Summary. Indirect call or Java Call found.
-        critical_summary(func_id, n, p_n, site_id) <--
-            (indirect_call(site_id, vx) | java_call(site_id, vx, _, _)),
-            let FlowVertex(v, p_call) = vx,
-            let InsnSiteId {func_id, ..} = InsnSiteId::unpack_from_slice(&**site_id).unwrap(),
-            locals(func_id, v, p_call, n, p_n);
+        // 1.1: Base Critical Summary. Indirect call or Java Call found. (context-free)
+        critical_summary(func_id, n, p_n) <--
+            (indirect_call(func_id, _, v, p_call) | java_call(func_id, _, v, p_call, _, _)),
+            locals(func_id, v, p_call, n, p_n, SmallestCallString::top());
 
-        // 1.2: Propagate Critical Summary
-        critical_summary(caller_func_id, n, p_n, critical_site_id) <--
-            critical_summary(tgt, n_tgt, p_tgt, critical_site_id),
+        // 1.2: Propagate Critical Summary (context-free)
+        critical_summary(caller_func_id, n, p_n) <--
             call(caller_func_id, caller_insn_id, tgt),
-            let call_arg_packed = PackedCallArg::try_from_parts(*caller_insn_id, *n_tgt).unwrap(),
-            let arg = FlowVariable::call_arg_packed(call_arg_packed),
-            locals(caller_func_id, arg, p_tgt, n, p_n);
+            critical_summary(tgt, n_tgt, p_tgt),
+            let arg = call_arg!(*caller_insn_id, *n_tgt),
+            locals(caller_func_id, arg, p_tgt, n, p_n, SmallestCallString::top());
 
         // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
         //   resolvent in parameters of summary
-        resolvent(new_cs.clone(), tgt, n_tgt, p_tgt.clone(), critical_site_id, ptr_tgt) <--
-            critical_summary(tgt, n_tgt, p_tgt, critical_site_id),
-            call(call_func_id, insn_id, tgt),
-            let call_site_id = PackedInsnSiteId::try_from_parts(*call_func_id, *insn_id).unwrap(),
-            let call_arg_packed = PackedCallArg::try_from_parts(*insn_id, *n_tgt).unwrap(),
-            let arg = FlowVariable::call_arg_packed(call_arg_packed),
-            (func_ptr_assign_like(call_func_id, arg, p_tgt, ptr_tgt) |
-             (java_obj_assign_like(call_func_id, arg, p_tgt, cls),
-              java_call(critical_site_id, _, method_name, method_desc),
-              java_resolvents(cls, method_name, method_desc, ptr_tgt))),
-            let cs = CallString::new(),
-            if let Some(new_cs) = cs.push(call_site_id);
+        resolvent(f, n, p.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
+            critical_summary(f, n, p),
+            call(caller, call_insn, f),
+            let arg = call_arg!(*call_insn, *n),
+            java_obj_assign_like(caller, arg, p, cls),
+            let resolvent_obj = Resolvent::Object(cls.clone()),
+            let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
+            if let Some(new_cs) = CallString::new().push(call_site_id);
+        resolvent(f, n, p.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
+            critical_summary(f, n, p),
+            call(caller, call_insn, f),
+            let arg = call_arg!(*call_insn, *n),
+            func_ptr_assign_like(caller, arg, p, tgt),
+            let resolvent_obj = Resolvent::Function(*tgt),
+            let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
+            if let Some(new_cs) = CallString::new().push(call_site_id);
 
         // 2.2: Propagate Resolvent
-        resolvent(new_cs.clone(), tgt, n_tgt, p_tgt.clone(), critical_site_id, ptr_tgt) <--
-            resolvent(cs, func_id, n, p, critical_site_id, ptr_tgt),
-            call(func_id, insn_id, tgt),
-            critical_summary(tgt, _, _, critical_site_id),
-            let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
-            locals(func_id, v_tgt, p_tgt, n, p),
-            if let Some(packed) = v_tgt.as_call_arg(),
-            let call_arg_id = CallArgId::try_from(packed).unwrap(),
-            let n_tgt = call_arg_id.formal(),
+        resolvent(f, n2, p2.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
+            // Ordered so the fixed-size call graph drives the outer loop instead of full-scanning
+            // the growing `resolvent` relation every iteration. Every join below hits an index
+            // (resolvent probed by (func_id,n,p)).
+            call(caller, call_insn, f),
+            resolvent(caller, n, p, resolvent_obj, cs_lat),
+            locals(caller, v2, p2, n, p, SmallestCallString::top()),
+            critical_summary(f, n2, p2),
+            if let SmallestCallString::Value(cs) = cs_lat,
+            let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
             if let Some(new_cs) = cs.push(call_site_id);
 
         // 3.1: Contextual Assignment (instantiate)
-        context_assign(cs.clone(), func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
-            resolvent(cs, func_id, n, p, critical_site_id, ptr_tgt),
-            locals(func_id, v_rec, p_v, n, p),
-            let vx_rec = FlowVertex(v_rec.clone(), p_v.clone()),
-            summary(ptr_tgt, n1, p1_sum, n2, p2_sum),
-            (java_call(critical_site_id, vx_rec, _, _) | indirect_call(critical_site_id, vx_rec)),
-            let InsnSiteId {insn_id, ..} = InsnSiteId::unpack_from_slice(&**critical_site_id).unwrap(),
-            let call_arg_packed1 = PackedCallArg::try_from_parts(insn_id, n1.clone()).unwrap(),
-            let v1 = FlowVariable::call_arg_packed(call_arg_packed1),
-            let p1 = p1_sum.clone(),
-            let call_arg_packed2 = PackedCallArg::try_from_parts(insn_id, n2.clone()).unwrap(),
-            let v2 = FlowVariable::call_arg_packed(call_arg_packed2),
-            let p2 = p2_sum.clone();
+        // The critical call site is recovered here by joining the resolvent's
+        // reached formal (n.p) back to a java_call receiver in func_id, rather
+        // than carrying the site through critical_summary/resolvent.
+        context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(cs.clone())) <--
+            java_call(caller, call_insn, v_rec, p_rec, meth_name, meth_desc),
+            locals(caller, v_rec, p_rec, n, p, SmallestCallString::top()),
+            resolvent(caller, n, p, resolvent_obj, cs_lat),
+            if let Resolvent::Object(cls) = resolvent_obj,
+            if let SmallestCallString::Value(cs) = cs_lat,
+            if !cs.is_empty(),
+            java_resolvents(cls, meth_name, meth_desc, resolvent_func),
+            summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
+            let v2 = call_arg!(*call_insn, *n2_sum),
+            let v1 = call_arg!(*call_insn, *n1_sum);
+        context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(cs.clone())) <--
+            indirect_call(caller, call_insn, v_rec, p_rec),
+            locals(caller, v_rec, p_rec, n, p, SmallestCallString::top()),
+            resolvent(caller, n, p, resolvent_obj, cs_lat),
+            if let Resolvent::Function(resolvent_func) = resolvent_obj,
+            if let SmallestCallString::Value(cs) = cs_lat,
+            if !cs.is_empty(),
+            summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
+            let v2 = call_arg!(*call_insn, *n2_sum),
+            let v1 = call_arg!(*call_insn, *n1_sum);
 
-        // 3.2: Contextual Locals Initialization and Propagation
-        context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
-            context_assign(cs, func_id, v1, p1, v2, p2),
-            locals(func_id, v2, p23, n, pn),
+        // 3.2: Seed `locals` with the context-specific flow from an instantiated callee summary
+        // (`context_assign`), with the call string. The base `locals` propagation rules then carry
+        // the context forward THROUGH locals. Guards kept AFTER both relations so `context_assign`
+        // and `locals` are adjacent first-two clauses => Ascent treats it as a SIMPLE JOIN and
+        // drives by the smaller (delta) side instead of full-scanning `context_assign`.
+        locals(func_id, v1.clone(), p13.clone(), a.clone(), p4.clone(), cs_lat.clone()) <--
+            context_assign(func_id, v1, p1, v2, p2, cs_lat),
+            locals(func_id, v2, p23, a, p4, SmallestCallString::top()),
+            if let SmallestCallString::Value(cs) = cs_lat,
+            if !cs.is_empty(),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
+        locals(func_id, v1.clone(), p1.clone(), a.clone(), p43.clone(), cs_lat.clone()) <--
+            context_assign(func_id, v1, p1, v2, p23, cs_lat),
+            locals(func_id, v2, p2, a, p4, SmallestCallString::top()),
+            if let SmallestCallString::Value(cs) = cs_lat,
+            if !cs.is_empty(),
+            if let Some(p43) = p23.substitute_prefix(p2, p4),
+            paths(&p43);
 
-        context_locals(cs.clone(), func_id, v2.clone(), p23.clone(), n.clone(), pn.clone()) <--
-            context_assign(cs, func_id, v1, p1, v2, p2),
-            locals(func_id, v1, p13, n, pn),
-            if let Some(p23) = p13.substitute_prefix(p1, p2),
-            paths(&p23);
-
-        context_locals(cs.clone(), func_id, v1.clone(), p13.clone(), n.clone(), pn.clone()) <--
-            context_locals(cs, func_id, v2, p23, n, pn),
-            assign_like(func_id, v1, p1, v2, p2),
-            if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(&p13);
-
-        context_locals(cs.clone(), func_id, v1.clone(), p1.clone(), n.clone(), pn3.clone()) <--
-            context_locals(cs, func_id, v2, p2, n, pn),
-            assign_like(func_id, v1, p1, v2, p23),
-            if let Some(pn3) = p23.substitute_prefix(p2, pn),
-            paths(&pn3);
-
-        // 3.3: Contextual Summary Creation
-        context_summary(cs.clone(), func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
-            context_locals(cs, func_id, dst_var, p1, n2, p2),
+        // 3.3: a context-specific flow (non-empty cs) that reaches an out-formal becomes a
+        // conditional summary tagged with its call string; 3.4 pops it back to the caller.
+        context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), cs_lat.clone()) <--
+            locals(func_id, dst_var, p1, n2, p2, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat,
+            if !cs.is_empty(),
             formal_param(func_id, dst_var, formal_ty),
             if let Some(n1) = dst_var.as_formal(),
             if isout(&n1, *formal_ty, p1),
             if n1 != *n2 || p1 != p2;
 
-        context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
-            context_locals(cs, func_id, v1, p1, n1, ap),
-            locals(func_id, v1, p13, n2, bp),
-            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            paths(&ap3),
-            if n1 != n2 || ap3 != *bp;
+        // 3.4: Instantiate Summaries and pop call string, either creating a new contextual assign
+        // or a bare, uncontextual assign
+        context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(new_cs)) <--
+            context_summary(f, n1, p1_sum, n2, p2_sum, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat,
+            if let (new_cs, Some(call_site_id)) = cs.pop(),
+            if !new_cs.is_empty(),
+            let InsnSiteId {func_id: caller, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
+            call(caller, insn_id, f),
+            let v1 = call_arg!(insn_id, *n1),
+            let v2 = call_arg!(insn_id, *n2);
 
-        context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
-            locals(func_id, v1, p1, n1, ap),
-            context_locals(cs, func_id, v1, p13, n2, bp),
-            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            paths(&ap3),
-            if n1 != n2 || ap3 != *bp;
-
-        context_summary(cs.clone(), func_id, n1.clone(), ap3.clone(), n2.clone(), bp.clone()) <--
-            context_locals(cs, func_id, v1, p1, n1, ap),
-            context_locals(cs, func_id, v1, p13, n2, bp),
-            if let Some(ap3) = p13.substitute_prefix_with_nonempty_suffix(p1, ap),
-            paths(&ap3),
-            if n1 != n2 || ap3 != *bp;
-
-        // 3.4: Instantiate Summaries and pop call string
-        context_assign(new_cs.clone(), func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
-            context_summary(cs, tgt, n1, p1_sum, n2, p2_sum),
-            let (new_cs, popped) = cs.pop(),
-            if let Some(call_site_id) = popped,
+        assign_like(func_id, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone()) <--
+            context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat,
+            if let (new_cs, Some(call_site_id)) = cs.pop(),
+            if new_cs.is_empty(),
             let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
             call(func_id, insn_id, tgt),
-            let call_arg_packed1 = PackedCallArg::try_from_parts(insn_id, n1.clone()).unwrap(),
-            let v1 = FlowVariable::call_arg_packed(call_arg_packed1),
-            let p1 = p1_sum.clone(),
-            let call_arg_packed2 = PackedCallArg::try_from_parts(insn_id, n2.clone()).unwrap(),
-            let v2 = FlowVariable::call_arg_packed(call_arg_packed2),
-            let p2 = p2_sum.clone();
+            let v1 = call_arg!(insn_id, *n1),
+            let v2 = call_arg!(insn_id, *n2);
 
-        // 3.5
-        summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone()) <--
-            context_summary(CallString::new(), func_id, n1, p1, n2, p2);
+        // Local virtual call and resolvent, bypassing the summary machinery.
+        assign_like(func_id, v2.into(), p1, v1.into(), p2) <--
+            java_call(func_id, insn_id, arg, arg_p, mname, mdesc),
+            java_obj_assign_like(func_id, arg, arg_p, cls),
+            java_resolvents(cls, mname, mdesc, resolve_tgt),
+            let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
+            summary(resolve_tgt, n1, p1, n2, p2),
+            let n2_id = PackedCallArg::try_from_parts(*insn_id, *n2).unwrap(),
+            let n1_id = PackedCallArg::try_from_parts(*insn_id, *n1).unwrap(),
+            let v2 = FlowVariableKind::CallArg(n2_id),
+            let v1 = FlowVariableKind::CallArg(n1_id);
 
-        assign_like(func_id, v1.clone(), p1.clone(), v2.clone(), p2.clone()) <--
-            context_assign(CallString::new(), func_id, v1, p1, v2, p2);
+        assign_like(func_id, v2.into(), p1, v1.into(), p2) <--
+            indirect_call(func_id, insn_id, arg, arg_p),
+            func_ptr_assign_like(func_id, arg, arg_p, resolve_tgt),
+            let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
+            summary(resolve_tgt, n1, p1, n2, p2),
+            let n2_id = PackedCallArg::try_from_parts(*insn_id, *n2).unwrap(),
+            let n1_id = PackedCallArg::try_from_parts(*insn_id, *n1).unwrap(),
+            let v2 = FlowVariableKind::CallArg(n2_id),
+            let v1 = FlowVariableKind::CallArg(n1_id);
 
         // Function Pointer Propagation
         func_ptr_assign_like(func_id, v.clone(), p.clone(), tgt) <--
-            func_ptr_assign(site_id, vx, tgt), let FlowVertex(v, p) = vx,
-            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&**site_id).unwrap();
+            func_ptr_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
+            critical_call(func_id);
 
         func_ptr_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
+            critical_call(func_id),
             func_ptr_assign_like(func_id, v2, p_context, tgt),
             assign_like(func_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
             paths(&p_new);
 
-        // Java Object Propagation
+        // Local Java Object Propagation
         java_obj_assign_like(func_id, v.clone(), p.clone(), tgt) <--
-            java_obj_assign(site_id, vx, tgt), let FlowVertex(v, p) = vx,
-            let InsnSiteId {func_id, ..} = InsnSiteId::unpack_from_slice(&**site_id).unwrap();
+            java_obj_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
+            critical_call(func_id);
 
         java_obj_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
+            // This resulted in a big reduction on Downloader test case
+            critical_call(func_id),
             java_obj_assign_like(func_id, v2, p_context, tgt),
             assign_like(func_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
             paths(&p_new);
+
+        critical_call(func_id) <-- (java_call(func_id, _, _, _, _, _) | indirect_call(func_id, _, _, _));
+        critical_call(func_id) <--
+            critical_summary(tgt, _, _),
+            call(func_id, _, tgt);
     };
     log::info!("index scc times: {}", prog.scc_times_summary());
     log::trace!(
