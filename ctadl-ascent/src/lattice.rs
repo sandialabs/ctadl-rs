@@ -57,9 +57,7 @@ impl<T: Eq> PartialOrd for Consistent<T> {
             (Consistent::Bottom, Consistent::Bottom) => Some(Ordering::Equal),
             (Consistent::Bottom, Consistent::Value(_)) => Some(Ordering::Less),
             (Consistent::Value(_), Consistent::Bottom) => Some(Ordering::Greater),
-            (Consistent::Value(a), Consistent::Value(b)) => {
-                (a == b).then_some(Ordering::Equal)
-            }
+            (Consistent::Value(a), Consistent::Value(b)) => (a == b).then_some(Ordering::Equal),
         }
     }
 }
