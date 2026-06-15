@@ -5,6 +5,8 @@ use std::fmt::{self, Debug, Display};
 use std::ops::Deref;
 use std::str::FromStr;
 
+use ascent::lattice::Lattice;
+use ctadl_ir::Symbol;
 use derive_builder::Builder;
 use immortal::StringRef;
 use internment::ArcIntern;
@@ -332,6 +334,97 @@ impl Display for CallString {
             write!(f, "{}", site)?;
         }
         write!(f, "]")
+    }
+}
+
+/// Compares two call strings by *lattice height* for [`SmallestCallString`].
+///
+/// Returns [`Ordering::Greater`] when `a` is the higher (preferred) element — i.e.
+/// when `a` is the "smaller" call string. Smaller means shorter; among equal
+/// lengths the lexicographically smaller string is higher. (`CallString`'s derived
+/// `Ord` is the lexicographic order over its frames, used here for the tie-break.)
+fn call_string_height_cmp(a: &CallString, b: &CallString) -> std::cmp::Ordering {
+    // Shorter `a` => a.len() < b.len() => b.len().cmp(a.len()) == Greater => `a` higher.
+    // Equal length, lex-smaller `a` => a < b => b.cmp(a) == Greater => `a` higher.
+    b.len().cmp(&a.len()).then_with(|| b.cmp(a))
+}
+
+/// A lattice over [`CallString`] that joins toward the *smallest* call string.
+///
+/// Unlike [`crate::lattice::Consistent`] — which sticks to the first value seen for
+/// a key — this lattice always moves toward the smaller call string: shorter is
+/// higher, and among equal lengths the lexicographically smaller is higher. The
+/// empty call string (length 0) is therefore the top element, so a key converges to
+/// the empty / fully-resolved context whenever it is derivable. This guarantees the
+/// `cs.is_empty()` feedback (e.g. index_engine rule 3.5) is never missed merely
+/// because some longer call string happened to be recorded first.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum SmallestCallString {
+    /// No value yet — the lattice bottom and the identity for `join`.
+    #[default]
+    Bottom,
+    /// A call string. Higher elements hold smaller call strings.
+    Value(CallString),
+}
+
+impl SmallestCallString {
+    /// Returns the call string, if any.
+    pub fn value(&self) -> Option<&CallString> {
+        match self {
+            SmallestCallString::Value(cs) => Some(cs),
+            SmallestCallString::Bottom => None,
+        }
+    }
+
+    /// Empty call string is top
+    pub fn top() -> Self {
+        SmallestCallString::Value(CallString::new())
+    }
+}
+
+impl PartialOrd for SmallestCallString {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SmallestCallString {
+    /// `Bottom` is the least element; among values, the smaller call string is the
+    /// greater (higher) element. This is a total order, consistent with the
+    /// pointer-based `Eq` because interning makes equal slices pointer-equal.
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self, other) {
+            (SmallestCallString::Bottom, SmallestCallString::Bottom) => Ordering::Equal,
+            (SmallestCallString::Bottom, SmallestCallString::Value(_)) => Ordering::Less,
+            (SmallestCallString::Value(_), SmallestCallString::Bottom) => Ordering::Greater,
+            (SmallestCallString::Value(a), SmallestCallString::Value(b)) => {
+                call_string_height_cmp(a, b)
+            }
+        }
+    }
+}
+
+impl Lattice for SmallestCallString {
+    /// Least upper bound: moves UP toward the smaller call string. `Bottom` is the
+    /// identity; among values the smaller call string wins.
+    fn join_mut(&mut self, other: Self) -> bool {
+        if other > *self {
+            *self = other;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Greatest lower bound: moves DOWN toward the larger call string / `Bottom`.
+    fn meet_mut(&mut self, other: Self) -> bool {
+        if other < *self {
+            *self = other;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -996,6 +1089,27 @@ impl Display for FlowVertex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let FlowVertex(var, path) = self;
         write!(f, "{var}{path}")
+    }
+}
+
+/// Resolvents represent target information for a virtual function call or indirect call. They con
+/// be either a function ID or an object. The function ID can be used directly. Typically the object
+/// is used in conjunction with virtual method table information to resolve the call.
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Serialize, Deserialize)]
+pub enum Resolvent {
+    #[default]
+    Unresolved,
+    Function(FunctionId),
+    Object(Symbol),
+}
+
+impl Display for Resolvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Resolvent::Unresolved => write!(f, "unresolved"),
+            Resolvent::Function(func_id) => write!(f, "function({})", func_id.id),
+            Resolvent::Object(cls) => write!(f, "object({cls})"),
+        }
     }
 }
 
