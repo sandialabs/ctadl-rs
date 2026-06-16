@@ -983,7 +983,7 @@ pub fn taint_index_with_config(
             let v2 = call_arg!(insn_id, *n2);
 
         // Local virtual call and resolvent, bypassing the summary machinery.
-        assign_like(func_id, v2.into(), p1, v1.into(), p2) <--
+        assign_like(func_id, v1.into(), p1, v2.into(), p2) <--
             java_call(func_id, insn_id, arg, arg_p, mname, mdesc),
             java_obj_assign_like(func_id, arg, arg_p, cls),
             java_resolvents(cls, mname, mdesc, resolve_tgt),
@@ -994,7 +994,7 @@ pub fn taint_index_with_config(
             let v2 = FlowVariableKind::CallArg(n2_id),
             let v1 = FlowVariableKind::CallArg(n1_id);
 
-        assign_like(func_id, v2.into(), p1, v1.into(), p2) <--
+        assign_like(func_id, v1.into(), p1, v2.into(), p2) <--
             indirect_call(func_id, insn_id, arg, arg_p),
             func_ptr_assign_like(func_id, arg, arg_p, resolve_tgt),
             let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
