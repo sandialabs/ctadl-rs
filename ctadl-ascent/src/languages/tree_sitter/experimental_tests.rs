@@ -178,8 +178,8 @@ fn comma_list_declarations() {
     let (program, dump) = program_from_string(src);
 
     log::info!("{}", dump);
-    assert!(check_assign(&program, "x", ["a"], None));
-    assert!(check_assign(&program, "y", ["b"], None));
+    assert!(check_assign_or_update(&program, "x", ["a"], None));
+    assert!(check_assign_or_update(&program, "y", ["b"], None));
     assert!(check_match(&dump, "assign %z = <const: \"7\""));
 
     //assert!(check_match(&dump, "assign %b = @p0"));
@@ -230,9 +230,9 @@ fn simple_elif() {
     let (program, dump) = program_from_string(src);
 
     log::info!("{}", dump);
-    assert!(check_assign(&program, "v_if", ["x"], Some(1)));
-    assert!(check_assign(&program, "v_elif", ["x"], Some(4)));
-    assert!(check_assign(&program, "v_else", ["x"], Some(6)));
+    assert!(check_assign_or_update(&program, "v_if", ["x"], Some(1)));
+    assert!(check_assign_or_update(&program, "v_elif", ["x"], Some(4)));
+    assert!(check_assign_or_update(&program, "v_else", ["x"], Some(6)));
 }
 
 #[test_log::test]
@@ -251,15 +251,10 @@ fn parameter_lists_query() {
     log::info!("{}", dump);
     assert!(check_match(&dump, "assign %b = @p0"));
     assert!(check_match(&dump, "what(@p0[byval], @p1[byref])"));
-    let (summary, source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     //log::info!("SUMMARY: {:?}", summary);
     //[(Function("parameter_what"), AuxParam(1), Path(""), Param(Index(0)), Path(""))]
-    assert!(summary_returns_param(
-        &summary,
-        &source_info,
-        "parameter_what",
-        0
-    ));
+    assert!(summary_returns_param(&summary, 0, ""));
 }
 
 #[test_log::test]
@@ -298,7 +293,7 @@ fn no_child_while() {
         ..Default::default()
     };
 
-    let (summary, source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     */
 }
 #[test_log::test]
@@ -318,13 +313,8 @@ fn unbraced_if() {
         ..Default::default()
     };
 
-    let (summary, source_info) = get_summary(program_info).unwrap();
-    assert!(summary_returns_param(
-        &summary,
-        &source_info,
-        "unbraced_if",
-        1
-    ));
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
+    assert!(summary_returns_param(&summary, 1, ""));
     log::info!("{}", dump);
 }
 
@@ -350,7 +340,7 @@ fn double_if() {
         ..Default::default()
     };
 
-    let (summary, source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
 
     assert!(summary_returns_param(
         &summary,
@@ -386,7 +376,7 @@ fn unbraced_if_while() {
         ..Default::default()
     };
 
-    let (summary, source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
 
     assert!(summary_returns_param(
         &summary,
@@ -417,7 +407,7 @@ fn unbraced_while() {
         ..Default::default()
     };
 
-    let (summary, source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
 
     assert!(summary_returns_param(
         &summary,
@@ -444,8 +434,8 @@ fn do_while() {
     let (prog, dump) = program_from_string(src);
     log::info!("{}", dump);
     assert!(check_block_count(&prog, 4));
-    //assert!(check_assign(&program, "x", ["b"], Some(1)));
-    //assert!(check_assign(&program, "y", ["x"], Some(2)));
+    //assert!(check_assign_or_update(&program, "x", ["b"], Some(1)));
+    //assert!(check_assign_or_update(&program, "y", ["x"], Some(2)));
 }
 
 #[test_log::test]
@@ -466,8 +456,8 @@ fn extra_parens() {
     ";
     let (program, dump) = program_from_string(src);
     log::info!("{}", dump);
-    assert!(check_assign(&program, "x", ["z"], None));
-    assert!(check_assign(&program, "y", ["z"], None));
+    assert!(check_assign_or_update(&program, "x", ["z"], None));
+    assert!(check_assign_or_update(&program, "y", ["z"], None));
 }
 
 #[test_log::test]
@@ -522,8 +512,8 @@ fn simple_while() {
         ";
     let (program, dump) = program_from_string(src);
     log::info!("{}", dump);
-    assert!(check_assign(&program, "x", ["b"], Some(3)));
-    assert!(check_assign(&program, "y", ["x"], Some(2)));
+    assert!(check_assign_or_update(&program, "x", ["b"], Some(3)));
+    assert!(check_assign_or_update(&program, "y", ["x"], Some(2)));
     assert!(janky_goto(&dump.as_str(), 1, "2, 3"));
     assert!(janky_goto(&dump.as_str(), 3, "1")); //the condition goes to 3, not the body.*/
 }
@@ -831,7 +821,7 @@ fn simplest_calls() {
         ..Default::default()
     };
     log::info!("{}", dump);
-    let (summary, _source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     log::info!("{:?}", summary);
     assert!(check_match(&dump, "direct-call tgt"));
 }
@@ -860,7 +850,7 @@ fn params_into_calls() {
 
     log::info!("{}", dump);
 
-    let (summary, _source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     log::info!("{:?}", summary);
     assert!(
         check_match(&dump, "assign %x = @p0"),
@@ -898,7 +888,7 @@ fn call_not_assign() {
     };
     log::info!("{}", dump);
 
-    let (summary, _source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     log::info!("{:?}", summary);
 
     assert!(check_match(&dump, "direct-call foo"));
@@ -959,7 +949,7 @@ fn simplest_if_with_return() {
     };
 
     log::info!("{}", dump);
-    let (summary, source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     assert!(summary_returns_param(
         &summary,
         &source_info,
@@ -998,9 +988,9 @@ fn shadow_block() {
     };
     log::info!("{}", dump);
 
-    let (summary, source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     log::info!("{:?}", summary);
-    assert!(summary_returns_param(&summary, &source_info, "bar", 1));
+    assert!(summary_returns_param(&summary, 1, ""));
 }
 
 #[test_log::test]
@@ -1037,7 +1027,7 @@ fn indirect_call_1() {
     };
     log::info!("{}", dump);
 
-    let (summary, _source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     log::info!("{:?}", summary);
 
     assert!(check_match(&dump, "indirect-call"));
@@ -1059,7 +1049,7 @@ fn block_without_return() {
     };
     log::info!("{}", dump);
 
-    let (summary, _source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     log::info!("{:?}", summary);
 
     assert!(check_match(&dump, "assign %x"));

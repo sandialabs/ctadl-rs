@@ -1,4 +1,9 @@
-#![allow(unused)] //TODO_JDB REMOVE THIS
+// `test_utils` is included as an unconditional `mod` (not `#[cfg(test)]`), so in non-test builds
+// these helpers have no callers and trip `dead_code` under `-D warnings`. Allowing it here keeps
+// `cargo clippy -- -D warnings` green. Cleaner fix when someone can touch mod.rs: make the
+// declaration `#[cfg(test)] mod test_utils;` and drop this allow.
+#![allow(dead_code)]
+
 use crate::error::Error;
 use crate::facts as fx;
 
@@ -9,10 +14,12 @@ use crate::{
     languages::tree_sitter,
 };
 use anyhow::{Context, Result};
+// `DirectedGraph` is a trait import: it provides `num_nodes()` used by `check_block_count`.
+// It looks unused but removing it breaks method resolution.
 use ctadl_ir::graph::DirectedGraph;
-use ctadl_ir::{Exp, StatementKind, VariableRef, ssa};
-use ctadl_ir::{Program, ProgramInfo};
-use std::path::{Path, PathBuf};
+use ctadl_ir::{AccessPath, Exp, FunctionData, StatementKind, VariableRef, ssa};
+use ctadl_ir::{Program, ProgramInfo, ParameterType, FieldAccess};
+use crate::facts::Path;
 
 pub(crate) fn init_test_logging() {
     let _ = env_logger::builder()
@@ -21,8 +28,8 @@ pub(crate) fn init_test_logging() {
         .try_init();
 }
 
-pub(crate) fn get_full_path(filename: &str) -> Result<PathBuf> {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+pub(crate) fn get_full_path(filename: &str) -> Result<std::path::PathBuf> {
+    let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     // Now just append the folders from the crate root
     path.push("tests");
@@ -41,13 +48,8 @@ pub(crate) fn program_from_string(src: &str) -> (Program, String) {
     (result.0, result.2)
 }
 
-/* Compile a program from a string. */
-pub(crate) fn program_from_string_no_check(src: &str) -> Program {
-    program_from_string(src).0
-}
-
 /* Compile a program from a file. */
-pub(crate) fn program_from_file<P: AsRef<Path>>(filename: P) -> Result<Program> {
+pub(crate) fn program_from_file<P: AsRef<std::path::Path>>(filename: P) -> Result<Program> {
     let path = filename.as_ref();
 
     // Read the file, and if it fails, attach a helpful message before returning
@@ -79,14 +81,54 @@ pub(crate) fn check_function_count(prog: &Program, count: usize) -> bool {
     true
 }
 
+pub(crate) fn get_only_function(prog: &Program) -> Option<&FunctionData> {
+    if !check_function_count(prog, 1) {
+        return None;
+    }
+    prog.functions.functions.raw.first()
+}
+
+/* A test to check a function has a certain number and type of params. */
+pub(crate) fn check_params(prog: &Program, params: &[ParameterType]) -> bool {
+    let Some(fun) = get_only_function(prog) else {
+        return false;
+    };
+
+    if params.len() != fun.params.parameters.len() {
+        let err = format!(
+            "Wrong number of params, expected {} got {}",
+            params.len(),
+            fun.params.parameters.len()
+        );
+        check_fail(prog, &err);
+        return false;
+    }
+
+    for (i, (actual, expected)) in params
+        .iter()
+        .zip(fun.params.parameters.iter())
+        .enumerate()
+    {
+        if expected != actual {
+            let err = format!(
+                "Wrong param type at index {}, expected {:?} got {:?}",
+                i,
+                expected,
+                actual
+            );
+            check_fail(prog, &err);
+            return false;
+        }
+    }
+
+    true
+}
+
 /* Checks that count number of blocks exist in the program.
   Implicitly checks for the existance of only 1 functions.
 */
 pub(crate) fn check_block_count(prog: &Program, count: usize) -> bool {
-    if !check_function_count(prog, 1) {
-        return false;
-    }
-    let Some(fun) = prog.functions.functions.raw.first() else {
+    let Some(fun) = get_only_function(prog) else {
         return false;
     };
     let len = fun.blocks.num_nodes();
@@ -99,21 +141,65 @@ pub(crate) fn check_block_count(prog: &Program, count: usize) -> bool {
     true
 }
 
+// A debugging aid for inspecting parsed blocks.
 pub(crate) fn debug_output_blocks(prog: &Program) {
     let Some(fun) = prog.functions.functions.raw.first() else {
         log::warn!("No functions in program");
         return;
     };
-    //let mut idx = 0;
-    for (idx, block) in fun.blocks.as_slice().into_iter().enumerate() {
+    for (idx, block) in fun.blocks.iter().enumerate() {
         log::info!("BLOCK {}: {}", idx, block);
-        //  idx += 1;
     }
 }
+
+// TODO: offset paths. This only produces `FieldAccess::Symbol`, so subscript/offset segments like
+// `[3]` are not parsed into `FieldAccess::Offset` and access paths with numeric offsets won't
+// round-trip through this helper yet.
+fn parse_fields(s: &str) -> impl Iterator<Item = FieldAccess> + '_ {
+    s.split('.')
+        .filter(|part| !part.is_empty())
+        .map(|f| FieldAccess::Symbol(f.into()))
+}
+
+fn access_path_from_str(s: &str) -> AccessPath {
+    if let Some(rest) = s.strip_prefix("$globals") {
+        return AccessPath::new(
+            VariableRef::new_global(),
+            parse_fields(rest.strip_prefix('.').unwrap_or("")),
+        );
+    }
+
+    if let Some(rest) = s.strip_prefix("@p") {
+        let (n_str, suffix) = if let Some((n, tail)) = rest.split_once('.') {
+            (n, tail)
+        } else {
+            (rest, "")
+        };
+
+        let n: u32 = n_str.parse().expect("invalid parameter index in @pN");
+
+        return AccessPath::new(
+            VariableRef::new_parameter(n.into()),
+            parse_fields(suffix),
+        );
+    }
+
+    let (base, suffix) = if let Some((base, tail)) = s.split_once('.') {
+        (base, tail)
+    } else {
+        (s, "")
+    };
+
+    AccessPath::new(
+        VariableRef::new_local(base.to_string()),
+        parse_fields(suffix),
+    )
+}
+
 /* This function is intended to run on Program objects generated by
 parsing a single function and will search all blocks for a
-particular assignment. */
-pub(crate) fn check_assign<I>(
+particular assignment or update if the dest requires an update. */
+pub(crate) fn check_assign_or_update<I>(
     prog: &Program,
     dst: &str,
     src_strs: I,
@@ -124,10 +210,19 @@ where
 {
     let srcs: Vec<Exp> = src_strs
         .into_iter()
-        .map(|s| Exp::from(VariableRef::new_local(String::from(s))))
+        .map(|s| Exp::from(access_path_from_str(s)))
         .collect();
-    let var = VariableRef::new_local(String::from(dst));
-    let assign = StatementKind::assign(var, srcs);
+
+    let dst_ap = access_path_from_str(dst);
+
+    let expected = if dst_ap.path.is_empty() {
+        StatementKind::assign(dst_ap.variable_ref, srcs)
+    } else {
+        if srcs.len() != 1 {
+            panic!("Update destination requires exactly one source expression");
+        }
+        StatementKind::update(dst_ap, srcs.into_iter().next().unwrap())
+    };
 
     if !check_function_count(prog, 1) {
         return false;
@@ -135,23 +230,26 @@ where
     let Some(fun) = prog.functions.functions.raw.first() else {
         return false;
     };
-    //for block in fun.blocks.iter() {
+
     for (i, block) in fun.blocks.iter().enumerate() {
-        // You can now check 'i' before proceeding
         if let Some(req_block) = block_id
             && i != req_block
         {
             continue;
         }
+
         for stmt in block.statements.iter() {
-            if let StatementKind::Assign { .. } = &stmt.kind
-                && stmt.kind == assign
-            {
+            if stmt.kind == expected {
                 return true;
             }
         }
     }
-    let err = format!("Could not find '{}' in function {}.", assign, fun.name);
+
+    let err = format!(
+        "Could not find '{}' in function {}.",
+        expected,
+        fun.name
+    );
     check_fail(prog, &err);
     false
 }
@@ -165,8 +263,12 @@ pub(crate) fn check_match(prog_str: &str, needle: &str) -> bool {
 }
 
 pub(crate) fn get_summary(
-    mut program_info: ProgramInfo,
+    program: Program,
 ) -> Result<(Vec<FunctionSummary>, IndexSourceInfo), Error> {
+    let mut program_info = ProgramInfo {
+        program,
+        ..Default::default()
+    };
     program_info.program.verify()?;
     let mut facts = IndexFacts::default();
     ssa::transform_program(&mut program_info.program, true);
@@ -176,27 +278,9 @@ pub(crate) fn get_summary(
         &mut facts,
         &mut source_info,
         CallResolutionStrategy::Mixed,
-    ); //why is that mutable in codegen?
+    );
     let result = taint_index(facts);
     Ok((result.summary, source_info))
-}
-
-// Isn't it simpler to just assume we will only pass a summary of 1 function?
-pub(crate) fn summary_returns_param(
-    summary: &[FunctionSummary],
-    source_info: &IndexSourceInfo,
-    func_name: &str,
-    param_num: i16,
-) -> bool {
-    let id = source_info
-        .sites
-        .get_function_id(fx::Function(func_name.into()))
-        .unwrap();
-    summary.iter().any(|r| {
-        r.0 == id
-            && r.1 == fx::FormalIndex::new(RETURN_INDEX)
-            && r.3 == fx::FormalIndex::new(param_num)
-    })
 }
 
 pub(crate) fn summary_count(summary: &[FunctionSummary], count: usize) -> bool {
@@ -210,10 +294,80 @@ pub(crate) fn summary_search(
     to_index: i16,
     to_path: &str,
 ) -> bool {
+    let from_path: Path = from_path.parse().unwrap();
+    let to_path: Path = to_path.parse().unwrap();
     summary.iter().any(|r| {
-        r.1 == fx::FormalIndex::new(to_index)
-            && r.2.to_string() == to_path
-            && r.3 == fx::FormalIndex::new(from_index)
-            && r.4.to_string() == from_path
+        r.1 == fx::FormalIndex::new(to_index) &&
+        r.2 == to_path &&
+        r.3 == fx::FormalIndex::new(from_index) &&
+        r.4 == from_path
     })
+}
+
+pub(crate) fn summary_returns_param(
+    summary: &[FunctionSummary],
+    param_num: i16,
+    param_path: &str
+) -> bool {
+    summary_search(summary, param_num, param_path, RETURN_INDEX, "")
+}
+
+// Unit tests for the access-path string DSL itself. These helpers contain real parsing logic, so a
+// bug here would silently weaken every test that relies on them.
+#[cfg(test)]
+mod ap_tests {
+    use super::*;
+
+    #[test]
+    fn local_no_fields() {
+        let ap = access_path_from_str("b");
+        assert_eq!(ap.variable_ref, VariableRef::new_local("b".to_string()));
+        assert!(ap.path.is_empty());
+    }
+
+    #[test]
+    fn param_with_field() {
+        assert_eq!(
+            access_path_from_str("@p1.f2"),
+            AccessPath::new(
+                VariableRef::new_parameter(1u32.into()),
+                [FieldAccess::Symbol("f2".into())],
+            ),
+        );
+    }
+
+    #[test]
+    fn global_with_field() {
+        assert_eq!(
+            access_path_from_str("$globals.a"),
+            AccessPath::new(VariableRef::new_global(), [FieldAccess::Symbol("a".into())]),
+        );
+    }
+
+    #[test]
+    fn nested_fields() {
+        assert_eq!(
+            access_path_from_str("v.f1.f2"),
+            AccessPath::new(
+                VariableRef::new_local("v".to_string()),
+                [
+                    FieldAccess::Symbol("f1".into()),
+                    FieldAccess::Symbol("f2".into()),
+                ],
+            ),
+        );
+    }
+
+    #[test]
+    fn parse_fields_skips_empty_segments() {
+        // Leading/trailing/double dots must not produce empty field segments.
+        let fields: Vec<FieldAccess> = parse_fields(".a..b.").collect();
+        assert_eq!(
+            fields,
+            vec![
+                FieldAccess::Symbol("a".into()),
+                FieldAccess::Symbol("b".into()),
+            ],
+        );
+    }
 }
