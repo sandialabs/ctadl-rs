@@ -1,4 +1,5 @@
 use crate::languages::tree_sitter::test_utils::*;
+use crate::languages::tree_sitter::testing_block_flow_ascii::*;
 
 use ctadl_ir::ProgramInfo;
 
@@ -21,11 +22,11 @@ fn type_def_func_params() {
         }
             "#;
     let (_, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
 }
 
 #[test_log::test]
-fn simplest_indirect() {
+fn func_ptr_simplest() {
     let src = r#"
                     #include <stdio.h>
 
@@ -37,7 +38,7 @@ fn simplest_indirect() {
                     "#;
 
     let (_, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_match(&dump, "funcptr-call"));
 }
 
@@ -53,7 +54,7 @@ fn func_params() {
 "#;
 
     let (_, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_match(&dump, "direct-call callback"));
 }
 
@@ -87,7 +88,7 @@ int main() {
 "#;
 
     let (_, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
 }
 
 #[test_log::test]
@@ -117,7 +118,7 @@ fn shadowing() {
 }
         "#;
     let (_, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
 }
 
 #[test_log::test]
@@ -131,7 +132,7 @@ fn if_no_scope() {
     "#;
     let (_, dump) = program_from_string(src);
 
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_match(&dump, "return @p0.unbraced"));
 }
 
@@ -146,6 +147,7 @@ fn empty_param_list() {
             }
         ";
     let (_, dump) = program_from_string(src);
+    dump_ir(&dump);
 
     assert!(check_match(&dump, "assign %b = %a"), "FAIL: dump\n{dump}");
 }
@@ -160,7 +162,7 @@ fn declare_assign() {
             }
         ";
     let (_, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_match(&dump, "assign %b = $globals.a"));
     assert!(check_match(&dump, "assign %<t0> = %b"));
     assert!(check_match(&dump, "assign %c = %<t0>"));
@@ -177,7 +179,7 @@ fn comma_list_declarations() {
 }";
     let (program, dump) = program_from_string(src);
 
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_assign(&program, "x", ["a"], None));
     assert!(check_assign(&program, "y", ["b"], None));
     assert!(check_match(&dump, "assign %z = <const: \"7\""));
@@ -199,7 +201,7 @@ fn simple_for() {
         ";
     let (_, dump) = program_from_string(src);
 
-    log::info!("{}", dump);
+    dump_ir(&dump);
     //assert!(check_match(&dump, "assign %b = @p0"));
     //assert!(check_match(&dump, "what(@p0[byval], @p1[byref])"));
 }
@@ -229,10 +231,20 @@ fn simple_elif() {
         ";
     let (program, dump) = program_from_string(src);
 
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_assign(&program, "v_if", ["x"], Some(1)));
     assert!(check_assign(&program, "v_elif", ["x"], Some(4)));
     assert!(check_assign(&program, "v_else", ["x"], Some(6)));
+    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
+    // Neither the outer if nor the inner else-if condition reaches the join directly.
+    assert!(
+        janky_goto(&dump, 0, "1, 3"),
+        "outer condition branches to consequence + else-if"
+    );
+    assert!(
+        janky_goto(&dump, 3, "4, 6"),
+        "inner condition branches to consequence + else"
+    );
 }
 
 #[test_log::test]
@@ -248,7 +260,7 @@ fn parameter_lists_query() {
         program,
         ..Default::default()
     };
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_match(&dump, "assign %b = @p0"));
     assert!(check_match(&dump, "what(@p0[byval], @p1[byref])"));
     let (summary, source_info) = get_summary(program_info).unwrap();
@@ -272,7 +284,7 @@ fn pointer_expression() {
             }            
         ";
     let (_program, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_match(&dump, "assign %b = @p0")); //?
     assert!(check_match(&dump, "what(@p0[byref])"))
 }
@@ -291,7 +303,7 @@ fn no_child_while() {
             }            
         ";
     let (_program, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     /*
     let program_info = ProgramInfo {
         program,
@@ -325,11 +337,29 @@ fn unbraced_if() {
         "unbraced_if",
         1
     ));
-    log::info!("{}", dump);
+    dump_ir(&dump);
 }
 
 #[test_log::test]
-#[ignore = "known_wip"]
+fn if_in_while() {
+    let src = r"
+            int if_in_while(int y, int z) {
+                int x = 5;
+                while(x<50){
+                  x = z;
+                  if(y == z)
+                    x = y;
+                  x = x + z;
+                 }                
+                return x; //ah it's not that there are two if's, it's that the if isn't followed by a return to overwrite the gotos.
+            }            
+        ";
+    let (_program, dump) = program_from_string(src);
+    dump_ir(&dump);
+    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0")
+}
+
+#[test_log::test]
 fn double_if() {
     let src = r"
             int double_if(int y, int z) {
@@ -342,8 +372,8 @@ fn double_if() {
             }            
         ";
     let (_program, dump) = program_from_string(src);
-    log::info!("{}", dump);
-    assert!(!check_match(&dump, "goto 0"), "contains errant goto 0")
+    dump_ir(&dump);
+    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0")
     /*
     let program_info = ProgramInfo {
         program,
@@ -361,39 +391,21 @@ fn double_if() {
 }
 
 #[test_log::test]
-#[ignore = "knownbug_workingit"]
 fn unbraced_if_while() {
     let src = r"
     // man I hope y is never 5!
             int unbraced_if_while(int y, int z) {
                 int x = 5;
-                  if(x == 3)
-                    x = z;                  
-                while(x == 5) 
+                if(x == 3)
+                    x = z;
+                while(x == 5)
                     x = y;
                 return x;
-            }            
+            }
         ";
     let (_program, dump) = program_from_string(src);
-    log::info!("{}", dump);
-    assert!(
-        false,
-        "You need to fix, 2.Continuation goes to 0, how does the if,while cause this?????WTH!"
-    )
-    /*
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-
-    let (summary, source_info) = get_summary(program_info).unwrap();
-
-    assert!(summary_returns_param(
-        &summary,
-        &source_info,
-        "unbraced_while",
-        0
-    ));*/
+    dump_ir(&dump);
+    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0")
 }
 
 #[test_log::test]
@@ -410,7 +422,7 @@ fn unbraced_while() {
             }            
         ";
     let (_program, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     /*
     let program_info = ProgramInfo {
         program,
@@ -428,24 +440,33 @@ fn unbraced_while() {
 }
 
 #[test_log::test]
-#[ignore = "Not done yet"]
 fn do_while() {
     let src = r"
             int do_while() {
-                int b = 2;  
+                int b = 2;
                 int x = 5;
                 do{
                     x = b;
                 } while(b = b + x);
                 int y = x;
                 return y;
-            }            
+            }
         ";
     let (prog, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_block_count(&prog, 4));
-    //assert!(check_assign(&program, "x", ["b"], Some(1)));
-    //assert!(check_assign(&program, "y", ["x"], Some(2)));
+    assert!(check_assign(&prog, "x", ["b"], Some(1)));
+    // do-while: body (block_1) -> condition (block_2); the condition loops back into
+    // the body (back-edge) and exits to the continuation (block_3).
+    assert!(
+        janky_goto(&dump, 1, "2"),
+        "body should fall into the condition"
+    );
+    assert!(
+        janky_goto(&dump, 2, "3, 1"),
+        "condition should exit to continuation and back-edge to body"
+    );
+    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
 }
 
 #[test_log::test]
@@ -465,7 +486,7 @@ fn extra_parens() {
         }
     ";
     let (program, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_assign(&program, "x", ["z"], None));
     assert!(check_assign(&program, "y", ["z"], None));
 }
@@ -483,7 +504,7 @@ fn plus_equals() {
         }
     ";
     let (_prog, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
 }
 
 #[test_log::test]
@@ -503,6 +524,7 @@ fn update_expression() {
         }
     ";
     let (_prog, dump) = program_from_string(src);
+    dump_ir(&dump);
     //assert(check_match(&dump,""))
     assert!(check_match(&dump, "@p0 = update (@p0.x :="));
 }
@@ -521,7 +543,7 @@ fn simple_while() {
             }            
         ";
     let (program, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_assign(&program, "x", ["b"], Some(3)));
     assert!(check_assign(&program, "y", ["x"], Some(2)));
     assert!(janky_goto(&dump.as_str(), 1, "2, 3"));
@@ -533,20 +555,37 @@ fn simple_while() {
 #[test_log::test]
 fn unbraced_if_else() {
     let src = r"
-            int simple_while(int y, int z) {
+            int unbraced_if_else(int y, int z) {
                 int x = 1;
                 if(x == 1)
                     x = y;
-/*
-                else if(x == 2)
-                    x = 0;
-*/
                 else
                 x = z;
             }            
         ";
     let (_program, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
+    // Both the if-consequence (x = y, @p0) and the unbraced else (x = z, @p1) must be
+    // present; the unbraced else body used to be silently dropped.
+    assert!(
+        check_match(&dump, "assign %x = @p0"),
+        "missing if-consequence"
+    );
+    assert!(
+        check_match(&dump, "assign %x = @p1"),
+        "unbraced else body was dropped"
+    );
+    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
+    // The condition branches to consequence + else only, never directly to the join.
+    assert!(
+        janky_goto(&dump, 0, "1, 3"),
+        "condition must branch to consequence and else, not the join"
+    );
+    assert!(
+        janky_goto(&dump, 1, "2"),
+        "consequence joins the continuation"
+    );
+    assert!(janky_goto(&dump, 3, "2"), "else joins the continuation");
 }
 
 #[test_log::test]
@@ -567,9 +606,9 @@ fn ascending_temps_per_function() {
         ";
 
     let (_program, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_match(&dump, "%<t4>"));
-    assert!(!check_match(&dump, "%<t5>"));
+    assert!(check_no_match(&dump, "%<t5>"));
 }
 
 #[test_log::test]
@@ -578,11 +617,10 @@ fn brackets_commutative() {
     let src = r"
             int field_access(Donkey v,  Burro* b, int x, int y){
                 int x = 3[f];
-            }   
         }
         ";
     let (_, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     //let summary = get_summary(program);
     //log::info!("SUMMARY {:#?}", summary);
     assert!(check_match(
@@ -608,7 +646,7 @@ fn brackets_simple() {
     
         "#;
     let (_, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     //let summary = get_summary(program);
     //log::info!("SUMMARY {:#?}", summary);
     assert!(check_match(&dump, "%f.[3]"));
@@ -629,7 +667,7 @@ fn field_access_values() {
             }   
         ";
     let (_, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     //let summary = get_summary(program);
     //log::info!("SUMMARY {:#?}", summary);
     assert!(check_match(&dump, "@p0 = update (@p0.f2 := @p2)"));
@@ -667,6 +705,7 @@ fn literals_in_expressions() {
             }
         ";
     let dump = program_from_string(src).1;
+    dump_ir(&dump);
     assert!(check_match(&dump, "assign %b = %a"));
     assert!(check_match(&dump, "assign %b = <const: "));
     assert!(check_match(&dump, "assign %c = %<t1>"));
@@ -691,7 +730,7 @@ fn complex_expressions() {
         ";
 
     let (_, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
 
     assert!(check_match(&dump, "assign %<t0> = %a, %b"));
     assert!(check_match(&dump, "assign %<t1> = %<t0>, %c"));
@@ -718,6 +757,7 @@ fn compound_return() {
             }
         ";
     let (_, dump) = program_from_string(src);
+    dump_ir(&dump);
 
     assert!(check_match(&dump, "assign %a = <const:"));
     assert!(check_match(&dump, "assign %<t0> = %a, %x"));
@@ -735,6 +775,7 @@ fn return_arity() {
             void really_void(void){return;}
         ";
     let (_, dump) = program_from_string(src);
+    dump_ir(&dump);
 
     //assert!(check_match(&dump, "define implicit_int() -> 1"));
     assert!(check_match(&dump, "define explicit() -> 1"));
@@ -749,7 +790,7 @@ fn params_and_simple_assign_in_example_2() {
         get_full_path("example2.c").expect("Test Sources are expected in .../tests/c/<filename>");
     let program = program_from_file(fp).expect("example2.c Program parsed");
     let dump = program.to_string();
-    log::info!("dump: {dump}");
+    dump_ir(&dump);
 
     assert!(check_match(&dump, "return %a"), "has return a");
     assert!(
@@ -773,6 +814,7 @@ fn passthrough_assignment() {
         }
         ";
     let dump = program_from_string(src).1;
+    dump_ir(&dump);
     assert!(check_match(&dump, "assign %a = <const"));
     assert!(check_match(&dump, "assign %b = %a"));
     assert!(check_match(&dump, "assign %<t0> = %a, %b"));
@@ -791,6 +833,7 @@ fn compound_declaration_with_fields() {
         }
         ";
     let dump = program_from_string(src).1;
+    dump_ir(&dump);
     assert!(check_match(&dump, "assign %<t0> = @p0.f1, @p0.f3"));
     assert!(check_match(&dump, "assign %<t1> = @p0.f5, $globals.b"));
     assert!(check_match(&dump, "@p0 = update (@p0.f4 := %<t1>)"));
@@ -808,6 +851,7 @@ fn param_by_reference() {
         }
         ";
     let (_, dump) = program_from_string(src);
+    dump_ir(&dump);
 
     assert!(check_match(&dump, "assign %b = @p1"));
 }
@@ -830,7 +874,7 @@ fn simplest_calls() {
         program,
         ..Default::default()
     };
-    log::info!("{}", dump);
+    dump_ir(&dump);
     let (summary, _source_info) = get_summary(program_info).unwrap();
     log::info!("{:?}", summary);
     assert!(check_match(&dump, "direct-call tgt"));
@@ -858,7 +902,7 @@ fn params_into_calls() {
         ..Default::default()
     };
 
-    log::info!("{}", dump);
+    dump_ir(&dump);
 
     let (summary, _source_info) = get_summary(program_info).unwrap();
     log::info!("{:?}", summary);
@@ -896,7 +940,7 @@ fn call_not_assign() {
         program,
         ..Default::default()
     };
-    log::info!("{}", dump);
+    dump_ir(&dump);
 
     let (summary, _source_info) = get_summary(program_info).unwrap();
     log::info!("{:?}", summary);
@@ -931,7 +975,7 @@ fn simplest_if_no_return() {
             }
         ";
     let (_program, dump) = program_from_string(src);
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(janky_goto(&dump.as_str(), 0, "1, 2"));
     assert!(janky_goto(&dump.as_str(), 1, "2"));
     assert!(janky_return(&dump.as_str(), 2, "@p1")); //returns
@@ -951,6 +995,7 @@ fn simplest_if_with_return() {
             }
         ";
     let (_program, dump) = program_from_string(src);
+    dump_ir(&dump);
 
     /*
     let program_info = ProgramInfo {
@@ -958,7 +1003,7 @@ fn simplest_if_with_return() {
         ..Default::default()
     };
 
-    log::info!("{}", dump);
+    dump_ir(&dump);
     let (summary, source_info) = get_summary(program_info).unwrap();
     assert!(summary_returns_param(
         &summary,
@@ -979,7 +1024,6 @@ fn simplest_if_with_return() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational"]
 fn shadow_block() {
     let src = r"
         int bar(int false_return, int ac_return){
@@ -996,7 +1040,7 @@ fn shadow_block() {
         program,
         ..Default::default()
     };
-    log::info!("{}", dump);
+    dump_ir(&dump);
 
     let (summary, source_info) = get_summary(program_info).unwrap();
     log::info!("{:?}", summary);
@@ -1004,7 +1048,6 @@ fn shadow_block() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational_indirect"]
 fn indirect_call_1() {
     let src = r#"
         #include <stdio.h>
@@ -1014,17 +1057,15 @@ fn indirect_call_1() {
         int sub(int a, int b) { return a - b; }
 
         int doit(int a) {
-            // 1. Declare a function pointer
-            int (*op_func)(int, int);
+            // 1. Declare a function pointer and point it at a target
+            //    (could be based on user input, making it tainted!)
+            int (*op_func)(int, int) = add;
 
-            // 2. Assign the pointer (could be based on user input, making it tainted!)
-            op_func = add; 
-
-            // 3. The Indirect Call
+            // 2. The Indirect Call
             int result = op_func(a, 3);
-            
-            // 4. Legacy syntax
-             result = (*op_func)(result, b);
+
+            // 3. Legacy syntax
+            result = (*op_func)(result, a);
             
             printf("Result: %d\n", result);
             return 0;
@@ -1035,7 +1076,7 @@ fn indirect_call_1() {
         program,
         ..Default::default()
     };
-    log::info!("{}", dump);
+    dump_ir(&dump);
 
     let (summary, _source_info) = get_summary(program_info).unwrap();
     log::info!("{:?}", summary);
@@ -1045,7 +1086,6 @@ fn indirect_call_1() {
 }
 
 #[test_log::test]
-#[ignore = "issue #40"]
 fn block_without_return() {
     let src = r"
         void bar(){
@@ -1057,7 +1097,7 @@ fn block_without_return() {
         program,
         ..Default::default()
     };
-    log::info!("{}", dump);
+    dump_ir(&dump);
 
     let (summary, _source_info) = get_summary(program_info).unwrap();
     log::info!("{:?}", summary);
@@ -1085,6 +1125,6 @@ fn try_catch() {
 "#;
     let (_program, dump) = program_from_string(src);
 
-    log::info!("{}", dump);
+    dump_ir(&dump);
     assert!(check_match(&dump, "exceptions not implemented"));
 }
