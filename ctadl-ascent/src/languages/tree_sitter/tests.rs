@@ -9,7 +9,7 @@ fn simple_function() {
             void simple() {}
         ";
     let prog = program_from_string(src).0;
-    assert!(check_block_count(&prog, 1));
+    check_block_count(&prog, 1);
 }
 
 #[test_log::test]
@@ -22,8 +22,8 @@ fn simple_assign() {
             }
         ";
     let prog = program_from_string(src).0;
-    assert!(check_block_count(&prog, 1));
-    assert!(check_assign_or_update(&prog, "b", ["a"], None));
+    check_block_count(&prog, 1);
+    check_assign_or_update(&prog, "b", ["a"], None);
 }
 
 #[test_log::test]
@@ -37,9 +37,9 @@ fn simple_assign_expr() {
             }
         ";
     let (prog, _dump) = program_from_string(src);
-    assert!(check_block_count(&prog, 1));
-    assert!(check_assign_or_update(&prog, "<t0>", ["a", "b"], None));
-    assert!(check_assign_or_update(&prog, "c", ["<t0>"], None));
+    check_block_count(&prog, 1);
+    check_assign_or_update(&prog, "<t0>", ["a", "b"], None);
+    check_assign_or_update(&prog, "c", ["<t0>"], None);
 }
 
 #[test_log::test]
@@ -51,7 +51,7 @@ fn simple_assign_global() {
             }
         ";
     let prog = program_from_string(src).0;
-    assert!(check_assign_or_update(&prog, "b", ["$globals.a"], None));
+    check_assign_or_update(&prog, "b", ["$globals.a"], None);
 }
 
 #[test_log::test]
@@ -66,7 +66,7 @@ fn simple_global_assign() {
         ";
     let (prog, dump) = program_from_string(src);
     log::info!("{}", dump);
-    assert!(check_assign_or_update(&prog, "$globals.a", ["b"], None));
+    check_assign_or_update(&prog, "$globals.a", ["b"], None);
 }
 
 #[test_log::test]
@@ -75,7 +75,7 @@ fn basic_params() {
             void basic_params(int x, int *y) {}
         ";
     let prog = program_from_string(src).0;
-    assert!(check_params(&prog, &[ByVal, ByRef]));
+    check_params(&prog, &[ByVal, ByRef]);
 }
 
 #[test_log::test]
@@ -86,7 +86,7 @@ fn basic_param_flow() {
             }            
         ";
     let prog = program_from_string(src).0;
-    assert!(check_params(&prog, &[ByVal]));
+    check_params(&prog, &[ByVal]);
 
     let summary = get_summary(prog).unwrap().0;
     assert!(summary_count(&summary, 1));
@@ -102,8 +102,8 @@ fn param_flows_through_local() {
             }            
         ";
     let prog = program_from_string(src).0;
-    assert!(check_params(&prog, &[ByVal]));
-    assert!(check_assign_or_update(&prog, "b", ["@p0"], None));
+    check_params(&prog, &[ByVal]);
+    check_assign_or_update(&prog, "b", ["@p0"], None);
 
     let summary = get_summary(prog).unwrap().0;
     assert!(summary_count(&summary, 1));
@@ -118,7 +118,7 @@ fn return_from_pointer() {
             }            
         ";
     let prog = program_from_string(src).0;
-    assert!(check_params(&prog, &[ByRef]));
+    check_params(&prog, &[ByRef]);
 
     let summary = get_summary(prog).unwrap().0;
     assert!(summary_count(&summary, 1));
@@ -134,8 +134,8 @@ fn return_from_pointer_through_local() {
             }            
         ";
     let prog = program_from_string(src).0;
-    assert!(check_params(&prog, &[ByRef]));
-    assert!(check_assign_or_update(&prog, "b", ["@p0"], None));
+    check_params(&prog, &[ByRef]);
+    check_assign_or_update(&prog, "b", ["@p0"], None);
 
     let summary = get_summary(prog).unwrap().0;
     assert!(summary_count(&summary, 1));
@@ -424,7 +424,7 @@ fn pointer_decl() {
 
     log::info!("{}", dump);
     //hmm how @njsalim: how do I test this assignment?
-    // assert!(check_assign_or_update(&prog, "r", ["@p0"])); <-- fails
+    // check_assign_or_update(&prog, "r", ["@p0"]); <-- fails
     assert!(check_match(&dump, "assign %r = @p0"));
     let (summary, source_info) = get_summary(program_info).unwrap();
     assert!(summary_returns_param(
@@ -622,7 +622,7 @@ fn scopes_arent_blocks() {
         return 0;
         }";
     let (program, _) = program_from_string(src);
-    assert!(check_block_count(&program, 1));
+    check_block_count(&program, 1);
 }
 
 #[test_log::test]
@@ -730,8 +730,8 @@ fn simple_else() {
     let (program, dump) = program_from_string(src);
 
     log::info!("{}", dump);
-    assert!(check_assign_or_update(&program, "v_if", ["x"], Some(1)));
-    assert!(check_assign_or_update(&program, "v_else", ["x"], Some(3)));
+    check_assign_or_update(&program, "v_if", ["x"], Some(1));
+    check_assign_or_update(&program, "v_else", ["x"], Some(3));
 }
 
  */

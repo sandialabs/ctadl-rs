@@ -178,8 +178,8 @@ fn comma_list_declarations() {
     let (program, dump) = program_from_string(src);
 
     log::info!("{}", dump);
-    assert!(check_assign_or_update(&program, "x", ["a"], None));
-    assert!(check_assign_or_update(&program, "y", ["b"], None));
+    check_assign_or_update(&program, "x", ["a"], None);
+    check_assign_or_update(&program, "y", ["b"], None);
     assert!(check_match(&dump, "assign %z = <const: \"7\""));
 
     //assert!(check_match(&dump, "assign %b = @p0"));
@@ -230,9 +230,9 @@ fn simple_elif() {
     let (program, dump) = program_from_string(src);
 
     log::info!("{}", dump);
-    assert!(check_assign_or_update(&program, "v_if", ["x"], Some(1)));
-    assert!(check_assign_or_update(&program, "v_elif", ["x"], Some(4)));
-    assert!(check_assign_or_update(&program, "v_else", ["x"], Some(6)));
+    check_assign_or_update(&program, "v_if", ["x"], Some(1));
+    check_assign_or_update(&program, "v_elif", ["x"], Some(4));
+    check_assign_or_update(&program, "v_else", ["x"], Some(6));
 }
 
 #[test_log::test]
@@ -433,9 +433,9 @@ fn do_while() {
         ";
     let (prog, dump) = program_from_string(src);
     log::info!("{}", dump);
-    assert!(check_block_count(&prog, 4));
-    //assert!(check_assign_or_update(&program, "x", ["b"], Some(1)));
-    //assert!(check_assign_or_update(&program, "y", ["x"], Some(2)));
+    check_block_count(&prog, 4);
+    //check_assign_or_update(&program, "x", ["b"], Some(1));
+    //check_assign_or_update(&program, "y", ["x"], Some(2));
 }
 
 #[test_log::test]
@@ -456,8 +456,8 @@ fn extra_parens() {
     ";
     let (program, dump) = program_from_string(src);
     log::info!("{}", dump);
-    assert!(check_assign_or_update(&program, "x", ["z"], None));
-    assert!(check_assign_or_update(&program, "y", ["z"], None));
+    check_assign_or_update(&program, "x", ["z"], None);
+    check_assign_or_update(&program, "y", ["z"], None);
 }
 
 #[test_log::test]
@@ -512,8 +512,8 @@ fn simple_while() {
         ";
     let (program, dump) = program_from_string(src);
     log::info!("{}", dump);
-    assert!(check_assign_or_update(&program, "x", ["b"], Some(3)));
-    assert!(check_assign_or_update(&program, "y", ["x"], Some(2)));
+    check_assign_or_update(&program, "x", ["b"], Some(3));
+    check_assign_or_update(&program, "y", ["x"], Some(2));
     assert!(janky_goto(&dump.as_str(), 1, "2, 3"));
     assert!(janky_goto(&dump.as_str(), 3, "1")); //the condition goes to 3, not the body.*/
 }
