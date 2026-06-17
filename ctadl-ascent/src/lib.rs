@@ -13,6 +13,7 @@ pub mod models;
 pub mod project;
 pub mod query_engine;
 pub mod stats;
+pub mod taint_compare;
 
 /// Initializes the logger
 pub fn init() {

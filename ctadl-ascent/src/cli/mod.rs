@@ -32,7 +32,7 @@ use ctadl_ir::ssa;
 use ctadl_ir::{ProgramInfo, encode};
 
 /// Helper: turn model endpoint table into QueryEndpoint vec
-fn build_query_endpoints(
+pub(crate) fn build_query_endpoints(
     batch: &crate::models::EndpointBatch,
     facts: &IndexFacts,
     idmap: &facts::IdMap,

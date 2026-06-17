@@ -1311,6 +1311,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctadl-dynamic"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctadl-ascent",
+ "env_logger",
+ "log",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ctadl-flowy"
 version = "0.1.0"
 dependencies = [

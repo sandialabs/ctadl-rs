@@ -1,0 +1,38 @@
+{
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature",
+          "pattern": ".*source.*"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "Test",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature",
+          "pattern": ".*sink.*"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Test",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}

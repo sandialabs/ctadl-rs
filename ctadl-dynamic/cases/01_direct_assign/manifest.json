@@ -1,0 +1,6 @@
+{
+  "name": "direct_assign",
+  "description": "source() return assigned to a local, passed straight to sink()",
+  "label": "Test",
+  "expect_flow": true
+}

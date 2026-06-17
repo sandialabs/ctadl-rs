@@ -1,0 +1,6 @@
+{
+  "name": "negative_no_flow",
+  "description": "source and sink present but disconnected; sink gets an untainted constant",
+  "label": "Test",
+  "expect_flow": false
+}
