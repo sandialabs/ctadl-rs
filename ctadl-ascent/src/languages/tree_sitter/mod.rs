@@ -814,10 +814,19 @@ impl<'a> Context<'a> {
                     .child_by_field_name("declarator")
                     .expect("double declarators on inits"),
                 "identifier" => nest_decl,
+                // Function-pointer / pointer / array declarators without an
+                // initializer, e.g. `int (*op_func)(int, int);`. Recurse to
+                // register the inner identifier as a local; there is no value
+                // to assign.
+                "function_declarator" | "pointer_declarator" | "parenthesized_declarator"
+                | "array_declarator" => {
+                    self.flatten_expr(program, nest_decl, source, scope_view)?;
+                    continue;
+                }
                 _ => {
-                    return Err(Error::TreeSitterParse(
-                        "Declaration didn't had an unexpected kind {decl_kind}".to_owned(),
-                    ));
+                    return Err(Error::TreeSitterParse(format!(
+                        "Declaration declarator had an unexpected kind {decl_kind}"
+                    )));
                 }
             };
             let var_name = to_str(&decl_ident, source);
@@ -1566,20 +1575,26 @@ impl<'a> Context<'a> {
         scope_view: &ScopeView,
         temp_name: String,
     ) -> Result<Exp, Error> {
-        let func_name = to_str(
-            &(node.child_by_field_name("function").expect("always has")),
-            source,
-        );
+        let func_node = node.child_by_field_name("function").expect("always has");
+        let func_name = to_str(&func_node, source);
 
         let call_edges = CallEdges::Explicit(smallvec![func_name.to_string()]);
 
         let arg_node = node.child_by_field_name("arguments").expect("always has");
         let args = self.collect_arguments(program, arg_node, source, scope_view)?;
 
-        let path_vec = Vec::<&str>::new();
-
-        let access_path =
-            self.build_access_path(func_name, path_vec.into_iter().collect(), scope_view);
+        // Resolve the callee. A plain `foo(...)` is an identifier; the legacy
+        // dereference form `(*op_func)(...)` wraps the pointer in a
+        // parenthesized/pointer expression, so route it through flatten_expr to
+        // recover the underlying variable (`op_func`).
+        let access_path = if func_node.kind() == "identifier" {
+            self.build_access_path(func_name, Default::default(), scope_view)
+        } else {
+            match self.flatten_expr(program, func_node, source, scope_view)? {
+                Exp::AccessPath(ap) => ap,
+                _ => self.build_access_path(func_name, Default::default(), scope_view),
+            }
+        };
 
         let var = &*access_path.variable_ref.variable;
         let style = match var {
@@ -1587,14 +1602,14 @@ impl<'a> Context<'a> {
                 log::info!("This is an Indirect LOCAL call: {}", name);
                 CallStyle::FuncPtrCall {
                     callee: access_path,
-                    signature: (Some("FOR THOSE ABOUT TO ROCK!".to_string())),
+                    signature: (Some("indirect-call".to_string())),
                 }
             }
             Variable::Param(idx) => {
                 log::info!("This is an Indirect PARAMETER call: {}", idx.get());
                 CallStyle::FuncPtrCall {
                     callee: access_path,
-                    signature: (Some("FOR THOSE ABOUT TO ROCK!".to_string())),
+                    signature: (Some("indirect-call".to_string())),
                 }
             }
             Variable::GlobalHeap => CallStyle::DirectCall { call_edges },

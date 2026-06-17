@@ -26,7 +26,7 @@ fn type_def_func_params() {
 }
 
 #[test_log::test]
-fn simplest_indirect() {
+fn func_ptr_simplest() {
     let src = r#"
                     #include <stdio.h>
 
@@ -1048,7 +1048,6 @@ fn shadow_block() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational_indirect"]
 fn indirect_call_1() {
     let src = r#"
         #include <stdio.h>
