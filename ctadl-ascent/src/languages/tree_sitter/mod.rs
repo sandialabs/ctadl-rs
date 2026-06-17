@@ -283,8 +283,9 @@ fn link_blocks(
                 // Falls off the end of the function body: emit an implicit empty
                 // `return` (SSA `complete()` rewrites it into a goto-to-exit).
                 // Mirrors the empty-return shape produced by `walk_return`.
-                if let Some(block) =
-                    program.functions[from_sv.fidx].blocks.get_mut(from_sv.blidx)
+                if let Some(block) = program.functions[from_sv.fidx]
+                    .blocks
+                    .get_mut(from_sv.blidx)
                 {
                     if block.terminator.is_none() {
                         block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
@@ -818,7 +819,9 @@ impl<'a> Context<'a> {
                 // initializer, e.g. `int (*op_func)(int, int);`. Recurse to
                 // register the inner identifier as a local; there is no value
                 // to assign.
-                "function_declarator" | "pointer_declarator" | "parenthesized_declarator"
+                "function_declarator"
+                | "pointer_declarator"
+                | "parenthesized_declarator"
                 | "array_declarator" => {
                     self.flatten_expr(program, nest_decl, source, scope_view)?;
                     continue;
