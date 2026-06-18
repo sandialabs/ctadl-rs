@@ -120,7 +120,14 @@
           in
           ctadl;
         packages.checksarif = checksarif;
-        packages.examples.nginx = pkgs.pkgsCross.gnu64.enableDebugging (
+        # Example target binaries live under `legacyPackages` rather than
+        # `packages` on purpose: `nix flake check` requires every
+        # `packages.<system>.<name>` to be a flat derivation, but this is a
+        # nested set (`examples.nginx`). `legacyPackages` is the standard home
+        # for nested/non-conforming trees and is skipped by flake check, which
+        # also keeps the slow cross-compile out of the check. Build it with
+        #   nix build .#legacyPackages.<system>.examples.nginx
+        legacyPackages.examples.nginx = pkgs.pkgsCross.gnu64.enableDebugging (
           pkgs.pkgsCross.gnu64.nginx.override {
             withDebug = true;
             withPerl = false;
