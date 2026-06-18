@@ -1187,19 +1187,26 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 }
             }
 
-            // Resolve the sink callee name(s) so consumers can match on the
-            // sink function directly instead of reconstructing it from the sink
-            // statement vertex. The model attaches a sink to the callee method
-            // (e.g. `system`), so the sink endpoint's `infunc` is that callee;
-            // resolve it via the same id_to_name map used for source/sink results.
+            // Resolve the source/sink callee name(s) so consumers can match on
+            // the function directly instead of reconstructing it from the taint
+            // statement vertex. The model attaches an endpoint to the callee
+            // method (e.g. `nvram_get` / `system`), so the endpoint's `infunc`
+            // is that callee; resolve it via the same id_to_name map used for
+            // source/sink results. `taintLabels` carries the source *kind*; this
+            // adds the source/sink *function names*.
+            let mut source_functions: BTreeSet<String> = BTreeSet::new();
             let mut sink_functions: BTreeSet<String> = BTreeSet::new();
-            for (_src, sink_opt, _lbl) in &details {
+            for (src, sink_opt, _lbl) in &details {
+                if let Some(name) = source_data.id_to_name.get(&src.infunc.id) {
+                    source_functions.insert(name.clone());
+                }
                 if let Some(sink) = sink_opt
                     && let Some(name) = source_data.id_to_name.get(&sink.infunc.id)
                 {
                     sink_functions.insert(name.clone());
                 }
             }
+            let source_functions: Vec<String> = source_functions.into_iter().collect();
             let sink_functions: Vec<String> = sink_functions.into_iter().collect();
 
             let mut additional_properties = BTreeMap::from([
@@ -1209,6 +1216,12 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     serde_json::json!(labels_to_vertices),
                 ),
             ]);
+            if let Some(first) = source_functions.first() {
+                additional_properties
+                    .insert("sourceCallee".to_string(), serde_json::json!(first));
+                additional_properties
+                    .insert("sourceFunctions".to_string(), serde_json::json!(source_functions));
+            }
             if let Some(first) = sink_functions.first() {
                 additional_properties
                     .insert("sinkCallee".to_string(), serde_json::json!(first));
