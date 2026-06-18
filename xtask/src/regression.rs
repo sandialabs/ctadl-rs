@@ -15,6 +15,7 @@ use anyhow::{bail, Context, Result};
 use crate::assertions;
 use crate::discovery::{self, Kind, TestCase};
 use crate::exec;
+use crate::jvm;
 
 /// Ghidra's pcode facts place the binary at this base address; subtract it to
 /// recover an offset usable with `addr2line` on the object file.
@@ -24,9 +25,10 @@ const PCODE_BASE_ADDRESS: i64 = 0x10_0000;
 pub struct Options {
     pub filter: Option<String>,
     pub tests_dir: Option<PathBuf>,
+    pub jvm_samples: Option<PathBuf>,
 }
 
-enum Outcome {
+pub(crate) enum Outcome {
     Pass,
     Fail(String),
     Skip(String),
@@ -36,44 +38,63 @@ enum Outcome {
 /// skipped, `Ok(false)` if any failed.
 pub fn run(opts: &Options) -> Result<bool> {
     let tests_dir = discovery::resolve_tests_dir(opts.tests_dir.as_deref())?;
-    preflight()?;
 
     let mut cases = discovery::discover(&tests_dir)?;
     if let Some(filter) = &opts.filter {
         cases.retain(|c| c.name.contains(filter));
     }
-    if cases.is_empty() {
+
+    // ctadl/dex-reader are only needed for the DEX/pcode cases; don't require
+    // them when (say) `--filter jvm` selects only the jvm-reader checks.
+    if !cases.is_empty() {
+        preflight()?;
+    }
+
+    let mut results: Vec<(String, Outcome)> = Vec::new();
+    for case in &cases {
+        // Infrastructure failures (analyzer crashed, tool missing, etc.) are
+        // reported as a failed case rather than aborting the whole run.
+        let outcome = run_case(case).unwrap_or_else(|err| Outcome::Fail(format!("{err:#}")));
+        results.push((case.name.clone(), outcome));
+    }
+
+    // jvm-reader checks: compile the sample .java and exercise jvm-reader on the
+    // resulting .class files and a jar built from them.
+    if let Some(samples_dir) = resolve_jvm_samples(opts.jvm_samples.as_deref()) {
+        let work = scratch_dir("jvm")?;
+        let mut jvm_results = jvm::run_checks(&samples_dir, &work)
+            .unwrap_or_else(|err| vec![("jvm".to_string(), Outcome::Fail(format!("{err:#}")))]);
+        if let Some(filter) = &opts.filter {
+            jvm_results.retain(|(name, _)| name.contains(filter));
+        }
+        results.extend(jvm_results);
+    }
+
+    if results.is_empty() {
         bail!("no test cases selected");
     }
 
     println!(
-        "Running {} regression case(s) from {}",
-        cases.len(),
+        "Ran {} regression case(s) (tests from {})",
+        results.len(),
         tests_dir.display()
     );
 
     let (mut passed, mut skipped, mut failures) = (0, 0, 0);
-    for case in &cases {
-        let outcome = match run_case(case) {
-            Ok(outcome) => outcome,
-            // Infrastructure failures (analyzer crashed, tool missing, etc.) are
-            // reported as a failed case rather than aborting the whole run.
-            Err(err) => Outcome::Fail(format!("{err:#}")),
-        };
-        match &outcome {
+    for (name, outcome) in &results {
+        match outcome {
             Outcome::Pass => {
                 passed += 1;
-                println!("  PASS  {}", case.name);
+                println!("  PASS  {name}");
             }
             Outcome::Skip(why) => {
                 skipped += 1;
-                println!("  SKIP  {}  ({why})", case.name);
+                println!("  SKIP  {name}  ({why})");
             }
             Outcome::Fail(why) => {
                 failures += 1;
                 println!(
-                    "  FAIL  {}\n        {}",
-                    case.name,
+                    "  FAIL  {name}\n        {}",
                     why.replace('\n', "\n        ")
                 );
             }
@@ -82,9 +103,21 @@ pub fn run(opts: &Options) -> Result<bool> {
 
     println!(
         "\n{passed} passed, {skipped} skipped, {failures} failed of {} case(s)",
-        cases.len()
+        results.len()
     );
     Ok(failures == 0)
+}
+
+/// Locate the jvm-reader sample sources. With no override, look where the crate
+/// lives relative to the repo root (`cargo xtask`) or the nightly cwd.
+fn resolve_jvm_samples(override_dir: Option<&Path>) -> Option<PathBuf> {
+    if let Some(dir) = override_dir {
+        return Some(dir.to_path_buf());
+    }
+    ["jvm-reader/tests/sample", "../jvm-reader/tests/sample"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_dir())
 }
 
 /// Ensure the executables the suite always needs are on `PATH`, failing early

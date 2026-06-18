@@ -11,6 +11,7 @@
 mod assertions;
 mod discovery;
 mod exec;
+mod jvm;
 mod regression;
 
 use std::path::PathBuf;
@@ -58,6 +59,10 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let dir = args.next().context("--tests-dir requires a value")?;
                 opts.tests_dir = Some(PathBuf::from(dir));
             }
+            "--jvm-samples" => {
+                let dir = args.next().context("--jvm-samples requires a value")?;
+                opts.jvm_samples = Some(PathBuf::from(dir));
+            }
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -78,6 +83,9 @@ Tasks:
     --filter <name>          Only run cases whose name contains <name>.
     --tests-dir <dir>        Look for test cases under <dir> (default: auto-detect
                              `nightly/tests` or `tests` relative to the cwd).
+    --jvm-samples <dir>      Directory of jvm-reader sample .java sources to
+                             compile and check (default: auto-detect
+                             `jvm-reader/tests/sample`).
 "
     );
 }

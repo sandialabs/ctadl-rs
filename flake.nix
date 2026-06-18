@@ -81,6 +81,22 @@
           release = false;
         };
 
+        # The two classes jvm-reader's `flow.rs` unit tests load at runtime,
+        # compiled from the committed sample sources (no `.class` is committed).
+        # Passed to the `jvm-reader-tests` check via JVM_READER_TEST_FIXTURES.
+        jvmTestFixtures =
+          pkgs.runCommand "jvm-reader-test-fixtures"
+            {
+              nativeBuildInputs = [ jdk ];
+              # Import the dir (not the files) so the sources keep their real
+              # names; javac requires a public class's file to match its name.
+              src = ./jvm-reader/tests/sample;
+            }
+            ''
+              mkdir -p "$out"
+              javac -d "$out" "$src/HelloWorld.java" "$src/ArrayFlow.java"
+            '';
+
         # Non-interactive environment that mirrors the tools the regression
         # scripts expect on PATH (ctadl, dex-reader, javac, dx, gcc/addr2line,
         # ghidra, jq, python3).
@@ -171,7 +187,12 @@
                   # ghidra/javac want a writable HOME; the sandbox HOME is not.
                   export HOME="$TMPDIR"
 
-                  ${self.packages.${system}.default}/bin/xtask regression
+                  # The jvm-reader checks compile the sample .java sources (which
+                  # live in the crate, outside ./nightly) and exercise jvm-reader
+                  # on the resulting .class/.jar. javac/javap/jar come from the
+                  # JDK in testEnv.
+                  ${self.packages.${system}.default}/bin/xtask regression \
+                    --jvm-samples ${./jvm-reader/tests/sample}
 
                   mkdir -p "$out"
                 '';
@@ -188,12 +209,16 @@
 
             # jvm-reader is workspace-excluded for the same reason (its bin must
             # not ship in the distro), which also keeps its tests out of
-            # `cargo test --workspace`. Run them here: pure-Rust parser tests
-            # over the committed tests/class and tests/jar fixtures, built
-            # offline by naersk in test mode. No external toolchain needed.
+            # `cargo test --workspace`. Run them here. Its `flow.rs` unit tests
+            # are `#[ignore]`d and load two classes at runtime from
+            # JVM_READER_TEST_FIXTURES (compiled from source by jvmTestFixtures,
+            # below); `--include-ignored` runs them. The integration-style
+            # checks were moved to `xtask regression`.
             jvm-reader-tests = naersk-lib.buildPackage {
               src = ./jvm-reader;
               mode = "test";
+              JVM_READER_TEST_FIXTURES = "${jvmTestFixtures}";
+              cargoTestOptions = opts: opts ++ [ "--" "--include-ignored" ];
             };
           in
           {
