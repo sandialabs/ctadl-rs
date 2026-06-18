@@ -24,12 +24,16 @@ use dex_reader::collect_line_map_entries;
 use dex_reader::parser::*;
 use dex_reader::{APKParser, DexParser};
 
+use crate::baksmali;
 use crate::exec;
 use crate::regression::Outcome;
 
-/// A sample program compiled all the way to a DEX, held in memory.
+/// A sample program compiled all the way to a DEX.
 struct SampleDex {
     name: String,
+    /// The compiled `.dex` on disk (baksmali reads this).
+    dex: PathBuf,
+    /// The same `.dex` contents in memory (dex-reader parses these).
     bytes: Vec<u8>,
 }
 
@@ -53,7 +57,8 @@ pub fn run_checks(
     if let Some(tool) = missing_tool {
         let why = format!("`{tool}` not on PATH");
         results.push(("dex:samples".to_string(), Outcome::Skip(why.clone())));
-        results.push(("dex:line-map".to_string(), Outcome::Skip(why)));
+        results.push(("dex:line-map".to_string(), Outcome::Skip(why.clone())));
+        results.push(("dex:baksmali".to_string(), Outcome::Skip(why)));
     } else {
         let samples = compile_samples(java_samples, work)?;
         if samples.is_empty() {
@@ -64,6 +69,21 @@ pub fn run_checks(
             "dex:line-map".to_string(),
             to_outcome(check_line_map(&samples)),
         ));
+
+        // Ground-truth disassembly check: compare dex-reader's smali against
+        // baksmali. baksmali comes from the Nix environment, so a checkout
+        // without it Skips.
+        if exec::which("baksmali").is_none() {
+            results.push((
+                "dex:baksmali".to_string(),
+                Outcome::Skip("`baksmali` not on PATH".to_string()),
+            ));
+        } else {
+            results.push((
+                "dex:baksmali".to_string(),
+                to_outcome(check_baksmali(&samples, work)),
+            ));
+        }
     }
 
     // The real-world APK smoke test: parse every classes*.dex it carries. It is
@@ -150,7 +170,7 @@ fn compile_samples(java_samples: &Path, work: &Path) -> Result<Vec<SampleDex>> {
 
         let bytes = std::fs::read(&dex)
             .with_context(|| format!("reading compiled dex {}", dex.display()))?;
-        samples.push(SampleDex { name, bytes });
+        samples.push(SampleDex { name, dex, bytes });
     }
     Ok(samples)
 }
@@ -207,6 +227,20 @@ fn check_line_map(samples: &[SampleDex]) -> Result<()> {
     }
     if !saw_any {
         bail!("no line-map entries across samples");
+    }
+    Ok(())
+}
+
+/// dex-reader's smali disassembly matches baksmali for every compiled sample.
+fn check_baksmali(samples: &[SampleDex], work: &Path) -> Result<()> {
+    let mut total = 0usize;
+    for sample in samples {
+        let out = work.join(format!("{}-baksmali", sample.name));
+        total += baksmali::compare(&sample.dex, &sample.bytes, &out)
+            .with_context(|| format!("baksmali comparison for {}", sample.name))?;
+    }
+    if total == 0 {
+        bail!("no methods were compared against baksmali across samples");
     }
     Ok(())
 }

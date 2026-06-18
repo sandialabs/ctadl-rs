@@ -73,6 +73,22 @@
         };
         jdk = pkgs.temurin-bin-17;
 
+        # baksmali, the reference smali disassembler, used as ground truth for
+        # the dex-reader `dex:baksmali` regression check. nixpkgs has no smali
+        # package, so we fetch the pinned 3.0.9 "fat" jar (the same version the
+        # original dex-reader test used) and wrap it so `baksmali` runs it. The
+        # jar is fetched, never committed to this repo.
+        baksmali =
+          let
+            jar = pkgs.fetchurl {
+              url = "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat.jar";
+              hash = "sha256-r0qBj26b/Koxst4t3ZkRfZlyXXbWZuklfmM9MF0r1NQ=";
+            };
+          in
+          pkgs.writeShellScriptBin "baksmali" ''
+            exec ${jdk}/bin/java -jar ${jar} "$@"
+          '';
+
         # `dex-reader` is a workspace-excluded crate (its bins must stay out of
         # the distro), so we build it on its own for the linemap step of the DEX
         # tests rather than expecting it in packages.default.
@@ -119,6 +135,7 @@
             dex-reader
             androidSdk.androidsdk
             jdk
+            baksmali
             pkgs.ghidra-bin
           ];
         };

@@ -9,6 +9,7 @@
 //!     cargo xtask regression --tests-dir <dir>
 
 mod assertions;
+mod baksmali;
 mod dex;
 mod discovery;
 mod exec;
