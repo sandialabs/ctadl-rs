@@ -136,7 +136,7 @@
         );
 
         # CI/test logic lives under `checks` so the nightly GitHub workflow can run
-        #   nix build .#checks.<system>.regression
+        #   nix build .#checks.<system>.regression .#checks.<system>.dex-reader-tests
         # instead of duplicating the test harness in YAML. This does not rely on
         # `nix flake check`; the check is an ordinary buildable derivation. The
         # cheap per-PR checks (fmt/clippy/unit tests) are intentionally NOT here:
@@ -175,9 +175,29 @@
 
                   mkdir -p "$out"
                 '';
+
+            # The dex-reader crate is workspace-excluded (its bins must not ship
+            # in the distro), so `cargo test --workspace` never runs its tests.
+            # Run them here instead: the pure-Rust unit + integration tests (the
+            # latter parses the committed dex-files/ APK fixture), built offline
+            # by naersk in test mode. No external toolchain needed.
+            dex-reader-tests = naersk-lib.buildPackage {
+              src = ./dex-reader;
+              mode = "test";
+            };
+
+            # jvm-reader is workspace-excluded for the same reason (its bin must
+            # not ship in the distro), which also keeps its tests out of
+            # `cargo test --workspace`. Run them here: pure-Rust parser tests
+            # over the committed tests/class and tests/jar fixtures, built
+            # offline by naersk in test mode. No external toolchain needed.
+            jvm-reader-tests = naersk-lib.buildPackage {
+              src = ./jvm-reader;
+              mode = "test";
+            };
           in
           {
-            inherit regression;
+            inherit regression dex-reader-tests jvm-reader-tests;
           };
 
         formatter = pkgs.nixfmt;
@@ -203,6 +223,8 @@
               ghidra-bin
               pkgsCross.gnu64.stdenv.cc
               pkgsCross.gnu64.binutils
+              nil
+              nixd
             ];
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
           };
