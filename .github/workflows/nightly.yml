@@ -28,8 +28,9 @@ jobs:
         uses: DeterminateSystems/flakehub-cache-action@main
 
       # All expensive/long-running regression logic lives in the flake
-      # (checks.<system>.nightly). It currently runs the cheap suite plus a
-      # placeholder; fill in the expensive suite there, not in this YAML.
-      # ubuntu-latest runners are x86_64-linux.
+      # (checks.<system>.nightly = the cheap suite + checks.<system>.regression,
+      # the source-sink taint tests driven by the ./nightly harness). Add new
+      # expensive tests there, not in this YAML. ubuntu-latest runners are
+      # x86_64-linux.
       - name: Run nightly checks
         run: nix build --print-build-logs '.#checks.x86_64-linux.nightly'
