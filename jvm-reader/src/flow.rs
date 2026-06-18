@@ -1730,6 +1730,23 @@ mod tests {
     use crate::parser::ClassFileParser;
     use crate::types::CpEntry;
 
+    /// Load a compiled test class by file name from the directory named by the
+    /// `JVM_READER_TEST_FIXTURES` environment variable. The fixtures are
+    /// compiled from the committed `tests/sample/*.java` sources at check time
+    /// (see the `jvm-reader-tests` check in flake.nix); no `.class` files are
+    /// committed to the repository.
+    fn fixture(name: &str) -> Vec<u8> {
+        let dir = std::env::var("JVM_READER_TEST_FIXTURES").unwrap_or_else(|_| {
+            panic!(
+                "JVM_READER_TEST_FIXTURES is not set; these tests load classes \
+                 compiled from tests/sample/*.java. Run them via \
+                 `nix build .#checks.<system>.jvm-reader-tests`."
+            )
+        });
+        let path = std::path::Path::new(&dir).join(name);
+        std::fs::read(&path).unwrap_or_else(|e| panic!("reading fixture {}: {e}", path.display()))
+    }
+
     #[test]
     #[ignore]
     fn test_descriptor_parameter_info_mixed_types() {
@@ -1767,7 +1784,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_array_load_dataflow_iaload() {
-        let bytes = include_bytes!("../tests/class/HelloWorld.class");
+        let bytes = &fixture("HelloWorld.class");
         let parser = ClassFileParser::parse(bytes).expect("parse");
         let cf = parser.class_file();
         let (sources, destinations) =
@@ -1787,7 +1804,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_array_load_dataflow_laload() {
-        let bytes = include_bytes!("../tests/class/HelloWorld.class");
+        let bytes = &fixture("HelloWorld.class");
         let parser = ClassFileParser::parse(bytes).expect("parse");
         let cf = parser.class_file();
         let (_sources, destinations) =
@@ -1800,7 +1817,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_array_store_iastore() {
-        let bytes = include_bytes!("../tests/class/HelloWorld.class");
+        let bytes = &fixture("HelloWorld.class");
         let parser = ClassFileParser::parse(bytes).expect("parse");
         let cf = parser.class_file();
         let (sources, destinations) =
@@ -1818,7 +1835,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_array_store_lastore() {
-        let bytes = include_bytes!("../tests/class/HelloWorld.class");
+        let bytes = &fixture("HelloWorld.class");
         let parser = ClassFileParser::parse(bytes).expect("parse");
         let cf = parser.class_file();
         let (sources, destinations) =
@@ -1839,7 +1856,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_normalize_array_element_nested_slots() {
-        let bytes = include_bytes!("../tests/sample/out/ArrayFlow.class");
+        let bytes = &fixture("ArrayFlow.class");
         let parser = ClassFileParser::parse(bytes).expect("parse");
         let cf = parser.class_file();
         let method = parser
@@ -1882,7 +1899,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_dup_dataflow() {
-        let bytes = include_bytes!("../tests/class/HelloWorld.class");
+        let bytes = &fixture("HelloWorld.class");
         let parser = ClassFileParser::parse(bytes).expect("parse");
         let cf = parser.class_file();
         let (sources, destinations) =
@@ -1897,7 +1914,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_dup_x1_dataflow() {
-        let bytes = include_bytes!("../tests/class/HelloWorld.class");
+        let bytes = &fixture("HelloWorld.class");
         let parser = ClassFileParser::parse(bytes).expect("parse");
         let cf = parser.class_file();
         let (sources, destinations) =
@@ -1912,7 +1929,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_dup2_dataflow() {
-        let bytes = include_bytes!("../tests/class/HelloWorld.class");
+        let bytes = &fixture("HelloWorld.class");
         let parser = ClassFileParser::parse(bytes).expect("parse");
         let cf = parser.class_file();
         let (sources, destinations) =
@@ -1927,7 +1944,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_swap_dataflow() {
-        let bytes = include_bytes!("../tests/class/HelloWorld.class");
+        let bytes = &fixture("HelloWorld.class");
         let parser = ClassFileParser::parse(bytes).expect("parse");
         let cf = parser.class_file();
         let (sources, destinations) =
@@ -1945,7 +1962,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_new_dataflow() {
-        let bytes = include_bytes!("../tests/class/HelloWorld.class");
+        let bytes = &fixture("HelloWorld.class");
         let parser = ClassFileParser::parse(bytes).expect("parse");
         let cf = parser.class_file();
         let mut class_idx = None;
