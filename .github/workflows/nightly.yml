@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: read
+  # Needed for the (tokenless, OIDC-based) FlakeHub Nix cache.
+  id-token: write
 
 jobs:
   nightly:
@@ -19,6 +21,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      # Placeholder. Fill in with expensive/long-running tests later.
-      - name: Placeholder
-        run: echo "Nightly job is staged but empty. Add expensive tests here."
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Set up Nix build cache
+        uses: DeterminateSystems/flakehub-cache-action@main
+
+      # All expensive/long-running regression logic lives in the flake
+      # (checks.<system>.nightly). It currently runs the cheap suite plus a
+      # placeholder; fill in the expensive suite there, not in this YAML.
+      # ubuntu-latest runners are x86_64-linux.
+      - name: Run nightly checks
+        run: nix build --print-build-logs '.#checks.x86_64-linux.nightly'
