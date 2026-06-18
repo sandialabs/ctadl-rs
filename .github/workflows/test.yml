@@ -9,25 +9,29 @@ on:
 
 permissions:
   contents: read
-  # Needed for the (tokenless, OIDC-based) FlakeHub Nix cache.
-  id-token: write
 
 jobs:
-  cheap:
+  test:
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.1
+          components: rustfmt, clippy
 
-      - name: Set up Nix build cache
-        uses: DeterminateSystems/flakehub-cache-action@main
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
 
-      # All test logic lives in the flake (checks.<system>.cheap):
-      # formatting, clippy, and the fast workspace unit tests. ubuntu-latest
-      # runners are x86_64-linux.
-      - name: Run cheap checks
-        run: nix build --print-build-logs '.#checks.x86_64-linux.cheap'
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy -- -Dwarnings
+
+      - name: Run workspace tests
+        run: cargo test --workspace --verbose
