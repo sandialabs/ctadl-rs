@@ -13,6 +13,7 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 
 use crate::assertions;
+use crate::dex;
 use crate::discovery::{self, Kind, TestCase};
 use crate::exec;
 use crate::jvm;
@@ -26,6 +27,7 @@ pub struct Options {
     pub filter: Option<String>,
     pub tests_dir: Option<PathBuf>,
     pub jvm_samples: Option<PathBuf>,
+    pub dex_apk: Option<PathBuf>,
 }
 
 pub(crate) enum Outcome {
@@ -58,16 +60,34 @@ pub fn run(opts: &Options) -> Result<bool> {
         results.push((case.name.clone(), outcome));
     }
 
+    // The jvm-reader and dex-reader checks share the same Java sample sources:
+    // jvm-reader exercises the `.class`/`.jar`, dex-reader the `.dex` they
+    // compile down to.
+    let samples_dir = resolve_jvm_samples(opts.jvm_samples.as_deref());
+
     // jvm-reader checks: compile the sample .java and exercise jvm-reader on the
     // resulting .class files and a jar built from them.
-    if let Some(samples_dir) = resolve_jvm_samples(opts.jvm_samples.as_deref()) {
+    if let Some(samples_dir) = &samples_dir {
         let work = scratch_dir("jvm")?;
-        let mut jvm_results = jvm::run_checks(&samples_dir, &work)
+        let mut jvm_results = jvm::run_checks(samples_dir, &work)
             .unwrap_or_else(|err| vec![("jvm".to_string(), Outcome::Fail(format!("{err:#}")))]);
         if let Some(filter) = &opts.filter {
             jvm_results.retain(|(name, _)| name.contains(filter));
         }
         results.extend(jvm_results);
+    }
+
+    // dex-reader checks: compile the same samples down to .dex and parse them,
+    // plus a real-world APK that xtask owns.
+    if let Some(samples_dir) = &samples_dir {
+        let work = scratch_dir("dex")?;
+        let apk = resolve_dex_apk(opts.dex_apk.as_deref());
+        let mut dex_results = dex::run_checks(samples_dir, apk.as_deref(), &work)
+            .unwrap_or_else(|err| vec![("dex".to_string(), Outcome::Fail(format!("{err:#}")))]);
+        if let Some(filter) = &opts.filter {
+            dex_results.retain(|(name, _)| name.contains(filter));
+        }
+        results.extend(dex_results);
     }
 
     if results.is_empty() {
@@ -118,6 +138,21 @@ fn resolve_jvm_samples(override_dir: Option<&Path>) -> Option<PathBuf> {
         .into_iter()
         .map(PathBuf::from)
         .find(|p| p.is_dir())
+}
+
+/// Locate the real-world APK xtask owns for the dex-reader smoke test. With no
+/// override, look where it lives relative to the repo root or the nightly cwd.
+fn resolve_dex_apk(override_path: Option<&Path>) -> Option<PathBuf> {
+    if let Some(path) = override_path {
+        return Some(path.to_path_buf());
+    }
+    [
+        "xtask/tests/dex/com.noto_54.apk",
+        "../xtask/tests/dex/com.noto_54.apk",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|p| p.is_file())
 }
 
 /// Ensure the executables the suite always needs are on `PATH`, failing early

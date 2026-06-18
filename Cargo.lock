@@ -5071,6 +5071,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dex-reader",
  "jvm-reader",
  "serde",
  "serde_json",

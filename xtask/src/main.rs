@@ -9,6 +9,7 @@
 //!     cargo xtask regression --tests-dir <dir>
 
 mod assertions;
+mod dex;
 mod discovery;
 mod exec;
 mod jvm;
@@ -63,6 +64,10 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let dir = args.next().context("--jvm-samples requires a value")?;
                 opts.jvm_samples = Some(PathBuf::from(dir));
             }
+            "--dex-apk" => {
+                let path = args.next().context("--dex-apk requires a value")?;
+                opts.dex_apk = Some(PathBuf::from(path));
+            }
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -85,7 +90,11 @@ Tasks:
                              `nightly/tests` or `tests` relative to the cwd).
     --jvm-samples <dir>      Directory of jvm-reader sample .java sources to
                              compile and check (default: auto-detect
-                             `jvm-reader/tests/sample`).
+                             `jvm-reader/tests/sample`). Also drive the
+                             dex-reader checks (compiled down to .dex).
+    --dex-apk <path>         Real-world APK to parse in the dex-reader smoke
+                             test (default: auto-detect
+                             `xtask/tests/dex/com.noto_54.apk`).
 "
     );
 }

@@ -189,19 +189,23 @@
 
                   # The jvm-reader checks compile the sample .java sources (which
                   # live in the crate, outside ./nightly) and exercise jvm-reader
-                  # on the resulting .class/.jar. javac/javap/jar come from the
-                  # JDK in testEnv.
+                  # on the resulting .class/.jar. The dex-reader checks compile
+                  # the same samples down to .dex (via `dx`) and also parse a
+                  # real-world APK owned by xtask. javac/javap/jar/dx come from
+                  # the JDK and Android SDK in testEnv / PATH.
                   ${self.packages.${system}.default}/bin/xtask regression \
-                    --jvm-samples ${./jvm-reader/tests/sample}
+                    --jvm-samples ${./jvm-reader/tests/sample} \
+                    --dex-apk ${./xtask/tests/dex/com.noto_54.apk}
 
                   mkdir -p "$out"
                 '';
 
             # The dex-reader crate is workspace-excluded (its bins must not ship
             # in the distro), so `cargo test --workspace` never runs its tests.
-            # Run them here instead: the pure-Rust unit + integration tests (the
-            # latter parses the committed dex-files/ APK fixture), built offline
-            # by naersk in test mode. No external toolchain needed.
+            # Run its pure-Rust unit tests here instead, built offline by naersk
+            # in test mode. No external toolchain needed. The integration-style
+            # full-parse checks (compiled samples + the real-world APK) were
+            # moved to `xtask regression`.
             dex-reader-tests = naersk-lib.buildPackage {
               src = ./dex-reader;
               mode = "test";

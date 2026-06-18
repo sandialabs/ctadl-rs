@@ -16,3 +16,7 @@ serde_json = "1"
 # library on the resulting .class / .jar). jvm-reader is workspace-excluded, so
 # this is a plain path-dependency library; it does not re-add jvm-reader's bin.
 jvm-reader = { path = "../jvm-reader" }
+# Likewise for the dex-reader checks (compile .java -> .dex, parse it, plus a
+# real-world APK). dex-reader is workspace-excluded too, so its bin stays out of
+# the distro; only its library is pulled in here.
+dex-reader = { path = "../dex-reader" }

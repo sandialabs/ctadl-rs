@@ -26,12 +26,14 @@ pub fn initialize() {
 }
 
 fn test_file() -> PathBuf {
-    // Not sure if .. is allowed but seems to work
+    // The real-world APK fixture is owned by the xtask regression harness (see
+    // xtask/tests/dex/). Not sure if .. is allowed but seems to work.
     [
         env!("CARGO_MANIFEST_DIR"),
         "..",
-        "dex-reader",
-        "dex-files",
+        "xtask",
+        "tests",
+        "dex",
         "com.noto_54.apk",
     ]
     .iter()
