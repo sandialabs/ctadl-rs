@@ -1,4 +1,4 @@
-use ctadl_ir::ParameterType::{ByVal, ByRef};
+use ctadl_ir::ParameterType::{ByRef, ByVal};
 use ctadl_ir::{StatementKind, Variable};
 
 use crate::languages::tree_sitter::test_utils::*;
@@ -89,8 +89,8 @@ fn basic_param_flow() {
     check_params(&prog, &[ByVal]);
 
     let summary = get_summary(prog).unwrap().0;
-    assert!(summary_count(&summary, 1));
-    assert!(summary_returns_param(&summary, 0, ""));
+    check_summary_count(&summary, 1);
+    check_returns_param(&summary, 0, "");
 }
 
 #[test_log::test]
@@ -106,8 +106,8 @@ fn param_flows_through_local() {
     check_assign_or_update(&prog, "b", ["@p0"], None);
 
     let summary = get_summary(prog).unwrap().0;
-    assert!(summary_count(&summary, 1));
-    assert!(summary_returns_param(&summary, 0, ""));
+    check_summary_count(&summary, 1);
+    check_returns_param(&summary, 0, "");
 }
 
 #[test_log::test]
@@ -121,8 +121,8 @@ fn return_from_pointer() {
     check_params(&prog, &[ByRef]);
 
     let summary = get_summary(prog).unwrap().0;
-    assert!(summary_count(&summary, 1));
-    assert!(summary_returns_param(&summary, 0, ""));
+    check_summary_count(&summary, 1);
+    check_returns_param(&summary, 0, "");
 }
 
 #[test_log::test]
@@ -138,10 +138,9 @@ fn return_from_pointer_through_local() {
     check_assign_or_update(&prog, "b", ["@p0"], None);
 
     let summary = get_summary(prog).unwrap().0;
-    assert!(summary_count(&summary, 1));
-    assert!(summary_returns_param(&summary, 0, ""));
+    check_summary_count(&summary, 1);
+    check_returns_param(&summary, 0, "");
 }
-
 
 #[test_log::test]
 fn unique_temps() {
@@ -183,29 +182,330 @@ fn unique_temps() {
 
     // ...and exactly <t0>..<t4> were allocated (ascending, no gaps, no extras).
     let expected: std::collections::BTreeSet<String> = (0..5).map(|i| format!("<t{i}>")).collect();
-    assert_eq!(distinct, expected, "expected exactly <t0>..<t4> as temporaries");
+    assert_eq!(
+        distinct, expected,
+        "expected exactly <t0>..<t4> as temporaries"
+    );
+}
+
+#[test_log::test]
+fn scopes_arent_blocks() {
+    // A bare lexical scope `{ ... }` is scoping, not control flow: it must NOT become its own
+    // basic block. The function should have exactly one block.
+    let src = r"
+        int bar() {
+            {
+                int x;
+            }
+            return 0;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 1);
+}
+
+#[test_log::test]
+fn assignment_statement() {
+    // `b = a;` as a standalone statement (NOT a declarator initializer) lowers to a plain assign.
+    // Exercises the expression-statement path, distinct from `simple_assign`'s declarator path.
+    let src = r"
+        int f() {
+            int a = 5;
+            int b;
+            b = a;
+            return b;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "b", ["a"], None);
+}
+
+#[test_log::test]
+fn comma_list_declarations() {
+    // Comma-separated declarators each lower to their own assignment.
+    let src = r"
+        int comma_sep_decl() {
+            int a, b, c, d;
+            int x = a, y = b, z = 7;
+            return x + y;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "x", ["a"], None);
+    check_assign_or_update(&prog, "y", ["b"], None);
+    check_assign_or_update(&prog, "z", ["#7"], None); // z = 7 (literal)
+}
+
+#[test_log::test]
+fn extra_parens() {
+    // Redundant parens around a condition are peeled, and an assignment used as a condition still
+    // lowers normally: `if((x = z))` / `while((((y = z))))`.
+    let src = r"
+        int extra_parens() {
+            int z = 55;
+            int x, y;
+            if((x = z)) {
+            }
+            while((((y = z)))) {
+            }
+            return 0;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "x", ["z"], None);
+    check_assign_or_update(&prog, "y", ["z"], None);
+}
+
+#[test_log::test]
+fn call_arg_flows_through_return() {
+    // A direct call's argument flows through the callee and back: `tgt` returns `x.f1`, and `top`
+    // returns the result of `tgt(y)`, so param 0's `.f1` field reaches the return. Asserting the
+    // flow (not the `direct-call tgt` rendering) proves the call resolved AND data flows through it.
+    let src = r"
+        int tgt(Rando x) {
+            return x.f1;
+        }
+        int top(Rando y) {
+            int v = tgt(y);
+            return v;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 0, "f1");
+}
+
+#[test_log::test]
+fn unbraced_if_branch_flows_to_return() {
+    // A value assigned inside an UNBRACED `if` consequent still reaches the return: `x = z` (z is
+    // param 1) under `if(x == 3)`, then `return x` => param 1 flows to the return.
+    let src = r"
+        int f(int y, int z) {
+            int x = 5;
+            if(x == 3)
+                x = z;
+            return x;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn unbraced_if_returns_param_field() {
+    // An unbraced `if` whose consequent returns a field of a by-ref param: `return fb->unbraced`
+    // => param 0's `.unbraced` field flows to the return. (The other path returns a global.)
+    let src = r"
+        int f(Foobar *fb) {
+            if(fb->ct == 3)
+                return fb->unbraced;
+            return x;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 0, "unbraced");
+}
+
+#[test_log::test]
+fn field_write_flows() {
+    // Field writes are summarized as effects on the formal (no temp names needed), including
+    // blended RHSs. `return v.f1` (set from `b.xyz`) is captured both as the formal field-return
+    // and the resolved source. Params: Donkey v = @p0, Burro* b = @p1, int x = @p2, int y = @p3.
+    let src = r"
+        int field_access(Donkey v, Burro* b, int x, int y) {
+            v.f2 = x;
+            v.f2.nf1.y = b->f2.f3->f4;
+            v.f5 = b->fa + b->fb;
+            v.f3 = x + y + z;
+            v.f1 = b.xyz;
+            return v.f1;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    // direct + deep-path field writes
+    check_flow(&s, 2, "", 0, "f2");
+    check_flow(&s, 1, "f2.f3.f4", 0, "f2.nf1.y");
+    // blended RHS feeding a field (temp-free)
+    check_flow(&s, 1, "fa", 0, "f5");
+    check_flow(&s, 1, "fb", 0, "f5");
+    check_flow(&s, 2, "", 0, "f3");
+    check_flow(&s, 3, "", 0, "f3");
+    // value-field source + field-write-then-return
+    check_flow(&s, 1, "xyz", 0, "f1");
+    check_returns_param(&s, 0, "f1"); // formal field returned
+    check_returns_param(&s, 1, "xyz"); // resolved b.xyz reaches return
+}
+
+#[test_log::test]
+fn field_assignment_is_update() {
+    // `v.f = x` lowers to a functional `update` on the base (not a plain assign). Syntactic claim
+    // the summary can't see; one representative case is enough.
+    let src = r"
+        int f(Donkey v, int x) {
+            v.f2 = x;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "@p0.f2", ["@p1"], None);
+}
+
+#[test_log::test]
+fn chained_assignment() {
+    // `b = a = 5;` — the inner assignment's value propagates outward, so `b` receives `a`.
+    let src = r"
+        int f() {
+            int a;
+            int b = a = 5;
+            int c = a + b;
+            return c;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "a", ["#5"], None); // inner `a = 5` (literal)
+    check_assign_or_update(&prog, "b", ["a"], None);
+}
+
+#[test_log::test]
+fn literal_assignments() {
+    // A numeric literal lowers to a constant source (`Exp::Str` of the source text), both as a
+    // statement assignment (`a = 5`) and a declarator initializer (`int x = 17`). Literals buried
+    // in a blend, or returned, are out of scope (see CLAUDE.md / constants notes).
+    let src = r"
+        int f() {
+            int a;
+            a = 5;
+            int x = 17;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "a", ["#5"], None);
+    check_assign_or_update(&prog, "x", ["#17"], None);
+}
+
+#[test_log::test]
+fn if_fallthrough_cfg() {
+    // An `if` with no early return: block 0 (condition) branches to the consequent (1) or the
+    // fallthrough (2); the consequent falls through to 2; block 2 returns (terminal).
+    let src = r"
+        int f(int x, int y) {
+            if(x) {
+                x = x + 21;
+            }
+            return y;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 3);
+    check_successors(&prog, 0, &[1, 2]);
+    check_successors(&prog, 1, &[2]);
+    check_successors(&prog, 2, &[]);
+}
+
+#[test_log::test]
+fn if_return_in_consequent_cfg() {
+    // `if` whose consequent returns: block 0 branches to 1 or 2; both are terminal returns.
+    let src = r"
+        int f(int x, int y) {
+            if(x) {
+                return x;
+            }
+            return y;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 3);
+    check_successors(&prog, 0, &[1, 2]);
+    check_successors(&prog, 1, &[]);
+    check_successors(&prog, 2, &[]);
+}
+
+#[test_log::test]
+fn if_both_branches_can_return_params() {
+    // The dataflow facet of the same shape: `return x` on one path and `return y` on the other
+    // means BOTH params reach the return.
+    let src = r"
+        int f(int x, int y) {
+            if(x) {
+                return x;
+            }
+            return y;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn while_loop_cfg() {
+    // While loop block structure: 0 enters the header (1); the condition (1) branches to the body
+    // (3) or the exit (2); the body branches back to the header (1, the back-edge); 2 returns.
+    let src = r"
+        int f(Field my_parm, int parB) {
+            int b = 2;
+            int x = 5;
+            while(my_parm->x = parB) {
+                x = b;
+            }
+            int y = x;
+            return y;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 4);
+    check_successors(&prog, 0, &[1]);
+    check_successors(&prog, 1, &[2, 3]);
+    check_successors(&prog, 3, &[1]);
+    check_successors(&prog, 2, &[]);
+    // body and post-loop assignments land in the right blocks
+    check_assign_or_update(&prog, "x", ["b"], Some(3));
+    check_assign_or_update(&prog, "y", ["x"], Some(2));
+}
+
+#[test_log::test]
+fn subscript_access_paths() {
+    // A constant array subscript becomes an `Offset` segment on the access path, both as an rvalue
+    // (`f[3]`) and an lvalue (`f[4] = ...`, which lowers to an `update`). `int x` is @p2.
+    let src = r"
+        int brackets_simple(Donkey v, Burro* b, int x, int y) {
+            int f = 1;
+            x = f[3];
+            f[4] = x;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "@p2", ["f.[3]"], None); // x = f[3]
+    check_assign_or_update(&prog, "f.[4]", ["@p2"], None); // f[4] = x  (update)
+}
+
+#[test_log::test]
+fn field_blend_into_field_update() {
+    // `v->f4 = v->f5 + b` with `b = v->f1 + v->f3`: the blended RHS (direct f5, plus f1/f3 routed
+    // through b) all flow into the field update @p0.f4. v = @p0.
+    let src = r"
+        int f(Donkey *v) {
+            int a = b = v->f1 + v->f3;
+            int x = v->f4 = v->f5 + b;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 0, "f5", 0, "f4"); // direct
+    check_flow(&s, 0, "f1", 0, "f4"); // via b
+    check_flow(&s, 0, "f3", 0, "f4"); // via b
+}
+
+#[test_log::test]
+fn nested_blend_operands_flow() {
+    // Every operand of a nested/parenthesized sum reaches the result: `a + b + c + (d + e)` => all
+    // five params flow to the return. (Covers flattening completeness, which `unique_temps` does
+    // not — that only checks temp allocation.)
+    let src = r"
+        int f(int a, int b, int c, int d, int e) {
+            int x = a + b + c + (d + e);
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    for p in 0..5 {
+        check_returns_param(&s, p, "");
+    }
+}
+
+#[test_log::test]
+fn returned_blend_operands_flow() {
+    // A blended expression used directly as a return value preserves all operand flows:
+    // `return a + x` => both params reach the return.
+    let src = r"
+        int g(int a, int x) {
+            return a + x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
 }
 
 /*
-
-#[test_log::test]
-#[ignore = "Aspirational  3[f] is valid C"]
-fn brackets_commutative() {
-    let src = r"
-            int field_access(Donkey v,  Burro* b, int x, int y){
-                int x = 3[f];
-            }   
-        }
-        ";
-    let (_program, dump) = program_from_string(src);
-    log::info!("{}", dump);
-    //let summary = get_summary(program);
-    //log::info!("SUMMARY {:#?}", summary);
-    assert!(check_match(
-        &dump,
-        "TODO: we need to check whether the index/lhs are swapped"
-    ));
-}
 
 #[test_log::test]
 #[ignore = "Issue 54: Implicit return"]
@@ -223,495 +523,6 @@ fn implicit_return() {
     let (_, _) = get_summary(program_info).expect("Verify probably bonked");
 }
 //TODO_JDB:  I don't think i handled *(p+1) = f; or (p+1)->f()
-
-#[test_log::test]
-fn brackets_simple() {
-    let src = r#"
-            int brackets_simple(Donkey v,  Burro* b, int x, int y){
-                int f = 1;
-                x = 5;
-                x = f[3];
-                f[4] = x;
-                f.y->yah[n] = 5;
-                f->p[4] = m[5] + v.n[4];                            
-                return 1;
-            }   
-    
-        "#;
-    let (_program, dump) = program_from_string(src);
-    log::info!("{}", dump);
-    //let summary = get_summary(program);
-    //log::info!("SUMMARY {:#?}", summary);
-    assert!(check_match(&dump, "%f.[3]"));
-    assert!(check_match(&dump, "%f.[4]"));
-}
-
-#[test_log::test]
-fn field_access_values() {
-    let src = r"
-            int field_access(Donkey v,  Burro* b, int x, int y){
-                
-               v.f2 = x;
-               v.f2.nf1.y = b->f2.f3->f4; //access b, with path f2,f3,f4
-               v.f5 = b->fa + b->fb;
-               v.f3 = x + y + z;
-               v.f1 = b.xyz;
-               return v.f1;
-
-            }   
-        ";
-    let (_program, dump) = program_from_string(src);
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f2 := @p2)"));
-
-    assert!(check_match(
-        &dump,
-        "@p0 = update (@p0.f2.nf1.y := @p1.f2.f3.f4)"
-    ));
-
-    assert!(check_match(
-        &dump,
-        "@p0 = update (@p0.f2.nf1.y := @p1.f2.f3.f4)"
-    ));
-
-    assert!(janky_expected(&dump, "assign %<t1> = @p2, @p3"));
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f3 := %<t2>)"));
-    assert!(janky_expected(&dump, "return @p0.f1"));
-}
-
-#[test_log::test]
-fn literals_in_expressions() {
-    let src = r"
-            int literals_1() {
-                int a;
-                int b = a;
-                b = 5;
-                int c = a + b + 17;
-                return (14); // what to do this with this?
-            }
-            int literals_2() {
-                int x = 17;
-                return (x + 25);
-            }
-        ";
-    let (_program, dump) = program_from_string(src);
-    assert!(janky_expected(&dump, "assign %b = %a"));
-    assert!(janky_expected(&dump, "assign %b = <const: "));
-    assert!(janky_expected(&dump, "assign %c = %<t1>"));
-    assert!(janky_expected(&dump, "assign %<t0> = %a, %b"));
-    assert!(janky_expected(&dump, "return <const: "));
-    assert!(janky_expected(&dump, "assign %x = <const: "));
-}
-
-#[test_log::test]
-fn complex_expressions() {
-    // let _ = env_logger::builder().is_test(true).try_init();
-    let src = r"
-            int complex_expressions_1(int p) {
-                int a = 1;
-                int b = a;
-                int c = 3;
-                int d = 4;
-                int e = 5;
-                b = a + b + c + (d + e); 
-                return b;
-            }
-        ";
-
-    let (_program, dump) = program_from_string(src);
-    log::info!("{}", dump);
-
-    assert!(check_match(&dump, "assign %<t0> = %a, %b"));
-    assert!(check_match(&dump, "assign %<t1> = %<t0>, %c"));
-    assert!(check_match(&dump, "assign %b = %<t3>"));
-    assert!(check_match(&dump, "assign %c = <const:"));
-}
-
-#[test_log::test]
-fn compound_return() {
-    let src = r"
-           int compound_return_1(){
-             int a = 1;
-             int x = 9;
-             return (a+x);
-            }
-
-            //technically you always had to implement temporaries.
-           int compound_return_long(){
-            int a;
-            int b;            
-            int d;
-            int e;
-            return a + b + 55 + d + e;
-            }
-        ";
-    let (_program, dump) = program_from_string(src);
-    assert!(janky_expected(&dump, "assign %a = <const:"));
-    assert!(janky_expected(&dump, "assign %<t0> = %a, %x"));
-    assert!(janky_expected(&dump, "return %<t0>"));
-    assert!(janky_expected(&dump, "return %<t3>"));
-}
-
-#[test_log::test]
-fn return_arity() {
-    let src = r"
-          // TREE-SITTER DOESN'T SUPPORT implicit int return
-          //  implicit_int(){return 1;}
-            int explicit(){return 0;}
-            void none(){return;}
-            void really_void(void){return;}
-        ";
-    let (_, dump) = program_from_string(src);
-
-    //assert!(check_match(&dump, "define implicit_int() -> 1"));
-    assert!(check_match(&dump, "define explicit() -> 1"));
-    assert!(check_match(&dump, "define none() -> 0"));
-    assert!(check_match(&dump, "define really_void() -> 0"));
-}
-
-#[test_log::test]
-fn params_and_simple_assign_in_example_2() {
-    init();
-    let fp =
-        get_full_path("example2.c").expect("Test Sources are expected in .../tests/c/<filename>");
-    let program = program_from_file(fp).expect("example2.c failed to parse");
-    let dump = program.to_string();
-    log::info!("dump: {dump}");
-
-    assert!(check_match(&dump, "return %a"), "has return a");
-    assert!(
-        check_match(&dump, "assign %a = @p1"),
-        "has the simplest assign, a=b"
-    );
-    assert!(
-        check_match(&dump, "assign %a = $globals.d"),
-        "has 2nd simple a=d"
-    );
-}
-
-#[test_log::test]
-fn passthrough_assignment() {
-    let src = r"
-        int passthrough_assigment() {
-            int a;
-            int b = a = 5;            
-            int c = a + b;
-            return c;
-        }
-        ";
-    let (_, dump) = program_from_string(src);
-    assert!(janky_expected(&dump, "assign %a = <const"));
-    assert!(janky_expected(&dump, "assign %b = %a"));
-    assert!(janky_expected(&dump, "assign %<t0> = %a, %b"));
-    assert!(
-        check_match(&dump, "assign %c = %<t0>"),
-        "Expected to see c receive the blend"
-    );
-}
-
-#[test_log::test]
-fn pointer_decl() {
-    let src = r"
-        int pointer_decl(Foobar *fb){
-            Foobar *r = fb;
-            return r;
-        }   
-        ";
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-
-    log::info!("{}", dump);
-    //hmm how @njsalim: how do I test this assignment?
-    // check_assign_or_update(&prog, "r", ["@p0"]); <-- fails
-    assert!(check_match(&dump, "assign %r = @p0"));
-    let (summary, source_info) = get_summary(program_info).unwrap();
-    assert!(summary_returns_param(
-        &summary,
-        &source_info,
-        "pointer_decl",
-        0
-    ));
-}
-
-#[test_log::test]
-
-fn ignore_scoped_condition() {
-    let src = r"
-        int scoped_condition(int a, int b){
-            //allegedly legal in C23, we walk past the ERROR from treesitter
-            if (int x = 7; x > 7){
-                fb->in_consequence =x;            
-              return a;            
-            }   
-        return b;
-        ";
-    let program = program_from_string_no_check(src);
-    let dump = program.to_string();
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-
-    log::info!("{}", dump);
-    let (summary, source_info) = get_summary(program_info).unwrap();
-    assert!(summary_returns_param(
-        &summary,
-        &source_info,
-        "scoped_condition",
-        1
-    ));
-}
-
-#[test_log::test]
-fn compound_declaration_with_fields() {
-    let src = r"
-        int passthrough_assigment_with_fields(Donkey *v) {
-            int a = b = v->f1 + v->f3;
-            int x = v->f4 = v->f5 + b;
-        }
-        ";
-    let (_, dump) = program_from_string(src);
-    assert!(janky_expected(&dump, "assign %<t0> = @p0.f1, @p0.f3"));
-    assert!(janky_expected(&dump, "assign %<t1> = @p0.f5, $globals.b"));
-    assert!(janky_expected(&dump, "@p0 = update (@p0.f4 := %<t1>)"));
-}
-
-#[test_log::test]
-fn param_by_reference() {
-    let src = r"
-        int param_by_reference(Rando x, Rando *y) {
-
-            Rando a = x;
-            Rando b = *y;
-            
-            return a.field + b.field;
-        }
-        ";
-    let (_, dump) = program_from_string(src);
-    assert!(janky_expected(&dump, "assign %b = @p1"));
-}
-
-#[test_log::test]
-fn simplest_calls() {
-    let src = r"
-
-        int tgt(Rando x){
-            return x.f1;
-    }
-        int top(Rando y){
-            int v = tgt(y);
-            return v;
-    }
-";
-
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    log::info!("{}", dump);
-
-    let (summary, _source_info) = get_summary(program_info).unwrap();
-    log::info!("{:?}", summary);
-    assert!(check_match(&dump, "direct-call tgt"));
-}
-#[test_log::test]
-fn params_into_calls() {
-    let src = r"
-        int foo(Rando x){
-            return x;
-        }
-        int foo2(int z){
-            return  z *z;
-        }
-        int bar(int y){
-            int x;
-            foo(x = y);
-            foo(y);
-            foo(y + y);
-            return y;
-        }
-        ";
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    log::info!("{}", dump);
-
-    let (summary, _source_info) = get_summary(program_info).unwrap();
-    log::info!("{:?}", summary);
-    assert!(
-        check_match(&dump, "assign %x = @p0"),
-        "picked up assign in parameter list"
-    );
-    assert!(
-        check_match(&dump, "%<t0> = direct-call foo(%x)"),
-        "picked up assign in parameter list"
-    );
-    assert!(check_match(&dump, "direct-call foo(@p0)"));
-    assert!(check_match(&dump, "assign %<t3> = @p0, @p0"));
-    assert!(check_match(&dump, "%<t2> = direct-call foo(%<t3>)"));
-    //TOOD_JDB: do summary queries, not these janks
-    //assert!(check_match(&dump, "TODO: write param queries");
-}
-
-#[test_log::test]
-fn call_not_assign() {
-    let src = r"
-        int foo(Rando x){
-            return x;
-        }
-        int baz(Rando m){
-        return m+ m;
-        }
-        int bar(Rando y){
-            foo(baz(y)); 
-            return y;
-        }
-        ";
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-
-    log::info!("{}", dump);
-
-    let (summary, _source_info) = get_summary(program_info).unwrap();
-    log::info!("{:?}", summary);
-
-    assert!(check_match(&dump, "direct-call foo"));
-}
-
-#[test_log::test]
-#[ignore = "aspirational"]
-fn shadow_block() {
-    let src = r"
-        int bar(int false_return, int ac_return){
-            int x = ac_return;          
-            
-            if(x == 6){                
-                int x = false_return;                
-            }
-            return x;
-        }
-        ";
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-
-    log::info!("{}", dump);
-
-    let (summary, source_info) = get_summary(program_info).unwrap();
-    log::info!("{:?}", summary);
-    assert!(summary_returns_param(&summary, &source_info, "bar", 1));
-}
-
-#[test_log::test]
-fn scopes_arent_blocks() {
-    let src = r"
-        int bar(){
-        {
-            int x;
-        }
-        return 0;
-        }";
-    let (program, _) = program_from_string(src);
-    check_block_count(&program, 1);
-}
-
-#[test_log::test]
-#[ignore = "aspirational_indirect"]
-fn indirect_call_1() {
-    let src = r#"
-        #include <stdio.h>
-
-        // Two target functions with the same signature
-        int add(int a, int b) { return a + b; }
-        int sub(int a, int b) { return a - b; }
-
-        int doit(int a) {
-            // 1. Declare a function pointer
-            int (*op_func)(int, int);
-
-            // 2. Assign the pointer (could be based on user input, making it tainted!)
-            op_func = add; 
-
-            // 3. The Indirect Call
-            int result = op_func(a, 3);
-            
-            // 4. Legacy syntax
-             result = (*op_func)(result, b);
-            
-            printf("Result: %d\n", result);
-            return 0;
-        }"#;
-
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    log::info!("{}", dump);
-
-    let (summary, _source_info) = get_summary(program_info).unwrap();
-    log::info!("{:?}", summary);
-
-    assert!(check_match(&dump, "indirect-call"));
-    //assert!(summary_returns_param(&summary, &source_info, "bar", 0));
-}
-
-#[test_log::test]
-#[ignore = "issue #40"]
-fn block_without_return() {
-    let src = r"
-        void bar(){
-            int x = 5;            
-        }
-        ";
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    log::info!("{}", dump);
-
-    let (summary, _source_info) = get_summary(program_info).unwrap();
-    log::info!("{:?}", summary);
-
-    assert!(check_match(&dump, "assign %x"));
-}
-
-//msvc has an extension for try/catch, tree-sitter
-#[test_log::test]
-#[ignore = "aspirational MSVC extension try catch"]
-fn try_catch() {
-    let src = r#"
-    #include <stdio.h>
-       
-        __try {
-        // Guarded code
-        int* ptr = NULL;
-        *ptr = 42; // This would normally crash the program (Access Violation)
-        } 
-        __except(EXCEPTION_EXECUTE_HANDLER) {
-            // This code runs if an exception occurs above
-            printf("Caught a memory fault!\n");
-        }
-    }
-"#;
-    let (_program, dump) = program_from_string(src);
-    log::info!("{}", dump);
-    assert!(check_match(&dump, "exceptions not implemented"));
-}
-
-
-
 
 #[test_log::test]
 fn simple_else() {

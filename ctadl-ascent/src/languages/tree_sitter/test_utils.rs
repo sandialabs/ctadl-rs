@@ -14,12 +14,15 @@ use crate::{
     languages::tree_sitter,
 };
 use anyhow::{Context, Result};
-// `DirectedGraph` is a trait import: it provides `num_nodes()` used by `check_block_count`.
-// It looks unused but removing it breaks method resolution.
-use ctadl_ir::graph::DirectedGraph;
-use ctadl_ir::{AccessPath, Exp, FunctionData, StatementKind, VariableRef, ssa};
-use ctadl_ir::{Program, ProgramInfo, ParameterType, FieldAccess};
+// `DirectedGraph`/`Successors` are trait imports: they provide `num_nodes()` (used by
+// `check_block_count`) and `successors()` (used by `check_successors`). They look unused but
+// removing them breaks method resolution.
 use crate::facts::Path;
+use ctadl_ir::graph::{DirectedGraph, Successors};
+use ctadl_ir::{
+    AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, StatementKind, VariableRef, ssa,
+};
+use ctadl_ir::{FieldAccess, ParameterType, Program, ProgramInfo};
 
 pub(crate) fn init_test_logging() {
     let _ = env_logger::builder()
@@ -105,7 +108,28 @@ function. Panics at the caller's line on mismatch. */
 #[track_caller]
 pub(crate) fn check_block_count(prog: &Program, count: usize) {
     let fun = get_only_function(prog).expect("expected exactly one function");
-    assert_eq!(fun.blocks.num_nodes(), count, "block count mismatch\n{prog}");
+    assert_eq!(
+        fun.blocks.num_nodes(),
+        count,
+        "block count mismatch\n{prog}"
+    );
+}
+
+/* Asserts block `block` of the (single) function has exactly `expected` as its successor block ids
+(order-insensitive). An empty slice means a terminal block (e.g. a `return`). Asserts on the real
+terminator graph, not the dump. Panics at the caller's line on mismatch. */
+#[track_caller]
+pub(crate) fn check_successors(prog: &Program, block: usize, expected: &[usize]) {
+    let fun = get_only_function(prog).expect("expected exactly one function");
+    let mut got: Vec<usize> = fun
+        .blocks
+        .successors(BasicBlockIdx::new(block))
+        .map(|b| b.index())
+        .collect();
+    got.sort_unstable();
+    let mut want = expected.to_vec();
+    want.sort_unstable();
+    assert_eq!(got, want, "block {block} successor mismatch\n{prog}");
 }
 
 // A debugging aid for inspecting parsed blocks.
@@ -119,9 +143,11 @@ pub(crate) fn debug_output_blocks(prog: &Program) {
     }
 }
 
-// TODO: offset paths. This only produces `FieldAccess::Symbol`, so subscript/offset segments like
-// `[3]` are not parsed into `FieldAccess::Offset` and access paths with numeric offsets won't
-// round-trip through this helper yet.
+// Every segment becomes a `FieldAccess::Symbol`, including subscripts like `[3]`. This matches the
+// C frontend, which currently lowers a subscript to `FieldAccess::Symbol("[N]")` (see
+// `flatten_subscript` in mod.rs) rather than a real `FieldAccess::Offset`. So `"f.[3]"` round-trips
+// to `[Symbol("f"), Symbol("[3]")]`, exactly what the parser emits. (Real `Offset` lowering is an
+// aspirational frontend change; revisit this helper if/when that lands.)
 fn parse_fields(s: &str) -> impl Iterator<Item = FieldAccess> + '_ {
     s.split('.')
         .filter(|part| !part.is_empty())
@@ -145,10 +171,7 @@ fn access_path_from_str(s: &str) -> AccessPath {
 
         let n: u32 = n_str.parse().expect("invalid parameter index in @pN");
 
-        return AccessPath::new(
-            VariableRef::new_parameter(n.into()),
-            parse_fields(suffix),
-        );
+        return AccessPath::new(VariableRef::new_parameter(n.into()), parse_fields(suffix));
     }
 
     let (base, suffix) = if let Some((base, tail)) = s.split_once('.') {
@@ -163,9 +186,20 @@ fn access_path_from_str(s: &str) -> AccessPath {
     )
 }
 
+/* Builds a source expression from the DSL. A `#`-prefixed string is a constant literal (`"#7"` =>
+`Exp::Str("7")`, matching how the C frontend lowers a literal — see `flatten_expr` in mod.rs);
+anything else is an access path (variable / param / global / field). */
+fn exp_from_str(s: &str) -> Exp {
+    match s.strip_prefix('#') {
+        Some(lit) => Exp::new_str(lit),
+        None => Exp::from(access_path_from_str(s)),
+    }
+}
+
 /* Asserts the (single) function contains the given assignment or update (an update is expected when
-`dst` has a field path). If `block_id` is given, only that block is searched. Intended for Programs
-parsed from a single function. Panics at the caller's line if not found. */
+`dst` has a field path). If `block_id` is given, only that block is searched. Sources are DSL strings
+(access paths, or `#literal` for a constant). Intended for Programs parsed from a single function.
+Panics at the caller's line if not found. */
 #[track_caller]
 pub(crate) fn check_assign_or_update<I>(
     prog: &Program,
@@ -175,10 +209,7 @@ pub(crate) fn check_assign_or_update<I>(
 ) where
     I: IntoIterator<Item = &'static str>,
 {
-    let srcs: Vec<Exp> = src_strs
-        .into_iter()
-        .map(|s| Exp::from(access_path_from_str(s)))
-        .collect();
+    let srcs: Vec<Exp> = src_strs.into_iter().map(exp_from_str).collect();
 
     let dst_ap = access_path_from_str(dst);
 
@@ -204,7 +235,11 @@ pub(crate) fn check_assign_or_update<I>(
         block.statements.iter().any(|stmt| stmt.kind == expected)
     });
 
-    assert!(found, "could not find `{expected}` in function {}\n{prog}", fun.name);
+    assert!(
+        found,
+        "could not find `{expected}` in function {}\n{prog}",
+        fun.name
+    );
 }
 
 pub(crate) fn check_match(prog_str: &str, needle: &str) -> bool {
@@ -250,19 +285,84 @@ pub(crate) fn summary_search(
     let from_path: Path = from_path.parse().unwrap();
     let to_path: Path = to_path.parse().unwrap();
     summary.iter().any(|r| {
-        r.1 == fx::FormalIndex::new(to_index) &&
-        r.2 == to_path &&
-        r.3 == fx::FormalIndex::new(from_index) &&
-        r.4 == from_path
+        r.1 == fx::FormalIndex::new(to_index)
+            && r.2 == to_path
+            && r.3 == fx::FormalIndex::new(from_index)
+            && r.4 == from_path
     })
 }
 
 pub(crate) fn summary_returns_param(
     summary: &[FunctionSummary],
     param_num: i16,
-    param_path: &str
+    param_path: &str,
 ) -> bool {
     summary_search(summary, param_num, param_path, RETURN_INDEX, "")
+}
+
+// Renders a summary endpoint for failure messages, e.g. `@p0.f1` or `return`.
+fn fmt_endpoint(index: i16, path: &str) -> String {
+    let base = if index == RETURN_INDEX {
+        "return".to_string()
+    } else {
+        format!("@p{index}")
+    };
+    if path.is_empty() {
+        base
+    } else {
+        format!("{base}.{path}")
+    }
+}
+
+/* Asserting wrappers around the summary predicates above. Unlike a bare `assert!(summary_*(...))`,
+these are `#[track_caller]` and print the actual summary on failure, so a Category B test shows what
+flows *were* present rather than just "assertion failed". The `bool` predicates are kept for
+composition — `check_no_flow` is the asserting form for the absence case (Flowy's `</-`). */
+
+#[track_caller]
+pub(crate) fn check_summary_count(summary: &[FunctionSummary], count: usize) {
+    assert_eq!(
+        summary.len(),
+        count,
+        "summary count mismatch\nsummary: {summary:#?}"
+    );
+}
+
+#[track_caller]
+pub(crate) fn check_flow(
+    summary: &[FunctionSummary],
+    from_index: i16,
+    from_path: &str,
+    to_index: i16,
+    to_path: &str,
+) {
+    assert!(
+        summary_search(summary, from_index, from_path, to_index, to_path),
+        "expected flow {} -> {}, but it is absent.\nsummary: {summary:#?}",
+        fmt_endpoint(from_index, from_path),
+        fmt_endpoint(to_index, to_path),
+    );
+}
+
+#[track_caller]
+pub(crate) fn check_no_flow(
+    summary: &[FunctionSummary],
+    from_index: i16,
+    from_path: &str,
+    to_index: i16,
+    to_path: &str,
+) {
+    assert!(
+        !summary_search(summary, from_index, from_path, to_index, to_path),
+        "unexpected flow {} -> {} is present.\nsummary: {summary:#?}",
+        fmt_endpoint(from_index, from_path),
+        fmt_endpoint(to_index, to_path),
+    );
+}
+
+#[track_caller]
+pub(crate) fn check_returns_param(summary: &[FunctionSummary], param_num: i16, param_path: &str) {
+    check_flow(summary, param_num, param_path, RETURN_INDEX, "");
 }
 
 // Unit tests for the access-path string DSL itself. These helpers contain real parsing logic, so a
@@ -322,5 +422,26 @@ mod ap_tests {
                 FieldAccess::Symbol("b".into()),
             ],
         );
+    }
+
+    #[test]
+    fn subscript_is_symbol_segment() {
+        // The C frontend lowers `f[3]` to `FieldAccess::Symbol("[3]")` (not a real Offset), so the
+        // DSL must too — `"f.[3]"` becomes `[Symbol("f"), Symbol("[3]")]`.
+        assert_eq!(
+            access_path_from_str("f.[3]"),
+            AccessPath::new(
+                VariableRef::new_local("f".to_string()),
+                [FieldAccess::Symbol("[3]".into())],
+            ),
+        );
+    }
+
+    #[test]
+    fn constant_source() {
+        // A `#`-prefixed source is a constant literal, not a variable.
+        assert_eq!(exp_from_str("#7"), Exp::new_str("7"));
+        // ...while a bare name is still an access-path variable.
+        assert_eq!(exp_from_str("b"), Exp::from(access_path_from_str("b")));
     }
 }
