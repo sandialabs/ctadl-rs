@@ -139,11 +139,13 @@
         checks =
           let
             # The expensive regression suite: source-sink taint tests over Java
-            # (DEX) and pcode (C) inputs, run via the vendored ./nightly harness
-            # inside testEnv. This is a full (non-local) derivation because it
-            # runs ctadl + ghidra + the Android toolchain. The Nix sandbox has no
-            # network, so every tool comes from testEnv. Note `tests.sh` takes a
-            # ctadl install prefix as $1 and puts its bin/ on PATH.
+            # (DEX) and pcode (C) inputs. The orchestration lives in the `xtask`
+            # crate (`cargo xtask regression`); here we just run the prebuilt
+            # `xtask` binary that ships in packages.default. This is a full
+            # (non-local) derivation because it runs ctadl + ghidra + the Android
+            # toolchain. The Nix sandbox has no network, so every tool comes from
+            # testEnv. `xtask` discovers cases under the cwd's `tests/` dir and
+            # invokes ctadl/dex-reader/javac/dx/addr2line from PATH.
             regression =
               pkgs.runCommand "ctadl-checks-regression"
                 {
@@ -162,8 +164,7 @@
                   # ghidra/javac want a writable HOME; the sandbox HOME is not.
                   export HOME="$TMPDIR"
 
-                  chmod +x ./tests.sh
-                  ./tests.sh ${self.packages.${system}.default}
+                  ${self.packages.${system}.default}/bin/xtask regression
 
                   mkdir -p "$out"
                 '';
