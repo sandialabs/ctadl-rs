@@ -1187,13 +1187,34 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 }
             }
 
-            let additional_properties = BTreeMap::from([
+            // Resolve the sink callee name(s) so consumers can match on the
+            // sink function directly instead of reconstructing it from the sink
+            // statement vertex. The model attaches a sink to the callee method
+            // (e.g. `system`), so the sink endpoint's `infunc` is that callee;
+            // resolve it via the same id_to_name map used for source/sink results.
+            let mut sink_functions: BTreeSet<String> = BTreeSet::new();
+            for (_src, sink_opt, _lbl) in &details {
+                if let Some(sink) = sink_opt
+                    && let Some(name) = source_data.id_to_name.get(&sink.infunc.id)
+                {
+                    sink_functions.insert(name.clone());
+                }
+            }
+            let sink_functions: Vec<String> = sink_functions.into_iter().collect();
+
+            let mut additional_properties = BTreeMap::from([
                 ("taintLabels".to_string(), serde_json::json!(sorted_labels)),
                 (
                     "taintVertices".to_string(),
                     serde_json::json!(labels_to_vertices),
                 ),
             ]);
+            if let Some(first) = sink_functions.first() {
+                additional_properties
+                    .insert("sinkCallee".to_string(), serde_json::json!(first));
+                additional_properties
+                    .insert("sinkFunctions".to_string(), serde_json::json!(sink_functions));
+            }
             let properties = PropertyBag::builder()
                 .additional_properties(additional_properties)
                 .build();
