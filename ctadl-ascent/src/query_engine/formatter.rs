@@ -1273,18 +1273,19 @@ fn format_source_sink_results(
             } else {
                 TAINT_SINK_RULE_ID
             };
+            // Render the full vertex (variable *and* access path) so distinct
+            // endpoints on the same variable -- e.g. a model that taints both
+            // `Argument(1).deref` and `Argument(1).deref.deref` -- read as the
+            // separate sources they are, instead of collapsing to identical
+            // "formal(1) in function main" lines. The label (taint kind) is the
+            // other distinguishing field; carry it in `properties` below.
+            let vertex = format!("{}{}", node.1, node.2.to_dot_string());
+            let func_name = id_to_name.get(&node.0.id).cloned().unwrap_or_else(|| "unknown".to_string());
+            let label = endpoint.label.0.to_string();
             let msg_text = if is_source {
-                format!(
-                    "Source of tainted data: {} in function {}",
-                    node.1,
-                    id_to_name.get(&node.0.id).unwrap_or(&"unknown".to_string())
-                )
+                format!("Source of tainted data: {vertex} in function {func_name} (kind '{label}')")
             } else {
-                format!(
-                    "Sink of tainted data: {} in function {}",
-                    node.1,
-                    id_to_name.get(&node.0.id).unwrap_or(&"unknown".to_string())
-                )
+                format!("Sink of tainted data: {vertex} in function {func_name} (kind '{label}')")
             };
 
             let fully_qualified_name = id_to_name
@@ -1321,12 +1322,20 @@ fn format_source_sink_results(
                 locations = vec![loc_with_phys];
             }
 
+            let properties = PropertyBag::builder()
+                .additional_properties(BTreeMap::from([
+                    ("taintLabels".to_string(), serde_json::json!([label])),
+                    ("taintVertex".to_string(), serde_json::json!(vertex)),
+                ]))
+                .build();
+
             let result = SarifResult::builder()
                 .rule_id(rule_id.to_string())
                 .kind(ResultKind::Informational)
                 .level(ResultLevel::None)
                 .message(Message::builder().text(msg_text).build())
                 .locations(locations)
+                .properties(properties)
                 .build();
 
             source_sink_results.push(result);
