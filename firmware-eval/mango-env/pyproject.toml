@@ -1,0 +1,16 @@
+[project]
+name = "mango-env"
+version = "0.0.0"
+description = "Reproducible env to run Operation Mango's argument_resolver natively (no docker)."
+requires-python = ">=3.11,<3.12"
+dependencies = ["argument_resolver"]
+
+[tool.uv]
+override-dependencies = ["capstone==5.0.6", "pycparser==2.21"]
+
+[tool.uv.sources]
+argument_resolver = { path = "/Users/dbueno/proj/operation-mango-public", editable = true }
+
+[tool.uv.extra-build-dependencies]
+angr = ["setuptools<81"]
+unicorn = ["setuptools<81"]
