@@ -1,0 +1,209 @@
+// =============================================================================
+// CTADL taint model: command injection in Linux firmware
+// =============================================================================
+//
+// This model mirrors the source/sink set of Operation Mango so that CTADL and
+// Mango are directly comparable on the firmware-eval benchmark. It is meant to
+// be loaded with `ctadl ... --models firmware-eval/models/cmdi-firmware.json5`.
+// It can be loaded ALONE or alongside CTADL's built-in pcode default model; the
+// propagation summaries below overlap the defaults harmlessly (the Datalog
+// engine is set-based, so duplicate facts are idempotent).
+//
+// Provenance / faithful-mirror notes
+// -----------------------------------
+//  * Sinks  come from operation-mango: package/argument_resolver/external_function/
+//           sink/sink_lists.py  -> COMMAND_INJECTION_SINKS
+//  * Sources come from:           external_function/input_functions.py
+//           (INPUT_EXTERNAL_FUNCTIONS) and the getter sinks reused as sources.
+//
+// Port index convention
+// ---------------------
+//  Mango `vulnerable_parameters` is 1-based (arg 1 = first argument).
+//  CTADL `Argument(n)` is 0-based.  So Mango [1] -> Argument(0), [2] -> Argument(1).
+//
+// `.deref` convention
+// -------------------
+//  Command-injection sinks take a `char *`; the *string bytes* live at the
+//  dereferenced location, so taint is checked on `Argument(0).deref`, matching
+//  CTADL's shipped pcode default model. Same reasoning for char* sources.
+//
+// `kind` convention
+// -----------------
+//  CTADL reports a flow whenever ANY source taint reaches ANY sink (kinds need
+//  not match -- the shipped default cmdi detector itself pairs source kind
+//  `user_input` with sink kind `command_injection`). We exploit that: each
+//  source carries a distinct kind so the normalized Finding's `source_class`
+//  falls out of the report directly:
+//      nvram_input   -> NVRAM
+//      env_input     -> ENV
+//      network_input -> NETWORK
+//      file_input    -> FILE
+//  (If a CTADL build is ever changed to require kind-matching and you get zero
+//   flows, collapse every source `kind` below to `command_injection`.)
+//
+// Matching / anchoring
+// --------------------
+//  CTADL matches pcode functions by regex over the function name. We anchor with
+//  ^(...)$ to mirror Mango's exact-name semantics and avoid substring hits like
+//  "filesystem" matching ".*system.*". If recall drops on stripped/thunked
+//  firmware (symbol decorated as `system@plt`, `__imp_system`, ...), relax the
+//  anchors or add an alternate generator with `.*(...).*`.
+//
+// HTTP KEY_BEACONS (ranking, not modeled here)
+// --------------------------------------------
+//  Mango boosts a finding's rank when the getter's key argument is an HTTP CGI
+//  var (REQUEST_URI, HTTP_COOKIE, QUERY_STRING, CONTENT_TYPE, HTTP_HOST, ...).
+//  CTADL has no model primitive for "argument string value equals X", so that
+//  stays a harness-side ranking step over the resolved key string, not a source.
+// =============================================================================
+{
+  model_generators: [
+
+    // ---------------------------------------------------------------------
+    // SINKS -- command injection (Mango COMMAND_INJECTION_SINKS)
+    // Command string at Mango param 1 => CTADL Argument(0).deref
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{
+        constraint: "signature_pattern",
+        pattern: "^(system|twsystem|execFormatCmd|exec_cmd|___system|bstar_system|doSystemCmd|doShell|CsteSystem|cgi_deal_popen|ExeCmd|ExecShell|exec_shell_popen|exec_shell_popen_str|popen|execl|execlp|execle|execv|execvp|execvpe|execve|tp_systemEx|exec_shell_async|exec_shell_sync|exec_shell_sync2|SLIBCSystem|SLIBCExec|SLIBCExecv|SLIBCPopen|pegaSystem)$"
+      }],
+      model: { sinks: [{ port: "Argument(0).deref", kind: "command_injection" }] }
+    },
+
+    // SLIBCExecl: Mango marks vulnerable param 2 => Argument(1).deref
+    {
+      find: "methods",
+      where: [{ constraint: "signature_pattern", pattern: "^(SLIBCExecl)$" }],
+      model: { sinks: [{ port: "Argument(1).deref", kind: "command_injection" }] }
+    },
+
+    // ---------------------------------------------------------------------
+    // SOURCES -- NVRAM getters (return value is attacker-influenced config)
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{
+        constraint: "signature_pattern",
+        pattern: "^(nvram_get|nvram_safe_get|bcm_nvram_get|envram_get|wlcsm_nvram_get|dni_nvram_get|PTI_nvram_get|acosNvramConfig_get|acosNvramConfig_read|GetValue)$"
+      }],
+      model: { sources: [{ port: "Return.deref", kind: "nvram_input" }] }
+    },
+
+    // SOURCES -- environment getter
+    {
+      find: "methods",
+      where: [{ constraint: "signature_pattern", pattern: "^(getenv)$" }],
+      model: { sources: [{ port: "Return.deref", kind: "env_input" }] }
+    },
+
+    // ---------------------------------------------------------------------
+    // SOURCES -- network input. Buffer written by the call.
+    //   recv(sock, buf, len, flags)            -> buf = Argument(1)
+    //   recvfrom(sock, buf, len, flags, ...)   -> buf = Argument(1)
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{ constraint: "signature_pattern", pattern: "^(recv|recvfrom)$" }],
+      model: { sources: [{ port: "Argument(1).deref", kind: "network_input" }] }
+    },
+
+    // Mango synthetic CGI parameter parser: result + out-buffer are network input
+    {
+      find: "methods",
+      where: [{ constraint: "signature_pattern", pattern: "^(custom_param_parser)$" }],
+      model: { sources: [
+        { port: "Return.deref",      kind: "network_input" },
+        { port: "Argument(0).deref", kind: "network_input" }
+      ] }
+    },
+
+    // ---------------------------------------------------------------------
+    // SOURCES -- file/stream input (Mango INPUT_EXTERNAL_FUNCTIONS)
+    //   read(fd, buf, count)   -> buf = Argument(1)
+    //   fread(ptr, sz, n, str) -> ptr = Argument(0)
+    //   fgets(s, n, stream)    -> s   = Argument(0), and returns s
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{ constraint: "signature_pattern", pattern: "^(read)$" }],
+      model: { sources: [{ port: "Argument(1).deref", kind: "file_input" }] }
+    },
+    {
+      find: "methods",
+      where: [{ constraint: "signature_pattern", pattern: "^(fread)$" }],
+      model: { sources: [{ port: "Argument(0).deref", kind: "file_input" }] }
+    },
+    {
+      find: "methods",
+      where: [{ constraint: "signature_pattern", pattern: "^(fgets)$" }],
+      model: { sources: [
+        { port: "Argument(0).deref", kind: "file_input" },
+        { port: "Return.deref",      kind: "file_input" }
+      ] }
+    },
+
+    // ---------------------------------------------------------------------
+    // PROPAGATION -- string builders, so tainted config/network data reaches a
+    // sink through the usual `sprintf(cmd, "fmt %s", tainted); system(cmd)`
+    // patterns. (Overlaps CTADL's pcode default model; harmless if both load.)
+    // ---------------------------------------------------------------------
+
+    // sprintf family: any format/source arg -> destination buffer (Argument 0) + return
+    {
+      find: "methods",
+      where: [{
+        constraint: "signature_pattern",
+        pattern: "^(sprintf|snprintf|vsprintf|vsnprintf|asprintf|vasprintf|swprintf|vswprintf)$"
+      }],
+      model: { propagation: [
+        { input: "Argument(*).deref", output: "Argument(0).deref" },
+        { input: "Argument(*).deref", output: "Return.deref" }
+      ] }
+    },
+
+    // strcpy / strcat family: src (Argument 1) -> dest (Argument 0) + return
+    {
+      find: "methods",
+      where: [{
+        constraint: "signature_pattern",
+        pattern: "^(strcpy|strncpy|stpcpy|stpncpy|strcat|strncat|strlcpy|strlcat)$"
+      }],
+      model: { propagation: [
+        { input: "Argument(1).deref", output: "Argument(0).deref" },
+        { input: "Argument(1).deref", output: "Return.deref" }
+      ] }
+    },
+
+    // memcpy / memmove: src (Argument 1) -> dest (Argument 0) + return
+    {
+      find: "methods",
+      where: [{ constraint: "signature_pattern", pattern: "^(memcpy|memmove|mempcpy|bcopy)$" }],
+      model: { propagation: [
+        { input: "Argument(1).deref", output: "Argument(0).deref" },
+        { input: "Argument(1).deref", output: "Return.deref" }
+      ] }
+    },
+
+    // strdup family and search/tokenizers: Argument 0 -> return
+    {
+      find: "methods",
+      where: [{
+        constraint: "signature_pattern",
+        pattern: "^(strdup|strndup|strstr|strchr|strrchr|strpbrk|strtok|strtok_r|strsep|basename|dirname)$"
+      }],
+      model: { propagation: [{ input: "Argument(0).deref", output: "Return.deref" }] }
+    },
+
+    // numeric parses keep taint on the (scalar) return
+    {
+      find: "methods",
+      where: [{
+        constraint: "signature_pattern",
+        pattern: "^(atoi|atol|atoll|strtol|strtoll|strtoul|strtoull)$"
+      }],
+      model: { propagation: [{ input: "Argument(0).deref", output: "Return" }] }
+    }
+  ]
+}
