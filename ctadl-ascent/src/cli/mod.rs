@@ -42,7 +42,10 @@ fn build_query_endpoints(
 ) {
     use crate::models::FormalIndexTypeTag;
     let ap_map = batch.aps.build_ap_map();
-    let func_num_params = facts.compute_num_params();
+    // `AnyArgument` ("*") on a source/sink endpoint ranges over the arguments
+    // actually passed at call sites, not the declared formal count (matches the
+    // propagation side; covers variadic endpoints).
+    let func_num_params = facts.compute_arg_arity();
 
     let mut out_eps = Vec::new();
     let mut out_formals = Vec::new();
