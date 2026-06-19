@@ -66,6 +66,9 @@ enum VnodeRep {
     Const(i64),
     Var(VariableRef),
     Offset(VariableRef, i64),
+    /// A named stack-storage varnode at frame offset `F`, expressed as the canonical
+    /// stack memory `__stack_top.[F].deref` so it unifies with stack-address derefs.
+    StackSlot(i64),
 }
 
 #[derive(Debug)]
@@ -999,6 +1002,13 @@ impl Context {
     /// map to a Var using vnode_id. Varnodes not in the register and not in the unique spaces map
     /// to a Offset of the vnode_id and the constant offset. All other varnodes map to a Var of the
     /// vnode_id.
+    ///
+    /// Stack memory is canonicalized so that the frontend's two models of it agree: a value
+    /// that constant-propagation resolves to a stack address `__stack_top + k` becomes
+    /// `__stack_top.[k]`, and a named Ghidra stack slot at frame offset `F` becomes
+    /// `__stack_top.[F].deref` (a [`VnodeRep::StackSlot`]). Both then share the `__stack_top`
+    /// root used by LOAD/STORE address resolution (see [`Self::resolve_mem_exp`]), so taint
+    /// written through a stack pointer meets taint read from the corresponding slot.
     fn convert_vnode(
         &self,
         vnode_id: &pcode_reader::PcodeVarnode,
@@ -1030,6 +1040,25 @@ impl Context {
             return VnodeRep::Offset(stack_top, 0);
         }
 
+        // A register/unique value that constant-propagation resolves to a stack address
+        // `__stack_top + k` is the address of frame slot `k`.
+        if matches!(space, Some("register") | Some("unique"))
+            && let Some(pcode_reader::constant_propagation::SymbolicProp::Value(Some(base), k)) =
+                self.cp_results.get(vnode_id)
+            && base.deref().deref() == "__stack_top"
+        {
+            let stack_top = VariableRef::new_local("__stack_top".to_string());
+            return VnodeRep::Offset(stack_top, *k);
+        }
+
+        // A named Ghidra stack slot denotes the memory at its frame offset; express it as a
+        // deref of the stack address so it unifies with the address-expression form above.
+        if space == Some("stack")
+            && let Some(offset) = vnode_data.constant_offset
+        {
+            return VnodeRep::StackSlot(offset);
+        }
+
         if space != Some("register")
             && space != Some("unique")
             && let Some(offset) = vnode_data.constant_offset
@@ -1038,6 +1067,15 @@ impl Context {
         }
 
         VnodeRep::Var(var)
+    }
+
+    /// Builds the access path for the canonical stack slot `__stack_top.[offset].deref`.
+    fn stack_slot_path(offset: i64) -> AccessPath {
+        let stack_top = VariableRef::new_local("__stack_top".to_string());
+        let mut ap = AccessPath::without_fields(stack_top);
+        ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
+        ap.path.fields.push(FieldAccess::Symbol("deref".into()));
+        ap
     }
 
     /// Resolve an offset expression using constant propagation results if available.
@@ -1212,6 +1250,7 @@ impl Context {
                 ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
                 Exp::AccessPath(ap)
             }
+            VnodeRep::StackSlot(offset) => Exp::AccessPath(Self::stack_slot_path(offset)),
         };
         Ok(exp)
     }
@@ -1234,6 +1273,7 @@ impl Context {
                 ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
                 ap
             }
+            VnodeRep::StackSlot(offset) => Self::stack_slot_path(offset),
         };
         Ok(ap)
     }
@@ -1245,7 +1285,7 @@ impl Context {
     ) -> Option<i64> {
         match self.convert_vnode(vnode_id, vnode_facts, &self.register_facts) {
             VnodeRep::Const(value) => Some(value),
-            _ => None,
+            VnodeRep::Var(_) | VnodeRep::Offset(..) | VnodeRep::StackSlot(_) => None,
         }
     }
 
