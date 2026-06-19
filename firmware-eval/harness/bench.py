@@ -86,11 +86,18 @@ def run_one(ctadl: Path, model: Path, entry: dict, timeout_s: int) -> tuple[F.Ru
     binary = entry["binary"]
     artifact = entry.get("artifact", binary)
     arch = entry.get("arch")
+    # Frontend/IR family for `ctadl go`. A raw firmware ELF goes through the
+    # Ghidra pcode lifter (`-l pcode`); set entry["language"] to override (e.g.
+    # "jvm"/"dex"/"auto" for non-binary artifacts, or "" to let ctadl sniff it).
+    language = entry.get("language", "pcode")
     sha = sha256_file(binary)
     project = "cta_" + sha[:12]
 
     with tempfile.TemporaryDirectory() as td:
-        cmd = [str(ctadl), "go", project, "--models", str(model), str(artifact)]
+        cmd = [str(ctadl), "go", project]
+        if language:
+            cmd += ["-l", language]
+        cmd += ["--models", str(model), str(artifact)]
         t0 = time.monotonic()
         timed_out = False
         stderr = ""

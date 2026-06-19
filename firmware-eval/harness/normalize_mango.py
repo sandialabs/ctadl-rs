@@ -38,20 +38,26 @@ _ERROR_STATUS = {
 def _pick_source(inputs: dict) -> tuple[str, list]:
     """From a closure's `inputs`, choose the strongest source class and collect
     all source sites. Prefer `likely` over `possibly`; prefer a specific class
-    over UNKNOWN."""
+    over UNKNOWN.
+
+    Mango's `likely`/`possibly` buckets are a *list* of source tokens, e.g.
+    `["ARGV", "stdin", "accept(fd: 3)@0x..._6_6", "/etc/passwd"]`; older/other
+    builds emit a `{src_name: [sites]}` dict. Handle both."""
     sites: list = []
     best = "UNKNOWN"
     for bucket in ("likely", "possibly"):
-        group = (inputs or {}).get(bucket, {}) or {}
-        for src_name, src_sites in group.items():
-            sites.extend(src_sites or [])
-            # classify by the source name AND its site strings
-            cls = F.classify_source(src_name)
-            if cls == "UNKNOWN":
-                for s in (src_sites or []):
-                    cls = F.classify_source(str(s))
-                    if cls != "UNKNOWN":
-                        break
+        group = (inputs or {}).get(bucket)
+        if isinstance(group, dict):
+            tokens = list(group.keys())
+            for v in group.values():
+                sites.extend(v or [])
+        elif isinstance(group, list):
+            tokens = [str(t) for t in group]
+            sites.extend(tokens)
+        else:
+            tokens = []
+        for tok in tokens:
+            cls = F.classify_source(tok)
             if best == "UNKNOWN" and cls != "UNKNOWN":
                 best = cls
         if best != "UNKNOWN" and bucket == "likely":
