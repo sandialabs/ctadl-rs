@@ -907,10 +907,15 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     // Map each node to an instruction for location info
     let mut node_to_site: BTreeMap<(FunctionId, FlowVariable, Path), (FunctionId, InsnId)> =
         BTreeMap::new();
+    let mut site_by_var: BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)> =
+        BTreeMap::new();
     for (site, _, v, p) in &ctx.facts.actual_param {
         let site_unpacked = InsnSiteId::unpack(site).unwrap();
         node_to_site
             .entry((site_unpacked.func_id, *v, *p))
+            .or_insert((site_unpacked.func_id, site_unpacked.insn_id));
+        site_by_var
+            .entry((site_unpacked.func_id, *v))
             .or_insert((site_unpacked.func_id, site_unpacked.insn_id));
     }
 
@@ -1020,7 +1025,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         let mut last_loc_id: Option<(&String, Option<String>)> = None;
         for &node_id in path {
             let node = &id_to_node[node_id as usize];
-            if let Some(site) = node_to_site.get(node)
+            if let Some(site) = node_to_site.get(node).or_else(|| site_by_var.get(&(node.0, node.1)))
                 && let Some(loc) = source_data.all_locations.get(&(site.0.id, site.1.id))
             {
                 let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
