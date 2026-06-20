@@ -905,15 +905,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     let endpoints: BTreeSet<_> = node_to_endpoint.values().flat_map(|v| v.iter()).collect();
 
     // Map each node to an instruction for location info
-    let mut node_to_site: BTreeMap<(FunctionId, FlowVariable, Path), (FunctionId, InsnId)> =
-        BTreeMap::new();
     let mut site_by_var: BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)> =
         BTreeMap::new();
-    for (site, _, v, p) in &ctx.facts.actual_param {
+    for (site, _, v, _) in &ctx.facts.actual_param {
         let site_unpacked = InsnSiteId::unpack(site).unwrap();
-        node_to_site
-            .entry((site_unpacked.func_id, *v, *p))
-            .or_insert((site_unpacked.func_id, site_unpacked.insn_id));
         site_by_var
             .entry((site_unpacked.func_id, *v))
             .or_insert((site_unpacked.func_id, site_unpacked.insn_id));
@@ -974,7 +969,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     for path in results_by_path.keys() {
         for &node_id in path {
             let node = &id_to_node[node_id as usize];
-            if let Some(site) = node_to_site.get(node)
+            if let Some(site) = site_by_var.get(&(node.0, node.1))
                 && seen_sites.insert((site.0.id, site.1.id))
             {
                 path_sites.insert((site.0, site.1));
@@ -1025,7 +1020,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         let mut last_loc_id: Option<(&String, Option<String>)> = None;
         for &node_id in path {
             let node = &id_to_node[node_id as usize];
-            if let Some(site) = node_to_site.get(node).or_else(|| site_by_var.get(&(node.0, node.1)))
+            if let Some(site) = site_by_var.get(&(node.0, node.1))
                 && let Some(loc) = source_data.all_locations.get(&(site.0.id, site.1.id))
             {
                 let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
@@ -1151,7 +1146,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             sarif_data,
             &endpoints,
             &source_data.id_to_name,
-            &node_to_site,
+            &site_by_var,
             &source_data.all_locations,
         ));
     }
@@ -1238,16 +1233,18 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 ),
             ]);
             if let Some(first) = source_functions.first() {
-                additional_properties
-                    .insert("sourceCallee".to_string(), serde_json::json!(first));
-                additional_properties
-                    .insert("sourceFunctions".to_string(), serde_json::json!(source_functions));
+                additional_properties.insert("sourceCallee".to_string(), serde_json::json!(first));
+                additional_properties.insert(
+                    "sourceFunctions".to_string(),
+                    serde_json::json!(source_functions),
+                );
             }
             if let Some(first) = sink_functions.first() {
-                additional_properties
-                    .insert("sinkCallee".to_string(), serde_json::json!(first));
-                additional_properties
-                    .insert("sinkFunctions".to_string(), serde_json::json!(sink_functions));
+                additional_properties.insert("sinkCallee".to_string(), serde_json::json!(first));
+                additional_properties.insert(
+                    "sinkFunctions".to_string(),
+                    serde_json::json!(sink_functions),
+                );
             }
             let properties = PropertyBag::builder()
                 .additional_properties(additional_properties)
@@ -1276,7 +1273,7 @@ fn format_source_sink_results(
     sarif_data: &mut SarifData,
     endpoints: &BTreeSet<&QueryEndpoint>,
     id_to_name: &BTreeMap<u32, String>,
-    node_to_site: &BTreeMap<(FunctionId, FlowVariable, Path), (FunctionId, InsnId)>,
+    site_by_var: &BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)>,
     all_locations: &BTreeMap<(u32, u64), Location>,
 ) -> Vec<SarifResult> {
     let mut source_sink_results = Vec::new();
@@ -1301,7 +1298,10 @@ fn format_source_sink_results(
             // "formal(1) in function main" lines. The label (taint kind) is the
             // other distinguishing field; carry it in `properties` below.
             let vertex = format!("{}{}", node.1, node.2.to_dot_string());
-            let func_name = id_to_name.get(&node.0.id).cloned().unwrap_or_else(|| "unknown".to_string());
+            let func_name = id_to_name
+                .get(&node.0.id)
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string());
             let label = endpoint.label.0.to_string();
             let msg_text = if is_source {
                 format!("Source of tainted data: {vertex} in function {func_name} (kind '{label}')")
@@ -1335,7 +1335,7 @@ fn format_source_sink_results(
                     .build(),
             ];
 
-            if let Some(&site) = node_to_site.get(&node)
+            if let Some(&site) = site_by_var.get(&(node.0, node.1))
                 && let Some(physical_loc) = all_locations.get(&(site.0.id, site.1.id))
             {
                 let mut loc_with_phys = physical_loc.clone();
