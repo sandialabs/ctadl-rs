@@ -30,6 +30,18 @@ pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramIn
 
     let facts_dir = import_path.join("facts");
 
+    // Persist Ghidra's image base on the import config so downstream consumers
+    // (SARIF address mapping, regression line checks) can recover
+    // section-relative offsets regardless of the base Ghidra chose.
+    if let Some(image_base) = PcodeFactsReader::new(&facts_dir)
+        .read_image_base()
+        .map_err(|e| Error::PcodeFactRead(format!("Failed to read image base: {}", e)))?
+    {
+        let mut updated = import.clone();
+        updated.image_base = Some(image_base);
+        updated.save()?;
+    }
+
     let mut ctx = Context::new();
     let mut builders = Builders::new();
 

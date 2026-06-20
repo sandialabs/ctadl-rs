@@ -82,6 +82,10 @@ pub struct ProjectContext<'a, P: AsRef<path::Path>> {
     pub facts: &'a FormatFacts,
     pub taint_results: &'a TaintAnalysisResults,
     pub language: ArtifactLanguage,
+    /// Base address the disassembler loaded the artifact at, if known. Used to
+    /// emit `relativeAddress` (the section-relative offset) alongside the
+    /// absolute instruction address in binary SARIF locations.
+    pub image_base: Option<i64>,
 }
 
 pub struct FormatConfig {
@@ -377,6 +381,7 @@ async fn async_format_sarif(
             facts,
             taint_results,
             language: import.language,
+            image_base: import.image_base,
         };
         let sarif_results = format_source_info_results(&ctx, config, &mut sarif_data)
             .await
@@ -772,8 +777,14 @@ async fn populate_source_info<P: AsRef<path::Path>>(
             let is_pcode = ctx.language == ArtifactLanguage::Pcode;
             let physical_location = match encoding {
                 source_info::ArtifactEncoding::Binary if is_pcode => {
+                    // `start` is the absolute instruction address (it includes
+                    // the disassembler's image base). Emit the section-relative
+                    // offset too so consumers (e.g. addr2line in the regression
+                    // suite) need not assume a particular base. When the base is
+                    // unknown, the relative offset degenerates to the absolute.
                     let address = Address::builder()
                         .absolute_address(start as i64)
+                        .relative_address(start as i64 - ctx.image_base.unwrap_or(0))
                         .kind("instruction")
                         .build();
                     PhysicalLocation::builder()
