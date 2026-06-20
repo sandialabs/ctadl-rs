@@ -148,6 +148,10 @@ pub struct TaintedInstructions {
 }
 
 pub struct TaintAnalysisResults {
+    /// Taint-flow edges. Each tuple is `(df, dv, dp, sf, sv, sp, direction)`:
+    /// the node `(df,dv,dp)` was tainted *from* `(sf,sv,sp)` while propagating
+    /// in `direction`. The data-flow orientation depends on `direction` — see
+    /// the consumers (SARIF path graph, `--dump-taint-graph`).
     pub edges: Vec<(
         FunctionId,
         FlowVariable,
@@ -155,6 +159,7 @@ pub struct TaintAnalysisResults {
         FunctionId,
         FlowVariable,
         Path,
+        TaintDirection,
     )>,
     pub tainted_insns: TaintedInstructions,
     pub absorbing_functions: Vec<(FunctionId, QueryEndpoint, FormalIndex)>,
@@ -183,9 +188,9 @@ pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
         struct FormatterEngine;
         macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sv:expr, $sp:expr) {
             taint($df, $dts, $dv, $dp, $a),
-            taint_edge($df, $dv, $dp, $sf, $sv, $sp)
+            taint_edge($df, $dv, $dp, $sf, $sv, $sp, ($a).direction)
         }
-        relation taint_edge(FunctionId, FlowVariable, Path, FunctionId, FlowVariable, Path);
+        relation taint_edge(FunctionId, FlowVariable, Path, FunctionId, FlowVariable, Path, TaintDirection);
         relation tainted_var_at_insn(PackedInsnSiteId, Label, FlowVariable, Path);
         relation external_function(FunctionId);
         relation absorbing_functions(FunctionId, QueryEndpoint, FormalIndex);
@@ -848,7 +853,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 id_to_node.push(src_n);
             }
         }
-        for (df, dv, dp, sf, sv, sp) in taint_edge {
+        for (df, dv, dp, sf, sv, sp, _dir) in taint_edge {
             let src_n = (*sf, *sv, *sp);
             if let std::collections::btree_map::Entry::Vacant(e) = node_to_id.entry(src_n) {
                 e.insert(id_to_node.len() as u32);
@@ -863,7 +868,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
 
         let edges: Vec<(u32, u32)> = taint_edge
             .iter()
-            .map(|(df, dv, dp, sf, sv, sp)| {
+            .map(|(df, dv, dp, sf, sv, sp, _dir)| {
                 let src_n = (*sf, *sv, *sp);
                 let dst_n = (*df, *dv, *dp);
                 let src_id = *node_to_id.get(&src_n).unwrap();

@@ -1,42 +1,84 @@
 use rustc_graphviz as dot;
-use std::collections::BTreeSet;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
 use crate::facts::{FlowVariable, FunctionId, Path};
 
-/// A wrapper around taint edges to implement Graphviz traits.
+/// A taint-graph vertex: `(function, variable, access-path)`.
+pub type TaintNode = (FunctionId, FlowVariable, Path);
+
+/// A taint-graph edge already oriented in *data-flow* direction
+/// (`src → dst`, i.e. taint flows from `src` into `dst`), tagged with which
+/// cone(s) produced it.
+pub type ConeEdge = (
+    FunctionId,
+    FlowVariable,
+    Path,
+    FunctionId,
+    FlowVariable,
+    Path,
+    Cone,
+);
+
+/// Which taint cone a node or edge belongs to.
+///
+/// The taint analysis is meet-in-the-middle: a *forward* cone grows from each
+/// source, a *backward* cone grows from each sink. A vertex/edge in `Both`
+/// cones — a "meet" — is exactly one that lies on a complete source→sink path.
+/// Reading reachability off the graph is then visual: follow the forward cone
+/// out of a source diamond and see whether it reaches the meet (`Both`) region.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Cone {
+    /// Reachable from a source (forward propagation only).
+    Forward,
+    /// Reaches a sink (backward propagation only).
+    Backward,
+    /// On a full source→sink path (seen in both cones).
+    Both,
+}
+
+impl Cone {
+    /// Combine two cone memberships: agreeing keeps the cone, disagreeing
+    /// promotes to `Both` (a meet).
+    pub fn join(self, other: Cone) -> Cone {
+        if self == other { self } else { Cone::Both }
+    }
+
+    /// Fill color for a node in this cone (used unless overridden by a
+    /// source/sink shape color).
+    fn node_fill(self) -> &'static str {
+        match self {
+            Cone::Forward => "lightblue",
+            Cone::Backward => "mistyrose",
+            Cone::Both => "palegreen",
+        }
+    }
+}
+
+/// A wrapper around the (oriented) taint edges to implement Graphviz traits.
 pub struct TaintGraphViz<'a> {
-    nodes: &'a [(FunctionId, FlowVariable, Path)],
-    edges: &'a [(
-        FunctionId,
-        FlowVariable,
-        Path,
-        FunctionId,
-        FlowVariable,
-        Path,
-    )],
-    sources: &'a BTreeSet<(FunctionId, FlowVariable, Path)>,
-    sinks: &'a BTreeSet<(FunctionId, FlowVariable, Path)>,
+    /// Every node, mapped to its cone membership. Also the node set for the walk.
+    node_cone: BTreeMap<TaintNode, Cone>,
+    /// Data-flow-oriented, deduplicated edges.
+    edges: &'a [ConeEdge],
+    /// Declared source vertices (drawn as diamonds).
+    sources: &'a BTreeSet<TaintNode>,
+    /// Declared sink vertices (drawn as ellipses).
+    sinks: &'a BTreeSet<TaintNode>,
     id_map: &'a crate::facts::IdMap,
 }
 
 impl<'a> TaintGraphViz<'a> {
     pub fn new(
-        nodes: &'a [(FunctionId, FlowVariable, Path)],
-        edges: &'a [(
-            FunctionId,
-            FlowVariable,
-            Path,
-            FunctionId,
-            FlowVariable,
-            Path,
-        )],
-        sources: &'a BTreeSet<(FunctionId, FlowVariable, Path)>,
-        sinks: &'a BTreeSet<(FunctionId, FlowVariable, Path)>,
+        node_cone: BTreeMap<TaintNode, Cone>,
+        edges: &'a [ConeEdge],
+        sources: &'a BTreeSet<TaintNode>,
+        sinks: &'a BTreeSet<TaintNode>,
         id_map: &'a crate::facts::IdMap,
     ) -> Self {
         Self {
-            nodes,
+            node_cone,
             edges,
             sources,
             sinks,
@@ -55,15 +97,8 @@ impl<'a> TaintGraphViz<'a> {
 }
 
 impl<'a> dot::Labeller<'a> for TaintGraphViz<'a> {
-    type Node = (FunctionId, FlowVariable, Path);
-    type Edge = &'a (
-        FunctionId,
-        FlowVariable,
-        Path,
-        FunctionId,
-        FlowVariable,
-        Path,
-    );
+    type Node = TaintNode;
+    type Edge = &'a ConeEdge;
 
     fn graph_id(&'a self) -> dot::Id<'a> {
         dot::Id::new("taint_graph").unwrap()
@@ -82,12 +117,10 @@ impl<'a> dot::Labeller<'a> for TaintGraphViz<'a> {
         dot::LabelText::EscStr(self.node_to_string(&n.0, &n.1, &n.2).into())
     }
 
-    fn node_style(&self, n: &Self::Node) -> dot::Style {
-        if self.sources.contains(n) || self.sinks.contains(n) {
-            dot::Style::Filled
-        } else {
-            dot::Style::None
-        }
+    fn node_style(&self, _n: &Self::Node) -> dot::Style {
+        // All nodes are filled; the color (set in `node_attrs`) carries the
+        // cone / source / sink signal.
+        dot::Style::Filled
     }
 
     fn node_shape(&'a self, n: &Self::Node) -> Option<dot::LabelText<'a>> {
@@ -100,58 +133,81 @@ impl<'a> dot::Labeller<'a> for TaintGraphViz<'a> {
         }
     }
 
+    fn node_attrs(&'a self, n: &Self::Node) -> Vec<(Cow<'a, str>, dot::LabelText<'a>)> {
+        // Source/sink shapes get their own fill so the endpoints stand out;
+        // everything else is colored by cone membership (meet = palegreen).
+        let color = if self.sources.contains(n) {
+            "gold"
+        } else if self.sinks.contains(n) {
+            "orange"
+        } else {
+            self.node_cone
+                .get(n)
+                .map(|c| c.node_fill())
+                .unwrap_or("white")
+        };
+        vec![("fillcolor".into(), dot::LabelText::label(color))]
+    }
+
     fn edge_label(&self, _e: &Self::Edge) -> dot::LabelText<'a> {
         dot::LabelText::label("")
+    }
+
+    fn edge_attrs(&'a self, e: &Self::Edge) -> Vec<(Cow<'a, str>, dot::LabelText<'a>)> {
+        // Color edges by cone: forward = blue, backward = red+dashed (it points
+        // *against* data flow in discovery terms but is drawn data-flow here),
+        // meet = bold dark green (an edge on a real source→sink path).
+        match e.6 {
+            Cone::Forward => vec![("color".into(), dot::LabelText::label("blue"))],
+            Cone::Backward => vec![
+                ("color".into(), dot::LabelText::label("red")),
+                ("style".into(), dot::LabelText::label("dashed")),
+            ],
+            Cone::Both => vec![
+                ("color".into(), dot::LabelText::label("darkgreen")),
+                ("penwidth".into(), dot::LabelText::label("2.0")),
+            ],
+        }
     }
 }
 
 impl<'a> dot::GraphWalk<'a> for TaintGraphViz<'a> {
-    type Node = (FunctionId, FlowVariable, Path);
-    type Edge = &'a (
-        FunctionId,
-        FlowVariable,
-        Path,
-        FunctionId,
-        FlowVariable,
-        Path,
-    );
+    type Node = TaintNode;
+    type Edge = &'a ConeEdge;
 
     fn nodes(&'a self) -> dot::Nodes<'a, Self::Node> {
-        self.nodes.iter().cloned().collect()
+        self.node_cone.keys().cloned().collect()
     }
 
     fn edges(&'a self) -> dot::Edges<'a, Self::Edge> {
         self.edges.iter().collect()
     }
 
+    // Edges are pre-oriented in data-flow direction, so the arrow goes
+    // src → dst — the same orientation `find_path` walks (source → sink).
     fn source(&'a self, e: &Self::Edge) -> Self::Node {
-        let (sf, sv, sp, _, _, _) = *e;
+        let (sf, sv, sp, _, _, _, _) = *e;
         (*sf, *sv, *sp)
     }
 
     fn target(&'a self, e: &Self::Edge) -> Self::Node {
-        let (_, _, _, df, dv, dp) = *e;
+        let (_, _, _, df, dv, dp, _) = *e;
         (*df, *dv, *dp)
     }
 }
 
-/// Renders the taint edges into Graphviz DOT format.
+/// Renders the (cone-classified, data-flow-oriented) taint graph into Graphviz
+/// DOT format. `node_cone` maps every node to its cone; `edges` must already be
+/// oriented src→dst in data-flow direction.
 pub fn render_taint_graph<W: Write>(
-    nodes: &[(FunctionId, FlowVariable, Path)],
-    edges: &[(
-        FunctionId,
-        FlowVariable,
-        Path,
-        FunctionId,
-        FlowVariable,
-        Path,
-    )],
-    sources: &BTreeSet<(FunctionId, FlowVariable, Path)>,
-    sinks: &BTreeSet<(FunctionId, FlowVariable, Path)>,
+    node_cone: BTreeMap<TaintNode, Cone>,
+    edges: &[ConeEdge],
+    sources: &BTreeSet<TaintNode>,
+    sinks: &BTreeSet<TaintNode>,
     id_map: &crate::facts::IdMap,
     writer: &mut W,
 ) -> std::io::Result<()> {
-    let graph = TaintGraphViz::new(nodes, edges, sources, sinks, id_map);
+    let graph = TaintGraphViz::new(node_cone, edges, sources, sinks, id_map);
     dot::render(&graph, writer)
 }
 
