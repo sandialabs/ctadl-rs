@@ -128,12 +128,23 @@ pub struct Path(pub tailshare::Seq<mir::FieldAccess>);
 impl Path {
     /// Creates access path from a sequences of accesses
     pub fn from_accesses(iter: impl IntoIterator<Item = mir::FieldAccess>) -> Self {
-        let mut items = Vec::new();
+        let mut items: Vec<mir::FieldAccess> = Vec::new();
         for item in iter {
             match (items.last_mut(), &item) {
                 (Some(mir::FieldAccess::Offset(last_off)), mir::FieldAccess::Offset(new_off)) => {
                     last_off.0 += new_off.0;
+                    // A net-zero offset is identity: by convention offset-0 is
+                    // omitted from paths, so `.[k].[-k]` collapses to its base.
+                    if last_off.0 == 0 {
+                        items.pop();
+                    }
                 }
+                // A standalone `.[0]` is likewise identity (e.g. left behind when
+                // `substitute_prefix` fully consumes a matched offset). Dropping it
+                // keeps `.[0].deref` equivalent to `.deref` so taint crossing a
+                // stack-slot binding (`formal <-> __stack_top.[off]`) lands on
+                // `formal.deref`, matching summary edges and sink checks.
+                (_, mir::FieldAccess::Offset(off)) if off.0 == 0 => {}
                 _ => items.push(item),
             }
         }
@@ -1438,6 +1449,42 @@ mod tests {
         let r: Path = ".y".into();
         let e: Path = ".y.[1].f".into();
         assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
+    }
+
+    #[test]
+    fn test_zero_offset_normalized_away() {
+        use ctadl_ir::mir::{FieldAccess, Offset};
+
+        // A standalone `.[0]` is identity and must not appear in a path.
+        let deref: Path = ".deref".into();
+        let with_zero = Path::from_accesses([FieldAccess::Offset(Offset(0))]).concat(&deref);
+        assert_eq!(with_zero, deref);
+
+        // Offsets that net to zero collapse to their base (here, the empty path).
+        let net_zero = Path::from_accesses([
+            FieldAccess::Offset(Offset(8)),
+            FieldAccess::Offset(Offset(-8)),
+        ]);
+        assert!(net_zero.is_empty());
+
+        // The leak that blocked stack-buffer flows: fully consuming a matched
+        // offset must yield `.deref`, not `.[0].deref`, so a summary edge written
+        // on `formal.deref` fires after taint crosses a `formal <-> base.[off]`
+        // binding.
+        let taint_path: Path = ".[-1304].deref".into();
+        let binding_src: Path = ".[-1304]".into();
+        let formal_view = taint_path
+            .substitute_prefix(&binding_src, &Path::empty())
+            .unwrap();
+        assert_eq!(formal_view, deref);
+
+        // Non-zero residual offsets are preserved (sub-buffer addressing).
+        let p: Path = ".[16].deref".into();
+        let prefix: Path = ".[8]".into();
+        assert_eq!(
+            p.substitute_prefix(&prefix, &Path::empty()).unwrap(),
+            ".[8].deref".into()
+        );
     }
 
     #[test]
