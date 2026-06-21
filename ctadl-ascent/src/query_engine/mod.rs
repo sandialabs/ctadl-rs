@@ -184,7 +184,10 @@ impl<'a> std::fmt::Display for QueryResultDisplay<'a> {
 pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     ascent! {
         struct QueryEngine;
-        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sv:expr, $sp:expr) {
+        // The taint query proper does not need edge provenance, so `$site` (and the
+        // source endpoint args) are accepted but discarded here; the formatter's
+        // copy of this macro is what records `taint_edge` with the call instruction.
+        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sv:expr, $sp:expr, $site:expr) {
             taint($df, $dts, $dv, $dp, $a)
         }
         include_source!(crate::query_engine::ascent_code::taint_analysis_rules);
@@ -233,14 +236,14 @@ pub mod ascent_code {
             let FlowVertex(v, p) = vertex;
 
         // Propagate taint locally onto fields
-        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, v2.clone(), p23.clone()) <--
+        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, v2.clone(), p23.clone(), None) <--
             taint(infunc, ts, v2, p23, a),
             if a.direction == TaintDirection::Forward,
             assign_like(infunc, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(p13.clone());
 
-        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, v2.clone(), p23.clone()) <--
+        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, v2.clone(), p23.clone(), None) <--
             taint(infunc, ts, v2, p23, a),
             if a.direction == TaintDirection::Backward,
             assign_like(infunc, v2, p2, v1, p1),
@@ -248,7 +251,7 @@ pub mod ascent_code {
             paths(p13.clone());
 
         // Formal-to-actual (Return in forward mode, Call in backward mode).
-        produce_taint!(func_id, TaintState::Free, v1.clone(), p2.clone(), a.clone(), infunc, v2.clone(), p2.clone()) <--
+        produce_taint!(func_id, TaintState::Free, v1.clone(), p2.clone(), a.clone(), infunc, v2.clone(), p2.clone(), Some(*site_id)) <--
             taint(infunc, TaintState::Free, v2, p2, a),
             formal_param(infunc, v2, formal_ty),
             if let Some(n2) = v2.as_formal(),
@@ -260,7 +263,7 @@ pub mod ascent_code {
             let v1 = FlowVariable::call_arg_packed(call_arg_packed);
 
         // Actual-to-formal (Call in forward mode, Return in backward mode).
-        produce_taint!(func, TaintState::Restricted, formal_var.clone(), p2.clone(), a.clone(), infunc, v2.clone(), p2.clone()) <--
+        produce_taint!(func, TaintState::Restricted, formal_var.clone(), p2.clone(), a.clone(), infunc, v2.clone(), p2.clone(), Some(site_id)) <--
             taint(infunc, _, v2, p2, a),
             if let Some(packed) = v2.as_call_arg(),
             let CallArgId { insn_id, formal: formal_raw } = CallArgId::try_from(packed).unwrap(),
@@ -280,12 +283,12 @@ pub mod ascent_code {
             assign_like(infunc, y, Path::empty(), x, Path::empty());
 
         // Propagates taint on a variable into its alias.
-        produce_taint!(infunc, st, v1.clone(), p.clone(), a.clone(), infunc, v2.clone(), Path::empty()) <--
+        produce_taint!(infunc, st, v1.clone(), p.clone(), a.clone(), infunc, v2.clone(), Path::empty(), None) <--
             taint(infunc, st, v2, Path::empty(), a),
             if a.direction == TaintDirection::Forward,
             alias_of_field(infunc, v2, v1, p);
 
-        produce_taint!(infunc, st, v1.clone(), p12.clone(), a.clone(), infunc, v2.clone(), p2.clone()) <--
+        produce_taint!(infunc, st, v1.clone(), p12.clone(), a.clone(), infunc, v2.clone(), p2.clone(), None) <--
             taint(infunc, st, v2, p2, a),
             if a.direction == TaintDirection::Forward,
             alias_of_field(infunc, v2, v1, p1),
@@ -293,12 +296,12 @@ pub mod ascent_code {
             paths(p12.clone());
 
         // Backward alias propagation
-        produce_taint!(infunc, st, v1.clone(), Path::empty(), a.clone(), infunc, v2.clone(), p.clone()) <--
+        produce_taint!(infunc, st, v1.clone(), Path::empty(), a.clone(), infunc, v2.clone(), p.clone(), None) <--
             taint(infunc, st, v2, p, a),
             if a.direction == TaintDirection::Backward,
             alias_of_field(infunc, v1, v2, p);
 
-        produce_taint!(infunc, st, v2.clone(), p2.clone(), a.clone(), infunc, v1.clone(), p12.clone()) <--
+        produce_taint!(infunc, st, v2.clone(), p2.clone(), a.clone(), infunc, v1.clone(), p12.clone(), None) <--
             taint(infunc, st, v1, p12, a),
             if a.direction == TaintDirection::Backward,
             alias_of_field(infunc, v1, v2, p1),
