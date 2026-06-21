@@ -276,6 +276,37 @@ pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult 
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(p13.clone());
 
+        // Offset-insensitive load: taint on a base pointer's offset-0 view covers
+        // reads at any element offset. For a load `v1.p1 := v2.[k]..rest`, taint on
+        // v2 at the offset-stripped path `..rest` flows to v1, so a tainted buffer
+        // base taints every element read off it (e.g. `argv[i]` inherits `argv`'s
+        // taint). Mirrors the forward field rule above with the leading Offset
+        // dropped from the source path.
+        taint(infunc, ts, v1.clone(), p13.clone(), a.clone()),
+        taint_edge_directed(FlowEdge::Intra, infunc, v1.clone(), p13.clone(), infunc, v2.clone(), p23.clone(), a.direction) <--
+            taint(infunc, ts, v2, p23, a),
+            if a.direction == TaintDirection::Forward,
+            assign_like(infunc, v1, p1, v2, p2),
+            if let Some(p2s) = p2.strip_leading_offset(),
+            if let Some(p13) = p23.substitute_prefix(&p2s, p1),
+            paths(p13.clone());
+
+        // Backward counterpart of the offset-insensitive load. The backward
+        // field rule is offset-*sensitive*, so slicing back from a sink through
+        // `v2 := v1.[k]..rest` reaches the element view `v1.[k]..`, which never
+        // coincides with an offset-0 source (e.g. argv tainted at `.deref`).
+        // Dropping the leading offset from the source path `p1` lets the
+        // backward cone reach the base's offset-0 view, so the reconstructed
+        // source->sink path is complete (the code flow traces back to argv).
+        taint(infunc, ts, v1.clone(), p13.clone(), a.clone()),
+        taint_edge_directed(FlowEdge::Intra, infunc, v1.clone(), p13.clone(), infunc, v2.clone(), p23.clone(), a.direction) <--
+            taint(infunc, ts, v2, p23, a),
+            if a.direction == TaintDirection::Backward,
+            assign_like(infunc, v2, p2, v1, p1),
+            if let Some(p1s) = p1.strip_leading_offset(),
+            if let Some(p13) = p23.substitute_prefix(p2, &p1s),
+            paths(p13.clone());
+
         // Formal-to-actual (Return in forward mode, Call in backward mode).
         taint(func_id, TaintState::Free, v1.clone(), p2.clone(), a.clone()),
         taint_edge_directed(if a.direction == TaintDirection::Forward { FlowEdge::Return(*site_id) } else { FlowEdge::Call(*site_id) }, func_id, v1.clone(), p2.clone(), infunc, v2.clone(), p2.clone(), a.direction) <--
