@@ -60,6 +60,21 @@
   model_generators: [
 
     // ---------------------------------------------------------------------
+    // SOURCES -- ARGV: main(argc, argv); argv is Argument(1), a `char**`. Mango
+    // taints all of argv, so the source is `saturating`: everything read off the
+    // argv pointer is tainted, however the program indexes in. That is what
+    // covers `argv[i]` (`argv.[8*i].deref...`) -- a concrete element offset the
+    // path-sensitive propagation would never match against an offset-0 port.
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{ constraint: "signature_pattern", pattern: "^main$" }],
+      model: { sources: [
+        { port: "Argument(1)", kind: "argv_input", saturating: true }
+      ] }
+    },
+
+    // ---------------------------------------------------------------------
     // SINKS -- command injection (Mango COMMAND_INJECTION_SINKS)
     // Command string at Mango param 1 => CTADL Argument(0).deref
     // ---------------------------------------------------------------------
