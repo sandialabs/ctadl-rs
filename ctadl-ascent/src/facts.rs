@@ -202,6 +202,21 @@ impl Path {
         Self::from_accesses(self.iter().chain(other.iter()).cloned())
     }
 
+    /// If the path begins with an [`Offset`](mir::FieldAccess::Offset) component,
+    /// returns the path with that leading offset removed; otherwise `None`.
+    ///
+    /// Used to model offset-insensitive loads: a read `v.[k]..rest` (element `k`
+    /// of a buffer/array) should inherit taint from the base's offset-0 view
+    /// `v..rest`, so a tainted buffer base taints every element read off it
+    /// (e.g. `argv[i]` inherits `argv`'s taint).
+    #[inline]
+    pub fn strip_leading_offset(&self) -> Option<Path> {
+        match self.0.head() {
+            Some(mir::FieldAccess::Offset(_)) => Some(Path(self.0.tail().unwrap_or_default())),
+            _ => None,
+        }
+    }
+
     /// Substitutes given prefix of path with new_prefix and returns the new path.
     #[inline(always)]
     pub fn substitute_prefix(&self, prefix: &Path, new_prefix: &Path) -> Option<Path> {

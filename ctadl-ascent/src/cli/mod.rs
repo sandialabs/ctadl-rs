@@ -232,15 +232,49 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
             .count();
         eprintln!("Matched {} sources and {} sinks", sources, sinks);
 
+        // Collect the access paths declared by source/sink endpoints (and all
+        // their suffixes). Propagation is gated by `paths(...)`, populated only
+        // from paths materialized during indexing; a model can declare a
+        // source/sink at a path the program never spells out literally -- e.g.
+        // argv's byte level `.deref.deref` on a `char**` -- which would
+        // otherwise be silently filtered. A declared endpoint path is
+        // realizable by construction.
+        let endpoint_paths: Vec<crate::facts::Path> = {
+            use std::collections::HashSet;
+            let mut extra: HashSet<crate::facts::Path> = HashSet::new();
+            for (ep,) in &endpoints {
+                let fields: Vec<_> = ep.vertex.1.iter().cloned().collect();
+                for i in 0..=fields.len() {
+                    extra.insert(crate::facts::Path::from_accesses(
+                        fields[i..].iter().cloned(),
+                    ));
+                }
+            }
+            extra.into_iter().collect()
+        };
         builder
             .endpoints(endpoints)
             .formal_param(formal_params)
             .actual_param(index_facts.actual_param)
             .call(index_facts.call);
         let index_result = IndexResult::try_load(&index_path)?;
-        builder
-            .assign(index_result.assign_like)
-            .paths(index_result.paths);
+        let mut paths = index_result.paths;
+        {
+            use std::collections::HashSet;
+            let seen: HashSet<&crate::facts::Path> = paths.iter().map(|(p,)| p).collect();
+            let new_paths: Vec<_> = endpoint_paths
+                .iter()
+                .filter(|p| !seen.contains(p))
+                .cloned()
+                .collect();
+            if !new_paths.is_empty() {
+                paths.extend(new_paths.into_iter().map(|p| (p,)));
+                // Persist so the formatter's taint re-derivation sees the same
+                // realizable path set as the query phase.
+                crate::facts::schema::paths::try_save(&index_path, paths.clone())?;
+            }
+        }
+        builder.assign(index_result.assign_like).paths(paths);
         // Insert model-derived endpoints if present
         builder.build().unwrap()
     };

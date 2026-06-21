@@ -60,6 +60,21 @@
   model_generators: [
 
     // ---------------------------------------------------------------------
+    // SOURCES -- ARGV: main(argc, argv); argv is Argument(1), a `char**`. Mango
+    // taints all of argv. The element pointers live at `.deref` and the string
+    // bytes at `.deref.deref`; offset-insensitive loads in the engine let these
+    // offset-0 views cover argv[i] reads (`argv.[8*i].deref...`).
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{ constraint: "signature_pattern", pattern: "^main$" }],
+      model: { sources: [
+        { port: "Argument(1).deref",       kind: "argv_input" },
+        { port: "Argument(1).deref.deref", kind: "argv_input" }
+      ] }
+    },
+
+    // ---------------------------------------------------------------------
     // SINKS -- command injection (Mango COMMAND_INJECTION_SINKS)
     // Command string at Mango param 1 => CTADL Argument(0).deref
     // ---------------------------------------------------------------------
