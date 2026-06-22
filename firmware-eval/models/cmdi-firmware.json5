@@ -95,6 +95,48 @@
     },
 
     // ---------------------------------------------------------------------
+    // SINKS -- exec-family ARGUMENT injection (argv passed to a spawned program)
+    //
+    // Unlike `system`/`popen`, the exec* family does NOT run a shell: Argument(0)
+    // is the program *path*, and the attacker-controllable command data lives in
+    // the argv the child receives. Mango models this with a dedicated `execv`
+    // analysis (resolves the spawned binary + which arg index is tainted), not a
+    // cmdi closure -- so these never appear in `cmdi_results.json`. We mirror it
+    // here as ordinary taint sinks on the argument ports so CTADL can flag the
+    // same argv -> exec* argument-injection flow.
+    //
+    //  * Variadic form  execl(path, arg0, arg1, ..., NULL): each arg is its own
+    //    positional parameter -> Argument(1..N).deref. We cap N at 8 (covers
+    //    realistic command builders; raise if a target passes more).
+    //  * Array form     execv(path, argv[], ...): argv is a single pointer at
+    //    Argument(1); element argv[i] is `Argument(1).[8*i].deref`. The sink port
+    //    `Argument(1).deref` only covers argv[0] (array offset 0) -- a tainted
+    //    argv[i>0] needs an offset-insensitive array-deref in the backward cone,
+    //    which CTADL's field model does not provide (and which would be a coarse,
+    //    blowup-prone alias). So the array form catches argv[0]-element taint
+    //    only; the general element case is a known engine limitation.
+    // ---------------------------------------------------------------------
+    {
+      find: "methods",
+      where: [{ constraint: "signature_pattern", pattern: "^(execl|execlp|execle)$" }],
+      model: { sinks: [
+        { port: "Argument(1).deref", kind: "command_injection" },
+        { port: "Argument(2).deref", kind: "command_injection" },
+        { port: "Argument(3).deref", kind: "command_injection" },
+        { port: "Argument(4).deref", kind: "command_injection" },
+        { port: "Argument(5).deref", kind: "command_injection" },
+        { port: "Argument(6).deref", kind: "command_injection" },
+        { port: "Argument(7).deref", kind: "command_injection" },
+        { port: "Argument(8).deref", kind: "command_injection" }
+      ] }
+    },
+    {
+      find: "methods",
+      where: [{ constraint: "signature_pattern", pattern: "^(execv|execvp|execvpe|execve)$" }],
+      model: { sinks: [{ port: "Argument(1).deref", kind: "command_injection" }] }
+    },
+
+    // ---------------------------------------------------------------------
     // SOURCES -- NVRAM getters (return value is attacker-influenced config)
     // ---------------------------------------------------------------------
     {
