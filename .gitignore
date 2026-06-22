@@ -1,9 +1,5 @@
-.DS_Store
 /out
 /target
-.direnv
-.vscode/**
 ascent/**
-/.opencode
-/results.sarif
-*.o
+.scratch/**/result
+result

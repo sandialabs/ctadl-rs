@@ -326,12 +326,12 @@ fn decode_instruction(
                     line.push_str(&format!("{}", b as i8));
                 }
             } else if operands_len == 2 {
-                if opcode == 0x7c {
-                    // iinc: index byte, const byte
+                if opcode == 0x84 {
+                    // iinc: index byte, signed const byte (javap: `iinc i, c`)
                     let index = read_u8(code, pc + 1)
                         .map_err(|_| ClassFileError::InvalidClassFile("operand"))?;
                     let const_val = code[pc + 2] as i8;
-                    line.push_str(&format!("{} {}", index, const_val));
+                    line.push_str(&format!("{}, {}", index, const_val));
                 } else if fmt_operands == Some(2) {
                     let idx = read_u16_be(code, pc + 1)
                         .map_err(|_| ClassFileError::InvalidClassFile("operand"))?;
@@ -569,6 +569,15 @@ fn format_method_signature(cf: &ClassFile, m: &MethodInfo) -> Result<String, Cla
     }
     if flags & 0x0004 != 0 {
         mods.push("protected");
+    }
+    // javap prints `default` for an interface instance method that has a body
+    // (i.e. not static, abstract, or private).
+    if cf.access_flags & 0x0200 != 0
+        && flags & 0x0008 == 0
+        && flags & 0x0400 == 0
+        && flags & 0x0002 == 0
+    {
+        mods.push("default");
     }
     if flags & 0x0008 != 0 {
         mods.push("static");

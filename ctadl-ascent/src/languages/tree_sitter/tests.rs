@@ -465,8 +465,11 @@ fn subscript_access_paths() {
 fn field_blend_into_field_update() {
     // `v->f4 = v->f5 + b` with `b = v->f1 + v->f3`: the blended RHS (direct f5, plus f1/f3 routed
     // through b) all flow into the field update @p0.f4. v = @p0.
+    // `f` is declared `void`: it returns nothing, so falling off the end is a consistent
+    // (arity-0) implicit return. The test exercises field-update dataflow on the param, not the
+    // return value.
     let src = r"
-        int f(Donkey *v) {
+        void f(Donkey *v) {
             int a = b = v->f1 + v->f3;
             int x = v->f4 = v->f5 + b;
         }";

@@ -48,6 +48,13 @@ pub(crate) fn program_from_string(src: &str) -> (Program, String) {
         !result.1,
         "Input Program failed to parse without error from Tree-sitter"
     );
+    // A block with no terminator is always a CFG defect, so fail loudly here rather
+    // than let a test silently pass on a malformed control-flow graph.
+    assert!(
+        !result.2.contains("<no terminator>"),
+        "Parsed IR contains a block with no terminator:\n{}",
+        result.2
+    );
     (result.0, result.2)
 }
 
@@ -248,6 +255,17 @@ pub(crate) fn check_match(prog_str: &str, needle: &str) -> bool {
     }
     check_fail_str(prog_str, &format!("expected {}", needle));
     false
+}
+
+/// Inverse of [`check_match`]: passes (returns true) when `needle` is ABSENT, and
+/// only logs a failure when it is unexpectedly present. Use this for negative
+/// assertions so a passing test doesn't emit a misleading "expected ..." line.
+pub(crate) fn check_no_match(prog_str: &str, needle: &str) -> bool {
+    if prog_str.contains(needle) {
+        check_fail_str(prog_str, &format!("did not expect {}", needle));
+        return false;
+    }
+    true
 }
 
 pub(crate) fn get_summary(

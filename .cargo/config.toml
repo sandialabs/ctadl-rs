@@ -1,0 +1,3 @@
+[alias]
+# `cargo xtask <task>` runs the developer task runner (see the `xtask` crate).
+xtask = "run --package xtask --"
