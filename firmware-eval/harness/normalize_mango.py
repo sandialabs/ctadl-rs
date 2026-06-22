@@ -34,6 +34,16 @@ _ERROR_STATUS = {
     "early_termination": "crash",
 }
 
+# exec-family functions whose attacker-controlled data is an *argv element*
+# handed to a spawned program (argument injection), not a shell-interpreted
+# command string. Mango does NOT emit these as cmdi closures -- it reports them
+# only in the sibling `execv.json` produced by its argument-resolution pass. We
+# ingest that file too so execve/execlp argv-injection is part of ground truth.
+EXEC_FUNCS = {
+    "execl", "execlp", "execle", "execv", "execvp", "execvpe", "execve",
+    "SLIBCExecl", "SLIBCExec", "SLIBCExecv",
+}
+
 
 def _pick_source(inputs: dict) -> tuple[str, list]:
     """From a closure's `inputs`, choose the strongest source class and collect
@@ -100,6 +110,75 @@ def parse_result(obj: dict) -> tuple[F.RunInfo, list[F.Finding]]:
     return run, out
 
 
+def _exec_sink_func(cmdi_obj: dict) -> Optional[str]:
+    """The exec-family callee Mango targeted, read from the sibling
+    cmdi_results.json `sinks` map (e.g. `{"execlp": 1}`). This is how we recover
+    the function name, since `execv.json` keys entries by the *spawned* binary,
+    not the caller. Unambiguous in practice (one exec sink per handcrafted
+    binary); if several, return None and let address matching carry it."""
+    sinks = (cmdi_obj or {}).get("sinks") or {}
+    execs = [name for name in sinks if name in EXEC_FUNCS]
+    return execs[0] if len(execs) == 1 else None
+
+
+def parse_execv(obj: dict, sha: str, sink_func: Optional[str]) -> list[F.Finding]:
+    """Argv-injection findings from Mango's `execv.json`. Each resolved exec call
+    with a non-empty `vulnerable_args` is one Finding: attacker input reaches an
+    argument of a spawned program. `args` maps positional index -> resolved value
+    tokens (e.g. `"2": ["<BV64 ARGV_1>"]`); `vulnerable_args` lists the tainted
+    indices; `addr` is the exec call site."""
+    out: list[F.Finding] = []
+    execv = (obj or {}).get("execv") or {}
+    for spawned, calls in execv.items():
+        for call in calls or []:
+            vuln = call.get("vulnerable_args") or []
+            if not vuln:
+                continue
+            args = call.get("args") or {}
+            sites: list = []
+            best = "UNKNOWN"
+            for idx in vuln:
+                for tok in args.get(str(idx), []) or []:
+                    sites.append(tok)
+                    cls = F.classify_source(tok)
+                    if best == "UNKNOWN" and cls != "UNKNOWN":
+                        best = cls
+            # argv-resolved values that aren't a recognized getter/recv/etc. are
+            # the program's own argv -> ARGV (Mango renders these as `ARGV_n`).
+            if best == "UNKNOWN":
+                best = "ARGV"
+            out.append(F.Finding(
+                binary_sha256=sha,
+                tool="mango",
+                sink_func=sink_func,
+                sink_callsite=F.parse_addr(call.get("addr")),
+                sink_site_kind="address",
+                sink_argpos=vuln[0],
+                source_class=best,
+                source_sites=sites,
+                raw_path={"spawned": spawned, "vulnerable_args": vuln,
+                          "args": args, "kind": "argv_injection"},
+            ))
+    return out
+
+
+def sibling_execv_findings(cmdi_path: Path, sha: str, cmdi_obj: dict) -> list[F.Finding]:
+    """Read the `execv.json` next to a `cmdi_results.json` and parse it into
+    argv-injection Findings. Returns [] if absent/unreadable or sha mismatches."""
+    ev_path = Path(cmdi_path).parent / "execv.json"
+    if not ev_path.exists():
+        return []
+    try:
+        ev = json.loads(ev_path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"skip {ev_path}: {e}")
+        return []
+    ev_sha = ev.get("sha256")
+    if ev_sha and sha and ev_sha != sha:
+        return []  # paired files must describe the same binary
+    return parse_execv(ev, sha, _exec_sink_func(cmdi_obj))
+
+
 def iter_result_files(paths: list[str]):
     for p in paths:
         pp = Path(p)
@@ -130,6 +209,7 @@ def main() -> None:
         if not run.sha256:
             print(f"skip {rf}: no sha256")
             continue
+        fs = fs + sibling_execv_findings(Path(rf), run.sha256, obj)
         F.ingest(con, run, args.version, fs,
                  arch=args.arch, path_example=obj.get("path"))
         n_runs += 1
