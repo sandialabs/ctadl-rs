@@ -806,74 +806,9 @@ fn simplest_calls() {
     log::info!("{:?}", summary);
     assert!(check_match(&dump, "direct-call tgt"));
 }
-#[test_log::test]
-fn params_into_calls() {
-    let src = r"
-        int foo(Rando x){
-            return x;
-        }
-        int foo2(int z){
-            return  z *z;
-        }
-        int bar(int y){
-            int x;
-            foo(x = y);
-            foo(y);
-            foo(y + y);
-            return y;
-        }
-        ";
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
 
-    dump_ir(&dump);
-
-    let (summary, _source_info) = get_summary(program_info.program).unwrap();
-    log::info!("{:?}", summary);
-    assert!(
-        check_match(&dump, "assign %x = @p0"),
-        "picked up assign in parameter list"
-    );
-    assert!(
-        check_match(&dump, "%<t0> = direct-call foo(%x)"),
-        "picked up assign in parameter list"
-    );
-    assert!(check_match(&dump, "direct-call foo(@p0)"));
-    assert!(check_match(&dump, "assign %<t3> = @p0, @p0"));
-    assert!(check_match(&dump, "%<t2> = direct-call foo(%<t3>)"));
-    //TOOD_JDB: do summary queries, not these janks
-    //assert!(check_match(&dump, "TODO: write param queries");
-}
-
-#[test_log::test]
-fn call_not_assign() {
-    let src = r"
-        int foo(Rando x){
-            return x;
-        }
-        int baz(Rando m){
-        return m+ m;
-        }
-        int bar(Rando y){
-            foo(baz(y)); 
-            return y;
-        }
-        ";
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    dump_ir(&dump);
-
-    let (summary, _source_info) = get_summary(program_info.program).unwrap();
-    log::info!("{:?}", summary);
-
-    assert!(check_match(&dump, "direct-call foo"));
-}
+// `params_into_calls` and `call_not_assign` promoted to tests.rs (structural call-site assertions
+// via direct_calls_in / check_direct_call / check_has_direct_call).
 
 fn janky_goto(dump: &str, from_block: usize, to_block: &str) -> bool {
     check_match(

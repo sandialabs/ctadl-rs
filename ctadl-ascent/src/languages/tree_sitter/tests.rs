@@ -626,3 +626,61 @@ fn return_constant() {
     let prog = program_from_string(src).0;
     check_returns_const(&prog, "return_constant", "14");
 }
+
+#[test_log::test]
+fn params_into_calls() {
+    // A direct call carries its arguments as access paths: `foo(y)` passes param 0 directly. The
+    // call result is discarded, so there is no summary flow -- this is purely call-site IR shape.
+    // (`foo(y + y)` flattens its argument into a temp; we deliberately do not assert that temp
+    // name, which would freeze TempAllocator numbering -- flattening is covered by the blend tests.)
+    let src = r"
+        int foo(Rando x){
+            return x;
+        }
+        int bar(int y){
+            foo(y);
+            foo(y + y);
+            return y;
+        }
+        ";
+    let prog = program_from_string(src).0;
+    check_direct_call(&prog, "bar", "foo", ["@p0"]);
+}
+
+#[test_log::test]
+fn call_not_assign() {
+    // A nested call `foo(baz(y))` lowers to two direct calls, not an assignment: `bar` directly
+    // calls both `baz` and `foo`. The results are discarded, so this is verifiable only as
+    // call-site shape, not as a summary flow.
+    let src = r"
+        int foo(Rando x){
+            return x;
+        }
+        int baz(Rando m){
+            return m + m;
+        }
+        int bar(Rando y){
+            foo(baz(y));
+            return y;
+        }
+        ";
+    let prog = program_from_string(src).0;
+    check_direct_call(&prog, "bar", "baz", ["@p0"]); // inner call gets the param directly
+    check_has_direct_call(&prog, "bar", "foo"); // outer call resolves (its arg is baz's ret temp)
+}
+
+#[test_log::test]
+fn assign_in_call_arg() {
+    // An assignment in argument position is lowered as a real assignment before the call:
+    // `bar(x = y)` emits `assign %x = @p0`. (Recursive self-call keeps this a single function so
+    // check_assign_or_update applies.)
+    let src = r"
+        int bar(int y){
+            int x;
+            bar(x = y);
+            return y;
+        }
+        ";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "x", ["@p0"], None);
+}

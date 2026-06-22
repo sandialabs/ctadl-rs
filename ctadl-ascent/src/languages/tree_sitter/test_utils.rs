@@ -20,6 +20,7 @@ use anyhow::{Context, Result};
 use crate::facts::Path;
 use ctadl_ir::graph::{DirectedGraph, Successors};
 use ctadl_ir::mir::TerminatorKind;
+use ctadl_ir::mir::call::{CallEdges, CallStyle};
 use ctadl_ir::{
     AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, StatementKind, VariableRef, ssa,
 };
@@ -142,6 +143,68 @@ pub(crate) fn check_returns_const(prog: &Program, name: &str, value: &str) {
     assert!(
         returns.iter().any(|args| *args == expected),
         "expected a `return ({value})` in {name:?}; found returns {returns:?}\n{prog}"
+    );
+}
+
+/* Extracts every direct call (`CallStyle::DirectCall`) in function `name`, as `(callees, args)`
+pairs in source order: `callees` are the resolved callee name(s) on the call edge, `args` the
+argument expressions (access paths / constants). Returns an empty Vec if the function has no direct
+calls (or doesn't exist). The extraction primitive behind `check_direct_call` / the dex precedent of
+"pull out the narrow thing, then assert on it". */
+pub(crate) fn direct_calls_in(prog: &Program, name: &str) -> Vec<(Vec<String>, Vec<Exp>)> {
+    let Some(fun) = function_named(prog, name) else {
+        return Vec::new();
+    };
+    fun.blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .filter_map(|stmt| match &stmt.kind {
+            StatementKind::CallAssign {
+                style: CallStyle::DirectCall { call_edges },
+                args,
+                ..
+            } => {
+                let CallEdges::Explicit(edges) = call_edges;
+                Some((edges.to_vec(), args.to_vec()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/* Asserts function `name` contains a direct call to `callee` with exactly the given argument access
+paths (DSL strings, same as `check_assign_or_update`'s sources -- e.g. `["@p0"]`). Prefer this over
+asserting the dump's `direct-call` text. On failure prints the direct calls actually found. Panics
+at the caller's line. */
+#[track_caller]
+pub(crate) fn check_direct_call<I>(prog: &Program, name: &str, callee: &str, args: I)
+where
+    I: IntoIterator<Item = &'static str>,
+{
+    let want_args: Vec<Exp> = args.into_iter().map(exp_from_str).collect();
+    let calls = direct_calls_in(prog, name);
+    let found = calls
+        .iter()
+        .any(|(callees, a)| callees.iter().any(|c| c == callee) && *a == want_args);
+    assert!(
+        found,
+        "expected a direct call to {callee:?} with args {want_args:?} in {name:?}; \
+         found direct calls {calls:?}\n{prog}"
+    );
+}
+
+/* Asserts function `name` contains a direct call to `callee`, without constraining the arguments.
+Use this when the argument is an incidental temp (e.g. a nested call's result) that shouldn't be
+pinned. Panics at the caller's line; prints the direct calls found on failure. */
+#[track_caller]
+pub(crate) fn check_has_direct_call(prog: &Program, name: &str, callee: &str) {
+    let calls = direct_calls_in(prog, name);
+    let found = calls
+        .iter()
+        .any(|(callees, _)| callees.iter().any(|c| c == callee));
+    assert!(
+        found,
+        "expected a direct call to {callee:?} in {name:?}; found direct calls {calls:?}\n{prog}"
     );
 }
 
