@@ -5,8 +5,8 @@
       "find": "methods",
       "where": [
         {
-          "constraint": "signature",
-          "pattern": ".*source.*"
+          "constraint": "signature_match",
+          "names": ["source"]
         }
       ],
       "model": {
@@ -22,8 +22,8 @@
       "find": "methods",
       "where": [
         {
-          "constraint": "signature",
-          "pattern": ".*sink.*"
+          "constraint": "signature_match",
+          "names": ["sink"]
         }
       ],
       "model": {

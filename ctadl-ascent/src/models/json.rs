@@ -615,6 +615,7 @@ pub trait ModelGeneratorVisitor {
             Some("any_parameter") => self.visit_any_parameter_constraint(n, value),
             Some("has_code") => self.visit_has_code_constraint(n, value),
             Some("number_parameters") => self.visit_number_parameters_constraint(n, value),
+            Some("name") => self.visit_name_constraint(n, value),
             Some("any_of") => self.visit_any_of_constraint(n, value),
             Some("all_of") => self.visit_all_of_constraint(n, value),
             Some("not") => self.visit_not_constraint(n, value),
@@ -688,6 +689,16 @@ pub trait ModelGeneratorVisitor {
             .get("inner")
             .into_iter()
             .for_each(|c| self.visit_where_constraint(n, c));
+    }
+
+    #[inline]
+    fn visit_name_constraint(&mut self, n: usize, value: &serde_json::Value) {
+        self.super_name_constraint(n, value)
+    }
+
+    #[inline]
+    fn super_name_constraint(&mut self, n: usize, value: &serde_json::Value) {
+        // Nothing
     }
 
     #[inline]

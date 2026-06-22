@@ -259,10 +259,17 @@ impl Context {
             used_names.insert(func_name.clone());
 
             // The simple (un-decorated) name and a best-effort type signature for
-            // the native VMT, so JSON models can match by `name`/`signature_pattern`
-            // even though `func_name` (the fully-qualified id) may be decorated,
-            // e.g. Ghidra's `<EXTERNAL>::system@00101008`.
-            let simple_name = func_data.name.clone();
+            // the native VMT, so a JSON model's exact `names` list can match by
+            // simple name even though `func_name` (the fully-qualified id) may be
+            // decorated, e.g. Ghidra's `<EXTERNAL>::system@00101008`. Strip leading
+            // underscores Ghidra sometimes emits (Mach-O prefixes every C symbol
+            // with `_`) so the bare libc name matches without listing `_`-variants.
+            let stripped = func_data.name.trim_start_matches('_');
+            let simple_name = if stripped.is_empty() {
+                func_data.name.as_str()
+            } else {
+                stripped
+            };
             let signature = Self::format_native_signature(func_data, proto_facts);
             let fq_name = func_name.clone();
 
@@ -294,7 +301,7 @@ impl Context {
             // model matcher can resolve simple names to this function's id.
             if let VirtualMethodTable::Native { methods } = &mut builders.vmt {
                 methods.push((
-                    NativeSimpleName(simple_name.as_str().into()),
+                    NativeSimpleName(simple_name.into()),
                     NativeSignature(signature.as_str().into()),
                     NativeFunction(fq_name.as_str().into()),
                 ));
