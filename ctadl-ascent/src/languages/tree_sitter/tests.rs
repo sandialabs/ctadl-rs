@@ -527,6 +527,8 @@ fn implicit_return() {
 }
 //TODO_JDB:  I don't think i handled *(p+1) = f; or (p+1)->f()
 
+ */
+
 #[test_log::test]
 fn simple_else() {
     let src = r"
@@ -536,16 +538,60 @@ fn simple_else() {
                 if(x){
                     v_if = x;
                 } else {
-                    int v_else = x;                    
+                    int v_else = x;
                 }
-                return 0;               
-            }            
+                return 0;
+            }
         ";
-    let (program, dump) = program_from_string(src);
+    let (program, _dump) = program_from_string(src);
 
-    log::info!("{}", dump);
+    // The assignments land in the if-consequence (block 1) and the else (block 3).
     check_assign_or_update(&program, "v_if", ["x"], Some(1));
     check_assign_or_update(&program, "v_else", ["x"], Some(3));
+
+    // CFG shape: the condition (block 0) branches to the consequence and the else only
+    // (never directly to the join); both rejoin at the return block, which is terminal.
+    check_successors(&program, 0, &[1, 3]);
+    check_successors(&program, 1, &[2]);
+    check_successors(&program, 3, &[2]);
+    check_successors(&program, 2, &[]);
 }
 
- */
+#[test_log::test]
+fn simple_elif() {
+    // `else if` desugars into a nested if inside the outer else: the outer condition (block 0)
+    // branches to its consequence (block 1) and the else-branch (block 3); block 3 is itself the
+    // inner condition, branching to the elif consequence (block 4) and the final else (block 6).
+    // Each arm flows to its own continuation and the arms rejoin at the return (block 2).
+    let src = r"
+             int simple_elif() {
+                int x = 5;
+                int v_if;
+                int v_elif;
+                int v_else;
+                if(x){
+                    v_if = x;
+                }
+                else if(!z) {
+                    v_elif = x;
+                } else {
+                    v_else = x;
+                }
+                return 0;
+            }
+        ";
+    let (program, _dump) = program_from_string(src);
+
+    check_assign_or_update(&program, "v_if", ["x"], Some(1));
+    check_assign_or_update(&program, "v_elif", ["x"], Some(4));
+    check_assign_or_update(&program, "v_else", ["x"], Some(6));
+
+    // No condition block over-approximates to the join: each branches only to its two arms.
+    check_successors(&program, 0, &[1, 3]); // outer condition -> if-consequence, else-branch
+    check_successors(&program, 1, &[2]); // if-consequence -> join
+    check_successors(&program, 3, &[4, 6]); // inner (elif) condition -> elif-consequence, else
+    check_successors(&program, 4, &[5]); // elif-consequence -> its continuation
+    check_successors(&program, 5, &[2]); // continuation -> join
+    check_successors(&program, 6, &[5]); // final else -> continuation
+    check_successors(&program, 2, &[]); // join: returns, terminal
+}

@@ -208,44 +208,7 @@ fn simple_for() {
 //todo:  comma operator
 //
 
-#[test_log::test]
-fn simple_elif() {
-    let src = r"
-             int simple_elif() {
-
-                int x = 5;
-                int v_if;
-                int v_elif;
-                int v_else;
-                if(x){
-                    v_if = x;
-                }
-                else if(!z)
-                 {
-                    v_elif = x;                    
-                } else {
-                    v_else = x;
-                }                
-                return 0;  
-            }            
-        ";
-    let (program, dump) = program_from_string(src);
-
-    dump_ir(&dump);
-    check_assign_or_update(&program, "v_if", ["x"], Some(1));
-    check_assign_or_update(&program, "v_elif", ["x"], Some(4));
-    check_assign_or_update(&program, "v_else", ["x"], Some(6));
-    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
-    // Neither the outer if nor the inner else-if condition reaches the join directly.
-    assert!(
-        janky_goto(&dump, 0, "1, 3"),
-        "outer condition branches to consequence + else-if"
-    );
-    assert!(
-        janky_goto(&dump, 3, "4, 6"),
-        "inner condition branches to consequence + else"
-    );
-}
+// `simple_elif` promoted to tests.rs (structural CFG assertions via check_successors).
 
 #[test_log::test]
 fn parameter_lists_query() {
@@ -526,8 +489,8 @@ fn simple_while() {
     dump_ir(&dump);
     check_assign_or_update(&program, "x", ["b"], Some(3));
     check_assign_or_update(&program, "y", ["x"], Some(2));
-    assert!(janky_goto(&dump.as_str(), 1, "2, 3"));
-    assert!(janky_goto(&dump.as_str(), 3, "1")); //the condition goes to 3, not the body.*/
+    assert!(janky_goto(&dump, 1, "2, 3"));
+    assert!(janky_goto(&dump, 3, "1")); //the condition goes to 3, not the body.*/
 }
 
 //this tests unbraced if/else consequents
@@ -956,9 +919,9 @@ fn simplest_if_no_return() {
         ";
     let (_program, dump) = program_from_string(src);
     dump_ir(&dump);
-    assert!(janky_goto(&dump.as_str(), 0, "1, 2"));
-    assert!(janky_goto(&dump.as_str(), 1, "2"));
-    assert!(janky_return(&dump.as_str(), 2, "@p1")); //returns
+    assert!(janky_goto(&dump, 0, "1, 2"));
+    assert!(janky_goto(&dump, 1, "2"));
+    assert!(janky_return(&dump, 2, "@p1")); //returns
 }
 
 #[test_log::test]
@@ -988,9 +951,9 @@ fn simplest_if_with_return() {
     assert!(summary_returns_param(&summary, 0, ""));
     assert!(summary_returns_param(&summary, 1, ""));
     */
-    assert!(janky_goto(&dump.as_str(), 0, "1, 2"));
-    assert!(janky_return(&dump.as_str(), 1, "@p0")); //returns
-    assert!(janky_return(&dump.as_str(), 2, "@p1")); //returns
+    assert!(janky_goto(&dump, 0, "1, 2"));
+    assert!(janky_return(&dump, 1, "@p0")); //returns
+    assert!(janky_return(&dump, 2, "@p1")); //returns
 }
 
 #[test_log::test]
