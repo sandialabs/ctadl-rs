@@ -81,8 +81,23 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 .iter()
                 .map(|(_cls, _name, sig, fid)| (sig.as_ref(), fid.as_ref()))
                 .for_each(|(key, val)| program_method_signatures.entry(key).or_default().push(val));
+        } else if let VirtualMethodTable::Native { methods } = vmt {
+            // Native frontends (pcode, clang) carry, per function, a simple
+            // (un-decorated) name and a best-effort type signature alongside the
+            // fully-qualified IR name. Key matching off the SIMPLE name so a model
+            // pattern like `^system$` resolves even when the IR name is decorated
+            // (e.g. Ghidra's `<EXTERNAL>::system@00101008`). The fully-qualified
+            // name is also kept matchable for models that spell it out verbatim.
+            for (simple, sig, fq) in methods {
+                let simple = simple.as_ref();
+                let fq = fq.as_ref();
+                program_method_names.entry(simple).or_default().push(fq);
+                program_method_signatures.entry(sig).or_default().push(fq);
+                program_method_names.entry(fq).or_default().push(fq);
+                program_method_signatures.entry(fq).or_default().push(fq);
+            }
         } else {
-            // For non-Java (e.g. PCODE), use the function names as signatures
+            // Fallback (Unknown / CplusPlus): use the IR function names directly.
             for func in &program_info.program.functions.functions {
                 let name = func.name.as_str();
                 program_method_signatures
@@ -813,6 +828,9 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
         UniverseSet::All => match vmt {
             VirtualMethodTable::Java { methods, .. } => {
                 methods.iter().map(|t| t.3.to_string()).collect()
+            }
+            VirtualMethodTable::Native { methods } => {
+                methods.iter().map(|t| t.2.to_string()).collect()
             }
             VirtualMethodTable::Unknown | VirtualMethodTable::CplusPlus => {
                 // For PCODE (which uses Unknown or CplusPlus), we don't have a list of all methods in the VMT

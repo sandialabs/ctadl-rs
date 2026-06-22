@@ -10,7 +10,9 @@ use source_info::{ArtifactKey, SourceInfoBuilder};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{Error, ErrorContext};
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::mir::call::{
+    NativeFunction, NativeSignature, NativeSimpleName, VirtualMethodTable,
+};
 use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;
@@ -68,7 +70,7 @@ impl Builders {
         let artifact_metadata = source_info::ArtifactMetadata::new();
         Self {
             program: Program::default(),
-            vmt: VirtualMethodTable::CplusPlus,
+            vmt: VirtualMethodTable::new_native(),
             source_info_builder: SourceInfoBuilder::new(artifact_metadata),
         }
     }
@@ -256,6 +258,14 @@ impl Context {
             }
             used_names.insert(func_name.clone());
 
+            // The simple (un-decorated) name and a best-effort type signature for
+            // the native VMT, so JSON models can match by `name`/`signature_pattern`
+            // even though `func_name` (the fully-qualified id) may be decorated,
+            // e.g. Ghidra's `<EXTERNAL>::system@00101008`.
+            let simple_name = func_data.name.clone();
+            let signature = Self::format_native_signature(func_data, proto_facts);
+            let fq_name = func_name.clone();
+
             // Create a new function
             let func_idx = builders.program.new_function();
             let func = &mut builders.program[func_idx];
@@ -280,10 +290,43 @@ impl Context {
                 func.set_return_type(ReturnType { arity: 0 });
             }
 
+            // Register in the native VMT (after the `func` borrow ends) so the
+            // model matcher can resolve simple names to this function's id.
+            if let VirtualMethodTable::Native { methods } = &mut builders.vmt {
+                methods.push((
+                    NativeSimpleName(simple_name.as_str().into()),
+                    NativeSignature(signature.as_str().into()),
+                    NativeFunction(fq_name.as_str().into()),
+                ));
+            }
+
             // Store function mapping
             self.functions.insert(func_id.clone(), func_idx);
         }
         Ok(())
+    }
+
+    /// Best-effort C-style signature string for the native VMT, e.g. `int(_, _)`.
+    /// Parameter datatypes aren't currently exported by the pcode frontend, so
+    /// each parameter renders as `_`; the arity, varargs flag, and return type
+    /// are faithful. Used for display/disambiguation, not for matching (which
+    /// keys off the simple name).
+    fn format_native_signature(
+        func_data: &pcode_reader::HFuncData,
+        proto_facts: &BTreeMap<pcode_reader::HighProto, pcode_reader::ProtoData>,
+    ) -> String {
+        let Some(proto) = func_data.proto.as_ref().and_then(|p| proto_facts.get(p)) else {
+            return "()".to_string();
+        };
+        let mut params: Vec<&str> = vec!["_"; proto.parameters.len()];
+        if proto.is_vararg {
+            params.push("...");
+        }
+        let ret = proto
+            .return_type
+            .as_deref()
+            .unwrap_or(if proto.is_void { "void" } else { "_" });
+        format!("{ret}({})", params.join(", "))
     }
 
     fn process_all_blocks(
