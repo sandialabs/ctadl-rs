@@ -613,3 +613,16 @@ fn return_arity() {
     check_return_arity(&prog, "none", 0);
     check_return_arity(&prog, "really_void", 0);
 }
+
+#[test_log::test]
+fn return_constant() {
+    // `return (14)` lowers to a Return terminator carrying the literal as a constant
+    // (Exp::Str of the literal's source text), not an access path. The parens are just grouping.
+    let src = r"
+            int return_constant() {
+                return (14);
+            }
+        ";
+    let prog = program_from_string(src).0;
+    check_returns_const(&prog, "return_constant", "14");
+}

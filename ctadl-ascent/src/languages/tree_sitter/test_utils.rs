@@ -19,6 +19,7 @@ use anyhow::{Context, Result};
 // removing them breaks method resolution.
 use crate::facts::Path;
 use ctadl_ir::graph::{DirectedGraph, Successors};
+use ctadl_ir::mir::TerminatorKind;
 use ctadl_ir::{
     AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, StatementKind, VariableRef, ssa,
 };
@@ -115,6 +116,32 @@ pub(crate) fn check_return_arity(prog: &Program, name: &str, arity: u8) {
     assert_eq!(
         fun.return_type.arity, arity,
         "return arity mismatch for {name:?}\n{prog}"
+    );
+}
+
+/* Asserts the function `name` has a `return` terminator returning exactly the single constant
+`value` (e.g. `return (14)` => value "14"). Constants lower to `Exp::Str` of the literal's source
+text, so this matches a `Return` whose args are `[Exp::Str(value)]`. On failure prints the actual
+return arg-lists found. Panics at the caller's line. */
+#[track_caller]
+pub(crate) fn check_returns_const(prog: &Program, name: &str, value: &str) {
+    let fun =
+        function_named(prog, name).unwrap_or_else(|| panic!("no function named {name:?}\n{prog}"));
+    let expected = [Exp::new_str(value)];
+    let returns: Vec<&[Exp]> = fun
+        .blocks
+        .iter()
+        .filter_map(|b| match &b.terminator {
+            Some(t) => match &t.kind {
+                TerminatorKind::Return { args } => Some(args.as_slice()),
+                _ => None,
+            },
+            None => None,
+        })
+        .collect();
+    assert!(
+        returns.iter().any(|args| *args == expected),
+        "expected a `return ({value})` in {name:?}; found returns {returns:?}\n{prog}"
     );
 }
 
