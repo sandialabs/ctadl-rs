@@ -175,6 +175,7 @@ def _load_mango_gt(con, mango_out: str, mango_version: str) -> int:
             continue
         run, fs = NM.parse_result(obj)
         if run.sha256:
+            fs = fs + NM.sibling_execv_findings(Path(rf), run.sha256, obj)
             F.ingest(con, run, mango_version, fs, path_example=obj.get("path"))
     return GT.ingest(con, GT.records_from_mango(con, mango_version))
 
