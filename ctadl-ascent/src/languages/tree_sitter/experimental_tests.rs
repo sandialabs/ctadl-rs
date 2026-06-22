@@ -783,30 +783,8 @@ fn param_by_reference() {
     assert!(check_match(&dump, "assign %b = @p1"));
 }
 
-#[test_log::test]
-fn simplest_calls() {
-    let src = r"
-
-        int tgt(Rando x){
-            return x.f1;
-    }
-        int top(Rando y){
-            int v = tgt(y);
-            return v;
-    }
-";
-
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    dump_ir(&dump);
-    let (summary, _source_info) = get_summary(program_info.program).unwrap();
-    log::info!("{:?}", summary);
-    assert!(check_match(&dump, "direct-call tgt"));
-}
-
+// `simplest_calls` promoted to tests.rs as `call_arg_flows_through_return` (Category B: the call's
+// argument flows through the callee and back to the return -- subsumes the `direct-call tgt` check).
 // `params_into_calls` and `call_not_assign` promoted to tests.rs (structural call-site assertions
 // via direct_calls_in / check_direct_call / check_has_direct_call).
 
