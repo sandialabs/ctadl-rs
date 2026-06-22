@@ -98,6 +98,26 @@ pub(crate) fn get_only_function(prog: &Program) -> Option<&FunctionData> {
     prog.functions.functions.raw.first()
 }
 
+/* Returns the function named `name`, or None. The C frontend does not overload, so the name
+uniquely identifies a function -- use this (not `get_only_function`) for fixtures with several
+functions. */
+pub(crate) fn function_named<'a>(prog: &'a Program, name: &str) -> Option<&'a FunctionData> {
+    prog.functions.functions.raw.iter().find(|f| f.name == name)
+}
+
+/* Asserts the function `name` has the given return arity (the `N` in the dump's `define name() ->
+N`): a value-returning function is arity 1, a `void` function is arity 0. Panics at the caller's
+line on mismatch. */
+#[track_caller]
+pub(crate) fn check_return_arity(prog: &Program, name: &str, arity: u8) {
+    let fun =
+        function_named(prog, name).unwrap_or_else(|| panic!("no function named {name:?}\n{prog}"));
+    assert_eq!(
+        fun.return_type.arity, arity,
+        "return arity mismatch for {name:?}\n{prog}"
+    );
+}
+
 /* Asserts a function has exactly the given parameter types. Panics (at the caller's line, via
 `#[track_caller]`) with an expected-vs-actual diff on mismatch. */
 #[track_caller]

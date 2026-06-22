@@ -595,3 +595,21 @@ fn simple_elif() {
     check_successors(&program, 6, &[5]); // final else -> continuation
     check_successors(&program, 2, &[]); // join: returns, terminal
 }
+
+#[test_log::test]
+fn return_arity() {
+    // A function's return arity comes from its declared return type: a value-returning `int`
+    // function is arity 1, a `void` function is arity 0. (tree-sitter doesn't support implicit-int
+    // returns, so every function here has an explicit signature -- see issue #54 for the
+    // implicit-int aspirational case.) This fixture has several functions, so it exercises
+    // `function_named` rather than `get_only_function`.
+    let src = r"
+            int explicit(){return 0;}
+            void none(){return;}
+            void really_void(void){return;}
+        ";
+    let prog = program_from_string(src).0;
+    check_return_arity(&prog, "explicit", 1);
+    check_return_arity(&prog, "none", 0);
+    check_return_arity(&prog, "really_void", 0);
+}

@@ -708,23 +708,7 @@ fn compound_return() {
     assert!(check_match(&dump, "return %<t3>"));
 }
 
-#[test_log::test]
-fn return_arity() {
-    let src = r"
-          // TREE-SITTER DOESN'T SUPPORT implicit int return
-          //  implicit_int(){return 1;}
-            int explicit(){return 0;}
-            void none(){return;}
-            void really_void(void){return;}
-        ";
-    let (_, dump) = program_from_string(src);
-    dump_ir(&dump);
-
-    //assert!(check_match(&dump, "define implicit_int() -> 1"));
-    assert!(check_match(&dump, "define explicit() -> 1"));
-    assert!(check_match(&dump, "define none() -> 0"));
-    assert!(check_match(&dump, "define really_void() -> 0"));
-}
+// `return_arity` promoted to tests.rs (structural check_return_arity / function_named).
 
 #[test_log::test]
 fn params_and_simple_assign_in_example_2() {
