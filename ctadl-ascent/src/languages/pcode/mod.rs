@@ -10,9 +10,7 @@ use source_info::{ArtifactKey, SourceInfoBuilder};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{Error, ErrorContext};
-use ctadl_ir::mir::call::{
-    NativeFunction, NativeSignature, NativeSimpleName, VirtualMethodTable,
-};
+use ctadl_ir::mir::call::{NativeFunction, NativeSignature, NativeSimpleName, VirtualMethodTable};
 use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;

@@ -436,8 +436,7 @@ fn dump_taint_graph_dot(
         )
         .err_context(|| "writing taint graph legend")?;
     }
-    let ids =
-        facts::IdMap::try_load(index_path).err_context(|| "loading IdMap for taint graph")?;
+    let ids = facts::IdMap::try_load(index_path).err_context(|| "loading IdMap for taint graph")?;
     crate::graphviz::render_taint_graph(node_cone, &edges, &sources, &sinks, &ids, &mut file)
         .err_context(|| "rendering taint graph")?;
     eprintln!(
