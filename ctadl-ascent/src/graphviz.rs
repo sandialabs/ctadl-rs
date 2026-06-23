@@ -292,3 +292,113 @@ pub fn render_index_graph<W: Write>(
     };
     dot::render(&graph, writer)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::facts::{Function, IdMap, Str};
+
+    /// Counts node declarations and edge declarations in rendered DOT output.
+    ///
+    /// rustc_graphviz emits one statement per line: an edge line contains the
+    /// `->` operator, while a node line is any other statement carrying a
+    /// `label=` attribute (the `digraph {`/`}` framing lines have neither).
+    fn count_nodes_edges(dot: &str) -> (usize, usize) {
+        let edges = dot.lines().filter(|l| l.contains("->")).count();
+        let nodes = dot
+            .lines()
+            .filter(|l| l.contains("label=") && !l.contains("->"))
+            .count();
+        (nodes, edges)
+    }
+
+    fn local(name: &str) -> FlowVariable {
+        FlowVariable::local(Str::from(name))
+    }
+
+    #[test]
+    fn index_graph_node_and_edge_counts() {
+        let mut ids = IdMap::new();
+        let f = ids.get_or_add_function(Function::from(Str::from("foo")));
+
+        // A chain a -> b -> c inside one function: tuples are
+        // (func, dst_var, dst_path, src_var, src_path), so each row is the
+        // assignment `dst = src`, drawn as an edge src -> dst.
+        let (a, b, c) = (local("a"), local("b"), local("c"));
+        let assign_like = vec![
+            (f, b, Path::empty(), a, Path::empty()),
+            (f, c, Path::empty(), b, Path::empty()),
+        ];
+
+        let mut out = Vec::new();
+        render_index_graph(&assign_like, &ids, &mut out).unwrap();
+        let dot = String::from_utf8(out).unwrap();
+
+        let (nodes, edges) = count_nodes_edges(&dot);
+        // Three distinct vertices (a, b, c), two assignment edges.
+        assert_eq!(nodes, 3, "index graph nodes\n{dot}");
+        assert_eq!(edges, 2, "index graph edges\n{dot}");
+        assert!(dot.contains("digraph index_graph"));
+    }
+
+    #[test]
+    fn index_graph_dedups_shared_vertices() {
+        let mut ids = IdMap::new();
+        let f = ids.get_or_add_function(Function::from(Str::from("foo")));
+
+        // Two edges sharing the destination `b`: a -> b and c -> b. The shared
+        // vertex must be emitted once, so 3 nodes / 2 edges (not 4 / 2).
+        let (a, b, c) = (local("a"), local("b"), local("c"));
+        let assign_like = vec![
+            (f, b, Path::empty(), a, Path::empty()),
+            (f, b, Path::empty(), c, Path::empty()),
+        ];
+
+        let mut out = Vec::new();
+        render_index_graph(&assign_like, &ids, &mut out).unwrap();
+        let dot = String::from_utf8(out).unwrap();
+
+        let (nodes, edges) = count_nodes_edges(&dot);
+        assert_eq!(nodes, 3, "index graph nodes\n{dot}");
+        assert_eq!(edges, 2, "index graph edges\n{dot}");
+    }
+
+    #[test]
+    fn taint_graph_node_and_edge_counts() {
+        let mut ids = IdMap::new();
+        let f = ids.get_or_add_function(Function::from(Str::from("foo")));
+
+        // Meet-in-the-middle shape: source a (forward) -> meet b (both) ->
+        // sink c (backward). Edge tuples are
+        // (src_func, src_var, src_path, dst_func, dst_var, dst_path, cone).
+        let (a, b, c) = (local("a"), local("b"), local("c"));
+        let na = (f, a, Path::empty());
+        let nb = (f, b, Path::empty());
+        let nc = (f, c, Path::empty());
+
+        let mut node_cone = BTreeMap::new();
+        node_cone.insert(na, Cone::Forward);
+        node_cone.insert(nb, Cone::Both);
+        node_cone.insert(nc, Cone::Backward);
+
+        let edges: Vec<ConeEdge> = vec![
+            (f, a, Path::empty(), f, b, Path::empty(), Cone::Forward),
+            (f, b, Path::empty(), f, c, Path::empty(), Cone::Backward),
+        ];
+
+        let sources: BTreeSet<TaintNode> = [na].into_iter().collect();
+        let sinks: BTreeSet<TaintNode> = [nc].into_iter().collect();
+
+        let mut out = Vec::new();
+        render_taint_graph(node_cone, &edges, &sources, &sinks, &ids, &mut out).unwrap();
+        let dot = String::from_utf8(out).unwrap();
+
+        let (nodes, edges_n) = count_nodes_edges(&dot);
+        assert_eq!(nodes, 3, "taint graph nodes\n{dot}");
+        assert_eq!(edges_n, 2, "taint graph edges\n{dot}");
+        assert!(dot.contains("digraph taint_graph"));
+        // Source is a diamond, sink an ellipse — sanity-check role shapes survive.
+        assert!(dot.contains("diamond"), "expected a source diamond\n{dot}");
+        assert!(dot.contains("ellipse"), "expected a sink ellipse\n{dot}");
+    }
+}

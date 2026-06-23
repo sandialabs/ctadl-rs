@@ -163,10 +163,7 @@ pub fn index(
     }
 
     if let Some(dot_path) = dump_index_graph {
-        let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
-        crate::graphviz::render_index_graph(&result.assign_like, &source_info.sites, &mut file)
-            .err_context(|| "rendering index graph")?;
-        eprintln!("Wrote index graph to '{}'", dot_path.display());
+        dump_index_graph_dot(&result.assign_like, &source_info.sites, dot_path)?;
     }
 
     let path = project.index_path()?;
@@ -286,141 +283,170 @@ pub fn format(
             .err_context(|| "formatting sarif")?;
 
         if let Some(dot_path) = dump_taint_graph {
-            use crate::facts::TaintDirection;
-            use crate::graphviz::Cone;
-
-            let taint_results = query_engine::formatter::compute_taint_results(&facts);
-
-            // Classify every tainted node by cone membership: a node carrying a
-            // Forward endpoint is in the forward cone, a Backward endpoint puts
-            // it in the backward cone, and both makes it a "meet" (Cone::Both)
-            // — exactly the nodes on a complete source→sink path.
-            let mut node_cone: std::collections::BTreeMap<_, Cone> =
-                std::collections::BTreeMap::new();
-            for (func_id, _, var, path, ep) in &facts.taint {
-                let cone = match ep.direction {
-                    TaintDirection::Forward => Cone::Forward,
-                    TaintDirection::Backward => Cone::Backward,
-                };
-                node_cone
-                    .entry((*func_id, *var, *path))
-                    .and_modify(|c| *c = c.join(cone))
-                    .or_insert(cone);
-            }
-
-            // Orient each edge in data-flow direction (so arrows match
-            // `find_path`: source → sink) and dedup, recording which cone(s)
-            // produced it. The edge tuple is (df, dv, dp, sf, sv, sp, dir),
-            // meaning (df,dv,dp) was tainted *from* (sf,sv,sp). Forward
-            // propagation means data flows sf → df; backward propagation
-            // (which walks assignments in reverse) means it flows df → sf.
-            let mut oriented: std::collections::BTreeMap<_, Cone> =
-                std::collections::BTreeMap::new();
-            for (df, dv, dp, sf, sv, sp, dir, _site) in &taint_results.edges {
-                let derived = (*df, *dv, *dp);
-                let origin = (*sf, *sv, *sp);
-                let (src, dst, cone) = match dir {
-                    TaintDirection::Forward => (origin, derived, Cone::Forward),
-                    TaintDirection::Backward => (derived, origin, Cone::Backward),
-                };
-                oriented
-                    .entry((src, dst))
-                    .and_modify(|c| *c = c.join(cone))
-                    .or_insert(cone);
-            }
-            let edges: Vec<_> = oriented
-                .into_iter()
-                .map(|((src, dst), cone)| (src.0, src.1, src.2, dst.0, dst.1, dst.2, cone))
-                .collect();
-
-            // The saved query taint is pruned to the relevant (content-level)
-            // vertices, but the re-derived edges also touch pointer-level
-            // intermediates. Declare every edge endpoint so none renders as an
-            // uncolored auto-node. Nodes already classified from `facts.taint`
-            // endpoints keep that authoritative (find_path-consistent) cone —
-            // structural pointer edges must not promote a content node to a
-            // false meet — while edge-only intermediates are colored by their
-            // incident edges' cone(s).
-            let from_taint: BTreeSet<_> = node_cone.keys().cloned().collect();
-            for (sf, sv, sp, df, dv, dp, cone) in &edges {
-                for n in [(*sf, *sv, *sp), (*df, *dv, *dp)] {
-                    if from_taint.contains(&n) {
-                        continue;
-                    }
-                    node_cone
-                        .entry(n)
-                        .and_modify(|c| *c = c.join(*cone))
-                        .or_insert(*cone);
-                }
-            }
-
-            let sources: BTreeSet<_> = facts
-                .taint
-                .iter()
-                .filter_map(|(_, _, _, _, ep)| {
-                    if ep.direction == TaintDirection::Forward {
-                        Some((ep.infunc, ep.vertex.0, ep.vertex.1))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let sinks: BTreeSet<_> = facts
-                .taint
-                .iter()
-                .filter_map(|(_, _, _, _, ep)| {
-                    if ep.direction == TaintDirection::Backward {
-                        Some((ep.infunc, ep.vertex.0, ep.vertex.1))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
-            // Embed the legend as a leading DOT comment so the file documents
-            // itself (kept in sync with the stderr message below).
-            {
-                use std::io::Write as _;
-                writeln!(
-                    file,
-                    "// Taint graph (meet-in-the-middle): a forward cone grows from each source,\n\
-                     // a backward cone from each sink. A \"meet\" lies in both cones -- i.e. on a\n\
-                     // complete source->sink path. Reading reachability is then visual: follow the\n\
-                     // forward cone out of a source diamond and see whether it reaches the meet.\n\
-                     //\n\
-                     // Nodes (shape = role, fill = cone):\n\
-                     //   diamond  = source vertex      (fill gold)\n\
-                     //   ellipse  = sink vertex        (fill orange)\n\
-                     //   box      = propagated vertex\n\
-                     //   fill lightblue = forward cone (reachable from a source)\n\
-                     //   fill mistyrose = backward cone (reaches a sink)\n\
-                     //   fill palegreen = meet (on a source->sink path)\n\
-                     //\n\
-                     // Edges (oriented in data-flow direction, source -> sink, matching find_path):\n\
-                     //   blue        = forward propagation\n\
-                     //   red dashed  = backward propagation\n\
-                     //   bold green  = meet edge (on a source->sink path)\n"
-                )
-                .err_context(|| "writing taint graph legend")?;
-            }
-            let ids = facts::IdMap::try_load(&index_path)
-                .err_context(|| "loading IdMap for taint graph")?;
-            crate::graphviz::render_taint_graph(
-                node_cone, &edges, &sources, &sinks, &ids, &mut file,
-            )
-            .err_context(|| "rendering taint graph")?;
-            eprintln!(
-                "Wrote taint graph to '{}'\n  \
-                 nodes: diamond=source, ellipse=sink, box=propagated; \
-                 fill lightblue=forward cone, mistyrose=backward cone, palegreen=meet (on a source→sink path)\n  \
-                 edges (data-flow oriented, source→sink): blue=forward, red dashed=backward, bold green=meet",
-                dot_path.display()
-            );
+            dump_taint_graph_dot(&facts, &index_path, dot_path)?;
         }
     };
     if output.to_str() != Some("-") {
         eprintln!("Wrote '{}'", output.display());
     }
+    Ok(())
+}
+
+/// Renders the index (assign-like) graph to a Graphviz DOT file.
+fn dump_index_graph_dot(
+    assign_like: &[(
+        facts::FunctionId,
+        FlowVariable,
+        facts::Path,
+        FlowVariable,
+        facts::Path,
+    )],
+    id_map: &facts::IdMap,
+    dot_path: &Path,
+) -> Result<(), Error> {
+    let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+    crate::graphviz::render_index_graph(assign_like, id_map, &mut file)
+        .err_context(|| "rendering index graph")?;
+    eprintln!("Wrote index graph to '{}'", dot_path.display());
+    Ok(())
+}
+
+/// Renders the meet-in-the-middle taint graph to a Graphviz DOT file.
+///
+/// Classifies every tainted node by cone membership, orients each propagation
+/// edge in data-flow direction (source → sink, matching `find_path`), then
+/// renders the result with a self-documenting legend.
+fn dump_taint_graph_dot(
+    facts: &query_engine::formatter::FormatFacts,
+    index_path: &Path,
+    dot_path: &Path,
+) -> Result<(), Error> {
+    use crate::facts::TaintDirection;
+    use crate::graphviz::Cone;
+
+    let taint_results = query_engine::formatter::compute_taint_results(facts);
+
+    // Classify every tainted node by cone membership: a node carrying a
+    // Forward endpoint is in the forward cone, a Backward endpoint puts
+    // it in the backward cone, and both makes it a "meet" (Cone::Both)
+    // — exactly the nodes on a complete source→sink path.
+    let mut node_cone: std::collections::BTreeMap<_, Cone> = std::collections::BTreeMap::new();
+    for (func_id, _, var, path, ep) in &facts.taint {
+        let cone = match ep.direction {
+            TaintDirection::Forward => Cone::Forward,
+            TaintDirection::Backward => Cone::Backward,
+        };
+        node_cone
+            .entry((*func_id, *var, *path))
+            .and_modify(|c| *c = c.join(cone))
+            .or_insert(cone);
+    }
+
+    // Orient each edge in data-flow direction (so arrows match
+    // `find_path`: source → sink) and dedup, recording which cone(s)
+    // produced it. The edge tuple is (df, dv, dp, sf, sv, sp, dir),
+    // meaning (df,dv,dp) was tainted *from* (sf,sv,sp). Forward
+    // propagation means data flows sf → df; backward propagation
+    // (which walks assignments in reverse) means it flows df → sf.
+    let mut oriented: std::collections::BTreeMap<_, Cone> = std::collections::BTreeMap::new();
+    for (df, dv, dp, sf, sv, sp, dir, _site) in &taint_results.edges {
+        let derived = (*df, *dv, *dp);
+        let origin = (*sf, *sv, *sp);
+        let (src, dst, cone) = match dir {
+            TaintDirection::Forward => (origin, derived, Cone::Forward),
+            TaintDirection::Backward => (derived, origin, Cone::Backward),
+        };
+        oriented
+            .entry((src, dst))
+            .and_modify(|c| *c = c.join(cone))
+            .or_insert(cone);
+    }
+    let edges: Vec<_> = oriented
+        .into_iter()
+        .map(|((src, dst), cone)| (src.0, src.1, src.2, dst.0, dst.1, dst.2, cone))
+        .collect();
+
+    // The saved query taint is pruned to the relevant (content-level)
+    // vertices, but the re-derived edges also touch pointer-level
+    // intermediates. Declare every edge endpoint so none renders as an
+    // uncolored auto-node. Nodes already classified from `facts.taint`
+    // endpoints keep that authoritative (find_path-consistent) cone —
+    // structural pointer edges must not promote a content node to a
+    // false meet — while edge-only intermediates are colored by their
+    // incident edges' cone(s).
+    let from_taint: BTreeSet<_> = node_cone.keys().cloned().collect();
+    for (sf, sv, sp, df, dv, dp, cone) in &edges {
+        for n in [(*sf, *sv, *sp), (*df, *dv, *dp)] {
+            if from_taint.contains(&n) {
+                continue;
+            }
+            node_cone
+                .entry(n)
+                .and_modify(|c| *c = c.join(*cone))
+                .or_insert(*cone);
+        }
+    }
+
+    let sources: BTreeSet<_> = facts
+        .taint
+        .iter()
+        .filter_map(|(_, _, _, _, ep)| {
+            if ep.direction == TaintDirection::Forward {
+                Some((ep.infunc, ep.vertex.0, ep.vertex.1))
+            } else {
+                None
+            }
+        })
+        .collect();
+    let sinks: BTreeSet<_> = facts
+        .taint
+        .iter()
+        .filter_map(|(_, _, _, _, ep)| {
+            if ep.direction == TaintDirection::Backward {
+                Some((ep.infunc, ep.vertex.0, ep.vertex.1))
+            } else {
+                None
+            }
+        })
+        .collect();
+    let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+    // Embed the legend as a leading DOT comment so the file documents
+    // itself (kept in sync with the stderr message below).
+    {
+        use std::io::Write as _;
+        writeln!(
+            file,
+            "// Taint graph (meet-in-the-middle): a forward cone grows from each source,\n\
+             // a backward cone from each sink. A \"meet\" lies in both cones -- i.e. on a\n\
+             // complete source->sink path. Reading reachability is then visual: follow the\n\
+             // forward cone out of a source diamond and see whether it reaches the meet.\n\
+             //\n\
+             // Nodes (shape = role, fill = cone):\n\
+             //   diamond  = source vertex      (fill gold)\n\
+             //   ellipse  = sink vertex        (fill orange)\n\
+             //   box      = propagated vertex\n\
+             //   fill lightblue = forward cone (reachable from a source)\n\
+             //   fill mistyrose = backward cone (reaches a sink)\n\
+             //   fill palegreen = meet (on a source->sink path)\n\
+             //\n\
+             // Edges (oriented in data-flow direction, source -> sink, matching find_path):\n\
+             //   blue        = forward propagation\n\
+             //   red dashed  = backward propagation\n\
+             //   bold green  = meet edge (on a source->sink path)\n"
+        )
+        .err_context(|| "writing taint graph legend")?;
+    }
+    let ids =
+        facts::IdMap::try_load(index_path).err_context(|| "loading IdMap for taint graph")?;
+    crate::graphviz::render_taint_graph(node_cone, &edges, &sources, &sinks, &ids, &mut file)
+        .err_context(|| "rendering taint graph")?;
+    eprintln!(
+        "Wrote taint graph to '{}'\n  \
+         nodes: diamond=source, ellipse=sink, box=propagated; \
+         fill lightblue=forward cone, mistyrose=backward cone, palegreen=meet (on a source→sink path)\n  \
+         edges (data-flow oriented, source→sink): blue=forward, red dashed=backward, bold green=meet",
+        dot_path.display()
+    );
     Ok(())
 }
 
