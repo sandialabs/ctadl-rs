@@ -46,6 +46,16 @@ pub fn collect_absolute_addresses(sarif: &Path) -> Result<BTreeSet<i64>> {
     Ok(out)
 }
 
+/// Collect every `relativeAddress` value in a SARIF document: the
+/// tainted-instruction addresses with the disassembler's image base already
+/// subtracted, i.e. the section-relative offsets `addr2line` expects. This is
+/// robust to whatever base Ghidra chose for the artifact.
+pub fn collect_relative_addresses(sarif: &Path) -> Result<BTreeSet<i64>> {
+    let mut out = BTreeSet::new();
+    collect_int_values(&read_json(sarif)?, "relativeAddress", &mut out);
+    Ok(out)
+}
+
 fn collect_int_values(value: &Value, key: &str, out: &mut BTreeSet<i64>) {
     match value {
         Value::Object(map) => {

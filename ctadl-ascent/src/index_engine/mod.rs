@@ -238,6 +238,36 @@ impl IndexFacts {
         }
         func_num_params
     }
+
+    /// Like [`compute_num_params`], but widens each function's arity to the
+    /// maximum *actual* argument index passed at any of its call sites (unioned
+    /// with the declared formals). This lets `AnyArgument` ("*") range over the
+    /// arguments actually passed -- including variadic arguments, which have no
+    /// declared formal -- rather than the callee's fixed signature. Matching on
+    /// actuals (not formals) is what makes a model like `sprintf: Argument(*) ->
+    /// Argument(0)` cover the variadic command-string pieces.
+    pub fn compute_arg_arity(&self) -> HashMap<FunctionId, i16> {
+        let mut arity = self.compute_num_params();
+        // call site -> target function
+        let mut target: HashMap<PackedInsnSiteId, FunctionId> = HashMap::new();
+        for (site, func) in self.call.iter() {
+            target.insert(*site, *func);
+        }
+        for (site, idx, _) in self.actual_param.iter() {
+            let i: i16 = **idx;
+            if i < 0 {
+                // negative indices are sentinels (globals/return), not arg positions
+                continue;
+            }
+            if let Some(func) = target.get(site) {
+                arity
+                    .entry(*func)
+                    .and_modify(|m| *m = (*m).max(i + 1))
+                    .or_insert(i + 1);
+            }
+        }
+        arity
+    }
 }
 
 #[derive(Debug, Clone, Builder, Eq, PartialEq, Ord, PartialOrd, Hash)]
