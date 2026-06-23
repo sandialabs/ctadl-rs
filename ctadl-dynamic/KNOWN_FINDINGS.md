@@ -87,3 +87,35 @@ The DFSan dynamic runner now observes this case directly: `05_funcptr_indirect` 
 indirect call while CTADL's static analysis reported no flow. So this is no longer just
 "the oracle says so": the gap is confirmed against observed runtime behavior, which is exactly
 the kind of soundness violation this harness exists to find.
+
+---
+
+# Frontend ingestion gaps
+
+The tree-sitter C frontend is incomplete: some valid C cannot be parsed/lowered to IR. These are
+tracked separately from soundness gaps and allowlisted with `"known_frontend_gap": "<id>"` in a
+case manifest (an un-allowlisted ingestion failure is a run-failing `FRONTEND-ERROR`). DFSan
+compiles these with clang regardless, so each case already carries the runtime ground truth to
+compare against the moment the frontend learns to ingest it (the harness will then report
+`resolved-known-frontend-gap`).
+
+## array_declarator — array declarations don't parse
+
+- **Status:** open (tracked externally in a GitLab issue). Allowlisted as
+  `"known_frontend_gap": "array_declarator"`.
+- **Symptom:** a declaration like `int a[3];` fails with
+  `ERR 78: Unsupported expression type: array_declarator` (the `array_declarator` arm in
+  `walk_declaration` routes to `flatten_expr`, which has no case for it).
+- **Reproduces with:** [`cases/18_array_subscript`](cases/18_array_subscript/) →
+  `known-frontend-gap (array_declarator)`. DFSan observes the flow (`a[1] = source(); sink(a[1])`),
+  so the expected result once it parses is `flow`.
+
+## switch_statement — `switch` is not ingested
+
+- **Status:** open. Allowlisted as `"known_frontend_gap": "switch_statement"`.
+- **Symptom:** a `switch` statement fails with `ERR 78: Unsupported expression type` — the
+  statement walker in `mod.rs` has no `switch_statement` arm, so it falls through to
+  `flatten_expr`, which doesn't handle it. (No `switch_statement` handling exists in the frontend.)
+- **Reproduces with:** [`cases/25_switch_taint`](cases/25_switch_taint/) →
+  `known-frontend-gap (switch_statement)`. DFSan observes the flow (`switch(1){case 1: x=s}`),
+  so the expected result once it parses is `flow`.

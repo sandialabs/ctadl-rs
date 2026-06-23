@@ -1,0 +1,6 @@
+{
+  "name": "two_hop_call",
+  "description": "taint through two direct calls b()->a(); summaries compose",
+  "label": "Test",
+  "expect_flow": true
+}

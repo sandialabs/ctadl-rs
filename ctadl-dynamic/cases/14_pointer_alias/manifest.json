@@ -1,0 +1,6 @@
+{
+  "name": "pointer_alias",
+  "description": "x tainted; p = &x; y = *p; sink(y) -- taint read back through the alias",
+  "label": "Test",
+  "expect_flow": true
+}

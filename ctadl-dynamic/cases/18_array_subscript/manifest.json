@@ -1,0 +1,7 @@
+{
+  "name": "array_subscript",
+  "description": "taint through an array element a[1]; expects flow once the frontend ingests arrays",
+  "label": "Test",
+  "expect_flow": true,
+  "known_frontend_gap": "array_declarator"
+}

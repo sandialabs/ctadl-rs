@@ -1,0 +1,6 @@
+{
+  "name": "for_loop",
+  "description": "for(i=0;i<1;i++){x=s} -- taint assigned in a for-loop body; expect flow",
+  "label": "Test",
+  "expect_flow": true
+}

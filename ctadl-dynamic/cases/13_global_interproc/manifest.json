@@ -1,0 +1,6 @@
+{
+  "name": "global_interproc",
+  "description": "taint flows store(x){g=x} -> global g -> load(){return g}, across functions",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "recursion_identity",
+  "description": "recursive identity rec(n,x) returns x; taint survives the recursion",
+  "label": "Test",
+  "expect_flow": true
+}

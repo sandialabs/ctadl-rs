@@ -47,6 +47,13 @@ struct Manifest {
     /// the run reports `resolved-known-gap` so the allowlist can be cleaned up.
     #[serde(default)]
     known_gap: Option<String>,
+    /// If set, the CTADL **tree-sitter C frontend is expected to fail to ingest**
+    /// this program (value names the construct, e.g. "array_declarator"). The
+    /// frontend is incomplete; this allowlists known ingestion gaps so an
+    /// *un-allowlisted* frontend error is treated as a new finding. If the
+    /// frontend later parses it, the run reports `resolved-known-frontend-gap`.
+    #[serde(default)]
+    known_frontend_gap: Option<String>,
 }
 
 fn default_label() -> String {
@@ -68,8 +75,14 @@ enum Status {
     ResolvedKnownGap(String),
     /// CTADL reported a flow that did not occur at runtime — imprecision.
     PrecisionGap,
-    /// CTADL failed to parse/index the program (frontend gap, not a taint bug).
+    /// CTADL's C frontend failed to ingest the program, and it is NOT allowlisted
+    /// — a new ingestion gap (the frontend is incomplete; this is a finding).
     FrontendError(String),
+    /// Frontend ingestion failure on an allowlisted case (`known_frontend_gap`).
+    KnownFrontendGap(String),
+    /// Allowlisted as a frontend gap, but the frontend ingested it this time — the
+    /// gap is gone (parser improved); the allowlist entry is now stale.
+    ResolvedKnownFrontendGap(String),
     /// DFSan could not compile/run the case (no dynamic ground truth).
     DynError(String),
 }
@@ -84,6 +97,8 @@ impl Status {
             Status::ResolvedKnownGap(_) => "resolved-known-gap",
             Status::PrecisionGap => "precision-gap",
             Status::FrontendError(_) => "frontend-error",
+            Status::KnownFrontendGap(_) => "known-frontend-gap",
+            Status::ResolvedKnownFrontendGap(_) => "resolved-known-frontend-gap",
             Status::DynError(_) => "dyn-error",
         }
     }
@@ -95,14 +110,19 @@ impl Status {
             Status::NewGap => "NEW-GAP".to_string(),
             Status::ResolvedKnownGap(id) => format!("RESOLVED-KNOWN-GAP ({id})"),
             Status::PrecisionGap => "precision-gap".to_string(),
-            Status::FrontendError(m) => format!("frontend-error ({m})"),
+            Status::FrontendError(m) => format!("FRONTEND-ERROR ({m})"),
+            Status::KnownFrontendGap(id) => format!("known-frontend-gap ({id})"),
+            Status::ResolvedKnownFrontendGap(id) => format!("RESOLVED-KNOWN-FRONTEND-GAP ({id})"),
             Status::DynError(m) => format!("dyn-error ({m})"),
         }
     }
     /// Extra detail for the JSON `detail` field (finding id or error message).
     fn detail(&self) -> Option<String> {
         match self {
-            Status::KnownGap(id) | Status::ResolvedKnownGap(id) => Some(id.clone()),
+            Status::KnownGap(id)
+            | Status::ResolvedKnownGap(id)
+            | Status::KnownFrontendGap(id)
+            | Status::ResolvedKnownFrontendGap(id) => Some(id.clone()),
             Status::FrontendError(m) | Status::DynError(m) => Some(m.clone()),
             _ => None,
         }
@@ -117,6 +137,7 @@ struct Row {
     dynamic_flow: Option<bool>,
     status: Status,
     known_gap: Option<String>,
+    known_frontend_gap: Option<String>,
     oracle_mismatch: bool,
 }
 
@@ -131,6 +152,7 @@ struct CaseReport {
     dynamic_flow: Option<bool>,
     status: &'static str,
     known_gap: Option<String>,
+    known_frontend_gap: Option<String>,
     oracle_mismatch: bool,
     detail: Option<String>,
 }
@@ -144,7 +166,10 @@ struct Summary {
     resolved_known_gap: usize,
     precision_gap: usize,
     oracle_mismatch: usize,
+    /// Un-allowlisted frontend ingestion failures (a finding).
     frontend_error: usize,
+    known_frontend_gap: usize,
+    resolved_known_frontend_gap: usize,
     dyn_error: usize,
 }
 
@@ -217,24 +242,36 @@ fn run(json_mode: bool) -> Result<i32> {
         // Dynamic: compile prog.c + instrumented shim under DFSan and run it.
         let dynamic_flow = run_dfsan(&prog_path, &dfsan_shim, &name);
 
-        // Classify along static-vs-dynamic, applying the known_gap allowlist.
+        // Classify, applying the known_gap / known_frontend_gap allowlists.
         let status = match (&static_flow, &dynamic_flow) {
-            (Err(m), _) => Status::FrontendError(m.clone()),
-            (_, Err(m)) => Status::DynError(m.clone()),
-            (Ok(s), Ok(d)) => match (*d, *s) {
-                // dynamic observed a flow CTADL missed: a soundness gap.
-                (true, false) => match &manifest.known_gap {
-                    Some(id) => Status::KnownGap(id.clone()),
-                    None => Status::NewGap,
-                },
-                // CTADL reported a flow runtime never produced.
-                (false, true) => Status::PrecisionGap,
-                // agree: but if this was an allowlisted gap, it's now resolved.
-                _ => match &manifest.known_gap {
-                    Some(id) => Status::ResolvedKnownGap(id.clone()),
-                    None => Status::Ok,
-                },
+            // CTADL's frontend couldn't ingest the program.
+            (Err(m), _) => match &manifest.known_frontend_gap {
+                Some(id) => Status::KnownFrontendGap(id.clone()),
+                None => Status::FrontendError(m.clone()),
             },
+            (_, Err(m)) => Status::DynError(m.clone()),
+            (Ok(s), Ok(d)) => {
+                // If this case was allowlisted as a frontend gap but the frontend
+                // ingested it this time, the parser improved — flag for re-triage.
+                if let Some(id) = &manifest.known_frontend_gap {
+                    Status::ResolvedKnownFrontendGap(id.clone())
+                } else {
+                    match (*d, *s) {
+                        // dynamic observed a flow CTADL missed: a soundness gap.
+                        (true, false) => match &manifest.known_gap {
+                            Some(id) => Status::KnownGap(id.clone()),
+                            None => Status::NewGap,
+                        },
+                        // CTADL reported a flow runtime never produced.
+                        (false, true) => Status::PrecisionGap,
+                        // agree: but if this was an allowlisted gap, it's now resolved.
+                        _ => match &manifest.known_gap {
+                            Some(id) => Status::ResolvedKnownGap(id.clone()),
+                            None => Status::Ok,
+                        },
+                    }
+                }
+            }
         };
 
         // Cross-check: does observed runtime match the hand-authored oracle?
@@ -249,13 +286,16 @@ fn run(json_mode: bool) -> Result<i32> {
             dynamic_flow: dynamic_flow.ok(),
             status,
             known_gap: manifest.known_gap,
+            known_frontend_gap: manifest.known_frontend_gap,
             oracle_mismatch,
         });
     }
 
     let summary = summarize(&rows);
-    // The gate: anything a loop should treat as "needs attention now".
-    let ok = summary.new_gap == 0 && summary.oracle_mismatch == 0;
+    // The gate: anything a loop should treat as "needs attention now" — a new
+    // soundness gap, an un-allowlisted frontend ingestion failure, or DFSan
+    // disagreeing with the hand-authored oracle.
+    let ok = summary.new_gap == 0 && summary.frontend_error == 0 && summary.oracle_mismatch == 0;
 
     let human = format!("{}\n{}", format_table(&rows), format_summary(&summary, ok));
     if json_mode {
@@ -286,6 +326,8 @@ fn summarize(rows: &[Row]) -> Summary {
             Status::ResolvedKnownGap(_) => s.resolved_known_gap += 1,
             Status::PrecisionGap => s.precision_gap += 1,
             Status::FrontendError(_) => s.frontend_error += 1,
+            Status::KnownFrontendGap(_) => s.known_frontend_gap += 1,
+            Status::ResolvedKnownFrontendGap(_) => s.resolved_known_frontend_gap += 1,
             Status::DynError(_) => s.dyn_error += 1,
         }
         if r.oracle_mismatch {
@@ -303,6 +345,7 @@ fn case_report(r: &Row) -> CaseReport {
         dynamic_flow: r.dynamic_flow,
         status: r.status.kind(),
         known_gap: r.known_gap.clone(),
+        known_frontend_gap: r.known_frontend_gap.clone(),
         oracle_mismatch: r.oracle_mismatch,
         detail: r.status.detail(),
     }
@@ -344,29 +387,40 @@ fn format_table(rows: &[Row]) -> String {
 }
 
 fn format_summary(s: &Summary, ok: bool) -> String {
-    let mut lines = vec![format!(
-        "{} cases: {} ok, {} known-gap, {} new-gap, {} resolved-known-gap, \
-         {} precision-gap, {} oracle-mismatch, {} frontend-error, {} dyn-error",
-        s.total,
-        s.ok,
-        s.known_gap,
-        s.new_gap,
-        s.resolved_known_gap,
-        s.precision_gap,
-        s.oracle_mismatch,
-        s.frontend_error,
-        s.dyn_error,
-    )];
+    let mut lines = vec![
+        format!(
+            "{} cases: {} ok, {} known-gap, {} NEW-GAP, {} resolved-known-gap, {} precision-gap, \
+             {} oracle-mismatch",
+            s.total, s.ok, s.known_gap, s.new_gap, s.resolved_known_gap, s.precision_gap,
+            s.oracle_mismatch,
+        ),
+        format!(
+            "          frontend: {} known-frontend-gap, {} FRONTEND-ERROR, \
+             {} resolved-known-frontend-gap, {} dyn-error",
+            s.known_frontend_gap, s.frontend_error, s.resolved_known_frontend_gap, s.dyn_error,
+        ),
+    ];
     if s.resolved_known_gap > 0 {
         lines.push(
-            "resolved-known-gap: a known gap stopped failing — if intended, drop its \
+            "resolved-known-gap: a known soundness gap stopped failing — if intended, drop its \
              `known_gap` from the manifest (and the F-entry in KNOWN_FINDINGS.md)."
+                .to_string(),
+        );
+    }
+    if s.resolved_known_frontend_gap > 0 {
+        lines.push(
+            "resolved-known-frontend-gap: the frontend now ingests a previously-failing case — \
+             drop its `known_frontend_gap` and re-triage (it may reveal a soundness result)."
                 .to_string(),
         );
     }
     lines.push(format!(
         "result: {} (exit {})",
-        if ok { "OK — nothing unexpected" } else { "ATTENTION — new gap or oracle mismatch" },
+        if ok {
+            "OK — nothing unexpected"
+        } else {
+            "ATTENTION — new soundness gap, frontend error, or oracle mismatch"
+        },
         if ok { 0 } else { 1 },
     ));
     lines.join("\n")

@@ -1,0 +1,6 @@
+{
+  "name": "out_param_pointer",
+  "description": "set(int *out, int v){*out=v} writes taint out through a pointer param; sink reads it",
+  "label": "Test",
+  "expect_flow": true
+}

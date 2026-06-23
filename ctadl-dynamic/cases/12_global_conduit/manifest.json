@@ -1,0 +1,6 @@
+{
+  "name": "global_conduit",
+  "description": "taint stored in a global g then read at the sink, same function",
+  "label": "Test",
+  "expect_flow": true
+}

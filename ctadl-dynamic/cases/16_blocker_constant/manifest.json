@@ -1,0 +1,6 @@
+{
+  "name": "blocker_constant",
+  "description": "drop(int p){return 0} discards taint; sink gets a constant -> NO flow",
+  "label": "Test",
+  "expect_flow": false
+}

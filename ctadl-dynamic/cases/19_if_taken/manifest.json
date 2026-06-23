@@ -1,0 +1,6 @@
+{
+  "name": "if_taken",
+  "description": "if(1){x=s} -- taint branch always taken; expect flow",
+  "label": "Test",
+  "expect_flow": true
+}

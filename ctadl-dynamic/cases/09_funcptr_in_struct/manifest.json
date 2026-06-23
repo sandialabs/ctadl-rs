@@ -1,0 +1,7 @@
+{
+  "name": "funcptr_in_struct",
+  "description": "F1 variant: function pointer in a struct field; r = o.op(s)",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F1"
+}
