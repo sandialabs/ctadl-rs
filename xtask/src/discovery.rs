@@ -19,6 +19,8 @@ pub struct TestCase {
 pub enum Kind {
     /// Java compiled to DEX, mapped back to source lines via a dex linemap.
     Dex { java: PathBuf, config: PathBuf },
+    /// Java compiled to a JAR, mapped back to source lines via a jvm linemap.
+    Jvm { java: PathBuf, config: PathBuf },
     /// C compiled to an ELF object, mapped back to lines via `addr2line`.
     Pcode { source: PathBuf, query: PathBuf },
 }
@@ -67,12 +69,18 @@ fn discover_dex(java_dir: &Path) -> Result<Vec<TestCase>> {
         let stem = file_stem(&entry)?;
         let config = java_dir.join(format!("{}.json", to_kebab_case(&stem)));
         if config.is_file() {
+            let java = absolute(&entry)?;
+            let config = absolute(&config)?;
             cases.push(TestCase {
-                name: stem,
+                name: stem.clone(),
                 kind: Kind::Dex {
-                    java: absolute(&entry)?,
-                    config: absolute(&config)?,
+                    java: java.clone(),
+                    config: config.clone(),
                 },
+            });
+            cases.push(TestCase {
+                name: format!("Jvm:{stem}"),
+                kind: Kind::Jvm { java, config },
             });
         }
     }
