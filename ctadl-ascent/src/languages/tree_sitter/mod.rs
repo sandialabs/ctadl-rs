@@ -406,6 +406,15 @@ fn add_scope(
 #[repr(transparent)]
 struct FunctionName<'a>(&'a str);
 
+// Lets `functions.contains_key(name: &str)` hash-look up a `FunctionName` key
+// without constructing one at a borrowed lifetime. The derived `Hash`/`Eq`
+// forward to the inner `&str`, so they agree with `str`'s, as `Borrow` requires.
+impl std::borrow::Borrow<str> for FunctionName<'_> {
+    fn borrow(&self) -> &str {
+        self.0
+    }
+}
+
 #[derive(Debug, Default)]
 struct Context<'a> {
     functions: HashMap<FunctionName<'a>, FunctionIdx>,
@@ -1173,6 +1182,13 @@ impl<'a> Context<'a> {
             .map(|(param_idx, _)| param_idx)
     }
 
+    /// Whether `name` is the name of a function defined in this translation unit.
+    /// Used to distinguish a function-address reference (`fp = id`) from an
+    /// ordinary variable read when flattening a bare identifier.
+    fn is_function_name(&self, name: &str) -> bool {
+        self.functions.contains_key(name)
+    }
+
     fn build_access_path(
         &self,
         name_pre_scope: &str,
@@ -1299,11 +1315,28 @@ impl<'a> Context<'a> {
         //debug_print_tree(node, 0, Some("FLATTEN_EXPR"), Some(50));
         let text = to_str(&node, source); //.to_string();
         match node.kind() {
-            "identifier" => Ok(Exp::AccessPath(self.build_access_path(
-                text,
-                Default::default(),
-                scope_view,
-            ))),
+            "identifier" => {
+                // A bare identifier that names a known function -- and is not shadowed by a
+                // variable in scope -- is a function-address reference, e.g. the `id` in
+                // `int (*fp)(int) = id;` or `g(id)`. Emit it as a function-pointer object so
+                // codegen records a `func_ptr_assign`; that is what lets the indirect-call
+                // machinery resolve `fp(...)` back to `id`'s summary. (A direct call `id(...)`
+                // does not reach here -- its callee is built in `collect_call`.)
+                if self
+                    .scope_tree
+                    .find_variable(scope_view.sidx, text)
+                    .is_none()
+                    && self.is_function_name(text)
+                {
+                    Ok(Exp::ObjectRef(CallObject::FunctionPtr(text.into())))
+                } else {
+                    Ok(Exp::AccessPath(self.build_access_path(
+                        text,
+                        Default::default(),
+                        scope_view,
+                    )))
+                }
+            }
             "comma_expression" => {
                 let ch1 = node.child_by_field_name("left").expect("always left");
                 let ch2 = node.child_by_field_name("right").expect("always right");

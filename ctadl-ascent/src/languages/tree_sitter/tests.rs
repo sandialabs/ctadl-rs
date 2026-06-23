@@ -557,14 +557,14 @@ fn taint_flows_through_direct_call() {
 }
 
 #[test_log::test]
-#[ignore = "soundness gap (F1): taint is dropped through indirect (function-pointer) calls; un-ignore when resolved -- see ctadl-dynamic/KNOWN_FINDINGS.md"]
 fn taint_flows_through_indirect_call() {
     // The SAME flow as `taint_flows_through_direct_call`, but the call goes through a function pointer
-    // (`int (*fp)(int) = id; return fp(b)`). It should still report param 1 reaching `wrap`'s return,
-    // but CTADL does not resolve taint through the indirect call, so `wrap` gets no summary and this
-    // fails today. Known soundness gap (false negative) surfaced by the DFSan dynamic/static comparison
-    // harness, where the matching dynamic run does observe the flow. Un-ignore when indirect-call taint
-    // is resolved.
+    // (`int (*fp)(int) = id; return fp(b)`). Taint now flows: the frontend records `fp = id` as a
+    // function-pointer reference (`ptr<id>`, a `func_ptr_assign`), which the index engine's
+    // indirect-call machinery uses to resolve `fp(b)` back to `id`'s summary -- so `wrap` reports param
+    // 1 reaching its return, matching the direct-call control above. This closes soundness gap F1
+    // (taint dropped through indirect calls), originally surfaced by the DFSan dynamic/static
+    // comparison harness.
     let src = r"
         int id(int p) { return p; }
         int wrap(int a, int b) {
