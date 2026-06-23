@@ -5,6 +5,7 @@ use crate::languages::tree_sitter::test_utils::*;
 
 #[test_log::test]
 fn simple_function() {
+    // An empty function body. Even with no statements, it lowers to exactly one basic block.
     let src = r"
             void simple() {}
         ";
@@ -14,6 +15,8 @@ fn simple_function() {
 
 #[test_log::test]
 fn simple_assign() {
+    // Copying one variable into another (`int b = a;`). Lowers to a single `assign b = a`, and a
+    // straight-line body is a single basic block.
     let src = r"
             int simple_assign() {
                 int a = 5;
@@ -28,6 +31,8 @@ fn simple_assign() {
 
 #[test_log::test]
 fn simple_assign_expr() {
+    // A binary operator inside a declarator (`int c = a + b;`). An assign can't hold a compound
+    // expression, so the add spills into a temporary: `<t0> = a, b` then `c = <t0>`.
     let src = r"
             int simple_assign_expr() {
                 int a = 5;
@@ -44,6 +49,8 @@ fn simple_assign_expr() {
 
 #[test_log::test]
 fn simple_assign_global() {
+    // Reading a name with no local declaration (`int b = a;`, where `a` was never declared). CTADL
+    // resolves it to a global, so the assignment's source is `$globals.a`.
     let src = r"
             int simple_assign_global() {
                 int b = a;
@@ -57,6 +64,9 @@ fn simple_assign_global() {
 #[test_log::test]
 #[ignore = "assigning to an undeclared global as a target is WIP; un-ignore once supported and confirmed"]
 fn simple_global_assign() {
+    // Writing to a name with no local declaration (`a = b;`). This should resolve to a global store,
+    // `$globals.a = b` -- but writing an undeclared global as the *target* isn't supported yet, so
+    // the test is ignored (see the attribute).
     let src = r"
             int simple_global_assign() {
                 int b;
@@ -71,6 +81,7 @@ fn simple_global_assign() {
 
 #[test_log::test]
 fn basic_params() {
+    // How parameters are passed: a plain `int x` is by-value, a pointer `int *y` is by-reference.
     let src = r"
             void basic_params(int x, int *y) {}
         ";
@@ -80,10 +91,12 @@ fn basic_params() {
 
 #[test_log::test]
 fn basic_param_flow() {
+    // Returning a parameter unchanged (`return x;`). The function summary holds a single flow:
+    // param 0 reaches the return.
     let src = r"
             int basic_param_flow(int x) {
                 return x;
-            }            
+            }
         ";
     let prog = program_from_string(src).0;
     check_params(&prog, &[ByVal]);
@@ -95,11 +108,13 @@ fn basic_param_flow() {
 
 #[test_log::test]
 fn param_flows_through_local() {
+    // Returning a parameter after bouncing it through a local (`int b = x; return b;`). The local
+    // copy is invisible to the summary -- it still reports param 0 reaching the return.
     let src = r"
             int param_flows_through_local(int x) {
                 int b = x;
-                return b;                
-            }            
+                return b;
+            }
         ";
     let prog = program_from_string(src).0;
     check_params(&prog, &[ByVal]);
@@ -112,10 +127,12 @@ fn param_flows_through_local() {
 
 #[test_log::test]
 fn return_from_pointer() {
+    // Returning a dereferenced pointer parameter (`return *y;`). CTADL doesn't distinguish `*y` from
+    // `y`, so the summary is identical to returning the param directly: param 0 reaches the return.
     let src = r"
             int return_from_pointer(int *y) {
-                return *y;                
-            }            
+                return *y;
+            }
         ";
     let prog = program_from_string(src).0;
     check_params(&prog, &[ByRef]);
@@ -127,11 +144,13 @@ fn return_from_pointer() {
 
 #[test_log::test]
 fn return_from_pointer_through_local() {
+    // Returning a dereferenced pointer parameter through a local (`int b = *y; return b;`). The
+    // pointer deref and the local copy are both transparent -- param 0 still reaches the return.
     let src = r"
             int return_from_pointer_through_local(int *y) {
                 int b = *y;
-                return b;                
-            }            
+                return b;
+            }
         ";
     let prog = program_from_string(src).0;
     check_params(&prog, &[ByRef]);
@@ -144,10 +163,10 @@ fn return_from_pointer_through_local() {
 
 #[test_log::test]
 fn unique_temps() {
-    // Each binary sub-expression gets a fresh temporary; within one function the TempAllocator must
-    // hand out distinct, ascending names with no reuse. This is inherently a naming/allocation
-    // property (temporaries are identified by the `<t...>` convention), but we assert it on the IR
-    // rather than substring-matching the dump.
+    // Several binary expressions in one function. Each operator that needs flattening gets its own
+    // temporary; this checks the allocator hands out distinct, gap-free names <t0>..<t4> across the
+    // whole function (no reuse, no extras). That's a property of how temporaries are numbered, so we
+    // read the names off the IR rather than substring-matching the dump.
     let src = r"
         void fun(){
             int z = n + p + r + q;   // <t0>, <t1>, <t2>
@@ -190,8 +209,8 @@ fn unique_temps() {
 
 #[test_log::test]
 fn scopes_arent_blocks() {
-    // A bare lexical scope `{ ... }` is scoping, not control flow: it must NOT become its own
-    // basic block. The function should have exactly one block.
+    // A bare `{ ... }` block with no control flow. It only introduces a lexical scope, so it does
+    // *not* start a new basic block -- the function stays at one block.
     let src = r"
         int bar() {
             {
@@ -205,8 +224,9 @@ fn scopes_arent_blocks() {
 
 #[test_log::test]
 fn assignment_statement() {
-    // `b = a;` as a standalone statement (NOT a declarator initializer) lowers to a plain assign.
-    // Exercises the expression-statement path, distinct from `simple_assign`'s declarator path.
+    // Assignment as a standalone statement (`b = a;`), not a declaration initializer. It lowers to
+    // the same `assign b = a`, but through the expression-statement path rather than the declarator
+    // path that `simple_assign` covers.
     let src = r"
         int f() {
             int a = 5;
@@ -220,7 +240,8 @@ fn assignment_statement() {
 
 #[test_log::test]
 fn comma_list_declarations() {
-    // Comma-separated declarators each lower to their own assignment.
+    // Several initialized declarators on one line (`int x = a, y = b, z = 7;`). Each becomes its own
+    // `assign` (and `z` takes the literal 7 as a constant source).
     let src = r"
         int comma_sep_decl() {
             int a, b, c, d;
@@ -235,8 +256,9 @@ fn comma_list_declarations() {
 
 #[test_log::test]
 fn extra_parens() {
-    // Redundant parens around a condition are peeled, and an assignment used as a condition still
-    // lowers normally: `if((x = z))` / `while((((y = z))))`.
+    // Redundant parentheses around a condition that is itself an assignment: `if((x = z))` and
+    // `while((((y = z))))`. The extra parens are peeled and the embedded assignment lowers normally
+    // to `assign x = z` / `assign y = z`.
     let src = r"
         int extra_parens() {
             int z = 55;
@@ -254,9 +276,10 @@ fn extra_parens() {
 
 #[test_log::test]
 fn call_arg_flows_through_return() {
-    // A direct call's argument flows through the callee and back: `tgt` returns `x.f1`, and `top`
-    // returns the result of `tgt(y)`, so param 0's `.f1` field reaches the return. Asserting the
-    // flow (not the `direct-call tgt` rendering) proves the call resolved AND data flows through it.
+    // A function whose return value is the result of calling another (`top` returns `tgt(y)`, and
+    // `tgt` returns `x.f1`). End to end, param 0's `.f1` field reaches `top`'s return. Asserting this
+    // flow -- rather than that a `direct-call tgt` was emitted -- proves both that the call resolved
+    // and that data passes through it.
     let src = r"
         int tgt(Rando x) {
             return x.f1;
@@ -271,8 +294,8 @@ fn call_arg_flows_through_return() {
 
 #[test_log::test]
 fn unbraced_if_branch_flows_to_return() {
-    // A value assigned inside an UNBRACED `if` consequent still reaches the return: `x = z` (z is
-    // param 1) under `if(x == 3)`, then `return x` => param 1 flows to the return.
+    // An `if` with an unbraced single-statement body (`if(x == 3) x = z;`). The assignment in the
+    // braceless body is not dropped: `z` (param 1) flows through `x` to the return.
     let src = r"
         int f(int y, int z) {
             int x = 5;
@@ -286,8 +309,9 @@ fn unbraced_if_branch_flows_to_return() {
 
 #[test_log::test]
 fn unbraced_if_returns_param_field() {
-    // An unbraced `if` whose consequent returns a field of a by-ref param: `return fb->unbraced`
-    // => param 0's `.unbraced` field flows to the return. (The other path returns a global.)
+    // An unbraced `if` whose body is a `return` of a pointer field (`if(...) return fb->unbraced;`).
+    // The summary reports param 0's `.unbraced` field reaching the return. (The fall-through path
+    // returns a global, which is not a param flow.)
     let src = r"
         int f(Foobar *fb) {
             if(fb->ct == 3)
@@ -300,9 +324,12 @@ fn unbraced_if_returns_param_field() {
 
 #[test_log::test]
 fn field_write_flows() {
-    // Field writes are summarized as effects on the formal (no temp names needed), including
-    // blended RHSs. `return v.f1` (set from `b.xyz`) is captured both as the formal field-return
-    // and the resolved source. Params: Donkey v = @p0, Burro* b = @p1, int x = @p2, int y = @p3.
+    // Writing to struct fields, with right-hand sides ranging from a plain param to a deep
+    // pointer-load to a sum (params: v=@p0, b=@p1, x=@p2, y=@p3). CTADL summarizes each as a flow
+    // into the formal's field, with no temporaries leaking out: x -> v.f2, the deep load
+    // b->f2.f3->f4 -> v.f2.nf1.y, and each operand of b->fa + b->fb -> v.f5. Returning a just-written
+    // field (`return v.f1`) shows up twice: as @p0.f1 -> return and as its resolved original source
+    // b.xyz -> return.
     let src = r"
         int field_access(Donkey v, Burro* b, int x, int y) {
             v.f2 = x;
@@ -329,8 +356,9 @@ fn field_write_flows() {
 
 #[test_log::test]
 fn field_assignment_is_update() {
-    // `v.f = x` lowers to a functional `update` on the base (not a plain assign). Syntactic claim
-    // the summary can't see; one representative case is enough.
+    // Storing into a struct field (`v.f2 = x;`). In the IR this is a functional `update` on the base
+    // value (`@p0` updated at `.f2`), not a plain `assign`. The summary can't see this distinction,
+    // so it's checked on the IR; one representative case is enough.
     let src = r"
         int f(Donkey v, int x) {
             v.f2 = x;
@@ -341,7 +369,8 @@ fn field_assignment_is_update() {
 
 #[test_log::test]
 fn chained_assignment() {
-    // `b = a = 5;` — the inner assignment's value propagates outward, so `b` receives `a`.
+    // A chained assignment (`int b = a = 5;`). The inner `a = 5` runs first and its value propagates
+    // outward, so `b` is assigned from `a`: IR is `assign a = 5` then `assign b = a`.
     let src = r"
         int f() {
             int a;
@@ -356,9 +385,9 @@ fn chained_assignment() {
 
 #[test_log::test]
 fn literal_assignments() {
-    // A numeric literal lowers to a constant source (`Exp::Str` of the source text), both as a
-    // statement assignment (`a = 5`) and a declarator initializer (`int x = 17`). Literals buried
-    // in a blend, or returned, are out of scope (see CLAUDE.md / constants notes).
+    // Numeric literals as assignment sources, both as a statement (`a = 5;`) and a declarator
+    // (`int x = 17;`). A literal lowers to a constant source -- the literal's source text, not an
+    // access path. (Literals buried inside a sum, or returned, are covered elsewhere.)
     let src = r"
         int f() {
             int a;
@@ -372,8 +401,9 @@ fn literal_assignments() {
 
 #[test_log::test]
 fn if_fallthrough_cfg() {
-    // An `if` with no early return: block 0 (condition) branches to the consequent (1) or the
-    // fallthrough (2); the consequent falls through to 2; block 2 returns (terminal).
+    // An `if` with no early return -- control falls out of the body and continues. CFG: block 0 (the
+    // condition) branches to the body (1) or the continuation (2); the body falls through to 2; and
+    // block 2 returns, so it is terminal.
     let src = r"
         int f(int x, int y) {
             if(x) {
@@ -390,7 +420,8 @@ fn if_fallthrough_cfg() {
 
 #[test_log::test]
 fn if_return_in_consequent_cfg() {
-    // `if` whose consequent returns: block 0 branches to 1 or 2; both are terminal returns.
+    // An `if` whose body returns (`if(x) return x; return y;`). CFG: block 0 branches to the body (1)
+    // or the fall-through (2), and both are terminal returns -- nothing rejoins.
     let src = r"
         int f(int x, int y) {
             if(x) {
@@ -407,8 +438,8 @@ fn if_return_in_consequent_cfg() {
 
 #[test_log::test]
 fn if_both_branches_can_return_params() {
-    // The dataflow facet of the same shape: `return x` on one path and `return y` on the other
-    // means BOTH params reach the return.
+    // The dataflow view of the same shape (`if(x) return x; return y;`): there are two possible
+    // return paths, so the summary reports *both* params 0 and 1 reaching the return.
     let src = r"
         int f(int x, int y) {
             if(x) {
@@ -423,8 +454,10 @@ fn if_both_branches_can_return_params() {
 
 #[test_log::test]
 fn while_loop_cfg() {
-    // While loop block structure: 0 enters the header (1); the condition (1) branches to the body
-    // (3) or the exit (2); the body branches back to the header (1, the back-edge); 2 returns.
+    // A `while` loop's block structure. CFG: block 0 sets up and enters the header (1); the
+    // header/condition (1) branches to the body (3) or the exit (2); the body loops back to the
+    // header (1, the back-edge); block 2 runs the post-loop code and returns. Also checks the body
+    // assignment lands in block 3 and the post-loop one in block 2.
     let src = r"
         int f(Field my_parm, int parB) {
             int b = 2;
@@ -448,8 +481,9 @@ fn while_loop_cfg() {
 
 #[test_log::test]
 fn subscript_access_paths() {
-    // A constant array subscript becomes an `Offset` segment on the access path, both as an rvalue
-    // (`f[3]`) and an lvalue (`f[4] = ...`, which lowers to an `update`). `int x` is @p2.
+    // A constant array subscript, read and written (`x = f[3];` and `f[4] = x;`). The subscript
+    // becomes a `.[N]` segment on the access path (a symbol segment, not a numeric offset): the read
+    // is `assign @p2 = f.[3]`, and the write lowers to an `update` of `f` at `.[4]`. (`int x` is @p2.)
     let src = r"
         int brackets_simple(Donkey v, Burro* b, int x, int y) {
             int f = 1;
@@ -463,11 +497,10 @@ fn subscript_access_paths() {
 
 #[test_log::test]
 fn field_blend_into_field_update() {
-    // `v->f4 = v->f5 + b` with `b = v->f1 + v->f3`: the blended RHS (direct f5, plus f1/f3 routed
-    // through b) all flow into the field update @p0.f4. v = @p0.
-    // `f` is declared `void`: it returns nothing, so falling off the end is a consistent
-    // (arity-0) implicit return. The test exercises field-update dataflow on the param, not the
-    // return value.
+    // A field store whose right-hand side is a sum mixing a direct field load with a value routed
+    // through a local: `v->f4 = v->f5 + b`, where `b = v->f1 + v->f3`. All three source fields flow
+    // into the updated field: f5 directly, f1 and f3 via `b`, all into @p0.f4. `f` is `void`, so it
+    // legitimately has no return -- this test is about the field-update flow, not a return value.
     let src = r"
         void f(Donkey *v) {
             int a = b = v->f1 + v->f3;
@@ -481,9 +514,9 @@ fn field_blend_into_field_update() {
 
 #[test_log::test]
 fn nested_blend_operands_flow() {
-    // Every operand of a nested/parenthesized sum reaches the result: `a + b + c + (d + e)` => all
-    // five params flow to the return. (Covers flattening completeness, which `unique_temps` does
-    // not — that only checks temp allocation.)
+    // A nested/parenthesized sum (`a + b + c + (d + e)`). Every operand survives flattening into
+    // temporaries: all five params flow to the return. (unique_temps only checks the temps are
+    // allocated; this checks none of the operands gets lost on the way.)
     let src = r"
         int f(int a, int b, int c, int d, int e) {
             int x = a + b + c + (d + e);
@@ -497,8 +530,8 @@ fn nested_blend_operands_flow() {
 
 #[test_log::test]
 fn returned_blend_operands_flow() {
-    // A blended expression used directly as a return value preserves all operand flows:
-    // `return a + x` => both params reach the return.
+    // A sum used directly as the return value (`return a + x;`). Both operands flow to the return --
+    // flattening a blended expression in return position keeps every source.
     let src = r"
         int g(int a, int x) {
             return a + x;
@@ -531,6 +564,9 @@ fn implicit_return() {
 
 #[test_log::test]
 fn simple_else() {
+    // A plain `if/else`. The CFG is a four-block diamond: the condition (0) branches to the if-body
+    // (1) or the else (3), each arm assigns its own variable, and both rejoin at the terminal
+    // return block (2).
     let src = r"
              int simple_else() {
                 int x = 55;
@@ -559,10 +595,11 @@ fn simple_else() {
 
 #[test_log::test]
 fn simple_elif() {
-    // `else if` desugars into a nested if inside the outer else: the outer condition (block 0)
-    // branches to its consequence (block 1) and the else-branch (block 3); block 3 is itself the
-    // inner condition, branching to the elif consequence (block 4) and the final else (block 6).
-    // Each arm flows to its own continuation and the arms rejoin at the return (block 2).
+    // C `if / else if / else`. Tree-sitter has no "elif", so `else if` desugars to a nested `if` in
+    // the outer else. In the IR that is two condition blocks, each branching to exactly its two arms:
+    // block 0 -> [1,3] (if-body / else-branch) and block 3 -> [4,6] (elif-body / final else); all
+    // arms reconverge at the terminal return block (2). What this pins down: each condition branches
+    // only to its own two arms, with no stray edge jumping straight to the join.
     let src = r"
              int simple_elif() {
                 int x = 5;
@@ -598,11 +635,10 @@ fn simple_elif() {
 
 #[test_log::test]
 fn return_arity() {
-    // A function's return arity comes from its declared return type: a value-returning `int`
-    // function is arity 1, a `void` function is arity 0. (tree-sitter doesn't support implicit-int
-    // returns, so every function here has an explicit signature -- see issue #54 for the
-    // implicit-int aspirational case.) This fixture has several functions, so it exercises
-    // `function_named` rather than `get_only_function`.
+    // Where a function's return arity comes from: its declared return type. An `int` function is
+    // arity 1, a `void` function arity 0 (whether it `return;`s or just falls off the end).
+    // tree-sitter can't parse implicit-int returns, so every function here is explicitly typed (see
+    // issue #54). The fixture has several functions, so it looks them up by name.
     let src = r"
             int explicit(){return 0;}
             void none(){return;}
@@ -616,8 +652,8 @@ fn return_arity() {
 
 #[test_log::test]
 fn return_constant() {
-    // `return (14)` lowers to a Return terminator carrying the literal as a constant
-    // (Exp::Str of the literal's source text), not an access path. The parens are just grouping.
+    // Returning a parenthesized literal (`return (14);`). The parens are just grouping; the return
+    // carries the literal as a constant (its source text "14"), not a variable or access path.
     let src = r"
             int return_constant() {
                 return (14);
@@ -629,10 +665,10 @@ fn return_constant() {
 
 #[test_log::test]
 fn params_into_calls() {
-    // A direct call carries its arguments as access paths: `foo(y)` passes param 0 directly. The
-    // call result is discarded, so there is no summary flow -- this is purely call-site IR shape.
-    // (`foo(y + y)` flattens its argument into a temp; we deliberately do not assert that temp
-    // name, which would freeze TempAllocator numbering -- flattening is covered by the blend tests.)
+    // Passing an argument to a call (`foo(y)`). It lowers to a direct call whose argument is the
+    // access path for param 0. The result is unused, so there is no summary flow -- this is purely
+    // about the call-site IR. (`foo(y + y)` flattens its argument into a temp first; we don't assert
+    // the temp name, which would only pin down allocator numbering -- flattening is covered elsewhere.)
     let src = r"
         int foo(Rando x){
             return x;
@@ -649,9 +685,9 @@ fn params_into_calls() {
 
 #[test_log::test]
 fn call_not_assign() {
-    // A nested call `foo(baz(y))` lowers to two direct calls, not an assignment: `bar` directly
-    // calls both `baz` and `foo`. The results are discarded, so this is verifiable only as
-    // call-site shape, not as a summary flow.
+    // A call used as another call's argument (`foo(baz(y))`). It lowers to two direct calls, not an
+    // assignment: `bar` directly calls `baz` (with param 0) and `foo` (whose argument is baz's result
+    // temp). Both results are discarded, so this is only visible as call-site IR shape, not a flow.
     let src = r"
         int foo(Rando x){
             return x;
@@ -671,9 +707,9 @@ fn call_not_assign() {
 
 #[test_log::test]
 fn assign_in_call_arg() {
-    // An assignment in argument position is lowered as a real assignment before the call:
-    // `bar(x = y)` emits `assign %x = @p0`. (Recursive self-call keeps this a single function so
-    // check_assign_or_update applies.)
+    // An assignment sitting in an argument position (`bar(x = y)`). The assignment is lowered as a
+    // real statement before the call: `assign x = y` (param 0). (`bar` calls itself so the program
+    // stays a single function, which is what check_assign_or_update needs.)
     let src = r"
         int bar(int y){
             int x;
