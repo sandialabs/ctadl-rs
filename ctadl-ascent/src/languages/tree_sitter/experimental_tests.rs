@@ -180,8 +180,8 @@ fn comma_list_declarations() {
     let (program, dump) = program_from_string(src);
 
     dump_ir(&dump);
-    assert!(check_assign(&program, "x", ["a"], None));
-    assert!(check_assign(&program, "y", ["b"], None));
+    check_assign_or_update(&program, "x", ["a"], None);
+    check_assign_or_update(&program, "y", ["b"], None);
     assert!(check_match(&dump, "assign %z = <const: \"7\""));
 
     //assert!(check_match(&dump, "assign %b = @p0"));
@@ -208,44 +208,7 @@ fn simple_for() {
 //todo:  comma operator
 //
 
-#[test_log::test]
-fn simple_elif() {
-    let src = r"
-             int simple_elif() {
-
-                int x = 5;
-                int v_if;
-                int v_elif;
-                int v_else;
-                if(x){
-                    v_if = x;
-                }
-                else if(!z)
-                 {
-                    v_elif = x;                    
-                } else {
-                    v_else = x;
-                }                
-                return 0;  
-            }            
-        ";
-    let (program, dump) = program_from_string(src);
-
-    dump_ir(&dump);
-    assert!(check_assign(&program, "v_if", ["x"], Some(1)));
-    assert!(check_assign(&program, "v_elif", ["x"], Some(4)));
-    assert!(check_assign(&program, "v_else", ["x"], Some(6)));
-    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
-    // Neither the outer if nor the inner else-if condition reaches the join directly.
-    assert!(
-        janky_goto(&dump, 0, "1, 3"),
-        "outer condition branches to consequence + else-if"
-    );
-    assert!(
-        janky_goto(&dump, 3, "4, 6"),
-        "inner condition branches to consequence + else"
-    );
-}
+// `simple_elif` promoted to tests.rs (structural CFG assertions via check_successors).
 
 #[test_log::test]
 fn parameter_lists_query() {
@@ -263,15 +226,10 @@ fn parameter_lists_query() {
     dump_ir(&dump);
     assert!(check_match(&dump, "assign %b = @p0"));
     assert!(check_match(&dump, "what(@p0[byval], @p1[byref])"));
-    let (summary, source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     //log::info!("SUMMARY: {:?}", summary);
     //[(Function("parameter_what"), AuxParam(1), Path(""), Param(Index(0)), Path(""))]
-    assert!(summary_returns_param(
-        &summary,
-        &source_info,
-        "parameter_what",
-        0
-    ));
+    assert!(summary_returns_param(&summary, 0, ""));
 }
 
 #[test_log::test]
@@ -310,7 +268,7 @@ fn no_child_while() {
         ..Default::default()
     };
 
-    let (summary, source_info) = get_summary(program_info).unwrap();
+    let (summary, source_info) = get_summary(program_info.program).unwrap();
     */
 }
 #[test_log::test]
@@ -330,13 +288,8 @@ fn unbraced_if() {
         ..Default::default()
     };
 
-    let (summary, source_info) = get_summary(program_info).unwrap();
-    assert!(summary_returns_param(
-        &summary,
-        &source_info,
-        "unbraced_if",
-        1
-    ));
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
+    assert!(summary_returns_param(&summary, 1, ""));
     dump_ir(&dump);
 }
 
@@ -380,14 +333,9 @@ fn double_if() {
         ..Default::default()
     };
 
-    let (summary, source_info) = get_summary(program_info).unwrap();
+    let (summary, source_info) = get_summary(program_info.program).unwrap();
 
-    assert!(summary_returns_param(
-        &summary,
-        &source_info,
-        "unbraced_while",
-        0
-    ));*/
+    assert!(summary_returns_param(&summary, 0, ""));*/
 }
 
 #[test_log::test]
@@ -429,14 +377,9 @@ fn unbraced_while() {
         ..Default::default()
     };
 
-    let (summary, source_info) = get_summary(program_info).unwrap();
+    let (summary, source_info) = get_summary(program_info.program).unwrap();
 
-    assert!(summary_returns_param(
-        &summary,
-        &source_info,
-        "unbraced_while",
-        0
-    ));*/
+    assert!(summary_returns_param(&summary, 0, ""));*/
 }
 
 #[test_log::test]
@@ -454,8 +397,8 @@ fn do_while() {
         ";
     let (prog, dump) = program_from_string(src);
     dump_ir(&dump);
-    assert!(check_block_count(&prog, 4));
-    assert!(check_assign(&prog, "x", ["b"], Some(1)));
+    check_block_count(&prog, 4);
+    check_assign_or_update(&prog, "x", ["b"], Some(1));
     // do-while: body (block_1) -> condition (block_2); the condition loops back into
     // the body (back-edge) and exits to the continuation (block_3).
     assert!(
@@ -487,8 +430,8 @@ fn extra_parens() {
     ";
     let (program, dump) = program_from_string(src);
     dump_ir(&dump);
-    assert!(check_assign(&program, "x", ["z"], None));
-    assert!(check_assign(&program, "y", ["z"], None));
+    check_assign_or_update(&program, "x", ["z"], None);
+    check_assign_or_update(&program, "y", ["z"], None);
 }
 
 #[test_log::test]
@@ -544,10 +487,10 @@ fn simple_while() {
         ";
     let (program, dump) = program_from_string(src);
     dump_ir(&dump);
-    assert!(check_assign(&program, "x", ["b"], Some(3)));
-    assert!(check_assign(&program, "y", ["x"], Some(2)));
-    assert!(janky_goto(&dump.as_str(), 1, "2, 3"));
-    assert!(janky_goto(&dump.as_str(), 3, "1")); //the condition goes to 3, not the body.*/
+    check_assign_or_update(&program, "x", ["b"], Some(3));
+    check_assign_or_update(&program, "y", ["x"], Some(2));
+    assert!(janky_goto(&dump, 1, "2, 3"));
+    assert!(janky_goto(&dump, 3, "1")); //the condition goes to 3, not the body.*/
 }
 
 //this tests unbraced if/else consequents
@@ -765,23 +708,7 @@ fn compound_return() {
     assert!(check_match(&dump, "return %<t3>"));
 }
 
-#[test_log::test]
-fn return_arity() {
-    let src = r"
-          // TREE-SITTER DOESN'T SUPPORT implicit int return
-          //  implicit_int(){return 1;}
-            int explicit(){return 0;}
-            void none(){return;}
-            void really_void(void){return;}
-        ";
-    let (_, dump) = program_from_string(src);
-    dump_ir(&dump);
-
-    //assert!(check_match(&dump, "define implicit_int() -> 1"));
-    assert!(check_match(&dump, "define explicit() -> 1"));
-    assert!(check_match(&dump, "define none() -> 0"));
-    assert!(check_match(&dump, "define really_void() -> 0"));
-}
+// `return_arity` promoted to tests.rs (structural check_return_arity / function_named).
 
 #[test_log::test]
 fn params_and_simple_assign_in_example_2() {
@@ -856,97 +783,10 @@ fn param_by_reference() {
     assert!(check_match(&dump, "assign %b = @p1"));
 }
 
-#[test_log::test]
-fn simplest_calls() {
-    let src = r"
-
-        int tgt(Rando x){
-            return x.f1;
-    }
-        int top(Rando y){
-            int v = tgt(y);
-            return v;
-    }
-";
-
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    dump_ir(&dump);
-    let (summary, _source_info) = get_summary(program_info).unwrap();
-    log::info!("{:?}", summary);
-    assert!(check_match(&dump, "direct-call tgt"));
-}
-#[test_log::test]
-fn params_into_calls() {
-    let src = r"
-        int foo(Rando x){
-            return x;
-        }
-        int foo2(int z){
-            return  z *z;
-        }
-        int bar(int y){
-            int x;
-            foo(x = y);
-            foo(y);
-            foo(y + y);
-            return y;
-        }
-        ";
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-
-    dump_ir(&dump);
-
-    let (summary, _source_info) = get_summary(program_info).unwrap();
-    log::info!("{:?}", summary);
-    assert!(
-        check_match(&dump, "assign %x = @p0"),
-        "picked up assign in parameter list"
-    );
-    assert!(
-        check_match(&dump, "%<t0> = direct-call foo(%x)"),
-        "picked up assign in parameter list"
-    );
-    assert!(check_match(&dump, "direct-call foo(@p0)"));
-    assert!(check_match(&dump, "assign %<t3> = @p0, @p0"));
-    assert!(check_match(&dump, "%<t2> = direct-call foo(%<t3>)"));
-    //TOOD_JDB: do summary queries, not these janks
-    //assert!(check_match(&dump, "TODO: write param queries");
-}
-
-#[test_log::test]
-fn call_not_assign() {
-    let src = r"
-        int foo(Rando x){
-            return x;
-        }
-        int baz(Rando m){
-        return m+ m;
-        }
-        int bar(Rando y){
-            foo(baz(y)); 
-            return y;
-        }
-        ";
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    dump_ir(&dump);
-
-    let (summary, _source_info) = get_summary(program_info).unwrap();
-    log::info!("{:?}", summary);
-
-    assert!(check_match(&dump, "direct-call foo"));
-}
+// `simplest_calls` promoted to tests.rs as `call_arg_flows_through_return` (Category B: the call's
+// argument flows through the callee and back to the return -- subsumes the `direct-call tgt` check).
+// `params_into_calls` and `call_not_assign` promoted to tests.rs (structural call-site assertions
+// via direct_calls_in / check_direct_call / check_has_direct_call).
 
 fn janky_goto(dump: &str, from_block: usize, to_block: &str) -> bool {
     check_match(
@@ -976,9 +816,9 @@ fn simplest_if_no_return() {
         ";
     let (_program, dump) = program_from_string(src);
     dump_ir(&dump);
-    assert!(janky_goto(&dump.as_str(), 0, "1, 2"));
-    assert!(janky_goto(&dump.as_str(), 1, "2"));
-    assert!(janky_return(&dump.as_str(), 2, "@p1")); //returns
+    assert!(janky_goto(&dump, 0, "1, 2"));
+    assert!(janky_goto(&dump, 1, "2"));
+    assert!(janky_return(&dump, 2, "@p1")); //returns
 }
 
 #[test_log::test]
@@ -1004,23 +844,13 @@ fn simplest_if_with_return() {
     };
 
     dump_ir(&dump);
-    let (summary, source_info) = get_summary(program_info).unwrap();
-    assert!(summary_returns_param(
-        &summary,
-        &source_info,
-        "simplest_if",
-        0
-    ));
-    assert!(summary_returns_param(
-        &summary,
-        &source_info,
-        "simplest_if",
-        1
-    ));
+    let (summary, source_info) = get_summary(program_info.program).unwrap();
+    assert!(summary_returns_param(&summary, 0, ""));
+    assert!(summary_returns_param(&summary, 1, ""));
     */
-    assert!(janky_goto(&dump.as_str(), 0, "1, 2"));
-    assert!(janky_return(&dump.as_str(), 1, "@p0")); //returns
-    assert!(janky_return(&dump.as_str(), 2, "@p1")); //returns
+    assert!(janky_goto(&dump, 0, "1, 2"));
+    assert!(janky_return(&dump, 1, "@p0")); //returns
+    assert!(janky_return(&dump, 2, "@p1")); //returns
 }
 
 #[test_log::test]
@@ -1042,9 +872,9 @@ fn shadow_block() {
     };
     dump_ir(&dump);
 
-    let (summary, source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     log::info!("{:?}", summary);
-    assert!(summary_returns_param(&summary, &source_info, "bar", 1));
+    assert!(summary_returns_param(&summary, 1, ""));
 }
 
 #[test_log::test]
@@ -1078,11 +908,11 @@ fn indirect_call_1() {
     };
     dump_ir(&dump);
 
-    let (summary, _source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     log::info!("{:?}", summary);
 
     assert!(check_match(&dump, "indirect-call"));
-    //assert!(summary_returns_param(&summary, &source_info, "bar", 0));
+    //assert!(summary_returns_param(&summary, 0, ""));
 }
 
 #[test_log::test]
@@ -1099,7 +929,7 @@ fn block_without_return() {
     };
     dump_ir(&dump);
 
-    let (summary, _source_info) = get_summary(program_info).unwrap();
+    let (summary, _source_info) = get_summary(program_info.program).unwrap();
     log::info!("{:?}", summary);
 
     assert!(check_match(&dump, "assign %x"));
