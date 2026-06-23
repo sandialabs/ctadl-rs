@@ -10,7 +10,7 @@ use source_info::{ArtifactKey, SourceInfoBuilder};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{Error, ErrorContext};
-use ctadl_ir::mir::call::VirtualMethodTable;
+use ctadl_ir::mir::call::{NativeFunction, NativeSignature, NativeSimpleName, VirtualMethodTable};
 use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;
@@ -29,6 +29,18 @@ pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramIn
     ghidra::run_ghidra_export(path, import_path)?;
 
     let facts_dir = import_path.join("facts");
+
+    // Persist Ghidra's image base on the import config so downstream consumers
+    // (SARIF address mapping, regression line checks) can recover
+    // section-relative offsets regardless of the base Ghidra chose.
+    if let Some(image_base) = PcodeFactsReader::new(&facts_dir)
+        .read_image_base()
+        .map_err(|e| Error::PcodeFactRead(format!("Failed to read image base: {}", e)))?
+    {
+        let mut updated = import.clone();
+        updated.image_base = Some(image_base);
+        updated.save()?;
+    }
 
     let mut ctx = Context::new();
     let mut builders = Builders::new();
@@ -56,7 +68,7 @@ impl Builders {
         let artifact_metadata = source_info::ArtifactMetadata::new();
         Self {
             program: Program::default(),
-            vmt: VirtualMethodTable::CplusPlus,
+            vmt: VirtualMethodTable::new_native(),
             source_info_builder: SourceInfoBuilder::new(artifact_metadata),
         }
     }
@@ -244,6 +256,21 @@ impl Context {
             }
             used_names.insert(func_name.clone());
 
+            // The simple (un-decorated) name and a best-effort type signature for
+            // the native VMT, so a JSON model's exact `names` list can match by
+            // simple name even though `func_name` (the fully-qualified id) may be
+            // decorated, e.g. Ghidra's `<EXTERNAL>::system@00101008`. Strip leading
+            // underscores Ghidra sometimes emits (Mach-O prefixes every C symbol
+            // with `_`) so the bare libc name matches without listing `_`-variants.
+            let stripped = func_data.name.trim_start_matches('_');
+            let simple_name = if stripped.is_empty() {
+                func_data.name.as_str()
+            } else {
+                stripped
+            };
+            let signature = Self::format_native_signature(func_data, proto_facts);
+            let fq_name = func_name.clone();
+
             // Create a new function
             let func_idx = builders.program.new_function();
             let func = &mut builders.program[func_idx];
@@ -268,10 +295,43 @@ impl Context {
                 func.set_return_type(ReturnType { arity: 0 });
             }
 
+            // Register in the native VMT (after the `func` borrow ends) so the
+            // model matcher can resolve simple names to this function's id.
+            if let VirtualMethodTable::Native { methods } = &mut builders.vmt {
+                methods.push((
+                    NativeSimpleName(simple_name.into()),
+                    NativeSignature(signature.as_str().into()),
+                    NativeFunction(fq_name.as_str().into()),
+                ));
+            }
+
             // Store function mapping
             self.functions.insert(func_id.clone(), func_idx);
         }
         Ok(())
+    }
+
+    /// Best-effort C-style signature string for the native VMT, e.g. `int(_, _)`.
+    /// Parameter datatypes aren't currently exported by the pcode frontend, so
+    /// each parameter renders as `_`; the arity, varargs flag, and return type
+    /// are faithful. Used for display/disambiguation, not for matching (which
+    /// keys off the simple name).
+    fn format_native_signature(
+        func_data: &pcode_reader::HFuncData,
+        proto_facts: &BTreeMap<pcode_reader::HighProto, pcode_reader::ProtoData>,
+    ) -> String {
+        let Some(proto) = func_data.proto.as_ref().and_then(|p| proto_facts.get(p)) else {
+            return "()".to_string();
+        };
+        let mut params: Vec<&str> = vec!["_"; proto.parameters.len()];
+        if proto.is_vararg {
+            params.push("...");
+        }
+        let ret = proto
+            .return_type
+            .as_deref()
+            .unwrap_or(if proto.is_void { "void" } else { "_" });
+        format!("{ret}({})", params.join(", "))
     }
 
     fn process_all_blocks(

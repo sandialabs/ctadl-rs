@@ -26,7 +26,7 @@ pub fn codegen_summary(
     source_info: &mut IndexSourceInfo,
 ) {
     let ap_map = batch.aps.build_ap_map();
-    let func_num_params = facts.compute_num_params();
+    let func_num_params = facts.compute_arg_arity();
 
     for record @ (func, dst_tag, dst_index, dst_ap, src_tag, src_index, src_ap) in
         batch.iter_summaries()

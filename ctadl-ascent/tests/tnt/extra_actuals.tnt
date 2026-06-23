@@ -1,0 +1,35 @@
+// Regression test: a call site may pass MORE actuals than the callee declares
+// formals. The analysis must (1) keep propagating through the declared formals
+// correctly regardless of the trailing extra actuals, (2) preserve formal/actual
+// index alignment, and (3) not let an actual beyond the declared formals leak
+// into the callee body (it has no formal to bind to).
+
+// callee declares TWO formals; its computed summary forwards only the second
+// formal (b) to the return value -- never the first (a).
+def callee(a, b): 1
+where summaries [return <- b, return </- a]
+{
+entry:
+  r = b;
+  return r;
+}
+
+def main() {
+entry:
+  clean = 0;
+  hit = source(Hit);
+  extra = source(Extra);
+  // FOUR actuals passed to a callee that declares only TWO formals:
+  //   arg0 = clean (formal a), arg1 = hit (formal b),
+  //   arg2/arg3 = extra (beyond the declared formals).
+  z = callee(clean, hit, extra, extra);
+  // present: hit flows through formal b -> return -> z, undisturbed by the
+  // trailing extra actuals.
+  sink(z, Hit);
+  // absent: an actual beyond the declared formals has no formal to bind to, so
+  // it must not flow into the callee and back out through the return.
+  errsink(z, Extra);
+  // gives source(Extra) a real sink so its presence requirement is satisfied.
+  sink(extra, Extra);
+  return;
+}
