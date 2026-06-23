@@ -541,6 +541,40 @@ fn returned_blend_operands_flow() {
     check_returns_param(&s, 1, "");
 }
 
+#[test_log::test]
+fn taint_flows_through_direct_call() {
+    // Control for the indirect-call test below: interprocedural flow through a DIRECT call. `id`
+    // returns its argument, and `wrap` passes its second parameter to it (`return id(b)`), so `wrap`'s
+    // summary reports param 1 reaching the return. Routing through param 1 (not 0) keeps the flow
+    // distinct from `id`'s own `return <- @p0` summary, so the assertion pins it to `wrap`.
+    let src = r"
+        int id(int p) { return p; }
+        int wrap(int a, int b) {
+            return id(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+#[ignore = "soundness gap (F1): taint is dropped through indirect (function-pointer) calls; un-ignore when resolved -- see ctadl-dynamic/KNOWN_FINDINGS.md"]
+fn taint_flows_through_indirect_call() {
+    // The SAME flow as `taint_flows_through_direct_call`, but the call goes through a function pointer
+    // (`int (*fp)(int) = id; return fp(b)`). It should still report param 1 reaching `wrap`'s return,
+    // but CTADL does not resolve taint through the indirect call, so `wrap` gets no summary and this
+    // fails today. Known soundness gap (false negative) surfaced by the DFSan dynamic/static comparison
+    // harness, where the matching dynamic run does observe the flow. Un-ignore when indirect-call taint
+    // is resolved.
+    let src = r"
+        int id(int p) { return p; }
+        int wrap(int a, int b) {
+            int (*fp)(int) = id;
+            return fp(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
 /*
 
 #[test_log::test]
