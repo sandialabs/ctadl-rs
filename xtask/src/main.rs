@@ -18,6 +18,7 @@ mod jvm;
 mod models;
 mod regression;
 mod sarif;
+mod taintbench;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -47,6 +48,10 @@ fn run() -> Result<bool> {
         Some("regression") => {
             let opts = parse_regression_args(args)?;
             regression::run(&opts)
+        }
+        Some("taintbench") => {
+            let opts = parse_taintbench_args(args)?;
+            taintbench::run(&opts)
         }
         Some("-h" | "--help") | None => {
             print_help();
@@ -119,6 +124,34 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
     Ok(opts)
 }
 
+fn parse_taintbench_args(mut args: impl Iterator<Item = String>) -> Result<taintbench::Options> {
+    let mut opts = taintbench::Options::default();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--apps-dir" => {
+                let dir = args.next().context("--apps-dir requires a value")?;
+                opts.apps_dir = Some(PathBuf::from(dir));
+            }
+            "--apk" => {
+                let spec = args.next().context("--apk requires a value (<name>=<path>)")?;
+                let (name, path) = spec
+                    .split_once('=')
+                    .with_context(|| format!("--apk expects <name>=<path>, got `{spec}`"))?;
+                opts.apks.push((name.to_string(), PathBuf::from(path)));
+            }
+            "--filter" => {
+                opts.filter = Some(args.next().context("--filter requires a value")?);
+            }
+            "-h" | "--help" => {
+                print_help();
+                std::process::exit(0);
+            }
+            other => bail!("unknown argument `{other}` (try `xtask --help`)"),
+        }
+    }
+    Ok(opts)
+}
+
 fn print_help() {
     println!(
         "\
@@ -159,6 +192,18 @@ Tasks:
                              (default: auto-detect `ctadl-ascent/src/models`).
                              The `models:*` checks self-skip when neither the
                              flag nor the default directory is present.
+
+  taintbench                 Run the TaintBench source-sink regression suite:
+                             analyze each app's APK with ctadl and match the
+                             reported flows against the app's ground-truth
+                             findings (on source and sink location only).
+    --apps-dir <dir>         Directory of per-app subdirs, each with
+                             findings.json + model.json (+ optional
+                             expected.json baseline). Default: auto-detect
+                             `taintbench/apps`.
+    --apk <name>=<path>      APK to analyze for app <name> (the dir name).
+                             Repeatable. Apps with no APK are skipped.
+    --filter <name>          Only run apps whose name contains <name>.
 "
     );
 }

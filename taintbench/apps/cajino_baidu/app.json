@@ -1,0 +1,9 @@
+{
+  "name": "cajino_baidu",
+  "apk": {
+    "url": "https://github.com/TaintBench/cajino_baidu/releases/download/APK/cajino_baidu.apk",
+    "sha256": "sha256-uMkKFhxFt0iLAqPhanc/+Anz1li6zHYmzJyRX3Qxl/E="
+  },
+  "upstream": "https://github.com/TaintBench/cajino_baidu",
+  "findingsCommit": "master"
+}
