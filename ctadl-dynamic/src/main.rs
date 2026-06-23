@@ -32,6 +32,8 @@ use anyhow::{Context, Result};
 use ctadl_ascent::taint_compare::analyze_c_flows;
 use serde::{Deserialize, Serialize};
 
+mod generator;
+
 /// Per-case ground truth, authored by hand alongside `prog.c`.
 #[derive(Debug, Deserialize)]
 struct Manifest {
@@ -186,10 +188,63 @@ fn harness_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// Shared static+dynamic comparison core, used by both the curated-corpus mode
+/// (`run`) and the manifest-free scan mode (`scan_mode` / `check_mode`).
+struct Harness {
+    model: PathBuf,
+    static_markers: String,
+    dfsan_shim: PathBuf,
+}
+
+impl Harness {
+    fn load() -> Result<Self> {
+        let root = harness_root();
+        Ok(Harness {
+            model: root.join("markers.json"),
+            static_markers: std::fs::read_to_string(root.join("shim/static_markers.c"))
+                .context("reading shim/static_markers.c")?,
+            dfsan_shim: root.join("shim/dfsan_shim.c"),
+        })
+    }
+
+    /// Run CTADL (static) and DFSan (dynamic) on one program. Each result is
+    /// `Ok(flow?)` or `Err(message)` (frontend error for static, dyn error for
+    /// dynamic). `prog` is the program source (prototypes + logic); `prog_path`
+    /// is the on-disk `.c` for the DFSan compile.
+    fn compare_program(
+        &self,
+        prog: &str,
+        prog_path: &Path,
+        name: &str,
+        label: &str,
+    ) -> (Result<bool, String>, Result<bool, String>) {
+        // Static: concatenate the inert marker bodies so CTADL's model matches.
+        let src = format!("{prog}\n{}\n", self.static_markers);
+        let model = &self.model;
+        let static_flow = match catch_unwind(AssertUnwindSafe(|| analyze_c_flows(&src, model))) {
+            Err(_) => Err("panic in CTADL frontend".to_string()),
+            Ok(Err(e)) => Err(short_err(&e.to_string())),
+            Ok(Ok(flows)) => Ok(flows.iter().any(|f| f.label == label)),
+        };
+        let dynamic_flow = run_dfsan(prog_path, &self.dfsan_shim, name);
+        (static_flow, dynamic_flow)
+    }
+}
+
 fn main() {
     env_logger::init();
-    let json_mode = std::env::args().any(|a| a == "--json");
-    match run(json_mode) {
+    // CTADL's C frontend uses some panicking paths; silence our panic messages so
+    // output stays readable (we recover via catch_unwind in compare_program).
+    std::panic::set_hook(Box::new(|_| {}));
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let result = match args.first().map(String::as_str) {
+        Some("scan") => scan_mode(&args[1..]),
+        Some("check") => check_mode(&args[1..]),
+        Some("gen") => generator::gen_mode(&args[1..]),
+        _ => run(args.iter().any(|a| a == "--json")), // default: curated corpus
+    };
+    match result {
         Ok(code) => std::process::exit(code),
         Err(e) => {
             eprintln!("harness error: {e:#}");
@@ -199,12 +254,8 @@ fn main() {
 }
 
 fn run(json_mode: bool) -> Result<i32> {
-    let root = harness_root();
-    let model = root.join("markers.json");
-    let static_markers = std::fs::read_to_string(root.join("shim/static_markers.c"))
-        .context("reading shim/static_markers.c")?;
-    let dfsan_shim = root.join("shim/dfsan_shim.c");
-    let cases_dir = root.join("cases");
+    let harness = Harness::load()?;
+    let cases_dir = harness_root().join("cases");
 
     let mut case_dirs: Vec<PathBuf> = std::fs::read_dir(&cases_dir)
         .with_context(|| format!("reading cases dir {}", cases_dir.display()))?
@@ -212,10 +263,6 @@ fn run(json_mode: bool) -> Result<i32> {
         .filter(|p| p.join("prog.c").is_file())
         .collect();
     case_dirs.sort();
-
-    // CTADL's C frontend uses some panicking paths; silence our panic messages
-    // so the table stays readable (we recover via catch_unwind below).
-    std::panic::set_hook(Box::new(|_| {}));
 
     let mut rows = Vec::new();
     for case in &case_dirs {
@@ -229,18 +276,10 @@ fn run(json_mode: bool) -> Result<i32> {
         )
         .with_context(|| format!("parsing {name}/manifest.json"))?;
 
-        let compiles = clang_compiles(&prog, &static_markers);
+        let compiles = clang_compiles(&prog, &harness.static_markers);
 
-        // Static: concatenate the inert marker bodies so CTADL's model matches.
-        let src = format!("{prog}\n{static_markers}\n");
-        let static_flow = match catch_unwind(AssertUnwindSafe(|| analyze_c_flows(&src, &model))) {
-            Err(_) => Err("panic in CTADL frontend".to_string()),
-            Ok(Err(e)) => Err(short_err(&e.to_string())),
-            Ok(Ok(flows)) => Ok(flows.iter().any(|f| f.label == manifest.label)),
-        };
-
-        // Dynamic: compile prog.c + instrumented shim under DFSan and run it.
-        let dynamic_flow = run_dfsan(&prog_path, &dfsan_shim, &name);
+        let (static_flow, dynamic_flow) =
+            harness.compare_program(&prog, &prog_path, &name, &manifest.label);
 
         // Classify, applying the known_gap / known_frontend_gap allowlists.
         let status = match (&static_flow, &dynamic_flow) {
@@ -424,6 +463,184 @@ fn format_summary(s: &Summary, ok: bool) -> String {
         if ok { 0 } else { 1 },
     ));
     lines.join("\n")
+}
+
+// ----- Scan mode (manifest-free; DFSan is the auto-oracle) -------------------
+
+/// Classification of one scanned program along static-vs-dynamic only (no oracle).
+enum ScanClass {
+    Agree,
+    /// dynamic=flow, static=none — CTADL missed a real flow (candidate soundness finding).
+    SoundnessDisagree,
+    /// static=flow, dynamic=none — CTADL over-reported (usually expected imprecision).
+    PrecisionDisagree,
+    /// CTADL's frontend couldn't ingest it (candidate parser-gap finding).
+    FrontendError(String),
+    /// DFSan couldn't compile/run it (bad program / UB) — skip.
+    DynError(String),
+}
+
+impl ScanClass {
+    fn kind(&self) -> &'static str {
+        match self {
+            ScanClass::Agree => "agree",
+            ScanClass::SoundnessDisagree => "soundness-disagree",
+            ScanClass::PrecisionDisagree => "precision-disagree",
+            ScanClass::FrontendError(_) => "frontend-error",
+            ScanClass::DynError(_) => "dyn-error",
+        }
+    }
+    fn detail(&self) -> Option<String> {
+        match self {
+            ScanClass::FrontendError(m) | ScanClass::DynError(m) => Some(m.clone()),
+            _ => None,
+        }
+    }
+}
+
+fn scan_classify(s: &Result<bool, String>, d: &Result<bool, String>) -> ScanClass {
+    match (s, d) {
+        (Err(m), _) => ScanClass::FrontendError(m.clone()),
+        (_, Err(m)) => ScanClass::DynError(m.clone()),
+        (Ok(sf), Ok(df)) => match (df, sf) {
+            (true, false) => ScanClass::SoundnessDisagree,
+            (false, true) => ScanClass::PrecisionDisagree,
+            _ => ScanClass::Agree,
+        },
+    }
+}
+
+#[derive(Serialize)]
+struct ScanResult {
+    file: String,
+    static_flow: Option<bool>,
+    dynamic_flow: Option<bool>,
+    class: &'static str,
+    detail: Option<String>,
+}
+
+#[derive(Default, Serialize)]
+struct ScanReport {
+    dir: String,
+    total: usize,
+    agree: usize,
+    soundness_disagree: usize,
+    precision_disagree: usize,
+    frontend_error: usize,
+    dyn_error: usize,
+    results: Vec<ScanResult>,
+}
+
+/// Recursively collect `*.c` files under `dir`.
+fn collect_c_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_c_files(&path, out)?;
+        } else if path.extension().and_then(|e| e.to_str()) == Some("c") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// `scan <dir> [--json]`: run static+dynamic on every `*.c` under <dir> with DFSan
+/// as the auto-oracle (no manifests). Reports disagreements; exits 0 on success.
+fn scan_mode(args: &[String]) -> Result<i32> {
+    let json_mode = args.iter().any(|a| a == "--json");
+    let dir = args
+        .iter()
+        .find(|a| !a.starts_with("--"))
+        .context("usage: ctadl-dynamic scan <dir> [--json]")?;
+    let dir_path = Path::new(dir);
+    let harness = Harness::load()?;
+
+    let mut progs = Vec::new();
+    collect_c_files(dir_path, &mut progs)?;
+    progs.sort();
+
+    let mut report = ScanReport {
+        dir: dir.clone(),
+        total: progs.len(),
+        ..Default::default()
+    };
+    for prog_path in &progs {
+        let rel = prog_path.strip_prefix(dir_path).unwrap_or(prog_path);
+        let name = rel.to_string_lossy().replace(['/', '\\'], "_");
+        let prog = std::fs::read_to_string(prog_path)
+            .with_context(|| format!("reading {}", prog_path.display()))?;
+        let (s, d) = harness.compare_program(&prog, prog_path, &name, "Test");
+        let class = scan_classify(&s, &d);
+        match class {
+            ScanClass::Agree => report.agree += 1,
+            ScanClass::SoundnessDisagree => report.soundness_disagree += 1,
+            ScanClass::PrecisionDisagree => report.precision_disagree += 1,
+            ScanClass::FrontendError(_) => report.frontend_error += 1,
+            ScanClass::DynError(_) => report.dyn_error += 1,
+        }
+        report.results.push(ScanResult {
+            file: rel.to_string_lossy().to_string(),
+            static_flow: s.ok(),
+            dynamic_flow: d.ok(),
+            class: class.kind(),
+            detail: class.detail(),
+        });
+    }
+
+    if json_mode {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        let tri = |b: Option<bool>| match b {
+            Some(true) => "flow",
+            Some(false) => "none",
+            None => "-",
+        };
+        for r in &report.results {
+            println!(
+                "{:<44}  s={:<4} d={:<4}  {}",
+                r.file,
+                tri(r.static_flow),
+                tri(r.dynamic_flow),
+                r.class
+            );
+        }
+        eprintln!(
+            "\n{} programs: {} agree, {} soundness-disagree, {} precision-disagree, \
+             {} frontend-error, {} dyn-error",
+            report.total,
+            report.agree,
+            report.soundness_disagree,
+            report.precision_disagree,
+            report.frontend_error,
+            report.dyn_error,
+        );
+    }
+    Ok(0)
+}
+
+/// `check <file> --interesting <kind>`: exit 0 iff <file> still classifies as
+/// <kind> (a disagreement kind). This is the interestingness test cvise calls
+/// while minimizing a disagreeing program (Phase 4).
+fn check_mode(args: &[String]) -> Result<i32> {
+    let file = args
+        .iter()
+        .find(|a| !a.starts_with("--"))
+        .context("usage: ctadl-dynamic check <file> --interesting <kind>")?;
+    let kind = arg_value(args, "--interesting").context("check requires --interesting <kind>")?;
+    let harness = Harness::load()?;
+    let prog = std::fs::read_to_string(file).with_context(|| format!("reading {file}"))?;
+    let (s, d) = harness.compare_program(&prog, Path::new(file), "check", "Test");
+    Ok(if scan_classify(&s, &d).kind() == kind {
+        0
+    } else {
+        1
+    })
+}
+
+/// Value following `flag` in `args` (e.g. `--interesting soundness-disagree`).
+fn arg_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    let i = args.iter().position(|a| a == flag)?;
+    args.get(i + 1).map(String::as_str)
 }
 
 /// Compile `prog.c` + inert static markers with plain clang (no DFSan) as a

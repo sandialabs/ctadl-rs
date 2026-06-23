@@ -8,8 +8,9 @@ DFSan observes that CTADL misses is a **soundness gap** (a real analyzer false-n
 ## Run it
 
 ```bash
-cargo run -p ctadl-dynamic            # human table + summary on stdout
-cargo run -p ctadl-dynamic -- --json  # machine-readable JSON on stdout (table -> stderr)
+# Curated corpus (cases/ + manifests + allowlists). Exit 0 unless something unexpected.
+cargo run -p ctadl-dynamic            # human table + summary
+cargo run -p ctadl-dynamic -- --json  # machine-readable JSON (table -> stderr)
 ```
 
 Requires `clang` with the dataflow-sanitizer runtime (`libclang_rt.dfsan-*`) and `setarch`
@@ -19,6 +20,27 @@ abort with "out of application range").
 For each case it runs CTADL statically (`ctadl_ascent::taint_compare::analyze_c_flows`) and
 DFSan dynamically (compile `prog.c` + the instrumented shim with `-fsanitize=dataflow`, run,
 read the observation), then classifies the two.
+
+### Other modes (automated discovery — M7)
+
+```bash
+# Scan bare *.c files with DFSan as the AUTO-ORACLE (no manifests). Classifies each as
+# agree / soundness-disagree / precision-disagree / frontend-error / dyn-error.
+cargo run -p ctadl-dynamic -- scan <dir> [--json]
+
+# Generate N reproducible C programs (source -> random taint transforms -> sink).
+cargo run -p ctadl-dynamic -- gen <outdir> --count N [--seed S]
+
+# Interestingness predicate for minimization (cvise): exit 0 iff <file> still shows <kind>.
+cargo run -p ctadl-dynamic -- check <file> --interesting <kind>   # kind = soundness-disagree | ...
+
+# Discovery loop core:
+cargo run -p ctadl-dynamic -- gen /tmp/g --count 200 --seed 1
+cargo run -p ctadl-dynamic -- scan /tmp/g --json | jq '.results[] | select(.class=="soundness-disagree")'
+```
+
+`scan`/`gen`/`check` are the M7 automated-generation modes; `scan` over `cases/` reproduces the
+curated classifications (it's corpus-mode minus the oracle).
 
 ## Layout
 
