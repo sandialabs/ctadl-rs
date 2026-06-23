@@ -24,8 +24,9 @@ the finding entry below.
 - **Status:** open; intentionally preserved as an exemplar. Allowlisted via
   `"known_gap": "F1"` in [`cases/05_funcptr_indirect/manifest.json`](cases/05_funcptr_indirect/manifest.json).
 - **Severity:** soundness false-negative (CTADL misses a flow that genuinely occurs).
-- **Reproduces with:** [`cases/05_funcptr_indirect`](cases/05_funcptr_indirect/) →
-  `cargo run -p ctadl-dynamic` prints `05_funcptr_indirect … known-gap (F1)`.
+- **Reproduces with (all `known-gap (F1)`):** `05_funcptr_indirect` (local fp, initialized),
+  `07_funcptr_separate_assign` (local fp, separate assignment), `08_funcptr_param` (fp passed as
+  a parameter), `09_funcptr_in_struct` (fp in a struct field). `cargo run -p ctadl-dynamic`.
 - **Also covered by:** the (ignored) unit test `taint_flows_through_indirect_call` in
   `ctadl-ascent/src/languages/tree_sitter/tests.rs`.
 
@@ -54,13 +55,30 @@ The C frontend was extended to *detect* indirect calls (emit `funcptr-call`, pus
 `facts.indirect_call`). The gap is that the **taint query doesn't resolve** those calls to
 carry data through them.
 
-### Hypothesis for a future fix (not yet investigated)
+### Scope — broad (M5 finding)
 
-The function-pointer assignment — especially the declaration-initializer form
-`int (*fp)(int) = id;` — may not produce the `func_ptr_assign_like` fact that the indirect-call
-resolution rules in `ctadl-ascent/src/index_engine/mod.rs` depend on. A focused investigation
-would compare the `assign_like` / `func_ptr_assign_like` / `resolvent` relations for the
-working direct case (`03`) against the failing indirect case (`05`).
+The gap is **not** specific to one syntactic form. All four function-pointer forms drop taint:
+
+| Case | Function pointer is… | Static |
+|------|----------------------|--------|
+| `05` | a local, initialized (`int (*fp)(int) = id;`) | no flow ✗ |
+| `07` | a local, assigned separately (`fp = id;`)     | no flow ✗ |
+| `08` | a parameter (`int apply(int (*f)(int), int x)`) | no flow ✗ |
+| `09` | a struct field (`o.op = id; o.op(s)`)         | no flow ✗ |
+
+The param (`08`) and struct-field (`09`) forms are progressively harder sub-cases (they need the
+resolution to follow the function value through a formal parameter / through field sensitivity),
+so a partial fix may resolve `05`/`07` first. The harness will show that split when it happens.
+
+### Hypothesis for a future fix (revised)
+
+The original guess — that the *declaration-initializer* form specifically fails to emit a
+`func_ptr_assign_like` fact — is **refuted by case `07`**: the separate-assignment form
+(`int (*fp)(int); fp = id;`) also drops the flow. So the problem is more general: the
+indirect-call resolution in the taint query (`resolvent` / `func_ptr_assign_like` rules in
+`ctadl-ascent/src/index_engine/mod.rs`) does not carry data through function-pointer calls in
+any form. A focused investigation should compare the `assign_like` / `func_ptr_assign_like` /
+`resolvent` relations between the working direct case (`03`) and the indirect cases (`05`/`07`).
 
 ### Confirmed by DFSan (runtime ground truth)
 
