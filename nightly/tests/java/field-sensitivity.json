@@ -1,0 +1,44 @@
+{
+  "expected_lines": [
+    10,
+    13
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "source",
+          "parent": "LFieldSensitivity;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "UserInput",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "sink",
+          "parent": "LFieldSensitivity;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "TaintedData",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "expected_lines": [10, 11, 12],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature",
+          "pattern": ".*source.*"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "UserInput",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature",
+          "pattern": ".*sink.*"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Output",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}
