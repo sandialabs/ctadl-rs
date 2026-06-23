@@ -4,22 +4,30 @@ This file records **analyzer findings the comparison harness has surfaced and th
 intentionally leaving in place** — usually as exemplars of what the dynamic-vs-static
 approach catches.
 
-> If `cargo run -p ctadl-dynamic` prints a `SOUNDNESS-GAP` (or `precision-gap`) for a case
-> listed here, that is **expected** — it's a real CTADL behavior we're tracking, not a broken
-> test. Do **not** "fix" it by flipping the case's manifest oracle; the oracle is correct and
-> the gap is the point.
+> If `cargo run -p ctadl-dynamic` prints a `known-gap (Fn)` for a case listed here, that is
+> **expected** — it's a real CTADL behavior we're tracking, not a broken test. Do **not** "fix"
+> it by flipping the case's manifest oracle; the oracle is correct and the gap is the point.
 
 Each finding names the case that reproduces it, so the documentation stays executable: run the
 harness and the gap re-appears.
+
+**Allowlist linkage.** Each finding's case is allowlisted by a `"known_gap": "Fn"` field in its
+`manifest.json` (see [README.md](README.md)). That is what turns a raw soundness gap into an
+expected `known-gap` instead of a run-failing `NEW-GAP`. When a finding is fixed, the harness
+reports the case as `resolved-known-gap` — at which point, remove the `known_gap` field **and**
+the finding entry below.
 
 ---
 
 ## F1 — Static taint is dropped through indirect (function-pointer) calls
 
-- **Status:** open; intentionally preserved as an exemplar.
+- **Status:** open; intentionally preserved as an exemplar. Allowlisted via
+  `"known_gap": "F1"` in [`cases/05_funcptr_indirect/manifest.json`](cases/05_funcptr_indirect/manifest.json).
 - **Severity:** soundness false-negative (CTADL misses a flow that genuinely occurs).
 - **Reproduces with:** [`cases/05_funcptr_indirect`](cases/05_funcptr_indirect/) →
-  `cargo run -p ctadl-dynamic` prints `05_funcptr_indirect … SOUNDNESS-GAP`.
+  `cargo run -p ctadl-dynamic` prints `05_funcptr_indirect … known-gap (F1)`.
+- **Also covered by:** the (ignored) unit test `taint_flows_through_indirect_call` in
+  `ctadl-ascent/src/languages/tree_sitter/tests.rs`.
 
 ### What it is
 
