@@ -697,7 +697,7 @@ pub trait ModelGeneratorVisitor {
     }
 
     #[inline]
-    fn super_name_constraint(&mut self, n: usize, value: &serde_json::Value) {
+    fn super_name_constraint(&mut self, _n: usize, _value: &serde_json::Value) {
         // Nothing
     }
 
