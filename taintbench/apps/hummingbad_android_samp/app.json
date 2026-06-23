@@ -1,0 +1,9 @@
+{
+  "name": "hummingbad_android_samp",
+  "apk": {
+    "url": "https://github.com/TaintBench/hummingbad_android_samp/releases/download/APK/hummingbad_android_samp.apk",
+    "sha256": "sha256-CiDQLv3adPUKFGAaIBHDTD9oVF4ZYmXew2ZmumfwWj4="
+  },
+  "upstream": "https://github.com/TaintBench/hummingbad_android_samp",
+  "findingsCommit": "master"
+}

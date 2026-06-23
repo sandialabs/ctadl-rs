@@ -1,0 +1,4 @@
+{
+  "_comment": "Baseline snapshot: TaintBench finding IDs ctadl currently detects via a connected source->sink path. #3 (FileInputStream -> DataOutputStream.write, the contact-file upload) connects. #1 (-> Transport.sendMessage) and #2 (-> BufferedWriter.write) do not: their source and sink are each recognized as endpoints, but ctadl finds no connecting path. See ../../README.md.",
+  "matched_finding_ids": [3]
+}

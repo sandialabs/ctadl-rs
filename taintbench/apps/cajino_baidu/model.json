@@ -1,0 +1,161 @@
+{
+  "description": [
+    "ctadl query model for the TaintBench `cajino_baidu` app. Sources and sinks are",
+    "derived from the framework methods named in the source/sink IR (Jimple) signatures",
+    "of cajino_baidu_findings.json. Sources: File.listFiles() lists the files to leak;",
+    "Cursor.getString() reads contact/SMS columns; LocationManager.getLastKnownLocation()",
+    "reads location; TelephonyManager.getDeviceId() reads the IMEI; File.<init>(String)",
+    "names a file whose path is then leaked. Sinks: BaiduBCS.putObject() uploads to Baidu",
+    "cloud storage; FileWriter.write() writes the data to a local file; File.delete()",
+    "deletes a (tainted) file. Sinks use Argument(*) so any tainted argument reaching the",
+    "call is a leak; File.delete()/File.<init> use Argument(0) (the receiver / first arg).",
+    "ctadl ignores the non-schema `description` key, as it does `expected_lines` in the",
+    "nightly models."
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "listFiles",
+          "parent": "Ljava/io/File;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "FileData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "getString",
+          "parent": "Landroid/database/Cursor;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "DatabaseData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "getLastKnownLocation",
+          "parent": "Landroid/location/LocationManager;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "LocationData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "getDeviceId",
+          "parent": "Landroid/telephony/TelephonyManager;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "DeviceId",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "<init>",
+          "parent": "Ljava/io/File;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "FileData",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "putObject",
+          "parent": "Lcom/baidu/inf/iis/bcs/BaiduBCS;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "write",
+          "parent": "Ljava/io/FileWriter;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "delete",
+          "parent": "Ljava/io/File;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}

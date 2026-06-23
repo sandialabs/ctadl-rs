@@ -1,0 +1,67 @@
+{
+  "description": [
+    "ctadl query model for the TaintBench `hummingbad_android_samp` app. Sources and",
+    "sinks are derived from the framework methods named in the source/sink IR (Jimple)",
+    "signatures of hummingbad_android_samp_findings.json: Cursor.getString() reads a",
+    "string out of a database cursor (source); SQLiteDatabase.insert / .update write it",
+    "back to the database (sinks). Sinks use Argument(*) so any tainted argument reaching",
+    "the call counts. ctadl ignores the non-schema `description` key, as it does",
+    "`expected_lines` in the nightly models."
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "getString",
+          "parent": "Landroid/database/Cursor;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "DbData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "insert",
+          "parent": "Landroid/database/sqlite/SQLiteDatabase;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "update",
+          "parent": "Landroid/database/sqlite/SQLiteDatabase;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    }
+  ]
+}
