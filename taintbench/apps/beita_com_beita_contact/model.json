@@ -1,0 +1,104 @@
+{
+  "description": [
+    "ctadl query model for the TaintBench `beita_com_beita_contact` app. Sources and",
+    "sinks are derived from the framework methods named in the source/sink IR (Jimple)",
+    "signatures of beita_com_beita_contact_findings.json: ContentResolver.query() returns",
+    "contact data (source); FileInputStream.<init>(String) opens the file holding leaked",
+    "contact data (source); Transport.sendMessage / BufferedWriter.write /",
+    "DataOutputStream.write exfiltrate it (sinks). Sinks use Argument(*) so any tainted",
+    "argument reaching the call counts as a leak. ctadl ignores the non-schema keys",
+    "(`description`) in this file, as it does `expected_lines` in the nightly models."
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "query",
+          "parent": "Landroid/content/ContentResolver;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "ContactData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "<init>",
+          "parent": "Ljava/io/FileInputStream;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "FileData",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "sendMessage",
+          "parent": "Ljavax/mail/Transport;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "write",
+          "parent": "Ljava/io/BufferedWriter;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "write",
+          "parent": "Ljava/io/DataOutputStream;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    }
+  ]
+}

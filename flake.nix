@@ -147,6 +147,41 @@
             pkgs.ghidra-bin
           ];
         };
+
+        # --- TaintBench regression suite ----------------------------------
+        # TaintBench (https://github.com/TaintBench) ships real Android malware
+        # APKs with hand-curated ground-truth taint findings. Unlike the nightly
+        # `regression` suite this needs no javac/dx/Ghidra/Android SDK: ctadl
+        # imports the prebuilt APK directly (`import -l apk`), so the only tool
+        # required at runtime is ctadl itself (xtask reads the DEX line map via
+        # the in-tree dex-reader library, not the binary).
+        #
+        # Each app under `taintbench/apps/<name>/` carries its ground truth
+        # (findings.json), query model (model.json), baseline (expected.json),
+        # and APK coordinates (app.json: url + SRI hash). The APK is fetched (a
+        # fixed-output derivation), never committed. Adding an app is data-only:
+        # drop in the four files and it is picked up here automatically.
+        taintbenchAppsDir = ./taintbench/apps;
+        taintbenchApps =
+          let
+            entries = builtins.readDir taintbenchAppsDir;
+            names = builtins.filter (
+              n: entries.${n} == "directory" && builtins.pathExists (taintbenchAppsDir + "/${n}/app.json")
+            ) (builtins.attrNames entries);
+          in
+          builtins.map (
+            name:
+            let
+              meta = builtins.fromJSON (builtins.readFile (taintbenchAppsDir + "/${name}/app.json"));
+              apk = pkgs.fetchurl {
+                url = meta.apk.url;
+                hash = meta.apk.sha256;
+              };
+            in
+            {
+              inherit name apk;
+            }
+          ) names;
       in
       {
         packages.default = naersk-lib.buildPackage ./.;
@@ -247,11 +282,46 @@
               src = ./jvm-reader;
               mode = "test";
               JVM_READER_TEST_FIXTURES = "${jvmTestFixtures}";
-              cargoTestOptions = opts: opts ++ [ "--" "--include-ignored" ];
+              cargoTestOptions =
+                opts:
+                opts
+                ++ [
+                  "--"
+                  "--include-ignored"
+                ];
             };
+
+            # The TaintBench source-sink suite. Separate from `regression`/nightly
+            # on purpose (lighter: ctadl only, no Ghidra/JDK/Android SDK). xtask
+            # imports each app's APK, runs the model, and credits a ground-truth
+            # finding when ctadl reports a connected source->sink path whose
+            # endpoint callees match it. The APKs are supplied as
+            # `--apk <name>=<store-path>` from `taintbenchApps`.
+            taintbench =
+              pkgs.runCommand "ctadl-checks-taintbench"
+                {
+                  nativeBuildInputs = [ self.packages.${system}.default ];
+                  src = ./taintbench;
+                }
+                ''
+                  cp -R "$src" ./taintbench
+                  chmod -R u+w ./taintbench
+                  cd ./taintbench
+                  export HOME="$TMPDIR"
+
+                  xtask taintbench --apps-dir ./apps \
+                    ${pkgs.lib.concatMapStringsSep " " (a: "--apk ${a.name}=${a.apk}") taintbenchApps}
+
+                  mkdir -p "$out"
+                '';
           in
           {
-            inherit regression dex-reader-tests jvm-reader-tests;
+            inherit
+              regression
+              dex-reader-tests
+              jvm-reader-tests
+              taintbench
+              ;
           };
 
         formatter = pkgs.nixfmt;
