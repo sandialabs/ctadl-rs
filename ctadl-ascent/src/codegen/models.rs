@@ -26,9 +26,6 @@ pub fn codegen_summary(
     source_info: &mut IndexSourceInfo,
 ) {
     let ap_map = batch.aps.build_ap_map();
-    // `AnyArgument` ("*") ranges over the arguments actually passed at call
-    // sites, not the callee's declared formal count -- so variadic args (e.g.
-    // the command pieces in `sprintf(dst, fmt, a, b, ...)`) are covered.
     let func_num_params = facts.compute_arg_arity();
 
     for record @ (func, dst_tag, dst_index, dst_ap, src_tag, src_index, src_ap) in
