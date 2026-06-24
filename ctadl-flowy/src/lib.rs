@@ -261,6 +261,12 @@ pub struct Endpoint {
     /// The taint label
     pub label: String,
     pub direction: EndpointDirection,
+    /// The parameter index this endpoint's port denotes, if it is (a copy of) a parameter.
+    /// `Some` anchors the endpoint at the function's call sites (the call-arg for this
+    /// formal); `None` (a local such as a `source`'s returned value, or a global) keeps it
+    /// function-anchored. The front-end's `t? = c; sink(t?, ...)` lowering means the port is
+    /// usually a temp, so this is resolved from the copied parameter rather than the port.
+    pub formal: Option<i16>,
     pub source_info: SourceInfo,
     /// Optional expected number of distinct source->sink paths to assert for
     /// this endpoint. Supplied as a trailing integer argument to the
@@ -280,6 +286,7 @@ impl Display for Endpoint {
             port,
             label,
             direction,
+            formal: _,
             source_info,
             path_count,
         } = self;
@@ -1135,11 +1142,26 @@ fn exp_to_count(e: &Exp) -> Option<usize> {
 struct ExtractSpec {
     function: ArcIntern<str>,
     endpoint_requires: HashMap<ArcIntern<str>, Vec<(Endpoint, FlowSpec)>>,
+    /// Maps a variable in the current function to the parameter index it (transitively)
+    /// copies, populated as `Assign` statements are visited. The front-end lowers
+    /// `sink(c, ...)` to `t? = c; sink(t?, ...)`, so the sink's port is a temp; this lets
+    /// the endpoint recover that the temp denotes parameter `c`, which is what anchors the
+    /// endpoint at the function's call sites. Cleared per function.
+    param_of: HashMap<VariableRef, i16>,
 }
 
 impl ExtractSpec {
     fn set_function_name(&mut self, function: ArcIntern<str>) {
         self.function = function;
+        self.param_of.clear();
+    }
+
+    /// The parameter index `var` (transitively) holds, if known.
+    fn formal_of(&self, var: &VariableRef) -> Option<i16> {
+        match var.variable.as_ref() {
+            Variable::Param(idx) => idx.index().try_into().ok(),
+            _ => self.param_of.get(var).copied(),
+        }
     }
 }
 
@@ -1148,6 +1170,17 @@ impl MutVisitor for ExtractSpec {
         use StatementKind::*;
         self.super_statement(statement, location);
         let stmt = &mut statement.kind;
+        // Track simple variable copies so a sink/source on a parameter-derived temp can
+        // recover the parameter index (see `param_of`). Only single-source, field-free
+        // copies of a parameter (or of an already-tracked variable) carry the index.
+        if let Assign { dest, sources } = stmt
+            && sources.len() == 1
+            && let Exp::AccessPath(ap) = &sources[0]
+            && ap.path.is_empty()
+            && let Some(formal) = self.formal_of(&ap.variable_ref)
+        {
+            self.param_of.insert(dest.clone(), formal);
+        }
         if let CallAssign {
             style:
                 CallStyle::DirectCall {
@@ -1168,6 +1201,9 @@ impl MutVisitor for ExtractSpec {
                         port,
                         direction: EndpointDirection::Source,
                         label: args[0].str().unwrap().to_string(),
+                        // A `source`'s port is the call's return temp, not a parameter,
+                        // so this is normally `None` (the source stays function-anchored).
+                        formal: self.formal_of(&rets[0]),
                         source_info: statement.source_info,
                         // Optional trailing integer: `source(Label, n)`.
                         path_count: args.get(1).and_then(exp_to_count),
@@ -1190,11 +1226,15 @@ impl MutVisitor for ExtractSpec {
                         args[0].access_path().unwrap().variable_ref.clone(),
                         args[0].access_path().unwrap().path.clone(),
                     );
+                    // The port is the `t? = x` temp the front-end sinks; recover the
+                    // parameter index it copies so the endpoint anchors at call sites.
+                    let formal = self.formal_of(&port.0);
                     let endpoint = Endpoint {
                         infunc: infunc.clone(),
                         port,
                         direction: EndpointDirection::Sink,
                         label: args[1].str().unwrap().to_string(),
+                        formal,
                         source_info: statement.source_info,
                         // Optional trailing integer: `sink(x, Label, n)`.
                         path_count: args.get(2).and_then(exp_to_count),

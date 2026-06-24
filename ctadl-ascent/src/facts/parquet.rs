@@ -891,9 +891,19 @@ impl EncodeColumn<query_engine::QueryEndpoint> for DefaultEncoder {
                 &(name.to_owned() + "_path"),
                 &(name.to_owned() + "_label"),
                 &(name.to_owned() + "_direction"),
+                &(name.to_owned() + "_call_site"),
             ],
             col.into_iter()
-                .map(|e| (e.infunc, e.vertex.0, e.vertex.1, e.label, e.direction))
+                .map(|e| {
+                    (
+                        e.infunc,
+                        e.vertex.0,
+                        e.vertex.1,
+                        e.label,
+                        e.direction,
+                        e.call_site,
+                    )
+                })
                 .collect(),
         )
     }
@@ -912,16 +922,18 @@ impl DecodeColumn<query_engine::QueryEndpoint> for DefaultDecoder {
                 &(name.to_owned() + "_path"),
                 &(name.to_owned() + "_label"),
                 &(name.to_owned() + "_direction"),
+                &(name.to_owned() + "_call_site"),
             ],
             batch,
         )
         .into_iter()
         .map(
-            |(infunc, var, path, label, direction)| query_engine::QueryEndpoint {
+            |(infunc, var, path, label, direction, call_site)| query_engine::QueryEndpoint {
                 infunc,
                 vertex: facts::FlowVertex(var, path),
                 label,
                 direction,
+                call_site,
             },
         )
     }

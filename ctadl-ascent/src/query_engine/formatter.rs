@@ -457,13 +457,17 @@ pub fn find_endpoint_paths(
             let Some(start_ids) = fg.ids_by_vertex.get(&start_vertex) else {
                 continue;
             };
-            // An endpoint names a vertex, not a taint state, so try every
-            // state-qualified node the vertex resolves to. Any path the graph
-            // admits is realizable, because the graph keeps call/return-matching
-            // states distinct; we keep the first one per source/sink pair.
-            'pair: for &start_id in start_ids {
-                for &end_id in end_ids {
-                    if let Some(nodes) = find_path(&fg.graph, start_id, end_id) {
+            // Endpoints are anchored at their call sites: a sink on a callee's
+            // formal becomes one endpoint per caller call site, each on the
+            // distinct call-arg vertex that call passes. Two flows that differ
+            // only in their call site are therefore distinct (source, sink) pairs
+            // already, so a single graph search per pair suffices -- no stitching
+            // through shared formal vertices. Searching to the exact call-arg
+            // vertex also pins the specific parameter, so a call into the sink's
+            // function on an unrelated argument is not mistaken for this flow.
+            'pair: for &sv in start_ids {
+                for &kv in end_ids {
+                    if let Some(nodes) = find_path(&fg.graph, sv, kv) {
                         paths.push(EndpointPath {
                             source: (*src).clone(),
                             sink: (*sink).clone(),
@@ -1106,29 +1110,36 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                             for src in &fwd_sources {
                                 let start_vertex = (src.infunc, src.vertex.0, src.vertex.1);
                                 let end_vertex = (sink.infunc, sink.vertex.0, sink.vertex.1);
-                                // An endpoint names a vertex; resolve it to every
-                                // taint-state-qualified node and look for a path
-                                // between any source/sink node pair. The graph
-                                // keeps Free/Restricted distinct, so every path it
-                                // admits is call/return-realizable.
-                                for &start_id in
-                                    ids_by_vertex.get(&start_vertex).into_iter().flatten()
-                                {
-                                    for &end_id in
-                                        ids_by_vertex.get(&end_vertex).into_iter().flatten()
-                                    {
-                                        if seen_pairs.insert((start_id, end_id))
-                                            && let Some(p) = find_path(g, start_id, end_id)
-                                        {
-                                            results_by_path
-                                                .entry(p)
-                                                .or_insert((*fs_id, Vec::new()))
-                                                .1
-                                                .push((
-                                                    (*src).clone(),
-                                                    Some((*sink).clone()),
-                                                    lbl.clone(),
-                                                ));
+                                let start_ids = ids_by_vertex
+                                    .get(&start_vertex)
+                                    .map(Vec::as_slice)
+                                    .unwrap_or(&[]);
+                                let end_ids = ids_by_vertex
+                                    .get(&end_vertex)
+                                    .map(Vec::as_slice)
+                                    .unwrap_or(&[]);
+                                // Endpoints are anchored at their call sites: a sink
+                                // on a callee's formal is one endpoint per caller call
+                                // site, each on the distinct call-arg vertex that call
+                                // passes. Two flows differing only in their call site
+                                // are thus distinct (source, sink) pairs already, so a
+                                // single graph search per pair suffices -- no stitching
+                                // through the shared formal vertex they funnel into.
+                                if seen_pairs.insert((start_vertex, end_vertex)) {
+                                    'pair: for &sv in start_ids {
+                                        for &kv in end_ids {
+                                            if let Some(p) = find_path(g, sv, kv) {
+                                                results_by_path
+                                                    .entry(p)
+                                                    .or_insert((*fs_id, Vec::new()))
+                                                    .1
+                                                    .push((
+                                                        (*src).clone(),
+                                                        Some((*sink).clone()),
+                                                        lbl.clone(),
+                                                    ));
+                                                break 'pair;
+                                            }
                                         }
                                     }
                                 }
@@ -1148,12 +1159,25 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         .collect();
 
     let mut path_sites = BTreeSet::new();
-    for path in results_by_path.keys() {
+    for (path, (_fs, details)) in &results_by_path {
         for window in path.windows(2) {
             if let Some(site) = site_by_edge.get(&(window[0], window[1]))
                 && seen_sites.insert((site.func_id.id, site.insn_id.id))
             {
                 path_sites.insert((site.func_id, site.insn_id));
+            }
+        }
+        // The endpoints are anchored at their call sites, and a source -> sink path
+        // walks the call-arg vertices via assign edges that carry no instruction. The
+        // source/sink call instructions are therefore not on any path edge; pull them
+        // from the endpoints so they are still loaded and reported as located sites.
+        for (src, sink, _lbl) in details {
+            for ep in std::iter::once(src).chain(sink.as_ref()) {
+                if let Some(site) = ep.call_site.and_then(|p| InsnSiteId::try_from(&p).ok())
+                    && seen_sites.insert((site.func_id.id, site.insn_id.id))
+                {
+                    path_sites.insert((site.func_id, site.insn_id));
+                }
             }
         }
     }
@@ -1196,45 +1220,92 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     }
 
     let mut code_flows_by_span: BTreeMap<u32, Vec<CodeFlow>> = BTreeMap::new();
-    for (path, (file_span_id, _details)) in &results_by_path {
+    for (path, (file_span_id, details)) in &results_by_path {
         let mut thread_flow_locations = Vec::new();
-        let mut last_loc_id: Option<(&String, Option<String>)> = None;
+        let mut last_loc_id: Option<(String, Option<String>)> = None;
+        // Emit a located code-flow step for a call instruction, deduping against the
+        // previous step's location. `label` describes the step (a vertex or endpoint).
+        let push_site_step =
+            |thread_flow_locations: &mut Vec<ThreadFlowLocation>,
+             last_loc_id: &mut Option<(String, Option<String>)>,
+             site: &InsnSiteId,
+             label: String| {
+                let Some(loc) = source_data
+                    .all_locations
+                    .get(&(site.func_id.id, site.insn_id.id))
+                else {
+                    return;
+                };
+                let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
+                    let uri = p.artifact_location.as_ref()?.uri.as_ref()?.clone();
+                    let pos = p
+                        .address
+                        .as_ref()
+                        .and_then(|a| a.absolute_address.as_ref().map(|v| v.to_string()))
+                        .or_else(|| {
+                            p.region
+                                .as_ref()
+                                .and_then(|r| Some(format!("{}:{}", r.start_line?, r.start_column?)))
+                        });
+                    Some((uri, pos))
+                });
+                if current_loc_id.is_some() && current_loc_id == *last_loc_id {
+                    return;
+                }
+                *last_loc_id = current_loc_id;
+                let mut loc_with_msg = loc.clone();
+                loc_with_msg.message = Some(Message::builder().text(label).build());
+                thread_flow_locations
+                    .push(ThreadFlowLocation::builder().location(loc_with_msg).build());
+            };
+
+        // Lead with the source endpoints' call sites: because the endpoints are
+        // anchored at call sites, the source/sink call instructions are not on any
+        // path edge (the path walks call-arg vertices via assign edges), so they
+        // would otherwise be absent from the code flow.
+        for (src, _sink, _lbl) in details {
+            if let Some(site) = src.call_site.and_then(|p| InsnSiteId::try_from(&p).ok()) {
+                push_site_step(
+                    &mut thread_flow_locations,
+                    &mut last_loc_id,
+                    &site,
+                    format!("{}", src.vertex.0),
+                );
+            }
+        }
         // Walk the path edge-by-edge: each consecutive `(src_id, dst_id)` pair is
         // a graph edge, and `site_by_edge` gives the call instruction that edge
         // flowed through. Attributing per edge keeps each call site distinct even
         // when the same variable participates in several calls.
         for window in path.windows(2) {
             let (src_id, dst_id) = (window[0], window[1]);
-            if let Some(site) = site_by_edge.get(&(src_id, dst_id))
-                && let Some(loc) = source_data
-                    .all_locations
-                    .get(&(site.func_id.id, site.insn_id.id))
-            {
-                let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
-                    let uri = p.artifact_location.as_ref()?.uri.as_ref()?;
-                    let pos = p
-                        .address
-                        .as_ref()
-                        .and_then(|a| a.absolute_address.as_ref().map(|v| v.to_string()))
-                        .or_else(|| {
-                            p.region.as_ref().and_then(|r| {
-                                Some(format!("{}:{}", r.start_line?, r.start_column?))
-                            })
-                        });
-                    Some((uri, pos))
-                });
-
-                if current_loc_id.is_some() && current_loc_id == last_loc_id {
-                    continue;
-                }
-                last_loc_id = current_loc_id;
-
+            if let Some(site) = site_by_edge.get(&(src_id, dst_id)) {
                 let dst_node = &id_to_node[dst_id as usize];
-                let mut loc_with_msg = loc.clone();
-                loc_with_msg.message =
-                    Some(Message::builder().text(format!("{}", dst_node.2)).build());
-                thread_flow_locations
-                    .push(ThreadFlowLocation::builder().location(loc_with_msg).build());
+                push_site_step(
+                    &mut thread_flow_locations,
+                    &mut last_loc_id,
+                    site,
+                    format!("{}", dst_node.2),
+                );
+            }
+        }
+        // Close with the sink endpoints' call sites, for the same reason.
+        for (_src, sink, _lbl) in details {
+            if let Some(site) = sink
+                .as_ref()
+                .and_then(|s| s.call_site)
+                .and_then(|p| InsnSiteId::try_from(&p).ok())
+            {
+                let label = sink
+                    .as_ref()
+                    .map(|s| format!("{}", s.vertex.0))
+                    .unwrap_or_default();
+                push_site_step(
+                    &mut thread_flow_locations,
+                    &mut last_loc_id,
+                    &site,
+                    label,
+                );
             }
         }
 
@@ -1743,6 +1814,7 @@ mod tests {
             vertex: FlowVertex(var, Path::empty()),
             label: Label(label.into()),
             direction: dir,
+            call_site: None,
         }
     }
 

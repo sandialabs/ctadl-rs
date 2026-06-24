@@ -120,13 +120,14 @@ pub fn index_check(
 pub fn get_endpoints(
     import: &ArtifactImport,
     sites: &fx::IdMap,
+    call: &[(fx::PackedInsnSiteId, fx::FunctionId)],
 ) -> Result<Vec<(QueryEndpoint,)>, Error> {
     let (_, endpoint_requires) = load_requirements(import)?;
     let endpoints = endpoint_requires
         .requires
         .iter()
         .flat_map(|(_k, v)| v.iter().map(|(ep, _)| ep))
-        .map(|e| (from_flowy_endpoint(sites, e),))
+        .flat_map(|e| from_flowy_endpoint(sites, call, e).into_iter().map(|ep| (ep,)))
         .collect();
     Ok(endpoints)
 }
@@ -235,20 +236,26 @@ fn check_human_profile_paths(
             {
                 continue;
             }
-            let qe = from_flowy_endpoint(sites, endpoint);
-            // Count how many distinct human-profile paths touch this endpoint.
-            // Presence is `path_hits > 0`; the count itself is what a declared
-            // `path_count` (the trailing integer on `source`/`sink`) asserts.
-            // Two source->sink flows that differ only in their call site collapse
-            // onto the same formal-anchored vertex here, so `path_hits` undercounts
-            // them until endpoints are anchored at call sites.
+            // Resolve the declaration to the same call-site-anchored endpoints the
+            // query seeded: a declaration on a callee's formal fans out to one
+            // endpoint per call site. Count how many distinct human-profile paths
+            // touch *any* of them -- that is what a declared `path_count` (the
+            // trailing integer on `source`/`sink`) asserts, and the two flows that
+            // differ only in their call site now land on distinct call-arg
+            // endpoints instead of collapsing onto the shared formal vertex.
+            let qes: std::collections::HashSet<QueryEndpoint> =
+                from_flowy_endpoint(sites, &format_facts.call, endpoint)
+                    .into_iter()
+                    .collect();
             let (kind, path_hits) = match endpoint.direction {
-                EndpointDirection::Source => {
-                    ("source", labeled.iter().filter(|p| p.source == qe).count())
-                }
-                EndpointDirection::Sink => {
-                    ("sink", labeled.iter().filter(|p| p.sink == qe).count())
-                }
+                EndpointDirection::Source => (
+                    "source",
+                    labeled.iter().filter(|p| qes.contains(&p.source)).count(),
+                ),
+                EndpointDirection::Sink => (
+                    "sink",
+                    labeled.iter().filter(|p| qes.contains(&p.sink)).count(),
+                ),
             };
             let on_path = path_hits > 0;
             match flow_spec {
@@ -316,7 +323,11 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
         .requires
         .iter()
         .flat_map(|(_k, v)| v.iter().map(|(ep, _)| ep))
-        .map(|e| (from_flowy_endpoint(&source_info.sites, e),))
+        .flat_map(|e| {
+            from_flowy_endpoint(&source_info.sites, &index_facts.call, e)
+                .into_iter()
+                .map(|ep| (ep,))
+        })
         .collect();
     let index_result = taint_index_with_config(
         index_facts.clone(),
@@ -438,7 +449,9 @@ impl From<&flowy::Endpoint> for fx::TaintEndpoint {
     }
 }
 
-fn from_flowy_endpoint(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> QueryEndpoint {
+/// Builds the function-anchored query endpoint a flowy `source`/`sink` declares, before any
+/// call-site fanning.
+fn flowy_endpoint_base(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> QueryEndpoint {
     use flowy::*;
     use fx::*;
     let infunc = sites
@@ -456,6 +469,26 @@ fn from_flowy_endpoint(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> QueryEn
             EndpointDirection::Source => TaintDirection::Forward,
             EndpointDirection::Sink => TaintDirection::Backward,
         },
+        call_site: None,
+    }
+}
+
+/// Resolves a flowy `source`/`sink` declaration to the query endpoints it seeds and checks
+/// against. A declaration on a parameter fans out to one endpoint per call site of its function
+/// (so flows that differ only by call site stay distinct); a declaration on a local (e.g. a
+/// `source`'s returned value), a global, or a function with no callers stays function-anchored.
+/// The parameter index is taken from `endpoint.formal` (resolved by the flowy front-end), since
+/// SSA has versioned the port into a local. The same set is used for both seeding and requirement
+/// checking, so a path's endpoint compares equal to a declared one.
+fn from_flowy_endpoint(
+    sites: &fx::IdMap,
+    call: &[(fx::PackedInsnSiteId, fx::FunctionId)],
+    endpoint: &flowy::Endpoint,
+) -> Vec<QueryEndpoint> {
+    let base = flowy_endpoint_base(sites, endpoint);
+    match endpoint.formal {
+        Some(formal) => base.anchored_at_callsites(fx::FormalIndex::from(formal), call),
+        None => vec![base],
     }
 }
 

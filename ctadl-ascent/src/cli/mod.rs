@@ -81,14 +81,26 @@ fn build_query_endpoints(
         let lbl = Label(label_str.into());
 
         for var in vars {
-            out_eps.push((crate::query_engine::QueryEndpoint {
+            // Register the model function's formal so taint can cross the call boundary
+            // for flow-through, independent of how the endpoint is anchored below.
+            if var.is_formal() {
+                out_formals.push((infunc, var, facts::FormalType::ByRef));
+            }
+            // Anchor at the call sites of `infunc` (the modeled function) so flows that
+            // share a formal but differ by call site stay distinct.
+            let base = crate::query_engine::QueryEndpoint {
                 infunc,
                 vertex: FlowVertex(var, ap),
                 label: lbl.clone(),
                 direction,
-            },));
-            if var.is_formal() {
-                out_formals.push((infunc, var, facts::FormalType::ByRef));
+                call_site: None,
+            };
+            let fanned = match var.as_formal() {
+                Some(formal) => base.anchored_at_callsites(formal, &facts.call),
+                None => vec![base],
+            };
+            for ep in fanned {
+                out_eps.push((ep,));
             }
         }
     }
@@ -199,7 +211,7 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
         for import in project.iter_imports() {
             let import = import?;
             if import.language == ArtifactLanguage::Flowy {
-                let eps = crate::codegen::flowy::get_endpoints(&import, &ids)?;
+                let eps = crate::codegen::flowy::get_endpoints(&import, &ids, &index_facts.call)?;
                 endpoints.extend(eps);
             }
         }
