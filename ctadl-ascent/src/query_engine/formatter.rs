@@ -82,6 +82,10 @@ pub struct ProjectContext<'a, P: AsRef<path::Path>> {
     pub facts: &'a FormatFacts,
     pub taint_results: &'a TaintAnalysisResults,
     pub language: ArtifactLanguage,
+    /// Base address the disassembler loaded the artifact at, if known. Used to
+    /// emit `relativeAddress` (the section-relative offset) alongside the
+    /// absolute instruction address in binary SARIF locations.
+    pub image_base: Option<i64>,
 }
 
 pub struct FormatConfig {
@@ -148,6 +152,12 @@ pub struct TaintedInstructions {
 }
 
 pub struct TaintAnalysisResults {
+    /// Taint-flow edges. Each tuple is `(df, dv, dp, sf, sv, sp, direction, site)`:
+    /// the node `(df,dv,dp)` was tainted *from* `(sf,sv,sp)` while propagating
+    /// in `direction`. The data-flow orientation depends on `direction` — see
+    /// the consumers (SARIF path graph, `--dump-taint-graph`). `site` is the call
+    /// instruction anchoring the edge when it is a call/return propagation, and
+    /// `None` for the flow-insensitive assign/alias edges.
     pub edges: Vec<(
         FunctionId,
         FlowVariable,
@@ -155,6 +165,8 @@ pub struct TaintAnalysisResults {
         FunctionId,
         FlowVariable,
         Path,
+        TaintDirection,
+        Option<PackedInsnSiteId>,
     )>,
     pub tainted_insns: TaintedInstructions,
     pub absorbing_functions: Vec<(FunctionId, QueryEndpoint, FormalIndex)>,
@@ -181,11 +193,16 @@ impl FormatFactsBuilder {
 pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
     ascent! {
         struct FormatterEngine;
-        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sv:expr, $sp:expr) {
+        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sv:expr, $sp:expr, $site:expr) {
             taint($df, $dts, $dv, $dp, $a),
-            taint_edge($df, $dv, $dp, $sf, $sv, $sp)
+            taint_edge($df, $dv, $dp, $sf, $sv, $sp, ($a).direction, $site)
         }
-        relation taint_edge(FunctionId, FlowVariable, Path, FunctionId, FlowVariable, Path);
+        // Each taint-flow edge carries the call instruction that anchors it, when
+        // there is one. Call/return propagation (the formal<->actual rules) records
+        // the call site; the flow-insensitive assign/alias rules have no instruction
+        // and record `None`. This is what lets `codeFlows` attribute each step of a
+        // path to its own call site instead of guessing from the variable alone.
+        relation taint_edge(FunctionId, FlowVariable, Path, FunctionId, FlowVariable, Path, TaintDirection, Option<PackedInsnSiteId>);
         relation tainted_var_at_insn(PackedInsnSiteId, Label, FlowVariable, Path);
         relation external_function(FunctionId);
         relation absorbing_functions(FunctionId, QueryEndpoint, FormalIndex);
@@ -372,6 +389,7 @@ async fn async_format_sarif(
             facts,
             taint_results,
             language: import.language,
+            image_base: import.image_base,
         };
         let sarif_results = format_source_info_results(&ctx, config, &mut sarif_data)
             .await
@@ -767,8 +785,14 @@ async fn populate_source_info<P: AsRef<path::Path>>(
             let is_pcode = ctx.language == ArtifactLanguage::Pcode;
             let physical_location = match encoding {
                 source_info::ArtifactEncoding::Binary if is_pcode => {
+                    // `start` is the absolute instruction address (it includes
+                    // the disassembler's image base). Emit the section-relative
+                    // offset too so consumers (e.g. addr2line in the regression
+                    // suite) need not assume a particular base. When the base is
+                    // unknown, the relative offset degenerates to the absolute.
                     let address = Address::builder()
                         .absolute_address(start as i64)
+                        .relative_address(start as i64 - ctx.image_base.unwrap_or(0))
                         .kind("instruction")
                         .build();
                     PhysicalLocation::builder()
@@ -829,6 +853,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     // Prepare graph for path finding when the selected profile emits path traces.
     let mut node_to_id: BTreeMap<(FunctionId, FlowVariable, Path), u32> = BTreeMap::new();
     let mut id_to_node: Vec<(FunctionId, FlowVariable, Path)> = Vec::new();
+    // The call instruction anchoring each graph edge, keyed by `(src_id, dst_id)`
+    // node-id pair (same orientation as the graph edges, i.e. origin -> derived).
+    // Only call/return edges have a site; assign/alias edges contribute nothing.
+    let mut site_by_edge: BTreeMap<(u32, u32), InsnSiteId> = BTreeMap::new();
 
     let graph = if matches!(
         config.profile,
@@ -848,7 +876,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 id_to_node.push(src_n);
             }
         }
-        for (df, dv, dp, sf, sv, sp) in taint_edge {
+        for (df, dv, dp, sf, sv, sp, _dir, _site) in taint_edge {
             let src_n = (*sf, *sv, *sp);
             if let std::collections::btree_map::Entry::Vacant(e) = node_to_id.entry(src_n) {
                 e.insert(id_to_node.len() as u32);
@@ -861,16 +889,22 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             }
         }
 
-        let edges: Vec<(u32, u32)> = taint_edge
-            .iter()
-            .map(|(df, dv, dp, sf, sv, sp)| {
-                let src_n = (*sf, *sv, *sp);
-                let dst_n = (*df, *dv, *dp);
-                let src_id = *node_to_id.get(&src_n).unwrap();
-                let dst_id = *node_to_id.get(&dst_n).unwrap();
-                (src_id, dst_id)
-            })
-            .collect();
+        let mut edges: Vec<(u32, u32)> = Vec::with_capacity(taint_edge.len());
+        for (df, dv, dp, sf, sv, sp, _dir, site) in taint_edge {
+            let src_n = (*sf, *sv, *sp);
+            let dst_n = (*df, *dv, *dp);
+            let src_id = *node_to_id.get(&src_n).unwrap();
+            let dst_id = *node_to_id.get(&dst_n).unwrap();
+            edges.push((src_id, dst_id));
+            // Anchor this edge to its call instruction so the code-flow step
+            // walking src_id -> dst_id resolves to *this* call site rather than
+            // whatever site happened to be recorded first for the variable.
+            if let Some(packed) = site
+                && let Ok(s) = InsnSiteId::try_from(packed)
+            {
+                site_by_edge.insert((src_id, dst_id), s);
+            }
+        }
         Some(TaintGraph::new(id_to_node.len(), edges))
     } else {
         None
@@ -889,12 +923,12 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     let endpoints: BTreeSet<_> = node_to_endpoint.values().flat_map(|v| v.iter()).collect();
 
     // Map each node to an instruction for location info
-    let mut node_to_site: BTreeMap<(FunctionId, FlowVariable, Path), (FunctionId, InsnId)> =
+    let mut site_by_var: BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)> =
         BTreeMap::new();
-    for (site, _, v, p) in &ctx.facts.actual_param {
+    for (site, _, v, _) in &ctx.facts.actual_param {
         let site_unpacked = InsnSiteId::unpack(site).unwrap();
-        node_to_site
-            .entry((site_unpacked.func_id, *v, *p))
+        site_by_var
+            .entry((site_unpacked.func_id, *v))
             .or_insert((site_unpacked.func_id, site_unpacked.insn_id));
     }
 
@@ -951,12 +985,11 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
 
     let mut path_sites = BTreeSet::new();
     for path in results_by_path.keys() {
-        for &node_id in path {
-            let node = &id_to_node[node_id as usize];
-            if let Some(site) = node_to_site.get(node)
-                && seen_sites.insert((site.0.id, site.1.id))
+        for window in path.windows(2) {
+            if let Some(site) = site_by_edge.get(&(window[0], window[1]))
+                && seen_sites.insert((site.func_id.id, site.insn_id.id))
             {
-                path_sites.insert((site.0, site.1));
+                path_sites.insert((site.func_id, site.insn_id));
             }
         }
     }
@@ -1002,10 +1035,16 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     for (path, (file_span_id, _details)) in &results_by_path {
         let mut thread_flow_locations = Vec::new();
         let mut last_loc_id: Option<(&String, Option<String>)> = None;
-        for &node_id in path {
-            let node = &id_to_node[node_id as usize];
-            if let Some(site) = node_to_site.get(node)
-                && let Some(loc) = source_data.all_locations.get(&(site.0.id, site.1.id))
+        // Walk the path edge-by-edge: each consecutive `(src_id, dst_id)` pair is
+        // a graph edge, and `site_by_edge` gives the call instruction that edge
+        // flowed through. Attributing per edge keeps each call site distinct even
+        // when the same variable participates in several calls.
+        for window in path.windows(2) {
+            let (src_id, dst_id) = (window[0], window[1]);
+            if let Some(site) = site_by_edge.get(&(src_id, dst_id))
+                && let Some(loc) = source_data
+                    .all_locations
+                    .get(&(site.func_id.id, site.insn_id.id))
             {
                 let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
                     let uri = p.artifact_location.as_ref()?.uri.as_ref()?;
@@ -1026,8 +1065,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 }
                 last_loc_id = current_loc_id;
 
+                let dst_node = &id_to_node[dst_id as usize];
                 let mut loc_with_msg = loc.clone();
-                loc_with_msg.message = Some(Message::builder().text(format!("{}", node.1)).build());
+                loc_with_msg.message =
+                    Some(Message::builder().text(format!("{}", dst_node.1)).build());
                 thread_flow_locations
                     .push(ThreadFlowLocation::builder().location(loc_with_msg).build());
             }
@@ -1130,7 +1171,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             sarif_data,
             &endpoints,
             &source_data.id_to_name,
-            &node_to_site,
+            &site_by_var,
             &source_data.all_locations,
         ));
     }
@@ -1187,13 +1228,49 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 }
             }
 
-            let additional_properties = BTreeMap::from([
+            // Resolve the source/sink callee name(s) so consumers can match on
+            // the function directly instead of reconstructing it from the taint
+            // statement vertex. The model attaches an endpoint to the callee
+            // method (e.g. `nvram_get` / `system`), so the endpoint's `infunc`
+            // is that callee; resolve it via the same id_to_name map used for
+            // source/sink results. `taintLabels` carries the source *kind*; this
+            // adds the source/sink *function names*.
+            let mut source_functions: BTreeSet<String> = BTreeSet::new();
+            let mut sink_functions: BTreeSet<String> = BTreeSet::new();
+            for (src, sink_opt, _lbl) in &details {
+                if let Some(name) = source_data.id_to_name.get(&src.infunc.id) {
+                    source_functions.insert(name.clone());
+                }
+                if let Some(sink) = sink_opt
+                    && let Some(name) = source_data.id_to_name.get(&sink.infunc.id)
+                {
+                    sink_functions.insert(name.clone());
+                }
+            }
+            let source_functions: Vec<String> = source_functions.into_iter().collect();
+            let sink_functions: Vec<String> = sink_functions.into_iter().collect();
+
+            let mut additional_properties = BTreeMap::from([
                 ("taintLabels".to_string(), serde_json::json!(sorted_labels)),
                 (
                     "taintVertices".to_string(),
                     serde_json::json!(labels_to_vertices),
                 ),
             ]);
+            if let Some(first) = source_functions.first() {
+                additional_properties.insert("sourceCallee".to_string(), serde_json::json!(first));
+                additional_properties.insert(
+                    "sourceFunctions".to_string(),
+                    serde_json::json!(source_functions),
+                );
+            }
+            if let Some(first) = sink_functions.first() {
+                additional_properties.insert("sinkCallee".to_string(), serde_json::json!(first));
+                additional_properties.insert(
+                    "sinkFunctions".to_string(),
+                    serde_json::json!(sink_functions),
+                );
+            }
             let properties = PropertyBag::builder()
                 .additional_properties(additional_properties)
                 .build();
@@ -1221,7 +1298,7 @@ fn format_source_sink_results(
     sarif_data: &mut SarifData,
     endpoints: &BTreeSet<&QueryEndpoint>,
     id_to_name: &BTreeMap<u32, String>,
-    node_to_site: &BTreeMap<(FunctionId, FlowVariable, Path), (FunctionId, InsnId)>,
+    site_by_var: &BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)>,
     all_locations: &BTreeMap<(u32, u64), Location>,
 ) -> Vec<SarifResult> {
     let mut source_sink_results = Vec::new();
@@ -1239,18 +1316,22 @@ fn format_source_sink_results(
             } else {
                 TAINT_SINK_RULE_ID
             };
+            // Render the full vertex (variable *and* access path) so distinct
+            // endpoints on the same variable -- e.g. a model that taints both
+            // `Argument(1).deref` and `Argument(1).deref.deref` -- read as the
+            // separate sources they are, instead of collapsing to identical
+            // "formal(1) in function main" lines. The label (taint kind) is the
+            // other distinguishing field; carry it in `properties` below.
+            let vertex = format!("{}{}", node.1, node.2.to_dot_string());
+            let func_name = id_to_name
+                .get(&node.0.id)
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string());
+            let label = endpoint.label.0.to_string();
             let msg_text = if is_source {
-                format!(
-                    "Source of tainted data: {} in function {}",
-                    node.1,
-                    id_to_name.get(&node.0.id).unwrap_or(&"unknown".to_string())
-                )
+                format!("Source of tainted data: {vertex} in function {func_name} (kind '{label}')")
             } else {
-                format!(
-                    "Sink of tainted data: {} in function {}",
-                    node.1,
-                    id_to_name.get(&node.0.id).unwrap_or(&"unknown".to_string())
-                )
+                format!("Sink of tainted data: {vertex} in function {func_name} (kind '{label}')")
             };
 
             let fully_qualified_name = id_to_name
@@ -1279,7 +1360,7 @@ fn format_source_sink_results(
                     .build(),
             ];
 
-            if let Some(&site) = node_to_site.get(&node)
+            if let Some(&site) = site_by_var.get(&(node.0, node.1))
                 && let Some(physical_loc) = all_locations.get(&(site.0.id, site.1.id))
             {
                 let mut loc_with_phys = physical_loc.clone();
@@ -1287,12 +1368,20 @@ fn format_source_sink_results(
                 locations = vec![loc_with_phys];
             }
 
+            let properties = PropertyBag::builder()
+                .additional_properties(BTreeMap::from([
+                    ("taintLabels".to_string(), serde_json::json!([label])),
+                    ("taintVertex".to_string(), serde_json::json!(vertex)),
+                ]))
+                .build();
+
             let result = SarifResult::builder()
                 .rule_id(rule_id.to_string())
                 .kind(ResultKind::Informational)
                 .level(ResultLevel::None)
                 .message(Message::builder().text(msg_text).build())
                 .locations(locations)
+                .properties(properties)
                 .build();
 
             source_sink_results.push(result);

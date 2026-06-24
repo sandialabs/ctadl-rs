@@ -185,7 +185,7 @@ enum PredicateFile {
 	PROTO_HAS_THIS("PROTO_HAS_THIS"), PROTO_CALLING_CONVENTION("PROTO_CALLING_CONVENTION"),
 	PROTO_RETTYPE("PROTO_RETTYPE"), PROTO_PARAMETER("PROTO_PARAMETER"), PROTO_PARAMETER_COUNT("PROTO_PARAMETER_COUNT"),
 	PROTO_PARAMETER_DATATYPE("PROTO_PARAMETER_DATATYPE"), SYMBOL_HVAR("SYMBOL_HVAR"), SYMBOL_HFUNC("SYMBOL_HFUNC"),
-	DATA_STRING("DATA_STRING"), VTABLE("VTABLE"), SYMBOL_NAME("SYMBOL_NAME"), PROGRAM_FILE("PROGRAM_FILE"), OFFSET_INDEX("OFFSET_INDEX"), SPACE_OFFSET("SPACE_OFFSET");
+	DATA_STRING("DATA_STRING"), VTABLE("VTABLE"), SYMBOL_NAME("SYMBOL_NAME"), PROGRAM_FILE("PROGRAM_FILE"), PROGRAM_IMAGE_BASE("PROGRAM_IMAGE_BASE"), OFFSET_INDEX("OFFSET_INDEX"), SPACE_OFFSET("SPACE_OFFSET");
 
 	private final String name;
 
@@ -1163,6 +1163,11 @@ public class ExportPcode extends GhidraScript {
 		HighFunctionExporter ex = new HighFunctionExporter(outputDirectory.getAbsolutePath());
 		ex.getDatabase().add(PredicateFile.LANGUAGE, "PCODE");
 		ex.getDatabase().add(PredicateFile.PROGRAM_FILE, getProgramFile().toString());
+		// The base address Ghidra loaded this program at. Instruction addresses in
+		// the facts are absolute (include this base); subtracting it recovers the
+		// section-relative offset used by addr2line/DWARF.
+		ex.getDatabase().add(PredicateFile.PROGRAM_IMAGE_BASE,
+				Long.toString(currentProgram.getImageBase().getOffset()));
 
 		DecompilerConfigurer configurer = new DecompilerConfigurer(currentProgram);
 
