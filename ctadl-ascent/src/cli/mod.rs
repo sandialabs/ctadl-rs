@@ -349,7 +349,7 @@ fn dump_taint_graph_dot(
     // propagation means data flows sf → df; backward propagation
     // (which walks assignments in reverse) means it flows df → sf.
     let mut oriented: std::collections::BTreeMap<_, Cone> = std::collections::BTreeMap::new();
-    for (df, dv, dp, sf, sv, sp, dir, _site) in &taint_results.edges {
+    for (df, _dts, dv, dp, sf, _sts, sv, sp, dir, _site) in &taint_results.edges {
         let derived = (*df, *dv, *dp);
         let origin = (*sf, *sv, *sp);
         let (src, dst, cone) = match dir {
