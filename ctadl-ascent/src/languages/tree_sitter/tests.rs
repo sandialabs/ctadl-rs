@@ -964,3 +964,112 @@ fn field_increment_is_update() {
     // an unpinnable flatten temp, so we assert only that exactly one such update exists.
     check_writes_to(&prog, "@p0.x", 1);
 }
+
+// ----------------------------------------------------------------------------------------------
+// Coverage wave: dataflow nuances -- pointer/value indistinction, field non-interference,
+// expression-level flow, and the sizeof negative. The unsupported-expression cases are kept as
+// `#[ignore]`d specs that flip green once the parser lowers the construct.
+// ----------------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn deref_read_returns_param() {
+    // Reading through a pointer parameter (`return *p;`) returns the parameter. Because the frontend
+    // does not distinguish `*p` from `p` (the documented pointer-vs-value indistinction in mod.rs),
+    // this is the *same* summary as the by-value twin `int f(int p){ return p; }`. This test pins
+    // that conflation as a dataflow fact: the deref still flows p -> return.
+    let deref = get_summary(program_from_string("int f(int *p) { return *p; }").0)
+        .unwrap()
+        .0;
+    let byval = get_summary(program_from_string("int f(int p) { return p; }").0)
+        .unwrap()
+        .0;
+    check_returns_param(&deref, 0, "");
+    check_returns_param(&byval, 0, "");
+}
+
+#[test_log::test]
+fn field_non_interference() {
+    // Field sensitivity, stated as a negative: writing `x` into `s.a` and returning `s.b` must NOT
+    // leak `x` to the return -- `s.a` and `s.b` are distinct field paths. The positive halves (x ->
+    // s.a, s.b returned) hold too; the load-bearing assertion is that x does not reach the return.
+    let src = r"
+        int f(Donkey s, int x) {
+            s.a = x;
+            return s.b;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 1, "", 0, "a"); // x -> s.a
+    check_returns_param(&s, 0, "b"); // s.b -> return
+    check_no_flow(&s, 1, "", 0, "b"); // x does NOT bleed into s.b
+    check_does_not_return_param(&s, 1, ""); // ...so x never reaches the return
+}
+
+#[test_log::test]
+fn arrow_field_returns_param() {
+    // Reading a field through an arrow (`return p->x;`) on a pointer parameter summarizes as the
+    // field path @p0.x reaching the return. (The `(*p).x` spelling that *should* be equivalent is
+    // not yet lowered -- see the ignored `deref_paren_field_equivalent`.)
+    let src = r"
+        int f(Field *p) {
+            return p->x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "x");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: (*p).x panics in mod.rs (expects only field_expression nodes); parser gap"]
+fn deref_paren_field_equivalent() {
+    // `(*p).x` should be the same field access as `p->x` (see `arrow_field_returns_param`), yielding
+    // @p0.x -> return. Today the frontend panics on the parenthesized-deref-then-field shape, so this
+    // documents the intended equivalence until the parser handles it.
+    let src = r"
+        int f(Field *p) {
+            return (*p).x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "x");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: conditional_expression is an Unsupported expression type in mod.rs"]
+fn ternary_both_arms_flow() {
+    // A ternary `a ? b : c` can yield either arm, so both `b` and `c` should flow to the result (here
+    // the return). The condition `a` is a control dependence, not a data source. The frontend does
+    // not yet lower `conditional_expression`, so this documents the intended both-arms flow.
+    let src = r"
+        int f(int a, int b, int c) {
+            return a ? b : c;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, ""); // b (consequent arm)
+    check_returns_param(&s, 2, ""); // c (alternative arm)
+}
+
+#[test_log::test]
+#[ignore = "aspirational: cast_expression is an Unsupported expression type in mod.rs"]
+fn cast_passthrough() {
+    // A cast is value-preserving for taint: `(long)a` should still carry `a` to the return. The
+    // frontend does not yet lower `cast_expression`, so this documents the intended pass-through.
+    let src = r"
+        int f(int a) {
+            return (long)a;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: sizeof_expression is an Unsupported expression type in mod.rs"]
+fn sizeof_does_not_evaluate() {
+    // `sizeof(*p)` does not evaluate its operand -- it yields a compile-time size, never reading
+    // through `p` -- so the parameter must NOT reach the return. The frontend does not yet lower
+    // `sizeof_expression`; this documents the intended (non-)flow, and is the negative that proves the
+    // operand stays unevaluated once lowering lands.
+    let src = r"
+        int f(int *p) {
+            return sizeof(*p);
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_does_not_return_param(&s, 0, "");
+}
