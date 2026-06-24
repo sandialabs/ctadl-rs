@@ -1,7 +1,6 @@
 {
   "name": "switch_taint",
-  "description": "switch(1){case 1: x=s} -- taint in the selected case; also a frontend probe for switch",
+  "description": "switch(1){case 1: x=s} -- taint in the selected case; switch now ingested",
   "label": "Test",
-  "expect_flow": true,
-  "known_frontend_gap": "switch_statement"
+  "expect_flow": true
 }

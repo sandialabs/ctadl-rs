@@ -110,12 +110,22 @@ compare against the moment the frontend learns to ingest it (the harness will th
   `known-frontend-gap (array_declarator)`. DFSan observes the flow (`a[1] = source(); sink(a[1])`),
   so the expected result once it parses is `flow`.
 
-## switch_statement — `switch` is not ingested
+## switch_statement — `switch` is now ingested (RESOLVED)
 
-- **Status:** open. Allowlisted as `"known_frontend_gap": "switch_statement"`.
-- **Symptom:** a `switch` statement fails with `ERR 78: Unsupported expression type` — the
-  statement walker in `mod.rs` has no `switch_statement` arm, so it falls through to
-  `flatten_expr`, which doesn't handle it. (No `switch_statement` handling exists in the frontend.)
-- **Reproduces with:** [`cases/25_switch_taint`](cases/25_switch_taint/) →
-  `known-frontend-gap (switch_statement)`. DFSan observes the flow (`switch(1){case 1: x=s}`),
-  so the expected result once it parses is `flow`.
+- **Status:** **resolved.** `switch`/`case`/`default` (and the `break`/`continue` they need)
+  are now lowered by the tree-sitter frontend. The `known_frontend_gap` allowlist has been
+  removed from `cases/25_switch_taint`.
+- **Was:** a `switch` statement failed with `ERR 78: Unsupported expression type:
+  switch_statement` — the statement walker in `mod.rs` had no `switch_statement` arm, so it fell
+  through to `flatten_expr`, which had no case for it.
+- **Fix:** `walk_switch` in
+  [`ctadl-ascent/src/languages/tree_sitter/mod.rs`](../ctadl-ascent/src/languages/tree_sitter/mod.rs)
+  lowers a `switch` path-insensitively, the same way `if` is lowered — the entry block branches
+  non-deterministically to every `case`/`default` arm, arms fall through to the next unless a
+  `break` redirects to the switch continuation. `break`/`continue` resolve against per-construct
+  target stacks on `Context` (also enabling `break`/`continue` inside loops). No backend changes.
+- **Covered by:** unit tests `switch_case_flows_to_return`, `switch_default_flows_to_return`,
+  `switch_fallthrough_flows_to_return`, `break_exits_loop_flows_to_return`,
+  `continue_in_loop_flows_to_return` (`ctadl-ascent/.../tree_sitter/tests.rs`); and DFSan cases
+  `25_switch_taint`, `26_switch_merge_paths`, `27_switch_untaken_case` (precision-gap, expected),
+  `28_switch_default_taint`, `29_switch_fallthrough`.

@@ -412,6 +412,13 @@ struct Context<'a> {
     param_names: HashMap<FunctionName<'a>, IndexVec<ParameterIdx, &'a str>>,
     scope_tree: ScopeTree,
     allocator: TempAllocator,
+    /// Block a `break` jumps to (innermost enclosing `switch`/loop continuation),
+    /// pushed on entry to a `switch`/loop body and popped on exit. A stack so
+    /// nested constructs resolve `break` to the nearest one.
+    break_targets: Vec<BasicBlockIdx>,
+    /// Block a `continue` jumps to (innermost enclosing loop's re-test/update
+    /// block). Only loops push here; `switch` does not.
+    continue_targets: Vec<BasicBlockIdx>,
 }
 
 pub struct MatchExtractor<'q, 'cursor, 'tree> {
@@ -769,9 +776,17 @@ impl<'a> Context<'a> {
                 "for_statement" => {
                     self.walk_for(source, program, &mut scope_view, child)?;
                 }
+                "switch_statement" => {
+                    self.walk_switch(source, program, &mut scope_view, child)?;
+                }
                 "return_statement" => {
                     return self.walk_return(source, program, &mut scope_view, child);
                 }
+                // `break`/`continue` terminate the current block with a goto to the
+                // enclosing target, so they end this compound just like `return`
+                // (returning early skips the fall-through link at the end).
+                "break_statement" => return self.walk_break(program, &scope_view),
+                "continue_statement" => return self.walk_continue(program, &scope_view),
                 "ERROR" => {
                     let node_str = to_str(&child, source);
                     log::warn!("Unknown token(2): {kind}: {node_str}");
@@ -956,7 +971,11 @@ impl<'a> Context<'a> {
         link_blocks(program, &condition_scope, &continuation, false)?;
         //what is the difference between walk_compound_statemnet and walk_compound_statement?
         body_scope.continuation_blidx = Some(update_scope.blidx);
+        self.break_targets.push(continuation.blidx);
+        self.continue_targets.push(update_scope.blidx);
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
+        self.continue_targets.pop();
+        self.break_targets.pop();
         self.walk_compound_statement(source, program, &update_scope, &update_cp)?;
         *scope_view = continuation;
         Ok(())
@@ -1011,9 +1030,145 @@ impl<'a> Context<'a> {
         // continuation was already added by the condition's end-of-compound link.
         link_blocks(program, &condition_sv, &body_scope, false)?;
         body_scope.continuation_blidx = Some(condition_sv.blidx);
+        self.break_targets.push(continuation.blidx);
+        self.continue_targets.push(condition_sv.blidx);
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
+        self.continue_targets.pop();
+        self.break_targets.pop();
         *scope_view = continuation;
         Ok(())
+    }
+
+    /// Lower a `switch` the way `if` is lowered: path-insensitively. The scrutinee
+    /// is flattened for its side effects but does not select a branch — the entry
+    /// block jumps non-deterministically to every arm. Arms fall through to the
+    /// next arm (C semantics) unless a `break` redirects to the continuation.
+    fn walk_switch(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        child: Node<'_>,
+    ) -> Result<(), Error> {
+        // `switch ( <condition> ) <body>`. Flatten the scrutinee for side effects.
+        let condition = child
+            .child_by_field_name("condition")
+            .expect("switch always has a condition");
+        self.flatten_expr(program, condition, source, &*scope_view)?;
+
+        let body = child
+            .child_by_field_name("body")
+            .expect("switch always has a body");
+
+        // Where control resumes after the switch, and the target of every `break`.
+        // `add_block` inherits the enclosing continuation, so a fall-off the end of
+        // the post-switch code still links correctly.
+        let continuation = add_block(
+            program,
+            &*scope_view,
+            &mut self.scope_tree,
+            false,
+            format!("switch_continuation(of)::{}", get_line_num(&child)).as_str(),
+        )?;
+
+        // The arms. `default:` is a valueless `case_statement`; there is no separate
+        // `default` node kind.
+        let mut cursor = body.walk();
+        let arms: Vec<Node<'_>> = body
+            .children(&mut cursor)
+            .filter(|n| n.kind() == "case_statement")
+            .collect();
+        let has_default = arms
+            .iter()
+            .any(|a| a.child_by_field_name("value").is_none());
+
+        // One block per arm, created up front so each arm can fall through to the
+        // next one.
+        let mut arm_svs: Vec<ScopeView> = Vec::with_capacity(arms.len());
+        for i in 0..arms.len() {
+            arm_svs.push(add_block(
+                program,
+                &*scope_view,
+                &mut self.scope_tree,
+                false,
+                format!("switch_case{i}(of)::{}", get_line_num(&child)).as_str(),
+            )?);
+        }
+
+        // Entry branches (non-deterministically) to every arm, plus straight to the
+        // continuation when no `default` guarantees an arm runs (covers an empty
+        // switch and the "value matched no case" path).
+        for sv in &arm_svs {
+            link_blocks(program, &*scope_view, sv, false)?;
+        }
+        if !has_default {
+            link_blocks(program, &*scope_view, &continuation, false)?;
+        }
+
+        // `break` in any arm jumps to the continuation; `switch` does not catch
+        // `continue`, so the enclosing loop's target (if any) stays in effect.
+        self.break_targets.push(continuation.blidx);
+        for (i, arm) in arms.iter().enumerate() {
+            // Fall through to the next arm, or out of the switch on the last arm.
+            let fallthrough = arm_svs
+                .get(i + 1)
+                .map(|sv| sv.blidx)
+                .unwrap_or(continuation.blidx);
+            let mut arm_sv = arm_svs[i].clone();
+            arm_sv.continuation_blidx = Some(fallthrough);
+
+            // Arm body = the case_statement's statement children (everything except
+            // the `case` value expression).
+            let value_id = arm.child_by_field_name("value").map(|v| v.id());
+            let mut body_cursor = arm.walk();
+            let stmts: Vec<Node<'_>> = arm
+                .children(&mut body_cursor)
+                .filter(|n| n.is_named() && Some(n.id()) != value_id)
+                .collect();
+            let cp = CompoundProxy {
+                nodes: stmts,
+                was_compound: false,
+            };
+            self.walk_compound_statement(source, program, &arm_sv, &cp)?;
+        }
+        self.break_targets.pop();
+
+        *scope_view = continuation;
+        Ok(())
+    }
+
+    /// `break`: terminate the current block with a goto to the innermost
+    /// `switch`/loop continuation.
+    fn walk_break(&mut self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
+        match self.break_targets.last().copied() {
+            Some(target) => {
+                let mut to = scope_view.clone();
+                to.blidx = target;
+                link_blocks(program, scope_view, &to, false)
+            }
+            None => Err(Error::TreeSitterParse(
+                "`break` outside of a switch or loop".to_string(),
+            )),
+        }
+    }
+
+    /// `continue`: terminate the current block with a goto to the innermost loop's
+    /// re-test/update block.
+    fn walk_continue(
+        &mut self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+    ) -> Result<(), Error> {
+        match self.continue_targets.last().copied() {
+            Some(target) => {
+                let mut to = scope_view.clone();
+                to.blidx = target;
+                link_blocks(program, scope_view, &to, false)
+            }
+            None => Err(Error::TreeSitterParse(
+                "`continue` outside of a loop".to_string(),
+            )),
+        }
     }
 
     // there is a lot of commonality between the top of the while and the top of the if.. then the if descends into madness.
@@ -1063,7 +1218,11 @@ impl<'a> Context<'a> {
         )?;
 
         body_scope.continuation_blidx = Some(condition_sv.blidx);
+        self.break_targets.push(continuation.blidx);
+        self.continue_targets.push(condition_sv.blidx);
         self.walk_compound_statement(source, program, &body_scope, &cp)?;
+        self.continue_targets.pop();
+        self.break_targets.pop();
         *scope_view = continuation;
         Ok(())
     }
