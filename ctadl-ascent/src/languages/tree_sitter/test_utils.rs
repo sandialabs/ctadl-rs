@@ -539,6 +539,18 @@ pub(crate) fn check_returns_param(summary: &[FunctionSummary], param_num: i16, p
     check_flow(summary, param_num, param_path, RETURN_INDEX, "");
 }
 
+/* Asserts the given param does NOT reach the return -- the negative complement of
+`check_returns_param` (Flowy's `</-` for a return endpoint). Use it to pin that a value is *not*
+returned, e.g. a block-scoped shadow that must not escape. Prints the actual summary on failure. */
+#[track_caller]
+pub(crate) fn check_does_not_return_param(
+    summary: &[FunctionSummary],
+    param_num: i16,
+    param_path: &str,
+) {
+    check_no_flow(summary, param_num, param_path, RETURN_INDEX, "");
+}
+
 // Unit tests for the access-path string DSL itself. These helpers contain real parsing logic, so a
 // bug here would silently weaken every test that relies on them.
 #[cfg(test)]

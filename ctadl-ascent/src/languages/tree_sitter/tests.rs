@@ -223,6 +223,27 @@ fn scopes_arent_blocks() {
 }
 
 #[test_log::test]
+fn block_shadow_does_not_leak() {
+    // A nested block re-declares `x` (`if(...) { int x = false_return; }`), shadowing the outer `x`.
+    // That inner `x` is a distinct, block-scoped variable, so `return x` refers to the OUTER `x`
+    // (= ac_return, param 1). The shadow must not escape its block: param 1 reaches the return, and
+    // param 0 (false_return, assigned only to the inner shadow) does NOT. The param-0 absence is the
+    // load-bearing assertion -- if the inner `x` were conflated with the outer one, false_return
+    // would leak to the return.
+    let src = r"
+        int bar(int false_return, int ac_return) {
+            int x = ac_return;
+            if(x == 5) {
+                int x = false_return;
+            }
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, ""); // outer x (ac_return) is what gets returned
+    check_does_not_return_param(&s, 0, ""); // the block-scoped shadow (false_return) must not leak
+}
+
+#[test_log::test]
 fn assignment_statement() {
     // Assignment as a standalone statement (`b = a;`), not a declaration initializer. It lowers to
     // the same `assign b = a`, but through the expression-statement path rather than the declarator

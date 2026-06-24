@@ -326,30 +326,6 @@ fn janky_return(dump: &str, from_block: usize, ret_val: &str) -> bool {
 }
 
 #[test_log::test]
-fn shadow_block() {
-    let src = r"
-        int bar(int false_return, int ac_return){
-            int x = ac_return;          
-            
-            if(x == 5){                
-                int x = false_return;                
-            }
-            return x;
-        }
-        ";
-    let (program, dump) = program_from_string(src);
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-    dump_ir(&dump);
-
-    let (summary, _source_info) = get_summary(program_info.program).unwrap();
-    log::info!("{:?}", summary);
-    assert!(summary_returns_param(&summary, 1, ""));
-}
-
-#[test_log::test]
 fn indirect_call_1() {
     let src = r#"
         #include <stdio.h>
