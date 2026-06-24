@@ -262,6 +262,15 @@ pub struct Endpoint {
     pub label: String,
     pub direction: EndpointDirection,
     pub source_info: SourceInfo,
+    /// Optional expected number of distinct source->sink paths to assert for
+    /// this endpoint. Supplied as a trailing integer argument to the
+    /// `source`/`sink` (and `errsource`/`errsink`) intrinsic, e.g.
+    /// `sink(x, Label, 2)`. When `None`, the endpoint is checked for *presence*
+    /// only (the default). When `Some(n)`, the human-profile path check asserts
+    /// that exactly `n` distinct paths reach (for a sink) or leave (for a
+    /// source) this endpoint -- this is how we encode the call-site-distinct
+    /// path expectation that formal-anchored endpoints currently collapse.
+    pub path_count: Option<usize>,
 }
 
 impl Display for Endpoint {
@@ -272,12 +281,16 @@ impl Display for Endpoint {
             label,
             direction,
             source_info,
+            path_count,
         } = self;
         write!(
             f,
             "{}@{}: {}{} is a {} label '{}'",
             infunc, source_info, port.0, port.1, direction, label
         )?;
+        if let Some(n) = path_count {
+            write!(f, " (expect {n} paths)")?;
+        }
         Ok(())
     }
 }
@@ -719,9 +732,20 @@ impl FlowyCtx {
                     } = &style
                         && (edges[0] == "source" || edges[0] == "errsource")
                     {
+                        // Stringify only the label (index 0); pass any trailing
+                        // actuals (e.g. the path-count int in `source(Label, n)`)
+                        // through unchanged so they reach `ExtractSpec` as-is,
+                        // mirroring how `sink` handles its extra actuals.
                         actuals
                             .into_iter()
-                            .map(|x| Exp::Str(format!("{x}").into()))
+                            .enumerate()
+                            .map(|(i, x)| {
+                                if i == 0 {
+                                    Exp::Str(format!("{x}").into())
+                                } else {
+                                    x
+                                }
+                            })
                             .collect()
                     } else {
                         actuals.into_iter().collect()
@@ -1094,6 +1118,18 @@ fn parse_actuals(
         .collect()
 }
 
+/// Decodes a trailing integer actual (e.g. the `2` in `sink(x, Label, 2)`) into
+/// a path count. Integer literals are stored as big-endian `u32` bytes (see
+/// `parse_exp`), so anything else yields `None`.
+fn exp_to_count(e: &Exp) -> Option<usize> {
+    match e {
+        Exp::Bytes(b) if b.len() == 4 => {
+            Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize)
+        }
+        _ => None,
+    }
+}
+
 /// Visits the source/sink/errsource/errsink instructions and collect specs
 #[derive(Debug, Default)]
 struct ExtractSpec {
@@ -1133,6 +1169,8 @@ impl MutVisitor for ExtractSpec {
                         direction: EndpointDirection::Source,
                         label: args[0].str().unwrap().to_string(),
                         source_info: statement.source_info,
+                        // Optional trailing integer: `source(Label, n)`.
+                        path_count: args.get(1).and_then(exp_to_count),
                     };
                     let spec = if endpoint_name == "source" {
                         FlowSpec::FlowPresent
@@ -1158,6 +1196,8 @@ impl MutVisitor for ExtractSpec {
                         direction: EndpointDirection::Sink,
                         label: args[1].str().unwrap().to_string(),
                         source_info: statement.source_info,
+                        // Optional trailing integer: `sink(x, Label, n)`.
+                        path_count: args.get(2).and_then(exp_to_count),
                     };
                     let spec = if endpoint_name == "sink" {
                         FlowSpec::FlowPresent

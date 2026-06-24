@@ -236,13 +236,35 @@ fn check_human_profile_paths(
                 continue;
             }
             let qe = from_flowy_endpoint(sites, endpoint);
-            let (kind, on_path) = match endpoint.direction {
-                EndpointDirection::Source => ("source", labeled.iter().any(|p| p.source == qe)),
-                EndpointDirection::Sink => ("sink", labeled.iter().any(|p| p.sink == qe)),
+            // Count how many distinct human-profile paths touch this endpoint.
+            // Presence is `path_hits > 0`; the count itself is what a declared
+            // `path_count` (the trailing integer on `source`/`sink`) asserts.
+            // Two source->sink flows that differ only in their call site collapse
+            // onto the same formal-anchored vertex here, so `path_hits` undercounts
+            // them until endpoints are anchored at call sites.
+            let (kind, path_hits) = match endpoint.direction {
+                EndpointDirection::Source => {
+                    ("source", labeled.iter().filter(|p| p.source == qe).count())
+                }
+                EndpointDirection::Sink => {
+                    ("sink", labeled.iter().filter(|p| p.sink == qe).count())
+                }
             };
+            let on_path = path_hits > 0;
             match flow_spec {
                 FlowSpec::FlowPresent => {
-                    if on_path {
+                    if let Some(expected) = endpoint.path_count {
+                        // The endpoint declared an exact number of paths to find.
+                        if path_hits == expected {
+                            pass_count += 1;
+                        } else {
+                            fail_count += 1;
+                            println!(
+                                "Human profile: expected {expected} path(s) for {kind} endpoint \
+                                 but found {path_hits}: {endpoint}"
+                            );
+                        }
+                    } else if on_path {
                         pass_count += 1;
                     } else {
                         fail_count += 1;
