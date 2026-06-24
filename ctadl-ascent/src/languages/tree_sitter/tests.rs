@@ -480,6 +480,50 @@ fn while_loop_cfg() {
 }
 
 #[test_log::test]
+fn do_while_cfg() {
+    // A `do { ... } while(...)` loop. The defining difference from `while` is that the body runs
+    // *before* the condition: block 0 sets up and falls into the body (1); the body (1) falls into
+    // the condition (2); the condition (2) either back-edges to the body (1) or exits to the
+    // continuation (3); block 3 runs the post-loop code and returns. (Contrast while_loop_cfg, where
+    // block 0 enters the condition first.) The body assignment lands in block 1.
+    let src = r"
+        int f() {
+            int b = 2;
+            int x = 5;
+            do {
+                x = b;
+            } while(b = b + x);
+            int y = x;
+            return y;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 4);
+    check_successors(&prog, 0, &[1]); // setup falls into the body, not a condition
+    check_successors(&prog, 1, &[2]); // body falls into the condition
+    check_successors(&prog, 2, &[1, 3]); // condition: back-edge to body, or exit
+    check_successors(&prog, 3, &[]); // continuation returns, terminal
+    check_assign_or_update(&prog, "x", ["b"], Some(1)); // body statement
+}
+
+#[test_log::test]
+fn do_while_body_flows() {
+    // Taint traverses a do-while body. The body assigns `x = p` (param 0); after the loop, `return x`
+    // carries param 0 to the return. Since a do-while runs its body at least once, the flow holds
+    // regardless of the condition -- and would vanish if the body were dropped (x would stay the
+    // constant 0).
+    let src = r"
+        int f(int p) {
+            int x = 0;
+            do {
+                x = p;
+            } while(x);
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
 fn subscript_access_paths() {
     // A constant array subscript, read and written (`x = f[3];` and `f[4] = x;`). The subscript
     // becomes a `.[N]` segment on the access path (a symbol segment, not a numeric offset): the read

@@ -257,36 +257,6 @@ fn unbraced_while() {
     assert!(summary_returns_param(&summary, 0, ""));*/
 }
 
-#[test_log::test]
-fn do_while() {
-    let src = r"
-            int do_while() {
-                int b = 2;
-                int x = 5;
-                do{
-                    x = b;
-                } while(b = b + x);
-                int y = x;
-                return y;
-            }
-        ";
-    let (prog, dump) = program_from_string(src);
-    dump_ir(&dump);
-    check_block_count(&prog, 4);
-    check_assign_or_update(&prog, "x", ["b"], Some(1));
-    // do-while: body (block_1) -> condition (block_2); the condition loops back into
-    // the body (back-edge) and exits to the continuation (block_3).
-    assert!(
-        janky_goto(&dump, 1, "2"),
-        "body should fall into the condition"
-    );
-    assert!(
-        janky_goto(&dump, 2, "3, 1"),
-        "condition should exit to continuation and back-edge to body"
-    );
-    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
-}
-
 //this tests unbraced if/else consequents
 
 #[test_log::test]
