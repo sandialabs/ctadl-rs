@@ -379,6 +379,16 @@ fn janky_goto(dump: &str, from_block: usize, to_block: &str) -> bool {
     )
 }
 
+// Companion to `janky_goto` for return terminators. Currently unused (its callers were promoted to
+// tests.rs) but kept here as scratch scaffolding for the partner's exploration lane.
+#[allow(dead_code)]
+fn janky_return(dump: &str, from_block: usize, ret_val: &str) -> bool {
+    check_match(
+        dump,
+        format!("return {}\nend block_{}", ret_val, from_block).as_str(),
+    )
+}
+
 #[test_log::test]
 fn shadow_block() {
     let src = r"

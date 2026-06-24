@@ -753,21 +753,8 @@ fn increment_decrement_reassign_local() {
             return x;
         }";
     let prog = program_from_string(src).0;
-    let fun = get_only_function(&prog).expect("expected exactly one function");
-    let assigns_to_x = fun
-        .blocks
-        .iter()
-        .flat_map(|b| b.statements.iter())
-        .filter(|stmt| {
-            matches!(&stmt.kind,
-                StatementKind::Assign { dest, .. }
-                    if matches!(dest.variable.as_ref(), Variable::Local(n) if n == "x"))
-        })
-        .count();
-    assert_eq!(
-        assigns_to_x, 3,
-        "expected `int x = a`, `x++`, `--x` to each write x (3 assigns)\n{prog}"
-    );
+    // init + the two increments each write x (the +/- 1 temp sources are left unpinned).
+    check_writes_to(&prog, "x", 3);
 }
 
 #[test_log::test]
@@ -781,19 +768,7 @@ fn field_increment_is_update() {
             p->x++;
         }";
     let prog = program_from_string(src).0;
-    let fun = get_only_function(&prog).expect("expected exactly one function");
-    let updates_p0_x = fun
-        .blocks
-        .iter()
-        .flat_map(|b| b.statements.iter())
-        .any(|stmt| {
-            matches!(&stmt.kind,
-            StatementKind::Update { dest, .. }
-                if matches!(dest.0.variable.as_ref(), Variable::Param(_))
-                    && dest.1.fields.iter().map(|f| f.to_string()).eq(["x".to_string()]))
-        });
-    assert!(
-        updates_p0_x,
-        "expected `p->x++` to lower to an update of @p0.x\n{prog}"
-    );
+    // The field increment routes through an `update` of @p0.x (not a plain assign); the new value is
+    // an unpinnable flatten temp, so we assert only that exactly one such update exists.
+    check_writes_to(&prog, "@p0.x", 1);
 }
