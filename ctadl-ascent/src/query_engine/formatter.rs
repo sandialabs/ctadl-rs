@@ -394,7 +394,10 @@ pub fn build_taint_flow_graph(
     // vertex resolves to.
     let mut ids_by_vertex: BTreeMap<(FunctionId, FlowVariable, Path), Vec<u32>> = BTreeMap::new();
     for (id, (f, _ts, v, p)) in id_to_node.iter().enumerate() {
-        ids_by_vertex.entry((*f, *v, *p)).or_default().push(id as u32);
+        ids_by_vertex
+            .entry((*f, *v, *p))
+            .or_default()
+            .push(id as u32);
     }
 
     TaintFlowGraph {
@@ -1225,39 +1228,38 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         let mut last_loc_id: Option<(String, Option<String>)> = None;
         // Emit a located code-flow step for a call instruction, deduping against the
         // previous step's location. `label` describes the step (a vertex or endpoint).
-        let push_site_step =
-            |thread_flow_locations: &mut Vec<ThreadFlowLocation>,
-             last_loc_id: &mut Option<(String, Option<String>)>,
-             site: &InsnSiteId,
-             label: String| {
-                let Some(loc) = source_data
-                    .all_locations
-                    .get(&(site.func_id.id, site.insn_id.id))
-                else {
-                    return;
-                };
-                let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
-                    let uri = p.artifact_location.as_ref()?.uri.as_ref()?.clone();
-                    let pos = p
-                        .address
-                        .as_ref()
-                        .and_then(|a| a.absolute_address.as_ref().map(|v| v.to_string()))
-                        .or_else(|| {
-                            p.region
-                                .as_ref()
-                                .and_then(|r| Some(format!("{}:{}", r.start_line?, r.start_column?)))
-                        });
-                    Some((uri, pos))
-                });
-                if current_loc_id.is_some() && current_loc_id == *last_loc_id {
-                    return;
-                }
-                *last_loc_id = current_loc_id;
-                let mut loc_with_msg = loc.clone();
-                loc_with_msg.message = Some(Message::builder().text(label).build());
-                thread_flow_locations
-                    .push(ThreadFlowLocation::builder().location(loc_with_msg).build());
+        let push_site_step = |thread_flow_locations: &mut Vec<ThreadFlowLocation>,
+                              last_loc_id: &mut Option<(String, Option<String>)>,
+                              site: &InsnSiteId,
+                              label: String| {
+            let Some(loc) = source_data
+                .all_locations
+                .get(&(site.func_id.id, site.insn_id.id))
+            else {
+                return;
             };
+            let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
+                let uri = p.artifact_location.as_ref()?.uri.as_ref()?.clone();
+                let pos = p
+                    .address
+                    .as_ref()
+                    .and_then(|a| a.absolute_address.as_ref().map(|v| v.to_string()))
+                    .or_else(|| {
+                        p.region
+                            .as_ref()
+                            .and_then(|r| Some(format!("{}:{}", r.start_line?, r.start_column?)))
+                    });
+                Some((uri, pos))
+            });
+            if current_loc_id.is_some() && current_loc_id == *last_loc_id {
+                return;
+            }
+            *last_loc_id = current_loc_id;
+            let mut loc_with_msg = loc.clone();
+            loc_with_msg.message = Some(Message::builder().text(label).build());
+            thread_flow_locations
+                .push(ThreadFlowLocation::builder().location(loc_with_msg).build());
+        };
 
         // Lead with the source endpoints' call sites: because the endpoints are
         // anchored at call sites, the source/sink call instructions are not on any
@@ -1300,12 +1302,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     .as_ref()
                     .map(|s| format!("{}", s.vertex.0))
                     .unwrap_or_default();
-                push_site_step(
-                    &mut thread_flow_locations,
-                    &mut last_loc_id,
-                    &site,
-                    label,
-                );
+                push_site_step(&mut thread_flow_locations, &mut last_loc_id, &site, label);
             }
         }
 
@@ -1808,7 +1805,12 @@ mod tests {
     }
 
     /// An endpoint on an arbitrary vertex of `func`.
-    fn endpoint_on(func: u32, var: FlowVariable, label: &str, dir: TaintDirection) -> QueryEndpoint {
+    fn endpoint_on(
+        func: u32,
+        var: FlowVariable,
+        label: &str,
+        dir: TaintDirection,
+    ) -> QueryEndpoint {
         QueryEndpoint {
             infunc: FunctionId::new(func),
             vertex: FlowVertex(var, Path::empty()),
@@ -1892,13 +1894,29 @@ mod tests {
     fn finds_path_for_connected_source_and_sink() {
         let source = endpoint(1, "X", TaintDirection::Forward);
         let sink = endpoint(2, "X", TaintDirection::Backward);
-        let src_node: FlowNode = (FunctionId::new(1), TaintState::Free, formal(0), Path::empty());
-        let sink_node: FlowNode = (FunctionId::new(2), TaintState::Free, formal(0), Path::empty());
+        let src_node: FlowNode = (
+            FunctionId::new(1),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
+        let sink_node: FlowNode = (
+            FunctionId::new(2),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
 
         let facts = FormatFacts {
             taint: vec![
                 // sink node is forward-tainted by the source endpoint
-                (sink_node.0, sink_node.1, sink_node.2, sink_node.3, source.clone()),
+                (
+                    sink_node.0,
+                    sink_node.1,
+                    sink_node.2,
+                    sink_node.3,
+                    source.clone(),
+                ),
                 // source node is backward-tainted by the sink endpoint
                 (src_node.0, src_node.1, src_node.2, src_node.3, sink.clone()),
             ],
@@ -1923,8 +1941,18 @@ mod tests {
     fn finds_no_path_when_disconnected() {
         let source = endpoint(1, "X", TaintDirection::Forward);
         let sink = endpoint(2, "X", TaintDirection::Backward);
-        let src_node: FlowNode = (FunctionId::new(1), TaintState::Free, formal(0), Path::empty());
-        let sink_node: FlowNode = (FunctionId::new(2), TaintState::Free, formal(0), Path::empty());
+        let src_node: FlowNode = (
+            FunctionId::new(1),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
+        let sink_node: FlowNode = (
+            FunctionId::new(2),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
 
         let facts = FormatFacts {
             taint: vec![
@@ -1963,10 +1991,30 @@ mod tests {
         let sink = endpoint_on(1, formal(1), "X", TaintDirection::Backward);
 
         // s: source in caller; f: callee formal; t: returned-to vertex in caller.
-        let s = (FunctionId::new(1), TaintState::Free, formal(0), Path::empty());
-        let f_restricted = (FunctionId::new(2), TaintState::Restricted, formal(0), Path::empty());
-        let f_free = (FunctionId::new(2), TaintState::Free, formal(0), Path::empty());
-        let t = (FunctionId::new(1), TaintState::Free, formal(1), Path::empty());
+        let s = (
+            FunctionId::new(1),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
+        let f_restricted = (
+            FunctionId::new(2),
+            TaintState::Restricted,
+            formal(0),
+            Path::empty(),
+        );
+        let f_free = (
+            FunctionId::new(2),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
+        let t = (
+            FunctionId::new(1),
+            TaintState::Free,
+            formal(1),
+            Path::empty(),
+        );
 
         let facts = FormatFacts {
             taint: vec![
@@ -2007,8 +2055,18 @@ mod tests {
         let source = endpoint_on(1, formal(0), "X", TaintDirection::Forward);
         let sink = endpoint_on(2, formal(0), "X", TaintDirection::Backward);
 
-        let s = (FunctionId::new(1), TaintState::Free, formal(0), Path::empty());
-        let f_restricted = (FunctionId::new(2), TaintState::Restricted, formal(0), Path::empty());
+        let s = (
+            FunctionId::new(1),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
+        let f_restricted = (
+            FunctionId::new(2),
+            TaintState::Restricted,
+            formal(0),
+            Path::empty(),
+        );
 
         let facts = FormatFacts {
             taint: vec![

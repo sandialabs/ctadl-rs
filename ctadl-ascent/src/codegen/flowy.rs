@@ -127,7 +127,11 @@ pub fn get_endpoints(
         .requires
         .iter()
         .flat_map(|(_k, v)| v.iter().map(|(ep, _)| ep))
-        .flat_map(|e| from_flowy_endpoint(sites, call, e).into_iter().map(|ep| (ep,)))
+        .flat_map(|e| {
+            from_flowy_endpoint(sites, call, e)
+                .into_iter()
+                .map(|ep| (ep,))
+        })
         .collect();
     Ok(endpoints)
 }
