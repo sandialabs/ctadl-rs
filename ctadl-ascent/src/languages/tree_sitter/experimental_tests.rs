@@ -257,44 +257,6 @@ fn unbraced_while() {
     assert!(summary_returns_param(&summary, 0, ""));*/
 }
 
-//this tests unbraced if/else consequents
-
-#[test_log::test]
-fn unbraced_if_else() {
-    let src = r"
-            int unbraced_if_else(int y, int z) {
-                int x = 1;
-                if(x == 1)
-                    x = y;
-                else
-                x = z;
-            }            
-        ";
-    let (_program, dump) = program_from_string(src);
-    dump_ir(&dump);
-    // Both the if-consequence (x = y, @p0) and the unbraced else (x = z, @p1) must be
-    // present; the unbraced else body used to be silently dropped.
-    assert!(
-        check_match(&dump, "assign %x = @p0"),
-        "missing if-consequence"
-    );
-    assert!(
-        check_match(&dump, "assign %x = @p1"),
-        "unbraced else body was dropped"
-    );
-    assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
-    // The condition branches to consequence + else only, never directly to the join.
-    assert!(
-        janky_goto(&dump, 0, "1, 3"),
-        "condition must branch to consequence and else, not the join"
-    );
-    assert!(
-        janky_goto(&dump, 1, "2"),
-        "consequence joins the continuation"
-    );
-    assert!(janky_goto(&dump, 3, "2"), "else joins the continuation");
-}
-
 #[test_log::test]
 #[ignore = "Aspirational  3[f] is valid C"]
 fn brackets_commutative() {
@@ -342,6 +304,10 @@ fn params_and_simple_assign_in_example_2() {
 // `params_into_calls` and `call_not_assign` promoted to tests.rs (structural call-site assertions
 // via direct_calls_in / check_direct_call / check_has_direct_call).
 
+// Dump-based CFG-edge matcher. Its callers were promoted to tests.rs (now using check_successors),
+// leaving it currently unused -- but kept here as scratch scaffolding for the partner's exploration
+// lane, alongside janky_return.
+#[allow(dead_code)]
 fn janky_goto(dump: &str, from_block: usize, to_block: &str) -> bool {
     check_match(
         dump,

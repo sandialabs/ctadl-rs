@@ -638,6 +638,49 @@ fn simple_else() {
 }
 
 #[test_log::test]
+fn unbraced_if_else_cfg() {
+    // An `if/else` whose arms are *unbraced* single statements (`if(...) x = y; else x = z;`). The
+    // unbraced else body must not be dropped -- it once was. Structurally that means the consequence
+    // assignment lands in block 1 and the else assignment in block 3. The CFG is the same diamond as
+    // simple_else (which covers the braced form): the condition (0) branches only to the two arms
+    // [1,3], never straight to the join, and both arms rejoin at the terminal block 2.
+    let src = r"
+        int f(int y, int z) {
+            int x = 1;
+            if(x == 1)
+                x = y;
+            else
+                x = z;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "x", ["@p0"], Some(1)); // if-consequence
+    check_assign_or_update(&prog, "x", ["@p1"], Some(3)); // unbraced else -- must not be dropped
+    check_successors(&prog, 0, &[1, 3]);
+    check_successors(&prog, 1, &[2]);
+    check_successors(&prog, 3, &[2]);
+    check_successors(&prog, 2, &[]);
+}
+
+#[test_log::test]
+fn unbraced_if_else_branches_flow() {
+    // The dataflow view of the unbraced if/else. With a trailing `return x`, either arm can supply
+    // x, so both params reach the return. param 1 (the unbraced else's `x = z`) is the load-bearing
+    // assertion: if that body were dropped, z would never reach the return.
+    let src = r"
+        int f(int y, int z) {
+            int x = 1;
+            if(x == 1)
+                x = y;
+            else
+                x = z;
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, ""); // if-consequence (y) reaches the return
+    check_returns_param(&s, 1, ""); // unbraced else (z) reaches the return
+}
+
+#[test_log::test]
 fn simple_elif() {
     // C `if / else if / else`. Tree-sitter has no "elif", so `else if` desugars to a nested `if` in
     // the outer else. In the IR that is two condition blocks, each branching to exactly its two arms:
