@@ -5,7 +5,7 @@ use crate::error::{ClassFileError, ClassFileResult};
 use crate::parse_utils::{read_i32_be, read_u16_be, read_u8};
 use crate::parser::ClassFileParser;
 use crate::types::{ClassFile, CpEntry, MethodInfo};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::slice::Iter;
 
 // ============== Location (source/destination) ==============
@@ -178,6 +178,8 @@ pub struct MethodBasicBlocks<'a> {
     pub class_file: &'a ClassFile,
     instructions: Vec<InstructionFlowInfo<'a>>,
     blocks: Vec<BasicBlock<'a>>,
+    /// `(from_block, to_block)` pairs for exception-table edges.
+    exception_edges: HashSet<(usize, usize)>,
 }
 
 impl<'a> MethodBasicBlocks<'a> {
@@ -424,6 +426,7 @@ pub fn compute_basic_blocks_for_method<'a>(
 
     // Approximate exception edges: from any block whose instructions lie in a try
     // range to the handler block.
+    let mut exception_edges = HashSet::new();
     for ex in &code_attr.exception_table {
         let handler_pc = ex.handler_pc as u32;
         let handler_block = match pc_to_block_index.get(&handler_pc) {
@@ -449,6 +452,7 @@ pub fn compute_basic_blocks_for_method<'a>(
             if !blocks[handler_block].predecessors.contains(&b) {
                 blocks[handler_block].predecessors.push(b);
             }
+            exception_edges.insert((b, handler_block));
         }
     }
 
@@ -457,6 +461,7 @@ pub fn compute_basic_blocks_for_method<'a>(
         class_file: cf,
         instructions,
         blocks,
+        exception_edges,
     })
 }
 
@@ -487,6 +492,8 @@ pub fn normalize_stack_slots_for_method<'a>(
     let mut in_state: Vec<Option<StackState>> = vec![None; blocks_len];
     let mut out_state: Vec<Option<StackState>> = vec![None; blocks_len];
     let mut worklist: Vec<usize> = Vec::new();
+    let mut next_slot_id: StackSlotId = 0;
+    let mut handler_entry_slots: HashMap<usize, StackSlotId> = HashMap::new();
 
     in_state[0] = Some(StackState { slots: Vec::new() });
     worklist.push(0);
@@ -516,18 +523,34 @@ pub fn normalize_stack_slots_for_method<'a>(
             if s >= blocks_len {
                 continue;
             }
+            let propagated = if cfg.exception_edges.contains(&(b, s)) {
+                let slot = *handler_entry_slots.entry(s).or_insert_with(|| {
+                    let id = next_slot_id;
+                    next_slot_id += 1;
+                    id
+                });
+                StackState { slots: vec![slot] }
+            } else {
+                exit.clone()
+            };
             match &mut in_state[s] {
                 None => {
-                    in_state[s] = Some(exit.clone());
+                    in_state[s] = Some(propagated);
                     worklist.push(s);
                 }
                 Some(existing) => {
-                    if existing.slots.len() != exit.slots.len() {
-                        return Err(ClassFileError::InvalidClassFile(
-                            "inconsistent operand stack height at basic-block join",
-                        ));
+                    if existing.slots.len() != propagated.slots.len() {
+                        let from_pc = cfg.blocks[b].start_pc;
+                        let to_pc = cfg.blocks[s].start_pc;
+                        return Err(ClassFileError::InvalidClassFileMessage(format!(
+                            "inconsistent operand stack height at basic-block join: \
+                             block {s} (pc {to_pc}) <- block {b} (pc {from_pc}), \
+                             existing_len={}, new_len={}",
+                            existing.slots.len(),
+                            propagated.slots.len()
+                        )));
                     }
-                    if existing.slots != exit.slots {
+                    if existing.slots != propagated.slots {
                         return Err(ClassFileError::InvalidClassFile(
                             "inconsistent operand stack layout at basic-block join",
                         ));
@@ -956,6 +979,7 @@ fn operand_byte_count(opcode: u8, _code: &[u8], _pc: usize) -> ClassFileResult<u
         0x12 => 1,
         0x13 | 0x14 => 2,
         0x15..=0x19 | 0x36..=0x3a => 1,
+        0x84 => 2, // iinc: index u8, const i8
         0xbc => 1,
         0xbd | 0xc0 | 0xc1 => 2,
         0xb2..=0xb8 => 2,
@@ -1181,6 +1205,7 @@ fn opcode_kind(opcode: u8) -> InstructionKind {
         0xb2..=0xb5 => InstructionKind::Dataflow,
         0xb6..=0xba => InstructionKind::Call,
         0xbb => InstructionKind::Dataflow,
+        0xbc | 0xbd => InstructionKind::Dataflow,
         _ => InstructionKind::Other,
     }
 }
@@ -1319,6 +1344,14 @@ pub fn decode_flow_instruction<'a>(
         }
         (opcode, mnem, kind, dataflow, call)
     };
+
+    let mut dataflow = dataflow;
+    if logical_opcode == 0xbf {
+        dataflow = vec![DataflowInfo {
+            sources: vec![Location::StackInput(0)],
+            destination: Location::StackInput(0),
+        }];
+    }
 
     let code_attr = method
         .code
@@ -1549,6 +1582,19 @@ fn decode_dataflow(
             sources.push(Location::Allocation(class_name));
             destinations.push(Location::StackOutput);
         }
+        0xbc => {
+            let atype = read_u8(code, pc + 1)?;
+            sources.push(Location::StackInput(0));
+            sources.push(Location::Allocation(primitive_array_descriptor(atype)));
+            destinations.push(Location::StackOutput);
+        }
+        0xbd => {
+            let idx = read_u16_be(code, pc + 1)?;
+            let class_name = cf.get_class_name(idx)?;
+            sources.push(Location::StackInput(0));
+            sources.push(Location::Allocation(format!("[L{};", class_name)));
+            destinations.push(Location::StackOutput);
+        }
         0x60..=0x83 => {
             let (consume, produce) = stack_effect(opcode);
             for i in 0..consume {
@@ -1656,6 +1702,20 @@ fn decode_dataflow(
     Ok((sources, destinations))
 }
 
+fn primitive_array_descriptor(atype: u8) -> String {
+    match atype {
+        4 => "[Z".to_string(),
+        5 => "[C".to_string(),
+        6 => "[F".to_string(),
+        7 => "[D".to_string(),
+        8 => "[B".to_string(),
+        9 => "[S".to_string(),
+        10 => "[I".to_string(),
+        11 => "[J".to_string(),
+        _ => "[?".to_string(),
+    }
+}
+
 fn const_for_const_op(opcode: u8) -> ClassFileResult<ConstantValue> {
     Ok(match opcode {
         0x02 => ConstantValue::Integer(-1),
@@ -1745,6 +1805,40 @@ mod tests {
         });
         let path = std::path::Path::new(&dir).join(name);
         std::fs::read(&path).unwrap_or_else(|e| panic!("reading fixture {}: {e}", path.display()))
+    }
+
+    #[test]
+    fn loop_flow_main_stack_normalizes() {
+        use std::process::Command;
+
+        let dir = std::env::temp_dir().join("jvm_reader_loop_flow_test");
+        let java = dir.join("LoopFlow.java");
+        let classes = dir.join("classes");
+        let class_file = classes.join("LoopFlow.class");
+        std::fs::create_dir_all(&classes).unwrap();
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../nightly/tests/java/LoopFlow.java"),
+            &java,
+        )
+        .unwrap();
+        let status = Command::new("javac")
+            .args(["--release", "8", "-d"])
+            .arg(&classes)
+            .arg(&java)
+            .status()
+            .expect("javac");
+        assert!(status.success(), "javac failed");
+
+        let bytes = std::fs::read(&class_file).unwrap();
+        let parser = ClassFileParser::parse(&bytes).expect("parse");
+        let cf = parser.class_file();
+        let method = cf
+            .methods
+            .iter()
+            .find(|m| cf.get_utf8(m.name_index).ok() == Some("main"))
+            .expect("main");
+        let mut cfg = compute_basic_blocks_for_method(cf, method).expect("cfg");
+        normalize_stack_slots_for_method(&mut cfg).expect("normalize");
     }
 
     #[test]

@@ -24,7 +24,22 @@ const PCODE_BASE_ADDRESS: i64 = 0x10_0000;
 
 /// JVM E2E cases whose failures count toward the suite exit code. All other
 /// `Jvm:*` taint cases run for visibility but report as XFAIL when they fail.
-const JVM_E2E_ENFORCED: &[&str] = &["Jvm:SourceSinkExample"];
+const JVM_E2E_ENFORCED: &[&str] = &[
+    "Jvm:AnotherExample",
+    "Jvm:ArrayFlow",
+    "Jvm:ArrayFlowComplex",
+    "Jvm:BranchingFlow",
+    "Jvm:CrossClassStaticFieldFlow",
+    "Jvm:ExceptionFlow",
+    "Jvm:FieldFlow",
+    "Jvm:FieldSensitivity",
+    "Jvm:LoopFlow",
+    "Jvm:ObjectSensitivity",
+    "Jvm:Reassignment",
+    "Jvm:SourceSinkExample",
+    "Jvm:StaticFieldFlow",
+    "Jvm:StringBuilderFlow",
+];
 
 #[derive(Default)]
 pub struct Options {
@@ -169,9 +184,7 @@ fn resolve_dex_apk(override_path: Option<&Path>) -> Option<PathBuf> {
 
 /// Ensure the executables needed for the selected cases are on `PATH`.
 fn preflight(cases: &[TestCase]) -> Result<()> {
-    if exec::which("ctadl").is_none() {
-        bail!("`ctadl` not found on PATH");
-    }
+    ctadl_bin()?;
     let needs_dex = cases.iter().any(|c| matches!(c.kind, Kind::Dex { .. }));
     let needs_jvm = cases.iter().any(|c| matches!(c.kind, Kind::Jvm { .. }));
     if needs_dex && exec::which("dex-reader").is_none() {
@@ -405,8 +418,25 @@ fn jar_arg(jar: &Path) -> String {
     jar.to_string_lossy().into_owned()
 }
 
+fn ctadl_bin() -> Result<PathBuf> {
+    // Prefer the workspace build so regression tracks the tree under test.
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        for subdir in ["release", "debug"] {
+            let candidate = PathBuf::from(&manifest)
+                .join("..")
+                .join("target")
+                .join(subdir)
+                .join(if cfg!(windows) { "ctadl.exe" } else { "ctadl" });
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+    exec::which("ctadl").context("`ctadl` not found on PATH or in target/{release,debug}")
+}
+
 fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {
-    let mut cmd = Command::new("ctadl");
+    let mut cmd = Command::new(ctadl_bin()?);
     cmd.current_dir(work)
         .env("XDG_STATE_HOME", state)
         .args(args);
@@ -587,7 +617,7 @@ fn is_writable(dir: &Path) -> bool {
 }
 
 fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&str]) -> Result<()> {
-    let mut cmd = Command::new("ctadl");
+    let mut cmd = Command::new(ctadl_bin()?);
     cmd.current_dir(work)
         .env("XDG_STATE_HOME", state)
         .args(args);
