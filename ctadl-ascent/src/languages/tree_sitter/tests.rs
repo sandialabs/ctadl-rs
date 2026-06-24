@@ -544,6 +544,90 @@ fn do_while_body_flows() {
     check_returns_param(&s, 0, "");
 }
 
+// The three tests below pin control-flow *combinations* (an if nested in a loop, two sequential ifs,
+// an if followed by a loop). Each was historically a "no errant goto 0" dump check: the worry was a
+// construct wiring a stray edge back into the entry block. Asserting the full successor graph is the
+// structural form of that guarantee -- block 0 never appears as a successor -- and also pins the
+// reconvergence/back-edge wiring these combinations introduce.
+
+#[test_log::test]
+fn while_with_nested_if_cfg() {
+    // A `while` whose body contains an `if` and a trailing statement. CFG: setup (0) enters the
+    // condition (1); the condition exits to the continuation (2, which returns) or the body (3); the
+    // body branches on the inner if to its consequence (4) or straight to the if-join (5); the
+    // consequence (4) falls into the join (5); the join (5) back-edges to the condition (1). The
+    // back-edge targets the condition, never the entry block.
+    let src = r"
+        int f(int y, int z) {
+            int x = 5;
+            while(x < 50) {
+                x = z;
+                if(y == z)
+                    x = y;
+                x = x + z;
+            }
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 6);
+    check_successors(&prog, 0, &[1]);
+    check_successors(&prog, 1, &[2, 3]); // condition: exit or enter body
+    check_successors(&prog, 2, &[]); // continuation returns, terminal
+    check_successors(&prog, 3, &[4, 5]); // body: inner-if branch
+    check_successors(&prog, 4, &[5]); // if-consequence joins
+    check_successors(&prog, 5, &[1]); // if-join back-edges to the condition, not entry
+}
+
+#[test_log::test]
+fn sequential_ifs_cfg() {
+    // Two `if`s back-to-back with no return in between (the function falls off the end). CFG: two
+    // diamonds chained -- the first if's condition (0) branches to its consequence (1) or its
+    // continuation (2); that continuation doubles as the second if's condition, branching to the
+    // second consequence (3) or the final continuation (4, terminal). Neither diamond branches back
+    // to the entry. (An if *not* followed by a return was the original "goto 0" trigger.)
+    let src = r"
+        int f(int y, int z) {
+            int x = 5;
+            if(x == 3)
+                x = z;
+            if(y == z)
+                x = y;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 5);
+    check_successors(&prog, 0, &[1, 2]); // first if
+    check_successors(&prog, 1, &[2]);
+    check_successors(&prog, 2, &[3, 4]); // second if (lives in the first if's continuation)
+    check_successors(&prog, 3, &[4]);
+    check_successors(&prog, 4, &[]); // falls off the end, terminal
+}
+
+#[test_log::test]
+fn if_then_while_cfg() {
+    // An unbraced `if` immediately followed by an unbraced `while`. CFG: the if's condition (0)
+    // branches to its consequence (1) or continuation (2); the continuation (2) flows into the while
+    // condition (3); the while condition exits to the continuation (4, which returns) or the body
+    // (5); the body (5) back-edges to the while condition (3). The two constructs chain in sequence
+    // with no edge back to the entry.
+    let src = r"
+        int f(int y, int z) {
+            int x = 5;
+            if(x == 3)
+                x = z;
+            while(x == 5)
+                x = y;
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 6);
+    check_successors(&prog, 0, &[1, 2]); // if
+    check_successors(&prog, 1, &[2]);
+    check_successors(&prog, 2, &[3]); // if-continuation flows into the while condition
+    check_successors(&prog, 3, &[4, 5]); // while condition: exit or body
+    check_successors(&prog, 4, &[]); // continuation returns, terminal
+    check_successors(&prog, 5, &[3]); // body back-edges to the while condition, not entry
+}
+
 #[test_log::test]
 fn subscript_access_paths() {
     // A constant array subscript, read and written (`x = f[3];` and `f[4] = x;`). The subscript
