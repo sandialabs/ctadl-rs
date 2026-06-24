@@ -287,44 +287,6 @@ fn do_while() {
     assert!(check_no_match(&dump, "goto 0"), "contains errant goto 0");
 }
 
-#[test_log::test]
-fn plus_equals() {
-    let src = r"
-        int update_expression_2(){
-            int x = 5;
-            int y = 11;
-            y = 99;
-            y+=10;
-            y+=x*2;
-            return 0;
-        }
-    ";
-    let (_prog, dump) = program_from_string(src);
-    dump_ir(&dump);
-}
-
-#[test_log::test]
-fn update_expression() {
-    let src = r"
-        int update_expression(Field myParm){
-            int x = 5;
-            int y = 11;
-
-            x++;        
-            y+=x*2;
-            
-            --x;
-            myParm->x++;
-            
-            return myParm->x;
-        }
-    ";
-    let (_prog, dump) = program_from_string(src);
-    dump_ir(&dump);
-    //assert(check_match(&dump,""))
-    assert!(check_match(&dump, "@p0 = update (@p0.x :="));
-}
-
 //this tests unbraced if/else consequents
 
 #[test_log::test]

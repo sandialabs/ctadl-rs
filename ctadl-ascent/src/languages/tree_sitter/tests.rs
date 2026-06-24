@@ -720,3 +720,80 @@ fn assign_in_call_arg() {
     let prog = program_from_string(src).0;
     check_assign_or_update(&prog, "x", ["@p0"], None);
 }
+
+#[test_log::test]
+fn compound_assign_accumulates() {
+    // Compound assignment (`y += b`) is an accumulate, not an overwrite: it lowers to `y = b + y`,
+    // keeping the prior value of `y` *and* mixing in the new one. With `y` seeded from param 0 and
+    // `+=` adding param 1, both params reach the return. param 1 is the load-bearing assertion --
+    // if `+=` were dropped (or lowered as a plain `y = b`), one of these two flows would vanish.
+    let src = r"
+        int f(int a, int b) {
+            int y = a;
+            y += b;
+            return y;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, ""); // old value of y (param 0) survives the +=
+    check_returns_param(&s, 1, ""); // += mixes param 1 in
+}
+
+#[test_log::test]
+fn increment_decrement_reassign_local() {
+    // `x++` and `--x` on a local each lower to a writeback assignment to `x` (`x = x +/- 1`). The
+    // `+/- 1` is a constant, so there is no dataflow to assert -- the contract is purely structural:
+    // each increment/decrement re-assigns the variable. Counting the assignments whose destination
+    // is `x` (init + two updates = 3) guards that neither was dropped, without pinning the flatten
+    // temp names. (`++` and `--` lower identically; the operator distinction is not preserved.)
+    let src = r"
+        int f(int a) {
+            int x = a;
+            x++;
+            --x;
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    let fun = get_only_function(&prog).expect("expected exactly one function");
+    let assigns_to_x = fun
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .filter(|stmt| {
+            matches!(&stmt.kind,
+                StatementKind::Assign { dest, .. }
+                    if matches!(dest.variable.as_ref(), Variable::Local(n) if n == "x"))
+        })
+        .count();
+    assert_eq!(
+        assigns_to_x, 3,
+        "expected `int x = a`, `x++`, `--x` to each write x (3 assigns)\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn field_increment_is_update() {
+    // Incrementing through a field (`p->x++`) routes through the functional `update` path on the
+    // formal, exactly like a field store does (see `field_assignment_is_update`) -- it is not a plain
+    // assign. The new value is a flatten temp (`@p0.x + 1`), so we assert only that an `update` of
+    // `@p0.x` exists, leaving the temp source unpinned.
+    let src = r"
+        void f(Field *p) {
+            p->x++;
+        }";
+    let prog = program_from_string(src).0;
+    let fun = get_only_function(&prog).expect("expected exactly one function");
+    let updates_p0_x = fun
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .any(|stmt| {
+            matches!(&stmt.kind,
+            StatementKind::Update { dest, .. }
+                if matches!(dest.0.variable.as_ref(), Variable::Param(_))
+                    && dest.1.fields.iter().map(|f| f.to_string()).eq(["x".to_string()]))
+        });
+    assert!(
+        updates_p0_x,
+        "expected `p->x++` to lower to an update of @p0.x\n{prog}"
+    );
+}
