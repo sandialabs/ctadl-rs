@@ -23,6 +23,7 @@ fn test_absorbing_functions() {
         ),
         label: Label("Net".into()),
         direction: TaintDirection::Forward,
+        call_site: None,
     };
 
     // Taint the formal 0 of main

@@ -81,14 +81,26 @@ fn build_query_endpoints(
         let lbl = Label(label_str.into());
 
         for var in vars {
-            out_eps.push((crate::query_engine::QueryEndpoint {
+            // Register the model function's formal so taint can cross the call boundary
+            // for flow-through, independent of how the endpoint is anchored below.
+            if var.is_formal() {
+                out_formals.push((infunc, var, facts::FormalType::ByRef));
+            }
+            // Anchor at the call sites of `infunc` (the modeled function) so flows that
+            // share a formal but differ by call site stay distinct.
+            let base = crate::query_engine::QueryEndpoint {
                 infunc,
                 vertex: FlowVertex(var, ap),
                 label: lbl.clone(),
                 direction,
-            },));
-            if var.is_formal() {
-                out_formals.push((infunc, var, facts::FormalType::ByRef));
+                call_site: None,
+            };
+            let fanned = match var.as_formal() {
+                Some(formal) => base.anchored_at_callsites(formal, &facts.call),
+                None => vec![base],
+            };
+            for ep in fanned {
+                out_eps.push((ep,));
             }
         }
     }
@@ -199,7 +211,7 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
         for import in project.iter_imports() {
             let import = import?;
             if import.language == ArtifactLanguage::Flowy {
-                let eps = crate::codegen::flowy::get_endpoints(&import, &ids)?;
+                let eps = crate::codegen::flowy::get_endpoints(&import, &ids, &index_facts.call)?;
                 endpoints.extend(eps);
             }
         }
@@ -349,7 +361,7 @@ fn dump_taint_graph_dot(
     // propagation means data flows sf → df; backward propagation
     // (which walks assignments in reverse) means it flows df → sf.
     let mut oriented: std::collections::BTreeMap<_, Cone> = std::collections::BTreeMap::new();
-    for (df, dv, dp, sf, sv, sp, dir, _site) in &taint_results.edges {
+    for (df, _dts, dv, dp, sf, _sts, sv, sp, dir, _site) in &taint_results.edges {
         let derived = (*df, *dv, *dp);
         let origin = (*sf, *sv, *sp);
         let (src, dst, cone) = match dir {
