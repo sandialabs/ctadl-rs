@@ -72,6 +72,13 @@ pub struct ArtifactImport {
     /// created before this field existed.
     #[serde(default)]
     pub image_base: Option<i64>,
+    /// Hex-encoded SHA-256 content hash of the artifact, recorded once the import
+    /// has successfully completed. Together with [`Self::artifact_path`] this lets
+    /// `import --skip-existing` decide whether a re-import is necessary. `None` for
+    /// older imports created before this field existed, or for an import that has
+    /// not yet completed.
+    #[serde(default)]
+    pub hash: Option<String>,
 }
 
 impl ArtifactImport {
@@ -98,6 +105,7 @@ impl ArtifactImport {
             import_path,
             version: "1".to_string(),
             image_base: None,
+            hash: None,
         };
         result.save()?;
         Ok(result)
@@ -168,6 +176,124 @@ impl ArtifactImport {
     pub fn config_path(&self) -> PathBuf {
         self.import_path.join("import_config.json")
     }
+
+    /// True if the import destination (the serialized IR program) is already present
+    /// in the store. Used together with [`Self::hash`] to decide whether an import can
+    /// be skipped.
+    #[inline]
+    pub fn destination_exists(&self) -> bool {
+        self.program_path().exists()
+    }
+
+    /// Records the artifact's content hash in the config and persists it. Call this
+    /// once an import has completed successfully so that a later `--skip-existing`
+    /// import can detect that the stored artifact is up to date.
+    ///
+    /// # Errors
+    ///
+    /// If the artifact cannot be read or the config cannot be written.
+    pub fn record_artifact_hash(&mut self) -> Result<(), Error> {
+        self.hash = Some(hash_artifact(&self.artifact_path)?);
+        self.save()
+    }
+
+    /// Returns true if an import named `name` already exists in the store, its
+    /// destination is present, and both the stored artifact path and content hash
+    /// match `artifact_path` and its current contents. When this holds, a re-import
+    /// would reproduce the same result and can be skipped.
+    ///
+    /// Returns `false` (rather than erroring) when no matching import config can be
+    /// loaded, so the caller falls back to performing the import.
+    ///
+    /// # Errors
+    ///
+    /// If the artifact path cannot be canonicalized or its contents cannot be hashed.
+    pub fn is_up_to_date(name: &str, artifact_path: &Path) -> Result<bool, Error> {
+        let config = match Self::load_by_name(name) {
+            Ok(config) => config,
+            // No (readable) prior import: not up to date, so the caller imports.
+            Err(_) => return Ok(false),
+        };
+        if !config.destination_exists() {
+            return Ok(false);
+        }
+        let stored_hash = match &config.hash {
+            Some(hash) => hash,
+            None => return Ok(false),
+        };
+        // Compare canonicalized paths so the stored path (always canonical) lines up.
+        let artifact_path = canonicalize(artifact_path)?;
+        if config.artifact_path != artifact_path {
+            return Ok(false);
+        }
+        Ok(*stored_hash == hash_artifact(&artifact_path)?)
+    }
+}
+
+/// Computes a stable, hex-encoded SHA-256 content hash of an artifact, which may be a
+/// single file or a directory (e.g. a directory of C sources or Ghidra pcode facts).
+///
+/// For a directory the hash covers every regular file underneath it, incorporating
+/// each file's path relative to the directory and its contents, in a deterministic
+/// (sorted) order so the result is independent of filesystem iteration order.
+///
+/// # Errors
+///
+/// If the artifact (or any file within it) cannot be read.
+pub fn hash_artifact(path: &Path) -> Result<String, Error> {
+    use source_info::ContentHasher;
+
+    let mut hasher = ContentHasher::new();
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.is_dir() {
+        let mut files = Vec::new();
+        collect_files(path, &mut files)?;
+        files.sort();
+        for file in &files {
+            let rel = file.strip_prefix(path).unwrap_or(file);
+            let rel_bytes = rel.to_string_lossy();
+            // Length-prefix path and contents so distinct trees can't collide by
+            // concatenation.
+            hasher.update(&(rel_bytes.len() as u64).to_le_bytes());
+            hasher.update(rel_bytes.as_bytes());
+            let data = std::fs::read(file)
+                .map_err(Error::Io)
+                .err_context(|| format!("hashing artifact file: {}", file.display()))?;
+            hasher.update(&(data.len() as u64).to_le_bytes());
+            hasher.update(&data);
+        }
+    } else {
+        let data = std::fs::read(path)
+            .map_err(Error::Io)
+            .err_context(|| format!("hashing artifact: {}", path.display()))?;
+        hasher.update(&data);
+    }
+    Ok(to_hex(&hasher.finalize()))
+}
+
+/// Recursively collects regular files under `dir` into `out`.
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), Error> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.is_dir() {
+            collect_files(&path, out)?;
+        } else if metadata.is_file() {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Hex-encodes a byte slice using lowercase digits.
+fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{:02x}", b);
+    }
+    s
 }
 
 /// An analysis project allows you to index single or multiple artifacts together.

@@ -27,7 +27,8 @@ pub mod store;
 pub mod validation;
 
 pub use artifact::{
-    ArtifactEncoding, ArtifactKey, ArtifactMetadata, ArtifactRecord, ArtifactTable, HashAlgorithm,
+    ArtifactEncoding, ArtifactKey, ArtifactMetadata, ArtifactRecord, ArtifactTable, ContentHasher,
+    HashAlgorithm, sha256,
 };
 pub use artifact_cache::ArtifactCache;
 pub use builder::SourceInfoBuilder;

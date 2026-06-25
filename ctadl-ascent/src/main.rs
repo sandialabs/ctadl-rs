@@ -139,6 +139,13 @@ pub struct ImportArgs {
     /// Language/IR family for the artifact: jvm, dex, or auto
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
     pub language: ImportLanguage,
+
+    /// Skip the import if an import of the same name already exists whose stored
+    /// artifact path and content hash match the artifact being imported. This
+    /// avoids re-doing the (potentially expensive) translation when nothing has
+    /// changed.
+    #[arg(long)]
+    pub skip_existing: bool,
 }
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
@@ -284,6 +291,12 @@ pub struct GoArgs {
     /// Language/IR family for the artifact: jvm, dex, or auto
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
     pub language: ImportLanguage,
+
+    /// Skip importing an artifact when an import of the same name already exists
+    /// whose stored artifact path and content hash match. Applies to the import
+    /// step of this one-shot flow.
+    #[arg(long)]
+    pub skip_existing: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -345,6 +358,7 @@ fn main() -> anyhow::Result<()> {
                     artifact: artifact.clone(),
                     name: None,
                     language: args.language,
+                    skip_existing: args.skip_existing,
                 };
                 eprintln!("Importing '{}'...", artifact.display());
                 let name = import_artifact_to_store(&import_args).with_context(|| {
@@ -481,6 +495,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 artifact: index_args.facts_path.clone(),
                 name: Some(legacy_name.to_string()),
                 language: ImportLanguage::Pcode,
+                skip_existing: false,
             };
             import_artifact_to_store(&import_args)?;
 
@@ -557,9 +572,25 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
     .to_str()
     .ok_or(anyhow::anyhow!("error converting filename to string"))?;
 
+    // If requested, skip the import when an up-to-date one already exists: the
+    // destination is present and the stored artifact path and content hash match.
+    if args.skip_existing && project::ArtifactImport::is_up_to_date(name, path)? {
+        log::info!(
+            "skipping import '{}': destination exists and artifact hash matches",
+            name
+        );
+        return Ok(name.to_string());
+    }
+
     // Create the import
     let config = project::ArtifactImport::try_create(name, language, path)?;
     cli::import(&config)?;
+    // Import succeeded: reload the config so we pick up any updates the import wrote
+    // (e.g. the pcode importer records `image_base`), then record the artifact's
+    // content hash (and path) so a later `--skip-existing` import can tell the import
+    // is up to date.
+    let mut config = project::ArtifactImport::load_by_name(name)?;
+    config.record_artifact_hash()?;
     Ok(name.to_string())
 }
 
