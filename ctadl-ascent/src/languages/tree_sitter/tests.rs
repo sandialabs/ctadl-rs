@@ -1149,3 +1149,122 @@ fn address_of_local_aliases() {
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&s, 1, "");
 }
+
+// ----------------------------------------------------------------------------------------------
+// Coverage wave 3: control-flow completion (for / break / continue / switch) and call-graph depth
+// (recursion fixpoint, struct-by-value through a call). The last two use the per-function summary
+// helpers (`*_in`) so a flow is pinned to the *right* function in a multi-function fixture; the
+// rejected control constructs are `#[ignore]`d specs that flip green once the parser lowers them.
+// ----------------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn for_loop_body_flows() {
+    // A `for` loop body that assigns the parameter into a local (`for(...) { x = src; }`) carries the
+    // parameter to a later `return x`. `for` is otherwise parked (only an ignored experimental case);
+    // this pins that its body dataflow actually lowers and flows src (@p0) -> return.
+    let src = r"
+        int f(int src) {
+            int x = 0;
+            for (int i = 0; i < 10; i++) {
+                x = src;
+            }
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn recursion_returns_param() {
+    // A self-recursive function (`if (src) return f(src); return src;`) must reach a summary fixpoint
+    // where the parameter flows to the return: the base case returns src directly, and the recursive
+    // call returns f(src), which by the same summary is src. Pins that the indexer's fixpoint handles
+    // direct recursion (single function, so plain check_returns_param suffices).
+    let src = r"
+        int f(int src) {
+            if (src) return f(src);
+            return src;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn struct_by_value_through_call() {
+    // Field taint survives a struct passed BY VALUE through a call. `callee` returns `p.a`, so its
+    // summary is @p0.a -> return; `caller` passes its struct `s` as that argument and returns the
+    // result, so caller's summary is @p0.a -> return too. Uses the per-function helpers so each flow
+    // is pinned to the correct function (plain summary_search would conflate the two).
+    let src = r"
+        int callee(Donkey p) {
+            return p.a;
+        }
+        int caller(Donkey s) {
+            return callee(s);
+        }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "callee", 0, "a");
+    check_returns_param_in(&s, &si, "caller", 0, "a");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: break_statement is an Unsupported expression type (ERR 78) in mod.rs"]
+fn break_exits_loop_flows() {
+    // A `break` out of a loop still lets pre-break assignments flow: `while(1){ x = src; break; }`
+    // then `return x` carries src -> return. The frontend rejects `break_statement` outright (the
+    // parse errors before any dataflow), so this documents the intended flow until break lowers.
+    let src = r"
+        int f(int src) {
+            int x = 0;
+            while (1) {
+                x = src;
+                break;
+            }
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: continue_statement is an Unsupported expression type (ERR 78) in mod.rs"]
+fn continue_back_edge_flows() {
+    // A `continue` jumps to the loop's next iteration; an assignment before it still flows. The
+    // frontend rejects `continue_statement` outright, so this documents the intended back-edge flow
+    // (src -> return) until continue lowers.
+    let src = r"
+        int f(int src) {
+            int x = 0;
+            while (1) {
+                x = src;
+                if (x) continue;
+                break;
+            }
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: switch_statement is an Unsupported expression type (ERR 78) in mod.rs"]
+fn switch_case_flows() {
+    // A `switch` whose case assigns the parameter must flow it to the return -- and fallthrough (no
+    // `break`) is the genuinely interesting part of switch semantics. The frontend rejects
+    // `switch_statement` outright; this documents the intended case-arm flow (src -> return) until
+    // switch lowers.
+    let src = r"
+        int f(int src) {
+            int x = 0;
+            switch (src) {
+                case 1:
+                    x = src;
+                    break;
+                default:
+                    x = 0;
+            }
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}

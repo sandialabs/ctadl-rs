@@ -551,6 +551,114 @@ pub(crate) fn check_does_not_return_param(
     check_no_flow(summary, param_num, param_path, RETURN_INDEX, "");
 }
 
+/* Per-function variant of `summary_search`: only matches summary records belonging to function
+`name`. The plain `summary_search` scans every function's summary, so on a multi-function fixture it
+can match a flow in the *wrong* function (e.g. assert "caller returns its param" but match the
+callee). This resolves `name` to its `FunctionId` via the source_info `sites` map and filters on it.
+Panics if `name` is not a known function -- a not-found function must fail loudly, never silently
+pass a `check_no_flow_in`. */
+#[track_caller]
+fn flow_present_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    from_index: i16,
+    from_path: &str,
+    to_index: i16,
+    to_path: &str,
+) -> bool {
+    let func_id = source_info
+        .sites
+        .get_function_id(fx::Function(fx::Str::from(name)))
+        .unwrap_or_else(|| panic!("no function named {name:?} in index summary"));
+    let from_path: Path = from_path.parse().unwrap();
+    let to_path: Path = to_path.parse().unwrap();
+    summary.iter().any(|r| {
+        r.0 == func_id
+            && r.1 == fx::FormalIndex::new(to_index)
+            && r.2 == to_path
+            && r.3 == fx::FormalIndex::new(from_index)
+            && r.4 == from_path
+    })
+}
+
+/* Asserting per-function flow (presence), the multi-function analogue of `check_flow`. Resolves
+`name` to its function and asserts the flow is present *in that function's* summary. Prints the full
+summary on failure. */
+#[track_caller]
+pub(crate) fn check_flow_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    from_index: i16,
+    from_path: &str,
+    to_index: i16,
+    to_path: &str,
+) {
+    assert!(
+        flow_present_in(
+            summary,
+            source_info,
+            name,
+            from_index,
+            from_path,
+            to_index,
+            to_path
+        ),
+        "expected flow {} -> {} in {name:?}, but it is absent.\nsummary: {summary:#?}",
+        fmt_endpoint(from_index, from_path),
+        fmt_endpoint(to_index, to_path),
+    );
+}
+
+/* Asserting per-function flow (absence), the multi-function analogue of `check_no_flow`. */
+#[track_caller]
+pub(crate) fn check_no_flow_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    from_index: i16,
+    from_path: &str,
+    to_index: i16,
+    to_path: &str,
+) {
+    assert!(
+        !flow_present_in(
+            summary,
+            source_info,
+            name,
+            from_index,
+            from_path,
+            to_index,
+            to_path
+        ),
+        "unexpected flow {} -> {} in {name:?} is present.\nsummary: {summary:#?}",
+        fmt_endpoint(from_index, from_path),
+        fmt_endpoint(to_index, to_path),
+    );
+}
+
+/* `check_returns_param` for a named function in a multi-function fixture: asserts param `param_num`
+(path `param_path`) reaches the return *of that function*. */
+#[track_caller]
+pub(crate) fn check_returns_param_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    param_num: i16,
+    param_path: &str,
+) {
+    check_flow_in(
+        summary,
+        source_info,
+        name,
+        param_num,
+        param_path,
+        RETURN_INDEX,
+        "",
+    );
+}
+
 // Unit tests for the access-path string DSL itself. These helpers contain real parsing logic, so a
 // bug here would silently weaken every test that relies on them.
 #[cfg(test)]
