@@ -1349,3 +1349,134 @@ fn switch_case_flows() {
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&s, 0, "");
 }
+
+// ----------------------------------------------------------------------------------------------
+// Coverage wave 5: aggregate/expression precision tails (union overlap, non-constant subscript
+// collapse, post-increment value, varargs shape, for-init ordering) plus the two rejected nodes
+// (designated initializers, goto). Probed lowered-vs-rejected first, as always.
+// ----------------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn for_init_clause_flows() {
+    // The `for` *init* clause is a real assignment slot: `for (x = src; ...; ...)` with an empty body
+    // still flows src into x, so a later `return x` carries it. Complements `for_loop_body_flows`
+    // (which exercises the body); this pins the init clause specifically.
+    let src = r"
+        int f(int src) {
+            int x = 0;
+            for (x = src; x < 10; x++) {}
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn post_increment_value_is_operand() {
+    // `int x = y++;` consumes the *value* of `y++` (post-increment yields the old y, then increments),
+    // so y flows to x and on to the return. We only ever tested `++` as a standalone statement before;
+    // this pins its value-as-subexpression behavior. (The frontend loses the pre/post distinction, but
+    // either way the operand value reaches x -- that is what we assert.)
+    let src = r"
+        int f(int y) {
+            int x = y++;
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: a non-constant subscript a[n] lowers to a distinct `[_elem_]` field symbol \
+            that does NOT alias a constant index `[0]`, so the sound a[n]->a[0] over-approximation is \
+            missed (node lowers, flow dropped)"]
+fn nonconstant_subscript_may_alias_constant() {
+    // A non-constant subscript is sound only if it may-alias every concrete index: writing `a[n]` and
+    // reading `a[0]` should carry taint, because `n` could be 0. The frontend instead lowers `a[n]` to
+    // `Symbol("[_elem_]")` and `a[0]` to `Symbol("[0]")` and treats them as disjoint paths, so src does
+    // NOT reach the return -- unsound. (The doc anticipated an array-blind *collapse*; the reality is a
+    // separate `[_elem_]` slot that never merges with constant indices.) Asserting the intended flow
+    // documents the gap. Contrast `constant_index_field_precision`, where keeping two *constant*
+    // indices distinct is the correct, precise answer.
+    let src = r"
+        int f(int *a, int src, int n) {
+            a[n] = src;
+            return a[0];
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: a union is treated as an ordinary field-sensitive struct (no overlap model), \
+            so a write to u.a does not taint a read of u.b -- node lowers, flow dropped"]
+fn union_write_overlaps_other_field() {
+    // A union aliases its fields: writing `u.a` and reading `u.b` should carry taint, because they
+    // share storage. The sound taint answer is a flow. Confirmed by observation: the frontend lowers a
+    // union like any struct (field-sensitive, no union model), keeps `.a` and `.b` disjoint, and drops
+    // the flow -- src does NOT reach the return. Asserting the ideal (overlap flows) documents the
+    // unsoundness until a union/overlap model lands.
+    let src = r"
+        int f(int src) {
+            U u;
+            u.a = src;
+            return u.b;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn vararg_call_carries_argument() {
+    // A tainted value passed as a variadic argument (`printf("%d", src)`) must at least be *captured*
+    // as an argument of the lowered call -- the prerequisite for any varargs taint modeling. printf is
+    // an unresolved external (no summary), so this is a Category-A call-shape assertion: f emits a
+    // direct call to printf, and src (@p0) appears among its arguments.
+    let src = r#"
+        int f(int src) {
+            return printf("%d", src);
+        }"#;
+    let (prog, _dump) = program_from_string(src);
+    check_has_direct_call(&prog, "f", "printf");
+    let carries_src = direct_calls_in(&prog, "f").iter().any(|(callees, args)| {
+        callees.iter().any(|c| c == "printf")
+            && args.iter().any(|a| format!("{a:?}").contains("Parameter"))
+    });
+    assert!(
+        carries_src,
+        "expected src to appear as an argument of the printf call\n{prog}"
+    );
+}
+
+#[test_log::test]
+#[ignore = "aspirational: initializer_list (designated initializer `{.a = src}`) is an Unsupported \
+            expression type (ERR 78) in mod.rs"]
+fn designated_initializer_flows() {
+    // A designated initializer `Thing v = {.a = src}` should taint `v.a`, so `return v.a` carries src.
+    // The frontend rejects `initializer_list` outright; documents the intended flow until it lowers.
+    let src = r"
+        int f(int src) {
+            Thing v = {.a = src};
+            return v.a;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "a");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: goto_statement is an Unsupported expression type (ERR 78) in mod.rs"]
+fn goto_label_flows() {
+    // A forward `goto` over an assignment, then the label: `goto L; L: x = src;` then `return x` should
+    // flow src to the return (and a backward goto would form a loop). The frontend rejects
+    // `goto_statement` outright; documents the intended flow until labels/goto lower.
+    let src = r"
+        int f(int src) {
+            int x;
+            goto L;
+        L:
+            x = src;
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
