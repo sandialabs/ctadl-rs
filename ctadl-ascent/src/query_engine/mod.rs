@@ -306,7 +306,7 @@ pub mod ascent_code {
         // base taints every element read off it (e.g. `argv[i]` inherits `argv`'s
         // taint). Mirrors the forward field rule above with the leading Offset
         // dropped from the source path.
-        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, v2.clone(), p23.clone(), None) <--
+        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, ts, v2.clone(), p23.clone(), None) <--
             taint(infunc, ts, v2, p23, a),
             if a.direction == TaintDirection::Forward,
             assign_like(infunc, v1, p1, v2, p2),
@@ -321,7 +321,7 @@ pub mod ascent_code {
         // Dropping the leading offset from the source path `p1` lets the
         // backward cone reach the base's offset-0 view, so the reconstructed
         // source->sink path is complete (the code flow traces back to argv).
-        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, v2.clone(), p23.clone(), None) <--
+        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, ts, v2.clone(), p23.clone(), None) <--
             taint(infunc, ts, v2, p23, a),
             if a.direction == TaintDirection::Backward,
             assign_like(infunc, v2, p2, v1, p1),
