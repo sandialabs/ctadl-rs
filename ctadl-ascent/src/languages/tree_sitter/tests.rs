@@ -1246,6 +1246,85 @@ fn continue_back_edge_flows() {
     check_returns_param(&s, 0, "");
 }
 
+// ----------------------------------------------------------------------------------------------
+// Coverage wave 4: cheap precision tests (unary blend-through, constant-index field sensitivity)
+// and more call-graph depth (mutual recursion, struct-by-value non-interference through a call).
+// All chosen because their AST nodes already lower -- the recurring node-support gate.
+// ----------------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn unary_ops_blend_through() {
+    // Unary operators are value-preserving for taint: negation, bitwise-not, and logical-not all carry
+    // their operand to the result. (`!x` arguably should not -- it yields 0/1 -- but the frontend
+    // treats it as a blend like the others; we pin the actual behavior.) Each is its own parse so a
+    // single operator failing is isolated in the assertion message.
+    for op in ["-", "~", "!"] {
+        let src = format!("int f(int x) {{ return {op}x; }}");
+        let (s, _si) = get_summary(program_from_string(&src).0).unwrap();
+        check_returns_param(&s, 0, "");
+    }
+}
+
+#[test_log::test]
+fn constant_index_field_precision() {
+    // Constant subscripts are distinct field paths: writing `src` into `v.a[0]` must NOT leak to a read
+    // of `v.a[1]`. Subscripts lower to `FieldAccess::Symbol("[N]")`, so `[0]` and `[1]` are different
+    // segments -- the array-index analogue of `field_non_interference`. The load-bearing assertion is
+    // that src (p1) does not reach the return through the distinct index.
+    //
+    // NB the escaped brackets in the path strings: the summary stores a subscript as the literal
+    // `Symbol("[0]")`, but `facts::Path`'s parser reads an unescaped `[0]` as a real `Offset(0)` (the
+    // Symbol-vs-Offset divergence noted in this dir's CLAUDE.md). Escaping (`\[0\]`) forces the parser
+    // to emit a Symbol, matching what the frontend actually lowered.
+    let src = r"
+        int f(Thing v, int src) {
+            v.a[0] = src;
+            return v.a[1];
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 1, "", 0, r"a.\[0\]"); // src -> v.a[0]
+    check_returns_param(&s, 0, r"a.\[1\]"); // v.a[1] -> return
+    check_does_not_return_param(&s, 1, ""); // src (into a[0]) does NOT reach the a[1] return
+}
+
+#[test_log::test]
+#[ignore = "aspirational: mutual recursion yields an EMPTY summary -- the f<->g cycle fixpoint is not \
+            computed (contrast recursion_returns_param: direct self-recursion works). Node lowers, \
+            flow dropped."]
+fn mutual_recursion_returns_param() {
+    // Mutual recursion (`f` calls `g`, `g` calls `f`) should reach a joint summary fixpoint where each
+    // function returns its parameter. Today the cycle produces NO summary at all (`summary: []`) --
+    // localized to the cycle itself: the same fixture with `g` returning directly (no call back) DOES
+    // summarize. Direct self-recursion already works (`recursion_returns_param`); only the mutual case
+    // is dropped. Pinned per-function so the two summaries aren't conflated once the fixpoint lands.
+    let src = r"
+        int g(int y);
+        int f(int x) { return g(x); }
+        int g(int y) { return f(y); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+    check_returns_param_in(&s, &si, "g", 0, "");
+}
+
+#[test_log::test]
+fn struct_by_value_non_interference_through_call() {
+    // Field sensitivity survives a by-value struct through a call: `callee` reads only `p.a`, so a
+    // caller that writes `src` into the *other* field `s.b` and returns `callee(s)` must NOT leak src
+    // to its return. The non-interference complement of `struct_by_value_through_call`. Uses the
+    // per-function negative so the absence is asserted on the caller's summary specifically.
+    let src = r"
+        int callee(Donkey p) {
+            return p.a;
+        }
+        int caller(Donkey s, int src) {
+            s.b = src;
+            return callee(s);
+        }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "caller", 0, "a"); // s.a still reaches caller's return
+    check_does_not_return_param_in(&s, &si, "caller", 1, ""); // src (into s.b) does not
+}
+
 #[test_log::test]
 #[ignore = "aspirational: switch_statement is an Unsupported expression type (ERR 78) in mod.rs"]
 fn switch_case_flows() {

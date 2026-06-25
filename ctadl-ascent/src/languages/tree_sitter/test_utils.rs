@@ -659,6 +659,28 @@ pub(crate) fn check_returns_param_in(
     );
 }
 
+/* `check_does_not_return_param` for a named function in a multi-function fixture: asserts param
+`param_num` (path `param_path`) does NOT reach the return *of that function*. The per-function
+return-endpoint negative -- use it for non-interference-through-a-call cases. */
+#[track_caller]
+pub(crate) fn check_does_not_return_param_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    param_num: i16,
+    param_path: &str,
+) {
+    check_no_flow_in(
+        summary,
+        source_info,
+        name,
+        param_num,
+        param_path,
+        RETURN_INDEX,
+        "",
+    );
+}
+
 // Unit tests for the access-path string DSL itself. These helpers contain real parsing logic, so a
 // bug here would silently weaken every test that relies on them.
 #[cfg(test)]
