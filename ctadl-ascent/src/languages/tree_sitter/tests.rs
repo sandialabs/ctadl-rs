@@ -1288,19 +1288,21 @@ fn constant_index_field_precision() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational: mutual recursion yields an EMPTY summary -- the f<->g cycle fixpoint is not \
-            computed (contrast recursion_returns_param: direct self-recursion works). Node lowers, \
-            flow dropped."]
 fn mutual_recursion_returns_param() {
-    // Mutual recursion (`f` calls `g`, `g` calls `f`) should reach a joint summary fixpoint where each
-    // function returns its parameter. Today the cycle produces NO summary at all (`summary: []`) --
-    // localized to the cycle itself: the same fixture with `g` returning directly (no call back) DOES
-    // summarize. Direct self-recursion already works (`recursion_returns_param`); only the mutual case
-    // is dropped. Pinned per-function so the two summaries aren't conflated once the fixpoint lands.
+    // Mutual recursion across a summary fixpoint: `f` calls `g`, `g` calls `f`, and EACH has a base
+    // case returning its parameter directly (`return x` / `return y`). The base cases seed the fixpoint
+    // with param->return for both functions; the recursive-call edges then propagate those summaries
+    // around the f<->g cycle without losing them. Pinned per-function so the two aren't conflated.
+    //
+    // The base cases are load-bearing. Without them -- `int f(int x){ return g(x); } int g(int y){
+    // return f(y); }` -- the program is non-terminating recursion that never returns, and the only
+    // sound summary is the EMPTY one: there is no param->return path that doesn't pass through another
+    // non-terminating call, so the least fixpoint is empty. That empty result is *correct*, not a
+    // dropped flow; a meaningful mutual-recursion test must supply a terminating base case.
     let src = r"
         int g(int y);
-        int f(int x) { return g(x); }
-        int g(int y) { return f(y); }";
+        int f(int x) { if (x > 0) return g(x); return x; }
+        int g(int y) { if (y > 0) return f(y); return y; }";
     let (s, si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param_in(&s, &si, "f", 0, "");
     check_returns_param_in(&s, &si, "g", 0, "");
