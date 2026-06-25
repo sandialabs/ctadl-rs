@@ -146,8 +146,10 @@ def insert_run(con: sqlite3.Connection, r: RunInfo, version: str) -> int:
         (r.sha256, r.tool, version, r.status, r.wall_s, r.peak_mem_mb, r.exit_code,
          r.cfg_time, r.taint_time, r.unsupported_reason, r.stderr_excerpt, r.started_at),
     )
-    if cur.lastrowid:
-        return cur.lastrowid
+    # NB: do NOT trust cur.lastrowid here -- after the ON CONFLICT DO UPDATE path
+    # (e.g. a --force re-run of an existing run) sqlite3's lastrowid is not the
+    # updated row's id, which then fails the finding.run_id foreign key. Always
+    # resolve the id by the unique key instead.
     row = con.execute(
         "SELECT id FROM run WHERE sha256=? AND tool=? AND analyzer_version=?",
         (r.sha256, r.tool, version),
