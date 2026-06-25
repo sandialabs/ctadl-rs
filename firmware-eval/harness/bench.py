@@ -349,7 +349,13 @@ def main() -> None:
                    help="version tag for the loaded Mango run")
     e.add_argument("--gt", default=None, help="ground-truth dataset file (json/jsonl/csv)")
     e.add_argument("--gt-origin", default="dataset", help="origin label for --gt rows")
-    e.add_argument("--addr-tolerance", type=int, default=0)
+    # Default tolerance absorbs the Ghidra(CTADL)<->angr(Mango) instruction-
+    # attribution jitter: CTADL anchors the sink at the tainted-arg setup insn,
+    # Mango at the `call` itself, typically <=~22 bytes apart. (Image-base deltas
+    # are already removed -- normalize_ctadl rebases onto angr's load base.) 32 is
+    # below the inter-sink spacing in the dense multi-sink fixtures, so it does not
+    # cross-match adjacent sinks.
+    e.add_argument("--addr-tolerance", type=int, default=32)
     e.add_argument("--show", type=int, default=20, help="rows per FN/FP list")
     e.set_defaults(func=cmd_eval)
 
@@ -357,8 +363,9 @@ def main() -> None:
     c.add_argument("--db", required=True)
     c.add_argument("--cta-version", required=True)
     c.add_argument("--mango-version", required=True)
-    c.add_argument("--addr-tolerance", type=int, default=0,
-                   help="abs address window for a match (set to angr<->ghidra base delta)")
+    c.add_argument("--addr-tolerance", type=int, default=32,
+                   help="abs address window for a match (absorbs lifter attribution jitter; "
+                        "base deltas are already removed by normalize_ctadl's rebasing)")
     c.add_argument("--show", type=int, default=0, help="print up to N rows per bucket")
     c.set_defaults(func=cmd_compare)
 
@@ -370,7 +377,7 @@ def main() -> None:
     sc.add_argument("--db", required=True)
     sc.add_argument("--tool", default="cta")
     sc.add_argument("--version", required=True)
-    sc.add_argument("--addr-tolerance", type=int, default=0)
+    sc.add_argument("--addr-tolerance", type=int, default=32)
     sc.add_argument("--show", type=int, default=0)
     sc.set_defaults(func=cmd_score)
 
@@ -382,7 +389,7 @@ def main() -> None:
     tf.add_argument("--tool", default="cta")
     tf.add_argument("--version", required=True)
     tf.add_argument("--analyst", default="auto")
-    tf.add_argument("--addr-tolerance", type=int, default=0)
+    tf.add_argument("--addr-tolerance", type=int, default=32)
     tf.set_defaults(func=cmd_triage)
 
     ts = tsub.add_parser("set", help="record a manual verdict on a finding / GT row")

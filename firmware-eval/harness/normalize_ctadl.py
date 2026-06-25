@@ -33,6 +33,14 @@ from typing import Optional
 
 import findings as F
 
+# Mango/angr load every one of these test binaries at this base, while Ghidra
+# loads PIE ELFs at 0x100000 and non-PIE at 0x400000. The SARIF `address` object
+# carries a base-independent `relativeAddress` (RVA); rebasing it onto the angr
+# base puts CTADL sink addresses in the SAME space as the Mango ground truth, so
+# they join address-primary regardless of PIE/non-PIE. (A small --addr-tolerance
+# still absorbs the call-vs-arg-setup instruction jitter between the two lifters.)
+ANGR_LOAD_BASE = 0x400000
+
 # The cmdi sink callee names (mirror of the model / Mango COMMAND_INJECTION_SINKS).
 # Used to recognize which sink a flow ends in, by scanning the SARIF text.
 CMDI_SINKS = {
@@ -77,11 +85,28 @@ def _sink_callee(result: dict) -> Optional[str]:
 
 def _sink_site(result: dict) -> tuple[Optional[int], Optional[str]]:
     """Best-effort sink call-site location. Returns (value, kind) where kind is
-    'address' or 'line'. Finalize the pcode address path on first real binary."""
+    'address' or 'line'.
+
+    Current pcode SARIF (post "Anchor query endpoints at callsites", #31) encodes
+    the sink-call instruction address under
+    `locations[0].physicalLocation.address.absoluteAddress` -- a real VA in the
+    same space Mango reports, so it joins address-primary against the Mango GT.
+    Older fallbacks (a property bag or `region.startLine`) are kept for SARIF that
+    predates the `address` object."""
     locs = result.get("locations") or []
     if not locs:
         return None, None
     phys = (locs[0].get("physicalLocation") or {})
+    # Preferred: the SARIF `address` object on the sink physicalLocation. Rebase
+    # the (base-independent) relativeAddress onto angr's load base so it lands in
+    # the Mango ground-truth address space; fall back to absoluteAddress as-is.
+    addr = phys.get("address") or {}
+    rel = F.parse_addr(addr.get("relativeAddress"))
+    if rel is not None:
+        return rel + ANGR_LOAD_BASE, "address"
+    a = F.parse_addr(addr.get("absoluteAddress"))
+    if a is not None:
+        return a, "address"
     # pcode frontends may carry the address as a property or in the uri.
     props = locs[0].get("properties") or {}
     for key in ("address", "ins_addr", "vaddr"):
