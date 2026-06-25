@@ -1073,3 +1073,79 @@ fn sizeof_does_not_evaluate() {
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_does_not_return_param(&s, 0, "");
 }
+
+// ----------------------------------------------------------------------------------------------
+// Coverage wave 2: aggregate precision and pointer writes. Constructs whose AST nodes are already
+// lowered, climbing toward the pointer cases where the value-vs-pointer indistinction bites.
+// ----------------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn whole_struct_copy_carries_field() {
+    // A whole-struct assignment (`t = s`) copies field taint: a later `t.a` read still resolves back
+    // to the source struct's field. So s.a (@p0.a) reaches the return through the copy.
+    let src = r"
+        int f(Donkey s) {
+            Donkey t;
+            t = s;
+            return t.a;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "a");
+}
+
+#[test_log::test]
+fn nested_field_depth_returns() {
+    // A deep field read (`v.a.b.c`) preserves the full access path: the summary endpoint is the
+    // three-deep field path on the formal, not a flattened or truncated one.
+    let src = r"
+        int f(Thing v) {
+            return v.a.b.c;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "a.b.c");
+}
+
+#[test_log::test]
+fn field_store_then_load_roundtrips() {
+    // Storing into a field and reading it back round-trips taint: `v.inner.val = x` then `y =
+    // v.inner.val` carries x to y, and the return. Exercises field-store/field-load on the same path
+    // across statements.
+    let src = r"
+        int f(Box v, int x) {
+            v.inner.val = x;
+            int y = v.inner.val;
+            return y;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn out_param_write_propagates() {
+    // The canonical C out-parameter taint shape: `*out = src` should propagate src (@p1) into the
+    // object reached through out (@p0). This is the highest-value pointer pattern for a taint tool.
+    let src = r"
+        void f(int *out, int src) {
+            *out = src;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 1, "", 0, "");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: address-of aliasing not modeled -- `int *p = &x; *p = src;` parses but does \
+            not taint x (contrast out_param_write_propagates, which works through a by-ref param)"]
+fn address_of_local_aliases() {
+    // Taking a local's address and writing through it (`int *p = &x; *p = src;`) should taint x, so a
+    // later `return x` carries src. Exercises address-of plus write-through-alias. Today the &x
+    // aliasing is dropped (the node lowers, but p = &x / *p = src reassign p's local, not x), so src
+    // never reaches the return -- documented here until aliasing lands.
+    let src = r"
+        int f(int x, int src) {
+            int *p = &x;
+            *p = src;
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, "");
+}
