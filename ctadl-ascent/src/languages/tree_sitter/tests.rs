@@ -720,3 +720,107 @@ fn assign_in_call_arg() {
     let prog = program_from_string(src).0;
     check_assign_or_update(&prog, "x", ["@p0"], None);
 }
+
+// ---- switch / case (+ break, continue) -------------------------------------
+// CTADL is path-insensitive, like its `if` lowering: it does not evaluate the
+// scrutinee, so every `case`/`default` arm is treated as reachable. These tests
+// assert the resulting (sound, over-approximate) param->return summary flows.
+
+#[test_log::test]
+fn switch_case_flows_to_return() {
+    // Taint in a `case` arm reaches the return. `b` (@p1) is assigned to `x` in
+    // `case 1`; after the switch merges, `x` carries @p1 into the return.
+    let src = r"
+        int f(int a, int b) {
+            int x = 0;
+            switch (a) {
+                case 1:
+                    x = b;
+                    break;
+                default:
+                    x = 0;
+                    break;
+            }
+            return x;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn switch_default_flows_to_return() {
+    // The `default` arm is just a valueless `case_statement`. `b` (@p1) assigned in
+    // `default` flows to the return.
+    let src = r"
+        int f(int a, int b) {
+            int x = 0;
+            switch (a) {
+                case 1:
+                    x = 0;
+                    break;
+                default:
+                    x = b;
+                    break;
+            }
+            return x;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn switch_fallthrough_flows_to_return() {
+    // Fall-through across a `case` boundary (no `break` after `case 1`): `x = b`
+    // in `case 1` flows into `y = x` in `case 2`, then to the return.
+    let src = r"
+        int f(int a, int b) {
+            int x = 0;
+            int y = 0;
+            switch (a) {
+                case 1:
+                    x = b;
+                case 2:
+                    y = x;
+                    break;
+                default:
+                    break;
+            }
+            return y;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn break_exits_loop_flows_to_return() {
+    // `break` inside a loop must be ingested (it had no handler before switch
+    // support landed). The taint assigned before the `break` still reaches the
+    // return.
+    let src = r"
+        int f(int a, int b) {
+            int x = 0;
+            while (a) {
+                x = b;
+                break;
+            }
+            return x;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn continue_in_loop_flows_to_return() {
+    // `continue` is likewise ingested; the body's taint assignment still flows.
+    let src = r"
+        int f(int a, int b) {
+            int x = 0;
+            while (a) {
+                x = b;
+                continue;
+            }
+            return x;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
