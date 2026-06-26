@@ -10,7 +10,7 @@ use crate::facts as fx;
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::{FunctionSummary, IndexFacts, taint_index};
 use crate::{
-    codegen::{CallResolutionStrategy, RETURN_INDEX, codegen_program},
+    codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program},
     languages::tree_sitter,
 };
 use anyhow::{Context, Result};
@@ -676,6 +676,50 @@ pub(crate) fn check_does_not_return_param_in(
         name,
         param_num,
         param_path,
+        RETURN_INDEX,
+        "",
+    );
+}
+
+/* Asserts function `name` writes parameter `param_num` into the global `field` -- the summary flow
+`@pN -> $globals.field` (e.g. `void set(int src){ g = src; }` summarizes `@p0 -> $globals.g`). The
+global heap is the special `GLOBALS_INDEX` summary endpoint; this hides that constant. Pairs with
+`check_returns_global_in` to pin a cross-function flow-through-a-global as two summary halves. */
+#[track_caller]
+pub(crate) fn check_param_into_global_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    param_num: i16,
+    field: &str,
+) {
+    check_flow_in(
+        summary,
+        source_info,
+        name,
+        param_num,
+        "",
+        GLOBALS_INDEX,
+        field,
+    );
+}
+
+/* Asserts function `name` returns the global `field` -- the summary flow `$globals.field -> return`
+(e.g. `int get(){ return g; }` summarizes `$globals.g -> return`). The other half of a
+flow-through-a-global; see `check_param_into_global_in`. */
+#[track_caller]
+pub(crate) fn check_returns_global_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    field: &str,
+) {
+    check_flow_in(
+        summary,
+        source_info,
+        name,
+        GLOBALS_INDEX,
+        field,
         RETURN_INDEX,
         "",
     );

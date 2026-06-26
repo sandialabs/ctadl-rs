@@ -1480,3 +1480,95 @@ fn goto_label_flows() {
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&s, 0, "");
 }
+
+// ----------------------------------------------------------------------------------------------
+// Coverage wave 6: cross-function and expression flows we hadn't pinned -- flow through a global,
+// transitive call depth, comma operator, short-circuit blend, and const/static locals. All probed
+// to lower first; every one produced the ideal flow (no #[ignore] this wave).
+// ----------------------------------------------------------------------------------------------
+
+#[test_log::test]
+fn global_flows_across_functions() {
+    // Taint through a global: `set` writes its parameter into global `g`, `get` returns `g`. Each half
+    // is a summary endpoint on the special global heap -- `set`: @p0 -> $globals.g, `get`:
+    // $globals.g -> return -- so the two compose into a cross-function flow `set`'s param ~> `get`'s
+    // return. Pins that global writes/reads are summarized (not dropped) and tied to the right function.
+    let src = r"
+        int g;
+        void set(int src) { g = src; }
+        int get() { return g; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_param_into_global_in(&s, &si, "set", 0, "g");
+    check_returns_global_in(&s, &si, "get", "g");
+}
+
+#[test_log::test]
+fn transitive_call_depth_returns_param() {
+    // Summary composition through three call hops: `a` calls `b` calls `c`, each returning its param.
+    // The param->return summary must propagate all the way out, so every function reports @p0 -> return
+    // (we only ever tested a single call hop before). Pinned per-function.
+    let src = r"
+        int c(int z) { return z; }
+        int b(int y) { return c(y); }
+        int a(int x) { return b(x); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "c", 0, "");
+    check_returns_param_in(&s, &si, "b", 0, "");
+    check_returns_param_in(&s, &si, "a", 0, "");
+}
+
+#[test_log::test]
+fn comma_operator_yields_rhs() {
+    // The comma operator `(a, b)` evaluates `a`, discards its value, and yields `b`. So `b` (p1) reaches
+    // the return and the discarded `a` (p0) does NOT -- a precise, correct result (not an over-approx
+    // blend). Distinct from `comma_list_declarations`, which is comma-separated *declarations*.
+    let src = r"
+        int f(int a, int b) {
+            return (a, b);
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, ""); // b is the value of the comma expression
+    check_does_not_return_param(&s, 0, ""); // a is evaluated then discarded
+}
+
+#[test_log::test]
+fn short_circuit_both_operands_flow() {
+    // A short-circuit `a && b` yields a 0/1 value derived from both operands (b only when a is truthy).
+    // The frontend treats it as a blend, so both p0 and p1 flow to the return -- the sound over-approx
+    // (it does not try to model that `b` may go unevaluated). Pins the blend behavior.
+    let src = r"
+        int f(int a, int b) {
+            return a && b;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn const_local_flows() {
+    // A `const`-qualified local is an ordinary local for dataflow: `const int x = src;` then `return x`
+    // carries src to the return. (Robustness: the qualifier must not change lowering.)
+    let src = r"
+        int f(int src) {
+            const int x = src;
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn static_local_flows() {
+    // A `static` local persists across calls, but within a single call `x = src; return x;` still flows
+    // src to the return. We pin the intra-call flow (cross-call persistence is not modeled and is out
+    // of scope for a per-function summary). Robustness: the `static` qualifier must not drop the flow.
+    let src = r"
+        int f(int src) {
+            static int x;
+            x = src;
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
