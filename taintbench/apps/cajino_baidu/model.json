@@ -9,6 +9,11 @@
     "cloud storage; FileWriter.write() writes the data to a local file; File.delete()",
     "deletes a (tainted) file. Sinks use Argument(*) so any tainted argument reaching the",
     "call is a leak; File.delete()/File.<init> use Argument(0) (the receiver / first arg).",
+    "putObject(PutObjectRequest) takes a request object rather than the raw data, and the",
+    "exfiltrated value is stored in the request's `object` (upload-key) field (e.g. finding",
+    "#7, where the device id becomes the upload key). ctadl is field-sensitive, so a sink",
+    "on the bare argument does not fire on a tainted subfield; the second putObject sink",
+    "names that field explicitly, matched by its full IR field descriptor (not short name).",
     "ctadl ignores the non-schema `description` key, as it does `expected_lines` in the",
     "nightly models."
   ],
@@ -117,6 +122,10 @@
           {
             "kind": "Exfiltration",
             "port": "Argument(*)"
+          },
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*).<Lcom/baidu/inf/iis/bcs/request/BaiduBCSRequest;->object:Ljava/lang/String;>"
           }
         ]
       }
