@@ -93,7 +93,9 @@ fn parse_taintbench_args(mut args: impl Iterator<Item = String>) -> Result<taint
                 opts.apps_dir = Some(PathBuf::from(dir));
             }
             "--apk" => {
-                let spec = args.next().context("--apk requires a value (<name>=<path>)")?;
+                let spec = args
+                    .next()
+                    .context("--apk requires a value (<name>=<path>)")?;
                 let (name, path) = spec
                     .split_once('=')
                     .with_context(|| format!("--apk expects <name>=<path>, got `{spec}`"))?;

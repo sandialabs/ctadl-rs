@@ -104,7 +104,10 @@ pub fn run(opts: &Options) -> Result<bool> {
             }
             Outcome::Fail(why) => {
                 failures += 1;
-                println!("  FAIL  {name}\n        {}", why.replace('\n', "\n        "));
+                println!(
+                    "  FAIL  {name}\n        {}",
+                    why.replace('\n', "\n        ")
+                );
             }
         }
     }
@@ -251,9 +254,17 @@ fn run_app(app: &App, apk: &Path) -> Result<Outcome> {
     let sarif = work.join("results.sarif");
     let apk_str = apk.to_string_lossy().into_owned();
 
-    run_ctadl(&work, &state, &["import", "-l", "apk", "-n", &project, &apk_str])?;
+    run_ctadl(
+        &work,
+        &state,
+        &["import", "-l", "apk", "-n", &project, &apk_str],
+    )?;
     run_ctadl(&work, &state, &["index", &project])?;
-    run_ctadl(&work, &state, &["query", &project, "-m", &model.to_string_lossy()])?;
+    run_ctadl(
+        &work,
+        &state,
+        &["query", &project, "-m", &model.to_string_lossy()],
+    )?;
     run_ctadl(
         &work,
         &state,
@@ -358,8 +369,14 @@ fn run_app(app: &App, apk: &Path) -> Result<Outcome> {
 
     // Compare against the baseline.
     let expected_ids: BTreeSet<i64> = expected.matched_finding_ids.iter().copied().collect();
-    let regressions: Vec<i64> = expected_ids.difference(&matched_positive).copied().collect();
-    let improvements: Vec<i64> = matched_positive.difference(&expected_ids).copied().collect();
+    let regressions: Vec<i64> = expected_ids
+        .difference(&matched_positive)
+        .copied()
+        .collect();
+    let improvements: Vec<i64> = matched_positive
+        .difference(&expected_ids)
+        .copied()
+        .collect();
 
     let total_positive = findings.findings.iter().filter(|f| !f.is_negative).count();
     let summary = format!(
@@ -409,8 +426,18 @@ fn dump_callees(label: &str, callees: &BTreeSet<Callee>) {
 
 fn results_with_rule<'a>(sarif: &'a Value, rule_id: &str) -> Vec<&'a Value> {
     let mut out = Vec::new();
-    for run in sarif.get("runs").and_then(|v| v.as_array()).into_iter().flatten() {
-        for res in run.get("results").and_then(|v| v.as_array()).into_iter().flatten() {
+    for run in sarif
+        .get("runs")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        for res in run
+            .get("results")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
             if res.get("ruleId").and_then(|v| v.as_str()) == Some(rule_id) {
                 out.push(res);
             }
@@ -424,10 +451,20 @@ fn results_with_rule<'a>(sarif: &'a Value, rule_id: &str) -> Vec<&'a Value> {
 /// `logicalLocations` table.
 fn collect_endpoint_callees(sarif: &Value, rule_id: &str) -> BTreeSet<Callee> {
     let mut out = BTreeSet::new();
-    let run = sarif.get("runs").and_then(|v| v.as_array()).and_then(|a| a.first());
-    let table = run.and_then(|r| r.get("logicalLocations")).and_then(|v| v.as_array());
+    let run = sarif
+        .get("runs")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first());
+    let table = run
+        .and_then(|r| r.get("logicalLocations"))
+        .and_then(|v| v.as_array());
     for res in results_with_rule(sarif, rule_id) {
-        for loc in res.get("locations").and_then(|v| v.as_array()).into_iter().flatten() {
+        for loc in res
+            .get("locations")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
             if let Some(fqn) = logical_location_fqn(loc, table) {
                 if let Some(c) = parse_sarif_callee(&fqn) {
                     out.insert(c);
@@ -462,7 +499,10 @@ fn collect_path_pairs(sarif: &Value) -> BTreeSet<(Callee, Callee)> {
 /// Resolve a location's logical-location fully-qualified name, following an
 /// `index` into the run-level `logicalLocations` table when present.
 fn logical_location_fqn(loc: &Value, table: Option<&Vec<Value>>) -> Option<String> {
-    let ll = loc.get("logicalLocations").and_then(|v| v.as_array()).and_then(|a| a.first())?;
+    let ll = loc
+        .get("logicalLocations")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())?;
     if let Some(name) = ll
         .get("fullyQualifiedName")
         .or_else(|| ll.get("name"))
@@ -534,8 +574,13 @@ fn normalize_class(s: &str) -> String {
 
 fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {
     let mut cmd = Command::new("ctadl");
-    cmd.current_dir(work).env("XDG_STATE_HOME", state).args(args);
-    exec::run_checked(cmd, &format!("ctadl {}", args.first().copied().unwrap_or("")))?;
+    cmd.current_dir(work)
+        .env("XDG_STATE_HOME", state)
+        .args(args);
+    exec::run_checked(
+        cmd,
+        &format!("ctadl {}", args.first().copied().unwrap_or("")),
+    )?;
     Ok(())
 }
 
@@ -564,8 +609,14 @@ mod tests {
 
     #[test]
     fn normalize_class_forms() {
-        assert_eq!(normalize_class("Lcom/beita/contact/MyContacts;"), "com.beita.contact.MyContacts");
-        assert_eq!(normalize_class("android.content.ContentResolver"), "android.content.ContentResolver");
+        assert_eq!(
+            normalize_class("Lcom/beita/contact/MyContacts;"),
+            "com.beita.contact.MyContacts"
+        );
+        assert_eq!(
+            normalize_class("android.content.ContentResolver"),
+            "android.content.ContentResolver"
+        );
         assert_eq!(normalize_class("Lcom/a/B$Inner;"), "com.a.B.Inner");
     }
 
