@@ -67,36 +67,58 @@ impl<T> ControlFlowGraph for T where T: DirectedGraph + StartNode + Predecessors
 ///
 /// - `start` and `end` exist in the graph.
 pub fn find_path<G: Successors>(graph: &G, start: G::Node, end: G::Node) -> Option<Vec<G::Node>> {
+    find_path_to_set(graph, start, |n| end == n)
+}
+
+/// Find a path from `start` to the nearest node satisfying `is_target`,
+/// following successors. The returned path includes both `start` and the target
+/// node it reaches; `None` if no target is reachable.
+///
+/// This generalizes [`find_path`] to a set of acceptable endpoints; pass
+/// `|n| n == end` to recover single-target search.
+///
+/// # Preconditions
+///
+/// - `start` exists in the graph.
+pub fn find_path_to_set<G: Successors>(
+    graph: &G,
+    start: G::Node,
+    is_target: impl Fn(G::Node) -> bool,
+) -> Option<Vec<G::Node>> {
     use hashbrown::hash_set::HashSet;
     let mut visited = HashSet::new();
+    let mut parent = IndexVec::from_elem_n(None, graph.num_nodes());
+    let mut queue = Vec::new();
     let mut path = Vec::new();
-    fn dfs<G: Successors>(
-        graph: &G,
-        curr: G::Node,
-        target: G::Node,
-        visited: &mut HashSet<G::Node>,
-        path: &mut Vec<G::Node>,
-    ) -> bool {
-        if curr == target {
-            path.push(curr);
-            return true;
-        }
-        if !visited.insert(curr) {
-            return false;
-        }
-        path.push(curr);
-        for succ in graph.successors(curr) {
-            if dfs(graph, succ, target, visited, path) {
-                return true;
+
+    let mut end = start;
+    queue.push(start);
+
+    while let Some(n) = queue.pop() {
+        if visited.insert(n) {
+            if is_target(n) {
+                end = n;
+                break;
+            }
+            for m in graph.successors(n) {
+                if !visited.contains(&m) {
+                    parent.insert(m, n);
+                    queue.push(m);
+                }
             }
         }
-        path.pop();
-        false
     }
-    if dfs(graph, start, end, &mut visited, &mut path) {
-        Some(path)
-    } else {
+
+    if !is_target(end) {
         None
+    } else {
+        path.push(end);
+        while let Some(p) = parent.remove(end) {
+            path.push(p);
+            end = p;
+        }
+        path.reverse();
+        Some(path)
     }
 }
 

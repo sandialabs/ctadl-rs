@@ -57,3 +57,46 @@ impl Successors for TestGraph {
         self.successors[&node].iter().cloned()
     }
 }
+
+#[test]
+fn find_path_to_set_reaches_nearest_target() {
+    // 0 -> 1 -> 2 -> 3, plus a 0 -> 4 branch.
+    let g = TestGraph::new(0, &[(0, 1), (1, 2), (2, 3), (0, 4)]);
+
+    // Reaches a target in the set; the returned path ends at that target.
+    let path = find_path_to_set(&g, 0, |n| n == 3 || n == 4).expect("path exists");
+    assert_eq!(*path.first().unwrap(), 0);
+    let end = *path.last().unwrap();
+    assert!(end == 3 || end == 4);
+    // Path is a real walk: each step is a successor of the previous.
+    for w in path.windows(2) {
+        assert!(g.successors(w[0]).any(|s| s == w[1]));
+    }
+
+    // No reachable target -> None.
+    assert!(find_path_to_set(&g, 4, |n| n == 3).is_none());
+
+    // start is itself a target -> trivial single-node path.
+    assert_eq!(find_path_to_set(&g, 2, |n| n == 2), Some(vec![2]));
+
+    // Single-target predicate recovers `find_path`.
+    assert_eq!(find_path_to_set(&g, 0, |n| n == 3), find_path(&g, 0, 3));
+}
+
+#[test]
+fn find_path_to_set_handles_deep_graph() {
+    // A long linear chain: 0 -> 1 -> ... -> N. A recursive DFS would overflow
+    // the stack here; the iterative implementation must not.
+    const N: usize = 200_000;
+    let edges: Vec<(usize, usize)> = (0..N).map(|i| (i, i + 1)).collect();
+    let g = TestGraph::new(0, &edges);
+
+    let path = find_path_to_set(&g, 0, |n| n == N).expect("path exists");
+    assert_eq!(*path.first().unwrap(), 0);
+    assert_eq!(*path.last().unwrap(), N);
+    assert_eq!(path.len(), N + 1);
+
+    // Unreachable target in a deep graph still terminates with None.
+    let g2 = TestGraph::new(0, &(0..N).map(|i| (i, i + 1)).collect::<Vec<_>>());
+    assert!(find_path_to_set(&g2, 0, |n| n == N + 5).is_none());
+}
