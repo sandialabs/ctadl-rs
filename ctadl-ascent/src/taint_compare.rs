@@ -96,7 +96,11 @@ pub fn analyze_c_flows(
             endpoints.len(),
             n_src,
             n_sink,
-            source_info.sites.functions().map(|(_, f)| f.0.to_string()).collect::<Vec<_>>(),
+            source_info
+                .sites
+                .functions()
+                .map(|(_, f)| f.0.to_string())
+                .collect::<Vec<_>>(),
         );
     }
 

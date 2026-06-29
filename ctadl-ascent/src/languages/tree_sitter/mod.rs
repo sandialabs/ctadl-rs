@@ -350,6 +350,8 @@ fn add_scoped_block(
         blidx,
         sidx,
         continuation_blidx: scope_view.continuation_blidx,
+        break_target: scope_view.break_target,
+        continue_target: scope_view.continue_target,
         explainer: format!("{}.{}", blidx.get(), debug_explainer),
     };
     if link_the_blocks {
@@ -375,6 +377,8 @@ fn add_block(
         blidx,
         sidx: scope_view.sidx,
         continuation_blidx: scope_view.continuation_blidx,
+        break_target: scope_view.break_target,
+        continue_target: scope_view.continue_target,
         explainer: format!("{}.{}", blidx.get(), debug_explainer),
     };
     if link_the_blocks {
@@ -398,6 +402,8 @@ fn add_scope(
         blidx: scope_view.blidx,
         sidx,
         continuation_blidx: scope_view.continuation_blidx,
+        break_target: scope_view.break_target,
+        continue_target: scope_view.continue_target,
         explainer: format!("{}.{}", scope_view.blidx.get(), debug_explainer),
     }
 }
@@ -621,6 +627,16 @@ pub struct ScopeView {
     // `None` is the fall-off-the-end sentinel: a continuation link to `None` becomes
     // an implicit `return` rather than a `goto` back to the entry block.
     pub continuation_blidx: Option<BasicBlockIdx>,
+    // Where a `break` jumps: the innermost enclosing `switch`/loop continuation.
+    // `None` means there is no enclosing breakable construct (a `break` here is an
+    // error). Like `continuation_blidx`, this rides along by value as we descend, so
+    // a child scope that overrides it has the parent's value automatically restored
+    // on return — no explicit stack/push/pop is needed.
+    pub break_target: Option<BasicBlockIdx>,
+    // Where a `continue` jumps: the innermost enclosing loop's re-test/update block.
+    // A `switch` deliberately leaves this untouched, so a `continue` inside a switch
+    // arm still targets the enclosing loop (matching C semantics).
+    pub continue_target: Option<BasicBlockIdx>,
     pub explainer: String,
 }
 
@@ -914,6 +930,8 @@ impl<'a> Context<'a> {
             blidx: scope_view.blidx,
             sidx: for_sidx,
             continuation_blidx: scope_view.continuation_blidx,
+            break_target: scope_view.break_target,
+            continue_target: scope_view.continue_target,
             explainer: "for_loop".to_string(),
         };
 
@@ -971,8 +989,11 @@ impl<'a> Context<'a> {
         link_blocks(program, &condition_scope, &continuation, false)?;
         //what is the difference between walk_compound_statemnet and walk_compound_statement?
         body_scope.continuation_blidx = Some(update_scope.blidx);
-        self.break_targets.push(continuation.blidx);
-        self.continue_targets.push(update_scope.blidx);
+        // `break` leaves the loop; `continue` jumps to the update expression (which
+        // then re-tests the condition). Set on the body view so they ride into every
+        // nested non-loop block and are restored after the loop.
+        body_scope.break_target = Some(continuation.blidx);
+        body_scope.continue_target = Some(update_scope.blidx);
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
         self.continue_targets.pop();
         self.break_targets.pop();
@@ -1030,9 +1051,67 @@ impl<'a> Context<'a> {
         // continuation was already added by the condition's end-of-compound link.
         link_blocks(program, &condition_sv, &body_scope, false)?;
         body_scope.continuation_blidx = Some(condition_sv.blidx);
-        self.break_targets.push(continuation.blidx);
-        self.continue_targets.push(condition_sv.blidx);
+        // `break` leaves the loop; `continue` jumps to the post-body condition test.
+        body_scope.break_target = Some(continuation.blidx);
+        body_scope.continue_target = Some(condition_sv.blidx);
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
+        self.continue_targets.pop();
+        self.break_targets.pop();
+        *scope_view = continuation;
+        Ok(())
+    }
+
+    // there is a lot of commonality between the top of the while and the top of the if.. then the if descends into madness.
+    // hopefully we can use "walk_while" more generically for all the looping constructs
+    fn walk_while(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        child: Node<'_>,
+    ) -> Result<(), Error> {
+        //debug_print_tree(child, 0, Some("while"), Some(20));
+        let condition = child
+            .child_by_field_name("condition")
+            .expect("always has condition");
+
+        let (mut condition_sv, cp) = self.setup_compound(
+            program,
+            scope_view,
+            condition,
+            BlockTypeRequest::NewBlockOrScopedBlock,
+            true,
+            "while_condition",
+        )?;
+
+        let continuation = add_block(
+            program,
+            &*scope_view,
+            &mut self.scope_tree,
+            false,
+            "Continuation",
+        )?;
+
+        condition_sv.continuation_blidx = Some(continuation.blidx);
+        //        self.flatten_expr(program, condition, source, &condition_sv)?; // gather field accesses and what not but we don't care about the condition result,etc.
+        self.walk_compound_statement(source, program, &condition_sv, &cp)?;
+
+        let body_node = child.child_by_field_name("body").expect("always has body");
+
+        let (mut body_scope, cp) = self.setup_compound(
+            program,
+            &mut condition_sv,
+            body_node,
+            BlockTypeRequest::NewBlockOrScopedBlock,
+            true,
+            "while_body",
+        )?;
+
+        body_scope.continuation_blidx = Some(condition_sv.blidx);
+        // `break` leaves the loop; `continue` jumps back to the condition re-test.
+        body_scope.break_target = Some(continuation.blidx);
+        body_scope.continue_target = Some(condition_sv.blidx);
+        self.walk_compound_statement(source, program, &body_scope, &cp)?;
         self.continue_targets.pop();
         self.break_targets.pop();
         *scope_view = continuation;
@@ -1083,7 +1162,9 @@ impl<'a> Context<'a> {
             .any(|a| a.child_by_field_name("value").is_none());
 
         // One block per arm, created up front so each arm can fall through to the
-        // next one.
+        // next one. They inherit the switch's scope view, so each arm's
+        // `continue_target` is the enclosing loop's (a `switch` is transparent to
+        // `continue`); only `break_target` is overridden below.
         let mut arm_svs: Vec<ScopeView> = Vec::with_capacity(arms.len());
         for i in 0..arms.len() {
             arm_svs.push(add_block(
@@ -1105,9 +1186,6 @@ impl<'a> Context<'a> {
             link_blocks(program, &*scope_view, &continuation, false)?;
         }
 
-        // `break` in any arm jumps to the continuation; `switch` does not catch
-        // `continue`, so the enclosing loop's target (if any) stays in effect.
-        self.break_targets.push(continuation.blidx);
         for (i, arm) in arms.iter().enumerate() {
             // Fall through to the next arm, or out of the switch on the last arm.
             let fallthrough = arm_svs
@@ -1116,6 +1194,9 @@ impl<'a> Context<'a> {
                 .unwrap_or(continuation.blidx);
             let mut arm_sv = arm_svs[i].clone();
             arm_sv.continuation_blidx = Some(fallthrough);
+            // `break` in any arm jumps to the continuation. `continue_target` is left
+            // inherited so a `continue` here still targets the enclosing loop.
+            arm_sv.break_target = Some(continuation.blidx);
 
             // Arm body = the case_statement's statement children (everything except
             // the `case` value expression).
@@ -1131,16 +1212,16 @@ impl<'a> Context<'a> {
             };
             self.walk_compound_statement(source, program, &arm_sv, &cp)?;
         }
-        self.break_targets.pop();
 
         *scope_view = continuation;
         Ok(())
     }
 
-    /// `break`: terminate the current block with a goto to the innermost
-    /// `switch`/loop continuation.
-    fn walk_break(&mut self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
-        match self.break_targets.last().copied() {
+    /// `break`: terminate the current block with a goto to the innermost enclosing
+    /// `switch`/loop continuation. The target rides on the scope view, so it is just
+    /// `scope_view.break_target` — no stack to consult.
+    fn walk_break(&self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
+        match scope_view.break_target {
             Some(target) => {
                 let mut to = scope_view.clone();
                 to.blidx = target;
@@ -1152,14 +1233,10 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// `continue`: terminate the current block with a goto to the innermost loop's
-    /// re-test/update block.
-    fn walk_continue(
-        &mut self,
-        program: &mut Program,
-        scope_view: &ScopeView,
-    ) -> Result<(), Error> {
-        match self.continue_targets.last().copied() {
+    /// `continue`: terminate the current block with a goto to the innermost enclosing
+    /// loop's re-test/update block (`scope_view.continue_target`).
+    fn walk_continue(&self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
+        match scope_view.continue_target {
             Some(target) => {
                 let mut to = scope_view.clone();
                 to.blidx = target;
@@ -1169,62 +1246,6 @@ impl<'a> Context<'a> {
                 "`continue` outside of a loop".to_string(),
             )),
         }
-    }
-
-    // there is a lot of commonality between the top of the while and the top of the if.. then the if descends into madness.
-    // hopefully we can use "walk_while" more generically for all the looping constructs
-    fn walk_while(
-        &mut self,
-        source: &'a str,
-        program: &mut Program,
-        scope_view: &mut ScopeView,
-        child: Node<'_>,
-    ) -> Result<(), Error> {
-        //debug_print_tree(child, 0, Some("while"), Some(20));
-        let condition = child
-            .child_by_field_name("condition")
-            .expect("always has condition");
-
-        let (mut condition_sv, cp) = self.setup_compound(
-            program,
-            scope_view,
-            condition,
-            BlockTypeRequest::NewBlockOrScopedBlock,
-            true,
-            "while_condition",
-        )?;
-
-        let continuation = add_block(
-            program,
-            &*scope_view,
-            &mut self.scope_tree,
-            false,
-            "Continuation",
-        )?;
-
-        condition_sv.continuation_blidx = Some(continuation.blidx);
-        //        self.flatten_expr(program, condition, source, &condition_sv)?; // gather field accesses and what not but we don't care about the condition result,etc.
-        self.walk_compound_statement(source, program, &condition_sv, &cp)?;
-
-        let body_node = child.child_by_field_name("body").expect("always has body");
-
-        let (mut body_scope, cp) = self.setup_compound(
-            program,
-            &mut condition_sv,
-            body_node,
-            BlockTypeRequest::NewBlockOrScopedBlock,
-            true,
-            "while_body",
-        )?;
-
-        body_scope.continuation_blidx = Some(condition_sv.blidx);
-        self.break_targets.push(continuation.blidx);
-        self.continue_targets.push(condition_sv.blidx);
-        self.walk_compound_statement(source, program, &body_scope, &cp)?;
-        self.continue_targets.pop();
-        self.break_targets.pop();
-        *scope_view = continuation;
-        Ok(())
     }
 
     fn walk_if(
@@ -1851,6 +1872,8 @@ impl<'a> Context<'a> {
                 blidx,
                 sidx: param_sidx,
                 continuation_blidx: None,
+                break_target: None,
+                continue_target: None,
                 explainer: "params".to_string(),
             };
 
@@ -1865,6 +1888,8 @@ impl<'a> Context<'a> {
                 blidx,
                 sidx: block_scope,
                 continuation_blidx: None,
+                break_target: None,
+                continue_target: None,
                 explainer: "initial_block".to_string(),
             };
             self.scope_tree.blocks.push(block_scope_view.clone());

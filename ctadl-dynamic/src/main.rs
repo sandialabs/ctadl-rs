@@ -399,7 +399,12 @@ fn format_table(rows: &[Row]) -> String {
     };
     let mut out = format!(
         "{:<nw$}  {:<8}  {:<6}  {:<6}  {:<7}  {}\n",
-        "case", "compiles", "oracle", "static", "dynamic", "status",
+        "case",
+        "compiles",
+        "oracle",
+        "static",
+        "dynamic",
+        "status",
         nw = name_w
     );
     out.push_str(&"-".repeat(name_w + 8 + 6 + 6 + 7 + 20));
@@ -430,7 +435,12 @@ fn format_summary(s: &Summary, ok: bool) -> String {
         format!(
             "{} cases: {} ok, {} known-gap, {} NEW-GAP, {} resolved-known-gap, {} precision-gap, \
              {} oracle-mismatch",
-            s.total, s.ok, s.known_gap, s.new_gap, s.resolved_known_gap, s.precision_gap,
+            s.total,
+            s.ok,
+            s.known_gap,
+            s.new_gap,
+            s.resolved_known_gap,
+            s.precision_gap,
             s.oracle_mismatch,
         ),
         format!(
@@ -651,7 +661,8 @@ fn clang_compiles(prog: &str, static_markers: &str) -> bool {
     let prog_path = dir.join(format!("ctadl_dyn_{stamp}_prog.c"));
     let mk_path = dir.join(format!("ctadl_dyn_{stamp}_markers.c"));
     let out_path = dir.join(format!("ctadl_dyn_{stamp}.out"));
-    if std::fs::write(&prog_path, prog).is_err() || std::fs::write(&mk_path, static_markers).is_err()
+    if std::fs::write(&prog_path, prog).is_err()
+        || std::fs::write(&mk_path, static_markers).is_err()
     {
         return false;
     }
