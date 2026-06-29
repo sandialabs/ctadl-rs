@@ -1029,8 +1029,6 @@ impl<'a> Context<'a> {
         body_scope.break_target = Some(continuation.blidx);
         body_scope.continue_target = Some(update_scope.blidx);
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
-        self.continue_targets.pop();
-        self.break_targets.pop();
         self.walk_compound_statement(source, program, &update_scope, &update_cp)?;
         *scope_view = continuation;
         Ok(())
@@ -1089,8 +1087,6 @@ impl<'a> Context<'a> {
         body_scope.break_target = Some(continuation.blidx);
         body_scope.continue_target = Some(condition_sv.blidx);
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
-        self.continue_targets.pop();
-        self.break_targets.pop();
         *scope_view = continuation;
         Ok(())
     }
@@ -1146,8 +1142,6 @@ impl<'a> Context<'a> {
         body_scope.break_target = Some(continuation.blidx);
         body_scope.continue_target = Some(condition_sv.blidx);
         self.walk_compound_statement(source, program, &body_scope, &cp)?;
-        self.continue_targets.pop();
-        self.break_targets.pop();
         *scope_view = continuation;
         Ok(())
     }
