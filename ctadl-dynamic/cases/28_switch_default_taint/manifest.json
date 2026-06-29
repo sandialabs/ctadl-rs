@@ -1,0 +1,6 @@
+{
+  "name": "switch_default_taint",
+  "description": "switch(99){case 1: x=0; default: x=s}; sink(x) -- taint in the default arm; expect flow",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "switch_merge_paths",
+  "description": "switch(1){case 1: x=s; case 2: x=0; default: x=0}; sink(x) after merge -- taken case is tainted",
+  "label": "Test",
+  "expect_flow": true
+}

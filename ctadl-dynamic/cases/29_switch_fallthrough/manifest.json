@@ -1,0 +1,6 @@
+{
+  "name": "switch_fallthrough",
+  "description": "switch(1){case 1: x=s; /* fall through */ case 2: y=x}; sink(y) -- taint crosses a case boundary; expect flow",
+  "label": "Test",
+  "expect_flow": true
+}
