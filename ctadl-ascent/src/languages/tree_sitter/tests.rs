@@ -496,6 +496,22 @@ fn subscript_access_paths() {
 }
 
 #[test_log::test]
+fn array_declaration_element_flows_to_return() {
+    // An explicit array *declaration* `int arr[3];` now ingests (previously
+    // "ERR 78: Unsupported expression type: array_declarator"). Taint written to an
+    // element flows back out when the same element is read: `b` (@p1) -> arr.[1] -> return.
+    // (Subscript access itself already worked; this exercises the declaration arm.)
+    let src = r"
+        int f(int a, int b) {
+            int arr[3];
+            arr[1] = b;
+            return arr[1];
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
 fn field_blend_into_field_update() {
     // A field store whose right-hand side is a sum mixing a direct field load with a value routed
     // through a local: `v->f4 = v->f5 + b`, where `b = v->f1 + v->f3`. All three source fields flow

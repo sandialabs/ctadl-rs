@@ -1477,7 +1477,7 @@ impl<'a> Context<'a> {
                 self.flatten_expr(program, ch1, source, scope_view)?;
                 self.flatten_expr(program, ch2, source, scope_view)
             }
-            "pointer_declarator" | "function_declarator" => {
+            "pointer_declarator" | "function_declarator" | "array_declarator" => {
                 self.flatten_nested_decl(program, node, source, scope_view)
             }
             "number_literal" | "string_literal" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
