@@ -1306,10 +1306,9 @@ impl<'a> Context<'a> {
             .child_by_field_name("label")
             .expect("goto_statement always has a label");
         let label = to_str(&label_node, source);
-        let target = *self
-            .label_blocks
-            .get(label)
-            .ok_or_else(|| Error::TreeSitterParse(format!("`goto` to undefined label `{label}`")))?;
+        let target = *self.label_blocks.get(label).ok_or_else(|| {
+            Error::TreeSitterParse(format!("`goto` to undefined label `{label}`"))
+        })?;
         let mut to = scope_view.clone();
         to.blidx = target;
         link_blocks(program, scope_view, &to, false)?;
@@ -1612,7 +1611,10 @@ impl<'a> Context<'a> {
                 // otherwise `id` is treated as a plain global and taint is dropped (F1).
                 // Direct calls are unaffected: `collect_call` resolves an identifier
                 // callee via `build_access_path`, not through here.
-                if self.scope_tree.find_variable(scope_view.sidx, text).is_none()
+                if self
+                    .scope_tree
+                    .find_variable(scope_view.sidx, text)
+                    .is_none()
                     && self.functions.keys().any(|f| f.0 == text)
                 {
                     Ok(Exp::ObjectRef(CallObject::FunctionPtr(text.into())))
