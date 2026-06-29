@@ -2,6 +2,5 @@
   "name": "funcptr_indirect",
   "description": "taint flows through an indirect call fp=id; fp(s) (tests indirect-call taint)",
   "label": "Test",
-  "expect_flow": true,
-  "known_gap": "F1"
+  "expect_flow": true
 }

@@ -2,6 +2,5 @@
   "name": "funcptr_separate_assign",
   "description": "F1 variant: int (*fp)(int); fp = id; r = fp(s) -- separate assignment, not initializer",
   "label": "Test",
-  "expect_flow": true,
-  "known_gap": "F1"
+  "expect_flow": true
 }

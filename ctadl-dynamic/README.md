@@ -64,10 +64,15 @@ matches *defined* functions, and DFSan needs instrumented ones). One `prog.c` se
   "description": "...",
   "label": "Test",          // taint label; matches markers.json (default "Test")
   "expect_flow": true,      // ORACLE: does taint truly flow source->sink? (hand-authored)
-  "known_gap": "F1",            // OPTIONAL: known, preserved SOUNDNESS gap
-  "known_frontend_gap": "array_declarator"  // OPTIONAL: known frontend INGESTION gap
+  "known_gap": "Fn",            // OPTIONAL: known, preserved SOUNDNESS gap (none open today)
+  "known_frontend_gap": "<construct>",       // OPTIONAL: known frontend INGESTION gap (none open today)
+  "precision_gap": "constant-condition"      // OPTIONAL: label for an EXPECTED precision gap
 }
 ```
+
+> Note: `known_gap` and `known_frontend_gap` are shown for completeness — as of 2026-06-29 **no
+> case sets either** (F1 and the `array_declarator`/`switch` frontend gaps are all fixed). The
+> only label in active use is `precision_gap` on the three constant-condition cases.
 
 There are **two allowlists**, both naming an entry in [`KNOWN_FINDINGS.md`](KNOWN_FINDINGS.md):
 
@@ -78,6 +83,15 @@ There are **two allowlists**, both naming an entry in [`KNOWN_FINDINGS.md`](KNOW
   `FRONTEND-ERROR` (fails the run). Finding "C source the frontend can't ingest" is a goal here,
   so an unexpected ingestion failure is surfaced, not swallowed.
 
+There is also a purely **descriptive** label (not an allowlist — precision gaps never fail the
+run):
+
+- `precision_gap` — names the reason a case is *expected* to over-report, surfaced as
+  `precision-gap (reason)` in the table/JSON. The only class today is **`constant-condition`**:
+  CTADL is path-insensitive and does not fold a compile-time-constant branch guard, so it keeps a
+  flow through a branch runtime never takes (dead `if(0)`, always-taken kill `if(1)`, untaken
+  `switch` case). This is sound over-approximation, not a bug — the label just makes that explicit.
+
 ## Per-case status
 
 | status                          | meaning                                                          |
@@ -86,7 +100,7 @@ There are **two allowlists**, both naming an entry in [`KNOWN_FINDINGS.md`](KNOW
 | `known-gap (Fn)`                | soundness gap, allowlisted via `known_gap` — expected            |
 | `NEW-GAP`                       | soundness gap, **not** allowlisted — a regression / new finding  |
 | `resolved-known-gap`            | allowlisted soundness gap that stopped failing — drop the entry  |
-| `precision-gap`                 | CTADL reported a flow runtime never produced (imprecision)       |
+| `precision-gap [(reason)]`      | CTADL reported a flow runtime never produced (imprecision); optional `reason` from `precision_gap`, e.g. `constant-condition` |
 | `known-frontend-gap (id)`       | frontend can't ingest it, allowlisted via `known_frontend_gap`   |
 | `FRONTEND-ERROR`                | frontend can't ingest it, **not** allowlisted — a new finding    |
 | `resolved-known-frontend-gap`   | frontend now ingests a previously-failing case — re-triage       |

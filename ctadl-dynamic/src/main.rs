@@ -56,6 +56,14 @@ struct Manifest {
     /// frontend later parses it, the run reports `resolved-known-frontend-gap`.
     #[serde(default)]
     known_frontend_gap: Option<String>,
+    /// If set, this case is *expected* to be a precision gap (CTADL soundly
+    /// over-reports a flow that does not occur at runtime) and the value names
+    /// the reason class, e.g. "constant-condition" (CTADL is path-insensitive
+    /// and does not fold a compile-time-constant branch guard). Precision gaps
+    /// never fail the run; this label is purely descriptive (surfaced in the
+    /// table / JSON) so the expected imprecision is self-documenting.
+    #[serde(default)]
+    precision_gap: Option<String>,
 }
 
 fn default_label() -> String {
@@ -76,7 +84,9 @@ enum Status {
     /// (likely fixed); the allowlist entry is now stale.
     ResolvedKnownGap(String),
     /// CTADL reported a flow that did not occur at runtime — imprecision.
-    PrecisionGap,
+    /// Carries an optional reason label from the manifest (`precision_gap`),
+    /// e.g. "constant-condition".
+    PrecisionGap(Option<String>),
     /// CTADL's C frontend failed to ingest the program, and it is NOT allowlisted
     /// — a new ingestion gap (the frontend is incomplete; this is a finding).
     FrontendError(String),
@@ -97,7 +107,7 @@ impl Status {
             Status::KnownGap(_) => "known-gap",
             Status::NewGap => "new-gap",
             Status::ResolvedKnownGap(_) => "resolved-known-gap",
-            Status::PrecisionGap => "precision-gap",
+            Status::PrecisionGap(_) => "precision-gap",
             Status::FrontendError(_) => "frontend-error",
             Status::KnownFrontendGap(_) => "known-frontend-gap",
             Status::ResolvedKnownFrontendGap(_) => "resolved-known-frontend-gap",
@@ -111,7 +121,8 @@ impl Status {
             Status::KnownGap(id) => format!("known-gap ({id})"),
             Status::NewGap => "NEW-GAP".to_string(),
             Status::ResolvedKnownGap(id) => format!("RESOLVED-KNOWN-GAP ({id})"),
-            Status::PrecisionGap => "precision-gap".to_string(),
+            Status::PrecisionGap(Some(reason)) => format!("precision-gap ({reason})"),
+            Status::PrecisionGap(None) => "precision-gap".to_string(),
             Status::FrontendError(m) => format!("FRONTEND-ERROR ({m})"),
             Status::KnownFrontendGap(id) => format!("known-frontend-gap ({id})"),
             Status::ResolvedKnownFrontendGap(id) => format!("RESOLVED-KNOWN-FRONTEND-GAP ({id})"),
@@ -125,6 +136,7 @@ impl Status {
             | Status::ResolvedKnownGap(id)
             | Status::KnownFrontendGap(id)
             | Status::ResolvedKnownFrontendGap(id) => Some(id.clone()),
+            Status::PrecisionGap(reason) => reason.clone(),
             Status::FrontendError(m) | Status::DynError(m) => Some(m.clone()),
             _ => None,
         }
@@ -302,7 +314,7 @@ fn run(json_mode: bool) -> Result<i32> {
                             None => Status::NewGap,
                         },
                         // CTADL reported a flow runtime never produced.
-                        (false, true) => Status::PrecisionGap,
+                        (false, true) => Status::PrecisionGap(manifest.precision_gap.clone()),
                         // agree: but if this was an allowlisted gap, it's now resolved.
                         _ => match &manifest.known_gap {
                             Some(id) => Status::ResolvedKnownGap(id.clone()),
@@ -363,7 +375,7 @@ fn summarize(rows: &[Row]) -> Summary {
             Status::KnownGap(_) => s.known_gap += 1,
             Status::NewGap => s.new_gap += 1,
             Status::ResolvedKnownGap(_) => s.resolved_known_gap += 1,
-            Status::PrecisionGap => s.precision_gap += 1,
+            Status::PrecisionGap(_) => s.precision_gap += 1,
             Status::FrontendError(_) => s.frontend_error += 1,
             Status::KnownFrontendGap(_) => s.known_frontend_gap += 1,
             Status::ResolvedKnownFrontendGap(_) => s.resolved_known_frontend_gap += 1,

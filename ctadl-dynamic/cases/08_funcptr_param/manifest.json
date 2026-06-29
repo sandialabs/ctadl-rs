@@ -2,6 +2,5 @@
   "name": "funcptr_param",
   "description": "F1 variant: function pointer passed as a parameter, called via f(x)",
   "label": "Test",
-  "expect_flow": true,
-  "known_gap": "F1"
+  "expect_flow": true
 }

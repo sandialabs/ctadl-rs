@@ -1,92 +1,69 @@
 # Known findings
 
-This file records **analyzer findings the comparison harness has surfaced and that we are
-intentionally leaving in place** — usually as exemplars of what the dynamic-vs-static
-approach catches.
+This file records **analyzer findings the comparison harness has surfaced** — soundness gaps and
+frontend ingestion gaps — and tracks their disposition. As of 2026-06-29 **every finding below
+is RESOLVED**: the harness ran clean (exit 0, 0 soundness-disagree, 0 frontend-error) and each
+case that once reproduced a gap is now a plain-`OK` regression test. The entries are kept as a
+record of what the dynamic-vs-static approach caught and how each was fixed.
 
-> If `cargo run -p ctadl-dynamic` prints a `known-gap (Fn)` for a case listed here, that is
-> **expected** — it's a real CTADL behavior we're tracking, not a broken test. Do **not** "fix"
-> it by flipping the case's manifest oracle; the oracle is correct and the gap is the point.
-
-Each finding names the case that reproduces it, so the documentation stays executable: run the
-harness and the gap re-appears.
-
-**Allowlist linkage.** Each finding's case is allowlisted by a `"known_gap": "Fn"` field in its
-`manifest.json` (see [README.md](README.md)). That is what turns a raw soundness gap into an
-expected `known-gap` instead of a run-failing `NEW-GAP`. When a finding is fixed, the harness
-reports the case as `resolved-known-gap` — at which point, remove the `known_gap` field **and**
-the finding entry below.
+**Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
+(soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see
+[README.md](README.md)). That turns a raw gap into an expected `known-gap`/`known-frontend-gap`
+instead of a run-failing `NEW-GAP`/`FRONTEND-ERROR`. When a fix lands, the harness reports the
+case as `resolved-known-gap` / `resolved-known-frontend-gap`; the closure step is to remove that
+field from the manifest **and** mark the entry below RESOLVED (which is the current state of all
+three findings).
 
 ---
 
-## F1 — Static taint is dropped through indirect (function-pointer) calls
+## F1 — Static taint dropped through indirect (function-pointer) calls (RESOLVED)
 
-- **Status:** open; intentionally preserved as an exemplar. Allowlisted via
-  `"known_gap": "F1"` in [`cases/05_funcptr_indirect/manifest.json`](cases/05_funcptr_indirect/manifest.json).
-- **Severity:** soundness false-negative (CTADL misses a flow that genuinely occurs).
-- **Reproduces with (all `known-gap (F1)`):** `05_funcptr_indirect` (local fp, initialized),
-  `07_funcptr_separate_assign` (local fp, separate assignment), `08_funcptr_param` (fp passed as
-  a parameter), `09_funcptr_in_struct` (fp in a struct field). `cargo run -p ctadl-dynamic`.
-- **Also covered by:** the (ignored) unit test `taint_flows_through_indirect_call` in
-  `ctadl-ascent/src/languages/tree_sitter/tests.rs`.
+- **Status:** **resolved** (fixed on `treesitter_feature_branch`, merged to `auto_test` as
+  `8484566` + `e01b58e`). The `known_gap: "F1"` allowlist has been removed from cases
+  `05`/`07`/`08`/`09`; they now run as plain `OK` and serve as regression tests.
+- **Was:** a soundness false-negative — CTADL did not carry taint through a call made via a
+  function pointer, even though the tainted value really reached the sink at runtime.
+- **Verified resolved by:** `cargo run -p ctadl-dynamic` reports `05`/`07`/`08`/`09` as
+  `static=flow dynamic=flow` (all `OK`); `scan cases/` reports **0 soundness-disagree**.
 
-### What it is
+### What it was
 
-CTADL's static taint analysis does not carry taint through a call made via a function pointer.
-The tainted value really does reach the sink at runtime, but the static analysis reports no
-flow.
-
-### Why we're confident it's real (controlled comparison)
-
-The corpus isolates the variable. Two cases call the same identity function `int id(int p)
+The corpus isolated the variable. Two cases call the same identity function `int id(int p)
 { return p; }`:
 
-| Case                  | Call form                          | Static result |
-|-----------------------|------------------------------------|---------------|
+| Case                  | Call form                          | Static result (before fix) |
+|-----------------------|------------------------------------|----------------------------|
 | `03_call_summary`     | `r = id(s);` (direct)              | flow ✓        |
 | `05_funcptr_indirect` | `fp = id; r = fp(s);` (indirect)   | **no flow** ✗ |
 
-The only difference is the indirection, so the dropped taint is attributable to indirect-call
-handling, not to summaries or field/local propagation (which the other cases confirm work).
+The only difference was the indirection, so the dropped taint was attributable to indirect-call
+handling. The gap was **broad** — all four function-pointer forms dropped taint: `05` local
+initialized (`int (*fp)(int) = id;`), `07` local assigned separately (`fp = id;`), `08` a
+parameter (`int apply(int (*f)(int), int x)`), `09` a struct field (`o.op = id; o.op(s)`).
 
-### Relationship to the C frontend work
+### The fix
 
-The C frontend was extended to *detect* indirect calls (emit `funcptr-call`, push
-`facts.indirect_call`). The gap is that the **taint query doesn't resolve** those calls to
-carry data through them.
+The C frontend already *detected* indirect calls (emitting `funcptr-call`, pushing
+`facts.indirect_call`); the gap was that the binding from the function value to the pointer
+variable wasn't recorded, so indirect-call resolution had nothing to follow to the call site.
+Two changes closed it:
 
-### Scope — broad (M5 finding)
+- **Frontend** (`ctadl-ascent/src/languages/tree_sitter/mod.rs`): the variable-declarator query
+  gained a `function_declarator` arm for parenthesized pointer declarators, so a
+  function-pointer declaration `int (*fp)(int)` captures the pointer variable name (fixes the
+  local forms `05`/`07`/`08`).
+- **Codegen** (`ctadl-ascent/src/codegen/mod.rs`): the field-store form of the `Assign` arm now
+  pushes a `func_ptr_assign` (and `java_obj_assign`) fact when the stored value is an
+  `Exp::ObjectRef(CallObject::FunctionPtr(..))`, **before** `trans_exp` lowers the value (which
+  returns `None` for an `ObjectRef` and would otherwise drop the binding). This records
+  `o.op = id` at its field path so resolution can follow it (fixes the struct-field form `09`).
 
-The gap is **not** specific to one syntactic form. All four function-pointer forms drop taint:
+### How DFSan caught it
 
-| Case | Function pointer is… | Static |
-|------|----------------------|--------|
-| `05` | a local, initialized (`int (*fp)(int) = id;`) | no flow ✗ |
-| `07` | a local, assigned separately (`fp = id;`)     | no flow ✗ |
-| `08` | a parameter (`int apply(int (*f)(int), int x)`) | no flow ✗ |
-| `09` | a struct field (`o.op = id; o.op(s)`)         | no flow ✗ |
-
-The param (`08`) and struct-field (`09`) forms are progressively harder sub-cases (they need the
-resolution to follow the function value through a formal parameter / through field sensitivity),
-so a partial fix may resolve `05`/`07` first. The harness will show that split when it happens.
-
-### Hypothesis for a future fix (revised)
-
-The original guess — that the *declaration-initializer* form specifically fails to emit a
-`func_ptr_assign_like` fact — is **refuted by case `07`**: the separate-assignment form
-(`int (*fp)(int); fp = id;`) also drops the flow. So the problem is more general: the
-indirect-call resolution in the taint query (`resolvent` / `func_ptr_assign_like` rules in
-`ctadl-ascent/src/index_engine/mod.rs`) does not carry data through function-pointer calls in
-any form. A focused investigation should compare the `assign_like` / `func_ptr_assign_like` /
-`resolvent` relations between the working direct case (`03`) and the indirect cases (`05`/`07`).
-
-### Confirmed by DFSan (runtime ground truth)
-
-The DFSan dynamic runner now observes this case directly: `05_funcptr_indirect` reports
-`static=none  dynamic=flow` — i.e. DFSan watched the `Test` label reach the sink through the
-indirect call while CTADL's static analysis reported no flow. So this is no longer just
-"the oracle says so": the gap is confirmed against observed runtime behavior, which is exactly
-the kind of soundness violation this harness exists to find.
+The harness flagged all four cases as `static=none dynamic=flow` — DFSan watched the `Test`
+label reach the sink through the indirect call while CTADL reported no flow. That runtime
+ground truth is exactly the kind of soundness violation this harness exists to find, and it now
+confirms the fix the same way (both sides `flow`).
 
 ---
 
@@ -99,16 +76,20 @@ compiles these with clang regardless, so each case already carries the runtime g
 compare against the moment the frontend learns to ingest it (the harness will then report
 `resolved-known-frontend-gap`).
 
-## array_declarator — array declarations don't parse
+## array_declarator — array declarations are now ingested (RESOLVED)
 
-- **Status:** open (tracked externally in a GitLab issue). Allowlisted as
-  `"known_frontend_gap": "array_declarator"`.
-- **Symptom:** a declaration like `int a[3];` fails with
-  `ERR 78: Unsupported expression type: array_declarator` (the `array_declarator` arm in
-  `walk_declaration` routes to `flatten_expr`, which has no case for it).
-- **Reproduces with:** [`cases/18_array_subscript`](cases/18_array_subscript/) →
-  `known-frontend-gap (array_declarator)`. DFSan observes the flow (`a[1] = source(); sink(a[1])`),
-  so the expected result once it parses is `flow`.
+- **Status:** **resolved** (`d1ccd07` "Treesitter array decl and goto"). The
+  `known_frontend_gap: "array_declarator"` allowlist has been removed from
+  `cases/18_array_subscript`, which now runs as plain `OK`.
+- **Was:** a declaration like `int a[3];` failed with
+  `ERR 78: Unsupported expression type: array_declarator` — the statement walker had no
+  `array_declarator` arm, so it routed to `flatten_expr`, which had no case for it.
+- **Fix:** `walk_declaration` in `ctadl-ascent/src/languages/tree_sitter/mod.rs` now handles
+  `array_declarator` (alongside `pointer_declarator`/`function_declarator`). (Same commit also
+  added `goto` lowering.)
+- **Verified resolved by:** [`cases/18_array_subscript`](cases/18_array_subscript/) now reports
+  `static=flow dynamic=flow` (`OK`); DFSan observes the flow `a[1] = source(); sink(a[1])`, and
+  CTADL now agrees.
 
 ## switch_statement — `switch` is now ingested (RESOLVED)
 
