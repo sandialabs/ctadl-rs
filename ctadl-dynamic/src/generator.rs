@@ -7,10 +7,17 @@
 //! oracle — DFSan determines the real flow when the harness scans the output.
 //!
 //! All generated programs are: compilable (plain clang and `-fsanitize=dataflow`),
-//! UB-free (every variable written before read; no arrays/OOB/null), libc-free in
-//! the taint path, and deterministic (constant conditions, fixed loop counts).
-//! Array declarators and `switch` are intentionally excluded — they're known
-//! frontend gaps and would just spam `frontend-error`.
+//! UB-free (every variable written before read; in-bounds array indices; no null),
+//! libc-free in the taint path, and deterministic (constant conditions, fixed
+//! indices/loop counts).
+//!
+//! The transform vocabulary deliberately spans the constructs the tree-sitter C
+//! frontend recently learned to ingest — arrays, `switch`, `goto`, function
+//! pointers — and, more importantly, their **combinations** (e.g. an array of
+//! function pointers, a pointer to a function pointer). Those combinations are the
+//! untested surface where the next soundness gap is most likely to hide; the
+//! generator's job is to thread real taint through them at volume and let DFSan
+//! adjudicate while CTADL is compared against it.
 
 use std::path::Path;
 
@@ -38,7 +45,7 @@ impl Rng {
     }
 }
 
-const NUM_TRANSFORMS: usize = 10;
+const NUM_TRANSFORMS: usize = 15;
 
 /// Builds one program: file-scope `preamble` + `main` `body`, threading a carrier.
 struct ProgBuilder {
@@ -105,12 +112,57 @@ impl ProgBuilder {
                 self.body.push(format!("{g} = {cur}; int {next} = {g};"));
             }
             6 => self.body.push(format!("int {next} = {cur} + 1;")), // arithmetic
+            7 => {
+                // array element round-trip (data flow through `a[i]`)
+                let a = self.fresh_var();
+                self.body
+                    .push(format!("int {a}[3]; {a}[1] = {cur}; int {next} = {a}[1];"));
+            }
+            8 => {
+                // indirect call through a function pointer in an ARRAY ELEMENT
+                // (array + indirect combo). Elements are assigned individually rather
+                // than brace-initialized: a `{...}` aggregate initializer is a known
+                // frontend gap (case 31), and avoiding it lets this transform probe the
+                // F2 soundness gap (funcptr-in-array-element taint, case 30) instead of
+                // just spamming frontend-error.
+                let fps = self.fresh_var();
+                self.body.push(format!(
+                    "int (*{fps}[2])(int); {fps}[0] = id; {fps}[1] = id; \
+                     int {next} = {fps}[0]({cur});"
+                ));
+            }
+            9 => {
+                // indirect call through a POINTER to a function pointer (double indirection)
+                let fp = self.fresh_var();
+                let pp = self.fresh_var();
+                self.body.push(format!(
+                    "int (*{fp})(int) = id; int (**{pp})(int) = &{fp}; \
+                     int {next} = (*{pp})({cur});"
+                ));
+            }
+            10 => {
+                // taint carried through a (taken) switch arm
+                self.body.push(format!(
+                    "int {next} = 0; switch (1) {{ case 1: {next} = {cur}; break; \
+                     default: break; }}"
+                ));
+            }
+            11 => {
+                // goto skips a kill: at runtime taint is preserved (the `= 0` is
+                // jumped over). The label is on a REAL statement (`{next} = {next};`):
+                // a label on an empty statement (`L: ;`) is a known frontend gap
+                // (case 32), so this form avoids it and exercises goto control flow.
+                let lbl = format!("lbl_{}", self.fresh_var());
+                self.body.push(format!(
+                    "int {next} = {cur}; goto {lbl}; {next} = 0; {lbl}: {next} = {next};"
+                ));
+            }
             // taint-killing / imprecision probes
-            7 => self.body.push(format!("int {next} = 0;")), // kill (drops cur)
-            8 => self
+            12 => self.body.push(format!("int {next} = 0;")), // kill (drops cur)
+            13 => self
                 .body
                 .push(format!("int {next} = 0; if (1) {{ {next} = {cur}; }}")), // taken
-            9 => self
+            14 => self
                 .body
                 .push(format!("int {next} = 0; if (0) {{ {next} = {cur}; }}")), // dead branch
             _ => unreachable!(),

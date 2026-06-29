@@ -1,18 +1,78 @@
 # Known findings
 
 This file records **analyzer findings the comparison harness has surfaced** — soundness gaps and
-frontend ingestion gaps — and tracks their disposition. As of 2026-06-29 **every finding below
-is RESOLVED**: the harness ran clean (exit 0, 0 soundness-disagree, 0 frontend-error) and each
-case that once reproduced a gap is now a plain-`OK` regression test. The entries are kept as a
-record of what the dynamic-vs-static approach caught and how each was fixed.
+frontend ingestion gaps — and tracks their disposition.
+
+**Current state (2026-06-29):**
+
+| Finding | Kind | Case(s) | Status |
+|---------|------|---------|--------|
+| F1 — indirect/function-pointer calls drop taint | soundness | 05/07/08/09 | ✅ resolved (`8484566`+`e01b58e`) |
+| array_declarator not ingested | frontend | 18 | ✅ resolved (`d1ccd07`) |
+| switch_statement not ingested | frontend | 25–29 | ✅ resolved (`5d5a695`) |
+| F2 — multiple funcptr stores into an aggregate drop taint | soundness | 30, 33 | ✅ resolved (index-engine path fix) |
+| **initializer_list (`{...}`) not ingested** | frontend | 31 | 🟠 open |
+| **labeled_empty_statement (`L: ;`) not ingested** | frontend | 32 | 🟡 open |
+
+F2 and the two open frontend findings were surfaced by the **broadened M7 generator** (it threads
+taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at volume).
+Resolved entries are kept as a record of what the approach caught and how each was fixed. **2
+findings remain open** (both frontend ingestion gaps — `initializer_list`, `labeled_empty_statement`).
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
 (soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see
 [README.md](README.md)). That turns a raw gap into an expected `known-gap`/`known-frontend-gap`
 instead of a run-failing `NEW-GAP`/`FRONTEND-ERROR`. When a fix lands, the harness reports the
 case as `resolved-known-gap` / `resolved-known-frontend-gap`; the closure step is to remove that
-field from the manifest **and** mark the entry below RESOLVED (which is the current state of all
-three findings).
+field from the manifest **and** mark the entry below RESOLVED.
+
+---
+
+## F2 — Static taint dropped through multiple function-pointer stores into an aggregate (RESOLVED)
+
+- **Status:** **resolved.** Fixed in `ctadl-ascent/src/index_engine/mod.rs` (the taint-index
+  datalog). The `known_gap: "F2"` allowlist was removed from case `30`; cases `30` (array form)
+  and `33` (struct form) now run as plain `OK` regression tests.
+- **Was:** a soundness false-negative whenever **two or more** function pointers were stored into
+  the **same aggregate** (array OR struct) before the indirect call:
+  ```c
+  int (*fps[2])(int); fps[0] = id; fps[1] = id; int r = fps[0](s);   // F2: was static=none
+  struct Ops { int (*a)(int); int (*b)(int); };
+  struct Ops o;      o.a = id;     o.b = id;     int r = o.a(s);     // same gap
+  ```
+  A **single** store always worked (`05`/`07`/`08`/`09`) — which is why the F1 fix looked
+  complete and this slipped through.
+
+### Root cause (NOT codegen — the index engine)
+
+Contrary to the initial guess, the F1 codegen fix already fired correctly here: the store lowers
+to `update (%fps.[0] := ptr<id>)` and codegen emits the right `func_ptr_assign` fact for each
+store. The gap was in **resolution**. The second store (`fps[1] = id`) creates a new SSA version
+of the receiver (`%fps`), so the call `fps[0](s)` reads a *later* version than the one the binding
+was recorded on. The binding must propagate across that version via the transitive
+`func_ptr_assign_like` rule — which gates on `paths(p_new)`. But `program_paths`/`paths` was
+populated **only from `actual_param`** (call-argument access paths); the *receiver* path of an
+indirect call (`.[0]` / `.a`) was never registered. So the propagation silently failed and the
+target never reached the call site.
+
+### The fix
+
+Register indirect-/virtual-call receiver paths as program paths, so the transitive propagation
+can fire:
+
+```rust
+program_paths(p) <-- indirect_call(_, _, _, p);
+program_paths(p) <-- java_call(_, _, _, p, _, _);   // same latent bug on the Java object path
+```
+
+(One-line root cause; the `java_call` line fixes the identical gap for `java_obj_assign_like`.)
+Full `ctadl-ascent` test suite stays green (101 lib + integration tests).
+
+### Confirmed by DFSan
+
+Before: `30_funcptr_array_elem` / `33_funcptr_struct_multistore` reported `static=none
+dynamic=flow`. After: both `static=flow dynamic=flow` (`OK`); `scan cases/` reports 0
+soundness-disagree.
 
 ---
 
@@ -75,6 +135,38 @@ case manifest (an un-allowlisted ingestion failure is a run-failing `FRONTEND-ER
 compiles these with clang regardless, so each case already carries the runtime ground truth to
 compare against the moment the frontend learns to ingest it (the harness will then report
 `resolved-known-frontend-gap`).
+
+## initializer_list — aggregate `{...}` initializers don't parse (OPEN)
+
+- **Status:** **open.** Allowlisted as `"known_frontend_gap": "initializer_list"` in
+  [`cases/31_aggregate_initializer`](cases/31_aggregate_initializer/).
+- **Symptom:** an aggregate (brace) initializer fails with `ERR 78: Unsupported expression type:
+  initializer_list`. The expression flattener (`flatten_expr` in
+  `ctadl-ascent/src/languages/tree_sitter/mod.rs`) has no `initializer_list` arm, so the `{ ... }`
+  node hits the catch-all. Affects **both** array and struct aggregates:
+  ```c
+  int a[2]      = { s, 0 };   // ERR 78
+  struct P p    = { s, 0 };   // ERR 78 (same gap)
+  int (*fps[2])(int) = { id, id };  // ERR 78 — this is what masked F2 until element-assignment
+  ```
+- **Reproduces with:** [`cases/31_aggregate_initializer`](cases/31_aggregate_initializer/) →
+  `known-frontend-gap (initializer_list)`. DFSan observes `a[0] <- s`, so the expected result once
+  it parses is `flow`. Everyday C — the broadest of the open frontend gaps.
+- **Found by:** the broadened M7 generator (its array-of-function-pointers transform used a brace
+  initializer; switching to element assignment dodged this and exposed F2).
+
+## labeled_empty_statement — a label on an empty statement (`L: ;`) doesn't parse (OPEN)
+
+- **Status:** **open.** Allowlisted as `"known_frontend_gap": "labeled_empty_statement"` in
+  [`cases/32_label_empty_statement`](cases/32_label_empty_statement/).
+- **Symptom:** a `labeled_statement` whose body is the null statement (`done: ;`) fails — the bare
+  `;` reaches `flatten_expr`'s catch-all (`ERR 78`). A label on a **real** statement
+  (`done: r = r;`) ingests fine, so the gap is specific to the empty-statement body. (`goto` and
+  labels generally work — added in `d1ccd07`; this is the one residual form.)
+- **Reproduces with:** [`cases/32_label_empty_statement`](cases/32_label_empty_statement/) →
+  `known-frontend-gap (labeled_empty_statement)`. The `goto` jumps over the kill, so DFSan observes
+  the flow; expected result once it parses is `flow`.
+- **Found by:** the broadened M7 generator (its goto transform labeled an empty statement).
 
 ## array_declarator — array declarations are now ingested (RESOLVED)
 
