@@ -1207,7 +1207,7 @@ impl<'a> Context<'a> {
     /// `break`: terminate the current block with a goto to the innermost enclosing
     /// `switch`/loop continuation. The target rides on the scope view, so it is just
     /// `scope_view.break_target` — no stack to consult.
-    fn walk_break(&mut self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
+    fn walk_break(&self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
         match scope_view.break_target {
             Some(target) => {
                 let mut to = scope_view.clone();
@@ -1223,7 +1223,7 @@ impl<'a> Context<'a> {
     /// `continue`: terminate the current block with a goto to the innermost enclosing
     /// loop's re-test/update block (`scope_view.continue_target`).
     fn walk_continue(
-        &mut self,
+        &self,
         program: &mut Program,
         scope_view: &ScopeView,
     ) -> Result<(), Error> {
