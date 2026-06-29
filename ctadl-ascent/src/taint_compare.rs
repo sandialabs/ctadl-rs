@@ -176,9 +176,16 @@ mod tests {
         "#;
         let flows = analyze_c_flows(src, test_c_path("markers.json")).expect("analyze");
         log::info!("direct flows: {flows:?}");
+        // The model sink `sink(Argument(0))` is anchored at the *call site* in `main`
+        // (not the `sink` callee): model endpoints on formals fan out to their callers'
+        // call-arg vertices so flows that differ by call site stay distinct (see
+        // QueryEndpoint::anchored_at_callsites). Every flow analyze_c_flows returns is a
+        // sink flow by construction, so we assert the source label reached one — the same
+        // predicate the harness itself keys on (ctadl-dynamic compare_program) — rather
+        // than the anchoring function's name.
         assert!(
-            flows.iter().any(|f| f.sink_function.contains("sink")),
-            "expected a flow into sink(), got: {flows:?}"
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a source->sink flow (label Test), got: {flows:?}"
         );
     }
 

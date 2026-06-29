@@ -226,6 +226,13 @@ impl PcodeFactsReader {
         })
     }
 
+    /// Read the program's image base: the address Ghidra loaded the artifact at.
+    /// Returns `None` if the fact is absent (older fact sets predate it).
+    pub fn read_image_base(&self) -> Result<Option<i64>> {
+        let rows = self.read_csv_facts_optional::<i64>("PROGRAM_IMAGE_BASE.facts")?;
+        Ok(rows.and_then(|rows| rows.into_iter().next()))
+    }
+
     /// Read Register facts
     pub fn read_register_facts(&self) -> Result<Vec<RegisterData>> {
         let off_name_facts = self

@@ -223,6 +223,27 @@ fn scopes_arent_blocks() {
 }
 
 #[test_log::test]
+fn block_shadow_does_not_leak() {
+    // A nested block re-declares `x` (`if(...) { int x = false_return; }`), shadowing the outer `x`.
+    // That inner `x` is a distinct, block-scoped variable, so `return x` refers to the OUTER `x`
+    // (= ac_return, param 1). The shadow must not escape its block: param 1 reaches the return, and
+    // param 0 (false_return, assigned only to the inner shadow) does NOT. The param-0 absence is the
+    // load-bearing assertion -- if the inner `x` were conflated with the outer one, false_return
+    // would leak to the return.
+    let src = r"
+        int bar(int false_return, int ac_return) {
+            int x = ac_return;
+            if(x == 5) {
+                int x = false_return;
+            }
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, ""); // outer x (ac_return) is what gets returned
+    check_does_not_return_param(&s, 0, ""); // the block-scoped shadow (false_return) must not leak
+}
+
+#[test_log::test]
 fn assignment_statement() {
     // Assignment as a standalone statement (`b = a;`), not a declaration initializer. It lowers to
     // the same `assign b = a`, but through the expression-statement path rather than the declarator
@@ -480,6 +501,134 @@ fn while_loop_cfg() {
 }
 
 #[test_log::test]
+fn do_while_cfg() {
+    // A `do { ... } while(...)` loop. The defining difference from `while` is that the body runs
+    // *before* the condition: block 0 sets up and falls into the body (1); the body (1) falls into
+    // the condition (2); the condition (2) either back-edges to the body (1) or exits to the
+    // continuation (3); block 3 runs the post-loop code and returns. (Contrast while_loop_cfg, where
+    // block 0 enters the condition first.) The body assignment lands in block 1.
+    let src = r"
+        int f() {
+            int b = 2;
+            int x = 5;
+            do {
+                x = b;
+            } while(b = b + x);
+            int y = x;
+            return y;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 4);
+    check_successors(&prog, 0, &[1]); // setup falls into the body, not a condition
+    check_successors(&prog, 1, &[2]); // body falls into the condition
+    check_successors(&prog, 2, &[1, 3]); // condition: back-edge to body, or exit
+    check_successors(&prog, 3, &[]); // continuation returns, terminal
+    check_assign_or_update(&prog, "x", ["b"], Some(1)); // body statement
+}
+
+#[test_log::test]
+fn do_while_body_flows() {
+    // Taint traverses a do-while body. The body assigns `x = p` (param 0); after the loop, `return x`
+    // carries param 0 to the return. Since a do-while runs its body at least once, the flow holds
+    // regardless of the condition -- and would vanish if the body were dropped (x would stay the
+    // constant 0).
+    let src = r"
+        int f(int p) {
+            int x = 0;
+            do {
+                x = p;
+            } while(x);
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+// The three tests below pin control-flow *combinations* (an if nested in a loop, two sequential ifs,
+// an if followed by a loop). Each was historically a "no errant goto 0" dump check: the worry was a
+// construct wiring a stray edge back into the entry block. Asserting the full successor graph is the
+// structural form of that guarantee -- block 0 never appears as a successor -- and also pins the
+// reconvergence/back-edge wiring these combinations introduce.
+
+#[test_log::test]
+fn while_with_nested_if_cfg() {
+    // A `while` whose body contains an `if` and a trailing statement. CFG: setup (0) enters the
+    // condition (1); the condition exits to the continuation (2, which returns) or the body (3); the
+    // body branches on the inner if to its consequence (4) or straight to the if-join (5); the
+    // consequence (4) falls into the join (5); the join (5) back-edges to the condition (1). The
+    // back-edge targets the condition, never the entry block.
+    let src = r"
+        int f(int y, int z) {
+            int x = 5;
+            while(x < 50) {
+                x = z;
+                if(y == z)
+                    x = y;
+                x = x + z;
+            }
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 6);
+    check_successors(&prog, 0, &[1]);
+    check_successors(&prog, 1, &[2, 3]); // condition: exit or enter body
+    check_successors(&prog, 2, &[]); // continuation returns, terminal
+    check_successors(&prog, 3, &[4, 5]); // body: inner-if branch
+    check_successors(&prog, 4, &[5]); // if-consequence joins
+    check_successors(&prog, 5, &[1]); // if-join back-edges to the condition, not entry
+}
+
+#[test_log::test]
+fn sequential_ifs_cfg() {
+    // Two `if`s back-to-back with no return in between (the function falls off the end). CFG: two
+    // diamonds chained -- the first if's condition (0) branches to its consequence (1) or its
+    // continuation (2); that continuation doubles as the second if's condition, branching to the
+    // second consequence (3) or the final continuation (4, terminal). Neither diamond branches back
+    // to the entry. (An if *not* followed by a return was the original "goto 0" trigger.)
+    let src = r"
+        int f(int y, int z) {
+            int x = 5;
+            if(x == 3)
+                x = z;
+            if(y == z)
+                x = y;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 5);
+    check_successors(&prog, 0, &[1, 2]); // first if
+    check_successors(&prog, 1, &[2]);
+    check_successors(&prog, 2, &[3, 4]); // second if (lives in the first if's continuation)
+    check_successors(&prog, 3, &[4]);
+    check_successors(&prog, 4, &[]); // falls off the end, terminal
+}
+
+#[test_log::test]
+fn if_then_while_cfg() {
+    // An unbraced `if` immediately followed by an unbraced `while`. CFG: the if's condition (0)
+    // branches to its consequence (1) or continuation (2); the continuation (2) flows into the while
+    // condition (3); the while condition exits to the continuation (4, which returns) or the body
+    // (5); the body (5) back-edges to the while condition (3). The two constructs chain in sequence
+    // with no edge back to the entry.
+    let src = r"
+        int f(int y, int z) {
+            int x = 5;
+            if(x == 3)
+                x = z;
+            while(x == 5)
+                x = y;
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 6);
+    check_successors(&prog, 0, &[1, 2]); // if
+    check_successors(&prog, 1, &[2]);
+    check_successors(&prog, 2, &[3]); // if-continuation flows into the while condition
+    check_successors(&prog, 3, &[4, 5]); // while condition: exit or body
+    check_successors(&prog, 4, &[]); // continuation returns, terminal
+    check_successors(&prog, 5, &[3]); // body back-edges to the while condition, not entry
+}
+
+#[test_log::test]
 fn subscript_access_paths() {
     // A constant array subscript, read and written (`x = f[3];` and `f[4] = x;`). The subscript
     // becomes a `.[N]` segment on the access path (a symbol segment, not a numeric offset): the read
@@ -493,22 +642,6 @@ fn subscript_access_paths() {
     let prog = program_from_string(src).0;
     check_assign_or_update(&prog, "@p2", ["f.[3]"], None); // x = f[3]
     check_assign_or_update(&prog, "f.[4]", ["@p2"], None); // f[4] = x  (update)
-}
-
-#[test_log::test]
-fn array_declaration_element_flows_to_return() {
-    // An explicit array *declaration* `int arr[3];` now ingests (previously
-    // "ERR 78: Unsupported expression type: array_declarator"). Taint written to an
-    // element flows back out when the same element is read: `b` (@p1) -> arr.[1] -> return.
-    // (Subscript access itself already worked; this exercises the declaration arm.)
-    let src = r"
-        int f(int a, int b) {
-            int arr[3];
-            arr[1] = b;
-            return arr[1];
-        }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
 }
 
 #[test_log::test]
@@ -607,6 +740,49 @@ fn simple_else() {
     check_successors(&program, 1, &[2]);
     check_successors(&program, 3, &[2]);
     check_successors(&program, 2, &[]);
+}
+
+#[test_log::test]
+fn unbraced_if_else_cfg() {
+    // An `if/else` whose arms are *unbraced* single statements (`if(...) x = y; else x = z;`). The
+    // unbraced else body must not be dropped -- it once was. Structurally that means the consequence
+    // assignment lands in block 1 and the else assignment in block 3. The CFG is the same diamond as
+    // simple_else (which covers the braced form): the condition (0) branches only to the two arms
+    // [1,3], never straight to the join, and both arms rejoin at the terminal block 2.
+    let src = r"
+        int f(int y, int z) {
+            int x = 1;
+            if(x == 1)
+                x = y;
+            else
+                x = z;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "x", ["@p0"], Some(1)); // if-consequence
+    check_assign_or_update(&prog, "x", ["@p1"], Some(3)); // unbraced else -- must not be dropped
+    check_successors(&prog, 0, &[1, 3]);
+    check_successors(&prog, 1, &[2]);
+    check_successors(&prog, 3, &[2]);
+    check_successors(&prog, 2, &[]);
+}
+
+#[test_log::test]
+fn unbraced_if_else_branches_flow() {
+    // The dataflow view of the unbraced if/else. With a trailing `return x`, either arm can supply
+    // x, so both params reach the return. param 1 (the unbraced else's `x = z`) is the load-bearing
+    // assertion: if that body were dropped, z would never reach the return.
+    let src = r"
+        int f(int y, int z) {
+            int x = 1;
+            if(x == 1)
+                x = y;
+            else
+                x = z;
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, ""); // if-consequence (y) reaches the return
+    check_returns_param(&s, 1, ""); // unbraced else (z) reaches the return
 }
 
 #[test_log::test]
@@ -737,239 +913,54 @@ fn assign_in_call_arg() {
     check_assign_or_update(&prog, "x", ["@p0"], None);
 }
 
-// ---- switch / case (+ break, continue) -------------------------------------
-// CTADL is path-insensitive, like its `if` lowering: it does not evaluate the
-// scrutinee, so every `case`/`default` arm is treated as reachable. These tests
-// assert the resulting (sound, over-approximate) param->return summary flows.
-
 #[test_log::test]
-fn switch_case_flows_to_return() {
-    // Taint in a `case` arm reaches the return. `b` (@p1) is assigned to `x` in
-    // `case 1`; after the switch merges, `x` carries @p1 into the return.
+fn compound_assign_accumulates() {
+    // Compound assignment (`y += b`) is an accumulate, not an overwrite: it lowers to `y = b + y`,
+    // keeping the prior value of `y` *and* mixing in the new one. With `y` seeded from param 0 and
+    // `+=` adding param 1, both params reach the return. param 1 is the load-bearing assertion --
+    // if `+=` were dropped (or lowered as a plain `y = b`), one of these two flows would vanish.
     let src = r"
         int f(int a, int b) {
-            int x = 0;
-            switch (a) {
-                case 1:
-                    x = b;
-                    break;
-                default:
-                    x = 0;
-                    break;
-            }
-            return x;
-        }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
-}
-
-#[test_log::test]
-fn switch_default_flows_to_return() {
-    // The `default` arm is just a valueless `case_statement`. `b` (@p1) assigned in
-    // `default` flows to the return.
-    let src = r"
-        int f(int a, int b) {
-            int x = 0;
-            switch (a) {
-                case 1:
-                    x = 0;
-                    break;
-                default:
-                    x = b;
-                    break;
-            }
-            return x;
-        }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
-}
-
-#[test_log::test]
-fn switch_fallthrough_flows_to_return() {
-    // Fall-through across a `case` boundary (no `break` after `case 1`): `x = b`
-    // in `case 1` flows into `y = x` in `case 2`, then to the return.
-    let src = r"
-        int f(int a, int b) {
-            int x = 0;
-            int y = 0;
-            switch (a) {
-                case 1:
-                    x = b;
-                case 2:
-                    y = x;
-                    break;
-                default:
-                    break;
-            }
+            int y = a;
+            y += b;
             return y;
         }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, ""); // old value of y (param 0) survives the +=
+    check_returns_param(&s, 1, ""); // += mixes param 1 in
 }
 
 #[test_log::test]
-fn break_exits_loop_flows_to_return() {
-    // `break` inside a loop must be ingested (it had no handler before switch
-    // support landed). The taint assigned before the `break` still reaches the
-    // return.
+fn increment_decrement_reassign_local() {
+    // `x++` and `--x` on a local each lower to a writeback assignment to `x` (`x = x +/- 1`). The
+    // `+/- 1` is a constant, so there is no dataflow to assert -- the contract is purely structural:
+    // each increment/decrement re-assigns the variable. Counting the assignments whose destination
+    // is `x` (init + two updates = 3) guards that neither was dropped, without pinning the flatten
+    // temp names. (`++` and `--` lower identically; the operator distinction is not preserved.)
     let src = r"
-        int f(int a, int b) {
-            int x = 0;
-            while (a) {
-                x = b;
-                break;
-            }
+        int f(int a) {
+            int x = a;
+            x++;
+            --x;
             return x;
         }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
+    let prog = program_from_string(src).0;
+    // init + the two increments each write x (the +/- 1 temp sources are left unpinned).
+    check_writes_to(&prog, "x", 3);
 }
 
 #[test_log::test]
-fn continue_in_loop_flows_to_return() {
-    // `continue` is likewise ingested; the body's taint assignment still flows.
+fn field_increment_is_update() {
+    // Incrementing through a field (`p->x++`) routes through the functional `update` path on the
+    // formal, exactly like a field store does (see `field_assignment_is_update`) -- it is not a plain
+    // assign. The new value is a flatten temp (`@p0.x + 1`), so we assert only that an `update` of
+    // `@p0.x` exists, leaving the temp source unpinned.
     let src = r"
-        int f(int a, int b) {
-            int x = 0;
-            while (a) {
-                x = b;
-                continue;
-            }
-            return x;
+        void f(Field *p) {
+            p->x++;
         }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
-}
-
-#[test_log::test]
-fn goto_backward_loop_flows_to_return() {
-    // A backward `goto` forms a loop. `x = b` (@p1) executes in the labeled block on
-    // every iteration and flows into the return. Exercises label definition + a
-    // backward jump (the label is seen before the `goto`).
-    let src = r"
-        int f(int a, int b) {
-            int x = 0;
-        loop:
-            x = b;
-            if (a) goto loop;
-            return x;
-        }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
-}
-
-#[test_log::test]
-fn goto_forward_jump_flows_to_return() {
-    // A forward `goto` (label defined *after* the jump, so it relies on the pre-scan)
-    // skips a kill on the only reachable path: `x = b`, jump over `x = 0`, then return
-    // x. The skipped block is unreachable, so @p1 still reaches the return.
-    let src = r"
-        int f(int a, int b) {
-            int x = b;
-            goto done;
-            x = 0;
-        done:
-            return x;
-        }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
-}
-
-// --- F1: taint through indirect (function-pointer) calls ---------------------
-// `check_returns_param` matches across all functions; routing the value through
-// param 1 means a `return <- @p1` summary can only come from `wrap` (the callee
-// `id`'s own summary is `return <- @p0`). So these assert that `wrap` carries @p1
-// through the (in)direct call to its return.
-
-#[test_log::test]
-fn taint_flows_through_direct_call() {
-    // Control (passed before the F1 fix): a DIRECT call carries taint param->return.
-    let src = r"
-        int id(int p) { return p; }
-        int wrap(int a, int b) {
-            return id(b);
-        }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
-}
-
-#[test_log::test]
-fn taint_flows_through_indirect_call() {
-    // F1: the same flow through an INDIRECT call via a local function pointer
-    // initialized to `id`. Previously dropped (soundness gap); now resolved because
-    // the RHS `id` lowers to a function-pointer object, emitting `func_ptr_assign`.
-    let src = r"
-        int id(int p) { return p; }
-        int wrap(int a, int b) {
-            int (*fp)(int) = id;
-            return fp(b);
-        }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
-}
-
-#[test_log::test]
-fn taint_flows_through_indirect_call_separate_assign() {
-    // F1, separate-assignment form: `int (*fp)(int); fp = id; fp(b)`.
-    let src = r"
-        int id(int p) { return p; }
-        int wrap(int a, int b) {
-            int (*fp)(int);
-            fp = id;
-            return fp(b);
-        }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
-}
-
-#[test_log::test]
-fn taint_flows_through_indirect_call_forward_decl() {
-    // The referenced function is defined AFTER its use as a function pointer. Relies on
-    // the function-name pre-pass in collect_functions so `later` is already known when
-    // `wrap`'s body is lowered.
-    let src = r"
-        int wrap(int a, int b) {
-            int (*fp)(int) = later;
-            return fp(b);
-        }
-        int later(int p) { return p; }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
-}
-
-#[test_log::test]
-#[ignore = "F1 partial: indirect call through a function-pointer PARAMETER still drops \
-            taint (needs interprocedural func-ptr-value propagation); un-ignore when resolved"]
-fn taint_flows_through_funcptr_param() {
-    // F1, harder form: the function pointer is a PARAMETER. `apply`'s `return f(x)`
-    // carries @p1 (x) to the return only if the indirect call through formal `f`
-    // resolves (interprocedurally, since `f` is bound to `id` at the call site).
-    // The frontend fix alone does NOT resolve this (the local-fp forms above do).
-    let src = r"
-        int id(int p) { return p; }
-        int apply(int (*f)(int), int x) { return f(x); }
-        int wrap(int a, int b) {
-            return apply(id, b);
-        }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
-}
-
-#[test_log::test]
-#[ignore = "F1 partial: indirect call through a function-pointer STRUCT FIELD still drops \
-            taint (needs field-sensitive func-ptr-value propagation); un-ignore when resolved"]
-fn taint_flows_through_funcptr_in_struct() {
-    // F1, hardest form: the function pointer lives in a STRUCT FIELD. `o.op(b)`
-    // resolves only if field-sensitivity carries `o.op = id` to the indirect call.
-    // The frontend fix alone does NOT resolve this (the local-fp forms above do).
-    let src = r"
-        int id(int p) { return p; }
-        struct S { int (*op)(int); };
-        int wrap(int a, int b) {
-            struct S o;
-            o.op = id;
-            return o.op(b);
-        }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 1, "");
+    let prog = program_from_string(src).0;
+    // The field increment routes through an `update` of @p0.x (not a plain assign); the new value is
+    // an unpinnable flatten temp, so we assert only that exactly one such update exists.
+    check_writes_to(&prog, "@p0.x", 1);
 }

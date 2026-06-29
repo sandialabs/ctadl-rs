@@ -18,8 +18,10 @@ use crate::discovery::{self, Kind, TestCase};
 use crate::exec;
 use crate::jvm;
 
-/// Ghidra's pcode facts place the binary at this base address; subtract it to
-/// recover an offset usable with `addr2line` on the object file.
+/// Historical fallback base address for SARIF that predates the analyzer
+/// emitting `relativeAddress`. Newer output carries the section-relative offset
+/// directly (Ghidra's real image base, via the `PROGRAM_IMAGE_BASE` fact), so
+/// this is only used when `relativeAddress` is absent.
 const PCODE_BASE_ADDRESS: i64 = 0x10_0000;
 
 #[derive(Default)]
@@ -347,8 +349,20 @@ fn run_pcode(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
         &["format", &project, "-o", &sarif.to_string_lossy()],
     )?;
 
-    let addresses = assertions::collect_absolute_addresses(&sarif)?;
-    if addresses.is_empty() {
+    // Prefer the section-relative offsets the analyzer now emits (image base
+    // already subtracted via the `PROGRAM_IMAGE_BASE` fact). Fall back to
+    // absolute addresses minus the historical base for older SARIF that
+    // predates `relativeAddress`.
+    let relative = assertions::collect_relative_addresses(&sarif)?;
+    let offsets: Vec<i64> = if !relative.is_empty() {
+        relative.into_iter().collect()
+    } else {
+        assertions::collect_absolute_addresses(&sarif)?
+            .into_iter()
+            .map(|addr| addr - PCODE_BASE_ADDRESS)
+            .collect()
+    };
+    if offsets.is_empty() {
         if cfg!(target_os = "macos") {
             return Ok(Outcome::Skip(
                 "no tainted instructions on Darwin; skipping strict offset check".to_string(),
@@ -359,10 +373,10 @@ fn run_pcode(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
         ));
     }
 
-    // Map each tainted address back to a source line via addr2line.
+    // Map each tainted offset back to a source line via addr2line.
     let mut found: BTreeSet<i64> = BTreeSet::new();
-    for addr in &addresses {
-        let rel = format!("0x{:x}", addr - PCODE_BASE_ADDRESS);
+    for off in &offsets {
+        let rel = format!("0x{:x}", off);
         let mut cmd = Command::new(&addr2line);
         cmd.current_dir(&work).arg("-e").arg(&obj).arg(&rel);
         let out = exec::capture_stdout(cmd, &addr2line)?;

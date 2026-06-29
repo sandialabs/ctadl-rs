@@ -1,0 +1,40 @@
+// Call-site-distinct paths collapse onto a formal-anchored sink (FAILING TEST).
+//
+// `snk` carries a sink on its formal parameter `c`. It is called from two
+// distinct sites in `main`, each passing freshly source-tainted data. There are
+// therefore TWO interesting source -> sink flows that differ *only* in their
+// call site -- the formals (`src`'s return, `snk`'s `c`) are identical.
+//
+// The SARIF formatter searches for paths by graph traversal over unique
+// `(function, variable, access-path)` vertices. Because the sink endpoint is
+// anchored on `snk`'s formal `c`, both call-site routes land on the single
+// `(snk, c)` vertex and the path search reports ONE path, silently dropping the
+// other. The trailing `2` in `sink(c, S, 2)` asserts the number of distinct
+// source -> sink paths we expect to find.
+//
+// This test FAILS today: only 1 path is found where 2 are expected. It should
+// pass once source/sink endpoints are anchored at their call sites rather than
+// at the callee's formal parameters (the point of this branch). The companion
+// presence-only assertion on the source still passes, isolating the failure to
+// the call-site collapse.
+def src():1 {
+s:
+  r = source(S);
+  return r;
+}
+
+def snk(c) {
+s:
+  // Expect two distinct call-site paths to reach this sink.
+  sink(c, S, 2);
+  return;
+}
+
+def main() {
+s:
+  a = src();
+  snk(a);      // call site 1
+  b = src();
+  snk(b);      // call site 2
+  return;
+}

@@ -133,6 +133,18 @@ pub enum VirtualMethodTable {
         methods: Vec<(JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
         hierarchy: HashMap<JavaClass, SmallVec<[JavaClass; 2]>>,
     },
+    /// Table for native / binary frontends (pcode today, clang later). There is
+    /// no class hierarchy; each function contributes its simple (un-decorated)
+    /// name and a best-effort type signature so JSON models can match by name or
+    /// `signature_pattern` even when the IR's fully-qualified name is decorated
+    /// (e.g. Ghidra names an imported `system` as `<EXTERNAL>::system@00101008`).
+    Native {
+        /// The columns are as follows:
+        /// - Simple name of the function, e.g. `system`
+        /// - Type signature of the function, e.g. `(int, char**)`
+        /// - Fully-qualified function name (the id used everywhere else)
+        methods: Vec<(NativeSimpleName, NativeSignature, NativeFunction)>,
+    },
     CplusPlus,
 }
 
@@ -141,6 +153,12 @@ impl VirtualMethodTable {
         VirtualMethodTable::Java {
             methods: Vec::new(),
             hierarchy: HashMap::new(),
+        }
+    }
+
+    pub fn new_native() -> Self {
+        VirtualMethodTable::Native {
+            methods: Vec::new(),
         }
     }
 }
@@ -159,6 +177,14 @@ impl Display for VirtualMethodTable {
                     }
                 }
                 writeln!(f, "end java virtual method table")?;
+                Ok(())
+            }
+            VirtualMethodTable::Native { methods } => {
+                writeln!(f, "native virtual method table")?;
+                for (name, sig, func) in methods {
+                    writeln!(f, "{name}{sig}: {func}")?;
+                }
+                writeln!(f, "end native virtual method table")?;
                 Ok(())
             }
             VirtualMethodTable::Unknown => write!(f, "unknown virtual method table"),
@@ -255,6 +281,79 @@ impl From<JavaMethod> for Symbol {
 }
 
 impl Display for JavaMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Simple (un-decorated) name of a native function, e.g. `system`.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct NativeSimpleName(pub Symbol);
+
+impl Deref for NativeSimpleName {
+    type Target = Symbol;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<NativeSimpleName> for Symbol {
+    fn from(c: NativeSimpleName) -> Self {
+        c.0.clone()
+    }
+}
+
+impl Display for NativeSimpleName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Type signature of a native function, e.g. `(int, char**)`.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct NativeSignature(pub Symbol);
+
+impl Deref for NativeSignature {
+    type Target = Symbol;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<NativeSignature> for Symbol {
+    fn from(c: NativeSignature) -> Self {
+        c.0.clone()
+    }
+}
+
+impl Display for NativeSignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Fully-qualified name of a native function (the id used everywhere else),
+/// e.g. `<EXTERNAL>::system@00101008` or `main`.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct NativeFunction(pub Symbol);
+
+impl Deref for NativeFunction {
+    type Target = Symbol;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<NativeFunction> for Symbol {
+    fn from(c: NativeFunction) -> Self {
+        c.0.clone()
+    }
+}
+
+impl Display for NativeFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }

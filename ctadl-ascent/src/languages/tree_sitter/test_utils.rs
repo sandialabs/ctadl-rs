@@ -22,7 +22,7 @@ use ctadl_ir::graph::{DirectedGraph, Successors};
 use ctadl_ir::mir::TerminatorKind;
 use ctadl_ir::mir::call::{CallEdges, CallStyle};
 use ctadl_ir::{
-    AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, StatementKind, VariableRef, ssa,
+    AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, Statement, StatementKind, VariableRef, ssa,
 };
 use ctadl_ir::{FieldAccess, ParameterType, Program, ProgramInfo};
 
@@ -359,6 +359,52 @@ pub(crate) fn check_assign_or_update<I>(
     );
 }
 
+/* Iterates every statement of the (single) function, in block-then-statement order. The shared walk
+behind the destination-focused helpers below, and a handy primitive for ad-hoc structural assertions
+that need to scan statements (cf. the dex frontend's "pull out the narrow thing, then assert on it").
+Panics if the program isn't a single function. */
+pub(crate) fn statements_of(prog: &Program) -> impl Iterator<Item = &Statement> {
+    let fun = get_only_function(prog).expect("expected exactly one function");
+    fun.blocks.iter().flat_map(|b| b.statements.iter())
+}
+
+/* True if `kind` writes to `dst`, comparing only the destination -- the source(s) are ignored. A
+bare `dst` (no field path) matches an `Assign` to that variable; a `dst` with a field path matches an
+`Update` of that field. This is the same assign-vs-update split as `check_assign_or_update`'s
+destination, minus the source constraint. */
+fn writes_dest(kind: &StatementKind, dst: &AccessPath) -> bool {
+    match kind {
+        StatementKind::Assign { dest, .. } => dst.path.is_empty() && *dest == dst.variable_ref,
+        StatementKind::Update { dest, .. } => {
+            !dst.path.is_empty() && dest.0 == dst.variable_ref && dest.1 == dst.path
+        }
+        _ => false,
+    }
+}
+
+/* Counts the statements of the (single) function that write to `dst`, ignoring the source
+expression. Destination DSL is the same as `check_assign_or_update`'s `dst` (`x`, `@p0.x`, ...). */
+pub(crate) fn count_writes_to(prog: &Program, dst: &str) -> usize {
+    let dst_ap = access_path_from_str(dst);
+    statements_of(prog)
+        .filter(|s| writes_dest(&s.kind, &dst_ap))
+        .count()
+}
+
+/* Asserts the (single) function writes to `dst` exactly `count` times, ignoring the written value.
+The source-agnostic complement to `check_assign_or_update`: use it when the value written is an
+incidental flatten temp that shouldn't be pinned -- e.g. `x++` lowers to `x = <t0>` and `p->x++` to
+an update of `@p0.x`, where the structural fact under test is *that* the write happens, not what
+feeds it. Panics at the caller's line on mismatch. */
+#[track_caller]
+pub(crate) fn check_writes_to(prog: &Program, dst: &str, count: usize) {
+    let got = count_writes_to(prog, dst);
+    assert_eq!(
+        got, count,
+        "expected {count} write(s) to {dst:?}, found {got}\n{prog}"
+    );
+}
+
 pub(crate) fn check_match(prog_str: &str, needle: &str) -> bool {
     if prog_str.contains(needle) {
         return true;
@@ -491,6 +537,18 @@ pub(crate) fn check_no_flow(
 #[track_caller]
 pub(crate) fn check_returns_param(summary: &[FunctionSummary], param_num: i16, param_path: &str) {
     check_flow(summary, param_num, param_path, RETURN_INDEX, "");
+}
+
+/* Asserts the given param does NOT reach the return -- the negative complement of
+`check_returns_param` (Flowy's `</-` for a return endpoint). Use it to pin that a value is *not*
+returned, e.g. a block-scoped shadow that must not escape. Prints the actual summary on failure. */
+#[track_caller]
+pub(crate) fn check_does_not_return_param(
+    summary: &[FunctionSummary],
+    param_num: i16,
+    param_path: &str,
+) {
+    check_no_flow(summary, param_num, param_path, RETURN_INDEX, "");
 }
 
 // Unit tests for the access-path string DSL itself. These helpers contain real parsing logic, so a
