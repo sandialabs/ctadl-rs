@@ -418,6 +418,11 @@ struct Context<'a> {
     param_names: HashMap<FunctionName<'a>, IndexVec<ParameterIdx, &'a str>>,
     scope_tree: ScopeTree,
     allocator: TempAllocator,
+    /// Block that each `goto` label maps to, for the function currently being walked.
+    /// Labels are function-scoped and can be jumped to before they are defined, so
+    /// (unlike `break`/`continue` targets, which ride on `ScopeView`) the blocks are
+    /// created in a pre-scan over the whole body and looked up here. Reset per function.
+    label_blocks: HashMap<String, BasicBlockIdx>,
 }
 
 pub struct MatchExtractor<'q, 'cursor, 'tree> {
@@ -610,6 +615,21 @@ fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
     n.utf8_text(source.as_bytes()).unwrap().trim()
 }
 
+/// Collect the names of every `labeled_statement` label reachable under `node`
+/// (recursing through nested blocks/ifs/loops). Used to pre-create a block per label
+/// before the body is walked, so a `goto` to a not-yet-seen label still resolves.
+fn collect_labels(node: Node<'_>, source: &str, out: &mut Vec<String>) {
+    if node.kind() == "labeled_statement"
+        && let Some(label) = node.child_by_field_name("label")
+    {
+        out.push(to_str(&label, source).to_string());
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_labels(child, source, out);
+    }
+}
+
 // This struct temporarily holds the specific book keeping needs of a function parse
 #[derive(Debug, Clone)]
 pub struct ScopeView {
@@ -745,74 +765,10 @@ impl<'a> Context<'a> {
             if !child.is_named() {
                 continue; // we skip , ( stuff like that...
             }
-            let kind = child.kind();
-            match kind {
-                "comment" => {}
-                "compound_statement" => {
-                    let (inner_view, cp) = self.setup_compound(
-                        program,
-                        &mut scope_view,
-                        child,
-                        BlockTypeRequest::JustScope,
-                        true,
-                        "compound_statement",
-                    )?;
-                    self.walk_compound_statement(source, program, &inner_view, &cp)?;
-                }
-                "declaration" => {
-                    self.walk_declaration(source, program, &scope_view, child)?;
-                }
-                "assignment_expression" => {
-                    self.flatten_expr(program, child, source, &scope_view)?;
-                }
-                "expression_statement" | "update_expression" => {
-                    if let Some(inner_child) = child.child(0) {
-                        self.flatten_expr(program, inner_child, source, &scope_view)?;
-                    }
-                }
-                "parenthesized_expression" => {
-                    if let Some(inner_child) = child.child(1) {
-                        self.flatten_expr(program, inner_child, source, &scope_view)?;
-                    }
-                }
-                "if_statement" => self.walk_if(source, program, &mut scope_view, child)?,
-                "while_statement" => {
-                    self.walk_while(source, program, &mut scope_view, child)?;
-                }
-                "do_statement" => {
-                    self.walk_do_while(source, program, &mut scope_view, child)?;
-                }
-                "for_statement" => {
-                    self.walk_for(source, program, &mut scope_view, child)?;
-                }
-                "switch_statement" => {
-                    self.walk_switch(source, program, &mut scope_view, child)?;
-                }
-                "return_statement" => {
-                    return self.walk_return(source, program, &mut scope_view, child);
-                }
-                // `break`/`continue` terminate the current block with a goto to the
-                // enclosing target, so they end this compound just like `return`
-                // (returning early skips the fall-through link at the end).
-                "break_statement" => return self.walk_break(program, &scope_view),
-                "continue_statement" => return self.walk_continue(program, &scope_view),
-                "ERROR" => {
-                    let node_str = to_str(&child, source);
-                    log::warn!("Unknown token(2): {kind}: {node_str}");
-                }
-                _ => {
-                    self.flatten_expr(program, child, source, &scope_view)?;
-                    /*
-                    let node_str = to_str(&child, source);
-                    log::error!(
-                        "Unknown token?maybe? or we fall through now(2): {kind}: {node_str}"
-                    );*/
-
-                    /*debug_print_tree(child, 0, None, Some(5));
-                    return Err(Error::TreeSitterParse(
-                        format!("Unknown Token({})", kind).to_owned(),
-                    ));*/
-                }
+            // A statement that diverges (return/break/continue, or a label whose body
+            // diverges) ends the compound; the trailing fall-through link is skipped.
+            if self.walk_statement(source, program, &mut scope_view, child)? {
+                return Ok(());
             }
         }
 
@@ -821,6 +777,105 @@ impl<'a> Context<'a> {
         link_blocks(program, &scope_view, scope_view_meowsers, true)?;
 
         Ok(())
+    }
+
+    /// Lower a single statement, threading `scope_view` (so control-flow statements can
+    /// move the "current block" for following statements). Returns `true` if the
+    /// statement *diverged* — i.e. it terminated the current block with no fall-through
+    /// (`return`/`break`/`continue`, or a `labeled_statement` whose body diverges) — so
+    /// the enclosing compound should stop and skip its end-of-compound link.
+    fn walk_statement(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        child: Node<'_>,
+    ) -> Result<bool, Error> {
+        let kind = child.kind();
+        match kind {
+            "comment" => {}
+            "compound_statement" => {
+                let (inner_view, cp) = self.setup_compound(
+                    program,
+                    scope_view,
+                    child,
+                    BlockTypeRequest::JustScope,
+                    true,
+                    "compound_statement",
+                )?;
+                self.walk_compound_statement(source, program, &inner_view, &cp)?;
+            }
+            "declaration" => {
+                self.walk_declaration(source, program, scope_view, child)?;
+            }
+            "assignment_expression" => {
+                self.flatten_expr(program, child, source, scope_view)?;
+            }
+            "expression_statement" | "update_expression" => {
+                if let Some(inner_child) = child.child(0) {
+                    self.flatten_expr(program, inner_child, source, scope_view)?;
+                }
+            }
+            "parenthesized_expression" => {
+                if let Some(inner_child) = child.child(1) {
+                    self.flatten_expr(program, inner_child, source, scope_view)?;
+                }
+            }
+            "if_statement" => self.walk_if(source, program, scope_view, child)?,
+            "while_statement" => {
+                self.walk_while(source, program, scope_view, child)?;
+            }
+            "do_statement" => {
+                self.walk_do_while(source, program, scope_view, child)?;
+            }
+            "for_statement" => {
+                self.walk_for(source, program, scope_view, child)?;
+            }
+            "switch_statement" => {
+                self.walk_switch(source, program, scope_view, child)?;
+            }
+            // `return`/`break`/`continue` terminate the current block and have no
+            // fall-through, so they end the compound (skipping its end link).
+            "return_statement" => {
+                self.walk_return(source, program, scope_view, child)?;
+                return Ok(true);
+            }
+            "break_statement" => {
+                self.walk_break(program, scope_view)?;
+                return Ok(true);
+            }
+            "continue_statement" => {
+                self.walk_continue(program, scope_view)?;
+                return Ok(true);
+            }
+            // Unlike break/continue, a `goto` does NOT end the compound: code after it
+            // is unreachable but may hold labels that must still lower, so it updates
+            // `scope_view` (to a fresh block) and we fall through to the next sibling.
+            "goto_statement" => self.walk_goto(source, program, scope_view, child)?,
+            // A label's body diverges iff its inner statement does; propagate that so a
+            // `L: return x;` at the tail of a compound doesn't leave a dangling block.
+            "labeled_statement" => {
+                return self.walk_labeled_statement(source, program, scope_view, child);
+            }
+            "ERROR" => {
+                let node_str = to_str(&child, source);
+                log::warn!("Unknown token(2): {kind}: {node_str}");
+            }
+            _ => {
+                self.flatten_expr(program, child, source, scope_view)?;
+                /*
+                let node_str = to_str(&child, source);
+                log::error!(
+                    "Unknown token?maybe? or we fall through now(2): {kind}: {node_str}"
+                );*/
+
+                /*debug_print_tree(child, 0, None, Some(5));
+                return Err(Error::TreeSitterParse(
+                    format!("Unknown Token({})", kind).to_owned(),
+                ));*/
+            }
+        }
+        Ok(false)
     }
 
     fn walk_declaration(
@@ -1233,6 +1288,87 @@ impl<'a> Context<'a> {
                 "`continue` outside of a loop".to_string(),
             )),
         }
+    }
+
+    /// `goto L`: terminate the current block with a jump to label `L`'s block (created
+    /// up front by the per-function pre-scan, so forward jumps resolve too). Unlike
+    /// `break`/`continue`, this does NOT end the compound — statements after a `goto`
+    /// are unreachable but may contain labels, so we keep lowering them into a fresh
+    /// (unlinked) block.
+    fn walk_goto(
+        &mut self,
+        source: &str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        child: Node<'_>,
+    ) -> Result<(), Error> {
+        let label_node = child
+            .child_by_field_name("label")
+            .expect("goto_statement always has a label");
+        let label = to_str(&label_node, source);
+        let target = *self
+            .label_blocks
+            .get(label)
+            .ok_or_else(|| Error::TreeSitterParse(format!("`goto` to undefined label `{label}`")))?;
+        let mut to = scope_view.clone();
+        to.blidx = target;
+        link_blocks(program, scope_view, &to, false)?;
+        // Anything after the goto is unreachable until the next label; lower it into a
+        // fresh block so following labels/statements still parse.
+        let dead = add_block(
+            program,
+            scope_view,
+            &mut self.scope_tree,
+            false,
+            &format!("after_goto::{}", get_line_num(&child)),
+        )?;
+        *scope_view = dead;
+        Ok(())
+    }
+
+    /// `L: <stmt>`: control falls through into label `L`'s (pre-created) block, the
+    /// inner statement is lowered there, and subsequent statements continue in an
+    /// after-block. The label block is also the target of any `goto L`.
+    fn walk_labeled_statement(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        child: Node<'_>,
+    ) -> Result<bool, Error> {
+        let label_node = child
+            .child_by_field_name("label")
+            .expect("labeled_statement always has a label");
+        let label = to_str(&label_node, source);
+        let label_blidx = *self
+            .label_blocks
+            .get(label)
+            .expect("label block pre-created in collect_functions");
+
+        // Fall through from the current block into the (pre-created) label block, then
+        // make it the current block — the inner statement and any following siblings
+        // continue from here, exactly as if the label weren't there.
+        let mut label_sv = scope_view.clone();
+        label_sv.blidx = label_blidx;
+        link_blocks(program, scope_view, &label_sv, false)?;
+        *scope_view = label_sv;
+
+        // Lower the labeled statement's inner statement(s) (everything but the label),
+        // threading `scope_view` so control flow continues naturally. The label
+        // diverges iff its body does (e.g. `L: return x;`), which we propagate up so a
+        // trailing labeled-return doesn't leave a dangling fall-through block.
+        let label_id = label_node.id();
+        let mut cursor = child.walk();
+        let inner: Vec<Node<'_>> = child
+            .children(&mut cursor)
+            .filter(|n| n.is_named() && n.id() != label_id)
+            .collect();
+        for stmt in inner {
+            if self.walk_statement(source, program, scope_view, stmt)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn walk_if(
@@ -1881,6 +2017,22 @@ impl<'a> Context<'a> {
             };
             self.scope_tree.blocks.push(block_scope_view.clone());
             let cp = CompoundProxy::from_node(body_node);
+
+            // Pre-create a block for every `goto` label in this function so forward
+            // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
+            self.label_blocks.clear();
+            let mut labels = Vec::new();
+            collect_labels(body_node, source, &mut labels);
+            for label in labels {
+                let label_block = add_block(
+                    program,
+                    &block_scope_view,
+                    &mut self.scope_tree,
+                    false,
+                    &format!("label:{label}"),
+                )?;
+                self.label_blocks.insert(label, label_block.blidx);
+            }
 
             self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
         }

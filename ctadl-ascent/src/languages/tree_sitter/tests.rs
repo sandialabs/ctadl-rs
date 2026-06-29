@@ -840,3 +840,37 @@ fn continue_in_loop_flows_to_return() {
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&summary, 1, "");
 }
+
+#[test_log::test]
+fn goto_backward_loop_flows_to_return() {
+    // A backward `goto` forms a loop. `x = b` (@p1) executes in the labeled block on
+    // every iteration and flows into the return. Exercises label definition + a
+    // backward jump (the label is seen before the `goto`).
+    let src = r"
+        int f(int a, int b) {
+            int x = 0;
+        loop:
+            x = b;
+            if (a) goto loop;
+            return x;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn goto_forward_jump_flows_to_return() {
+    // A forward `goto` (label defined *after* the jump, so it relies on the pre-scan)
+    // skips a kill on the only reachable path: `x = b`, jump over `x = 0`, then return
+    // x. The skipped block is unreachable, so @p1 still reaches the return.
+    let src = r"
+        int f(int a, int b) {
+            int x = b;
+            goto done;
+            x = 0;
+        done:
+            return x;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
