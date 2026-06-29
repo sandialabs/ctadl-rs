@@ -45,8 +45,6 @@ fn func_ptr_simplest() {
 #[test_log::test]
 fn func_params() {
     let src = r#"
-
-
     void function_param(void (*callback)(char*)) {
         return callback("I once had a dog name foo, he was a great boy");
     }
@@ -55,7 +53,11 @@ fn func_params() {
 
     let (_, dump) = program_from_string(src);
     dump_ir(&dump);
-    assert!(check_match(&dump, "direct-call callback"));
+    // A call through a function-pointer PARAMETER is an INDIRECT call: the callee is
+    // unknown at the call site, arriving via `callback` (@p0). (Previously asserted a
+    // direct call — the buggy behavior from when collect_params dropped function-pointer
+    // parameters, leaving `callback` unresolved.)
+    assert!(check_match(&dump, "@p0 <indirect-call"));
 }
 
 #[test_log::test]

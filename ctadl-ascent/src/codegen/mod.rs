@@ -487,16 +487,31 @@ impl Visitor for CodegenVisitor<'_> {
             } => {
                 let dest_var = self.trans_variable_ref(dest_var);
                 let source = self.trans_variable_ref(source);
+                // dest_var.dest_fields <- value
+                let dest = FlowVertex(dest_var, dest_fields.into());
+                // A function pointer / Java object stored INTO A FIELD (`o.op = id`).
+                // This is the field-store form of the `Assign` arm's object-ref handling:
+                // record the store at its field path so indirect-call resolution can follow
+                // it to the call site. Must run before `value` is lowered, since trans_exp()
+                // returns None for an ObjectRef and would otherwise drop the binding (F1).
+                if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = value {
+                    let target = fx::Function(name.clone().into());
+                    let target = self.source_info.sites.get_or_add_function(target);
+                    self.facts.func_ptr_assign.push((site, dest.clone(), target));
+                }
+                if let Exp::ObjectRef(CallObject::JavaObject(cls)) = value {
+                    self.facts
+                        .java_obj_assign
+                        .push((site, dest.clone(), cls.0.clone()));
+                }
                 let value = self.trans_exp(value);
                 // dest_var <- source
-                let dest = FlowVertex(dest_var, dest_fields.into());
                 // Multiple field updates of the same src/dst cause duplicate assigns
                 self.facts.assign.push((
                     site,
                     FlowVertex(dest_var, fx::Path::empty()),
                     FlowVertex(source, fx::Path::empty()),
                 ));
-                // dest_var.dest_fields <- value
                 if !dest_fields.is_empty()
                     && let Some(value) = value
                 {
