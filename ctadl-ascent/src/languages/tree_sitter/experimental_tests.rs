@@ -45,8 +45,6 @@ fn func_ptr_simplest() {
 #[test_log::test]
 fn func_params() {
     let src = r#"
-
-
     void function_param(void (*callback)(char*)) {
         return callback("I once had a dog name foo, he was a great boy");
     }
