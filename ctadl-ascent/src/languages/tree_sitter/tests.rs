@@ -496,6 +496,22 @@ fn subscript_access_paths() {
 }
 
 #[test_log::test]
+fn array_declaration_element_flows_to_return() {
+    // An explicit array *declaration* `int arr[3];` now ingests (previously
+    // "ERR 78: Unsupported expression type: array_declarator"). Taint written to an
+    // element flows back out when the same element is read: `b` (@p1) -> arr.[1] -> return.
+    // (Subscript access itself already worked; this exercises the declaration arm.)
+    let src = r"
+        int f(int a, int b) {
+            int arr[3];
+            arr[1] = b;
+            return arr[1];
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
 fn field_blend_into_field_update() {
     // A field store whose right-hand side is a sum mixing a direct field load with a value routed
     // through a local: `v->f4 = v->f5 + b`, where `b = v->f1 + v->f3`. All three source fields flow
@@ -820,6 +836,139 @@ fn continue_in_loop_flows_to_return() {
                 continue;
             }
             return x;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn goto_backward_loop_flows_to_return() {
+    // A backward `goto` forms a loop. `x = b` (@p1) executes in the labeled block on
+    // every iteration and flows into the return. Exercises label definition + a
+    // backward jump (the label is seen before the `goto`).
+    let src = r"
+        int f(int a, int b) {
+            int x = 0;
+        loop:
+            x = b;
+            if (a) goto loop;
+            return x;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn goto_forward_jump_flows_to_return() {
+    // A forward `goto` (label defined *after* the jump, so it relies on the pre-scan)
+    // skips a kill on the only reachable path: `x = b`, jump over `x = 0`, then return
+    // x. The skipped block is unreachable, so @p1 still reaches the return.
+    let src = r"
+        int f(int a, int b) {
+            int x = b;
+            goto done;
+            x = 0;
+        done:
+            return x;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+// --- F1: taint through indirect (function-pointer) calls ---------------------
+// `check_returns_param` matches across all functions; routing the value through
+// param 1 means a `return <- @p1` summary can only come from `wrap` (the callee
+// `id`'s own summary is `return <- @p0`). So these assert that `wrap` carries @p1
+// through the (in)direct call to its return.
+
+#[test_log::test]
+fn taint_flows_through_direct_call() {
+    // Control (passed before the F1 fix): a DIRECT call carries taint param->return.
+    let src = r"
+        int id(int p) { return p; }
+        int wrap(int a, int b) {
+            return id(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn taint_flows_through_indirect_call() {
+    // F1: the same flow through an INDIRECT call via a local function pointer
+    // initialized to `id`. Previously dropped (soundness gap); now resolved because
+    // the RHS `id` lowers to a function-pointer object, emitting `func_ptr_assign`.
+    let src = r"
+        int id(int p) { return p; }
+        int wrap(int a, int b) {
+            int (*fp)(int) = id;
+            return fp(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn taint_flows_through_indirect_call_separate_assign() {
+    // F1, separate-assignment form: `int (*fp)(int); fp = id; fp(b)`.
+    let src = r"
+        int id(int p) { return p; }
+        int wrap(int a, int b) {
+            int (*fp)(int);
+            fp = id;
+            return fp(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn taint_flows_through_indirect_call_forward_decl() {
+    // The referenced function is defined AFTER its use as a function pointer. Relies on
+    // the function-name pre-pass in collect_functions so `later` is already known when
+    // `wrap`'s body is lowered.
+    let src = r"
+        int wrap(int a, int b) {
+            int (*fp)(int) = later;
+            return fp(b);
+        }
+        int later(int p) { return p; }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+#[ignore = "F1 partial: indirect call through a function-pointer PARAMETER still drops \
+            taint (needs interprocedural func-ptr-value propagation); un-ignore when resolved"]
+fn taint_flows_through_funcptr_param() {
+    // F1, harder form: the function pointer is a PARAMETER. `apply`'s `return f(x)`
+    // carries @p1 (x) to the return only if the indirect call through formal `f`
+    // resolves (interprocedurally, since `f` is bound to `id` at the call site).
+    // The frontend fix alone does NOT resolve this (the local-fp forms above do).
+    let src = r"
+        int id(int p) { return p; }
+        int apply(int (*f)(int), int x) { return f(x); }
+        int wrap(int a, int b) {
+            return apply(id, b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+#[ignore = "F1 partial: indirect call through a function-pointer STRUCT FIELD still drops \
+            taint (needs field-sensitive func-ptr-value propagation); un-ignore when resolved"]
+fn taint_flows_through_funcptr_in_struct() {
+    // F1, hardest form: the function pointer lives in a STRUCT FIELD. `o.op(b)`
+    // resolves only if field-sensitivity carries `o.op = id` to the indirect call.
+    // The frontend fix alone does NOT resolve this (the local-fp forms above do).
+    let src = r"
+        int id(int p) { return p; }
+        struct S { int (*op)(int); };
+        int wrap(int a, int b) {
+            struct S o;
+            o.op = id;
+            return o.op(b);
         }";
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&summary, 1, "");
