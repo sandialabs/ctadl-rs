@@ -55,7 +55,7 @@ fn func_params() {
 
     let (_, dump) = program_from_string(src);
     dump_ir(&dump);
-    assert!(check_match(&dump, "direct-call callback"));
+    assert!(check_match(&dump, "@p0 <indirect-call"));
 }
 
 #[test_log::test]
