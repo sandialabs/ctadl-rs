@@ -1249,6 +1249,9 @@ impl<'a> Context<'a> {
                 (identifier) @var_name
                 (pointer_declarator declarator: (identifier) @var_name) @is_ref
                 (array_declarator declarator: (identifier) @var_name) @is_ref
+                (function_declarator
+                    declarator: (parenthesized_declarator
+                        (pointer_declarator declarator: (identifier) @var_name)))
             ]
         )
     "#;
