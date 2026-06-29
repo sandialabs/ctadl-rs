@@ -757,10 +757,6 @@ impl<'a> Context<'a> {
     ) -> Result<(), Error> {
         let mut scope_view = scope_view_meowsers.clone();
 
-        /*  let mut cursor = compound.walk();
-
-        for child in compound.children(&mut cursor) {
-        */
         for &child in &compound.nodes {
             if !child.is_named() {
                 continue; // we skip , ( stuff like that...
@@ -863,16 +859,6 @@ impl<'a> Context<'a> {
             }
             _ => {
                 self.flatten_expr(program, child, source, scope_view)?;
-                /*
-                let node_str = to_str(&child, source);
-                log::error!(
-                    "Unknown token?maybe? or we fall through now(2): {kind}: {node_str}"
-                );*/
-
-                /*debug_print_tree(child, 0, None, Some(5));
-                return Err(Error::TreeSitterParse(
-                    format!("Unknown Token({})", kind).to_owned(),
-                ));*/
             }
         }
         Ok(false)
