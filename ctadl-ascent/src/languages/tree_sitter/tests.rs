@@ -874,3 +874,102 @@ fn goto_forward_jump_flows_to_return() {
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&summary, 1, "");
 }
+
+// --- F1: taint through indirect (function-pointer) calls ---------------------
+// `check_returns_param` matches across all functions; routing the value through
+// param 1 means a `return <- @p1` summary can only come from `wrap` (the callee
+// `id`'s own summary is `return <- @p0`). So these assert that `wrap` carries @p1
+// through the (in)direct call to its return.
+
+#[test_log::test]
+fn taint_flows_through_direct_call() {
+    // Control (passed before the F1 fix): a DIRECT call carries taint param->return.
+    let src = r"
+        int id(int p) { return p; }
+        int wrap(int a, int b) {
+            return id(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn taint_flows_through_indirect_call() {
+    // F1: the same flow through an INDIRECT call via a local function pointer
+    // initialized to `id`. Previously dropped (soundness gap); now resolved because
+    // the RHS `id` lowers to a function-pointer object, emitting `func_ptr_assign`.
+    let src = r"
+        int id(int p) { return p; }
+        int wrap(int a, int b) {
+            int (*fp)(int) = id;
+            return fp(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn taint_flows_through_indirect_call_separate_assign() {
+    // F1, separate-assignment form: `int (*fp)(int); fp = id; fp(b)`.
+    let src = r"
+        int id(int p) { return p; }
+        int wrap(int a, int b) {
+            int (*fp)(int);
+            fp = id;
+            return fp(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn taint_flows_through_indirect_call_forward_decl() {
+    // The referenced function is defined AFTER its use as a function pointer. Relies on
+    // the function-name pre-pass in collect_functions so `later` is already known when
+    // `wrap`'s body is lowered.
+    let src = r"
+        int wrap(int a, int b) {
+            int (*fp)(int) = later;
+            return fp(b);
+        }
+        int later(int p) { return p; }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+#[ignore = "F1 partial: indirect call through a function-pointer PARAMETER still drops \
+            taint (needs interprocedural func-ptr-value propagation); un-ignore when resolved"]
+fn taint_flows_through_funcptr_param() {
+    // F1, harder form: the function pointer is a PARAMETER. `apply`'s `return f(x)`
+    // carries @p1 (x) to the return only if the indirect call through formal `f`
+    // resolves (interprocedurally, since `f` is bound to `id` at the call site).
+    // The frontend fix alone does NOT resolve this (the local-fp forms above do).
+    let src = r"
+        int id(int p) { return p; }
+        int apply(int (*f)(int), int x) { return f(x); }
+        int wrap(int a, int b) {
+            return apply(id, b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+#[ignore = "F1 partial: indirect call through a function-pointer STRUCT FIELD still drops \
+            taint (needs field-sensitive func-ptr-value propagation); un-ignore when resolved"]
+fn taint_flows_through_funcptr_in_struct() {
+    // F1, hardest form: the function pointer lives in a STRUCT FIELD. `o.op(b)`
+    // resolves only if field-sensitivity carries `o.op = id` to the indirect call.
+    // The frontend fix alone does NOT resolve this (the local-fp forms above do).
+    let src = r"
+        int id(int p) { return p; }
+        struct S { int (*op)(int); };
+        int wrap(int a, int b) {
+            struct S o;
+            o.op = id;
+            return o.op(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}

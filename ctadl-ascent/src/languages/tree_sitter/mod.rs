@@ -1602,11 +1602,28 @@ impl<'a> Context<'a> {
         //debug_print_tree(node, 0, Some("FLATTEN_EXPR"), Some(50));
         let text = to_str(&node, source); //.to_string();
         match node.kind() {
-            "identifier" => Ok(Exp::AccessPath(self.build_access_path(
-                text,
-                Default::default(),
-                scope_view,
-            ))),
+            "identifier" => {
+                // A bare identifier that names a known function (and is not shadowed by
+                // a variable in scope) is a function *reference* used as a value -- the
+                // RHS of `fp = id`, an initializer `int (*fp)(int) = id`, a call argument
+                // `apply(id, x)`, or a field store `o.op = id`. Lower it as a
+                // function-pointer object (as the pcode backend does) so codegen emits
+                // the `func_ptr_assign` fact that indirect-call taint resolution needs;
+                // otherwise `id` is treated as a plain global and taint is dropped (F1).
+                // Direct calls are unaffected: `collect_call` resolves an identifier
+                // callee via `build_access_path`, not through here.
+                if self.scope_tree.find_variable(scope_view.sidx, text).is_none()
+                    && self.functions.keys().any(|f| f.0 == text)
+                {
+                    Ok(Exp::ObjectRef(CallObject::FunctionPtr(text.into())))
+                } else {
+                    Ok(Exp::AccessPath(self.build_access_path(
+                        text,
+                        Default::default(),
+                        scope_view,
+                    )))
+                }
+            }
             "comma_expression" => {
                 let ch1 = node.child_by_field_name("left").expect("always left");
                 let ch2 = node.child_by_field_name("right").expect("always right");
@@ -1955,6 +1972,23 @@ impl<'a> Context<'a> {
             "#;
 
         let query = compile_query(query_src);
+
+        // Pre-pass: register every function name up front so a function-pointer
+        // reference to a function defined LATER in the file (`fp = later;`) is already
+        // known when its using function is lowered. Without this, `flatten_expr` would
+        // not recognise `later` as a function and would drop the indirect-call taint.
+        let mut name_cursor = QueryCursor::new();
+        let mut name_matches = name_cursor.matches(&query, tree.root_node(), source.as_bytes());
+        while let Some(m) = name_matches.next() {
+            let extract = MatchExtractor::new(&query, m);
+            if let Ok(name_node) = extract.get("func.name") {
+                let func_name = to_str(&name_node, source);
+                self.functions
+                    .entry(FunctionName(func_name))
+                    .or_insert_with(|| program.new_function());
+            }
+        }
+
         // Each match binds *all* captures.
         let mut cursor = QueryCursor::new();
         let mut matches_iter = cursor.matches(&query, tree.root_node(), source.as_bytes());
