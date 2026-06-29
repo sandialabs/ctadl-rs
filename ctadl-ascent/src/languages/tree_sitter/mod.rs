@@ -923,8 +923,8 @@ impl<'a> Context<'a> {
             blidx: scope_view.blidx,
             sidx: for_sidx,
             continuation_blidx: scope_view.continuation_blidx,
-        break_target: scope_view.break_target,
-        continue_target: scope_view.continue_target,
+            break_target: scope_view.break_target,
+            continue_target: scope_view.continue_target,
             explainer: "for_loop".to_string(),
         };
 
@@ -1222,11 +1222,7 @@ impl<'a> Context<'a> {
 
     /// `continue`: terminate the current block with a goto to the innermost enclosing
     /// loop's re-test/update block (`scope_view.continue_target`).
-    fn walk_continue(
-        &self,
-        program: &mut Program,
-        scope_view: &ScopeView,
-    ) -> Result<(), Error> {
+    fn walk_continue(&self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
         match scope_view.continue_target {
             Some(target) => {
                 let mut to = scope_view.clone();
