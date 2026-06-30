@@ -534,3 +534,119 @@ fn cpp_reference_local_aliases_referent() {
     let prog = program_from_cpp_string(src).0;
     check_direct_call(&prog, "main", "sink", ["x"]);
 }
+
+// ---------------------------------------------------------------------------
+// Milestone 3 (spec 005) — methods slice 2: out-of-line definitions, explicit `this->`,
+// and pointer/reference receivers. These assert the *frontend's* lowering; the end-to-end
+// source→sink flows are asserted in `taint_compare::tests::cpp_{out_of_line,this_arrow,
+// pointer_receiver,reference_receiver}_*` and validated against DFSan by CPP_42..CPP_46.
+// ---------------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_out_of_line_method_discovered_and_lowered() {
+    // FR-1: a method defined out of line (`void Box::set(int){…}`, declarator is a
+    // `qualified_identifier`) is discovered and lowered with the same implicit `this` (`ByRef`,
+    // param 0) and `this.<member>` resolution as an inline method — the body's `v = x` becomes
+    // an update of `@p0.v`, and the prototype-only class still resolves `b.set`/`b.get` calls.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        class Box {
+          public:
+            int v;
+            void set(int x);
+            int get();
+        };
+        void Box::set(int x) { v = x; }
+        int Box::get() { return v; }
+        int main() {
+            Box b;
+            b.set(source());
+            sink(b.get());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::set",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_return_arity(&prog, "Box::set", 0);
+    check_func_assign_or_update(&prog, "Box::set", "@p0.v", ["@p1"]);
+    check_func_returns_path(&prog, "Box::get", "@p0.v");
+    // The calls in `main` dispatch to the qualified methods even though the bodies are
+    // out of line (discovery registered them before `main` was lowered).
+    check_direct_call_arg0(&prog, "main", "Box::set", "b");
+    check_direct_call(&prog, "main", "Box::get", ["b"]);
+}
+
+#[test_log::test]
+fn cpp_this_arrow_resolves_to_member() {
+    // FR-2: an explicit `this->v` resolves to the same `this.v` (`@p0.v`) access path as the
+    // unqualified member `v` — `this->v = x` is an update of `@p0.v`; `return this->v` returns
+    // `@p0.v`.
+    let src = r"
+        struct Box {
+            int v;
+            void set(int x) { this->v = x; }
+            int get() { return this->v; }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_assign_or_update(&prog, "Box::set", "@p0.v", ["@p1"]);
+    check_func_returns_path(&prog, "Box::get", "@p0.v");
+}
+
+#[test_log::test]
+fn cpp_pointer_receiver_dispatches_to_method() {
+    // FR-3: `p->set(args)` / `p->get()` (where `Box* p = &b`) dispatch as DIRECT calls to
+    // `Box::set`/`Box::get` with the pointer `p` as the arg-0 receiver — by-ref param 0 carries
+    // the member write back to `p`, and `p->get()` reads it out.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Box {
+            int v;
+            void set(int x) { v = x; }
+            int get() { return v; }
+        };
+        int main() {
+            Box b;
+            Box* p = &b;
+            p->set(source());
+            sink(p->get());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "main", "Box::set");
+    check_direct_call_arg0(&prog, "main", "Box::set", "p");
+    check_direct_call(&prog, "main", "Box::get", ["p"]);
+}
+
+#[test_log::test]
+fn cpp_reference_receiver_dispatches_to_referent() {
+    // FR-3: `r.set(args)` / `r.get()` (where `Box& r = b`) dispatch to `Box::set`/`Box::get`
+    // with the *referent* `b` as the arg-0 receiver (the reference local aliases `b`, reusing
+    // spec 004), not a separate local `r`.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Box {
+            int v;
+            void set(int x) { v = x; }
+            int get() { return v; }
+        };
+        int main() {
+            Box b;
+            Box& r = b;
+            r.set(source());
+            sink(r.get());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "main", "Box::set");
+    check_direct_call_arg0(&prog, "main", "Box::set", "b");
+    check_direct_call(&prog, "main", "Box::get", ["b"]);
+}

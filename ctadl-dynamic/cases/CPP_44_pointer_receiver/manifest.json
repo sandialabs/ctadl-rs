@@ -1,0 +1,6 @@
+{
+  "name": "CPP_44_pointer_receiver",
+  "description": "C++: p->set()/p->get() through a pointer to a Box dispatch with the pointed-to object as receiver; taint flows",
+  "label": "Test",
+  "expect_flow": true
+}

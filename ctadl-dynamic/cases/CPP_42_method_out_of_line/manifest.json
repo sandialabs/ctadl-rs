@@ -1,0 +1,6 @@
+{
+  "name": "CPP_42_method_out_of_line",
+  "description": "C++: out-of-line Box::set/Box::get definitions carry taint in via a setter and out via a getter",
+  "label": "Test",
+  "expect_flow": true
+}

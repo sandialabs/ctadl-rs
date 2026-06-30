@@ -1074,6 +1074,16 @@ impl<'a> Context<'a> {
                     // so this is inert for C.
                     if inner.kind() == "reference_declarator" {
                         self.bind_reference_local(source, program, scope_view, inner, nest_decl)?;
+                        // A reference to a known class object (`Box& r = b`) carries that
+                        // class so a later `r.m(…)` dispatches; the alias above already maps
+                        // `r` to the referent, which becomes the arg-0 receiver. Only ever
+                        // fires under C++ for a class-typed reference (`class_type` is `None`
+                        // for C and for `int&`), so the C path is unaffected.
+                        if let Some(class) = &class_type
+                            && let Some(leaf) = declarator_leaf_ident(inner, source)
+                        {
+                            self.local_types.insert(leaf.to_string(), class.clone());
+                        }
                         continue;
                     }
                     inner
@@ -1105,7 +1115,11 @@ impl<'a> Context<'a> {
                 None,
             );
             if let Some(class) = &class_type {
-                self.local_types.insert(var_name.to_string(), class.clone());
+                // Key the class-typed local by its leaf identifier so a pointer receiver
+                // (`Box* p = &b`) is recorded as `p`, not `*p` — otherwise a later
+                // `p->m(…)` (whose receiver is the identifier `p`) would not dispatch.
+                let key = declarator_leaf_ident(decl_ident, source).unwrap_or(var_name);
+                self.local_types.insert(key.to_string(), class.clone());
             }
             if let Some(vc) = nest_decl.child_by_field_name("value") {
                 self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;
@@ -2611,6 +2625,26 @@ pub fn debug_print_tree(
     }
 }
 
+/// The leaf identifier a declarator ultimately names, descending through pointer
+/// (`Box* p`), array, parenthesized, and C++ reference (`Box& r`) wrappers. Used to key a
+/// class-typed local in [`Context::local_types`] by its plain name (`p`/`r`), so a later
+/// `p->m(…)` / `r.m(…)` call can look up its class — `to_str` of the wrapping declarator
+/// would otherwise yield `*p`, which never matches the receiver identifier. Returns `None`
+/// for shapes that name no single identifier (e.g. a function declarator).
+fn declarator_leaf_ident<'s>(decl: Node<'_>, source: &'s str) -> Option<&'s str> {
+    match decl.kind() {
+        "identifier" => Some(to_str(&decl, source)),
+        "pointer_declarator"
+        | "array_declarator"
+        | "parenthesized_declarator"
+        | "reference_declarator" => decl
+            .child_by_field_name("declarator")
+            .or_else(|| decl.named_child(0))
+            .and_then(|d| declarator_leaf_ident(d, source)),
+        _ => None,
+    }
+}
+
 // this returns the field expresion chained from the 1st field_expression,
 // The final argument of kind "identifier" is returned, as it needs to be stuffed
 // in the variable field, while the rest (the out_vec) is the path
@@ -2620,7 +2654,12 @@ fn extract_field_expression<'a>(
     source: &'a str,
     out_vec: &mut Vec<&'a str>,
 ) -> anyhow::Result<&'a str, Error> {
-    if chain.kind() == "identifier" {
+    // A `this->member` access (C++) bases the chain on a `this` node rather than an
+    // identifier. Its source text is literally "this", which `build_access_path` resolves
+    // to parameter 0 (the implicit `this` installed by `lower_function`) — so `this->v`
+    // yields the same `@p0.v` access path as the unqualified member `v`. The `this` node
+    // never occurs under the C grammar, so this is inert for C.
+    if chain.kind() == "identifier" || chain.kind() == "this" {
         return Ok(to_str(&chain, source));
     }
     //otherwise, we have a field expression, and expect 2 children.

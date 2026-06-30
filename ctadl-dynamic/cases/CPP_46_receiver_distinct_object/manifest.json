@@ -1,0 +1,6 @@
+{
+  "name": "CPP_46_receiver_distinct_object",
+  "description": "C++ negative: a pointer receiver taints object a, but the sink reads a different object b; no cross-taint despite real taint elsewhere",
+  "label": "Test",
+  "expect_flow": false
+}

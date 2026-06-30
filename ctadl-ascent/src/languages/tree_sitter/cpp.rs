@@ -67,20 +67,25 @@ fn member_name<'a>(decl: Node<'_>, source: &'a str) -> Option<&'a str> {
     }
 }
 
-/// Discover C++ inline instance methods and lower them through the shared core.
+/// Discover C++ instance methods — inline *and* out-of-line — and lower them through the
+/// shared core.
 ///
 /// The top-level `function_definition` query in `Context::collect_functions` only matches
-/// definitions whose name is a plain `identifier`; a member function's name is a
-/// `field_identifier` nested inside a `class_specifier`/`struct_specifier`, so those bodies
-/// are invisible to it. This hook (installed only for C++) finds each class, records its
-/// data members and method names into `Context::classes` (the neutral map the shared core
-/// consults for member resolution and `recv.method(…)` dispatch), and lowers every inline
-/// method body via `Context::lower_function` with an implicit `this` (`ByRef`) parameter.
+/// definitions whose name is a plain `identifier`; a member function's name is either a
+/// `field_identifier` nested inside a `class_specifier`/`struct_specifier` (inline body) or
+/// a `qualified_identifier` `Class::m` at top level (out-of-line body) — both invisible to
+/// it. This hook (installed only for C++) finds each class, records its data members and
+/// method names into `Context::classes` (the neutral map the shared core consults for member
+/// resolution and `recv.method(…)` dispatch), and lowers every method body via
+/// `Context::lower_function` with an implicit `this` (`ByRef`) parameter. An out-of-line body
+/// resolves its enclosing class from the qualifier and is otherwise identical to an inline
+/// one (same implicit `this`, same `this.<member>` resolution).
 ///
-/// Two phases: first gather each class's members/methods and register a `FunctionIdx` for
-/// every method (so a method or a later top-level body can resolve a call to it); then
-/// lower the bodies. Gathering finishes (and drops the tree-query cursor) before any
-/// `lower_function` call, which needs `&mut Context`.
+/// Phases: gather each class's members/inline methods (phase 1); discover out-of-line
+/// definitions for already-declared classes (phase 1.5); register a `FunctionIdx` for every
+/// method, inline or out-of-line (phase 2a), so a method or a later top-level body can
+/// resolve a call to it; then lower the bodies (phase 2b). Each gathering step finishes (and
+/// drops its tree-query cursor) before any `lower_function` call, which needs `&mut Context`.
 fn cpp_collect_methods<'a>(
     ctx: &mut Context<'a>,
     source: &'a str,
@@ -169,6 +174,63 @@ fn cpp_collect_methods<'a>(
     }
     drop(it);
     drop(cursor);
+
+    // Phase 1.5: discover out-of-line method definitions — a top-level `function_definition`
+    // whose declarator names a `qualified_identifier` (`ret Class::m(params){…}`). The
+    // top-level `function_definition` query in `Context::collect_functions` only matches a
+    // plain `identifier` name, so these are invisible to it and must be found here. We gather
+    // (class, method, params, body) first — the cursor borrows the tree, not `ctx`, so reading
+    // `ctx.classes` to filter to already-declared classes is fine — then register the method
+    // names and queue the bodies after the cursor drops.
+    let ool_query = ctx.compile_query(
+        r#"
+        (function_definition
+            declarator: (function_declarator
+                declarator: (qualified_identifier
+                    scope: (namespace_identifier) @class
+                    name: (identifier) @method)
+                parameters: (parameter_list) @params)
+            body: (compound_statement) @body) @def
+        "#,
+    );
+    let mut out_of_line: Vec<MethodDef<'_>> = Vec::new();
+    {
+        let mut ool_cursor = QueryCursor::new();
+        let mut ool_it = ool_cursor.matches(&ool_query, root, source.as_bytes());
+        while let Some(m) = ool_it.next() {
+            let extract = MatchExtractor::new(&ool_query, m);
+            let class = to_str(&extract.get("class")?, source).to_string();
+            // Only lower out-of-line bodies for a class known from its declaration (this
+            // slice's scope). An unknown qualifier (e.g. a namespaced free function) is left
+            // alone — it is not an instance method we can model here.
+            if !ctx.classes.contains_key(&class) {
+                continue;
+            }
+            let name = to_str(&extract.get("method")?, source).to_string();
+            let params = extract.get("params")?;
+            let body = extract.get("body")?;
+            let void = extract
+                .get("def")?
+                .child_by_field_name("type")
+                .is_some_and(|t| to_str(&t, source).eq_ignore_ascii_case("void"));
+            out_of_line.push(MethodDef {
+                class,
+                name,
+                params,
+                body,
+                void,
+            });
+        }
+    }
+    // Register each out-of-line method's name on its class (so `recv.m(…)` dispatches even
+    // though the body lives outside the class body), then queue it for lowering alongside the
+    // inline methods.
+    for md in out_of_line {
+        if let Some(info) = ctx.classes.get_mut(&md.class) {
+            info.methods.insert(md.name.clone());
+        }
+        methods.push(md);
+    }
 
     // Phase 2a: register a function index for every method, so a method calling another
     // method (or a top-level body calling one) resolves it regardless of definition order.

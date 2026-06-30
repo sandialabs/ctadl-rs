@@ -1,0 +1,6 @@
+{
+  "name": "CPP_45_reference_receiver",
+  "description": "C++: r.set()/r.get() through a reference to a Box dispatch with the referent as receiver; taint flows",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_43_this_arrow",
+  "description": "C++: explicit this->v reads/writes resolve to this.v; setter->getter taint flows",
+  "label": "Test",
+  "expect_flow": true
+}

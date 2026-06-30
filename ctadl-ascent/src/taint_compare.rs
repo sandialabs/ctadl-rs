@@ -465,4 +465,163 @@ mod tests {
             "expected flow through a reference local aliasing a tainted variable, got: {flows:?}"
         );
     }
+
+    /// M3 (spec 005, FR-1) acceptance, end to end: a method defined *out of line*
+    /// (`void Box::set(int){…}` / `int Box::get(){…}`) is discovered and lowered with the same
+    /// implicit `this` as an inline method, so the setter→getter source→sink path flows —
+    /// mirrors CPP_42.
+    #[test_log::test]
+    fn cpp_out_of_line_method_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            class Box {
+              public:
+                int v;
+                void set(int x);
+                int get();
+            };
+            void Box::set(int x) { v = x; }
+            int Box::get() { return v; }
+            int main() {
+                Box b;
+                b.set(source());
+                sink(b.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp out-of-line method flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through out-of-line method definitions, got: {flows:?}"
+        );
+    }
+
+    /// M3 (spec 005, FR-2) acceptance, end to end: explicit `this->v` reads/writes resolve to
+    /// the same `this.v` member as the unqualified `v`, so the setter→getter path flows —
+    /// mirrors CPP_43.
+    #[test_log::test]
+    fn cpp_this_arrow_member_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                void set(int x) { this->v = x; }
+                int get() { return this->v; }
+            };
+            int main() {
+                Box b;
+                b.set(source());
+                sink(b.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp this-> member flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through explicit this->member accesses, got: {flows:?}"
+        );
+    }
+
+    /// M3 (spec 005, FR-3) acceptance, end to end: a pointer receiver `p->set(…)` / `p->get()`
+    /// (where `Box* p = &b`) dispatches to `Box::set`/`Box::get` with the pointed-to object as
+    /// the arg-0 receiver, so the member write propagates back and flows out — mirrors CPP_44.
+    #[test_log::test]
+    fn cpp_pointer_receiver_method_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                void set(int x) { v = x; }
+                int get() { return v; }
+            };
+            int main() {
+                Box b;
+                Box* p = &b;
+                p->set(source());
+                sink(p->get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp pointer-receiver method flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through a pointer receiver, got: {flows:?}"
+        );
+    }
+
+    /// M3 (spec 005, FR-3) acceptance, end to end: a reference receiver `r.set(…)` / `r.get()`
+    /// (where `Box& r = b`) dispatches to the referenced object — mirrors CPP_45 and reuses the
+    /// spec-004 reference-local aliasing.
+    #[test_log::test]
+    fn cpp_reference_receiver_method_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                void set(int x) { v = x; }
+                int get() { return v; }
+            };
+            int main() {
+                Box b;
+                Box& r = b;
+                r.set(source());
+                sink(r.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp reference-receiver method flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through a reference receiver, got: {flows:?}"
+        );
+    }
+
+    /// M3 (spec 005, FR-3) negative control: a pointer receiver taints one object (`a` via
+    /// `p = &a`), but the sink reads a *different*, untainted object (`b`). The method model is
+    /// per-object (the receiver is arg-0 by-ref), so no spurious `a`→`b` cross-taint is
+    /// reported even though real taint exists — mirrors CPP_46 (`s=none d=none`).
+    #[test_log::test]
+    fn cpp_distinct_receiver_object_has_no_cross_taint() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                void set(int x) { v = x; }
+                int get() { return v; }
+            };
+            int main() {
+                Box a;
+                Box b;
+                Box* p = &a;
+                p->set(source());
+                sink(b.v);
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp distinct-object flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "tainting a different object than the one sunk must not flow, got: {flows:?}"
+        );
+    }
 }
