@@ -964,3 +964,82 @@ fn field_increment_is_update() {
     // an unpinnable flatten temp, so we assert only that exactly one such update exists.
     check_writes_to(&prog, "@p0.x", 1);
 }
+
+// --- F2: taint through MULTIPLE function-pointer stores into one aggregate -----------
+//
+// A single function-pointer store into an aggregate already resolves at the call site.
+// The F2 gap is that a *second* store into the same aggregate (struct or array) creates
+// a new SSA version of the receiver, and the stored target must propagate across that
+// version to reach the indirect call. The taint-index transitive rule that performs the
+// hop (`func_ptr_assign_like` over `assign_like`) gates on `paths(p_new)`, but program
+// paths were seeded only from call *arguments* (`actual_param`) -- never from an indirect
+// call's *receiver* path. So the binding never reached the call and taint was dropped.
+//
+// Fix (ctadl-ascent/src/index_engine/mod.rs): register indirect/virtual-call receiver
+// paths as program paths --
+//     program_paths(p) <-- indirect_call(_, _, _, p);
+//     program_paths(p) <-- java_call(_, _, _, p, _, _);
+//
+// Each test routes param 1 (`b`) through `id` and back to the return; a `return <- @p1`
+// summary can only come from `wrap` (the callee `id`'s own summary is `return <- @p0`),
+// so these assert that `wrap` carries @p1 through the indirect call. Remove the two fix
+// lines above and the two `*_multistore_flows` tests fail (taint dropped) while
+// `funcptr_single_store_flows` still passes -- that contrast IS the bug.
+
+#[test_log::test]
+fn funcptr_single_store_flows() {
+    // Control: ONE function pointer stored into a struct field, then called through it.
+    // Resolves with the single-store handling alone -- no SSA version hop is needed, so
+    // this passes with or without the F2 fix. Establishes the baseline for the contrast.
+    let src = r"
+        int id(int p) { return p; }
+        struct Ops { int (*f)(int); };
+        int wrap(int a, int b) {
+            struct Ops o;
+            o.f = id;
+            return o.f(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn funcptr_struct_multistore_flows() {
+    // F2 (struct form): TWO function pointers stored into the same struct, then a call
+    // through the first. The second store (`o.g = id`) makes a new SSA version of `o`;
+    // the `o.f -> id` binding must propagate across it to the call `o.f(b)`. This was
+    // dropped before the F2 index-engine fix even though `funcptr_single_store_flows` works.
+    let src = r"
+        int id(int p) { return p; }
+        struct Ops { int (*f)(int); int (*g)(int); };
+        int wrap(int a, int b) {
+            struct Ops o;
+            o.f = id;
+            o.g = id;
+            return o.f(b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+#[ignore = "needs the array_declarator frontend fix (auto_test commit d1ccd07): `int (*fps[2])(int)` \
+            fails ingestion here with `ERR 78: Unsupported expression type: array_declarator`. The F2 \
+            resolution itself is covered by funcptr_struct_multistore_flows; un-ignore once array \
+            declarators are supported on this branch."]
+fn funcptr_array_multistore_flows() {
+    // F2 (array form): TWO function pointers stored into the same array, then a call
+    // through element 0. The `fps[1] = id` store makes a new SSA version of `fps`; the
+    // `fps[0] -> id` binding must propagate across it to the call `fps[0](b)`. Same root
+    // cause as the struct form -- this is what the broadened DFSan generator first surfaced.
+    let src = r"
+        int id(int p) { return p; }
+        int wrap(int a, int b) {
+            int (*fps[2])(int);
+            fps[0] = id;
+            fps[1] = id;
+            return fps[0](b);
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 1, "");
+}
