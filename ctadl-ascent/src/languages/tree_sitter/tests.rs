@@ -1043,5 +1043,3 @@ fn funcptr_array_multistore_flows() {
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&summary, 1, "");
 }
-
-
