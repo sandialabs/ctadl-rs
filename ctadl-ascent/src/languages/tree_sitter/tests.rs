@@ -1350,3 +1350,484 @@ fn funcptr_array_multistore_flows() {
     check_returns_param(&summary, 1, "");
 }
 
+// ============================================================================
+// Imported from the `treesitter_c_testing` coverage waves: cross-function flow
+// (recursion, call-depth, globals), field/struct precision, expression-level
+// dataflow, and `#[ignore]`d aspirational specs for not-yet-lowered constructs.
+// ============================================================================
+
+#[test_log::test]
+fn field_non_interference() {
+    // Field sensitivity, stated as a negative: writing `x` into `s.a` and returning `s.b` must NOT
+    // leak `x` to the return -- `s.a` and `s.b` are distinct field paths. The positive halves (x ->
+    // s.a, s.b returned) hold too; the load-bearing assertion is that x does not reach the return.
+    let src = r"
+        int f(Donkey s, int x) {
+            s.a = x;
+            return s.b;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 1, "", 0, "a"); // x -> s.a
+    check_returns_param(&s, 0, "b"); // s.b -> return
+    check_no_flow(&s, 1, "", 0, "b"); // x does NOT bleed into s.b
+    check_does_not_return_param(&s, 1, ""); // ...so x never reaches the return
+}
+
+#[test_log::test]
+fn arrow_field_returns_param() {
+    // Reading a field through an arrow (`return p->x;`) on a pointer parameter summarizes as the
+    // field path @p0.x reaching the return. (The `(*p).x` spelling that *should* be equivalent is
+    // not yet lowered -- see the ignored `deref_paren_field_equivalent`.)
+    let src = r"
+        int f(Field *p) {
+            return p->x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "x");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: (*p).x panics in mod.rs (expects only field_expression nodes); parser gap"]
+fn deref_paren_field_equivalent() {
+    // `(*p).x` should be the same field access as `p->x` (see `arrow_field_returns_param`), yielding
+    // @p0.x -> return. Today the frontend panics on the parenthesized-deref-then-field shape, so this
+    // documents the intended equivalence until the parser handles it.
+    let src = r"
+        int f(Field *p) {
+            return (*p).x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "x");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: conditional_expression is an Unsupported expression type in mod.rs"]
+fn ternary_both_arms_flow() {
+    // A ternary `a ? b : c` can yield either arm, so both `b` and `c` should flow to the result (here
+    // the return). The condition `a` is a control dependence, not a data source. The frontend does
+    // not yet lower `conditional_expression`, so this documents the intended both-arms flow.
+    let src = r"
+        int f(int a, int b, int c) {
+            return a ? b : c;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, ""); // b (consequent arm)
+    check_returns_param(&s, 2, ""); // c (alternative arm)
+}
+
+#[test_log::test]
+#[ignore = "aspirational: cast_expression is an Unsupported expression type in mod.rs"]
+fn cast_passthrough() {
+    // A cast is value-preserving for taint: `(long)a` should still carry `a` to the return. The
+    // frontend does not yet lower `cast_expression`, so this documents the intended pass-through.
+    let src = r"
+        int f(int a) {
+            return (long)a;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: sizeof_expression is an Unsupported expression type in mod.rs"]
+fn sizeof_does_not_evaluate() {
+    // `sizeof(*p)` does not evaluate its operand -- it yields a compile-time size, never reading
+    // through `p` -- so the parameter must NOT reach the return. The frontend does not yet lower
+    // `sizeof_expression`; this documents the intended (non-)flow, and is the negative that proves the
+    // operand stays unevaluated once lowering lands.
+    let src = r"
+        int f(int *p) {
+            return sizeof(*p);
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_does_not_return_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn whole_struct_copy_carries_field() {
+    // A whole-struct assignment (`t = s`) copies field taint: a later `t.a` read still resolves back
+    // to the source struct's field. So s.a (@p0.a) reaches the return through the copy.
+    let src = r"
+        int f(Donkey s) {
+            Donkey t;
+            t = s;
+            return t.a;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "a");
+}
+
+#[test_log::test]
+fn nested_field_depth_returns() {
+    // A deep field read (`v.a.b.c`) preserves the full access path: the summary endpoint is the
+    // three-deep field path on the formal, not a flattened or truncated one.
+    let src = r"
+        int f(Thing v) {
+            return v.a.b.c;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "a.b.c");
+}
+
+#[test_log::test]
+fn field_store_then_load_roundtrips() {
+    // Storing into a field and reading it back round-trips taint: `v.inner.val = x` then `y =
+    // v.inner.val` carries x to y, and the return. Exercises field-store/field-load on the same path
+    // across statements.
+    let src = r"
+        int f(Box v, int x) {
+            v.inner.val = x;
+            int y = v.inner.val;
+            return y;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn out_param_write_propagates() {
+    // The canonical C out-parameter taint shape: `*out = src` should propagate src (@p1) into the
+    // object reached through out (@p0). This is the highest-value pointer pattern for a taint tool.
+    let src = r"
+        void f(int *out, int src) {
+            *out = src;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 1, "", 0, "");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: address-of aliasing not modeled -- `int *p = &x; *p = src;` parses but does \
+            not taint x (contrast out_param_write_propagates, which works through a by-ref param)"]
+fn address_of_local_aliases() {
+    // Taking a local's address and writing through it (`int *p = &x; *p = src;`) should taint x, so a
+    // later `return x` carries src. Exercises address-of plus write-through-alias. Today the &x
+    // aliasing is dropped (the node lowers, but p = &x / *p = src reassign p's local, not x), so src
+    // never reaches the return -- documented here until aliasing lands.
+    let src = r"
+        int f(int x, int src) {
+            int *p = &x;
+            *p = src;
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn for_loop_body_flows() {
+    // A `for` loop body that assigns the parameter into a local (`for(...) { x = src; }`) carries the
+    // parameter to a later `return x`. `for` is otherwise parked (only an ignored experimental case);
+    // this pins that its body dataflow actually lowers and flows src (@p0) -> return.
+    let src = r"
+        int f(int src) {
+            int x = 0;
+            for (int i = 0; i < 10; i++) {
+                x = src;
+            }
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn recursion_returns_param() {
+    // A self-recursive function (`if (src) return f(src); return src;`) must reach a summary fixpoint
+    // where the parameter flows to the return: the base case returns src directly, and the recursive
+    // call returns f(src), which by the same summary is src. Pins that the indexer's fixpoint handles
+    // direct recursion (single function, so plain check_returns_param suffices).
+    let src = r"
+        int f(int src) {
+            if (src) return f(src);
+            return src;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn struct_by_value_through_call() {
+    // Field taint survives a struct passed BY VALUE through a call. `callee` returns `p.a`, so its
+    // summary is @p0.a -> return; `caller` passes its struct `s` as that argument and returns the
+    // result, so caller's summary is @p0.a -> return too. Uses the per-function helpers so each flow
+    // is pinned to the correct function (plain summary_search would conflate the two).
+    let src = r"
+        int callee(Donkey p) {
+            return p.a;
+        }
+        int caller(Donkey s) {
+            return callee(s);
+        }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "callee", 0, "a");
+    check_returns_param_in(&s, &si, "caller", 0, "a");
+}
+
+#[test_log::test]
+fn unary_ops_blend_through() {
+    // Unary operators are value-preserving for taint: negation, bitwise-not, and logical-not all carry
+    // their operand to the result. (`!x` arguably should not -- it yields 0/1 -- but the frontend
+    // treats it as a blend like the others; we pin the actual behavior.) Each is its own parse so a
+    // single operator failing is isolated in the assertion message.
+    for op in ["-", "~", "!"] {
+        let src = format!("int f(int x) {{ return {op}x; }}");
+        let (s, _si) = get_summary(program_from_string(&src).0).unwrap();
+        check_returns_param(&s, 0, "");
+    }
+}
+
+#[test_log::test]
+fn constant_index_field_precision() {
+    // Constant subscripts are distinct field paths: writing `src` into `v.a[0]` must NOT leak to a read
+    // of `v.a[1]`. Subscripts lower to `FieldAccess::Symbol("[N]")`, so `[0]` and `[1]` are different
+    // segments -- the array-index analogue of `field_non_interference`. The load-bearing assertion is
+    // that src (p1) does not reach the return through the distinct index.
+    //
+    // NB the escaped brackets in the path strings: the summary stores a subscript as the literal
+    // `Symbol("[0]")`, but `facts::Path`'s parser reads an unescaped `[0]` as a real `Offset(0)` (the
+    // Symbol-vs-Offset divergence noted in this dir's CLAUDE.md). Escaping (`\[0\]`) forces the parser
+    // to emit a Symbol, matching what the frontend actually lowered.
+    let src = r"
+        int f(Thing v, int src) {
+            v.a[0] = src;
+            return v.a[1];
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_flow(&s, 1, "", 0, r"a.\[0\]"); // src -> v.a[0]
+    check_returns_param(&s, 0, r"a.\[1\]"); // v.a[1] -> return
+    check_does_not_return_param(&s, 1, ""); // src (into a[0]) does NOT reach the a[1] return
+}
+
+#[test_log::test]
+fn mutual_recursion_returns_param() {
+    // Mutual recursion across a summary fixpoint: `f` calls `g`, `g` calls `f`, and EACH has a base
+    // case returning its parameter directly (`return x` / `return y`). The base cases seed the fixpoint
+    // with param->return for both functions; the recursive-call edges then propagate those summaries
+    // around the f<->g cycle without losing them. Pinned per-function so the two aren't conflated.
+    //
+    // The base cases are load-bearing. Without them -- `int f(int x){ return g(x); } int g(int y){
+    // return f(y); }` -- the program is non-terminating recursion that never returns, and the only
+    // sound summary is the EMPTY one: there is no param->return path that doesn't pass through another
+    // non-terminating call, so the least fixpoint is empty. That empty result is *correct*, not a
+    // dropped flow; a meaningful mutual-recursion test must supply a terminating base case.
+    let src = r"
+        int g(int y);
+        int f(int x) { if (x > 0) return g(x); return x; }
+        int g(int y) { if (y > 0) return f(y); return y; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "f", 0, "");
+    check_returns_param_in(&s, &si, "g", 0, "");
+}
+
+#[test_log::test]
+fn struct_by_value_non_interference_through_call() {
+    // Field sensitivity survives a by-value struct through a call: `callee` reads only `p.a`, so a
+    // caller that writes `src` into the *other* field `s.b` and returns `callee(s)` must NOT leak src
+    // to its return. The non-interference complement of `struct_by_value_through_call`. Uses the
+    // per-function negative so the absence is asserted on the caller's summary specifically.
+    let src = r"
+        int callee(Donkey p) {
+            return p.a;
+        }
+        int caller(Donkey s, int src) {
+            s.b = src;
+            return callee(s);
+        }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "caller", 0, "a"); // s.a still reaches caller's return
+    check_does_not_return_param_in(&s, &si, "caller", 1, ""); // src (into s.b) does not
+}
+
+#[test_log::test]
+fn for_init_clause_flows() {
+    // The `for` *init* clause is a real assignment slot: `for (x = src; ...; ...)` with an empty body
+    // still flows src into x, so a later `return x` carries it. Complements `for_loop_body_flows`
+    // (which exercises the body); this pins the init clause specifically.
+    let src = r"
+        int f(int src) {
+            int x = 0;
+            for (x = src; x < 10; x++) {}
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn post_increment_value_is_operand() {
+    // `int x = y++;` consumes the *value* of `y++` (post-increment yields the old y, then increments),
+    // so y flows to x and on to the return. We only ever tested `++` as a standalone statement before;
+    // this pins its value-as-subexpression behavior. (The frontend loses the pre/post distinction, but
+    // either way the operand value reaches x -- that is what we assert.)
+    let src = r"
+        int f(int y) {
+            int x = y++;
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: a non-constant subscript a[n] lowers to a distinct `[_elem_]` field symbol \
+            that does NOT alias a constant index `[0]`, so the sound a[n]->a[0] over-approximation is \
+            missed (node lowers, flow dropped)"]
+fn nonconstant_subscript_may_alias_constant() {
+    // A non-constant subscript is sound only if it may-alias every concrete index: writing `a[n]` and
+    // reading `a[0]` should carry taint, because `n` could be 0. The frontend instead lowers `a[n]` to
+    // `Symbol("[_elem_]")` and `a[0]` to `Symbol("[0]")` and treats them as disjoint paths, so src does
+    // NOT reach the return -- unsound. (The doc anticipated an array-blind *collapse*; the reality is a
+    // separate `[_elem_]` slot that never merges with constant indices.) Asserting the intended flow
+    // documents the gap. Contrast `constant_index_field_precision`, where keeping two *constant*
+    // indices distinct is the correct, precise answer.
+    let src = r"
+        int f(int *a, int src, int n) {
+            a[n] = src;
+            return a[0];
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+#[ignore = "aspirational: a union is treated as an ordinary field-sensitive struct (no overlap model), \
+            so a write to u.a does not taint a read of u.b -- node lowers, flow dropped"]
+fn union_write_overlaps_other_field() {
+    // A union aliases its fields: writing `u.a` and reading `u.b` should carry taint, because they
+    // share storage. The sound taint answer is a flow. Confirmed by observation: the frontend lowers a
+    // union like any struct (field-sensitive, no union model), keeps `.a` and `.b` disjoint, and drops
+    // the flow -- src does NOT reach the return. Asserting the ideal (overlap flows) documents the
+    // unsoundness until a union/overlap model lands.
+    let src = r"
+        int f(int src) {
+            U u;
+            u.a = src;
+            return u.b;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn vararg_call_carries_argument() {
+    // A tainted value passed as a variadic argument (`printf("%d", src)`) must at least be *captured*
+    // as an argument of the lowered call -- the prerequisite for any varargs taint modeling. printf is
+    // an unresolved external (no summary), so this is a Category-A call-shape assertion: f emits a
+    // direct call to printf, and src (@p0) appears among its arguments.
+    let src = r#"
+        int f(int src) {
+            return printf("%d", src);
+        }"#;
+    let (prog, _dump) = program_from_string(src);
+    check_has_direct_call(&prog, "f", "printf");
+    let src_exp = exp_from_str("@p0");
+    let carries_src = direct_calls_in(&prog, "f").iter().any(|(callees, args)| {
+        callees.iter().any(|c| c == "printf") && args.iter().any(|a| *a == src_exp)
+    });
+    assert!(
+        carries_src,
+        "expected @p0 to appear as an argument of the printf call\n{prog}"
+    );
+}
+
+#[test_log::test]
+#[ignore = "aspirational: initializer_list (designated initializer `{.a = src}`) is an Unsupported \
+            expression type (ERR 78) in mod.rs"]
+fn designated_initializer_flows() {
+    // A designated initializer `Thing v = {.a = src}` should taint `v.a`, so `return v.a` carries src.
+    // The frontend rejects `initializer_list` outright; documents the intended flow until it lowers.
+    let src = r"
+        int f(int src) {
+            Thing v = {.a = src};
+            return v.a;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "a");
+}
+
+#[test_log::test]
+fn global_flows_across_functions() {
+    // Taint through a global: `set` writes its parameter into global `g`, `get` returns `g`. Each half
+    // is a summary endpoint on the special global heap -- `set`: @p0 -> $globals.g, `get`:
+    // $globals.g -> return -- so the two compose into a cross-function flow `set`'s param ~> `get`'s
+    // return. Pins that global writes/reads are summarized (not dropped) and tied to the right function.
+    let src = r"
+        int g;
+        void set(int src) { g = src; }
+        int get() { return g; }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_param_into_global_in(&s, &si, "set", 0, "g");
+    check_returns_global_in(&s, &si, "get", "g");
+}
+
+#[test_log::test]
+fn transitive_call_depth_returns_param() {
+    // Summary composition through three call hops: `a` calls `b` calls `c`, each returning its param.
+    // The param->return summary must propagate all the way out, so every function reports @p0 -> return
+    // (we only ever tested a single call hop before). Pinned per-function.
+    let src = r"
+        int c(int z) { return z; }
+        int b(int y) { return c(y); }
+        int a(int x) { return b(x); }";
+    let (s, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&s, &si, "c", 0, "");
+    check_returns_param_in(&s, &si, "b", 0, "");
+    check_returns_param_in(&s, &si, "a", 0, "");
+}
+
+#[test_log::test]
+fn comma_operator_yields_rhs() {
+    // The comma operator `(a, b)` evaluates `a`, discards its value, and yields `b`. So `b` (p1) reaches
+    // the return and the discarded `a` (p0) does NOT -- a precise, correct result (not an over-approx
+    // blend). Distinct from `comma_list_declarations`, which is comma-separated *declarations*.
+    let src = r"
+        int f(int a, int b) {
+            return (a, b);
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, ""); // b is the value of the comma expression
+    check_does_not_return_param(&s, 0, ""); // a is evaluated then discarded
+}
+
+#[test_log::test]
+fn short_circuit_both_operands_flow() {
+    // A short-circuit `a && b` yields a 0/1 value derived from both operands (b only when a is truthy).
+    // The frontend treats it as a blend, so both p0 and p1 flow to the return -- the sound over-approx
+    // (it does not try to model that `b` may go unevaluated). Pins the blend behavior.
+    let src = r"
+        int f(int a, int b) {
+            return a && b;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+    check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn const_local_flows() {
+    // A `const`-qualified local is an ordinary local for dataflow: `const int x = src;` then `return x`
+    // carries src to the return. (Robustness: the qualifier must not change lowering.)
+    let src = r"
+        int f(int src) {
+            const int x = src;
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn static_local_flows() {
+    // A `static` local persists across calls, but within a single call `x = src; return x;` still flows
+    // src to the return. We pin the intra-call flow (cross-call persistence is not modeled and is out
+    // of scope for a per-function summary). Robustness: the `static` qualifier must not drop the flow.
+    let src = r"
+        int f(int src) {
+            static int x;
+            x = src;
+            return x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
