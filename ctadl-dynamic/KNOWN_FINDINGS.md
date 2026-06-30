@@ -3,7 +3,7 @@
 This file records **analyzer findings the comparison harness has surfaced** — soundness gaps and
 frontend ingestion gaps — and tracks their disposition.
 
-**Current state (2026-06-29):**
+**Current state (2026-06-30):**
 
 | Finding | Kind | Case(s) | Status |
 |---------|------|---------|--------|
@@ -13,11 +13,25 @@ frontend ingestion gaps — and tracks their disposition.
 | F2 — multiple funcptr stores into an aggregate drop taint | soundness | 30, 33 | ✅ resolved (index-engine path fix) |
 | **initializer_list (`{...}`) not ingested** | frontend | 31 | 🟠 open |
 | **labeled_empty_statement (`L: ;`) not ingested** | frontend | 32 | 🟡 open |
+| **F3 — write through a local's address doesn't taint the local** | soundness | 34 | 🔴 open |
+| **F4 — union field overlap not modeled** | soundness | 35 | 🔴 open |
+| **F5 — non-constant subscript doesn't may-alias a constant index** | soundness | 36 | 🔴 open |
+| **cast_expression not ingested** | frontend | 37 | 🟠 open |
+| **conditional_expression (ternary) not ingested** | frontend | 38 | 🟠 open |
+| **sizeof_expression not ingested** | frontend | 39 | 🟠 open |
+| **designated_initializer not ingested** | frontend | 40 | 🟠 open |
+| **deref_paren_field (`(*p).x`) panics** | frontend | 41 | 🟠 open |
 
-F2 and the two open frontend findings were surfaced by the **broadened M7 generator** (it threads
-taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at volume).
-Resolved entries are kept as a record of what the approach caught and how each was fixed. **2
-findings remain open** (both frontend ingestion gaps — `initializer_list`, `labeled_empty_statement`).
+F2 and the two `31`/`32` frontend findings were surfaced by the **broadened M7 generator** (it
+threads taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at
+volume). **F3–F5 and the five `37`–`41` frontend gaps (cases 34–41, added 2026-06-30) were
+cross-validated from `treesitter_feature_branch`'s aspirational `#[ignore]` unit tests** — each
+documented static gap was reproduced as a DFSan case, and the runtime ground truth confirmed every
+one (3 `soundness-disagree`, 5 `frontend-error`). Resolved entries are kept as a record of what the
+approach caught and how each was fixed. **10 findings remain open** (3 soundness: F3/F4/F5; 7
+frontend ingestion: `initializer_list`, `labeled_empty_statement`, `cast_expression`,
+`conditional_expression`, `sizeof_expression`, `designated_initializer`, `deref_paren_field`).
+NB: `31`/`32` are fixed on `treesitter_feature_branch` but still open on this branch until merged.
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
 (soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see
@@ -25,6 +39,70 @@ findings remain open** (both frontend ingestion gaps — `initializer_list`, `la
 instead of a run-failing `NEW-GAP`/`FRONTEND-ERROR`. When a fix lands, the harness reports the
 case as `resolved-known-gap` / `resolved-known-frontend-gap`; the closure step is to remove that
 field from the manifest **and** mark the entry below RESOLVED.
+
+---
+
+## F5 — Non-constant subscript doesn't may-alias a constant index (OPEN)
+
+- **Status:** **open.** Allowlisted `"known_gap": "F5"` in
+  [`cases/36_nonconstant_subscript`](cases/36_nonconstant_subscript/).
+- **Symptom:** writing `a[n]` (with `n` non-constant) then reading `a[0]` drops taint. CTADL lowers
+  a non-constant subscript to a distinct `[_elem_]` field symbol and a constant subscript `a[0]` to
+  `[0]`, and treats the two as **disjoint** field paths — so `a[n] = src` never reaches `a[0]`. A
+  sound analysis must let `a[n]` may-alias every concrete index (`n` could be 0):
+  ```c
+  int a[4]; int n = /* 0 at runtime */; a[n] = src; sink(a[0]);   // F5: static=none, dynamic=flow
+  ```
+- **Reproduces with:** [`cases/36_nonconstant_subscript`](cases/36_nonconstant_subscript/) (`n` is
+  read from a `volatile` so it isn't constant-folded) → `static=none dynamic=flow` (`known-gap F5`).
+  Contrast: keeping two **constant** indices distinct (`a[0]` vs `a[1]`) is correct precision, not a
+  bug — that distinction is what makes this a may-alias question, not a collapse.
+- **Found by / cross-validated:** the `treesitter_feature_branch` aspirational unit test
+  `nonconstant_subscript_may_alias_constant` (`#[ignore]`); reproduced here as a DFSan case.
+- **Root cause:** not yet investigated. Candidate: a non-constant `[_elem_]` subscript should
+  may-alias its constant-index siblings (`[N]`) in the taint-index field model.
+
+---
+
+## F4 — Union field overlap not modeled (OPEN)
+
+- **Status:** **open.** Allowlisted `"known_gap": "F4"` in
+  [`cases/35_union_field_overlap`](cases/35_union_field_overlap/).
+- **Symptom:** writing one union member and reading another drops taint. A `union` aliases its
+  members (they share storage), so `u.a = src; … u.b` carries taint. CTADL models a union like an
+  ordinary **field-sensitive struct** — `.a` and `.b` are disjoint paths — so the overlap flow is
+  dropped:
+  ```c
+  union U { int a; int b; }; union U u; u.a = src; sink(u.b);   // F4: static=none, dynamic=flow
+  ```
+- **Reproduces with:** [`cases/35_union_field_overlap`](cases/35_union_field_overlap/) →
+  `static=none dynamic=flow` (`known-gap F4`).
+- **Found by / cross-validated:** the `treesitter_feature_branch` aspirational unit test
+  `union_write_overlaps_other_field` (`#[ignore]`); reproduced here as a DFSan case.
+- **Root cause:** not yet investigated. Needs a union/overlap model (e.g. collapse all members of a
+  `union` type to a shared field, or make sibling union members may-alias).
+
+---
+
+## F3 — Write through a local's address doesn't taint the local (OPEN)
+
+- **Status:** **open.** Allowlisted `"known_gap": "F3"` in
+  [`cases/34_addr_of_local_alias`](cases/34_addr_of_local_alias/).
+- **Symptom:** taking a local's address and writing through it (`int *p = &x; *p = src;`) does not
+  taint `x`, so a later read of `x` is clean. CTADL handles **reading** through a pointer alias
+  (case `14`) and `*out = src` through a pointer **parameter** (case `15`), but does not model a
+  *local's* address being captured and written through:
+  ```c
+  int x = 0; int *p = &x; *p = src; sink(x);   // F3: static=none, dynamic=flow
+  ```
+- **Reproduces with:** [`cases/34_addr_of_local_alias`](cases/34_addr_of_local_alias/) →
+  `static=none dynamic=flow` (`known-gap F3`). The contrast with cases `14`/`15` (both `OK`)
+  localizes the gap to write-through a *local* alias (`&local`), not pointer handling in general.
+- **Found by / cross-validated:** the `treesitter_feature_branch` aspirational unit test
+  `address_of_local_aliases` (`#[ignore]`); reproduced here as a DFSan case.
+- **Root cause:** not yet investigated. Candidate: `p = &x` doesn't bind `p`'s pointee to `x`, so
+  the `*p = src` store updates an abstract pointee rather than `x` (needs local points-to / address-of
+  modeling).
 
 ---
 
@@ -167,6 +245,68 @@ compare against the moment the frontend learns to ingest it (the harness will th
   `known-frontend-gap (labeled_empty_statement)`. The `goto` jumps over the kill, so DFSan observes
   the flow; expected result once it parses is `flow`.
 - **Found by:** the broadened M7 generator (its goto transform labeled an empty statement).
+
+## cast_expression — casts don't parse (OPEN)
+
+- **Status:** **open.** Allowlisted `"known_frontend_gap": "cast_expression"` in
+  [`cases/37_cast_expression`](cases/37_cast_expression/).
+- **Symptom:** a cast `(long)x` fails `ERR 78` — `flatten_expr` has no `cast_expression` arm. A cast
+  is value-preserving for taint, so the expected result once it lowers is `flow`.
+- **Reproduces with:** [`cases/37_cast_expression`](cases/37_cast_expression/) →
+  `known-frontend-gap (cast_expression)`. DFSan observes `flow`.
+- **Found by / cross-validated:** the `treesitter_feature_branch` aspirational unit test
+  `cast_passthrough` (`#[ignore]`).
+
+## conditional_expression (ternary) — doesn't parse (OPEN)
+
+- **Status:** **open.** Allowlisted `"known_frontend_gap": "conditional_expression"` in
+  [`cases/38_conditional_expression`](cases/38_conditional_expression/).
+- **Symptom:** a ternary `c ? x : 0` fails `ERR 78`. The value is whichever arm is taken, so both
+  arms should flow to the result; expected result once it lowers is `flow` (both arms).
+- **Reproduces with:** [`cases/38_conditional_expression`](cases/38_conditional_expression/) →
+  `known-frontend-gap (conditional_expression)`. DFSan observes `flow`.
+- **Found by / cross-validated:** the `treesitter_feature_branch` aspirational unit test
+  `ternary_both_arms_flow` (`#[ignore]`).
+
+## sizeof_expression — doesn't parse (OPEN)
+
+- **Status:** **open.** Allowlisted `"known_frontend_gap": "sizeof_expression"` in
+  [`cases/39_sizeof_expression`](cases/39_sizeof_expression/).
+- **Symptom:** `sizeof(x)` fails `ERR 78`. Semantically `sizeof` does **not** evaluate its operand
+  (it yields a compile-time size), so the correct result is **no flow** — this case has
+  `expect_flow: false`. It is the one frontend gap whose expected post-fix result is a *negative*:
+  once `sizeof` lowers, the operand must stay unevaluated and this becomes a no-flow regression test.
+- **Reproduces with:** [`cases/39_sizeof_expression`](cases/39_sizeof_expression/) →
+  `known-frontend-gap (sizeof_expression)`. DFSan correctly observes **no** flow.
+- **Found by / cross-validated:** the `treesitter_feature_branch` aspirational unit test
+  `sizeof_does_not_evaluate` (`#[ignore]`).
+
+## designated_initializer — designated brace initializers don't parse (OPEN)
+
+- **Status:** **open.** Allowlisted `"known_frontend_gap": "designated_initializer"` in
+  [`cases/40_designated_initializer`](cases/40_designated_initializer/).
+- **Symptom:** `struct S s = { .a = x }` fails `ERR 78`. This is the **designated** form of
+  `initializer_list`, tracked separately from the **positional** form (case `31`): on
+  `treesitter_feature_branch` the positional form was fixed but the designated form remained a gap,
+  so the two close independently. Expected result once it lowers is `flow`.
+- **Reproduces with:** [`cases/40_designated_initializer`](cases/40_designated_initializer/) →
+  `known-frontend-gap (designated_initializer)`. DFSan observes `flow`.
+- **Found by / cross-validated:** the `treesitter_feature_branch` aspirational unit test
+  `designated_initializer_flows` (`#[ignore]`).
+
+## deref_paren_field — `(*p).x` panics (OPEN)
+
+- **Status:** **open.** Allowlisted `"known_frontend_gap": "deref_paren_field"` in
+  [`cases/41_deref_paren_field`](cases/41_deref_paren_field/).
+- **Symptom:** `(*p).x` (a parenthesized deref then field access) **panics** in `mod.rs` — the
+  field-access handler expects particular `field_expression` object shapes and doesn't handle a
+  parenthesized-deref object. Unlike the `ERR 78` gaps this is a *panic*, caught by the runner's
+  `catch_unwind` and reported as `frontend-error`. It should be identical to `p->x`; expected result
+  once handled is `flow`.
+- **Reproduces with:** [`cases/41_deref_paren_field`](cases/41_deref_paren_field/) →
+  `known-frontend-gap (deref_paren_field)`. DFSan observes `flow`.
+- **Found by / cross-validated:** the `treesitter_feature_branch` aspirational unit test
+  `deref_paren_field_equivalent` (`#[ignore]`).
 
 ## array_declarator — array declarations are now ingested (RESOLVED)
 
