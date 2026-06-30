@@ -33,10 +33,19 @@ use crate::facts::{
     serde::Deserialize,
 )]
 pub struct QueryEndpoint {
+    /// The function the vertex lives in. For a call-site-anchored endpoint this is the
+    /// *caller* (the function containing `call_site`); for a function-anchored endpoint it
+    /// is the function the source/sink was declared on.
     pub infunc: FunctionId,
     pub vertex: FlowVertex,
     pub label: Label,
     pub direction: TaintDirection,
+    /// The call site this endpoint is anchored at, if any. When `Some`, `vertex` is a
+    /// call-arg vertex in `infunc` and `call_site`'s function is `infunc`. `None` denotes a
+    /// function-anchored endpoint (no usable call site: a local/global port, or a function
+    /// with no callers). It is human-facing metadata; the taint machinery seeds and searches
+    /// from `infunc`/`vertex` alone.
+    pub call_site: Option<PackedInsnSiteId>,
 }
 
 impl QueryEndpoint {
@@ -62,7 +71,48 @@ impl QueryEndpoint {
             vertex: endpoint.vertex,
             label: endpoint.label,
             direction: endpoint.direction,
+            call_site: None,
         }
+    }
+
+    /// Fans a function-anchored endpoint into one endpoint per call site of `infunc`,
+    /// re-anchoring each at the call-arg vertex (for `formal`) that the call passes. `call`
+    /// is the static call graph (`site -> callee`). The endpoint is returned unchanged when
+    /// it can't be re-anchored: `formal` is the globals pseudo-formal, or `infunc` has no
+    /// callers. `formal` is supplied by the caller because the endpoint's own vertex may have
+    /// been SSA-versioned into a local even when it denotes a parameter; the formal index
+    /// names the parameter the call boundary maps it to. This is how query endpoints come to
+    /// denote "a vertex at a particular call site," letting the formatter distinguish flows
+    /// that share a formal but differ by call site.
+    pub fn anchored_at_callsites(
+        self,
+        formal: FormalIndex,
+        call: &[(PackedInsnSiteId, FunctionId)],
+    ) -> Vec<Self> {
+        // The globals pseudo-formal does not cross a call boundary as an argument.
+        if *formal == crate::codegen::GLOBALS_INDEX {
+            return vec![self];
+        }
+        let mut out = Vec::new();
+        for (site, callee) in call {
+            if *callee != self.infunc {
+                continue;
+            }
+            let Ok(insn_site) = InsnSiteId::try_from(site) else {
+                continue;
+            };
+            let Ok(call_arg) = PackedCallArg::try_from_parts(insn_site.insn_id, formal) else {
+                continue;
+            };
+            out.push(QueryEndpoint {
+                infunc: insn_site.func_id,
+                vertex: FlowVertex(FlowVariable::call_arg_packed(call_arg), self.vertex.1),
+                label: self.label.clone(),
+                direction: self.direction,
+                call_site: Some(*site),
+            });
+        }
+        if out.is_empty() { vec![self] } else { out }
     }
 }
 
@@ -187,7 +237,7 @@ pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult 
         // The taint query proper does not need edge provenance, so `$site` (and the
         // source endpoint args) are accepted but discarded here; the formatter's
         // copy of this macro is what records `taint_edge` with the call instruction.
-        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sv:expr, $sp:expr, $site:expr) {
+        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sts:expr, $sv:expr, $sp:expr, $site:expr) {
             taint($df, $dts, $dv, $dp, $a)
         }
         include_source!(crate::query_engine::ascent_code::taint_analysis_rules);
@@ -232,18 +282,18 @@ pub mod ascent_code {
         // Initialize taint with source
         taint(infunc, TaintState::Free, v.clone(), p.clone(), s) <--
             sources(s),
-            let QueryEndpoint { infunc, vertex, label, direction } = s,
+            let QueryEndpoint { infunc, vertex, label, direction, call_site: _ } = s,
             let FlowVertex(v, p) = vertex;
 
         // Propagate taint locally onto fields
-        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, v2.clone(), p23.clone(), None) <--
+        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, ts, v2.clone(), p23.clone(), None) <--
             taint(infunc, ts, v2, p23, a),
             if a.direction == TaintDirection::Forward,
             assign_like(infunc, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(p13.clone());
 
-        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, v2.clone(), p23.clone(), None) <--
+        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, ts, v2.clone(), p23.clone(), None) <--
             taint(infunc, ts, v2, p23, a),
             if a.direction == TaintDirection::Backward,
             assign_like(infunc, v2, p2, v1, p1),
@@ -251,7 +301,7 @@ pub mod ascent_code {
             paths(p13.clone());
 
         // Formal-to-actual (Return in forward mode, Call in backward mode).
-        produce_taint!(func_id, TaintState::Free, v1.clone(), p2.clone(), a.clone(), infunc, v2.clone(), p2.clone(), Some(*site_id)) <--
+        produce_taint!(func_id, TaintState::Free, v1.clone(), p2.clone(), a.clone(), infunc, TaintState::Free, v2.clone(), p2.clone(), Some(*site_id)) <--
             taint(infunc, TaintState::Free, v2, p2, a),
             formal_param(infunc, v2, formal_ty),
             if let Some(n2) = v2.as_formal(),
@@ -263,8 +313,8 @@ pub mod ascent_code {
             let v1 = FlowVariable::call_arg_packed(call_arg_packed);
 
         // Actual-to-formal (Call in forward mode, Return in backward mode).
-        produce_taint!(func, TaintState::Restricted, formal_var.clone(), p2.clone(), a.clone(), infunc, v2.clone(), p2.clone(), Some(site_id)) <--
-            taint(infunc, _, v2, p2, a),
+        produce_taint!(func, TaintState::Restricted, formal_var.clone(), p2.clone(), a.clone(), infunc, sts, v2.clone(), p2.clone(), Some(site_id)) <--
+            taint(infunc, sts, v2, p2, a),
             if let Some(packed) = v2.as_call_arg(),
             let CallArgId { insn_id, formal: formal_raw } = CallArgId::try_from(packed).unwrap(),
             let formal = FormalIndex::from(formal_raw),
@@ -283,12 +333,12 @@ pub mod ascent_code {
             assign_like(infunc, y, Path::empty(), x, Path::empty());
 
         // Propagates taint on a variable into its alias.
-        produce_taint!(infunc, st, v1.clone(), p.clone(), a.clone(), infunc, v2.clone(), Path::empty(), None) <--
+        produce_taint!(infunc, st, v1.clone(), p.clone(), a.clone(), infunc, st, v2.clone(), Path::empty(), None) <--
             taint(infunc, st, v2, Path::empty(), a),
             if a.direction == TaintDirection::Forward,
             alias_of_field(infunc, v2, v1, p);
 
-        produce_taint!(infunc, st, v1.clone(), p12.clone(), a.clone(), infunc, v2.clone(), p2.clone(), None) <--
+        produce_taint!(infunc, st, v1.clone(), p12.clone(), a.clone(), infunc, st, v2.clone(), p2.clone(), None) <--
             taint(infunc, st, v2, p2, a),
             if a.direction == TaintDirection::Forward,
             alias_of_field(infunc, v2, v1, p1),
@@ -296,12 +346,12 @@ pub mod ascent_code {
             paths(p12.clone());
 
         // Backward alias propagation
-        produce_taint!(infunc, st, v1.clone(), Path::empty(), a.clone(), infunc, v2.clone(), p.clone(), None) <--
+        produce_taint!(infunc, st, v1.clone(), Path::empty(), a.clone(), infunc, st, v2.clone(), p.clone(), None) <--
             taint(infunc, st, v2, p, a),
             if a.direction == TaintDirection::Backward,
             alias_of_field(infunc, v1, v2, p);
 
-        produce_taint!(infunc, st, v2.clone(), p2.clone(), a.clone(), infunc, v1.clone(), p12.clone(), None) <--
+        produce_taint!(infunc, st, v2.clone(), p2.clone(), a.clone(), infunc, st, v1.clone(), p12.clone(), None) <--
             taint(infunc, st, v1, p12, a),
             if a.direction == TaintDirection::Backward,
             alias_of_field(infunc, v1, v2, p1),
@@ -360,6 +410,7 @@ impl<'a> std::fmt::Display for QueryEndpointDisplay<'a> {
             direction,
             infunc,
             vertex,
+            call_site,
         } = self.endpoint;
 
         let func_name = self
@@ -375,6 +426,9 @@ impl<'a> std::fmt::Display for QueryEndpointDisplay<'a> {
             vertex.0,
             vertex.1.to_dot_string()
         )?;
+        if let Some(site) = call_site {
+            write!(f, " @{site}")?;
+        }
         Ok(())
     }
 }
