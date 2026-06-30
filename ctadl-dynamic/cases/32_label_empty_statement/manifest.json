@@ -1,0 +1,7 @@
+{
+  "name": "label_empty_statement",
+  "description": "label on an empty statement (done: ;) after a goto -- frontend can't ingest the null-statement label body (ERR 78); DFSan sees the flow",
+  "label": "Test",
+  "expect_flow": true,
+  "known_frontend_gap": "labeled_empty_statement"
+}

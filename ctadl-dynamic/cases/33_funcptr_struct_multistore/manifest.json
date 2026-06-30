@@ -1,0 +1,6 @@
+{
+  "name": "funcptr_struct_multistore",
+  "description": "F2 regression (struct form): two funcptr stores into a struct (o.a=id; o.b=id), call o.a(s) -- propagation across the SSA version from the 2nd store",
+  "label": "Test",
+  "expect_flow": true
+}
