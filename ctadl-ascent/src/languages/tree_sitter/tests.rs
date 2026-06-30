@@ -298,9 +298,9 @@ fn extra_parens() {
 #[test_log::test]
 fn call_arg_flows_through_return() {
     // A function whose return value is the result of calling another (`top` returns `tgt(y)`, and
-    // `tgt` returns `x.f1`). End to end, param 0's `.f1` field reaches `top`'s return. Asserting this
-    // flow -- rather than that a `direct-call tgt` was emitted -- proves both that the call resolved
-    // and that data passes through it.
+    // `tgt` returns `x.f1`). End to end, param 0's `.f1` field reaches `top`'s return. Pinned to
+    // `top` via `check_returns_param_in` so the assertion requires the *caller's* summary to carry
+    // the flow, not just the callee's independent entry.
     let src = r"
         int tgt(Rando x) {
             return x.f1;
@@ -309,8 +309,8 @@ fn call_arg_flows_through_return() {
             int v = tgt(y);
             return v;
         }";
-    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 0, "f1");
+    let (summary, si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param_in(&summary, &si, "top", 0, "f1");
 }
 
 #[test_log::test]
@@ -344,35 +344,51 @@ fn unbraced_if_returns_param_field() {
 }
 
 #[test_log::test]
-fn field_write_flows() {
-    // Writing to struct fields, with right-hand sides ranging from a plain param to a deep
-    // pointer-load to a sum (params: v=@p0, b=@p1, x=@p2, y=@p3). CTADL summarizes each as a flow
-    // into the formal's field, with no temporaries leaking out: x -> v.f2, the deep load
-    // b->f2.f3->f4 -> v.f2.nf1.y, and each operand of b->fa + b->fb -> v.f5. Returning a just-written
-    // field (`return v.f1`) shows up twice: as @p0.f1 -> return and as its resolved original source
-    // b.xyz -> return.
+fn field_write_direct_and_deep_path() {
+    // Direct and deep-path field writes: `v.f2 = x` (plain param) and `v.f2.nf1.y = b->f2.f3->f4`
+    // (three-deep pointer load). Both flow into the formal's field path with no temporaries leaking.
     let src = r"
-        int field_access(Donkey v, Burro* b, int x, int y) {
+        int f(Donkey v, Burro* b, int x) {
             v.f2 = x;
             v.f2.nf1.y = b->f2.f3->f4;
-            v.f5 = b->fa + b->fb;
-            v.f3 = x + y + z;
-            v.f1 = b.xyz;
-            return v.f1;
+            return 0;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    // direct + deep-path field writes
     check_flow(&s, 2, "", 0, "f2");
     check_flow(&s, 1, "f2.f3.f4", 0, "f2.nf1.y");
-    // blended RHS feeding a field (temp-free)
+}
+
+#[test_log::test]
+fn field_write_blended_rhs() {
+    // A binary-expression RHS (`b->fa + b->fb`) feeding a field write: both operands flow into
+    // `v.f5` (temp-free). Similarly, `x + y + z` feeds `v.f3` -- two params, no rogue sources.
+    let src = r"
+        int f(Donkey v, Burro* b, int x, int y) {
+            v.f5 = b->fa + b->fb;
+            v.f3 = x + y + z;
+            return 0;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_flow(&s, 1, "fa", 0, "f5");
     check_flow(&s, 1, "fb", 0, "f5");
     check_flow(&s, 2, "", 0, "f3");
     check_flow(&s, 3, "", 0, "f3");
-    // value-field source + field-write-then-return
+}
+
+#[test_log::test]
+fn field_write_then_return() {
+    // A field written from a value-field source (`v.f1 = b.xyz`) is then returned (`return v.f1`).
+    // The summary carries the original source all the way: b.xyz (@p1.xyz) reaches return, and so
+    // does the formal field path @p0.f1.
+    let src = r"
+        int f(Donkey v, Burro b) {
+            v.f1 = b.xyz;
+            return v.f1;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_flow(&s, 1, "xyz", 0, "f1");
-    check_returns_param(&s, 0, "f1"); // formal field returned
-    check_returns_param(&s, 1, "xyz"); // resolved b.xyz reaches return
+    check_returns_param(&s, 0, "f1");
+    check_returns_param(&s, 1, "xyz");
 }
 
 #[test_log::test]
@@ -1438,13 +1454,13 @@ fn vararg_call_carries_argument() {
         }"#;
     let (prog, _dump) = program_from_string(src);
     check_has_direct_call(&prog, "f", "printf");
+    let src_exp = exp_from_str("@p0");
     let carries_src = direct_calls_in(&prog, "f").iter().any(|(callees, args)| {
-        callees.iter().any(|c| c == "printf")
-            && args.iter().any(|a| format!("{a:?}").contains("Parameter"))
+        callees.iter().any(|c| c == "printf") && args.iter().any(|a| *a == src_exp)
     });
     assert!(
         carries_src,
-        "expected src to appear as an argument of the printf call\n{prog}"
+        "expected @p0 to appear as an argument of the printf call\n{prog}"
     );
 }
 

@@ -250,6 +250,15 @@ pub(crate) fn check_successors(prog: &Program, block: usize, expected: &[usize])
 }
 
 // A debugging aid for inspecting parsed blocks.
+/* Diagnostic helper: logs all basic blocks of the first function in `prog` at INFO level. Not a
+test assertion -- use it temporarily when debugging a failing CFG test to inspect the block
+structure the lowering actually produced. Typical usage:
+
+    debug_output_blocks(&prog);  // add to the failing test body
+    // then run:  RUST_LOG=info cargo test -p ctadl-ascent <test_name> -- --nocapture
+
+Only covers the first function; for multi-function programs extend this or use
+`function_named` + iterate `fun.blocks` directly. Remove the call before committing. */
 pub(crate) fn debug_output_blocks(prog: &Program) {
     let Some(fun) = prog.functions.functions.raw.first() else {
         log::warn!("No functions in program");
@@ -306,7 +315,7 @@ fn access_path_from_str(s: &str) -> AccessPath {
 /* Builds a source expression from the DSL. A `#`-prefixed string is a constant literal (`"#7"` =>
 `Exp::Str("7")`, matching how the C frontend lowers a literal — see `flatten_expr` in mod.rs);
 anything else is an access path (variable / param / global / field). */
-fn exp_from_str(s: &str) -> Exp {
+pub(crate) fn exp_from_str(s: &str) -> Exp {
     match s.strip_prefix('#') {
         Some(lit) => Exp::new_str(lit),
         None => Exp::from(access_path_from_str(s)),
@@ -413,9 +422,18 @@ pub(crate) fn check_match(prog_str: &str, needle: &str) -> bool {
     false
 }
 
-/// Inverse of [`check_match`]: passes (returns true) when `needle` is ABSENT, and
-/// only logs a failure when it is unexpectedly present. Use this for negative
-/// assertions so a passing test doesn't emit a misleading "expected ..." line.
+/* Inverse of `check_match`: returns `true` when `needle` is ABSENT from the program dump string,
+and logs a failure via `check_fail_str` when it is unexpectedly present.
+
+**Footgun warning:** this returns `bool`, not a panic. A bare call in a test body silently no-ops
+the "must be absent" assertion if the return value is dropped. Always wrap in `assert!`:
+
+    assert!(check_no_match(&prog_str, "ERR 78"), "…");
+
+Prefer IR-level negatives (`check_no_flow`, `check_does_not_return_param`) over dump-string checks
+where possible -- those assert on the real dataflow, not the pretty-printer output. Reserve this
+for cases where the IR query is not expressive enough, e.g. asserting that a particular temp name
+or keyword never appears in the lowering (useful for debugging unexpected code-generation artifacts). */
 pub(crate) fn check_no_match(prog_str: &str, needle: &str) -> bool {
     if prog_str.contains(needle) {
         check_fail_str(prog_str, &format!("did not expect {}", needle));
@@ -445,10 +463,21 @@ pub(crate) fn get_summary(
     Ok((result.summary, source_info))
 }
 
+/* Predicate: returns `true` iff the summary slice contains exactly `count` flow records. This is
+the raw predicate underlying `check_summary_count` (which panics with a diff on mismatch); prefer
+that for standalone assertions. Use `summary_count` for composition -- e.g. asserting an exact
+edge count alongside other conditions in a single expression, or building a custom assertion that
+needs the boolean value rather than a panic. Example future use: a precision test that asserts a
+specific lowering produces *exactly* N edges (no more), guarding against over-approximation that
+inflates the summary. */
 pub(crate) fn summary_count(summary: &[FunctionSummary], count: usize) -> bool {
     summary.len() == count
 }
 
+/* Searches a summary slice for a specific flow edge. **Single-function fixtures only.** If the
+summary contains records from more than one function this panics -- the all-function scan would
+silently match the wrong function's flow (see W1 in the review). For multi-function fixtures use
+`flow_present_in` / `check_flow_in` / `check_returns_param_in` etc. instead. */
 pub(crate) fn summary_search(
     summary: &[FunctionSummary],
     from_index: i16,
@@ -456,6 +485,14 @@ pub(crate) fn summary_search(
     to_index: i16,
     to_path: &str,
 ) -> bool {
+    if let Some(first) = summary.first() {
+        let first_fn = first.0;
+        assert!(
+            summary.iter().all(|r| r.0 == first_fn),
+            "summary_search used on a multi-function summary; \
+             use check_flow_in / check_returns_param_in / check_no_flow_in instead"
+        );
+    }
     let from_path: Path = from_path.parse().unwrap();
     let to_path: Path = to_path.parse().unwrap();
     summary.iter().any(|r| {
