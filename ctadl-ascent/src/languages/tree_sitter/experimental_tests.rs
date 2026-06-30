@@ -211,7 +211,6 @@ fn simple_for() {
 //
 
 // `simple_elif` promoted to tests.rs (structural CFG assertions via check_successors).
-
 #[test_log::test]
 fn parameter_lists_query() {
     let src = r"
@@ -264,14 +263,6 @@ fn no_child_while() {
         ";
     let (_program, dump) = program_from_string(src);
     dump_ir(&dump);
-    /*
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-
-    let (summary, source_info) = get_summary(program_info.program).unwrap();
-    */
 }
 #[test_log::test]
 fn unbraced_if() {
@@ -575,7 +566,6 @@ fn brackets_commutative() {
 }
 
 //TODO_JDB:  I don't think i handled *(p+1) = f; or (p+1)->f()
-
 #[test_log::test]
 fn brackets_simple() {
     let src = r#"
@@ -709,7 +699,6 @@ fn compound_return() {
     assert!(check_match(&dump, "return %<t0>"));
     assert!(check_match(&dump, "return %<t3>"));
 }
-
 // `return_arity` promoted to tests.rs (structural check_return_arity / function_named).
 
 #[test_log::test]
@@ -731,6 +720,7 @@ fn params_and_simple_assign_in_example_2() {
         "has 2nd simple a=d"
     );
 }
+
 
 #[test_log::test]
 fn passthrough_assignment() {
@@ -790,12 +780,20 @@ fn param_by_reference() {
 // `params_into_calls` and `call_not_assign` promoted to tests.rs (structural call-site assertions
 // via direct_calls_in / check_direct_call / check_has_direct_call).
 
+// Dump-based CFG-edge matcher. Its callers were promoted to tests.rs (now using check_successors),
+// leaving it currently unused -- but kept here as scratch scaffolding for the partner's exploration
+// lane, alongside janky_return.
+#[allow(dead_code)]
 fn janky_goto(dump: &str, from_block: usize, to_block: &str) -> bool {
     check_match(
         dump,
         format!("goto {}\nend block_{}", to_block, from_block).as_str(),
     )
 }
+
+// Companion to `janky_goto` for return terminators. Currently unused (its callers were promoted to
+// tests.rs) but kept here as scratch scaffolding for the partner's exploration lane.
+#[allow(dead_code)]
 fn janky_return(dump: &str, from_block: usize, ret_val: &str) -> bool {
     check_match(
         dump,
@@ -838,18 +836,6 @@ fn simplest_if_with_return() {
         ";
     let (_program, dump) = program_from_string(src);
     dump_ir(&dump);
-
-    /*
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-
-    dump_ir(&dump);
-    let (summary, source_info) = get_summary(program_info.program).unwrap();
-    assert!(summary_returns_param(&summary, 0, ""));
-    assert!(summary_returns_param(&summary, 1, ""));
-    */
     assert!(janky_goto(&dump, 0, "1, 2"));
     assert!(janky_return(&dump, 1, "@p0")); //returns
     assert!(janky_return(&dump, 2, "@p1")); //returns

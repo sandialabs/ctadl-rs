@@ -82,6 +82,10 @@ pub struct ProjectContext<'a, P: AsRef<path::Path>> {
     pub facts: &'a FormatFacts,
     pub taint_results: &'a TaintAnalysisResults,
     pub language: ArtifactLanguage,
+    /// Base address the disassembler loaded the artifact at, if known. Used to
+    /// emit `relativeAddress` (the section-relative offset) alongside the
+    /// absolute instruction address in binary SARIF locations.
+    pub image_base: Option<i64>,
 }
 
 pub struct FormatConfig {
@@ -148,13 +152,27 @@ pub struct TaintedInstructions {
 }
 
 pub struct TaintAnalysisResults {
+    /// Taint-flow edges. Each tuple is
+    /// `(df, dts, dv, dp, sf, sts, sv, sp, direction, site)`: the node
+    /// `(df,dts,dv,dp)` was tainted *from* `(sf,sts,sv,sp)` while propagating in
+    /// `direction`. Each endpoint carries its [`TaintState`] (second column, as
+    /// in the `taint` relation) so the call/return-matching distinction survives
+    /// into the graph and `FlowNode`s can be rebuilt unambiguously. The data-flow
+    /// orientation depends on `direction` — see the consumers (SARIF path graph,
+    /// `--dump-taint-graph`). `site` is the call instruction anchoring the edge
+    /// when it is a call/return propagation, and `None` for the flow-insensitive
+    /// assign/alias edges.
     pub edges: Vec<(
         FunctionId,
+        TaintState,
         FlowVariable,
         Path,
         FunctionId,
+        TaintState,
         FlowVariable,
         Path,
+        TaintDirection,
+        Option<PackedInsnSiteId>,
     )>,
     pub tainted_insns: TaintedInstructions,
     pub absorbing_functions: Vec<(FunctionId, QueryEndpoint, FormalIndex)>,
@@ -181,11 +199,16 @@ impl FormatFactsBuilder {
 pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
     ascent! {
         struct FormatterEngine;
-        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sv:expr, $sp:expr) {
+        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sts:expr, $sv:expr, $sp:expr, $site:expr) {
             taint($df, $dts, $dv, $dp, $a),
-            taint_edge($df, $dv, $dp, $sf, $sv, $sp)
+            taint_edge($df, $dts, $dv, $dp, $sf, $sts, $sv, $sp, ($a).direction, $site)
         }
-        relation taint_edge(FunctionId, FlowVariable, Path, FunctionId, FlowVariable, Path);
+        // Each taint-flow edge carries the call instruction that anchors it, when
+        // there is one. Call/return propagation (the formal<->actual rules) records
+        // the call site; the flow-insensitive assign/alias rules have no instruction
+        // and record `None`. This is what lets `codeFlows` attribute each step of a
+        // path to its own call site instead of guessing from the variable alone.
+        relation taint_edge(FunctionId, TaintState, FlowVariable, Path, FunctionId, TaintState, FlowVariable, Path, TaintDirection, Option<PackedInsnSiteId>);
         relation tainted_var_at_insn(PackedInsnSiteId, Label, FlowVariable, Path);
         relation external_function(FunctionId);
         relation absorbing_functions(FunctionId, QueryEndpoint, FormalIndex);
@@ -273,6 +296,193 @@ impl<N: Idx> Predecessors for TaintGraph<N> {
     fn predecessors(&self, node: Self::Node) -> impl Iterator<Item = Self::Node> {
         self.predecessors[node.index()].iter().cloned()
     }
+}
+
+/// A node in the taint dataflow graph: a function-local vertex (a variable
+/// together with its access path) *qualified by its taint state*. The
+/// [`TaintState`] is part of the node identity, not incidental data: the query
+/// engine uses Free/Restricted to enforce call/return matching, so the same
+/// `(function, variable, path)` vertex reached `Free` versus `Restricted` is two
+/// distinct nodes. Keeping them distinct is what makes the formatter's plain
+/// graph search yield realizable (call/return-balanced) paths instead of
+/// splicing a call edge into an unrelated return edge.
+pub type FlowNode = (FunctionId, TaintState, FlowVariable, Path);
+
+/// The taint dataflow graph the formatter walks to emit path (code-flow)
+/// results, together with the maps needed to translate between interned node
+/// ids and the `(function, variable, path)` vertices they stand for.
+pub struct TaintFlowGraph {
+    /// Reachability graph over interned nodes, oriented source -> derived.
+    pub graph: TaintGraph<u32>,
+    /// Vertex -> node id.
+    pub node_to_id: BTreeMap<FlowNode, u32>,
+    /// Node id -> vertex (the id indexes this vector).
+    pub id_to_node: Vec<FlowNode>,
+    /// Call instruction anchoring each `(src_id, dst_id)` edge, when the edge is
+    /// a call/return propagation. Assign/alias edges contribute nothing.
+    pub site_by_edge: BTreeMap<(u32, u32), InsnSiteId>,
+    /// All node ids sharing a given `(function, variable, path)` vertex, across
+    /// taint states. A source/sink endpoint names a vertex, not a taint state,
+    /// so path search resolves an endpoint vertex to every state-distinguished
+    /// node it might start or end at via this map.
+    pub ids_by_vertex: BTreeMap<(FunctionId, FlowVariable, Path), Vec<u32>>,
+}
+
+/// Builds the taint dataflow graph from the format facts and the computed taint
+/// results. This is the profile-agnostic core that both the SARIF path formatter
+/// and the flowy human-profile path check build on; it performs no source-info
+/// I/O.
+pub fn build_taint_flow_graph(
+    facts: &FormatFacts,
+    taint_results: &TaintAnalysisResults,
+) -> TaintFlowGraph {
+    use std::collections::btree_map::Entry;
+
+    let mut node_to_id: BTreeMap<FlowNode, u32> = BTreeMap::new();
+    let mut id_to_node: Vec<FlowNode> = Vec::new();
+    let mut site_by_edge: BTreeMap<(u32, u32), InsnSiteId> = BTreeMap::new();
+
+    let taint_edge = &taint_results.edges;
+    // Collect all nodes into node_to_id first: every tainted vertex and the
+    // endpoint that tainted it, then both ends of every propagation edge. Nodes
+    // are qualified by taint state (see `FlowNode`); the source/sink endpoint
+    // that originates taint is, by construction, in the `Free` state.
+    for (f, ts, v, p, src) in &facts.taint {
+        let n = (*f, *ts, *v, *p);
+        if let Entry::Vacant(e) = node_to_id.entry(n) {
+            e.insert(id_to_node.len() as u32);
+            id_to_node.push(n);
+        }
+        let src_n = (src.infunc, TaintState::Free, src.vertex.0, src.vertex.1);
+        if let Entry::Vacant(e) = node_to_id.entry(src_n) {
+            e.insert(id_to_node.len() as u32);
+            id_to_node.push(src_n);
+        }
+    }
+    for (df, dts, dv, dp, sf, sts, sv, sp, _dir, _site) in taint_edge {
+        let src_n = (*sf, *sts, *sv, *sp);
+        if let Entry::Vacant(e) = node_to_id.entry(src_n) {
+            e.insert(id_to_node.len() as u32);
+            id_to_node.push(src_n);
+        }
+        let dst_n = (*df, *dts, *dv, *dp);
+        if let Entry::Vacant(e) = node_to_id.entry(dst_n) {
+            e.insert(id_to_node.len() as u32);
+            id_to_node.push(dst_n);
+        }
+    }
+
+    let mut edges: Vec<(u32, u32)> = Vec::with_capacity(taint_edge.len());
+    for (df, dts, dv, dp, sf, sts, sv, sp, _dir, site) in taint_edge {
+        let src_n = (*sf, *sts, *sv, *sp);
+        let dst_n = (*df, *dts, *dv, *dp);
+        let src_id = *node_to_id.get(&src_n).unwrap();
+        let dst_id = *node_to_id.get(&dst_n).unwrap();
+        edges.push((src_id, dst_id));
+        // Anchor this edge to its call instruction so the code-flow step walking
+        // src_id -> dst_id resolves to *this* call site rather than whatever site
+        // happened to be recorded first for the variable.
+        if let Some(packed) = site
+            && let Ok(s) = InsnSiteId::try_from(packed)
+        {
+            site_by_edge.insert((src_id, dst_id), s);
+        }
+    }
+
+    // Index the state-qualified nodes by their bare vertex so endpoint lookups
+    // (which know a vertex but not its taint state) can find every node id the
+    // vertex resolves to.
+    let mut ids_by_vertex: BTreeMap<(FunctionId, FlowVariable, Path), Vec<u32>> = BTreeMap::new();
+    for (id, (f, _ts, v, p)) in id_to_node.iter().enumerate() {
+        ids_by_vertex
+            .entry((*f, *v, *p))
+            .or_default()
+            .push(id as u32);
+    }
+
+    TaintFlowGraph {
+        graph: TaintGraph::new(id_to_node.len(), edges),
+        node_to_id,
+        id_to_node,
+        site_by_edge,
+        ids_by_vertex,
+    }
+}
+
+/// A source -> sink taint path discovered in the dataflow graph: the source and
+/// sink endpoints it connects, and the interned graph node ids from source to
+/// sink.
+#[derive(Debug, Clone)]
+pub struct EndpointPath {
+    pub source: QueryEndpoint,
+    pub sink: QueryEndpoint,
+    /// Graph node ids walked from source to sink (see [`TaintFlowGraph`]).
+    pub nodes: Vec<u32>,
+}
+
+/// Finds the source -> sink taint paths the human profile reports.
+///
+/// It pairs every forward-source endpoint with every backward-sink endpoint that
+/// taint actually reached, and keeps the pairs connected in the dataflow graph.
+/// This is the path-existence core behind the human-profile SARIF `tainted-path`
+/// results, exposed so the flowy checker can assert a path exists for each
+/// declared source/sink pair.
+pub fn find_endpoint_paths(
+    facts: &FormatFacts,
+    taint_results: &TaintAnalysisResults,
+) -> Vec<EndpointPath> {
+    let fg = build_taint_flow_graph(facts, taint_results);
+
+    // The source/sink endpoints actually present on tainted nodes -- the same
+    // endpoint set the SARIF formatter draws on. Forward endpoints are sources,
+    // backward endpoints are sinks.
+    let mut sources: BTreeSet<&QueryEndpoint> = BTreeSet::new();
+    let mut sinks: BTreeSet<&QueryEndpoint> = BTreeSet::new();
+    for (_, _, _, _, ep) in &facts.taint {
+        match ep.direction {
+            TaintDirection::Forward => {
+                sources.insert(ep);
+            }
+            TaintDirection::Backward => {
+                sinks.insert(ep);
+            }
+        }
+    }
+
+    let mut paths = Vec::new();
+    for sink in &sinks {
+        let end_vertex = (sink.infunc, sink.vertex.0, sink.vertex.1);
+        let Some(end_ids) = fg.ids_by_vertex.get(&end_vertex) else {
+            continue;
+        };
+        for src in &sources {
+            let start_vertex = (src.infunc, src.vertex.0, src.vertex.1);
+            let Some(start_ids) = fg.ids_by_vertex.get(&start_vertex) else {
+                continue;
+            };
+            // Endpoints are anchored at their call sites: a sink on a callee's
+            // formal becomes one endpoint per caller call site, each on the
+            // distinct call-arg vertex that call passes. Two flows that differ
+            // only in their call site are therefore distinct (source, sink) pairs
+            // already, so a single graph search per pair suffices -- no stitching
+            // through shared formal vertices. Searching to the exact call-arg
+            // vertex also pins the specific parameter, so a call into the sink's
+            // function on an unrelated argument is not mistaken for this flow.
+            'pair: for &sv in start_ids {
+                for &kv in end_ids {
+                    if let Some(nodes) = find_path(&fg.graph, sv, kv) {
+                        paths.push(EndpointPath {
+                            source: (*src).clone(),
+                            sink: (*sink).clone(),
+                            nodes,
+                        });
+                        break 'pair;
+                    }
+                }
+            }
+        }
+    }
+    paths
 }
 
 pub fn format_sarif(
@@ -372,6 +582,7 @@ async fn async_format_sarif(
             facts,
             taint_results,
             language: import.language,
+            image_base: import.image_base,
         };
         let sarif_results = format_source_info_results(&ctx, config, &mut sarif_data)
             .await
@@ -767,8 +978,14 @@ async fn populate_source_info<P: AsRef<path::Path>>(
             let is_pcode = ctx.language == ArtifactLanguage::Pcode;
             let physical_location = match encoding {
                 source_info::ArtifactEncoding::Binary if is_pcode => {
+                    // `start` is the absolute instruction address (it includes
+                    // the disassembler's image base). Emit the section-relative
+                    // offset too so consumers (e.g. addr2line in the regression
+                    // suite) need not assume a particular base. When the base is
+                    // unknown, the relative offset degenerates to the absolute.
                     let address = Address::builder()
                         .absolute_address(start as i64)
+                        .relative_address(start as i64 - ctx.image_base.unwrap_or(0))
                         .kind("instruction")
                         .build();
                     PhysicalLocation::builder()
@@ -827,51 +1044,24 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     sarif_data: &mut SarifData,
 ) -> Result<Vec<SarifResult>, Error> {
     // Prepare graph for path finding when the selected profile emits path traces.
-    let mut node_to_id: BTreeMap<(FunctionId, FlowVariable, Path), u32> = BTreeMap::new();
-    let mut id_to_node: Vec<(FunctionId, FlowVariable, Path)> = Vec::new();
+    let mut id_to_node: Vec<FlowNode> = Vec::new();
+    // The call instruction anchoring each graph edge, keyed by `(src_id, dst_id)`
+    // node-id pair (same orientation as the graph edges, i.e. origin -> derived).
+    // Only call/return edges have a site; assign/alias edges contribute nothing.
+    let mut site_by_edge: BTreeMap<(u32, u32), InsnSiteId> = BTreeMap::new();
+    // Endpoint vertex -> the (state-qualified) node ids it resolves to.
+    let mut ids_by_vertex: BTreeMap<(FunctionId, FlowVariable, Path), Vec<u32>> = BTreeMap::new();
 
     let graph = if matches!(
         config.profile,
         SarifProfile::Human | SarifProfile::Debug | SarifProfile::Agent
     ) {
-        let taint_edge = &ctx.taint_results.edges;
-        // Collect all nodes into node_to_id first
-        for (f, _, v, p, src) in &ctx.facts.taint {
-            let n = (*f, *v, *p);
-            if let std::collections::btree_map::Entry::Vacant(e) = node_to_id.entry(n) {
-                e.insert(id_to_node.len() as u32);
-                id_to_node.push(n);
-            }
-            let src_n = (src.infunc, src.vertex.0, src.vertex.1);
-            if let std::collections::btree_map::Entry::Vacant(e) = node_to_id.entry(src_n) {
-                e.insert(id_to_node.len() as u32);
-                id_to_node.push(src_n);
-            }
-        }
-        for (df, dv, dp, sf, sv, sp) in taint_edge {
-            let src_n = (*sf, *sv, *sp);
-            if let std::collections::btree_map::Entry::Vacant(e) = node_to_id.entry(src_n) {
-                e.insert(id_to_node.len() as u32);
-                id_to_node.push(src_n);
-            }
-            let dst_n = (*df, *dv, *dp);
-            if let std::collections::btree_map::Entry::Vacant(e) = node_to_id.entry(dst_n) {
-                e.insert(id_to_node.len() as u32);
-                id_to_node.push(dst_n);
-            }
-        }
-
-        let edges: Vec<(u32, u32)> = taint_edge
-            .iter()
-            .map(|(df, dv, dp, sf, sv, sp)| {
-                let src_n = (*sf, *sv, *sp);
-                let dst_n = (*df, *dv, *dp);
-                let src_id = *node_to_id.get(&src_n).unwrap();
-                let dst_id = *node_to_id.get(&dst_n).unwrap();
-                (src_id, dst_id)
-            })
-            .collect();
-        Some(TaintGraph::new(id_to_node.len(), edges))
+        // Same graph the human-profile path check uses; see `build_taint_flow_graph`.
+        let fg = build_taint_flow_graph(ctx.facts, ctx.taint_results);
+        id_to_node = fg.id_to_node;
+        site_by_edge = fg.site_by_edge;
+        ids_by_vertex = fg.ids_by_vertex;
+        Some(fg.graph)
     } else {
         None
     };
@@ -889,12 +1079,12 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     let endpoints: BTreeSet<_> = node_to_endpoint.values().flat_map(|v| v.iter()).collect();
 
     // Map each node to an instruction for location info
-    let mut node_to_site: BTreeMap<(FunctionId, FlowVariable, Path), (FunctionId, InsnId)> =
+    let mut site_by_var: BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)> =
         BTreeMap::new();
-    for (site, _, v, p) in &ctx.facts.actual_param {
+    for (site, _, v, _) in &ctx.facts.actual_param {
         let site_unpacked = InsnSiteId::unpack(site).unwrap();
-        node_to_site
-            .entry((site_unpacked.func_id, *v, *p))
+        site_by_var
+            .entry((site_unpacked.func_id, *v))
             .or_insert((site_unpacked.func_id, site_unpacked.insn_id));
     }
 
@@ -921,18 +1111,40 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     if has_sinks {
                         for sink in &bwd_sinks {
                             for src in &fwd_sources {
-                                let start_node = (src.infunc, src.vertex.0, src.vertex.1);
-                                let end_node = (sink.infunc, sink.vertex.0, sink.vertex.1);
-                                if let (Some(&start_id), Some(&end_id)) =
-                                    (node_to_id.get(&start_node), node_to_id.get(&end_node))
-                                    && seen_pairs.insert((start_id, end_id))
-                                    && let Some(p) = find_path(g, start_id, end_id)
-                                {
-                                    results_by_path
-                                        .entry(p)
-                                        .or_insert((*fs_id, Vec::new()))
-                                        .1
-                                        .push(((*src).clone(), Some((*sink).clone()), lbl.clone()));
+                                let start_vertex = (src.infunc, src.vertex.0, src.vertex.1);
+                                let end_vertex = (sink.infunc, sink.vertex.0, sink.vertex.1);
+                                let start_ids = ids_by_vertex
+                                    .get(&start_vertex)
+                                    .map(Vec::as_slice)
+                                    .unwrap_or(&[]);
+                                let end_ids = ids_by_vertex
+                                    .get(&end_vertex)
+                                    .map(Vec::as_slice)
+                                    .unwrap_or(&[]);
+                                // Endpoints are anchored at their call sites: a sink
+                                // on a callee's formal is one endpoint per caller call
+                                // site, each on the distinct call-arg vertex that call
+                                // passes. Two flows differing only in their call site
+                                // are thus distinct (source, sink) pairs already, so a
+                                // single graph search per pair suffices -- no stitching
+                                // through the shared formal vertex they funnel into.
+                                if seen_pairs.insert((start_vertex, end_vertex)) {
+                                    'pair: for &sv in start_ids {
+                                        for &kv in end_ids {
+                                            if let Some(p) = find_path(g, sv, kv) {
+                                                results_by_path
+                                                    .entry(p)
+                                                    .or_insert((*fs_id, Vec::new()))
+                                                    .1
+                                                    .push((
+                                                        (*src).clone(),
+                                                        Some((*sink).clone()),
+                                                        lbl.clone(),
+                                                    ));
+                                                break 'pair;
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -950,13 +1162,25 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         .collect();
 
     let mut path_sites = BTreeSet::new();
-    for path in results_by_path.keys() {
-        for &node_id in path {
-            let node = &id_to_node[node_id as usize];
-            if let Some(site) = node_to_site.get(node)
-                && seen_sites.insert((site.0.id, site.1.id))
+    for (path, (_fs, details)) in &results_by_path {
+        for window in path.windows(2) {
+            if let Some(site) = site_by_edge.get(&(window[0], window[1]))
+                && seen_sites.insert((site.func_id.id, site.insn_id.id))
             {
-                path_sites.insert((site.0, site.1));
+                path_sites.insert((site.func_id, site.insn_id));
+            }
+        }
+        // The endpoints are anchored at their call sites, and a source -> sink path
+        // walks the call-arg vertices via assign edges that carry no instruction. The
+        // source/sink call instructions are therefore not on any path edge; pull them
+        // from the endpoints so they are still loaded and reported as located sites.
+        for (src, sink, _lbl) in details {
+            for ep in std::iter::once(src).chain(sink.as_ref()) {
+                if let Some(site) = ep.call_site.and_then(|p| InsnSiteId::try_from(&p).ok())
+                    && seen_sites.insert((site.func_id.id, site.insn_id.id))
+                {
+                    path_sites.insert((site.func_id, site.insn_id));
+                }
             }
         }
     }
@@ -999,37 +1223,86 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     }
 
     let mut code_flows_by_span: BTreeMap<u32, Vec<CodeFlow>> = BTreeMap::new();
-    for (path, (file_span_id, _details)) in &results_by_path {
+    for (path, (file_span_id, details)) in &results_by_path {
         let mut thread_flow_locations = Vec::new();
-        let mut last_loc_id: Option<(&String, Option<String>)> = None;
-        for &node_id in path {
-            let node = &id_to_node[node_id as usize];
-            if let Some(site) = node_to_site.get(node)
-                && let Some(loc) = source_data.all_locations.get(&(site.0.id, site.1.id))
+        let mut last_loc_id: Option<(String, Option<String>)> = None;
+        // Emit a located code-flow step for a call instruction, deduping against the
+        // previous step's location. `label` describes the step (a vertex or endpoint).
+        let push_site_step = |thread_flow_locations: &mut Vec<ThreadFlowLocation>,
+                              last_loc_id: &mut Option<(String, Option<String>)>,
+                              site: &InsnSiteId,
+                              label: String| {
+            let Some(loc) = source_data
+                .all_locations
+                .get(&(site.func_id.id, site.insn_id.id))
+            else {
+                return;
+            };
+            let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
+                let uri = p.artifact_location.as_ref()?.uri.as_ref()?.clone();
+                let pos = p
+                    .address
+                    .as_ref()
+                    .and_then(|a| a.absolute_address.as_ref().map(|v| v.to_string()))
+                    .or_else(|| {
+                        p.region
+                            .as_ref()
+                            .and_then(|r| Some(format!("{}:{}", r.start_line?, r.start_column?)))
+                    });
+                Some((uri, pos))
+            });
+            if current_loc_id.is_some() && current_loc_id == *last_loc_id {
+                return;
+            }
+            *last_loc_id = current_loc_id;
+            let mut loc_with_msg = loc.clone();
+            loc_with_msg.message = Some(Message::builder().text(label).build());
+            thread_flow_locations
+                .push(ThreadFlowLocation::builder().location(loc_with_msg).build());
+        };
+
+        // Lead with the source endpoints' call sites: because the endpoints are
+        // anchored at call sites, the source/sink call instructions are not on any
+        // path edge (the path walks call-arg vertices via assign edges), so they
+        // would otherwise be absent from the code flow.
+        for (src, _sink, _lbl) in details {
+            if let Some(site) = src.call_site.and_then(|p| InsnSiteId::try_from(&p).ok()) {
+                push_site_step(
+                    &mut thread_flow_locations,
+                    &mut last_loc_id,
+                    &site,
+                    format!("{}", src.vertex.0),
+                );
+            }
+        }
+        // Walk the path edge-by-edge: each consecutive `(src_id, dst_id)` pair is
+        // a graph edge, and `site_by_edge` gives the call instruction that edge
+        // flowed through. Attributing per edge keeps each call site distinct even
+        // when the same variable participates in several calls.
+        for window in path.windows(2) {
+            let (src_id, dst_id) = (window[0], window[1]);
+            if let Some(site) = site_by_edge.get(&(src_id, dst_id)) {
+                let dst_node = &id_to_node[dst_id as usize];
+                push_site_step(
+                    &mut thread_flow_locations,
+                    &mut last_loc_id,
+                    site,
+                    format!("{}", dst_node.2),
+                );
+            }
+        }
+        // Close with the sink endpoints' call sites, for the same reason.
+        for (_src, sink, _lbl) in details {
+            if let Some(site) = sink
+                .as_ref()
+                .and_then(|s| s.call_site)
+                .and_then(|p| InsnSiteId::try_from(&p).ok())
             {
-                let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
-                    let uri = p.artifact_location.as_ref()?.uri.as_ref()?;
-                    let pos = p
-                        .address
-                        .as_ref()
-                        .and_then(|a| a.absolute_address.as_ref().map(|v| v.to_string()))
-                        .or_else(|| {
-                            p.region.as_ref().and_then(|r| {
-                                Some(format!("{}:{}", r.start_line?, r.start_column?))
-                            })
-                        });
-                    Some((uri, pos))
-                });
-
-                if current_loc_id.is_some() && current_loc_id == last_loc_id {
-                    continue;
-                }
-                last_loc_id = current_loc_id;
-
-                let mut loc_with_msg = loc.clone();
-                loc_with_msg.message = Some(Message::builder().text(format!("{}", node.1)).build());
-                thread_flow_locations
-                    .push(ThreadFlowLocation::builder().location(loc_with_msg).build());
+                let label = sink
+                    .as_ref()
+                    .map(|s| format!("{}", s.vertex.0))
+                    .unwrap_or_default();
+                push_site_step(&mut thread_flow_locations, &mut last_loc_id, &site, label);
             }
         }
 
@@ -1130,7 +1403,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             sarif_data,
             &endpoints,
             &source_data.id_to_name,
-            &node_to_site,
+            &site_by_var,
             &source_data.all_locations,
         ));
     }
@@ -1187,13 +1460,49 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 }
             }
 
-            let additional_properties = BTreeMap::from([
+            // Resolve the source/sink callee name(s) so consumers can match on
+            // the function directly instead of reconstructing it from the taint
+            // statement vertex. The model attaches an endpoint to the callee
+            // method (e.g. `nvram_get` / `system`), so the endpoint's `infunc`
+            // is that callee; resolve it via the same id_to_name map used for
+            // source/sink results. `taintLabels` carries the source *kind*; this
+            // adds the source/sink *function names*.
+            let mut source_functions: BTreeSet<String> = BTreeSet::new();
+            let mut sink_functions: BTreeSet<String> = BTreeSet::new();
+            for (src, sink_opt, _lbl) in &details {
+                if let Some(name) = source_data.id_to_name.get(&src.infunc.id) {
+                    source_functions.insert(name.clone());
+                }
+                if let Some(sink) = sink_opt
+                    && let Some(name) = source_data.id_to_name.get(&sink.infunc.id)
+                {
+                    sink_functions.insert(name.clone());
+                }
+            }
+            let source_functions: Vec<String> = source_functions.into_iter().collect();
+            let sink_functions: Vec<String> = sink_functions.into_iter().collect();
+
+            let mut additional_properties = BTreeMap::from([
                 ("taintLabels".to_string(), serde_json::json!(sorted_labels)),
                 (
                     "taintVertices".to_string(),
                     serde_json::json!(labels_to_vertices),
                 ),
             ]);
+            if let Some(first) = source_functions.first() {
+                additional_properties.insert("sourceCallee".to_string(), serde_json::json!(first));
+                additional_properties.insert(
+                    "sourceFunctions".to_string(),
+                    serde_json::json!(source_functions),
+                );
+            }
+            if let Some(first) = sink_functions.first() {
+                additional_properties.insert("sinkCallee".to_string(), serde_json::json!(first));
+                additional_properties.insert(
+                    "sinkFunctions".to_string(),
+                    serde_json::json!(sink_functions),
+                );
+            }
             let properties = PropertyBag::builder()
                 .additional_properties(additional_properties)
                 .build();
@@ -1221,7 +1530,7 @@ fn format_source_sink_results(
     sarif_data: &mut SarifData,
     endpoints: &BTreeSet<&QueryEndpoint>,
     id_to_name: &BTreeMap<u32, String>,
-    node_to_site: &BTreeMap<(FunctionId, FlowVariable, Path), (FunctionId, InsnId)>,
+    site_by_var: &BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)>,
     all_locations: &BTreeMap<(u32, u64), Location>,
 ) -> Vec<SarifResult> {
     let mut source_sink_results = Vec::new();
@@ -1239,18 +1548,22 @@ fn format_source_sink_results(
             } else {
                 TAINT_SINK_RULE_ID
             };
+            // Render the full vertex (variable *and* access path) so distinct
+            // endpoints on the same variable -- e.g. a model that taints both
+            // `Argument(1).deref` and `Argument(1).deref.deref` -- read as the
+            // separate sources they are, instead of collapsing to identical
+            // "formal(1) in function main" lines. The label (taint kind) is the
+            // other distinguishing field; carry it in `properties` below.
+            let vertex = format!("{}{}", node.1, node.2.to_dot_string());
+            let func_name = id_to_name
+                .get(&node.0.id)
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string());
+            let label = endpoint.label.0.to_string();
             let msg_text = if is_source {
-                format!(
-                    "Source of tainted data: {} in function {}",
-                    node.1,
-                    id_to_name.get(&node.0.id).unwrap_or(&"unknown".to_string())
-                )
+                format!("Source of tainted data: {vertex} in function {func_name} (kind '{label}')")
             } else {
-                format!(
-                    "Sink of tainted data: {} in function {}",
-                    node.1,
-                    id_to_name.get(&node.0.id).unwrap_or(&"unknown".to_string())
-                )
+                format!("Sink of tainted data: {vertex} in function {func_name} (kind '{label}')")
             };
 
             let fully_qualified_name = id_to_name
@@ -1279,7 +1592,7 @@ fn format_source_sink_results(
                     .build(),
             ];
 
-            if let Some(&site) = node_to_site.get(&node)
+            if let Some(&site) = site_by_var.get(&(node.0, node.1))
                 && let Some(physical_loc) = all_locations.get(&(site.0.id, site.1.id))
             {
                 let mut loc_with_phys = physical_loc.clone();
@@ -1287,12 +1600,20 @@ fn format_source_sink_results(
                 locations = vec![loc_with_phys];
             }
 
+            let properties = PropertyBag::builder()
+                .additional_properties(BTreeMap::from([
+                    ("taintLabels".to_string(), serde_json::json!([label])),
+                    ("taintVertex".to_string(), serde_json::json!(vertex)),
+                ]))
+                .build();
+
             let result = SarifResult::builder()
                 .rule_id(rule_id.to_string())
                 .kind(ResultKind::Informational)
                 .level(ResultLevel::None)
                 .message(Message::builder().text(msg_text).build())
                 .locations(locations)
+                .properties(properties)
                 .build();
 
             source_sink_results.push(result);
@@ -1467,4 +1788,304 @@ async fn build_selector_table(
     let table = MemTable::try_new(schema, vec![vec![batch]])?;
     ctx.register_table("site_id", Arc::new(table))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::facts::FormalIndex;
+
+    fn formal(i: i16) -> FlowVariable {
+        FlowVariable::formal_index(FormalIndex::new(i))
+    }
+
+    /// An endpoint on `formal(0)` of `func`.
+    fn endpoint(func: u32, label: &str, dir: TaintDirection) -> QueryEndpoint {
+        endpoint_on(func, formal(0), label, dir)
+    }
+
+    /// An endpoint on an arbitrary vertex of `func`.
+    fn endpoint_on(
+        func: u32,
+        var: FlowVariable,
+        label: &str,
+        dir: TaintDirection,
+    ) -> QueryEndpoint {
+        QueryEndpoint {
+            infunc: FunctionId::new(func),
+            vertex: FlowVertex(var, Path::empty()),
+            label: Label(label.into()),
+            direction: dir,
+            call_site: None,
+        }
+    }
+
+    /// A taint fact placing endpoint `ep` on node `(func, state, var)`.
+    fn taint_fact(
+        func: u32,
+        state: TaintState,
+        var: FlowVariable,
+        ep: QueryEndpoint,
+    ) -> (FunctionId, TaintState, FlowVariable, Path, QueryEndpoint) {
+        (FunctionId::new(func), state, var, Path::empty(), ep)
+    }
+
+    fn taint_results(
+        edges: Vec<(
+            FunctionId,
+            TaintState,
+            FlowVariable,
+            Path,
+            FunctionId,
+            TaintState,
+            FlowVariable,
+            Path,
+            TaintDirection,
+            Option<PackedInsnSiteId>,
+        )>,
+    ) -> TaintAnalysisResults {
+        TaintAnalysisResults {
+            edges,
+            tainted_insns: TaintedInstructions {
+                tainted_insn: vec![],
+            },
+            absorbing_functions: vec![],
+        }
+    }
+
+    /// A propagation edge along which data flows `src -> dst`, recorded the way
+    /// `compute_taint_results` emits it: the *derived* node first, then the
+    /// *origin*, each carrying its own taint state. `build_taint_flow_graph`
+    /// re-orients it source -> derived in the graph.
+    #[allow(clippy::type_complexity)]
+    fn edge(
+        dst: FlowNode,
+        src: FlowNode,
+    ) -> (
+        FunctionId,
+        TaintState,
+        FlowVariable,
+        Path,
+        FunctionId,
+        TaintState,
+        FlowVariable,
+        Path,
+        TaintDirection,
+        Option<PackedInsnSiteId>,
+    ) {
+        (
+            dst.0,
+            dst.1,
+            dst.2,
+            dst.3,
+            src.0,
+            src.1,
+            src.2,
+            src.3,
+            TaintDirection::Forward,
+            None,
+        )
+    }
+
+    /// A source in function 1 connected by one propagation edge to a sink in
+    /// function 2 yields exactly one source -> sink path, anchored at the right
+    /// nodes.
+    #[test]
+    fn finds_path_for_connected_source_and_sink() {
+        let source = endpoint(1, "X", TaintDirection::Forward);
+        let sink = endpoint(2, "X", TaintDirection::Backward);
+        let src_node: FlowNode = (
+            FunctionId::new(1),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
+        let sink_node: FlowNode = (
+            FunctionId::new(2),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
+
+        let facts = FormatFacts {
+            taint: vec![
+                // sink node is forward-tainted by the source endpoint
+                (
+                    sink_node.0,
+                    sink_node.1,
+                    sink_node.2,
+                    sink_node.3,
+                    source.clone(),
+                ),
+                // source node is backward-tainted by the sink endpoint
+                (src_node.0, src_node.1, src_node.2, src_node.3, sink.clone()),
+            ],
+            ..Default::default()
+        };
+        // One edge, oriented as data flows: source node -> sink node.
+        let results = taint_results(vec![edge(sink_node, src_node)]);
+
+        let paths = find_endpoint_paths(&facts, &results);
+        assert_eq!(paths.len(), 1, "expected exactly one source->sink path");
+        assert_eq!(paths[0].source, source);
+        assert_eq!(paths[0].sink, sink);
+
+        let fg = build_taint_flow_graph(&facts, &results);
+        assert_eq!(paths[0].nodes.first(), Some(&fg.node_to_id[&src_node]));
+        assert_eq!(paths[0].nodes.last(), Some(&fg.node_to_id[&sink_node]));
+    }
+
+    /// With no propagation edge, the source cannot reach the sink, so the human
+    /// profile reports no path.
+    #[test]
+    fn finds_no_path_when_disconnected() {
+        let source = endpoint(1, "X", TaintDirection::Forward);
+        let sink = endpoint(2, "X", TaintDirection::Backward);
+        let src_node: FlowNode = (
+            FunctionId::new(1),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
+        let sink_node: FlowNode = (
+            FunctionId::new(2),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
+
+        let facts = FormatFacts {
+            taint: vec![
+                (sink_node.0, sink_node.1, sink_node.2, sink_node.3, source),
+                (src_node.0, src_node.1, src_node.2, src_node.3, sink),
+            ],
+            ..Default::default()
+        };
+        let results = taint_results(vec![]);
+
+        let paths = find_endpoint_paths(&facts, &results);
+        assert!(
+            paths.is_empty(),
+            "disconnected endpoints must not yield a path"
+        );
+    }
+
+    /// Taint that enters a callee through a call (becoming `Restricted`) must not
+    /// be spliced onto a *return* edge that leaves the callee in the `Free`
+    /// state: that splice is exactly the unrealizable call/return mismatch the
+    /// `TaintState` qualifier exists to prevent.
+    ///
+    /// Layout (forward analysis): source `S` in func 1 flows through a call into
+    /// callee formal `F` in func 2 (so `F` is reached `Restricted`). Separately,
+    /// `F` returns to `T` in func 1 along a *return* edge that, per the query
+    /// engine's rules, leaves `F` only in the `Free` state. The sink is on `T`.
+    ///
+    /// Because `F`-reached-`Restricted` and `F`-as-`Free` are distinct
+    /// `FlowNode`s, the `Restricted` `F` has no outgoing return edge, so no
+    /// source -> sink path exists. If `FlowNode` dropped the taint state (the
+    /// bug), the two `F`s would collapse and the search would report a spurious
+    /// path `S -> F -> T`.
+    #[test]
+    fn taint_state_blocks_unrealizable_call_return() {
+        let source = endpoint_on(1, formal(0), "X", TaintDirection::Forward);
+        let sink = endpoint_on(1, formal(1), "X", TaintDirection::Backward);
+
+        // s: source in caller; f: callee formal; t: returned-to vertex in caller.
+        let s = (
+            FunctionId::new(1),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
+        let f_restricted = (
+            FunctionId::new(2),
+            TaintState::Restricted,
+            formal(0),
+            Path::empty(),
+        );
+        let f_free = (
+            FunctionId::new(2),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
+        let t = (
+            FunctionId::new(1),
+            TaintState::Free,
+            formal(1),
+            Path::empty(),
+        );
+
+        let facts = FormatFacts {
+            taint: vec![
+                taint_fact(1, TaintState::Free, formal(0), source.clone()),
+                taint_fact(1, TaintState::Free, formal(1), sink.clone()),
+            ],
+            ..Default::default()
+        };
+        let results = taint_results(vec![
+            // call: S flows into the callee formal, which becomes Restricted.
+            edge(f_restricted, s),
+            // return: F flows back out to T, but only from the Free F.
+            edge(t, f_free),
+        ]);
+
+        // The callee formal F is two distinct nodes (Free and Restricted).
+        let fg = build_taint_flow_graph(&facts, &results);
+        let f_vertex = (FunctionId::new(2), formal(0), Path::empty());
+        assert_eq!(
+            fg.ids_by_vertex[&f_vertex].len(),
+            2,
+            "F must be two nodes, one per taint state, for matching to work"
+        );
+
+        let paths = find_endpoint_paths(&facts, &results);
+        assert!(
+            paths.is_empty(),
+            "call/return mismatch must not surface as a realizable path"
+        );
+    }
+
+    /// The realizable counterpart: a source in the caller flows through a call
+    /// into a callee, where the sink lives. The meet happens on the callee
+    /// formal in the `Restricted` state it was actually reached in, so the path
+    /// is found.
+    #[test]
+    fn finds_realizable_path_through_call() {
+        let source = endpoint_on(1, formal(0), "X", TaintDirection::Forward);
+        let sink = endpoint_on(2, formal(0), "X", TaintDirection::Backward);
+
+        let s = (
+            FunctionId::new(1),
+            TaintState::Free,
+            formal(0),
+            Path::empty(),
+        );
+        let f_restricted = (
+            FunctionId::new(2),
+            TaintState::Restricted,
+            formal(0),
+            Path::empty(),
+        );
+
+        let facts = FormatFacts {
+            taint: vec![
+                taint_fact(1, TaintState::Free, formal(0), source.clone()),
+                // The sink endpoint sits on the callee formal.
+                taint_fact(2, TaintState::Free, formal(0), sink.clone()),
+            ],
+            ..Default::default()
+        };
+        // call: S flows into the callee formal, which becomes Restricted.
+        let results = taint_results(vec![edge(f_restricted, s)]);
+
+        let paths = find_endpoint_paths(&facts, &results);
+        assert_eq!(paths.len(), 1, "expected the realizable call path");
+        assert_eq!(paths[0].source, source);
+        assert_eq!(paths[0].sink, sink);
+
+        // The path ends on the Restricted F, the state it was reached in.
+        let fg = build_taint_flow_graph(&facts, &results);
+        assert_eq!(paths[0].nodes.last(), Some(&fg.node_to_id[&f_restricted]));
+    }
 }

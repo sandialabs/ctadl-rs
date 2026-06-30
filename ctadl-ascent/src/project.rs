@@ -56,7 +56,7 @@ pub fn init_store_path<P: AsRef<Path>>(override_path: Option<P>) -> Result<(), &
 }
 
 /// Represents our local import of an artifact
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub struct ArtifactImport {
     /// Name of the import for 'index' to reference
     pub name: String,
@@ -66,6 +66,12 @@ pub struct ArtifactImport {
     /// Path to the import directory for the artifact.
     pub import_path: PathBuf,
     pub version: String,
+    /// Base address the disassembler (Ghidra) loaded the artifact at. Used to
+    /// recover section-relative offsets from absolute instruction addresses
+    /// (e.g. for `addr2line`). `None` for non-binary imports or older imports
+    /// created before this field existed.
+    #[serde(default)]
+    pub image_base: Option<i64>,
 }
 
 impl ArtifactImport {
@@ -91,6 +97,7 @@ impl ArtifactImport {
             artifact_path,
             import_path,
             version: "1".to_string(),
+            image_base: None,
         };
         result.save()?;
         Ok(result)

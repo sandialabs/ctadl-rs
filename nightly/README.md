@@ -7,21 +7,28 @@ repo root (`xtask/src/`), not in shell scripts.
 
 ## Running
 
+Run the suite through the flake check. It is one hermetic derivation that does
+**everything** — builds `ctadl` and `dex-reader` and supplies every other tool
+(javac, dx, Ghidra, gcc/addr2line, the Android SDK) from Nix, then runs all the
+cases. No dev shell, no PATH setup, no prebuilt binaries:
+
 ```sh
-# from the repo root, inside the Nix dev environment
-cargo xtask regression
+nix build .#checks.aarch64-darwin.regression    # macOS
+nix build .#checks.x86_64-linux.regression       # Linux / CI
+```
+
+This is the supported way to run the suite, and it is what the nightly GitHub
+workflow runs on a schedule. Add expensive tests here, not in YAML.
+
+Under the hood the derivation just invokes the `xtask` task runner
+(`xtask/src/`) over the cases. If you are iterating on one case and already have
+the full toolchain (`ctadl`, `dex-reader`, `javac`, `dx`, `gcc`, `addr2line`,
+Ghidra) on `PATH`, you can call it directly — but the flake check above is the
+zero-setup path and the one to trust:
+
+```sh
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
-
-In CI this is driven by the flake check (which provides ctadl, dex-reader,
-javac, dx, Ghidra, gcc/addr2line):
-
-```sh
-nix build .#checks.x86_64-linux.regression
-```
-
-The nightly GitHub workflow runs that check on a schedule. Add expensive tests
-here, not in YAML.
 
 ## How discovery works
 
@@ -83,6 +90,8 @@ the strict check runs on Linux/CI.
 - Cases are independent — one failure does not abort the rest; every case is run
   and the final line reports `N passed, M skipped, K failed`.
 - The runner expects its tools (`ctadl`, `dex-reader`, `javac`, `dx`, `gcc`,
-  `addr2line`, Ghidra) on `PATH`; the Nix check supplies them. Outside Nix, run
-  from within the project's dev environment.
+  `addr2line`, Ghidra) on `PATH`. The flake check in [Running](#running) builds
+  and supplies all of them — that is why it is the canonical entry point. Only
+  invoke `cargo xtask regression` directly if you have already put every one of
+  those tools on `PATH` yourself.
 - `scripts/*.py` are unused by the current suite and kept only for reference.

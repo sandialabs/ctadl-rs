@@ -497,7 +497,9 @@ impl Visitor for CodegenVisitor<'_> {
                 if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = value {
                     let target = fx::Function(name.clone().into());
                     let target = self.source_info.sites.get_or_add_function(target);
-                    self.facts.func_ptr_assign.push((site, dest.clone(), target));
+                    self.facts
+                        .func_ptr_assign
+                        .push((site, dest.clone(), target));
                 }
                 if let Exp::ObjectRef(CallObject::JavaObject(cls)) = value {
                     self.facts
