@@ -1,0 +1,6 @@
+{
+  "name": "CPP_10_two_hop_call",
+  "description": "C++: taint through two direct calls b()->a(); summaries compose",
+  "label": "Test",
+  "expect_flow": true
+}

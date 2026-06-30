@@ -1,0 +1,6 @@
+{
+  "name": "CPP_14_pointer_alias",
+  "description": "C++: x tainted; p = &x; y = *p; sink(y) -- taint read back through the alias",
+  "label": "Test",
+  "expect_flow": true
+}

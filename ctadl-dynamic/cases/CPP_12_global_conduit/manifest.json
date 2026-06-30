@@ -1,0 +1,6 @@
+{
+  "name": "CPP_12_global_conduit",
+  "description": "C++: taint stored in a global g then read at the sink, same function",
+  "label": "Test",
+  "expect_flow": true
+}

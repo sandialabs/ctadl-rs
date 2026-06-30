@@ -1,0 +1,6 @@
+{
+  "name": "CPP_23_while_loop",
+  "description": "C++: while(i<1){x=s;i++} -- taint assigned in a loop body that runs; expect flow",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_25_switch_taint",
+  "description": "C++: switch(1){case 1: x=s} -- taint in the selected case; switch now ingested",
+  "label": "Test",
+  "expect_flow": true
+}

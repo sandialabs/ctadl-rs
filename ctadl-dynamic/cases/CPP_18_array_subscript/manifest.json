@@ -1,0 +1,6 @@
+{
+  "name": "CPP_18_array_subscript",
+  "description": "C++: taint through an array element a[1]; flows now that the frontend ingests arrays",
+  "label": "Test",
+  "expect_flow": true
+}

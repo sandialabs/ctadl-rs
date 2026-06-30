@@ -1,0 +1,6 @@
+{
+  "name": "CPP_17_blocker_overwrite",
+  "description": "C++: s = source(); s = 0; sink(s) -- taint overwritten before sink -> NO flow",
+  "label": "Test",
+  "expect_flow": false
+}

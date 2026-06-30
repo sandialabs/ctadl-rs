@@ -1,0 +1,6 @@
+{
+  "name": "CPP_07_funcptr_separate_assign",
+  "description": "C++: F1 variant: int (*fp)(int); fp = id; r = fp(s) -- separate assignment, not initializer",
+  "label": "Test",
+  "expect_flow": true
+}

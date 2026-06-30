@@ -1,0 +1,6 @@
+{
+  "name": "CPP_03_call_summary",
+  "description": "C++: taint flows through id(p){return p;} via its function summary",
+  "label": "Test",
+  "expect_flow": true
+}

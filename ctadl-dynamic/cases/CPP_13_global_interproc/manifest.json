@@ -1,0 +1,6 @@
+{
+  "name": "CPP_13_global_interproc",
+  "description": "C++: taint flows store(x){g=x} -> global g -> load(){return g}, across functions",
+  "label": "Test",
+  "expect_flow": true
+}

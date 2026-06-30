@@ -1,0 +1,6 @@
+{
+  "name": "CPP_11_recursion_identity",
+  "description": "C++: recursive identity rec(n,x) returns x; taint survives the recursion",
+  "label": "Test",
+  "expect_flow": true
+}

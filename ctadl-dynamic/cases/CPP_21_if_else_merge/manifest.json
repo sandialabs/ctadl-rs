@@ -1,0 +1,6 @@
+{
+  "name": "CPP_21_if_else_merge",
+  "description": "C++: if(1){x=s}else{x=0}; sink(x) after the merge -- taken branch is tainted",
+  "label": "Test",
+  "expect_flow": true
+}

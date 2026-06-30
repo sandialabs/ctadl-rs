@@ -421,6 +421,36 @@ fn add_scope(
 #[repr(transparent)]
 struct FunctionName<'a>(&'a str);
 
+/// Grammar-shape adapters for the *few* places tree-sitter-cpp and tree-sitter-c expose
+/// the same construct under a different node shape. The shared lowering core stays
+/// language-neutral (constitution Principle III: no `is_cpp`, no `if <language> {…}` in
+/// the shared walker); instead it reads through these hooks. The C frontend installs
+/// [`GrammarHooks::C`] (the historical behavior, byte-for-byte) and the `cpp` submodule
+/// installs its own (`cpp::CPP_HOOKS`). Each hook is a plain `fn` pointer so `Context`
+/// stays `Copy`-free but cheap to clone-free.
+#[derive(Debug, Clone, Copy)]
+struct GrammarHooks {
+    /// Map an `if`/`while`/`switch` `condition` field node to the expression to flatten.
+    /// C exposes it directly as a `parenthesized_expression` (identity); C++ wraps it in a
+    /// `condition_clause` whose `value` field is the real condition.
+    condition_expr: for<'t> fn(Node<'t>) -> Node<'t>,
+    /// Map a `subscript_expression` node to its index expression. C uses a direct `index`
+    /// field; C++ nests it under an `indices` `subscript_argument_list`.
+    subscript_index: for<'t> fn(Node<'t>) -> Node<'t>,
+}
+
+impl GrammarHooks {
+    /// The C frontend's behavior — the long-standing default. `parse_c_program` runs with
+    /// these, so its lowering is unchanged.
+    const C: GrammarHooks = GrammarHooks {
+        condition_expr: |n| n,
+        subscript_index: |n| {
+            n.child_by_field_name("index")
+                .expect("C subscript_expression always has an `index` field")
+        },
+    };
+}
+
 #[derive(Debug)]
 struct Context<'a> {
     functions: HashMap<FunctionName<'a>, FunctionIdx>,
@@ -439,6 +469,11 @@ struct Context<'a> {
     /// the tree (queries match by numeric symbol id, which differs between grammars). Any
     /// C++-specific behavior belongs in the `cpp` submodule, not in branches here.
     grammar: tree_sitter::Language,
+    /// Grammar-shape adapters for the handful of node-shape divergences between
+    /// tree-sitter-c and tree-sitter-cpp. Defaults to [`GrammarHooks::C`]; the `cpp`
+    /// submodule overrides them via [`Context::set_hooks`]. The shared walker reads
+    /// conditions and subscript indices through these instead of branching on language.
+    hooks: GrammarHooks,
 }
 
 impl Context<'_> {
@@ -453,7 +488,14 @@ impl Context<'_> {
             allocator: TempAllocator::default(),
             label_blocks: HashMap::default(),
             grammar,
+            hooks: GrammarHooks::C,
         }
+    }
+
+    /// Install grammar-shape adapters for the driving grammar. `parse_c_program` keeps the
+    /// default [`GrammarHooks::C`]; `parse_cpp_program` calls this with `cpp::CPP_HOOKS`.
+    fn set_hooks(&mut self, hooks: GrammarHooks) {
+        self.hooks = hooks;
     }
 
     /// Compile a tree-sitter query against this context's grammar. Use this (not the
@@ -1149,9 +1191,10 @@ impl<'a> Context<'a> {
         child: Node<'_>,
     ) -> Result<(), Error> {
         //debug_print_tree(child, 0, Some("while"), Some(20));
-        let condition = child
+        let condition_raw = child
             .child_by_field_name("condition")
             .expect("always has condition");
+        let condition = (self.hooks.condition_expr)(condition_raw);
 
         let (mut condition_sv, cp) = self.setup_compound(
             program,
@@ -1206,9 +1249,10 @@ impl<'a> Context<'a> {
         child: Node<'_>,
     ) -> Result<(), Error> {
         // `switch ( <condition> ) <body>`. Flatten the scrutinee for side effects.
-        let condition = child
+        let condition_raw = child
             .child_by_field_name("condition")
             .expect("switch always has a condition");
+        let condition = (self.hooks.condition_expr)(condition_raw);
         self.flatten_expr(program, condition, source, &*scope_view)?;
 
         let body = child
@@ -1412,9 +1456,10 @@ impl<'a> Context<'a> {
         child: Node<'_>,
     ) -> Result<(), Error> {
         //debug_print_tree(child, 0, Some("if"), Some(20));
-        let condition = child
+        let condition_raw = child
             .child_by_field_name("condition")
             .expect("always has condition");
+        let condition = (self.hooks.condition_expr)(condition_raw);
         self.flatten_expr(program, condition, source, &*scope_view)?; // gather field accesses and what not but we don't care about the condition result,etc.
         let consequence = child
             .child_by_field_name("consequence")
@@ -1873,7 +1918,7 @@ impl<'a> Context<'a> {
         )?;
         let index = self.flatten_expr(
             program,
-            node.child_by_field_name("index").unwrap(),
+            (self.hooks.subscript_index)(node),
             source,
             scope_view,
         )?;

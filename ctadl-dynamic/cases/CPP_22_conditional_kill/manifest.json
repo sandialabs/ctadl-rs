@@ -1,0 +1,7 @@
+{
+  "name": "CPP_22_conditional_kill",
+  "description": "C++: s=source(); if(1){s=0}; sink(s) -- taint killed on the taken path; no runtime flow",
+  "label": "Test",
+  "expect_flow": false,
+  "precision_gap": "constant-condition"
+}

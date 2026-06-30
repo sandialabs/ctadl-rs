@@ -1,0 +1,6 @@
+{
+  "name": "CPP_02_through_local",
+  "description": "C++: taint passes through an intermediate local before the sink",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_04_struct_field",
+  "description": "C++: taint stored in x.f and read back from x.f at the sink",
+  "label": "Test",
+  "expect_flow": true
+}

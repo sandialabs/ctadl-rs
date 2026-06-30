@@ -1,0 +1,7 @@
+{
+  "name": "CPP_27_switch_untaken_case",
+  "description": "C++: switch(1){case 2: x=s; default: x=0} -- taint in a non-taken case; no runtime flow; static may over-report (precision-gap)",
+  "label": "Test",
+  "expect_flow": false,
+  "precision_gap": "constant-condition"
+}

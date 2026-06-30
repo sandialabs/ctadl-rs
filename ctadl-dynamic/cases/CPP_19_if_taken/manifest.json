@@ -1,0 +1,6 @@
+{
+  "name": "CPP_19_if_taken",
+  "description": "C++: if(1){x=s} -- taint branch always taken; expect flow",
+  "label": "Test",
+  "expect_flow": true
+}

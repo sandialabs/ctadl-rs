@@ -1,0 +1,6 @@
+{
+  "name": "CPP_08_funcptr_param",
+  "description": "C++: F1 variant: function pointer passed as a parameter, called via f(x)",
+  "label": "Test",
+  "expect_flow": true
+}

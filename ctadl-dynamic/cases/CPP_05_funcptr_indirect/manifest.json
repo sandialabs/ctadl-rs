@@ -1,0 +1,6 @@
+{
+  "name": "CPP_05_funcptr_indirect",
+  "description": "C++: taint flows through an indirect call fp=id; fp(s) (tests indirect-call taint)",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_06_negative_no_flow",
+  "description": "C++: source and sink present but disconnected; sink gets an untainted constant",
+  "label": "Test",
+  "expect_flow": false
+}

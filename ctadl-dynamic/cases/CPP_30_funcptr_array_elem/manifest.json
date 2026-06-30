@@ -1,0 +1,6 @@
+{
+  "name": "CPP_30_funcptr_array_elem",
+  "description": "C++: F2 (fixed): two funcptr stores into an array (fps[0]=id; fps[1]=id), call fps[0](s) -- exercises func_ptr_assign_like propagation across the SSA version created by the 2nd store. Regression test.",
+  "label": "Test",
+  "expect_flow": true
+}

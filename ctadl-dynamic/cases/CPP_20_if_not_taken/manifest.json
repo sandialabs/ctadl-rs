@@ -1,0 +1,7 @@
+{
+  "name": "CPP_20_if_not_taken",
+  "description": "C++: if(0){x=s} -- dead branch; no runtime flow. Static may over-report (precision-gap)",
+  "label": "Test",
+  "expect_flow": false,
+  "precision_gap": "constant-condition"
+}

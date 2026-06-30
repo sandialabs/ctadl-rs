@@ -1,0 +1,6 @@
+{
+  "name": "CPP_09_funcptr_in_struct",
+  "description": "C++: F1 variant: function pointer in a struct field; r = o.op(s)",
+  "label": "Test",
+  "expect_flow": true
+}
