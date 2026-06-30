@@ -431,3 +431,106 @@ fn cpp_method_call_is_direct_with_receiver_arg0() {
     check_direct_call_arg0(&prog, "main", "Box::set", "b");
     check_direct_call(&prog, "main", "Box::get", ["b"]);
 }
+
+// ---------------------------------------------------------------------------
+// Milestone 3 (spec 004) — C++ lvalue references (`T&`) and `const`.
+// ---------------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_ref_param_is_byref_write_back() {
+    // A non-const reference parameter `int& out` is a write-back `ByRef` formal (param 0),
+    // exactly like a pointer out-param; the trailing value param `v` is `ByVal` (param 1).
+    // The body `out = v` lowers to an assignment of the formal `@p0` from `@p1`, so the
+    // existing out-param propagation carries `v`'s taint back to the caller's argument.
+    let src = r"
+        void set_ref(int& out, int v) {
+            out = v;
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "set_ref",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_assign_or_update(&prog, "set_ref", "@p0", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_const_ref_param_is_byval_inbound() {
+    // A `const int& r` parameter is read-only: model it `ByVal` (inbound only, no write-back),
+    // and the referent's value flows out through the return (`return r` => `return @p0`).
+    let src = r"
+        int read(const int& r) {
+            return r;
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(&prog, "read", &[ParameterType::ByVal]);
+    check_func_returns_path(&prog, "read", "@p0");
+}
+
+#[test_log::test]
+fn cpp_const_is_stripped_from_value_declaration() {
+    // `const` is a type qualifier that never blocks taint: a `const T x = …` local must lower
+    // identically to its non-const form. We assert the two lowerings are byte-for-byte equal.
+    let const_src = r"
+        int source();
+        void sink(int);
+        int main() {
+            const int x = source();
+            sink(x);
+            return 0;
+        }
+    ";
+    let plain_src = r"
+        int source();
+        void sink(int);
+        int main() {
+            int x = source();
+            sink(x);
+            return 0;
+        }
+    ";
+    let const_dump = program_from_cpp_string(const_src).1;
+    let plain_dump = program_from_cpp_string(plain_src).1;
+    assert_eq!(
+        const_dump, plain_dump,
+        "`const int x` must lower identically to `int x`"
+    );
+}
+
+#[test_log::test]
+fn cpp_const_member_function_parses_and_lowers() {
+    // A `const` member function (`int get() const`) parses without error and is discovered
+    // as a method: the trailing `const` qualifier on the function declarator is inert for
+    // flow, so `get` still lowers to `S::get(this: ByRef)` returning the member `this.v`.
+    let src = r"
+        struct S {
+            int v;
+            int get() const { return v; }
+        };
+    ";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(&prog, "S::get", &[ParameterType::ByRef]);
+    check_func_returns_path(&prog, "S::get", "@p0.v");
+}
+
+#[test_log::test]
+fn cpp_reference_local_aliases_referent() {
+    // A reference local `int& r = x` aliases `x` rather than copying it, so a use of `r`
+    // resolves to `x`'s access path: `sink(r)` lowers to a direct call to `sink` with the
+    // argument `x` (not a separate local `r`).
+    let src = r"
+        int source();
+        void sink(int);
+        int main() {
+            int x = source();
+            int& r = x;
+            sink(r);
+            return 0;
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call(&prog, "main", "sink", ["x"]);
+}

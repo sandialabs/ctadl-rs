@@ -447,6 +447,16 @@ struct GrammarHooks {
     /// Map a `subscript_expression` node to its index expression. C uses a direct `index`
     /// field; C++ nests it under an `indices` `subscript_argument_list`.
     subscript_index: for<'t> fn(Node<'t>) -> Node<'t>,
+    /// The tree-sitter query [`Context::collect_params`] runs over a `parameter_list` to
+    /// classify each parameter (name + by-ref/by-value mode). C and C++ share the same
+    /// declarator shapes for plain/pointer/array/function-pointer params; C++ additionally
+    /// has the `reference_declarator` (`T& r`) node, which the C grammar lacks — so a query
+    /// mentioning it cannot be compiled against the C grammar. Carrying the query string per
+    /// grammar keeps that C++-only node out of the C path (the C string is byte-for-byte the
+    /// historical one) without an `is_cpp` branch in the shared classifier. A `reference_`
+    /// `declarator` is captured as `@is_ref_cpp`; the classifier then reads the `const`
+    /// qualifier (grammar-neutral) to pick `ByVal` (`const T&`, inbound) vs `ByRef` (`T&`).
+    param_query: &'static str,
     /// Discover and lower any *auxiliary* function definitions that the top-level
     /// `function_definition` query in [`Context::collect_functions`] does not reach. C has
     /// none, so its hook is a no-op. C++ uses it to discover inline instance methods (which
@@ -474,6 +484,20 @@ impl GrammarHooks {
         },
         // C has no functions hidden from the top-level query: no methods, no classes.
         collect_aux: |_ctx, _source, _root, _program, _global_sidx| Ok(()),
+        // The historical C parameter query, verbatim: plain, pointer (`@is_ref`), array
+        // (`@is_ref`), and function-pointer declarators. C has no `reference_declarator`.
+        param_query: r#"
+        (parameter_declaration
+            declarator: [
+                (identifier) @var_name
+                (pointer_declarator declarator: (identifier) @var_name) @is_ref
+                (array_declarator declarator: (identifier) @var_name) @is_ref
+                (function_declarator
+                    declarator: (parenthesized_declarator
+                        (pointer_declarator declarator: (identifier) @var_name)))
+            ]
+        )
+    "#,
     };
 }
 
@@ -515,6 +539,14 @@ struct Context<'a> {
     /// in `build_access_path` consults this (plus [`Context::classes`]) to rewrite an
     /// unqualified member name to `this.<member>`. `None` for every C function.
     current_method_class: Option<String>,
+    /// C++ reference locals (`T& r = x`) map their name to the referent's access path, for
+    /// the function currently being lowered. A reference *is* its referent's storage, so a
+    /// use of `r` resolves to `x`'s path (with any trailing fields appended) rather than a
+    /// copy — this is the alias [`Context::build_access_path`] applies before scope lookup.
+    /// Filled in [`Context::walk_declaration`]; only ever populated under C++ (C has no
+    /// `reference_declarator`), so it is empty for C and the C path is unchanged. Reset per
+    /// function in [`Context::lower_function`].
+    reference_aliases: HashMap<String, AccessPath>,
 }
 
 impl Context<'_> {
@@ -533,6 +565,7 @@ impl Context<'_> {
             classes: HashMap::default(),
             local_types: HashMap::default(),
             current_method_class: None,
+            reference_aliases: HashMap::default(),
         }
     }
 
@@ -747,6 +780,17 @@ pub(crate) fn compile_query_for(language: &tree_sitter::Language, query_src: &st
 
 fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
     n.utf8_text(source.as_bytes()).unwrap().trim()
+}
+
+/// Whether `node` carries a leading `const` type qualifier (a `type_qualifier` child whose
+/// text is `const`). Used to tell `const T&` (read-only → `ByVal`) from `T&` (write-back →
+/// `ByRef`). `type_qualifier`/`const` are grammar-neutral (both tree-sitter-c and -cpp emit
+/// them), so this carries no language assumption; the C++ classifier is simply the only
+/// caller, since only a reference parameter consults it.
+fn node_has_const_qualifier(node: &Node<'_>, source: &str) -> bool {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .any(|child| child.kind() == "type_qualifier" && to_str(&child, source) == "const")
 }
 
 /// Collect the names of every `labeled_statement` label reachable under `node`
@@ -1021,9 +1065,19 @@ impl<'a> Context<'a> {
         for nest_decl in node.children_by_field_name("declarator", &mut cursor) {
             let decl_kind = nest_decl.kind();
             let decl_ident = match decl_kind {
-                "init_declarator" => nest_decl
-                    .child_by_field_name("declarator")
-                    .expect("double declarators on inits"),
+                "init_declarator" => {
+                    let inner = nest_decl
+                        .child_by_field_name("declarator")
+                        .expect("double declarators on inits");
+                    // A C++ reference local (`T& r = x`) aliases its referent rather than
+                    // copying it; `reference_declarator` only occurs under the C++ grammar,
+                    // so this is inert for C.
+                    if inner.kind() == "reference_declarator" {
+                        self.bind_reference_local(source, program, scope_view, inner, nest_decl)?;
+                        continue;
+                    }
+                    inner
+                }
                 "identifier" => nest_decl,
                 // Function-pointer / pointer / array declarators without an
                 // initializer, e.g. `int (*op_func)(int, int);`. Recurse to
@@ -1056,6 +1110,51 @@ impl<'a> Context<'a> {
             if let Some(vc) = nest_decl.child_by_field_name("value") {
                 self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;
             };
+        }
+        Ok(())
+    }
+
+    /// Bind a C++ reference local `T& r = x;`. A reference *is* its referent's storage, so
+    /// instead of emitting a copy we record `r -> <referent access path>` in
+    /// [`Context::reference_aliases`]; [`Context::build_access_path`] then resolves every use
+    /// (read or write) of `r` to the referent. The referent must be a resolvable lvalue — an
+    /// identifier or a field access, the in-scope forms, which [`Context::flatten_expr`]
+    /// returns as a side-effect-free `AccessPath`. For anything else (or a malformed
+    /// reference) we fall back to a plain local plus a copy so lowering never fails. Only
+    /// reached under C++ (C has no `reference_declarator`), so the C path is unaffected.
+    fn bind_reference_local(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        ref_decl: Node<'_>,
+        init: Node<'_>,
+    ) -> Result<(), Error> {
+        let name_node = ref_decl.named_child(0).filter(|n| n.kind() == "identifier");
+        let value = init.child_by_field_name("value");
+
+        if let Some(name_node) = name_node {
+            let ref_name = to_str(&name_node, source);
+            if let Some(val) = value
+                && matches!(val.kind(), "identifier" | "field_expression")
+                && let Exp::AccessPath(path) =
+                    self.flatten_expr(program, val, source, scope_view)?
+            {
+                // Alias the reference to its referent's access path.
+                self.reference_aliases.insert(ref_name.to_string(), path);
+                return Ok(());
+            }
+            // Fallback: register a plain local and copy whatever initializer there is.
+            self.scope_tree.add_variable(
+                scope_view.sidx,
+                ref_name.to_string(),
+                VarKind::Local,
+                None,
+                None,
+            );
+            if let Some(val) = value {
+                self.collect_assignment(source, program, scope_view, name_node, val, None)?;
+            }
         }
         Ok(())
     }
@@ -1618,6 +1717,14 @@ impl<'a> Context<'a> {
         field_path: FieldAccesses,
         scope_view: &ScopeView,
     ) -> AccessPath {
+        // A C++ reference local (`T& r = x`) aliases its referent: resolve the name to the
+        // referent's access path and append any trailing field accesses. The map is empty
+        // for C (no `reference_declarator`), so this never fires on the C path.
+        if let Some(aliased) = self.reference_aliases.get(name_pre_scope) {
+            let mut ap = aliased.clone();
+            ap.path.fields.extend(field_path.fields);
+            return ap;
+        }
         let name: String;
         let varkind: VarKind;
         if let Some(vardecl) = self
@@ -1696,18 +1803,12 @@ impl<'a> Context<'a> {
         scope_view: &ScopeView,
         start_idx: usize,
     ) -> anyhow::Result<(), Error> {
-        let query_src = r#"
-        (parameter_declaration
-            declarator: [
-                (identifier) @var_name
-                (pointer_declarator declarator: (identifier) @var_name) @is_ref
-                (array_declarator declarator: (identifier) @var_name) @is_ref
-                (function_declarator
-                    declarator: (parenthesized_declarator
-                        (pointer_declarator declarator: (identifier) @var_name)))
-            ]
-        )
-    "#;
+        // The classifier query comes from the grammar hooks: C and C++ share the plain/
+        // pointer/array/function-pointer declarator shapes; the C++ string additionally
+        // matches the `reference_declarator` (`T& r`) node (captured `@is_ref_cpp`), which
+        // the C grammar lacks. Keeping it per-grammar keeps that C++-only node out of the
+        // query compiled against the C grammar — no `is_cpp` branch in this classifier.
+        let query_src = self.hooks.param_query;
         //       debug_print_tree(*param_list, 0, None, None); //depth, field_name, depth_limit);
         // Compile against this context's grammar *before* taking the mutable borrow of
         // `param_names` below (both touch `self`).
@@ -1729,8 +1830,24 @@ impl<'a> Context<'a> {
             let param_name = extract.get("var_name")?;
             let is_ref = extract.get_opt("is_ref");
 
-            // Check the AST node type of the wrapper!
-            let param_type = if is_ref.is_some() {
+            // Classify the parameter's passing mode. Pointer/array out-params are `ByRef`
+            // (the value can be written back) — the historical C behavior. A C++ lvalue
+            // reference (`@is_ref_cpp`, only ever captured by the C++ query) is also storage
+            // shared with the caller, but `const T&` is read-only: model `const T&` as
+            // `ByVal` (the referent's value flows in, nothing flows back) and a non-const
+            // `T&` as `ByRef` (write-back), exactly like a pointer out-param. The `const`
+            // probe is grammar-neutral (`type_qualifier` exists in both grammars) and only
+            // reached for a reference param, so the C path is unaffected.
+            let param_type = if let Some(ref_decl) = extract.get_opt("is_ref_cpp") {
+                let param_decl = ref_decl
+                    .parent()
+                    .expect("a reference_declarator is a child of its parameter_declaration");
+                if node_has_const_qualifier(&param_decl, source) {
+                    ParameterType::ByVal
+                } else {
+                    ParameterType::ByRef
+                }
+            } else if is_ref.is_some() {
                 ParameterType::ByRef
             } else {
                 ParameterType::ByVal
@@ -2266,9 +2383,11 @@ impl<'a> Context<'a> {
         implicit_this: Option<&str>,
     ) -> anyhow::Result<(), Error> {
         self.allocator.reset();
-        // Per-function state: a fresh local→class-type map (filled as we walk declarations)
-        // and the enclosing class for member resolution (set only for a method body).
+        // Per-function state: a fresh local→class-type map (filled as we walk declarations),
+        // a fresh reference-alias map (`T& r = x`), and the enclosing class for member
+        // resolution (set only for a method body).
         self.local_types.clear();
+        self.reference_aliases.clear();
         self.current_method_class = implicit_this.map(str::to_string);
 
         let fidx = *self

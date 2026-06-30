@@ -1,0 +1,6 @@
+{
+  "name": "CPP_41_ref_local_alias",
+  "description": "C++: int& r = x aliases x; sink(r) reads x's taint (alias, not copy); flow",
+  "label": "Test",
+  "expect_flow": true
+}

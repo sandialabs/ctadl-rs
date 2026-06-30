@@ -1,0 +1,6 @@
+{
+  "name": "CPP_38_ref_out_param",
+  "description": "C++: set_ref(int& out, int v){out=v} writes taint back through a non-const T& reference param; sink reads the caller's x",
+  "label": "Test",
+  "expect_flow": true
+}

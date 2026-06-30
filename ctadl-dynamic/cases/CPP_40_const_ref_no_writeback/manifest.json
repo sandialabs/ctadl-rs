@@ -1,0 +1,6 @@
+{
+  "name": "CPP_40_const_ref_no_writeback",
+  "description": "C++ negative: a const T& param is read-only (ByVal); passing a clean x by const& leaves x clean despite taint elsewhere; no flow",
+  "label": "Test",
+  "expect_flow": false
+}

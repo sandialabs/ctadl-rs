@@ -363,4 +363,106 @@ mod tests {
             "expected no cross-member flow (field sensitivity), got: {flows:?}"
         );
     }
+
+    /// M3 (spec 004, FR-2) acceptance, end to end: a non-const `T&` parameter is a write-back
+    /// `ByRef` out-param. `set_ref(int& out, int v){ out = v; }` writes the tainted second
+    /// argument through the reference, tainting the caller's `x` — mirrors CPP_38.
+    #[test_log::test]
+    fn cpp_ref_out_param_write_back_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            void set_ref(int& out, int v) { out = v; }
+            int main() {
+                int x = 0;
+                set_ref(x, source());
+                sink(x);
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp ref out-param flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a write-back flow through a non-const T& param, got: {flows:?}"
+        );
+    }
+
+    /// M3 (spec 004, FR-3) acceptance, end to end: a `const T&` parameter is inbound-only
+    /// (`ByVal`). `read(const int& r){ return r; }` flows the tainted argument out through the
+    /// return — mirrors CPP_39.
+    #[test_log::test]
+    fn cpp_const_ref_inbound_through_return_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            int read(const int& r) { return r; }
+            int main() {
+                int x = source();
+                sink(read(x));
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp const-ref inbound flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected an inbound flow through a const T& param's return, got: {flows:?}"
+        );
+    }
+
+    /// Negative control for `const T&` (spec 004, FR-3): a `const T&` parameter is read-only,
+    /// NOT a write-back out-param, so passing a clean variable by const-reference leaves it
+    /// clean even though the program produces taint elsewhere — mirrors CPP_40 (`s=none`).
+    #[test_log::test]
+    fn cpp_const_ref_no_write_back() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            int read(const int& r) { return r; }
+            int main() {
+                int t = source();
+                int x = 0;
+                int y = read(x);
+                sink(x);
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp const-ref no-write-back flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "const T& must not write the caller's clean variable back, got: {flows:?}"
+        );
+    }
+
+    /// M3 (spec 004, FR-4) acceptance, end to end: a reference local `int& r = x` aliases its
+    /// referent, so reading `r` reads `x`'s taint — mirrors CPP_41.
+    #[test_log::test]
+    fn cpp_reference_local_alias_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            int main() {
+                int x = source();
+                int& r = x;
+                sink(r);
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp reference-local alias flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected flow through a reference local aliasing a tainted variable, got: {flows:?}"
+        );
+    }
 }

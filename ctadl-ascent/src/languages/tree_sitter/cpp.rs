@@ -203,6 +203,24 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     condition_expr: cpp_condition_expr,
     subscript_index: cpp_subscript_index,
     collect_aux: cpp_collect_methods,
+    // The C declarator shapes plus the C++-only `reference_declarator` (`T& r`), captured
+    // `@is_ref_cpp`. The shared classifier maps a non-const reference to `ByRef` (write-back)
+    // and a `const T&` to `ByVal` (inbound only), reading the grammar-neutral `const`
+    // qualifier; the C grammar has no `reference_declarator`, so this query is the reason the
+    // classifier query is carried per-grammar (it could not compile against the C grammar).
+    param_query: r#"
+        (parameter_declaration
+            declarator: [
+                (identifier) @var_name
+                (pointer_declarator declarator: (identifier) @var_name) @is_ref
+                (array_declarator declarator: (identifier) @var_name) @is_ref
+                (function_declarator
+                    declarator: (parenthesized_declarator
+                        (pointer_declarator declarator: (identifier) @var_name)))
+                (reference_declarator (identifier) @var_name) @is_ref_cpp
+            ]
+        )
+    "#,
 };
 
 /// Parse the C++ source in `source` into a CTADL IR program.

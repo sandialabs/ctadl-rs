@@ -1,0 +1,6 @@
+{
+  "name": "CPP_39_const_ref_in",
+  "description": "C++: read(const int& r){return r} flows a tainted argument out through the return via a const T& (ByVal, inbound)",
+  "label": "Test",
+  "expect_flow": true
+}
