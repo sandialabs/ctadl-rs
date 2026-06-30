@@ -54,6 +54,22 @@ use ctadl_ir::Symbol;
 
 pub mod source_info;
 
+// Column encodings for the mmap-LSM Ascent `ds` provider (see [`lsm::ascent_provider`]).
+//
+// Each column is reinterpreted as a fixed number of 8-byte slots. All of these
+// types are `Copy` and fixed-width: `FunctionId`/`FormalIndex`/`PackedInsnSiteId`/
+// `FlowVariable` are small POD wrappers, while `Path` and `CallString` are
+// interned `&'static` (fat-)pointers whose bits stay valid for the whole process
+// run (their interners are leaked and never freed). The encoding stores those raw
+// bits; this is sound only within a single `ctadl index` run on a little-endian
+// target, which is exactly how the provider is used here.
+lsm::lsm_col!(FunctionId, 1);
+lsm::lsm_col!(FlowVariable, 1);
+lsm::lsm_col!(Path, 1);
+lsm::lsm_col!(FormalIndex, 1);
+lsm::lsm_col!(PackedInsnSiteId, 1);
+lsm::lsm_col!(CallString, 2);
+
 /// An assignment statement. The order is destination vertex then source vertex.
 pub type AssignFlow = (PackedInsnSiteId, FlowVertex, FlowVertex);
 pub type FunctionSummary = (FunctionId, FormalIndex, Path, FormalIndex, Path);
@@ -792,6 +808,7 @@ pub fn taint_index_with_config(
         // lattice value (empty cs = context-free = lattice top). Context flows propagate through
         // locals.
         lattice locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
+        #[ds(lsm::ascent_provider::provider)]
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path) = assign_like;
         relation java_obj_assign_like(FunctionId, FlowVariable, Path, Symbol);
         relation model_paths(Path) = summary_paths.into_iter().collect();

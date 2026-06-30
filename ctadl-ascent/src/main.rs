@@ -206,6 +206,15 @@ pub struct IndexArgs {
     /// Dump the index graph to a dot file
     #[arg(long)]
     pub dump_index_graph: Option<PathBuf>,
+
+    /// Per-map in-memory write-buffer limit, in entries, for the mmap-LSM
+    /// dataflow provider: each index map flushes to a run file once its memtable
+    /// holds this many. Larger values use fewer, larger run files (less per-tuple
+    /// dedup-scan overhead) at the cost of more resident RAM per map; smaller
+    /// values trade RAM for more/smaller runs. Defaults to about 1/3 of physical
+    /// RAM (converted to entries) when unset.
+    #[arg(long, value_name = "ENTRIES")]
+    pub lsm_memtable_limit: Option<usize>,
 }
 
 #[derive(Debug, Args)]
@@ -340,6 +349,7 @@ fn main() -> anyhow::Result<()> {
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
                 dump_index_graph: args.dump_index_graph.clone(),
+                lsm_memtable_limit: None,
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
@@ -476,6 +486,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
                 dump_index_graph: None,
+                lsm_memtable_limit: None,
             };
             index_artifacts_to_store(&index_args)?;
         }
@@ -551,12 +562,75 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
     Ok(name.to_string())
 }
 
+/// Default per-map memtable limit (entries) for the mmap-LSM dataflow provider
+/// when the user doesn't pass `--lsm-memtable-limit`: about 1/3 of physical RAM,
+/// converted to entries via an estimated per-entry size. Falls back to a fixed
+/// value if RAM can't be detected.
+fn default_lsm_memtable_limit() -> usize {
+    /// Estimated resident bytes per buffered `(key, value)` entry (fixed-width
+    /// slot blobs plus `BTreeMap`/`Vec` bookkeeping).
+    const BYTES_PER_ENTRY: u64 = 128;
+    /// Fraction of physical RAM the default targets.
+    const RAM_DIVISOR: u64 = 3;
+    const NUM_INDEXES: u64 = 6;
+
+    match total_ram_bytes() {
+        Some(ram) if ram > 0 => {
+            let entries = (ram / RAM_DIVISOR / BYTES_PER_ENTRY / NUM_INDEXES) as usize;
+            entries.max(lsm::ascent_provider::DEFAULT_MEMTABLE_LIMIT)
+        }
+        _ => lsm::ascent_provider::DEFAULT_MEMTABLE_LIMIT,
+    }
+}
+
+/// Physical RAM in bytes, or `None` if it can't be determined on this platform.
+fn total_ram_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: `sysconf` takes no pointers and only reads kernel counters.
+        let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) };
+        (pages > 0 && page_size > 0).then(|| pages as u64 * page_size as u64)
+    }
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        let mut mem: u64 = 0;
+        let mut size = std::mem::size_of::<u64>();
+        // SAFETY: `hw.memsize` returns a u64; `oldp`/`oldlenp` point at `mem`/`size`
+        // which are correctly sized and live for the call; `newp` is null.
+        let ret = unsafe {
+            libc::sysctlbyname(
+                c"hw.memsize".as_ptr(),
+                &mut mem as *mut u64 as *mut libc::c_void,
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        (ret == 0).then_some(mem)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios")))]
+    {
+        None
+    }
+}
+
 /// Index the named programs and store the index into the named project
 ///
 /// # Errors
 ///
 /// If there ary any loading or writing errors
 fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
+    // Configure the mmap-LSM dataflow provider's per-map memtable limit before
+    // any Ascent program runs (each index map reads it when constructed). The
+    // limit policy lives here, not in the `lsm` crate: when the user doesn't pass
+    // one, default to an entry count sized from physical RAM.
+    let (limit, source) = match args.lsm_memtable_limit {
+        Some(limit) => (limit.max(1), "--lsm-memtable-limit"),
+        None => (default_lsm_memtable_limit(), "~1/3 RAM heuristic"),
+    };
+    lsm::ascent_provider::set_memtable_limit(limit);
+    log::info!("LSM provider memtable limit set to {limit} entries/map ({source})");
     // Determine the list of program names to index. If the user did not supply any, use the project name.
     let import_names: Vec<String> = if args.progs.is_empty() {
         vec![args.name.clone()]

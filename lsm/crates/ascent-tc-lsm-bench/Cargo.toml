@@ -1,0 +1,20 @@
+[package]
+name = "ascent-tc-lsm-bench"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ascent = "0.8"
+ascent-byods-rels = "0.8"
+lsm = { path = "../.." }
+bytemuck = "1"
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "transitive_closure"
+harness = false
+
+[lints]
+workspace = true
