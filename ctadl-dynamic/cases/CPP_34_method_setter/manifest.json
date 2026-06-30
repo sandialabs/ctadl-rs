@@ -1,0 +1,6 @@
+{
+  "name": "CPP_34_method_setter",
+  "description": "C++: b.set(source()) writes taint through a method into member v; sink reads b.v directly",
+  "label": "Test",
+  "expect_flow": true
+}

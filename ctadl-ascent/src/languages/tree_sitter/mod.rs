@@ -50,6 +50,7 @@
 //!
 
 use hashbrown::hash_map::HashMap;
+use hashbrown::hash_set::HashSet;
 
 use crate::error::Error;
 
@@ -417,9 +418,18 @@ fn add_scope(
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-#[repr(transparent)]
-struct FunctionName<'a>(&'a str);
+/// What `parse_cpp_program`'s method-discovery hook learns about one class/struct: the
+/// data members and inline member-function names it declares. The shared lowering core
+/// consults these neutral maps (member resolution, method-call dispatch) but never builds
+/// them — only the C++ `collect_aux` hook populates [`Context::classes`], so for C the map
+/// is empty and every lookup misses, leaving the C path byte-for-byte unchanged.
+#[derive(Debug, Default)]
+struct ClassInfo {
+    /// Names of the class's data members (resolved to `this.<member>` inside a method).
+    members: HashSet<String>,
+    /// Names of inline member functions (resolve a `recv.<method>(…)` call to `Class::method`).
+    methods: HashSet<String>,
+}
 
 /// Grammar-shape adapters for the *few* places tree-sitter-cpp and tree-sitter-c expose
 /// the same construct under a different node shape. The shared lowering core stays
@@ -437,6 +447,20 @@ struct GrammarHooks {
     /// Map a `subscript_expression` node to its index expression. C uses a direct `index`
     /// field; C++ nests it under an `indices` `subscript_argument_list`.
     subscript_index: for<'t> fn(Node<'t>) -> Node<'t>,
+    /// Discover and lower any *auxiliary* function definitions that the top-level
+    /// `function_definition` query in [`Context::collect_functions`] does not reach. C has
+    /// none, so its hook is a no-op. C++ uses it to discover inline instance methods (which
+    /// live inside a `class_specifier`/`struct_specifier`, named by a `field_identifier`),
+    /// register their members/methods into [`Context::classes`], and lower each method body
+    /// via [`Context::lower_function`] with an implicit `this` parameter. Runs *before* the
+    /// top-level functions are lowered, so a `recv.method(…)` call can resolve its callee.
+    collect_aux: for<'a, 't> fn(
+        &mut Context<'a>,
+        &'a str,
+        Node<'t>,
+        &mut Program,
+        usize,
+    ) -> anyhow::Result<(), Error>,
 }
 
 impl GrammarHooks {
@@ -448,13 +472,15 @@ impl GrammarHooks {
             n.child_by_field_name("index")
                 .expect("C subscript_expression always has an `index` field")
         },
+        // C has no functions hidden from the top-level query: no methods, no classes.
+        collect_aux: |_ctx, _source, _root, _program, _global_sidx| Ok(()),
     };
 }
 
 #[derive(Debug)]
 struct Context<'a> {
-    functions: HashMap<FunctionName<'a>, FunctionIdx>,
-    param_names: HashMap<FunctionName<'a>, IndexVec<ParameterIdx, &'a str>>,
+    functions: HashMap<String, FunctionIdx>,
+    param_names: HashMap<String, IndexVec<ParameterIdx, &'a str>>,
     scope_tree: ScopeTree,
     allocator: TempAllocator,
     /// Block that each `goto` label maps to, for the function currently being walked.
@@ -474,6 +500,21 @@ struct Context<'a> {
     /// submodule overrides them via [`Context::set_hooks`]. The shared walker reads
     /// conditions and subscript indices through these instead of branching on language.
     hooks: GrammarHooks,
+    /// Classes/structs and their members + inline methods, keyed by class name. Populated
+    /// **only** by the C++ `collect_aux` hook (method discovery); empty for C. The shared
+    /// lowering reads it for member resolution (`this.<member>`) and method-call dispatch —
+    /// a data-driven lookup that misses on C, so the C path is unchanged. Never branched on.
+    classes: HashMap<String, ClassInfo>,
+    /// Maps a local variable to the name of its class type, for the function currently being
+    /// walked. Filled in [`Context::walk_declaration`] when a declaration's type names a known
+    /// class (so it only ever has entries under C++); used by `collect_call` to dispatch
+    /// `recv.method(…)`. Reset per function in [`Context::lower_function`].
+    local_types: HashMap<String, String>,
+    /// The class whose method body is currently being lowered, or `None` for a free function.
+    /// Set in [`Context::lower_function`] from the implicit-`this` argument. Member resolution
+    /// in `build_access_path` consults this (plus [`Context::classes`]) to rewrite an
+    /// unqualified member name to `this.<member>`. `None` for every C function.
+    current_method_class: Option<String>,
 }
 
 impl Context<'_> {
@@ -489,6 +530,9 @@ impl Context<'_> {
             label_blocks: HashMap::default(),
             grammar,
             hooks: GrammarHooks::C,
+            classes: HashMap::default(),
+            local_types: HashMap::default(),
+            current_method_class: None,
         }
     }
 
@@ -961,6 +1005,17 @@ impl<'a> Context<'a> {
         scope_view: &ScopeView,
         node: Node<'_>,
     ) -> Result<(), Error> {
+        // If this declaration's type names a known class (only ever true under C++, where
+        // the `collect_aux` hook has populated `self.classes`), remember the class of each
+        // local it declares so a later `recv.method(…)` call can dispatch on it. For C the
+        // `classes` map is empty, so this is always `None` and records nothing.
+        let class_type: Option<String> = node
+            .child_by_field_name("type")
+            .filter(|t| t.kind() == "type_identifier")
+            .map(|t| to_str(&t, source))
+            .filter(|name| self.classes.contains_key(*name))
+            .map(str::to_string);
+
         let mut cursor = node.walk();
 
         for nest_decl in node.children_by_field_name("declarator", &mut cursor) {
@@ -995,6 +1050,9 @@ impl<'a> Context<'a> {
                 None,
                 None,
             );
+            if let Some(class) = &class_type {
+                self.local_types.insert(var_name.to_string(), class.clone());
+            }
             if let Some(vc) = nest_decl.child_by_field_name("value") {
                 self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;
             };
@@ -1545,7 +1603,7 @@ impl<'a> Context<'a> {
     }
 
     fn get_param_idx(&self, func_name: &str, var_name: &str) -> Option<ParameterIdx> {
-        let param_vec = self.param_names.get(&FunctionName(func_name)).unwrap();
+        let param_vec = self.param_names.get(func_name).unwrap();
         // Find returns Option<(ParameterIdx, &String)>
         // Map transforms it into Option<ParameterIdx>
         param_vec
@@ -1568,6 +1626,24 @@ impl<'a> Context<'a> {
         {
             name = self.scope_tree.to_string(vardecl);
             varkind = vardecl.kind.clone();
+        } else if let Some(class) = self.current_method_class.as_deref()
+            && self
+                .classes
+                .get(class)
+                .is_some_and(|info| info.members.contains(name_pre_scope))
+        {
+            // Inside a method body, an unqualified name that is a data member of the
+            // enclosing class (and was not shadowed by a local/parameter — those are found
+            // above) resolves to `this.<member>`: the implicit `this` is parameter 0
+            // (installed by `lower_function`), so the member becomes the leading field on it.
+            // Any trailing `field_path` (rare for the in-scope method slice) follows. This is
+            // data-driven on the neutral `classes` map, which is empty for C — no language branch.
+            return ctadl_ir::mir::AccessPath {
+                variable_ref: VariableRef::new_parameter(0u32.into()),
+                path: std::iter::once(FieldAccess::Symbol(name_pre_scope.into()))
+                    .chain(field_path.fields)
+                    .collect(),
+            };
         } else {
             name = name_pre_scope.to_string();
             if name.starts_with("<t")
@@ -1616,8 +1692,9 @@ impl<'a> Context<'a> {
         source: &'a str,
         param_list: &Node<'_>,
         fdat: &mut FunctionData,
-        function_name: &'a str,
+        function_name: &str,
         scope_view: &ScopeView,
+        start_idx: usize,
     ) -> anyhow::Result<(), Error> {
         let query_src = r#"
         (parameter_declaration
@@ -1638,13 +1715,15 @@ impl<'a> Context<'a> {
 
         let param_names = self
             .param_names
-            .entry(FunctionName(function_name))
+            .entry(function_name.to_string())
             .or_default();
 
         let mut cursor = QueryCursor::new();
         let mut matches_iter = cursor.matches(&query, *param_list, source.as_bytes());
 
-        let mut ctr = 0;
+        // `start_idx` lets an implicit leading parameter (a method's `this`, installed by
+        // `lower_function`) occupy index 0, so the declared params number from 1.
+        let mut ctr = start_idx;
         while let Some(m) = matches_iter.next() {
             let extract = MatchExtractor::new(&query, m);
             let param_name = extract.get("var_name")?;
@@ -1699,7 +1778,7 @@ impl<'a> Context<'a> {
                     .scope_tree
                     .find_variable(scope_view.sidx, text)
                     .is_none()
-                    && self.functions.keys().any(|f| f.0 == text)
+                    && self.functions.keys().any(|f| f == text)
                 {
                     Ok(Exp::ObjectRef(CallObject::FunctionPtr(text.into())))
                 } else {
@@ -1985,11 +2064,60 @@ impl<'a> Context<'a> {
         temp_name: String,
     ) -> Result<Exp, Error> {
         let func_node = node.child_by_field_name("function").expect("always has");
+        let arg_node = node.child_by_field_name("arguments").expect("always has");
+
+        // C++ instance-method call: `recv.method(args)` where `recv` is a local of a known
+        // class type that declares `method`. Dispatch it as a *direct* call to
+        // `Class::method` with `recv` prepended as the arg-0 receiver, so writes the callee
+        // makes to `this.<member>` flow back to `recv.<member>` (param 0 is `ByRef`) and a
+        // returned member flows out. This is data-driven on the neutral `local_types`/
+        // `classes` maps (empty for C, so this branch never fires there) — no language branch.
+        if func_node.kind() == "field_expression" {
+            let recv_node = func_node
+                .child_by_field_name("argument")
+                .expect("field_expression always has an argument");
+            let field_node = func_node
+                .child_by_field_name("field")
+                .expect("field_expression always has a field");
+            if recv_node.kind() == "identifier" {
+                let recv_name = to_str(&recv_node, source);
+                let method = to_str(&field_node, source);
+                // Clone the resolved class/method out so the immutable map borrows end
+                // before `flatten_expr`/`collect_arguments` take `&mut self` below.
+                let dispatch = self.local_types.get(recv_name).and_then(|class| {
+                    self.classes.get(class).and_then(|info| {
+                        info.methods
+                            .contains(method)
+                            .then(|| format!("{class}::{method}"))
+                    })
+                });
+                if let Some(qualified) = dispatch {
+                    let recv_exp = self.flatten_expr(program, recv_node, source, scope_view)?;
+                    let mut method_args: SmallVec<[Exp; 4]> = smallvec![recv_exp];
+                    method_args
+                        .extend(self.collect_arguments(program, arg_node, source, scope_view)?);
+                    program[scope_view.fidx].blocks[scope_view.blidx].push_back(
+                        Statement::new_kind(StatementKind::CallAssign {
+                            style: CallStyle::DirectCall {
+                                call_edges: CallEdges::Explicit(smallvec![qualified]),
+                            },
+                            rets: vec![VariableRef::new_local(temp_name.clone())].into(),
+                            args: method_args,
+                        }),
+                    );
+                    return Ok(Exp::AccessPath(self.build_access_path(
+                        temp_name.as_str(),
+                        Default::default(),
+                        scope_view,
+                    )));
+                }
+            }
+        }
+
         let func_name = to_str(&func_node, source);
 
         let call_edges = CallEdges::Explicit(smallvec![func_name.to_string()]);
 
-        let arg_node = node.child_by_field_name("arguments").expect("always has");
         let args = self.collect_arguments(program, arg_node, source, scope_view)?;
 
         // Resolve the callee. A plain `foo(...)` is an identifier; the legacy
@@ -2070,12 +2198,21 @@ impl<'a> Context<'a> {
             if let Ok(name_node) = extract.get("func.name") {
                 let func_name = to_str(&name_node, source);
                 self.functions
-                    .entry(FunctionName(func_name))
+                    .entry(func_name.to_string())
                     .or_insert_with(|| program.new_function());
             }
         }
 
-        // Each match binds *all* captures.
+        // Discover and lower any functions the top-level query above can't see (C++ inline
+        // methods, named by a `field_identifier` inside a class). The C hook is a no-op.
+        // This runs first so a top-level body's `recv.method(…)` call resolves its callee,
+        // and so the method's class is registered for member resolution. No language branch
+        // here — the shared core just calls through the installed hook.
+        let aux = self.hooks.collect_aux;
+        aux(self, source, tree.root_node(), program, global_sidx)?;
+
+        // Each match binds *all* captures. Lower every top-level function via the shared
+        // `lower_function`, which methods also funnel through (with an implicit `this`).
         let mut cursor = QueryCursor::new();
         let mut matches_iter = cursor.matches(&query, tree.root_node(), source.as_bytes());
         while let Some(m) = matches_iter.next() {
@@ -2087,75 +2224,141 @@ impl<'a> Context<'a> {
             let body_node = extract.get("body")?;
             //debug_print_tree(body_node, 0, None, Some(50));
             let func_name = to_str(&func_name_node, source);
-            self.allocator.reset();
-            let fidx = *self
-                .functions
-                .entry(FunctionName(func_name))
-                .or_insert_with(|| program.new_function());
-
-            let fdat = &mut program.functions[fidx];
-            fdat.name = func_name.to_string();
-
-            //return type, remember C can have an implicit int return type. boo
-            let ret_ct = if let Some(rt) = return_type
-                && to_str(&rt, source).eq_ignore_ascii_case("void")
-            {
-                0
-            } else {
-                1
-            };
-
-            fdat.set_return_type(ReturnType { arity: ret_ct });
-            let scope_name = format!("{}.params", func_name);
-            let blidx = fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
-            let param_sidx = self.scope_tree.add_scope(scope_name, Some(global_sidx));
-            let para_scope_view = ScopeView {
-                func_name: func_name.to_string(),
-                fidx,
-                blidx,
-                sidx: param_sidx,
-                continuation_blidx: None,
-                break_target: None,
-                continue_target: None,
-                explainer: "params".to_string(),
-            };
-
-            let body_name = format!("{}.body", func_name);
-            self.collect_params(source, &param_list, fdat, func_name, &para_scope_view)?;
-
-            //we have to build this one by hand, becuase we want the initial scope without the extra block
-            let block_scope = self.scope_tree.add_scope(body_name, Some(param_sidx));
-            let block_scope_view = ScopeView {
-                func_name: func_name.to_string(),
-                fidx,
-                blidx,
-                sidx: block_scope,
-                continuation_blidx: None,
-                break_target: None,
-                continue_target: None,
-                explainer: "initial_block".to_string(),
-            };
-            self.scope_tree.blocks.push(block_scope_view.clone());
-            let cp = CompoundProxy::from_node(body_node);
-
-            // Pre-create a block for every `goto` label in this function so forward
-            // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
-            self.label_blocks.clear();
-            let mut labels = Vec::new();
-            collect_labels(body_node, source, &mut labels);
-            for label in labels {
-                let label_block = add_block(
-                    program,
-                    &block_scope_view,
-                    &mut self.scope_tree,
-                    false,
-                    &format!("label:{label}"),
-                )?;
-                self.label_blocks.insert(label, label_block.blidx);
-            }
-
-            self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
+            // C allows an implicit `int` return type (no `type` node); only an explicit
+            // `void` is arity 0.
+            let return_is_void =
+                return_type.is_some_and(|rt| to_str(&rt, source).eq_ignore_ascii_case("void"));
+            self.lower_function(
+                source,
+                program,
+                global_sidx,
+                func_name,
+                return_is_void,
+                param_list,
+                body_node,
+                None,
+            )?;
         }
+        Ok(())
+    }
+
+    /// Lower a single function body with the shared lowering core: allocate (or reuse) its
+    /// `FunctionIdx`, set its name and return arity, build its parameter and body scopes,
+    /// collect parameters, pre-create `goto`-label blocks, and walk the body.
+    ///
+    /// Both frontend entry points funnel through here. A free function passes
+    /// `implicit_this = None`. A C++ instance method passes `Some(class_name)`: an implicit
+    /// `this` parameter (`ByRef`) is installed at index 0 (so writes the body makes to
+    /// `this.<member>` propagate back to the caller's receiver, exactly like an out-param),
+    /// the declared parameters number from 1, and `current_method_class` is set so the body's
+    /// unqualified member names resolve to `this.<member>`. `func_name` is the IR name and the
+    /// resolution key — a free function's bare name, or a method's qualified `Class::method`.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_function(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        global_sidx: usize,
+        func_name: &str,
+        return_is_void: bool,
+        param_list: Node<'_>,
+        body_node: Node<'_>,
+        implicit_this: Option<&str>,
+    ) -> anyhow::Result<(), Error> {
+        self.allocator.reset();
+        // Per-function state: a fresh local→class-type map (filled as we walk declarations)
+        // and the enclosing class for member resolution (set only for a method body).
+        self.local_types.clear();
+        self.current_method_class = implicit_this.map(str::to_string);
+
+        let fidx = *self
+            .functions
+            .entry(func_name.to_string())
+            .or_insert_with(|| program.new_function());
+
+        let fdat = &mut program.functions[fidx];
+        fdat.name = func_name.to_string();
+        fdat.set_return_type(ReturnType {
+            arity: if return_is_void { 0 } else { 1 },
+        });
+
+        let scope_name = format!("{}.params", func_name);
+        let blidx = fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
+        let param_sidx = self.scope_tree.add_scope(scope_name, Some(global_sidx));
+        let para_scope_view = ScopeView {
+            func_name: func_name.to_string(),
+            fidx,
+            blidx,
+            sidx: param_sidx,
+            continuation_blidx: None,
+            break_target: None,
+            continue_target: None,
+            explainer: "params".to_string(),
+        };
+
+        // A method gets an implicit `this` at parameter 0, passed `ByRef` so the existing
+        // out-param machinery carries member writes back to the caller. The declared params
+        // follow, numbered from 1.
+        let start_idx = if implicit_this.is_some() {
+            fdat.params.push(ParameterType::ByRef);
+            self.param_names
+                .entry(func_name.to_string())
+                .or_default()
+                .push("this");
+            self.scope_tree.add_variable(
+                param_sidx,
+                "this".to_string(),
+                VarKind::Parameter,
+                Some(0),
+                Some(ParameterType::ByRef),
+            );
+            1
+        } else {
+            0
+        };
+
+        let body_name = format!("{}.body", func_name);
+        self.collect_params(
+            source,
+            &param_list,
+            fdat,
+            func_name,
+            &para_scope_view,
+            start_idx,
+        )?;
+
+        //we have to build this one by hand, becuase we want the initial scope without the extra block
+        let block_scope = self.scope_tree.add_scope(body_name, Some(param_sidx));
+        let block_scope_view = ScopeView {
+            func_name: func_name.to_string(),
+            fidx,
+            blidx,
+            sidx: block_scope,
+            continuation_blidx: None,
+            break_target: None,
+            continue_target: None,
+            explainer: "initial_block".to_string(),
+        };
+        self.scope_tree.blocks.push(block_scope_view.clone());
+        let cp = CompoundProxy::from_node(body_node);
+
+        // Pre-create a block for every `goto` label in this function so forward
+        // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
+        self.label_blocks.clear();
+        let mut labels = Vec::new();
+        collect_labels(body_node, source, &mut labels);
+        for label in labels {
+            let label_block = add_block(
+                program,
+                &block_scope_view,
+                &mut self.scope_tree,
+                false,
+                &format!("label:{label}"),
+            )?;
+            self.label_blocks.insert(label, label_block.blidx);
+        }
+
+        self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
         Ok(())
     }
 

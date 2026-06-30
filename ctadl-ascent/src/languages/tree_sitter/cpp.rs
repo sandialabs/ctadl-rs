@@ -22,9 +22,10 @@
 //! templates, …) are later milestones and may still error.
 
 use ctadl_ir::mir::Program;
-use tree_sitter::{Node, Parser};
+use streaming_iterator::StreamingIterator;
+use tree_sitter::{Node, Parser, QueryCursor};
 
-use super::{Context, GrammarHooks, markup};
+use super::{ClassInfo, Context, GrammarHooks, MatchExtractor, markup, to_str};
 use crate::error::Error;
 
 /// Map a C++ `if`/`while`/`switch` `condition` field to the expression to flatten.
@@ -52,13 +53,156 @@ fn cpp_subscript_index(node: Node<'_>) -> Node<'_> {
         .expect("C++ subscript_expression always has an index under `indices`")
 }
 
-/// The C++ grammar-shape adapters installed on the lowering [`Context`]. Everything the
-/// C++ frontend needs that differs from C lives behind these two hooks (per the spec-002
-/// triage, the *only* C-subset divergences between the two grammars); the shared core is
-/// otherwise grammar-neutral.
+/// Recover the leaf member name from a `field_declaration`'s declarator. Scalar members
+/// (`int v;`) declare it directly as a `field_identifier`; descend through any
+/// pointer/array wrappers to reach it. Anything else (a nested function declarator, etc.)
+/// is not a plain data member in this slice and yields `None`.
+fn member_name<'a>(decl: Node<'_>, source: &'a str) -> Option<&'a str> {
+    match decl.kind() {
+        "field_identifier" => Some(to_str(&decl, source)),
+        "pointer_declarator" | "array_declarator" | "parenthesized_declarator" => decl
+            .child_by_field_name("declarator")
+            .and_then(|d| member_name(d, source)),
+        _ => None,
+    }
+}
+
+/// Discover C++ inline instance methods and lower them through the shared core.
+///
+/// The top-level `function_definition` query in `Context::collect_functions` only matches
+/// definitions whose name is a plain `identifier`; a member function's name is a
+/// `field_identifier` nested inside a `class_specifier`/`struct_specifier`, so those bodies
+/// are invisible to it. This hook (installed only for C++) finds each class, records its
+/// data members and method names into `Context::classes` (the neutral map the shared core
+/// consults for member resolution and `recv.method(…)` dispatch), and lowers every inline
+/// method body via `Context::lower_function` with an implicit `this` (`ByRef`) parameter.
+///
+/// Two phases: first gather each class's members/methods and register a `FunctionIdx` for
+/// every method (so a method or a later top-level body can resolve a call to it); then
+/// lower the bodies. Gathering finishes (and drops the tree-query cursor) before any
+/// `lower_function` call, which needs `&mut Context`.
+fn cpp_collect_methods<'a>(
+    ctx: &mut Context<'a>,
+    source: &'a str,
+    root: Node<'_>,
+    program: &mut Program,
+    global_sidx: usize,
+) -> anyhow::Result<(), Error> {
+    let query = ctx.compile_query(
+        r#"
+        [(struct_specifier name: (type_identifier) @class.name
+            body: (field_declaration_list) @class.body)
+         (class_specifier name: (type_identifier) @class.name
+            body: (field_declaration_list) @class.body)]
+        "#,
+    );
+
+    // A method body to lower in phase 2. Nodes are `Copy` and tied to the tree, not to
+    // `ctx`, so they can be stashed across the `&mut ctx` lowering calls below.
+    struct MethodDef<'t> {
+        class: String,
+        name: String,
+        params: Node<'t>,
+        body: Node<'t>,
+        void: bool,
+    }
+    let mut methods: Vec<MethodDef<'_>> = Vec::new();
+
+    // Phase 1: scan classes, populate `ctx.classes`, collect method bodies. The query
+    // cursor borrows the tree (not `ctx`), so populating `ctx.classes` here is fine.
+    let mut cursor = QueryCursor::new();
+    let mut it = cursor.matches(&query, root, source.as_bytes());
+    while let Some(m) = it.next() {
+        let extract = MatchExtractor::new(&query, m);
+        let class_name = to_str(&extract.get("class.name")?, source).to_string();
+        let body = extract.get("class.body")?;
+
+        let mut info = ClassInfo::default();
+        let mut bc = body.walk();
+        for child in body.children(&mut bc) {
+            match child.kind() {
+                "field_declaration" => {
+                    let mut dc = child.walk();
+                    for declr in child.children_by_field_name("declarator", &mut dc) {
+                        if let Some(name) = member_name(declr, source) {
+                            info.members.insert(name.to_string());
+                        }
+                    }
+                }
+                "function_definition" => {
+                    // A member function: declarator is a `function_declarator` whose own
+                    // declarator is the method-name `field_identifier`. Out-of-line defs,
+                    // constructors, etc. don't match this shape and are skipped (later specs).
+                    let Some(declr) = child.child_by_field_name("declarator") else {
+                        continue;
+                    };
+                    if declr.kind() != "function_declarator" {
+                        continue;
+                    }
+                    let (Some(name_node), Some(params), Some(method_body)) = (
+                        declr.child_by_field_name("declarator"),
+                        declr.child_by_field_name("parameters"),
+                        child.child_by_field_name("body"),
+                    ) else {
+                        continue;
+                    };
+                    if name_node.kind() != "field_identifier" {
+                        continue;
+                    }
+                    let name = to_str(&name_node, source).to_string();
+                    let void = child
+                        .child_by_field_name("type")
+                        .is_some_and(|t| to_str(&t, source).eq_ignore_ascii_case("void"));
+                    info.methods.insert(name.clone());
+                    methods.push(MethodDef {
+                        class: class_name.clone(),
+                        name,
+                        params,
+                        body: method_body,
+                        void,
+                    });
+                }
+                _ => {}
+            }
+        }
+        ctx.classes.insert(class_name, info);
+    }
+    drop(it);
+    drop(cursor);
+
+    // Phase 2a: register a function index for every method, so a method calling another
+    // method (or a top-level body calling one) resolves it regardless of definition order.
+    for md in &methods {
+        let qualified = format!("{}::{}", md.class, md.name);
+        ctx.functions
+            .entry(qualified)
+            .or_insert_with(|| program.new_function());
+    }
+    // Phase 2b: lower each method body with an implicit `this` of its class.
+    for md in methods {
+        let qualified = format!("{}::{}", md.class, md.name);
+        ctx.lower_function(
+            source,
+            program,
+            global_sidx,
+            &qualified,
+            md.void,
+            md.params,
+            md.body,
+            Some(&md.class),
+        )?;
+    }
+    Ok(())
+}
+
+/// The C++ grammar-shape adapters installed on the lowering [`Context`]. The first two
+/// bridge the only C-subset node-shape divergences between the two grammars (per the
+/// spec-002 triage); [`cpp_collect_methods`] adds C++ instance-method discovery, which the
+/// top-level function query cannot see. The shared core is otherwise grammar-neutral.
 pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     condition_expr: cpp_condition_expr,
     subscript_index: cpp_subscript_index,
+    collect_aux: cpp_collect_methods,
 };
 
 /// Parse the C++ source in `source` into a CTADL IR program.

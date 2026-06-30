@@ -1,0 +1,6 @@
+{
+  "name": "CPP_37_method_field_sensitive",
+  "description": "C++: source taints member a via set_a; sink reads member b via get_b; no flow (field sensitivity)",
+  "label": "Test",
+  "expect_flow": false
+}

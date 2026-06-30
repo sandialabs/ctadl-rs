@@ -15,6 +15,7 @@
 //! structural and dataflow output directly.
 
 use crate::languages::tree_sitter::test_utils::*;
+use ctadl_ir::ParameterType;
 
 #[test_log::test]
 fn cpp_simple_function() {
@@ -336,4 +337,97 @@ fn cpp_field_assignment_is_update() {
         }";
     let prog = program_from_cpp_string(src).0;
     check_assign_or_update(&prog, "@p0.f2", ["@p1"], None);
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 3 (spec 003) — C++ instance methods. These assert the *frontend's* lowering:
+// method discovery (the implicit `this` shape), member resolution (`this.<member>`), and
+// `recv.method(…)` dispatch. The end-to-end source→sink flow through methods is asserted in
+// `taint_compare::tests::cpp_method_flow_through_struct_is_reported` and validated against
+// DFSan by the CPP_34/35/36 dynamic cases.
+// ---------------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_method_discovery_this_param_shape() {
+    // FR-1: each inline member function lowers to a `Class::method` function whose parameter 0
+    // is an implicit `this` (`ByRef`), with the declared params following. A `void` setter is
+    // arity 0; a value-returning getter is arity 1.
+    let src = r"
+        struct Box {
+            int v;
+            void set(int x) { v = x; }
+            int get() { return v; }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::set",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_return_arity(&prog, "Box::set", 0);
+    check_func_params(&prog, "Box::get", &[ParameterType::ByRef]);
+    check_return_arity(&prog, "Box::get", 1);
+}
+
+#[test_log::test]
+fn cpp_method_member_resolves_to_this() {
+    // FR-2: inside a method body an unqualified data-member name resolves to `this.<member>`,
+    // i.e. an access path rooted at the implicit `this` (parameter 0). The setter's `v = x`
+    // becomes an update of `@p0.v`; the getter's `return v` returns `@p0.v`.
+    let src = r"
+        struct Box {
+            int v;
+            void set(int x) { v = x; }
+            int get() { return v; }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    // `v = x` => update `this.v` (@p0.v) from the declared param `x` (@p1).
+    check_func_assign_or_update(&prog, "Box::set", "@p0.v", ["@p1"]);
+    // `return v` => return `this.v` (@p0.v).
+    check_func_returns_path(&prog, "Box::get", "@p0.v");
+}
+
+#[test_log::test]
+fn cpp_method_member_shadowed_by_param() {
+    // FR-2 (shadowing): a parameter named like a member shadows it — `v` here is the param, so
+    // `v = x` is a plain local/param assign, NOT a write to `this.v`. Guards that member
+    // resolution defers to in-scope locals/params (it only fires when the name is unbound).
+    let src = r"
+        struct Box {
+            int v;
+            void set(int v) { v = v; }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    // The param `v` is `@p1` (`this` is `@p0`), so `v = v` is the self-assign `@p1 := @p1`.
+    // Member resolution does not fire (the name is bound), so no `@p0.v` update is produced.
+    check_func_assign_or_update(&prog, "Box::set", "@p1", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_method_call_is_direct_with_receiver_arg0() {
+    // FR-3: `recv.method(args)` lowers to a DIRECT call to `Class::method` with `recv` prepended
+    // as the arg-0 receiver (not an indirect call through a nonexistent field-pointer). The
+    // getter result feeds the sink; the setter receives the source's value as arg 1.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Box {
+            int v;
+            void set(int x) { v = x; }
+            int get() { return v; }
+        };
+        int main() {
+            Box b;
+            b.set(source());
+            sink(b.get());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // Both calls resolve to the qualified method as direct calls.
+    check_has_direct_call(&prog, "main", "Box::set");
+    check_has_direct_call(&prog, "main", "Box::get");
+    // The receiver `b` is arg 0 of each (set's arg 1 is the incidental source() temp).
+    check_direct_call_arg0(&prog, "main", "Box::set", "b");
+    check_direct_call(&prog, "main", "Box::get", ["b"]);
 }

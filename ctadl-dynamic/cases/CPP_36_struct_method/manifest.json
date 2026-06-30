@@ -1,0 +1,6 @@
+{
+  "name": "CPP_36_struct_method",
+  "description": "C++: struct with set()/get() methods; taint flows in via set() and out via get()",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -570,6 +570,87 @@ pub(crate) fn check_does_not_return_param(
     check_no_flow(summary, param_num, param_path, RETURN_INDEX, "");
 }
 
+/* Function-scoped variant of `check_assign_or_update`: asserts the function named `name` (not
+necessarily the only one) contains the given assignment or update. Used by the C++ method tests,
+where the program has several functions (`Class::m`, `main`, …) so `get_only_function` doesn't
+apply. Same DSL as `check_assign_or_update`. Panics at the caller's line if not found. */
+#[track_caller]
+pub(crate) fn check_func_assign_or_update<I>(prog: &Program, name: &str, dst: &str, src_strs: I)
+where
+    I: IntoIterator<Item = &'static str>,
+{
+    let srcs: Vec<Exp> = src_strs.into_iter().map(exp_from_str).collect();
+    let dst_ap = access_path_from_str(dst);
+    let expected = if dst_ap.path.is_empty() {
+        StatementKind::assign(dst_ap.variable_ref, srcs)
+    } else {
+        assert_eq!(
+            srcs.len(),
+            1,
+            "update destination requires exactly one source expression"
+        );
+        StatementKind::update(dst_ap, srcs.into_iter().next().unwrap())
+    };
+    let fun =
+        function_named(prog, name).unwrap_or_else(|| panic!("no function named {name:?}\n{prog}"));
+    let found = fun
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .any(|stmt| stmt.kind == expected);
+    assert!(
+        found,
+        "could not find `{expected}` in function {name:?}\n{prog}"
+    );
+}
+
+/* Asserts the function `name` has a `return` terminator returning exactly the single access path
+`ret` (DSL, e.g. `@p0.v`). Complements `check_returns_const` (for constants) and the summary-level
+`check_returns_param`; this pins the *frontend's* lowered return expression. Panics at the caller's
+line. */
+#[track_caller]
+pub(crate) fn check_func_returns_path(prog: &Program, name: &str, ret: &str) {
+    let want = exp_from_str(ret);
+    let fun =
+        function_named(prog, name).unwrap_or_else(|| panic!("no function named {name:?}\n{prog}"));
+    let found = fun.blocks.iter().filter_map(|b| b.terminator.as_ref()).any(
+        |t| matches!(&t.kind, TerminatorKind::Return { args } if args.as_slice() == [want.clone()]),
+    );
+    assert!(found, "expected `return {ret}` in {name:?}\n{prog}");
+}
+
+/* Asserts the function `name` has exactly the given parameter types. The multi-function counterpart
+of `check_params` (which is limited to a single-function program). Panics at the caller's line with
+an expected-vs-actual diff on mismatch. */
+#[track_caller]
+pub(crate) fn check_func_params(prog: &Program, name: &str, expected: &[ParameterType]) {
+    let fun =
+        function_named(prog, name).unwrap_or_else(|| panic!("no function named {name:?}\n{prog}"));
+    assert_eq!(
+        fun.params.parameters.raw.as_slice(),
+        expected,
+        "parameter mismatch for {name:?}\n{prog}"
+    );
+}
+
+/* Asserts function `caller` contains a direct call to `callee` whose *first* argument is the access
+path `arg0` (DSL), without constraining the remaining arguments. Use this to pin the receiver of a
+lowered method call (`recv.m(args)` → `Class::m(recv, …)`) without pinning the incidental flatten
+temps that follow. Panics at the caller's line; prints the direct calls found on failure. */
+#[track_caller]
+pub(crate) fn check_direct_call_arg0(prog: &Program, caller: &str, callee: &str, arg0: &str) {
+    let want = exp_from_str(arg0);
+    let calls = direct_calls_in(prog, caller);
+    let found = calls
+        .iter()
+        .any(|(callees, a)| callees.iter().any(|c| c == callee) && a.first() == Some(&want));
+    assert!(
+        found,
+        "expected a direct call to {callee:?} with arg0 {arg0:?} in {caller:?}; \
+         found direct calls {calls:?}\n{prog}"
+    );
+}
+
 // Unit tests for the access-path string DSL itself. These helpers contain real parsing logic, so a
 // bug here would silently weaken every test that relies on them.
 #[cfg(test)]

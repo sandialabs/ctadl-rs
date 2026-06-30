@@ -300,4 +300,67 @@ mod tests {
         log::info!("cpp disconnected flows: {flows:?}");
         assert!(flows.is_empty(), "expected no flow, got: {flows:?}");
     }
+
+    /// M3 (spec 003) acceptance, end to end: taint flows IN through a setter method and OUT
+    /// through a getter method of a `struct`, so the source→sink path runs through two member
+    /// functions. The frontend models each as `Box::m(this: ByRef, …)`, and the existing
+    /// by-ref/return propagation carries the member across — mirrors the CPP_36 dynamic case.
+    #[test_log::test]
+    fn cpp_method_flow_through_struct_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                void set(int x) { v = x; }
+                int get() { return v; }
+            };
+            int main() {
+                Box b;
+                b.set(source());
+                sink(b.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp method flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a C++ source->sink flow through instance methods, got: {flows:?}"
+        );
+    }
+
+    /// Negative control for instance methods (field sensitivity): `source()` taints member
+    /// `a` through one method, but the sink reads a *different* member `b` through another.
+    /// The member modeling is field-sensitive, so no spurious `a`→`b` flow is reported —
+    /// mirrors the CPP_37 dynamic case (`s=none d=none`).
+    #[test_log::test]
+    fn cpp_method_field_sensitive_no_cross_member_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Pair {
+                int a;
+                int b;
+                void set_a(int x) { a = x; }
+                int get_b() { return b; }
+            };
+            int main() {
+                Pair p;
+                p.set_a(source());
+                sink(p.get_b());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp field-sensitive method flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "expected no cross-member flow (field sensitivity), got: {flows:?}"
+        );
+    }
 }

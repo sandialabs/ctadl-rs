@@ -1,0 +1,6 @@
+{
+  "name": "CPP_35_method_getter",
+  "description": "C++: b.v = source() written directly; sink reads b.get() which returns the member through a method",
+  "label": "Test",
+  "expect_flow": true
+}
