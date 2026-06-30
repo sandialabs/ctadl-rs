@@ -1387,11 +1387,10 @@ fn arrow_field_returns_param() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational: (*p).x panics in mod.rs (expects only field_expression nodes); parser gap"]
 fn deref_paren_field_equivalent() {
-    // `(*p).x` should be the same field access as `p->x` (see `arrow_field_returns_param`), yielding
-    // @p0.x -> return. Today the frontend panics on the parenthesized-deref-then-field shape, so this
-    // documents the intended equivalence until the parser handles it.
+    // `(*p).x` is the same field access as `p->x` (see `arrow_field_returns_param`), yielding
+    // @p0.x -> return. The frontend used to panic on the parenthesized-deref-then-field shape;
+    // `extract_field_expression` now peels parens/derefs so it resolves like `p->x`.
     let src = r"
         int f(Field *p) {
             return (*p).x;
@@ -1401,11 +1400,10 @@ fn deref_paren_field_equivalent() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational: conditional_expression is an Unsupported expression type in mod.rs"]
 fn ternary_both_arms_flow() {
-    // A ternary `a ? b : c` can yield either arm, so both `b` and `c` should flow to the result (here
-    // the return). The condition `a` is a control dependence, not a data source. The frontend does
-    // not yet lower `conditional_expression`, so this documents the intended both-arms flow.
+    // A ternary `a ? b : c` can yield either arm, so both `b` and `c` flow to the result (here the
+    // return). The condition `a` is a control dependence, not a data source. `flatten_expr` lowers
+    // `conditional_expression` by blending both arms into a temp.
     let src = r"
         int f(int a, int b, int c) {
             return a ? b : c;
@@ -1416,10 +1414,9 @@ fn ternary_both_arms_flow() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational: cast_expression is an Unsupported expression type in mod.rs"]
 fn cast_passthrough() {
-    // A cast is value-preserving for taint: `(long)a` should still carry `a` to the return. The
-    // frontend does not yet lower `cast_expression`, so this documents the intended pass-through.
+    // A cast is value-preserving for taint: `(long)a` still carries `a` to the return.
+    // `flatten_expr` lowers `cast_expression` by passing the operand straight through.
     let src = r"
         int f(int a) {
             return (long)a;
@@ -1429,12 +1426,10 @@ fn cast_passthrough() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational: sizeof_expression is an Unsupported expression type in mod.rs"]
 fn sizeof_does_not_evaluate() {
     // `sizeof(*p)` does not evaluate its operand -- it yields a compile-time size, never reading
-    // through `p` -- so the parameter must NOT reach the return. The frontend does not yet lower
-    // `sizeof_expression`; this documents the intended (non-)flow, and is the negative that proves the
-    // operand stays unevaluated once lowering lands.
+    // through `p` -- so the parameter must NOT reach the return. `flatten_expr` lowers
+    // `sizeof_expression` as a constant (the operand is never visited), keeping this a true negative.
     let src = r"
         int f(int *p) {
             return sizeof(*p);
@@ -1732,18 +1727,18 @@ fn vararg_call_carries_argument() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational: initializer_list (designated initializer `{.a = src}`) is an Unsupported \
-            expression type (ERR 78) in mod.rs"]
 fn designated_initializer_flows() {
-    // A designated initializer `Thing v = {.a = src}` should taint `v.a`, so `return v.a` carries src.
-    // The frontend rejects `initializer_list` outright; documents the intended flow until it lowers.
+    // A designated initializer `Thing v = {.a = src}` taints field `a`, so `return v.a` carries src.
+    // The designator gives the member name, so the store lands at `v.a` -- exactly where the `v.a`
+    // read resolves. (`src` is a scalar param, so it reaches the return at path "" -- the field path
+    // lives on the local `v`, not on the param.)
     let src = r"
         int f(int src) {
             Thing v = {.a = src};
             return v.a;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, "a");
+    check_returns_param(&s, 0, "");
 }
 
 #[test_log::test]
