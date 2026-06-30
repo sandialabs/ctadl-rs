@@ -973,3 +973,56 @@ fn taint_flows_through_funcptr_in_struct() {
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&summary, 1, "");
 }
+
+#[test_log::test]
+fn aggregate_initializer_list_lowers_to_element_stores() {
+    // An aggregate brace initializer (`int a[2] = { s, 0 }`) lowers to per-element stores
+    // into synthetic index fields `a.[i]` -- the same `.[N]` field shape a constant-index
+    // subscript read resolves to (see `subscript_access_paths`), so taint deposited in the
+    // initializer is observed at a later `a[0]` read. Previously the `initializer_list`
+    // reached `flatten_expr`'s catch-all and failed ingestion (ERR 78).
+    let src = r"
+        int f() {
+            int s = source();
+            int a[2] = { s, 0 };
+            return a[0];
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "a.[0]", ["s"], None); // a[0] <- s
+    check_assign_or_update(&prog, "a.[1]", ["#0"], None); // a[1] <- 0
+}
+
+#[test_log::test]
+fn nested_aggregate_initializer_lowers_recursively() {
+    // A nested aggregate (`int m[2][2] = {{s,0},{0,0}}`) recurses, extending the base path
+    // by the outer index: the tainted element lands at `m.[0].[0]`.
+    let src = r"
+        int f() {
+            int s = source();
+            int m[2][2] = { { s, 0 }, { 0, 0 } };
+            return m[0][0];
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "m.[0].[0]", ["s"], None);
+}
+
+#[test_log::test]
+fn labeled_empty_statement_parses() {
+    // A label on an empty statement (`done: ;`), e.g. a `goto` target that jumps over a
+    // kill, must ingest cleanly: the empty `expression_statement` (just `;`) carries no
+    // expression to lower. Previously the bare `;` reached `flatten_expr`'s catch-all and
+    // failed ingestion (ERR 78). `program_from_string` asserts a clean parse with no
+    // dangling (terminator-less) block; we also confirm the pre-goto `r = s` flow survives.
+    let src = r"
+        int f() {
+            int s = source();
+            int r = s;
+            goto done;
+            r = 0;
+        done:
+            ;
+            return r;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "r", ["s"], None); // r = s, before the goto
+}

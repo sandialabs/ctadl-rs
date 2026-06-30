@@ -687,6 +687,70 @@ impl<'a> Context<'a> {
         Ok(target_var)
     }
 
+    /// Lower an aggregate brace initializer (`int a[2] = { s, 0 }`,
+    /// `struct P p = { s, 0 }`) into per-element stores. `decl_ident` is the declarator
+    /// being initialized (an `array_declarator` for arrays, an `identifier` for structs
+    /// / scalars); flattening it yields -- and registers -- the base access path.
+    fn collect_initializer_list(
+        &mut self,
+        source: &str,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        decl_ident: Node<'_>,
+        init_list: Node<'_>,
+    ) -> Result<(), Error> {
+        let base = self.flatten_expr(program, decl_ident, source, scope_view)?;
+        let Exp::AccessPath(base_ap) = base else {
+            return Err(Error::TreeSitterParse(
+                "initializer target was not an access path".to_owned(),
+            ));
+        };
+        self.lower_initializer_list(source, program, scope_view, &base_ap, init_list)
+    }
+
+    /// Walk the elements of an `initializer_list`, storing each into a successive
+    /// synthetic index field `[i]` of `base_ap` -- the same `[N]` field shape a
+    /// constant-index subscript read (`a[0]`) resolves to (see `flatten_subscript`), so
+    /// taint deposited here is later observed at the read. Positional struct fields reuse
+    /// the same `[i]` synthesis (no type info to recover member names). Nested aggregates
+    /// (`{{..},{..}}`) recurse, extending the base path by the outer index.
+    fn lower_initializer_list(
+        &mut self,
+        source: &str,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        base_ap: &AccessPath,
+        init_list: Node<'_>,
+    ) -> Result<(), Error> {
+        let mut cursor = init_list.walk();
+        let mut idx = 0usize;
+        for elem in init_list.children(&mut cursor) {
+            if !elem.is_named() {
+                continue; // skip the `{`, `,`, `}` tokens
+            }
+            let mut fields = base_ap.path.fields.clone();
+            fields.push(FieldAccess::Symbol(ArcIntern::<str>::from(format!("[{idx}]"))));
+            let elem_ap = ctadl_ir::mir::AccessPath {
+                variable_ref: base_ap.variable_ref.clone(),
+                path: fields.into_iter().collect(),
+            };
+            if elem.kind() == "initializer_list" {
+                self.lower_initializer_list(source, program, scope_view, &elem_ap, elem)?;
+            } else {
+                let rhs = self.flatten_expr(program, elem, source, scope_view)?;
+                self.add_assign_to_program(
+                    program,
+                    scope_view,
+                    &Exp::AccessPath(elem_ap),
+                    &rhs,
+                    None,
+                );
+            }
+            idx += 1;
+        }
+        Ok(())
+    }
+
     fn setup_compound<'b>(
         &mut self,
         program: &mut Program,
@@ -808,7 +872,13 @@ impl<'a> Context<'a> {
                 self.flatten_expr(program, child, source, scope_view)?;
             }
             "expression_statement" | "update_expression" => {
-                if let Some(inner_child) = child.child(0) {
+                // An empty statement (`;`) -- e.g. the body of a label, `done: ;` --
+                // parses as an `expression_statement` whose only child is the `;` token.
+                // There is no expression to lower, so skip it; otherwise the bare `;`
+                // falls through to `flatten_expr`'s catch-all and fails ingestion (ERR 78).
+                if let Some(inner_child) = child.child(0)
+                    && !_is_empty(&inner_child)
+                {
                     self.flatten_expr(program, inner_child, source, scope_view)?;
                 }
             }
@@ -906,7 +976,15 @@ impl<'a> Context<'a> {
                 None,
             );
             if let Some(vc) = nest_decl.child_by_field_name("value") {
-                self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;
+                if vc.kind() == "initializer_list" {
+                    // Aggregate brace initializer, e.g. `int a[2] = { s, 0 }`. Lower it
+                    // to per-element stores `a[i] = elem_i` so taint flows into the
+                    // indexed access paths a later `a[0]` read resolves to. (Without this
+                    // the `initializer_list` reaches `flatten_expr`'s catch-all -> ERR 78.)
+                    self.collect_initializer_list(source, program, scope_view, decl_ident, vc)?;
+                } else {
+                    self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;
+                }
             };
         }
         Ok(())
