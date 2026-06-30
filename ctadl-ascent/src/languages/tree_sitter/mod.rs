@@ -64,8 +64,17 @@ use tree_sitter::{Parser, Query, QueryCapture, QueryCursor, QueryMatch, Tree};
 mod test_utils;
 mod testing_block_flow_ascii;
 
+/// C++ frontend entry point (`parse_cpp_program`). A submodule so it can reach the
+/// language-agnostic lowering core in this module (`Context`, `markup`, …) and reuse it
+/// without duplication; only the grammar it drives differs from the C path.
+mod cpp;
+pub use cpp::parse_cpp_program;
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod cpp_tests;
 
 #[cfg(test)]
 mod experimental_tests;
@@ -412,7 +421,7 @@ fn add_scope(
 #[repr(transparent)]
 struct FunctionName<'a>(&'a str);
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Context<'a> {
     functions: HashMap<FunctionName<'a>, FunctionIdx>,
     param_names: HashMap<FunctionName<'a>, IndexVec<ParameterIdx, &'a str>>,
@@ -423,6 +432,36 @@ struct Context<'a> {
     /// (unlike `break`/`continue` targets, which ride on `ScopeView`) the blocks are
     /// created in a pre-scan over the whole body and looked up here. Reset per function.
     label_blocks: HashMap<String, BasicBlockIdx>,
+    /// The tree-sitter grammar this lowering is driving, supplied by the frontend entry
+    /// point (`parse_c_program` passes C; the `cpp` submodule's `parse_cpp_program` passes
+    /// C++). The shared lowering is language-neutral and never branches on the language;
+    /// this handle is used only to compile queries against the same grammar that parsed
+    /// the tree (queries match by numeric symbol id, which differs between grammars). Any
+    /// C++-specific behavior belongs in the `cpp` submodule, not in branches here.
+    grammar: tree_sitter::Language,
+}
+
+impl Context<'_> {
+    /// Create a lowering context driving `grammar`. Both frontend entry points build the
+    /// context this way — `parse_c_program` with the C grammar, `parse_cpp_program` with
+    /// the C++ grammar — so the shared lowering stays language-neutral.
+    fn new(grammar: tree_sitter::Language) -> Self {
+        Self {
+            functions: HashMap::default(),
+            param_names: HashMap::default(),
+            scope_tree: ScopeTree::default(),
+            allocator: TempAllocator::default(),
+            label_blocks: HashMap::default(),
+            grammar,
+        }
+    }
+
+    /// Compile a tree-sitter query against this context's grammar. Use this (not the
+    /// free [`compile_query`], which is hard-wired to C) for any query run over a tree
+    /// produced by this context, so the tree is queried with the grammar that parsed it.
+    fn compile_query(&self, query_src: &str) -> Query {
+        compile_query_for(&self.grammar, query_src)
+    }
 }
 
 pub struct MatchExtractor<'q, 'cursor, 'tree> {
@@ -584,7 +623,7 @@ pub fn parse_c_program(source: &str) -> anyhow::Result<(Program, bool, String), 
         .set_language(&tree_sitter_c::LANGUAGE.into())
         .expect("error loading C grammar");
 
-    let mut ctx = Context::default();
+    let mut ctx = Context::new(tree_sitter_c::LANGUAGE.into());
     let mut program = Program::default();
     let tree = parser
         .parse(source, None)
@@ -595,7 +634,16 @@ pub fn parse_c_program(source: &str) -> anyhow::Result<(Program, bool, String), 
 }
 
 pub fn compile_query(query_src: &str) -> Query {
-    Query::new(&tree_sitter_c::LANGUAGE.into(), query_src).unwrap_or_else(|e| {
+    compile_query_for(&tree_sitter_c::LANGUAGE.into(), query_src)
+}
+
+/// Compile a tree-sitter query against an explicit grammar. The C frontend goes through
+/// [`compile_query`] (C); the C++ frontend drives this with the C++ grammar via
+/// [`Context::compile_query`]. A query must be compiled against the same grammar that
+/// parsed the tree it runs over — tree-sitter matches by numeric symbol id, and the C and
+/// C++ grammars assign different ids to the same node kind.
+pub(crate) fn compile_query_for(language: &tree_sitter::Language, query_src: &str) -> Query {
+    Query::new(language, query_src).unwrap_or_else(|e| {
         let header = "--- Query Syntax Error ---";
         let snippet = query_src
             .lines()
@@ -1526,11 +1574,6 @@ impl<'a> Context<'a> {
         function_name: &'a str,
         scope_view: &ScopeView,
     ) -> anyhow::Result<(), Error> {
-        let param_names = self
-            .param_names
-            .entry(FunctionName(function_name))
-            .or_default();
-
         let query_src = r#"
         (parameter_declaration
             declarator: [
@@ -1544,7 +1587,14 @@ impl<'a> Context<'a> {
         )
     "#;
         //       debug_print_tree(*param_list, 0, None, None); //depth, field_name, depth_limit);
-        let query = compile_query(query_src);
+        // Compile against this context's grammar *before* taking the mutable borrow of
+        // `param_names` below (both touch `self`).
+        let query = self.compile_query(query_src);
+
+        let param_names = self
+            .param_names
+            .entry(FunctionName(function_name))
+            .or_default();
 
         let mut cursor = QueryCursor::new();
         let mut matches_iter = cursor.matches(&query, *param_list, source.as_bytes());
@@ -1962,7 +2012,7 @@ impl<'a> Context<'a> {
                 body: (compound_statement) @body)
             "#;
 
-        let query = compile_query(query_src);
+        let query = self.compile_query(query_src);
 
         // Pre-pass: register every function name up front so a function-pointer
         // reference to a function defined LATER in the file (`fp = later;`) is already

@@ -66,6 +66,7 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 trie = { path = "../trie" }
 tree-sitter = "0.26"
 tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
 tempfile = "3"
 which = "6"
 elsa = "1.11"

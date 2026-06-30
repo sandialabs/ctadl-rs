@@ -19,7 +19,7 @@ use crate::error::Error;
 use crate::facts::TaintDirection;
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::{IndexConfig, IndexFacts, taint_index_with_config};
-use crate::languages::tree_sitter::parse_c_program;
+use crate::languages::tree_sitter::{parse_c_program, parse_cpp_program};
 use crate::models::{ModelsBatch, try_load_models};
 use crate::query_engine::{QueryFacts, taint_analysis};
 
@@ -33,14 +33,39 @@ pub struct StaticFlow {
     pub label: String,
 }
 
-/// Parse `src`, index it, and run the taint query using the source/sink model at
-/// `model_path`. Returns the deduplicated, sorted set of reported flows.
+/// Parse `src` as **C**, index it, and run the taint query using the source/sink model
+/// at `model_path`. Returns the deduplicated, sorted set of reported flows.
 pub fn analyze_c_flows(
     src: &str,
     model_path: impl AsRef<std::path::Path>,
 ) -> Result<Vec<StaticFlow>, Error> {
     // 1. Parse C to IR.
     let (program, has_error, _dump) = parse_c_program(src)?;
+    analyze_parsed_flows(program, has_error, model_path)
+}
+
+/// Parse `src` as **C++**, index it, and run the taint query using the source/sink model
+/// at `model_path`. The C++ counterpart of [`analyze_c_flows`]: it differs only in the
+/// frontend ([`parse_cpp_program`]); the index/query pipeline below is language-agnostic
+/// and shared via [`analyze_parsed_flows`].
+pub fn analyze_cpp_flows(
+    src: &str,
+    model_path: impl AsRef<std::path::Path>,
+) -> Result<Vec<StaticFlow>, Error> {
+    // 1. Parse C++ to IR.
+    let (program, has_error, _dump) = parse_cpp_program(src)?;
+    analyze_parsed_flows(program, has_error, model_path)
+}
+
+/// Shared index+query tail for [`analyze_c_flows`] / [`analyze_cpp_flows`]: takes an
+/// already-parsed [`Program`] (plus the frontend's tree-sitter error flag) and the model
+/// path, and returns the reported source→sink flows. Everything below the frontend is
+/// language-agnostic, so both entry points funnel through here.
+fn analyze_parsed_flows(
+    program: ctadl_ir::Program,
+    has_error: bool,
+    model_path: impl AsRef<std::path::Path>,
+) -> Result<Vec<StaticFlow>, Error> {
     if has_error {
         return Err(Error::TreeSitterParse(
             "tree-sitter reported a parse error in the input program".to_owned(),
@@ -205,6 +230,74 @@ mod tests {
         "#;
         let flows = analyze_c_flows(src, test_c_path("markers.json")).expect("analyze");
         log::info!("disconnected flows: {flows:?}");
+        assert!(flows.is_empty(), "expected no flow, got: {flows:?}");
+    }
+
+    /// M1 (FR-2) acceptance: the same direct source() → sink() flow is reported when the
+    /// program is driven through the **C++** frontend (`analyze_cpp_flows`). Same model,
+    /// same pipeline, only the parser differs.
+    #[test_log::test]
+    fn cpp_direct_flow_is_reported() {
+        let src = r#"
+            int source() { return 0; }
+            void sink(int x) { return; }
+            int main() {
+                int s = source();
+                sink(s);
+                return 0;
+            }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp direct flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a C++ source->sink flow (label Test), got: {flows:?}"
+        );
+    }
+
+    /// Mirrors exactly what the `ctadl-dynamic` harness feeds the static side for a C++
+    /// case: the FR-4 program's `extern "C"` prototypes + body, concatenated with the
+    /// `extern "C"` inert marker *definitions* (`static_markers_cpp.cpp`). This pins that
+    /// `parse_cpp_program` ingests `extern "C"` function definitions (wrapped in a
+    /// tree-sitter `linkage_specification`) and still resolves `main`'s calls to them, so
+    /// the source→sink flow is reported through the unmangled markers.
+    #[test_log::test]
+    fn cpp_extern_c_markers_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            int main() {
+                int s = source();
+                sink(s);
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp extern-c flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a C++ source->sink flow through extern \"C\" markers, got: {flows:?}"
+        );
+    }
+
+    /// Negative control for the C++ frontend: a source and a sink with no data path
+    /// between them must report no flow (parity with `no_flow_when_disconnected`).
+    #[test_log::test]
+    fn cpp_no_flow_when_disconnected() {
+        let src = r#"
+            int source() { return 0; }
+            void sink(int x) { return; }
+            int main() {
+                int s = source();
+                int x = 0;
+                sink(x);
+                return 0;
+            }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp disconnected flows: {flows:?}");
         assert!(flows.is_empty(), "expected no flow, got: {flows:?}");
     }
 }

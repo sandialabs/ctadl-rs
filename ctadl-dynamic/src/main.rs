@@ -29,10 +29,49 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
-use ctadl_ascent::taint_compare::analyze_c_flows;
+use ctadl_ascent::taint_compare::{analyze_c_flows, analyze_cpp_flows};
 use serde::{Deserialize, Serialize};
 
 mod generator;
+
+/// Source language of a case, selected by file extension. Each language has its own
+/// static driver (CTADL frontend), inert static markers, instrumented DFSan shim, and
+/// compiler invocation; everything else in the harness is language-agnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lang {
+    C,
+    Cpp,
+}
+
+impl Lang {
+    /// `.cpp`/`.cc`/`.cxx` → C++, everything else → C (the historical default).
+    fn from_path(path: &Path) -> Lang {
+        match path.extension().and_then(|e| e.to_str()) {
+            Some("cpp") | Some("cc") | Some("cxx") => Lang::Cpp,
+            _ => Lang::C,
+        }
+    }
+
+    /// The compiler driver for this language's dynamic (DFSan) and well-formedness builds.
+    fn compiler(self) -> &'static str {
+        match self {
+            Lang::C => "clang",
+            Lang::Cpp => "clang++",
+        }
+    }
+}
+
+/// The program-file basenames a case directory may use, in priority order. The C path is
+/// `prog.c`; the C++ path is `prog.cpp` (or `.cc`/`.cxx`).
+const CASE_PROG_NAMES: &[&str] = &["prog.c", "prog.cpp", "prog.cc", "prog.cxx"];
+
+/// Find the single program file in a case directory (`prog.c` or `prog.cpp`/`.cc`/`.cxx`).
+fn case_prog_file(dir: &Path) -> Option<PathBuf> {
+    CASE_PROG_NAMES
+        .iter()
+        .map(|n| dir.join(n))
+        .find(|p| p.is_file())
+}
 
 /// Per-case ground truth, authored by hand alongside `prog.c`.
 #[derive(Debug, Deserialize)]
@@ -201,11 +240,15 @@ fn harness_root() -> PathBuf {
 }
 
 /// Shared static+dynamic comparison core, used by both the curated-corpus mode
-/// (`run`) and the manifest-free scan mode (`scan_mode` / `check_mode`).
+/// (`run`) and the manifest-free scan mode (`scan_mode` / `check_mode`). The model
+/// (`markers.json`) is language-agnostic (regex matches on `source`/`sink`); the markers
+/// and DFSan shim are per-language and selected by the case's file extension.
 struct Harness {
     model: PathBuf,
-    static_markers: String,
-    dfsan_shim: PathBuf,
+    c_markers: String,
+    c_shim: PathBuf,
+    cpp_markers: String,
+    cpp_shim: PathBuf,
 }
 
 impl Harness {
@@ -213,16 +256,37 @@ impl Harness {
         let root = harness_root();
         Ok(Harness {
             model: root.join("markers.json"),
-            static_markers: std::fs::read_to_string(root.join("shim/static_markers.c"))
+            c_markers: std::fs::read_to_string(root.join("shim/static_markers.c"))
                 .context("reading shim/static_markers.c")?,
-            dfsan_shim: root.join("shim/dfsan_shim.c"),
+            c_shim: root.join("shim/dfsan_shim.c"),
+            cpp_markers: std::fs::read_to_string(root.join("shim/static_markers_cpp.cpp"))
+                .context("reading shim/static_markers_cpp.cpp")?,
+            cpp_shim: root.join("shim/dfsan_shim_cpp.cpp"),
         })
+    }
+
+    /// The inert static-marker bodies CTADL concatenates onto a program of this language.
+    fn static_markers(&self, lang: Lang) -> &str {
+        match lang {
+            Lang::C => &self.c_markers,
+            Lang::Cpp => &self.cpp_markers,
+        }
+    }
+
+    /// The instrumented DFSan shim compiled alongside a program of this language.
+    fn dfsan_shim(&self, lang: Lang) -> &Path {
+        match lang {
+            Lang::C => &self.c_shim,
+            Lang::Cpp => &self.cpp_shim,
+        }
     }
 
     /// Run CTADL (static) and DFSan (dynamic) on one program. Each result is
     /// `Ok(flow?)` or `Err(message)` (frontend error for static, dyn error for
     /// dynamic). `prog` is the program source (prototypes + logic); `prog_path`
-    /// is the on-disk `.c` for the DFSan compile.
+    /// is the on-disk source file (`.c`/`.cpp`) for the DFSan compile. The language is
+    /// chosen from `prog_path`'s extension, selecting the static driver, markers, shim,
+    /// and compiler.
     fn compare_program(
         &self,
         prog: &str,
@@ -230,15 +294,20 @@ impl Harness {
         name: &str,
         label: &str,
     ) -> (Result<bool, String>, Result<bool, String>) {
+        let lang = Lang::from_path(prog_path);
         // Static: concatenate the inert marker bodies so CTADL's model matches.
-        let src = format!("{prog}\n{}\n", self.static_markers);
+        let src = format!("{prog}\n{}\n", self.static_markers(lang));
         let model = &self.model;
-        let static_flow = match catch_unwind(AssertUnwindSafe(|| analyze_c_flows(&src, model))) {
+        let analyze = move || match lang {
+            Lang::C => analyze_c_flows(&src, model),
+            Lang::Cpp => analyze_cpp_flows(&src, model),
+        };
+        let static_flow = match catch_unwind(AssertUnwindSafe(analyze)) {
             Err(_) => Err("panic in CTADL frontend".to_string()),
             Ok(Err(e)) => Err(short_err(&e.to_string())),
             Ok(Ok(flows)) => Ok(flows.iter().any(|f| f.label == label)),
         };
-        let dynamic_flow = run_dfsan(prog_path, &self.dfsan_shim, name);
+        let dynamic_flow = run_dfsan(prog_path, self.dfsan_shim(lang), name, lang);
         (static_flow, dynamic_flow)
     }
 }
@@ -272,23 +341,25 @@ fn run(json_mode: bool) -> Result<i32> {
     let mut case_dirs: Vec<PathBuf> = std::fs::read_dir(&cases_dir)
         .with_context(|| format!("reading cases dir {}", cases_dir.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.join("prog.c").is_file())
+        .filter(|p| case_prog_file(p).is_some())
         .collect();
     case_dirs.sort();
 
     let mut rows = Vec::new();
     for case in &case_dirs {
         let name = case.file_name().unwrap().to_string_lossy().to_string();
-        let prog_path = case.join("prog.c");
+        let prog_path =
+            case_prog_file(case).with_context(|| format!("no prog.{{c,cpp}} in {name}"))?;
+        let lang = Lang::from_path(&prog_path);
         let prog = std::fs::read_to_string(&prog_path)
-            .with_context(|| format!("reading {name}/prog.c"))?;
+            .with_context(|| format!("reading {}", prog_path.display()))?;
         let manifest: Manifest = serde_json::from_str(
             &std::fs::read_to_string(case.join("manifest.json"))
                 .with_context(|| format!("reading {name}/manifest.json"))?,
         )
         .with_context(|| format!("parsing {name}/manifest.json"))?;
 
-        let compiles = clang_compiles(&prog, &harness.static_markers);
+        let compiles = clang_compiles(&prog, harness.static_markers(lang), lang);
 
         let (static_flow, dynamic_flow) =
             harness.compare_program(&prog, &prog_path, &name, &manifest.label);
@@ -553,13 +624,17 @@ struct ScanReport {
     results: Vec<ScanResult>,
 }
 
-/// Recursively collect `*.c` files under `dir`.
+/// Recursively collect C and C++ source files (`*.c`/`*.cpp`/`*.cc`/`*.cxx`) under `dir`.
+/// The language of each is decided per file by [`Lang::from_path`] downstream.
 fn collect_c_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
         let path = entry?.path();
         if path.is_dir() {
             collect_c_files(&path, out)?;
-        } else if path.extension().and_then(|e| e.to_str()) == Some("c") {
+        } else if matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("c" | "cpp" | "cc" | "cxx")
+        ) {
             out.push(path);
         }
     }
@@ -665,20 +740,29 @@ fn arg_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     args.get(i + 1).map(String::as_str)
 }
 
-/// Compile `prog.c` + inert static markers with plain clang (no DFSan) as a
-/// well-formedness check. Returns true on success.
-fn clang_compiles(prog: &str, static_markers: &str) -> bool {
+/// Compile the program + inert static markers with the plain compiler (no DFSan) as a
+/// well-formedness check. Returns true on success. `lang` selects the compiler driver,
+/// source extension, and (for C++) `-nostdlib++`.
+fn clang_compiles(prog: &str, static_markers: &str, lang: Lang) -> bool {
     let dir = std::env::temp_dir();
     let stamp = std::process::id();
-    let prog_path = dir.join(format!("ctadl_dyn_{stamp}_prog.c"));
-    let mk_path = dir.join(format!("ctadl_dyn_{stamp}_markers.c"));
+    let ext = match lang {
+        Lang::C => "c",
+        Lang::Cpp => "cpp",
+    };
+    let prog_path = dir.join(format!("ctadl_dyn_{stamp}_prog.{ext}"));
+    let mk_path = dir.join(format!("ctadl_dyn_{stamp}_markers.{ext}"));
     let out_path = dir.join(format!("ctadl_dyn_{stamp}.out"));
     if std::fs::write(&prog_path, prog).is_err()
         || std::fs::write(&mk_path, static_markers).is_err()
     {
         return false;
     }
-    let ok = Command::new("clang")
+    let mut cmd = Command::new(lang.compiler());
+    if lang == Lang::Cpp {
+        cmd.arg("-nostdlib++");
+    }
+    let ok = cmd
         .args(["-O0", "-w", "-o"])
         .arg(&out_path)
         .arg(&prog_path)
@@ -692,17 +776,30 @@ fn clang_compiles(prog: &str, static_markers: &str) -> bool {
     ok
 }
 
-/// Compile `prog.c` + the instrumented DFSan shim and run it, returning whether
+/// Compile the program + the instrumented DFSan shim and run it, returning whether
 /// the sink observed the `Test` label at runtime. ASLR is disabled via
 /// `setarch -R` because DFSan's shadow-memory layout assumes the binary loads in
 /// a fixed low address range (otherwise it aborts with "out of application
 /// range"). Falls back to a direct run if `setarch` is unavailable.
-fn run_dfsan(prog_path: &Path, shim_path: &Path, case_name: &str) -> Result<bool, String> {
+///
+/// `lang` selects the compiler driver (`clang` vs `clang++`); the C++ build adds
+/// `-nostdlib++` (this box has libc++/libc++abi but no libstdc++ to link).
+fn run_dfsan(
+    prog_path: &Path,
+    shim_path: &Path,
+    case_name: &str,
+    lang: Lang,
+) -> Result<bool, String> {
     let dir = std::env::temp_dir();
     let out = dir.join(format!("ctadl_dfsan_{}_{}", std::process::id(), case_name));
 
-    let compiled = Command::new("clang")
-        .args(["-fsanitize=dataflow", "-O0", "-w", "-o"])
+    let mut compile = Command::new(lang.compiler());
+    compile.arg("-fsanitize=dataflow");
+    if lang == Lang::Cpp {
+        compile.arg("-nostdlib++");
+    }
+    let compiled = compile
+        .args(["-O0", "-w", "-o"])
         .arg(&out)
         .arg(prog_path)
         .arg(shim_path)

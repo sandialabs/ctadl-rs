@@ -60,6 +60,25 @@ pub(crate) fn program_from_string(src: &str) -> (Program, String) {
     (result.0, result.2)
 }
 
+/* Compile a program from a C++ string (the C++ frontend counterpart of
+`program_from_string`). Drives `parse_cpp_program` and applies the same well-formedness
+guards. */
+pub(crate) fn program_from_cpp_string(src: &str) -> (Program, String) {
+    let result = tree_sitter::parse_cpp_program(src).expect("Failed to parse C++ program.");
+    assert!(
+        !result.1,
+        "Input C++ program failed to parse without error from Tree-sitter"
+    );
+    // A block with no terminator is always a CFG defect, so fail loudly here rather
+    // than let a test silently pass on a malformed control-flow graph.
+    assert!(
+        !result.2.contains("<no terminator>"),
+        "Parsed IR contains a block with no terminator:\n{}",
+        result.2
+    );
+    (result.0, result.2)
+}
+
 /* Compile a program from a file. */
 pub(crate) fn program_from_file<P: AsRef<std::path::Path>>(filename: P) -> Result<Program> {
     let path = filename.as_ref();

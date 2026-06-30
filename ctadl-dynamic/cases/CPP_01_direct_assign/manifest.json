@@ -1,0 +1,6 @@
+{
+  "name": "CPP_01_direct_assign",
+  "description": "C++: source() return assigned to a local, passed straight to sink()",
+  "label": "Test",
+  "expect_flow": true
+}
