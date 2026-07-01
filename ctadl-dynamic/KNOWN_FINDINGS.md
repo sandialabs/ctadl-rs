@@ -14,7 +14,7 @@ frontend ingestion gaps — and tracks their disposition.
 | initializer_list (`{...}`) not ingested | frontend | 31 | ✅ resolved (frontend lowering, 2026-06-30) |
 | labeled_empty_statement (`L: ;`) not ingested | frontend | 32 | ✅ resolved (frontend lowering, 2026-07-01) |
 | F3 — write through a local's address doesn't taint the local | soundness | 34 | ✅ resolved (frontend address-of alias, 2026-07-01) |
-| **F4 — union field overlap not modeled** | soundness | 35 | 🔴 open |
+| F4 — union field overlap not modeled | soundness | 35 | ✅ resolved (frontend union-member collapse, 2026-07-01) |
 | **F5 — non-constant subscript doesn't may-alias a constant index** | soundness | 36 | 🔴 open |
 | cast_expression not ingested | frontend | 37 | ✅ resolved (frontend lowering, 2026-06-30) |
 | conditional_expression (ternary) not ingested | frontend | 38 | ✅ resolved (frontend lowering, 2026-06-30) |
@@ -36,7 +36,9 @@ positional **and** designated (`{.a = e}`) forms — with matching unit tests in
 fixed (2026-07-01)** — `walk_statement` skips an empty `;` body (guards `child.child(0)` with
 `!_is_empty`) — closing the last open frontend ingestion gap. **F3 (case 34) was also fixed
 (2026-07-01)** — the frontend resolves a same-block dereference `*p` to its address-of pointee, so a
-write `*p = src` through `int *p = &x` taints `x`. **2 findings remain open** (soundness: F4/F5). The
+write `*p = src` through `int *p = &x` taints `x`. **F4 (case 35) was also fixed (2026-07-01)** — a
+variable declared with a `union` type has its member accesses collapsed to one synthetic field, so
+`u.a` and `u.b` alias (structs are untouched). **1 finding remains open** (soundness: F5). The
 frontend fixes here are also on `treesitter_feature_branch` (which carries the un-ignored / live
 aspirational tests).
 
@@ -71,23 +73,51 @@ field from the manifest **and** mark the entry below RESOLVED.
 
 ---
 
-## F4 — Union field overlap not modeled (OPEN)
+## F4 — Union field overlap not modeled (RESOLVED)
 
-- **Status:** **open.** Allowlisted `"known_gap": "F4"` in
-  [`cases/35_union_field_overlap`](cases/35_union_field_overlap/).
-- **Symptom:** writing one union member and reading another drops taint. A `union` aliases its
-  members (they share storage), so `u.a = src; … u.b` carries taint. CTADL models a union like an
-  ordinary **field-sensitive struct** — `.a` and `.b` are disjoint paths — so the overlap flow is
-  dropped:
+- **Status:** **resolved** (2026-07-01, frontend union-member collapse). The `known_gap: "F4"`
+  allowlist was removed from [`cases/35_union_field_overlap`](cases/35_union_field_overlap/), which
+  now runs as plain `OK` (`static=flow dynamic=flow`).
+- **Was:** writing one union member and reading another dropped taint. A `union` aliases its members
+  (they share storage), so `u.a = src; … u.b` carries taint. CTADL modeled a union like an ordinary
+  **field-sensitive struct** — `.a` and `.b` disjoint paths — so the overlap flow was dropped:
   ```c
-  union U { int a; int b; }; union U u; u.a = src; sink(u.b);   // F4: static=none, dynamic=flow
+  union U { int a; int b; }; union U u; u.a = src; sink(u.b);   // was: static=none, dynamic=flow
   ```
-- **Reproduces with:** [`cases/35_union_field_overlap`](cases/35_union_field_overlap/) →
-  `static=none dynamic=flow` (`known-gap F4`).
+
+### Root cause (no type awareness in the frontend)
+
+The tree-sitter C frontend did no type tracking at all (`toplevel` only walks functions; `union`/
+`struct` type declarations were ignored), so a union member access lowered exactly like a struct
+member access: `u.a = src` → `update u.a := src`, read `u.b` → `u.b`. Field-sensitivity is correct
+for structs (disjoint members) but wrong for unions (all members overlap), so the flow was dropped.
+
+### The fix
+
+Teach the frontend which locals are unions and collapse their member accesses, entirely in
+`ctadl-ascent/src/languages/tree_sitter/mod.rs`: `walk_declaration` flags a variable whose
+declaration type is a `union_specifier` (`union U u;`, inline `union U { .. } u;`, or anonymous
+`union { .. } u;`) in a `Context::union_vars` set; the `field_expression` arm of `flatten_expr` then
+rewrites the accessed member (the first path segment) of any access off a union variable to a single
+synthetic field `$union`. So `u.a` and `u.b` both become `u.$union` — a write to one member is
+observed at a read of another — while structs (not in `union_vars`) keep genuinely disjoint fields.
+No backend/index-engine changes.
+
+**Scope / limitations (deliberate, no worse than before):** only locals *directly* declared with a
+`union_specifier` are collapsed. Not yet covered — `typedef union { .. } U; U u;` (the declaration
+type is a `type_identifier`, needs typedef tracking), union *parameters* and *globals*, pointer/array
+union declarators, and unions *nested* as a struct field. Those still use the value-copy/field-
+sensitive model (the old behaviour), so they are unchanged, not regressed.
+
+### Confirmed by DFSan
+
+Before: `35_union_field_overlap` reported `static=none dynamic=flow`. After: `static=flow
+dynamic=flow` (`OK`); `scan cases/` drops to a single remaining soundness-disagree (F5). Regression
+tests in `tests.rs`: `union_member_write_aliases_other_member`, `struct_members_stay_disjoint` (the
+control proving struct fields stay disjoint). Full `ctadl-ascent` suite green (113 lib tests).
+
 - **Found by / cross-validated:** the `treesitter_feature_branch` aspirational unit test
-  `union_write_overlaps_other_field` (`#[ignore]`); reproduced here as a DFSan case.
-- **Root cause:** not yet investigated. Needs a union/overlap model (e.g. collapse all members of a
-  `union` type to a shared field, or make sibling union members may-alias).
+  `union_write_overlaps_other_field` (`#[ignore]`); reproduced here as DFSan case `35`.
 
 ---
 

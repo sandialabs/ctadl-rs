@@ -1128,3 +1128,51 @@ fn addr_of_alias_does_not_cross_basic_blocks() {
         "only `int x = 0` should write x; the post-if `*p = src` must not resolve to x across a block boundary"
     );
 }
+
+#[test_log::test]
+fn union_member_write_aliases_other_member() {
+    // F4 (soundness): a union's members share storage, so writing `u.a` is observable at a
+    // read of `u.b`. CTADL is field-sensitive (correct for structs) and treated `.a`/`.b` as
+    // disjoint, dropping the flow. Union members are now collapsed to a single synthetic field
+    // (`$union`), so `u.a` and `u.b` share an access path: the write to `.a` lands on
+    // `u.$union` and the read of `.b` resolves there too, carrying the taint. DFSan corpus
+    // case 35_union_field_overlap confirms the runtime flow.
+    let src = r"
+        union U { int a; int b; };
+        int f(int src) {
+            union U u;
+            u.a = src;
+            return u.b;
+        }";
+    let prog = program_from_string(src).0;
+    // The write to member `.a` collapses onto the shared union field...
+    check_assign_or_update(&prog, "u.$union", ["@p0"], None); // u.a = src  ==>  u.$union := @p0
+    // ...and no distinct `.a` field survives (both members share `$union`).
+    assert_eq!(
+        count_writes_to(&prog, "u.a"),
+        0,
+        "union member `.a` must collapse to `$union`, not remain a distinct field"
+    );
+    // End to end: param 0 reaches the return through the aliased union member.
+    let (s, _si) = get_summary(prog).unwrap();
+    check_summary_count(&s, 1);
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn struct_members_stay_disjoint() {
+    // Control for the union fix: a *struct*'s members are genuinely disjoint, so writing
+    // `s.a` must NOT taint `s.b`. Structs are not collapsed (only `union_specifier`-typed
+    // vars are), so field sensitivity is preserved and there is no param->return flow.
+    let src = r"
+        struct S { int a; int b; };
+        int f(int src) {
+            struct S s;
+            s.a = src;
+            return s.b;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "s.a", ["@p0"], None); // stays a distinct `.a` field
+    let (s, _si) = get_summary(prog).unwrap();
+    check_summary_count(&s, 0); // s.a = src does not reach `return s.b`
+}
