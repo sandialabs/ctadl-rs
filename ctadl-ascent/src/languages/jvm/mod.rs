@@ -19,6 +19,32 @@ use ctadl_ir::*;
 use jvm_reader::flow::{CallInfo, CallKind, ConstantValue, DataflowInfo, Location};
 use jvm_reader::{ClassFileParser, JarFileParser};
 
+const JVM_ACC_STATIC: u16 = 0x0008;
+
+/// JVM internal names (`java/lang/Object`, `MyInterface`) and type descriptors
+/// (`LMyInterface;`) to the `L...;` symbol form used in MIR and CHA.
+fn jvm_class_symbol(name: &str) -> String {
+    if name.starts_with('L') && name.ends_with(';') {
+        name.to_string()
+    } else {
+        format!("L{};", name)
+    }
+}
+
+fn jvm_descriptor_to_params(descriptor: &str, is_instance: bool) -> Vec<ParameterType> {
+    let mut params = Vec::new();
+    if is_instance {
+        params.push(ParameterType::ByRef);
+    }
+    for p in jvm_reader::descriptor_parameter_info(descriptor) {
+        match p.kind {
+            jvm_reader::MethodParameterKind::Primitive => params.push(ParameterType::ByVal),
+            jvm_reader::MethodParameterKind::Reference => params.push(ParameterType::ByRef),
+        }
+    }
+    params
+}
+
 //#[cfg(test)]
 //mod tests;
 
@@ -111,7 +137,7 @@ impl Context {
     ) -> Result<(), Error> {
         // Iterate over all classes (no artificial limit).
         for class_def in parser.classes() {
-            let class_name = "L".to_owned() + parser.class_name()? + ";";
+            let class_name = jvm_class_symbol(parser.class_name()?);
             log::trace!("Class: {}", class_name);
             // Populate class hierarchy information for the VMT.
             // Immediate superclass (if any) and immediate super‑interfaces.
@@ -119,7 +145,7 @@ impl Context {
                 parser
                     .get_class_name(class_def.super_class)
                     .ok()
-                    .map(|arg0: &str| JavaClass(arg0.to_string().into()))
+                    .map(|name| JavaClass(jvm_class_symbol(name).into()))
             } else {
                 None
             };
@@ -136,18 +162,9 @@ impl Context {
                 iface_vec.push(jc)
             };
             for type_idx in &class_def.interfaces {
-                iface_vec.push(JavaClass(
-                    parser
-                        .get_class_name(*type_idx)
-                        .ok()
-                        .unwrap()
-                        .to_string()
-                        .into(),
-                ));
-                log::trace!(
-                    "Interface: {}",
-                    parser.get_class_name(*type_idx).ok().unwrap()
-                );
+                let iface = jvm_class_symbol(parser.get_class_name(*type_idx).ok().unwrap());
+                iface_vec.push(JavaClass(iface.clone().into()));
+                log::trace!("Interface: {}", iface);
             }
 
             if let VirtualMethodTable::Java { hierarchy, .. } = &mut builders.vmt {
@@ -170,16 +187,9 @@ impl Context {
                 let full_name: String = class_name.to_owned() + "->" + &sig;
                 fdat.name = full_name.clone();
 
-                let params = jvm_reader::descriptor_parameter_info(&java_sig);
-                for p in params {
-                    match p.kind {
-                        jvm_reader::MethodParameterKind::Primitive => {
-                            fdat.params.push(ParameterType::ByVal)
-                        }
-                        jvm_reader::MethodParameterKind::Reference => {
-                            fdat.params.push(ParameterType::ByRef)
-                        }
-                    };
+                let is_instance = enc.access_flags & JVM_ACC_STATIC == 0;
+                for p in jvm_descriptor_to_params(&java_sig, is_instance) {
+                    fdat.params.push(p);
                 }
 
                 // All JVM functions model (normal_return, exception_return) like DEX.
@@ -301,7 +311,7 @@ impl Context {
                                                 if let [Exp::AccessPath(ap)] = sources.as_slice() {
                                                     if ap.path.is_empty()
                                                         && Self::is_stack_var(dest)
-                                                        && Self::is_register_var(&ap.variable_ref)
+                                                        && Self::aload_source_var(&ap.variable_ref)
                                                     {
                                                         last_aload_reg =
                                                             Some(ap.variable_ref.clone());
@@ -441,18 +451,7 @@ impl Context {
                         let method_name = call.dynamic_name.as_ref().unwrap();
                         let descr = call.dynamic_type.as_ref().unwrap();
                         let java_sig = "L".to_owned() + class_name + ";->" + method_name + descr;
-                        let in_params = jvm_reader::descriptor_parameter_info(descr);
-                        let mut out_params = Vec::new();
-                        for p in in_params {
-                            match p.kind {
-                                jvm_reader::MethodParameterKind::Primitive => {
-                                    out_params.push(ParameterType::ByVal)
-                                }
-                                jvm_reader::MethodParameterKind::Reference => {
-                                    out_params.push(ParameterType::ByRef)
-                                }
-                            };
-                        }
+                        let out_params = jvm_descriptor_to_params(descr, false);
                         // All functions return 2 values: (normal_return, exception_return)
                         self.ext.insert(
                             java_sig.clone(),
@@ -475,18 +474,7 @@ impl Context {
                         let method_name = &target.method_name;
                         let descr = &target.descriptor;
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
-                        let in_params = jvm_reader::descriptor_parameter_info(descr);
-                        let mut out_params = Vec::new();
-                        for p in in_params {
-                            match p.kind {
-                                jvm_reader::MethodParameterKind::Primitive => {
-                                    out_params.push(ParameterType::ByVal)
-                                }
-                                jvm_reader::MethodParameterKind::Reference => {
-                                    out_params.push(ParameterType::ByRef)
-                                }
-                            };
-                        }
+                        let out_params = jvm_descriptor_to_params(descr, true);
                         self.ext.insert(
                             java_sig.clone(),
                             (
@@ -508,18 +496,7 @@ impl Context {
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
-                        let in_params = jvm_reader::descriptor_parameter_info(descr);
-                        let mut out_params = Vec::new();
-                        for p in in_params {
-                            match p.kind {
-                                jvm_reader::MethodParameterKind::Primitive => {
-                                    out_params.push(ParameterType::ByVal)
-                                }
-                                jvm_reader::MethodParameterKind::Reference => {
-                                    out_params.push(ParameterType::ByRef)
-                                }
-                            };
-                        }
+                        let out_params = jvm_descriptor_to_params(descr, false);
                         // All functions return 2 values: (normal_return, exception_return)
                         self.ext.insert(
                             java_sig.clone(),
@@ -548,18 +525,7 @@ impl Context {
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = call.dynamic_type.as_ref().unwrap();
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
-                        let in_params = jvm_reader::descriptor_parameter_info(descr);
-                        let mut out_params = Vec::new();
-                        for p in in_params {
-                            match p.kind {
-                                jvm_reader::MethodParameterKind::Primitive => {
-                                    out_params.push(ParameterType::ByVal)
-                                }
-                                jvm_reader::MethodParameterKind::Reference => {
-                                    out_params.push(ParameterType::ByRef)
-                                }
-                            };
-                        }
+                        let out_params = jvm_descriptor_to_params(descr, true);
                         // All functions return 2 values: (normal_return, exception_return)
                         self.ext.insert(
                             java_sig.clone(),
@@ -586,18 +552,7 @@ impl Context {
                         let method_name = &call.target.as_ref().unwrap().method_name;
                         let descr = &call.target.as_ref().unwrap().descriptor;
                         let java_sig = class_name.to_owned() + "->" + method_name + descr;
-                        let in_params = jvm_reader::descriptor_parameter_info(descr);
-                        let mut out_params = Vec::new();
-                        for p in in_params {
-                            match p.kind {
-                                jvm_reader::MethodParameterKind::Primitive => {
-                                    out_params.push(ParameterType::ByVal)
-                                }
-                                jvm_reader::MethodParameterKind::Reference => {
-                                    out_params.push(ParameterType::ByRef)
-                                }
-                            };
-                        }
+                        let out_params = jvm_descriptor_to_params(descr, true);
                         // All functions return 2 values: (normal_return, exception_return)
                         self.ext.insert(
                             java_sig.clone(),
@@ -706,7 +661,10 @@ impl Context {
                                 .get(&ap.variable_ref.to_string())
                                 .cloned()
                                 .unwrap_or_else(|| ap.variable_ref.clone());
-                            if Self::is_stack_var(dest) && Self::is_register_var(&ap.variable_ref) {
+                            if Self::is_stack_var(dest)
+                                && (Self::is_register_var(&ap.variable_ref)
+                                    || Self::aload_source_var(&ap.variable_ref))
+                            {
                                 aliases.insert(dest.to_string(), ap.variable_ref.clone());
                             } else {
                                 aliases.insert(dest.to_string(), base);
@@ -723,16 +681,61 @@ impl Context {
         }
     }
 
+    fn aload_source_var(v: &VariableRef) -> bool {
+        let s = v.to_string();
+        s.starts_with("reg") || s.starts_with("@p")
+    }
+
+    fn stack_slot_alias(
+        loc: &Location,
+        aliases: &HashMap<String, VariableRef>,
+    ) -> Option<VariableRef> {
+        let stack_var = match loc {
+            Location::StackSlot(n) => VariableRef::new_local(format!("stack{n}")),
+            _ => return None,
+        };
+        aliases.get(&stack_var.to_string()).cloned()
+    }
+
+    fn aload_for_stack_slot(
+        block_instrs: &[jvm_reader::flow::InstructionFlowInfo<'_>],
+        current_idx: usize,
+        object_loc: &Location,
+    ) -> Option<VariableRef> {
+        let target_slot = Self::stack_slot_index(object_loc)?;
+        for inst in block_instrs[..current_idx].iter().rev() {
+            if matches!(inst.opcode, 0x15..=0x19 | 0x1a..=0x2d) {
+                for df in &inst.dataflow {
+                    if Self::stack_slot_index(&df.destination) != Some(target_slot) {
+                        continue;
+                    }
+                    for loc in &df.sources {
+                        match loc {
+                            Location::Register(n) => {
+                                return Some(VariableRef::new_local(format!("reg{n}")));
+                            }
+                            Location::Parameter(n) => {
+                                return Some(VariableRef::new_parameter((*n).into()));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            if matches!(inst.opcode, 0xb4 | 0xb5) {
+                break;
+            }
+        }
+        None
+    }
+
     fn resolve_object_var(
         &self,
         loc: &Location,
         aliases: &HashMap<String, VariableRef>,
-        last_aload_reg: Option<&VariableRef>,
     ) -> VariableRef {
-        if matches!(loc, Location::StackSlot(_) | Location::StackInput(_)) {
-            if let Some(reg) = last_aload_reg {
-                return reg.clone();
-            }
+        if let Some(base) = Self::stack_slot_alias(loc, aliases) {
+            return base;
         }
         let v = self.convert_location_to_var_ref(loc);
         aliases.get(&v.to_string()).cloned().unwrap_or(v)
@@ -774,13 +777,26 @@ impl Context {
         block_instrs: &[jvm_reader::flow::InstructionFlowInfo<'_>],
         instr_idx: usize,
     ) -> VariableRef {
+        // Prefer a stable register/parameter for this stack slot when it differs from the
+        // most recent aload (e.g. aload_0; aload_1; putfield must use this, not the arg).
+        if let Some(slot_base) = Self::stack_slot_alias(loc, aliases) {
+            if !Self::is_stack_var(&slot_base) {
+                let conflicts_with_last = last_aload_reg.is_some_and(|r| r != &slot_base);
+                if conflicts_with_last {
+                    return slot_base;
+                }
+            }
+        }
         if let Some(reg) = last_aload_reg {
             return reg.clone();
+        }
+        if let Some(reg) = Self::aload_for_stack_slot(block_instrs, instr_idx, loc) {
+            return reg;
         }
         if let Some(reg) = Self::aload_register_before(block_instrs, instr_idx) {
             return reg;
         }
-        self.resolve_object_var(loc, aliases, None)
+        self.resolve_object_var(loc, aliases)
     }
 
     /// Stack-manipulation `dup*` opcodes (JVMS 6.5).

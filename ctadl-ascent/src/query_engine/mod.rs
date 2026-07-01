@@ -279,6 +279,13 @@ pub mod ascent_code {
             alias_of_field(infunc, x, a, p),
             assign_like(infunc, y, Path::empty(), x, Path::empty());
 
+        // Empty-path aliasing implies shared field paths (e.g. call-arg(0) = reg1 and
+        // summary write to call-arg(0).field must reach reg1.field for a later call).
+        alias_of_field(infunc, x.clone(), a.clone(), Path::empty()) <--
+            assign_like(infunc, x, Path::empty(), a, Path::empty());
+        alias_of_field(infunc, a.clone(), x.clone(), Path::empty()) <--
+            assign_like(infunc, x, Path::empty(), a, Path::empty());
+
         // Propagates taint on a variable into its alias.
         produce_taint!(infunc, st, v1.clone(), p.clone(), a.clone(), infunc, v2.clone(), Path::empty()) <--
             taint(infunc, st, v2, Path::empty(), a),

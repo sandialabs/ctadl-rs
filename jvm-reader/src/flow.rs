@@ -1314,7 +1314,11 @@ pub fn decode_flow_instruction<'a>(
             .map(descriptor_param_slot_count)
             .unwrap_or(0);
         let is_instance = (method.access_flags & 0x0008) == 0;
-        let param_slots = param_slot_count;
+        let param_slots = if is_instance {
+            param_slot_count + 1
+        } else {
+            param_slot_count
+        };
         let kind = opcode_kind(subop);
         let mut dataflow = Vec::new();
         let call = None;
@@ -1331,7 +1335,11 @@ pub fn decode_flow_instruction<'a>(
             .map(descriptor_param_slot_count)
             .unwrap_or(0);
         let is_instance = (method.access_flags & 0x0008) == 0;
-        let param_slots = param_slot_count;
+        let param_slots = if is_instance {
+            param_slot_count + 1
+        } else {
+            param_slot_count
+        };
         let kind = opcode_kind(opcode);
         let mut dataflow = Vec::new();
         let mut call = None;
