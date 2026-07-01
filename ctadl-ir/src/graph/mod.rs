@@ -122,6 +122,87 @@ pub fn find_path_to_set<G: Successors>(
     }
 }
 
+/// An annotation threaded along a path during [`find_annotated_path_to_set`].
+///
+/// The search begins at its `start` node carrying [`Annotation::start`].
+/// Whenever it expands an edge `from -> to`, the annotation carried by `from`
+/// produces the annotation carried by `to` via [`Annotation::expand`], which may
+/// also prune the edge. Because the annotation is path-dependent, the same graph
+/// node can be reached with several distinct annotations; the search treats each
+/// `(node, annotation)` pair as its own state, hence the `Eq + Hash` bound.
+pub trait Annotation<G: DirectedGraph>: Clone + Eq + std::hash::Hash {
+    /// The annotation carried by the node the search starts from.
+    fn start() -> Self;
+
+    /// Produce the annotation carried by `to` when the search expands the edge
+    /// `from -> to`, given `self`, the annotation carried by `from`. Returning
+    /// `None` prunes the edge, so `to` is not reached along this path.
+    fn expand(&self, graph: &G, from: G::Node, to: G::Node) -> Option<Self>;
+}
+
+/// Find a path from `start` to the nearest node whose `(node, annotation)` state
+/// satisfies `is_target`, following successors and threading an [`Annotation`]
+/// along each path.
+///
+/// This generalizes [`find_path_to_set`]: alongside each search node it carries
+/// an annotation, seeded with [`Annotation::start`] at `start` and advanced by
+/// [`Annotation::expand`] across every edge (which may also prune edges). The
+/// target test sees both the node and its annotation, so set membership can
+/// depend on *how* a node was reached. The returned path pairs each node with
+/// the annotation it carried, and includes both `start` and the target it
+/// reaches; `None` if no target state is reachable.
+///
+/// # Preconditions
+///
+/// - `start` exists in the graph.
+pub fn find_annotated_path_to_set<G, A>(
+    graph: &G,
+    start: G::Node,
+    is_target: impl Fn(G::Node, &A) -> bool,
+) -> Option<Vec<(G::Node, A)>>
+where
+    G: Successors,
+    A: Annotation<G>,
+{
+    use hashbrown::hash_map::HashMap;
+    use hashbrown::hash_set::HashSet;
+
+    let mut visited: HashSet<(G::Node, A)> = HashSet::new();
+    let mut parent: HashMap<(G::Node, A), (G::Node, A)> = HashMap::new();
+    let mut queue: Vec<(G::Node, A)> = Vec::new();
+
+    let mut end: Option<(G::Node, A)> = None;
+    queue.push((start, A::start()));
+
+    while let Some(state) = queue.pop() {
+        if visited.insert(state.clone()) {
+            let (n, a) = &state;
+            if is_target(*n, a) {
+                end = Some(state);
+                break;
+            }
+            for m in graph.successors(*n) {
+                if let Some(b) = a.expand(graph, *n, m) {
+                    let next = (m, b);
+                    if !visited.contains(&next) {
+                        parent.insert(next.clone(), state.clone());
+                        queue.push(next);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut end = end?;
+    let mut path = vec![end.clone()];
+    while let Some(p) = parent.remove(&end) {
+        path.push(p.clone());
+        end = p;
+    }
+    path.reverse();
+    Some(path)
+}
+
 /// Assigns a depth-first numbering to each graph node and returns the nodes in dfs numbered order.
 ///
 /// # Preconditions

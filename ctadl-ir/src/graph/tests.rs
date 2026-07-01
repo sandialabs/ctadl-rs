@@ -83,6 +83,86 @@ fn find_path_to_set_reaches_nearest_target() {
     assert_eq!(find_path_to_set(&g, 0, |n| n == 3), find_path(&g, 0, 3));
 }
 
+/// Counts the number of edges traversed to reach a node.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+struct Hops(usize);
+
+impl Annotation<TestGraph> for Hops {
+    fn start() -> Self {
+        Hops(0)
+    }
+    fn expand(&self, _graph: &TestGraph, _from: usize, _to: usize) -> Option<Self> {
+        Some(Hops(self.0 + 1))
+    }
+}
+
+/// Counts hops but refuses to expand past a budget of 2 edges, pruning any
+/// deeper edge.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+struct Budget(usize);
+
+impl Annotation<TestGraph> for Budget {
+    fn start() -> Self {
+        Budget(0)
+    }
+    fn expand(&self, _graph: &TestGraph, _from: usize, _to: usize) -> Option<Self> {
+        if self.0 >= 2 {
+            None
+        } else {
+            Some(Budget(self.0 + 1))
+        }
+    }
+}
+
+#[test]
+fn find_annotated_path_threads_annotation() {
+    // 0 -> 1 -> 2 -> 3.
+    let g = TestGraph::new(0, &[(0, 1), (1, 2), (2, 3)]);
+
+    let path =
+        find_annotated_path_to_set(&g, 0, |n, _a: &Hops| n == 3).expect("path exists");
+    let nodes: Vec<usize> = path.iter().map(|(n, _)| *n).collect();
+    assert_eq!(nodes, vec![0, 1, 2, 3]);
+    // The annotation counts edges traversed: 0 hops at the start, 3 at the goal.
+    let hops: Vec<usize> = path.iter().map(|(_, Hops(h))| *h).collect();
+    assert_eq!(hops, vec![0, 1, 2, 3]);
+
+    // start is itself a target -> trivial single-node path carrying the start
+    // annotation.
+    let trivial = find_annotated_path_to_set(&g, 2, |n, _a: &Hops| n == 2);
+    assert_eq!(trivial, Some(vec![(2, Hops(0))]));
+}
+
+#[test]
+fn find_annotated_path_target_depends_on_annotation() {
+    // Two routes to the goal 4: a short one 0 -> 1 -> 4 (2 hops) and a long one
+    // 0 -> 2 -> 3 -> 4 (3 hops).
+    let g = TestGraph::new(0, &[(0, 1), (1, 4), (0, 2), (2, 3), (3, 4)]);
+
+    // Accept the goal only when reached in exactly 3 hops. A node-keyed search
+    // would mark node 4 visited via the 2-hop route and give up; keying on
+    // `(node, annotation)` lets the 3-hop route through.
+    let path = find_annotated_path_to_set(&g, 0, |n, Hops(h)| n == 4 && *h == 3)
+        .expect("path exists");
+    let nodes: Vec<usize> = path.iter().map(|(n, _)| *n).collect();
+    assert_eq!(nodes, vec![0, 2, 3, 4]);
+    assert_eq!(path.last().unwrap().1, Hops(3));
+}
+
+#[test]
+fn find_annotated_path_expand_prunes_edges() {
+    // 0 -> 1 -> 2 -> 3.
+    let g = TestGraph::new(0, &[(0, 1), (1, 2), (2, 3)]);
+
+    // Within budget: node 2 sits 2 hops out and is reachable.
+    let path =
+        find_annotated_path_to_set(&g, 0, |n, _a: &Budget| n == 2).expect("path exists");
+    assert_eq!(path.iter().map(|(n, _)| *n).collect::<Vec<_>>(), vec![0, 1, 2]);
+
+    // Node 3 needs a 3rd edge, which the budget prunes -> unreachable.
+    assert!(find_annotated_path_to_set(&g, 0, |n, _a: &Budget| n == 3).is_none());
+}
+
 #[test]
 fn find_path_to_set_handles_deep_graph() {
     // A long linear chain: 0 -> 1 -> ... -> N. A recursive DFS would overflow
