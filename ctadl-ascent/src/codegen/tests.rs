@@ -109,6 +109,7 @@ fn test_basic2_source_sink() {
         call: facts.call,
         assign: index_result.assign_like,
         paths: facts.paths,
+        external_function: index_result.external_function,
         endpoints: [ss.source.clone(), ss.sink.clone()]
             .into_iter()
             .map(|e| (QueryEndpoint::from_taint_endpoint(&source_info.sites, e),))

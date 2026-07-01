@@ -1,68 +1,43 @@
 use ctadl_ascent::facts::{
-    FlowVariable, FunctionId, InsnId, InsnSiteId, Label, PackedInsnSiteId, Path, TaintDirection,
-    TaintState,
+    FlowVariable, FlowVertex, FunctionId, InsnId, InsnSiteId, Label, PackedInsnSiteId, Path,
+    TaintDirection,
 };
-use ctadl_ascent::query_engine::QueryEndpoint;
-use ctadl_ascent::query_engine::formatter::{FormatFacts, compute_taint_results};
+use ctadl_ascent::query_engine::{QueryEndpoint, QueryFacts, taint_analysis};
 
 #[test]
 fn test_absorbing_functions() {
-    let mut facts = FormatFacts::default();
-
     let main_id = FunctionId::new(0);
     let ext_id = FunctionId::new(1);
 
     let site_id = InsnSiteId::new(main_id, InsnId::new(0));
     let packed_site = PackedInsnSiteId::try_from(site_id).unwrap();
 
+    // main calls ExternalFunc(arg), and `arg` (formal 0 of the call) is tainted.
+    // Seeding the source directly on the call-arg vertex means the single taint
+    // pass taints it, and the `absorbing_functions` rule (now part of
+    // `taint_analysis`) should report that the external function absorbs it.
+    let call_arg = FlowVariable::call_arg_packed(
+        ctadl_ascent::facts::PackedCallArg::try_from_parts(site_id.insn_id, 0i16.into()).unwrap(),
+    );
+
     let endpoint = QueryEndpoint {
         infunc: main_id,
-        vertex: ctadl_ascent::facts::FlowVertex(
-            FlowVariable::formal_index(0i16.into()),
-            Path::empty(),
-        ),
+        vertex: FlowVertex(call_arg, Path::empty()),
         label: Label("Net".into()),
         direction: TaintDirection::Forward,
         call_site: None,
     };
 
-    // Taint the formal 0 of main
-    facts.taint.push((
-        main_id,
-        TaintState::Free,
-        FlowVariable::formal_index(0i16.into()),
-        Path::empty(),
-        endpoint.clone(),
-    ));
+    let facts = QueryFacts {
+        // Call site info: the call at `packed_site` targets the external function.
+        call: vec![(packed_site, ext_id)],
+        // External function info.
+        external_function: vec![(ext_id,)],
+        endpoints: vec![(endpoint,)],
+        ..Default::default()
+    };
 
-    // actual_param: main calls ExternalFunc(main.formal(0))
-    // we need to show that the call site has a tainted argument.
-    // In compute_taint_results, it uses:
-    // taint(_, _, v, _, src),
-    // if let FlowVariable::CallArg { id, formal: f } = v,
-    // call(id, target),
-    // external_function(target);
-
-    let call_arg = FlowVariable::call_arg_packed(
-        ctadl_ascent::facts::PackedCallArg::try_from_parts(site_id.insn_id, 0i16.into()).unwrap(),
-    );
-
-    // Propagate taint from formal to CallArg
-    facts.taint.push((
-        main_id,
-        TaintState::Free,
-        call_arg.clone(),
-        Path::empty(),
-        endpoint.clone(),
-    ));
-
-    // Call site info
-    facts.call.push((packed_site, ext_id));
-
-    // External function info
-    facts.external_function.push((ext_id,));
-
-    let result = compute_taint_results(&facts);
+    let result = taint_analysis(facts, None);
 
     assert!(
         result

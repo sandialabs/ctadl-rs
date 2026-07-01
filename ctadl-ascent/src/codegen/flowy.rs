@@ -203,17 +203,17 @@ pub fn query_check(
 /// must begin one. A flow that is forbidden (`FlowSpec::FlowAbsent`, i.e.
 /// `errsource`/`errsink`) must *not* appear in any path. This runs the very
 /// path-finding that `format_sarif` uses to build the human-profile
-/// `tainted-path` results (`compute_taint_results` + `find_endpoint_paths`), so
-/// the formatter is exercised directly.
+/// `tainted-path` results (`find_endpoint_paths`), so the formatter is exercised
+/// directly.
 fn check_human_profile_paths(
     format_facts: &crate::query_engine::formatter::FormatFacts,
+    taint_results: &crate::query_engine::formatter::TaintAnalysisResults,
     endpoint_requires: &EndpointRequires,
     sites: &fx::IdMap,
 ) -> (usize, usize) {
     use flowy::EndpointDirection;
 
-    let taint_results = formatter::compute_taint_results(format_facts);
-    let paths = formatter::find_endpoint_paths(format_facts, &taint_results);
+    let paths = formatter::find_endpoint_paths(format_facts, taint_results);
 
     // A declared source/sink pair shares a taint label, so only consider paths
     // whose source and sink carry the same label. The taint graph itself is
@@ -365,9 +365,6 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
     format_facts_builder
         .index_actual_param(index_facts.actual_param.clone())
         .call(index_facts.call.clone())
-        .assign(index_result.assign_like.clone())
-        .paths(index_result.paths.clone())
-        .external_function(index_result.external_function.clone())
         .id_to_name(source_info.sites.get_id_to_name_map());
 
     let query_facts = QueryFacts {
@@ -376,6 +373,7 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
         call: index_facts.call,
         assign: index_result.assign_like,
         paths: index_facts.paths,
+        external_function: index_result.external_function,
         endpoints,
     };
     let query_result = taint_analysis(query_facts, Some(&source_info.sites));
@@ -394,14 +392,18 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
     // Human-profile formatter check: every declared source/sink pair that is
     // required to flow must surface as a source -> sink path in the human SARIF
     // profile.
+    let taint_results = formatter::TaintAnalysisResults::from_query_result(&query_result);
     let format_facts = format_facts_builder
         .taint(query_result.taint.clone())
         .taint_edge(query_result.taint_edge.clone())
-        .formal_param(query_result.formal_param.clone())
         .build()
         .expect("building format facts");
-    let (hpass, hfail) =
-        check_human_profile_paths(&format_facts, &endpoint_requires, &source_info.sites);
+    let (hpass, hfail) = check_human_profile_paths(
+        &format_facts,
+        &taint_results,
+        &endpoint_requires,
+        &source_info.sites,
+    );
     pass_count += hpass;
     fail_count += hfail;
 

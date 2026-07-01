@@ -27,7 +27,6 @@ use std::fs::File;
 use std::path;
 use std::sync::Arc;
 
-use ascent::ascent;
 use ctadl_ir::graph::{Annotation, DirectedGraph, LabeledSuccessors, find_annotated_path_to_set};
 use datafusion::arrow::array::{StringViewArray, UInt8Array, UInt32Array, UInt64Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -51,8 +50,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::{Error, ErrorContext};
 use crate::facts::schema;
 use crate::facts::{
-    CallArgId, FlowEdge, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId,
-    InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintState, isout,
+    FlowEdge, FlowVariable, FlowVertex, FormalIndex, FunctionId, InsnId, InsnSiteId, Label,
+    PackedInsnSiteId, Path, TaintDirection, TaintState,
 };
 use crate::project::{AnalysisProject, ArtifactLanguage};
 use crate::query_engine::QueryEndpoint;
@@ -140,17 +139,9 @@ pub struct FormatFacts {
         Path,
     )>,
     #[builder(default)]
-    pub formal_param: Vec<(FunctionId, FlowVariable, FormalType)>,
-    #[builder(default)]
     pub actual_param: Vec<(PackedInsnSiteId, FormalIndex, FlowVariable, Path)>,
     #[builder(default)]
     pub call: Vec<(PackedInsnSiteId, FunctionId)>,
-    #[builder(default)]
-    pub assign: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
-    #[builder(default)]
-    pub paths: Vec<(Path,)>,
-    #[builder(default)]
-    pub external_function: Vec<(FunctionId,)>,
     #[builder(default)]
     pub id_to_name: BTreeMap<u32, String>,
 }
@@ -200,62 +191,19 @@ impl FormatFactsBuilder {
     }
 }
 
-pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
-    ascent! {
-        struct FormatterEngine;
-        // The taint-graph edges are loaded from the query engine's persisted
-        // `taint_edge` (see `edges` below), not recomputed here. This engine only
-        // re-derives the instruction-level facts (`tainted_var_at_insn`,
-        // `absorbing_functions`) from the loaded `taint`, so `produce_taint!` need
-        // only record `taint`; the `$sf/$sts/$sv/$sp/$edge` operands describing the
-        // edge are unused at this expansion site.
-        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sts:expr, $sv:expr, $sp:expr, $edge:expr) {
-            taint($df, $dts, $dv, $dp, $a)
+impl TaintAnalysisResults {
+    /// Repackages the taint pass's output for the formatter. The taint closure,
+    /// taint graph, and instruction-level facts are all computed in a single
+    /// [`taint_analysis`](crate::query_engine::taint_analysis) pass; this just
+    /// borrows the pieces the formatter reads. No taint is (re)computed here.
+    pub fn from_query_result(result: &crate::query_engine::QueryResult) -> Self {
+        TaintAnalysisResults {
+            edges: result.taint_edge.clone(),
+            tainted_insns: TaintedInstructions {
+                tainted_insn: result.tainted_insn.clone(),
+            },
+            absorbing_functions: result.absorbing_functions.clone(),
         }
-        relation tainted_var_at_insn(PackedInsnSiteId, Label, FlowVariable, Path);
-        relation external_function(FunctionId);
-        relation absorbing_functions(FunctionId, QueryEndpoint, FormalIndex);
-
-        include_source!(crate::query_engine::ascent_code::taint_analysis_rules);
-
-        absorbing_functions(target, src, formal.clone()) <--
-            taint(infunc, _, v, _, src),
-            if let Some(packed) = v.as_call_arg(),
-            let call_arg_id = CallArgId::try_from(packed).unwrap(),
-            let formal = call_arg_id.formal(),
-            let id = PackedInsnSiteId::try_from_parts(*infunc, call_arg_id.insn_id).unwrap(),
-            call(id, target),
-            external_function(target);
-
-        // taint call sites
-        tainted_var_at_insn(id, label, v2, p2) <--
-            taint(infunc, _, v2, p2, src),
-            if !v2.is_globals(),
-            if let Some(packed) = v2.as_call_arg(),
-            let call_arg_id = CallArgId::try_from(packed).unwrap(),
-            let id = PackedInsnSiteId::try_from_parts(*infunc, call_arg_id.insn_id).unwrap(),
-            if *call_arg_id.formal() >= 0,
-            let label = src.label.clone();
-    }
-
-    let mut engine = FormatterEngine {
-        taint: facts.taint.clone(),
-        formal_param: facts.formal_param.clone(),
-        call: facts.call.clone(),
-        assign_like: facts.assign.clone(),
-        paths: facts.paths.clone(),
-        external_function: facts.external_function.clone(),
-        ..Default::default()
-    };
-    engine.run();
-
-    TaintAnalysisResults {
-        // Loaded from the query engine's persisted taint graph, not recomputed.
-        edges: facts.taint_edge.clone(),
-        tainted_insns: TaintedInstructions {
-            tainted_insn: engine.tainted_var_at_insn.into_iter().collect(),
-        },
-        absorbing_functions: engine.absorbing_functions.into_iter().collect(),
     }
 }
 
@@ -498,17 +446,17 @@ pub fn find_endpoint_paths(
 
 pub fn format_sarif(
     project: &AnalysisProject,
-    facts: FormatFacts,
+    facts: &FormatFacts,
+    taint_results: &TaintAnalysisResults,
     compact: bool,
     output: &path::Path,
     profile: SarifProfile,
 ) -> Result<(), Error> {
     log::trace!("format_sarif entry");
-    let taint_results = compute_taint_results(&facts);
     let rt = tokio::runtime::Runtime::new()?;
     let config = FormatConfig { compact, profile };
     let final_sarif =
-        rt.block_on(async { async_format_sarif(project, &taint_results, &facts, &config).await })?;
+        rt.block_on(async { async_format_sarif(project, taint_results, facts, &config).await })?;
 
     let writer: Box<dyn std::io::Write> = if output.to_str() == Some("-") {
         Box::new(std::io::stdout())

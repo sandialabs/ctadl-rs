@@ -248,18 +248,23 @@ pub fn query(
             .count();
         eprintln!("Matched {} sources and {} sinks", sources, sinks);
 
-        // The index tables are reused by the formatter below, so the query facts take
-        // clones and the originals feed `FormatFacts`.
+        // `actual_param` and `call` are also needed by `FormatFacts` below, so the
+        // query facts take clones and the originals feed the formatter. `assign`,
+        // `paths`, and `external_function` are consumed only by the query engine, so
+        // they are moved.
         builder
             .endpoints(endpoints)
             .formal_param(formal_params)
             .actual_param(index_facts.actual_param.clone())
             .call(index_facts.call.clone())
-            .assign(index_result.assign_like.clone())
-            .paths(index_result.paths.clone());
+            .assign(index_result.assign_like)
+            .paths(index_result.paths)
+            .external_function(index_result.external_function);
         builder.build().unwrap()
     };
 
+    // A single taint pass computes the closure, the taint graph, and the
+    // instruction-level facts the formatter needs.
     let result = taint_analysis(facts, Some(&ids));
     for import in project.iter_imports() {
         let import = import?;
@@ -268,20 +273,25 @@ pub fn query(
         }
     }
 
+    let taint_results =
+        query_engine::formatter::TaintAnalysisResults::from_query_result(&result);
     let mut b = query_engine::formatter::FormatFactsBuilder::default();
     b.taint(result.taint)
         .taint_edge(result.taint_edge)
-        .formal_param(result.formal_param)
         .index_actual_param(index_facts.actual_param)
         .call(index_facts.call)
-        .assign(index_result.assign_like)
-        .paths(index_result.paths)
-        .external_function(index_result.external_function)
         .id_to_name(ids.get_id_to_name_map());
     let facts = b.build().unwrap();
 
-    query_engine::formatter::format_sarif(project, facts.clone(), compact, output, profile)
-        .err_context(|| "formatting sarif")?;
+    query_engine::formatter::format_sarif(
+        project,
+        &facts,
+        &taint_results,
+        compact,
+        output,
+        profile,
+    )
+    .err_context(|| "formatting sarif")?;
 
     if let Some(dot_path) = dump_taint_graph {
         dump_taint_graph_dot(&facts, &index_path, dot_path)?;
