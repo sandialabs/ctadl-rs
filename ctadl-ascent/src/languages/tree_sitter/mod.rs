@@ -50,6 +50,7 @@
 //!
 
 use hashbrown::hash_map::HashMap;
+use hashbrown::hash_set::HashSet;
 
 use crate::error::Error;
 
@@ -412,6 +413,11 @@ fn add_scope(
 #[repr(transparent)]
 struct FunctionName<'a>(&'a str);
 
+/// Synthetic field name that all members of a `union` variable collapse to, so they share a
+/// single access path (union members alias -- they occupy the same storage). The `$` keeps it
+/// out of the C identifier space, so it can never collide with a real source-level field.
+const UNION_FIELD: &str = "$union";
+
 #[derive(Debug, Default)]
 struct Context<'a> {
     functions: HashMap<FunctionName<'a>, FunctionIdx>,
@@ -423,6 +429,26 @@ struct Context<'a> {
     /// (unlike `break`/`continue` targets, which ride on `ScopeView`) the blocks are
     /// created in a pre-scan over the whole body and looked up here. Reset per function.
     label_blocks: HashMap<String, BasicBlockIdx>,
+    /// Intraprocedural must-points-to for address-taken locals: maps a pointer variable
+    /// `p` to the access path it was taken to (`x` after `p = &x`) together with the basic
+    /// block in which that binding was established. Used to resolve a dereference `*p` --
+    /// as a store LHS (`*p = v`) or a load RHS (`y = *p`) -- to the pointee `x`, so a write
+    /// through the alias taints `x` (the F3 soundness gap: CTADL models pointers as value
+    /// copies, which is sound for reads but drops the write-back). The block key confines
+    /// each binding to the straight-line region it was recorded in: a lookup only trusts an
+    /// entry whose block matches the current `blidx`, so once control flow moves to another
+    /// block the alias is dropped and we fall back to the value-copy model. That keeps the
+    /// must-points-to exact (no cross-branch may-alias reasoning) and never less sound than
+    /// before. Reset per function.
+    addr_alias: HashMap<VariableRef, (AccessPath, BasicBlockIdx)>,
+    /// Variables declared with a `union` type. A union's members share storage, so every
+    /// member access aliases the others (`u.a = v` is observable at a read of `u.b`). CTADL
+    /// is otherwise field-sensitive -- correct for structs, whose members are disjoint --
+    /// so union members are collapsed to a single synthetic field (see `UNION_FIELD`) when a
+    /// `field_expression` is lowered off one of these variables, making all members the same
+    /// access path (the F4 soundness gap). Populated from `union_specifier`-typed local
+    /// declarations; reset per function.
+    union_vars: HashSet<VariableRef>,
 }
 
 pub struct MatchExtractor<'q, 'cursor, 'tree> {
@@ -684,6 +710,43 @@ impl<'a> Context<'a> {
         }
 
         self.add_assign_to_program(program, scope_view, &target_var, &rhs_var, right_op);
+
+        // Maintain the address-of must-points-to map (see `Context::addr_alias`). Only a
+        // plain, whole assignment to a variable (`p = &x`, or a declarator initializer)
+        // updates it; a store through a dereference (`*p = ...`, whose `target_node` is
+        // itself a `pointer_expression`) writes *through* the alias and must not disturb it.
+        if target_node.kind() != "pointer_expression"
+            && let Exp::AccessPath(dest_ap) = &target_var
+            && dest_ap.path.is_empty()
+        {
+            let is_plain_assign = operator_node.is_none_or(|op| op.kind() == "=");
+            let addr_of_pointee = if is_plain_assign
+                && expr_node.kind() == "pointer_expression"
+                && expr_node
+                    .child_by_field_name("operator")
+                    .is_some_and(|op| to_str(&op, source) == "&")
+                && let Exp::AccessPath(pointee) = &rhs_var
+            {
+                // `p = &x`: `rhs_var` is the pointee's access path (`&x` flattened to `x`).
+                Some(pointee.clone())
+            } else {
+                None
+            };
+            match addr_of_pointee {
+                Some(pointee) => {
+                    self.addr_alias
+                        .insert(dest_ap.variable_ref.clone(), (pointee, scope_view.blidx));
+                }
+                // Any other assignment to `p` (a different pointer, a computed value, a
+                // compound `+=`) makes its pointee unknown -- drop the stale binding so a
+                // later `*p` falls back to the value-copy model instead of resolving to the
+                // wrong local.
+                None => {
+                    self.addr_alias.remove(&dest_ap.variable_ref);
+                }
+            }
+        }
+
         Ok(target_var)
     }
 
@@ -966,6 +1029,13 @@ impl<'a> Context<'a> {
     ) -> Result<(), Error> {
         let mut cursor = node.walk();
 
+        // A `union`-typed declaration (`union U u;`, inline `union U { .. } u;`, or anonymous
+        // `union { .. } u;`) has a `union_specifier` as its type. Its members share storage, so
+        // record the declared variables to collapse their member accesses (see `union_vars`).
+        let is_union = node
+            .child_by_field_name("type")
+            .is_some_and(|t| t.kind() == "union_specifier");
+
         for nest_decl in node.children_by_field_name("declarator", &mut cursor) {
             let decl_kind = nest_decl.kind();
             let decl_ident = match decl_kind {
@@ -998,6 +1068,15 @@ impl<'a> Context<'a> {
                 None,
                 None,
             );
+            // Mark a plainly-declared union variable so its member accesses collapse. Only a
+            // bare identifier declarator is handled (pointer/array union declarators take the
+            // `continue` path above and are left to the value-copy model).
+            if is_union && decl_ident.kind() == "identifier" {
+                let vref = self
+                    .build_access_path(var_name, Default::default(), scope_view)
+                    .variable_ref;
+                self.union_vars.insert(vref);
+            }
             if let Some(vc) = nest_decl.child_by_field_name("value") {
                 if vc.kind() == "initializer_list" {
                     // Aggregate brace initializer, e.g. `int a[2] = { s, 0 }`. Lower it
@@ -1755,6 +1834,18 @@ impl<'a> Context<'a> {
                 let mut path_vec = Vec::<&str>::new();
                 //let tt = to_str(&node, &source);
                 let final_ident = extract_field_expression(node, source, &mut path_vec)?;
+                // If the base is a union variable, collapse the accessed member (the first
+                // path segment) to a single synthetic field so all members share one access
+                // path -- `u.a` and `u.b` both become `u.$union`, so a write to one member is
+                // observed at a read of another (union members alias; F4). Structs are not in
+                // `union_vars`, so their fields stay genuinely disjoint.
+                if !path_vec.is_empty()
+                    && self
+                        .union_vars
+                        .contains(&self.build_access_path(final_ident, Default::default(), scope_view).variable_ref)
+                {
+                    path_vec[0] = UNION_FIELD;
+                }
                 let ret = Exp::AccessPath(self.build_access_path(
                     final_ident,
                     path_vec.into_iter().collect(),
@@ -1773,13 +1864,32 @@ impl<'a> Context<'a> {
                     .expect("always has operator"),*/
                 node.child_by_field_name("operator"),
             ),
-            "pointer_expression" => self.flatten_expr(
-                program,
-                node.child_by_field_name("argument")
-                    .expect("always a argument for the * operator"),
-                source,
-                scope_view,
-            ),
+            // Both dereference (`*p`) and address-of (`&x`) parse as `pointer_expression`;
+            // the operator child distinguishes them. Historically CTADL passed the operand
+            // straight through for both (`*p` -> `p`, `&x` -> `x`), a value-copy model that
+            // is sound for reads but drops writes through a pointer (F3). For a dereference
+            // whose operand is a plain variable with a known same-block address-of alias
+            // (`p = &x`), resolve `*p` to the pointee `x` so a store `*p = v` becomes a real
+            // write to `x` (and a load `y = *p` reads the current `x`). Everything else --
+            // `&x`, a dereference of a non-aliased/compound operand -- keeps the pass-through.
+            "pointer_expression" => {
+                let arg = node
+                    .child_by_field_name("argument")
+                    .expect("always a argument for the * operator");
+                let is_deref = node
+                    .child_by_field_name("operator")
+                    .is_some_and(|op| to_str(&op, source) == "*");
+                let arg_exp = self.flatten_expr(program, arg, source, scope_view)?;
+                if is_deref
+                    && let Exp::AccessPath(ptr_ap) = &arg_exp
+                    && ptr_ap.path.is_empty()
+                    && let Some((pointee, blk)) = self.addr_alias.get(&ptr_ap.variable_ref)
+                    && *blk == scope_view.blidx
+                {
+                    return Ok(Exp::AccessPath(pointee.clone()));
+                }
+                Ok(arg_exp)
+            }
             "subscript_expression" => self.flatten_subscript(program, node, source, scope_view),
             "call_expression" => {
                 let x = self.allocator.next_temp();
@@ -2195,6 +2305,10 @@ impl<'a> Context<'a> {
             // Pre-create a block for every `goto` label in this function so forward
             // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
             self.label_blocks.clear();
+            // Address-of aliases are function-local and confined to a straight-line block.
+            self.addr_alias.clear();
+            // Union-typed locals are function-scoped.
+            self.union_vars.clear();
             let mut labels = Vec::new();
             collect_labels(body_node, source, &mut labels);
             for label in labels {
