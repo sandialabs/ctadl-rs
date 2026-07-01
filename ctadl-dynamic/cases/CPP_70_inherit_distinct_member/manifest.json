@@ -1,0 +1,6 @@
+{
+  "name": "CPP_70_inherit_distinct_member",
+  "description": "C++ single inheritance negative: the inherited setter taints inherited member v; the sink reads a distinct derived member w set to a constant -- field sensitivity through inheritance keeps the taint from crossing, so no flow",
+  "label": "Test",
+  "expect_flow": false
+}

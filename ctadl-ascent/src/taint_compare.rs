@@ -1128,4 +1128,141 @@ mod tests {
             "g(source(), 0) must resolve to the dropping arity-2 overload g#2, not the flowing g#1, got: {flows:?}"
         );
     }
+
+    /// Spec 011 (FR-2), end to end: an **inherited** setter and getter carry taint through a
+    /// derived object. `Derived` adds nothing of its own; `set`/`get` are defined in `Base`, so
+    /// `d.set(source())` must dispatch to `Base::set` (with `d` as the by-ref receiver, writing
+    /// `d.v`) and `d.get()` to `Base::get` (reading `d.v` back). Before this slice neither
+    /// inherited method dispatched. Mirrors the CPP_67 dynamic case.
+    #[test_log::test]
+    fn cpp_inherited_method_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Base {
+                int v;
+                void set(int x) { v = x; }
+                int get() { return v; }
+            };
+            struct Derived : Base {};
+            int main() {
+                Derived d;
+                d.set(source());
+                sink(d.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp inherited-method flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through inherited Base::set/Base::get on a Derived object, got: {flows:?}"
+        );
+    }
+
+    /// Spec 011 (FR-1), end to end: a **derived method** touches an **inherited data member**.
+    /// `store` is defined in `Derived` but writes `v`, a member of `Base`; member flattening
+    /// makes `v` resolve to `this.v` inside `Derived::store` (the base subobject shares the
+    /// derived object's field-named path). The inherited `Base::get` reads it back, so
+    /// `d.store(source()); sink(d.get())` flows. Mirrors the CPP_68 dynamic case.
+    #[test_log::test]
+    fn cpp_inherited_member_in_derived_method_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Base {
+                int v;
+                int get() { return v; }
+            };
+            struct Derived : Base {
+                void store(int x) { v = x; }
+            };
+            int main() {
+                Derived d;
+                d.store(source());
+                sink(d.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp inherited-member-in-derived-method flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow: Derived::store writes inherited member v, Base::get reads it, got: {flows:?}"
+        );
+    }
+
+    /// Spec 011 (FR-3), negative control: **non-virtual override** picks the derived method by
+    /// static type. `Derived` redefines `get` to return a constant, hiding `Base::get`. A
+    /// `Derived` static-type receiver's `d.get()` must dispatch to `Derived::get` (checked
+    /// first), which drops the taint `d.set(source())` wrote into `d.v` — so no flow. If the
+    /// walk found `Base::get` instead, this would leak. Mirrors the CPP_69 dynamic case.
+    #[test_log::test]
+    fn cpp_inherited_override_static_dispatch_no_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Base {
+                int v;
+                void set(int x) { v = x; }
+                int get() { return v; }
+            };
+            struct Derived : Base {
+                int get() { return 0; }
+            };
+            int main() {
+                Derived d;
+                d.set(source());
+                sink(d.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp inherited-override flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "Derived::get (override) must be selected by static type and drop the taint, got: {flows:?}"
+        );
+    }
+
+    /// Spec 011 (FR-4), negative control: field sensitivity through inheritance. An inherited
+    /// setter taints the **inherited** member `v`; the sink reads a **distinct derived** member
+    /// `w` (set to a constant). `d.v` and `d.w` are separate field-named paths, so no taint
+    /// crosses despite real taint entering `d.v`. Mirrors the CPP_70 dynamic case.
+    #[test_log::test]
+    fn cpp_inherited_distinct_member_no_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Base {
+                int v;
+                void setv(int x) { v = x; }
+            };
+            struct Derived : Base {
+                int w;
+                int getw() { return w; }
+            };
+            int main() {
+                Derived d;
+                d.w = 0;
+                d.setv(source());
+                sink(d.getw());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp inherited-distinct-member flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "inherited setter taints d.v; sink reads distinct derived member d.w — no flow, got: {flows:?}"
+        );
+    }
 }

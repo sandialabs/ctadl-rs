@@ -440,6 +440,13 @@ struct ClassInfo {
     /// arguments (`Box b(args)` etc.) lowers to a `DirectCall Class::Class(&b, args…)`.
     /// Always `false` for C (the `classes` map is empty), so construction never fires there.
     has_ctor: bool,
+    /// The class's **direct** base classes (`struct Derived : Base` → `["Base"]`), recorded
+    /// from the `base_class_clause` by the C++ discovery hook. A derived class's [`Self::members`]
+    /// already include its bases' (flattened transitively at discovery); this list additionally
+    /// lets method **dispatch** walk the base chain to the class that defines an inherited method
+    /// ([`Context::resolve_method_class`]). Empty for every C class and every base-less C++ class,
+    /// so the base-chain walk is a no-op there and the C path is unchanged. Never branched on.
+    bases: Vec<String>,
 }
 
 /// The object a C++ instance-method receiver resolves to: the access-path expression to
@@ -2316,6 +2323,36 @@ impl<'a> Context<'a> {
         Ok(result)
     }
 
+    /// Walk `class` then its base chain (transitively) to the class that **defines** `method`,
+    /// returning that class's name and whether the method returns its receiver (`returns_self`).
+    /// The receiver's own class is checked **first**, so a derived class that redefines an
+    /// inherited method (a non-virtual override) wins for a derived static-type receiver;
+    /// otherwise the walk descends to the base that owns the method. Returns `None` if no class
+    /// in the chain defines it. Driven by the neutral [`ClassInfo::bases`] (empty for C and for
+    /// base-less classes, so this reduces to a single own-class lookup and never fires on C).
+    /// A cycle guard (`seen`) keeps a malformed base loop from spinning; single inheritance in
+    /// this slice is a linear chain, but the level-by-level walk also handles a wider chain.
+    fn resolve_method_class(&self, class: &str, method: &str) -> Option<(String, bool)> {
+        let mut level = vec![class.to_string()];
+        let mut seen: HashSet<String> = HashSet::default();
+        while !level.is_empty() {
+            let mut next = Vec::new();
+            for c in level {
+                if !seen.insert(c.clone()) {
+                    continue;
+                }
+                if let Some(info) = self.classes.get(&c) {
+                    if info.methods.contains(method) {
+                        return Some((c, info.returns_self.contains(method)));
+                    }
+                    next.extend(info.bases.iter().cloned());
+                }
+            }
+            level = next;
+        }
+        None
+    }
+
     /// Resolve a C++ instance-method call receiver node into the object to dispatch on — its
     /// arg-0 (`ByRef`) access-path expression and its class — or `None` if it is not a known
     /// class object. Handles a plain identifier local (`b.m()`), the implicit receiver
@@ -2415,15 +2452,20 @@ impl<'a> Context<'a> {
         let Some(recv) = self.resolve_recv_obj(program, recv_node, source, scope_view)? else {
             return Ok(None);
         };
-        // Resolve `method` against the receiver's class; bail to ordinary lowering if it is
-        // not a known method (e.g. a function-pointer member `s.fp(x)` on a plain struct).
-        let (base, returns_self) = match self.classes.get(&recv.class) {
-            Some(info) if info.methods.contains(method) => (
-                format!("{}::{}", recv.class, method),
-                info.returns_self.contains(method),
-            ),
-            _ => return Ok(None),
+        // Resolve `method` against the receiver's static class, then (if not defined there)
+        // walk its base chain to the class that defines it — an inherited method dispatches to
+        // the base that owns it, with the derived object as the by-ref receiver. Bail to
+        // ordinary lowering if no class in the chain defines it (e.g. a function-pointer member
+        // `s.fp(x)` on a plain struct). Checking the receiver's own class first makes a
+        // non-virtual override (a derived redefinition) win by static type. The base chain is
+        // empty for C and base-less classes, so this is a plain own-class lookup there.
+        let (defining_class, returns_self) = match self.resolve_method_class(&recv.class, method) {
+            Some(found) => found,
+            None => return Ok(None),
         };
+        // Emit the edge to the class that *defines* the method (`DefiningClass::method`), so an
+        // inherited method reaches the base's lowered body.
+        let base = format!("{defining_class}::{method}");
 
         let arg_node = call_node
             .child_by_field_name("arguments")

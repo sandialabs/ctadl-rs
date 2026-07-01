@@ -71,6 +71,30 @@ fn member_name<'a>(decl: Node<'_>, source: &'a str) -> Option<&'a str> {
     }
 }
 
+/// Extract the **direct base-class names** of a `struct_specifier`/`class_specifier` from its
+/// `base_class_clause`. The clause (`: Base`, `: public Base`) is an unnamed child of the
+/// specifier holding, per base, an optional `access_specifier` / `virtual` keyword followed by
+/// the base's `type_identifier`; we collect every `type_identifier` (so `: A, B` yields both,
+/// though multiple inheritance is out of scope). A namespaced base (`ns::Base`,
+/// `qualified_identifier`) or a base-less class yields nothing recorded here. Returns an empty
+/// `Vec` when there is no `base_class_clause`. Inert for C (no such node).
+fn base_class_names(specifier: Node<'_>, source: &str) -> Vec<String> {
+    let mut bases = Vec::new();
+    let mut sc = specifier.walk();
+    for child in specifier.children(&mut sc) {
+        if child.kind() != "base_class_clause" {
+            continue;
+        }
+        let mut cc = child.walk();
+        for b in child.children(&mut cc) {
+            if b.kind() == "type_identifier" {
+                bases.push(to_str(&b, source).to_string());
+            }
+        }
+    }
+    bases
+}
+
 /// Unwrap a `reference_declarator` (`Class& m(…)`, `int& get(…)`) to the `function_`
 /// `declarator` it wraps; pass any other declarator through unchanged. A reference return
 /// type nests the function declarator inside a `reference_declarator`, which the
@@ -264,6 +288,39 @@ fn cpp_discover_overloads<'a>(
     Ok(())
 }
 
+/// Union each class's **transitive** base-class data members into its own `members`, so an
+/// inherited member used inside a derived method resolves to `this.<member>` exactly as it does
+/// in the base (the base subobject shares the derived object's field-named access paths). For
+/// every registered class we walk its full base chain — reading each reachable base's *own*
+/// members — and extend the derived class's `members` with them; walking the whole chain (not
+/// just direct bases) makes the result transitive regardless of discovery order, and a `seen`
+/// set guards against a malformed base cycle. A class with no bases (all of C, every base-less
+/// C++ class) gains nothing, so the C path and existing C++ cases are unchanged.
+fn flatten_inherited_members(ctx: &mut Context<'_>) {
+    let class_names: Vec<String> = ctx.classes.keys().cloned().collect();
+    for name in class_names {
+        let mut inherited: Vec<String> = Vec::new();
+        let mut stack: Vec<String> = ctx
+            .classes
+            .get(&name)
+            .map(|info| info.bases.clone())
+            .unwrap_or_default();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        while let Some(base) = stack.pop() {
+            if !seen.insert(base.clone()) {
+                continue;
+            }
+            if let Some(binfo) = ctx.classes.get(&base) {
+                inherited.extend(binfo.members.iter().cloned());
+                stack.extend(binfo.bases.iter().cloned());
+            }
+        }
+        if let Some(info) = ctx.classes.get_mut(&name) {
+            info.members.extend(inherited);
+        }
+    }
+}
+
 /// Discover C++ instance methods and constructors — inline *and* out-of-line — and lower
 /// them through the shared core.
 ///
@@ -295,9 +352,9 @@ fn cpp_collect_methods<'a>(
     let query = ctx.compile_query(
         r#"
         [(struct_specifier name: (type_identifier) @class.name
-            body: (field_declaration_list) @class.body)
+            body: (field_declaration_list) @class.body) @class.node
          (class_specifier name: (type_identifier) @class.name
-            body: (field_declaration_list) @class.body)]
+            body: (field_declaration_list) @class.body) @class.node]
         "#,
     );
 
@@ -339,7 +396,16 @@ fn cpp_collect_methods<'a>(
         );
         let body = extract.get("class.body")?;
 
-        let mut info = ClassInfo::default();
+        // Record direct base classes from the `base_class_clause` (`: Base` / `: public Base`),
+        // an unnamed child of the class specifier between the name and the body. Its base name
+        // is a `type_identifier` (optionally preceded by an `access_specifier`, which taint
+        // ignores; a `virtual` keyword or a namespaced `qualified_identifier` base are later
+        // milestones, so we simply take each `type_identifier`). `bases` stays empty for a
+        // base-less class. C has no `base_class_clause`, so this is inert for C.
+        let mut info = ClassInfo {
+            bases: base_class_names(extract.get("class.node")?, source),
+            ..Default::default()
+        };
         let mut bc = body.walk();
         for child in body.children(&mut bc) {
             match child.kind() {
@@ -435,6 +501,15 @@ fn cpp_collect_methods<'a>(
     }
     drop(it);
     drop(cursor);
+
+    // Phase 1b: flatten inherited data members. A derived class's `members` becomes the union
+    // of its own and its bases' members (transitively), so an inherited member used inside a
+    // derived method resolves to `this.<member>` exactly as it does in the base — the base
+    // subobject shares the derived object's field-named access paths. Walking the full base
+    // chain here (not just direct bases) makes it transitive even though a base `ClassInfo` may
+    // still hold only its own members. `bases` is empty for every C and base-less class, so this
+    // adds nothing there. Done before phase 2b lowers the bodies, which read `members`.
+    flatten_inherited_members(ctx);
 
     // Phase 1.5: discover out-of-line method definitions — a top-level `function_definition`
     // whose declarator names a `qualified_identifier` (`ret Class::m(params){…}`). The

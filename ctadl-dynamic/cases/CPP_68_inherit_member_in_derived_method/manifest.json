@@ -1,0 +1,6 @@
+{
+  "name": "CPP_68_inherit_member_in_derived_method",
+  "description": "C++ single inheritance: a derived method writes an inherited data member (v defined in Base); the inherited getter reads it back, so source() flows through the inherited member to the sink",
+  "label": "Test",
+  "expect_flow": true
+}

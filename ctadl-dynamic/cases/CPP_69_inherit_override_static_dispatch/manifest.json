@@ -1,0 +1,6 @@
+{
+  "name": "CPP_69_inherit_override_static_dispatch",
+  "description": "C++ single inheritance negative: Derived overrides get() to return 0 (non-virtual override); a Derived static-type receiver dispatches to Derived::get, which drops the taint the inherited setter wrote into d.v -- no flow despite real taint entering",
+  "label": "Test",
+  "expect_flow": false
+}

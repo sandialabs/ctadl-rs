@@ -1400,3 +1400,135 @@ fn cpp_single_ctor_stays_bare() {
     );
     check_direct_call_arg0(&prog, "main", "Box::Box", "b");
 }
+
+// ---------------------------------------------------------------------------
+// Milestone 6 (spec 011) — C++ single (non-virtual) inheritance.
+// ---------------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_inherited_method_dispatches_to_base() {
+    // FR-2: a method defined only in `Base` dispatches on a `Derived` receiver to the base that
+    // owns it (`Base::set`/`Base::get`), with the derived object `d` as the arg-0 by-ref
+    // receiver — so the base's `this.v` write/read lands in `d`. Before this slice neither
+    // inherited call dispatched (dispatch checked only the receiver's own `methods`).
+    let src = r#"
+        struct Base {
+            int v;
+            void set(int x) { v = x; }
+            int get() { return v; }
+        };
+        struct Derived : Base {};
+        int main() {
+            Derived d;
+            d.set(0);
+            int y = d.get();
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // The edge names the *defining* base class, not the receiver's static class.
+    check_has_direct_call(&prog, "main", "Base::set");
+    check_has_direct_call(&prog, "main", "Base::get");
+    check_direct_call_arg0(&prog, "main", "Base::set", "d");
+    check_direct_call(&prog, "main", "Base::get", ["d"]);
+}
+
+#[test_log::test]
+fn cpp_inherited_member_resolves_in_derived_method() {
+    // FR-1: an inherited data member used unqualified inside a *derived* method resolves to
+    // `this.<member>` (`@p0.v`) — member flattening unions `Base`'s members into `Derived`'s, so
+    // `v` in `Derived::store` is recognized as a member (the base subobject shares the field-named
+    // path). Guards the resolution `build_access_path` performs off `Derived`'s flattened members.
+    let src = r"
+        struct Base { int v; };
+        struct Derived : Base {
+            void store(int x) { v = x; }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_assign_or_update(&prog, "Derived::store", "@p0.v", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_non_virtual_override_dispatches_to_derived() {
+    // FR-3: when both `Base` and `Derived` define `get`, a `Derived` static-type receiver
+    // dispatches to `Derived::get` (the walk checks the receiver's own class first) — non-virtual
+    // override by static type. The inherited-only `set` still dispatches to `Base::set`.
+    let src = r#"
+        struct Base {
+            int v;
+            void set(int x) { v = x; }
+            int get() { return v; }
+        };
+        struct Derived : Base {
+            int get() { return 0; }
+        };
+        int main() {
+            Derived d;
+            d.set(0);
+            int y = d.get();
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // `get` is overridden: the derived method wins for a Derived receiver.
+    check_has_direct_call(&prog, "main", "Derived::get");
+    assert!(
+        !direct_calls_in(&prog, "main")
+            .iter()
+            .any(|(edges, _)| edges.iter().any(|e| e == "Base::get")),
+        "a Derived static-type receiver must NOT dispatch d.get() to Base::get\n{prog}"
+    );
+    // `set`, defined only in Base, still dispatches to the base.
+    check_has_direct_call(&prog, "main", "Base::set");
+    check_direct_call_arg0(&prog, "main", "Derived::get", "d");
+}
+
+#[test_log::test]
+fn cpp_two_level_inheritance_walks_transitively() {
+    // FR-2 (transitive): a two-level chain `A <- B <- C`. `set`/`get` are defined in `A`; a `C`
+    // receiver walks C -> B -> A to dispatch each to `A::set`/`A::get`. Also exercises transitive
+    // member flattening (C's members include A's `v`).
+    let src = r#"
+        struct A {
+            int v;
+            void set(int x) { v = x; }
+            int get() { return v; }
+        };
+        struct B : A {};
+        struct C : B {};
+        int main() {
+            C c;
+            c.set(0);
+            int y = c.get();
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "main", "A::set");
+    check_has_direct_call(&prog, "main", "A::get");
+    check_direct_call_arg0(&prog, "main", "A::set", "c");
+    check_direct_call(&prog, "main", "A::get", ["c"]);
+}
+
+#[test_log::test]
+fn cpp_base_less_class_dispatch_unchanged() {
+    // FR-5 regression guard: a base-less class keeps an empty `bases`, so dispatch is a plain
+    // own-class lookup — `b.set(...)`/`b.get()` dispatch to `Box::set`/`Box::get` exactly as
+    // before this slice (the base-chain walk is a no-op when `bases` is empty).
+    let src = r#"
+        struct Box {
+            int v;
+            void set(int x) { v = x; }
+            int get() { return v; }
+        };
+        int main() {
+            Box b;
+            b.set(0);
+            int y = b.get();
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call_arg0(&prog, "main", "Box::set", "b");
+    check_direct_call(&prog, "main", "Box::get", ["b"]);
+}

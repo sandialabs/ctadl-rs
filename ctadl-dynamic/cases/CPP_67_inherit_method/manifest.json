@@ -1,0 +1,6 @@
+{
+  "name": "CPP_67_inherit_method",
+  "description": "C++ single inheritance: set/get are defined only in Base; on a Derived object the inherited setter/getter dispatch to Base (base-chain walk), so source() flows through d.v to the sink",
+  "label": "Test",
+  "expect_flow": true
+}
