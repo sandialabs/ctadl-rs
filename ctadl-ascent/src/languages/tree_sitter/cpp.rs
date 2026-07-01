@@ -68,6 +68,46 @@ fn member_name<'a>(decl: Node<'_>, source: &'a str) -> Option<&'a str> {
     }
 }
 
+/// Unwrap a `reference_declarator` (`Class& m(…)`, `int& get(…)`) to the `function_`
+/// `declarator` it wraps; pass any other declarator through unchanged. A reference return
+/// type nests the function declarator inside a `reference_declarator`, which the
+/// method-discovery and top-level function queries key on the bare `function_declarator` and
+/// would otherwise skip. Inert for C (no `reference_declarator`).
+fn unwrap_reference_declarator(decl: Node<'_>) -> Node<'_> {
+    if decl.kind() == "reference_declarator" {
+        let mut c = decl.walk();
+        decl.children(&mut c)
+            .find(|n| n.kind() == "function_declarator")
+            .unwrap_or(decl)
+    } else {
+        decl
+    }
+}
+
+/// Whether a method body returns the receiver object itself (`return *this;`), so its
+/// (reference) result aliases arg 0. Scans the body's `return` statements for a `*this` — a
+/// `pointer_expression` dereferencing the `this` node. Combined with a reference return type
+/// by the caller to mark a fluent setter as `returns_self`. Inert for C (no `this` node).
+fn body_returns_deref_this(body: Node<'_>) -> bool {
+    let mut stack = vec![body];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "return_statement"
+            && let Some(val) = n.named_child(0)
+            && val.kind() == "pointer_expression"
+            && val
+                .child_by_field_name("argument")
+                .is_some_and(|a| a.kind() == "this")
+        {
+            return true;
+        }
+        let mut c = n.walk();
+        for ch in n.children(&mut c) {
+            stack.push(ch);
+        }
+    }
+    false
+}
+
 /// Discover C++ instance methods and constructors — inline *and* out-of-line — and lower
 /// them through the shared core.
 ///
@@ -113,6 +153,10 @@ fn cpp_collect_methods<'a>(
         params: Node<'t>,
         body: Node<'t>,
         void: bool,
+        /// Whether the method's result aliases the receiver object — a reference return type
+        /// (`Class& m()`) whose body does `return *this`. Recorded in `ClassInfo.returns_self`
+        /// so a chained `recv.m(…).n(…)` dispatches `n` on the same object.
+        returns_self: bool,
         /// A constructor's member-initializer list as `(member, init-expr)` pairs; empty
         /// for an ordinary method and for a constructor written without one.
         member_inits: Vec<(String, Node<'t>)>,
@@ -151,12 +195,17 @@ fn cpp_collect_methods<'a>(
                     let Some(declr) = child.child_by_field_name("declarator") else {
                         continue;
                     };
-                    if declr.kind() != "function_declarator" {
+                    // A reference return type (`Class& m(…)`, `int& get(…)`) nests the
+                    // `function_declarator` inside a `reference_declarator`; unwrap it so the
+                    // method is discovered (otherwise it is silently skipped).
+                    let is_reference_return = declr.kind() == "reference_declarator";
+                    let func_declr = unwrap_reference_declarator(declr);
+                    if func_declr.kind() != "function_declarator" {
                         continue;
                     }
                     let (Some(name_node), Some(params), Some(method_body)) = (
-                        declr.child_by_field_name("declarator"),
-                        declr.child_by_field_name("parameters"),
+                        func_declr.child_by_field_name("declarator"),
+                        func_declr.child_by_field_name("parameters"),
                         child.child_by_field_name("body"),
                     ) else {
                         continue;
@@ -185,16 +234,25 @@ fn cpp_collect_methods<'a>(
                             params,
                             body: method_body,
                             void: true,
+                            returns_self: false,
                             member_inits: ctor_member_inits(child, source),
                         });
                     } else {
+                        // A reference-returning method that returns `*this` (a fluent setter)
+                        // has a result aliasing the receiver object.
+                        let returns_self =
+                            is_reference_return && body_returns_deref_this(method_body);
                         info.methods.insert(name.clone());
+                        if returns_self {
+                            info.returns_self.insert(name.clone());
+                        }
                         methods.push(MethodDef {
                             class: class_name.clone(),
                             name,
                             params,
                             body: method_body,
                             void,
+                            returns_self,
                             member_inits: Vec::new(),
                         });
                     }
@@ -214,14 +272,24 @@ fn cpp_collect_methods<'a>(
     // (class, method, params, body) first — the cursor borrows the tree, not `ctx`, so reading
     // `ctx.classes` to filter to already-declared classes is fine — then register the method
     // names and queue the bodies after the cursor drops.
+    // Match both a plain out-of-line declarator and a reference-returning one
+    // (`Box& Box::setV(…)`), whose `function_declarator` is wrapped in a `reference_declarator`.
     let ool_query = ctx.compile_query(
         r#"
         (function_definition
-            declarator: (function_declarator
-                declarator: (qualified_identifier
-                    scope: (namespace_identifier) @class
-                    name: (identifier) @method)
-                parameters: (parameter_list) @params)
+            declarator: [
+                (function_declarator
+                    declarator: (qualified_identifier
+                        scope: (namespace_identifier) @class
+                        name: (identifier) @method)
+                    parameters: (parameter_list) @params)
+                (reference_declarator
+                    (function_declarator
+                        declarator: (qualified_identifier
+                            scope: (namespace_identifier) @class
+                            name: (identifier) @method)
+                        parameters: (parameter_list) @params))
+            ]
             body: (compound_statement) @body) @def
         "#,
     );
@@ -250,6 +318,14 @@ fn cpp_collect_methods<'a>(
                 || def
                     .child_by_field_name("type")
                     .is_some_and(|t| to_str(&t, source).eq_ignore_ascii_case("void"));
+            // A reference-returning out-of-line definition (`Box& Box::setV(…)`) has its
+            // `function_declarator` wrapped in a `reference_declarator`; if its body returns
+            // `*this` the result aliases the receiver object (a fluent setter).
+            let returns_self = !is_ctor
+                && def
+                    .child_by_field_name("declarator")
+                    .is_some_and(|d| d.kind() == "reference_declarator")
+                && body_returns_deref_this(body);
             let member_inits = if is_ctor {
                 ctor_member_inits(def, source)
             } else {
@@ -263,6 +339,7 @@ fn cpp_collect_methods<'a>(
                     params,
                     body,
                     void,
+                    returns_self,
                     member_inits,
                 },
             ));
@@ -277,6 +354,9 @@ fn cpp_collect_methods<'a>(
                 info.has_ctor = true;
             } else {
                 info.methods.insert(md.name.clone());
+                if md.returns_self {
+                    info.returns_self.insert(md.name.clone());
+                }
             }
         }
         methods.push(md);

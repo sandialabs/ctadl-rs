@@ -429,12 +429,36 @@ struct ClassInfo {
     members: HashSet<String>,
     /// Names of inline member functions (resolve a `recv.<method>(…)` call to `Class::method`).
     methods: HashSet<String>,
+    /// Method names whose call result aliases the receiver object, because the method has a
+    /// reference return type and its body returns the receiver (`Class& m(){ … return *this; }`).
+    /// A chained `recv.m(…).n(…)` then dispatches `n` on the same object, and `Class& r =
+    /// recv.m(…)` binds `r` to it. A subset of [`Self::methods`]; empty for C.
+    returns_self: HashSet<String>,
     /// Whether the class declares a (user-defined) constructor, modeled as the function
     /// `Class::Class` with an implicit `this` (`ByRef`) param 0. Set by the C++ method
     /// discovery hook; consulted by the `construct` hook so a class-typed declaration with
     /// arguments (`Box b(args)` etc.) lowers to a `DirectCall Class::Class(&b, args…)`.
     /// Always `false` for C (the `classes` map is empty), so construction never fires there.
     has_ctor: bool,
+}
+
+/// The object a C++ instance-method receiver resolves to: the access-path expression to
+/// pass as the arg-0 (`ByRef`) receiver, and the object's class (to look up the method).
+/// Produced by [`Context::resolve_recv_obj`] for a plain identifier local, the implicit
+/// `this`, or a chained call whose callee returns its receiver.
+#[derive(Clone)]
+struct RecvObj {
+    exp: Exp,
+    class: String,
+}
+
+/// The outcome of lowering a C++ instance-method (or chained) call in [`Context::dispatch_call`].
+struct DispatchOut {
+    /// The call's result value (a temp), for use as an ordinary rvalue.
+    value: Exp,
+    /// When the callee returns a reference to its receiver (`return *this`), the object the
+    /// result aliases — so a chained `.n(…)` dispatches on it and `Class& r = call` binds to it.
+    aliased: Option<RecvObj>,
 }
 
 /// Grammar-shape adapters for the *few* places tree-sitter-cpp and tree-sitter-c expose
@@ -1189,11 +1213,18 @@ impl<'a> Context<'a> {
         if let Some(name_node) = name_node {
             let ref_name = to_str(&name_node, source);
             if let Some(val) = value
-                && matches!(val.kind(), "identifier" | "field_expression")
+                && matches!(
+                    val.kind(),
+                    "identifier" | "field_expression" | "call_expression"
+                )
                 && let Exp::AccessPath(path) =
                     self.flatten_expr(program, val, source, scope_view)?
             {
-                // Alias the reference to its referent's access path.
+                // Alias the reference to its referent's access path. A `call_expression`
+                // referent is a reference-returning method (`Box& r = b.setV(x)`): its result
+                // aliases the receiver object (registered in `reference_aliases` by
+                // `dispatch_call`), so flattening it already yields that object's path — `r`
+                // binds straight to the real object, and a later `r.m(…)` dispatches on it.
                 self.reference_aliases.insert(ref_name.to_string(), path);
                 return Ok(());
             }
@@ -2023,6 +2054,15 @@ impl<'a> Context<'a> {
                 source,
                 scope_view,
             ),
+            // The C++ `this` receiver — inside a method body, `this` is the implicit param 0
+            // installed by `lower_function`, so it resolves to `@p0`. `*this` reaches here via
+            // the `pointer_expression` arm above (its argument is this node). A `this` node
+            // never occurs under the C grammar, so this arm is inert for C.
+            "this" => Ok(Exp::AccessPath(self.build_access_path(
+                "this",
+                Default::default(),
+                scope_view,
+            ))),
             "subscript_expression" => self.flatten_subscript(program, node, source, scope_view),
             "call_expression" => {
                 let x = self.allocator.next_temp();
@@ -2221,6 +2261,154 @@ impl<'a> Context<'a> {
         Ok(result)
     }
 
+    /// Resolve a C++ instance-method call receiver node into the object to dispatch on — its
+    /// arg-0 (`ByRef`) access-path expression and its class — or `None` if it is not a known
+    /// class object. Handles a plain identifier local (`b.m()`), the implicit receiver
+    /// (`this`/`*this`), a parenthesized receiver, and a **chained** call whose callee returns
+    /// its receiver (`recv.a(…).b(…)` — `a` does `return *this`): the chained case lowers the
+    /// inner call and yields the same object `a` dispatched on. Neutral-map-driven
+    /// (`local_types`/`classes`, both empty for C), so it never fires on the C path.
+    fn resolve_recv_obj(
+        &mut self,
+        program: &mut Program,
+        recv_node: Node<'_>,
+        source: &str,
+        scope_view: &ScopeView,
+    ) -> Result<Option<RecvObj>, Error> {
+        match recv_node.kind() {
+            "identifier" => {
+                let name = to_str(&recv_node, source);
+                match self.local_types.get(name).cloned() {
+                    Some(class) => {
+                        let exp = Exp::AccessPath(self.build_access_path(
+                            name,
+                            Default::default(),
+                            scope_view,
+                        ));
+                        Ok(Some(RecvObj { exp, class }))
+                    }
+                    None => Ok(None),
+                }
+            }
+            // The implicit receiver inside a method body: `this.m()` (rare) or `(*this).m()`.
+            "this" => match self.current_method_class.clone() {
+                Some(class) => {
+                    let exp = Exp::AccessPath(self.build_access_path(
+                        "this",
+                        Default::default(),
+                        scope_view,
+                    ));
+                    Ok(Some(RecvObj { exp, class }))
+                }
+                None => Ok(None),
+            },
+            "parenthesized_expression" => {
+                let inner = recv_node
+                    .child(1)
+                    .expect("parenthesized_expression has an inner node");
+                self.resolve_recv_obj(program, inner, source, scope_view)
+            }
+            "pointer_expression" => {
+                let arg = recv_node
+                    .child_by_field_name("argument")
+                    .expect("pointer_expression always has an argument");
+                self.resolve_recv_obj(program, arg, source, scope_view)
+            }
+            // A chained receiver: lower the inner call; only a receiver-returning method
+            // (`return *this`) yields an object to chain on.
+            "call_expression" => {
+                let temp = self.allocator.next_temp();
+                Ok(self
+                    .dispatch_call(program, recv_node, source, scope_view, temp)?
+                    .and_then(|out| out.aliased))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Try to lower `call_node` as a C++ instance-method call — `recv.method(args)`, including
+    /// a chained receiver (`recv.a(args).b(args2)`). Returns `None` if it is not an instance-
+    /// method call (a plain function call, or a function-pointer *member* call like `s.fp(x)`);
+    /// the caller then lowers it as an ordinary call. On success it emits
+    /// `DirectCall Class::method(recv, args…)` — `recv` prepended as the arg-0 (`ByRef`)
+    /// receiver, so the callee's `this.<member>` writes flow back and a returned member flows
+    /// out — and returns the result value plus, for a **receiver-returning** method
+    /// (`return *this`), the object the result aliases (for chaining and `Class& r = call`
+    /// binding). Neutral-map-driven, so it never fires on the C path.
+    fn dispatch_call(
+        &mut self,
+        program: &mut Program,
+        call_node: Node<'_>,
+        source: &str,
+        scope_view: &ScopeView,
+        temp_name: String,
+    ) -> Result<Option<DispatchOut>, Error> {
+        let func_node = call_node
+            .child_by_field_name("function")
+            .expect("call_expression always has a function");
+        if func_node.kind() != "field_expression" {
+            return Ok(None);
+        }
+        let recv_node = func_node
+            .child_by_field_name("argument")
+            .expect("field_expression always has an argument");
+        let field_node = func_node
+            .child_by_field_name("field")
+            .expect("field_expression always has a field");
+        let method = to_str(&field_node, source);
+
+        let Some(recv) = self.resolve_recv_obj(program, recv_node, source, scope_view)? else {
+            return Ok(None);
+        };
+        // Resolve `method` against the receiver's class; bail to ordinary lowering if it is
+        // not a known method (e.g. a function-pointer member `s.fp(x)` on a plain struct).
+        let (qualified, returns_self) = match self.classes.get(&recv.class) {
+            Some(info) if info.methods.contains(method) => (
+                format!("{}::{}", recv.class, method),
+                info.returns_self.contains(method),
+            ),
+            _ => return Ok(None),
+        };
+
+        let arg_node = call_node
+            .child_by_field_name("arguments")
+            .expect("call_expression always has arguments");
+        let mut method_args: SmallVec<[Exp; 4]> = smallvec![recv.exp.clone()];
+        method_args.extend(self.collect_arguments(program, arg_node, source, scope_view)?);
+        program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+            StatementKind::CallAssign {
+                style: CallStyle::DirectCall {
+                    call_edges: CallEdges::Explicit(smallvec![qualified]),
+                },
+                rets: vec![VariableRef::new_local(temp_name.clone())].into(),
+                args: method_args,
+            },
+        ));
+
+        // A receiver-returning method makes the call's result an alias to the receiver
+        // object. Register the result temp as an alias of that object so `Class& r = call`
+        // and any read of the temp resolve to the real object, and surface it so a chained
+        // `.n(…)` dispatches on the same object (the by-ref receiver carries chained writes
+        // back to it). Only class-object receivers (an `AccessPath`) can alias.
+        let aliased = if returns_self && matches!(recv.exp, Exp::AccessPath(_)) {
+            if let Exp::AccessPath(recv_path) = &recv.exp {
+                self.reference_aliases
+                    .insert(temp_name.clone(), recv_path.clone());
+                self.local_types
+                    .insert(temp_name.clone(), recv.class.clone());
+            }
+            Some(recv.clone())
+        } else {
+            None
+        };
+        let value = Exp::AccessPath(self.build_access_path(
+            temp_name.as_str(),
+            Default::default(),
+            scope_view,
+        ));
+        Ok(Some(DispatchOut { value, aliased }))
+    }
+
     /*
     Call expression always 'assign' into a temp variable, that way the collect_assignment can be consistent
      */
@@ -2233,57 +2421,18 @@ impl<'a> Context<'a> {
         scope_view: &ScopeView,
         temp_name: String,
     ) -> Result<Exp, Error> {
-        let func_node = node.child_by_field_name("function").expect("always has");
-        let arg_node = node.child_by_field_name("arguments").expect("always has");
-
-        // C++ instance-method call: `recv.method(args)` where `recv` is a local of a known
-        // class type that declares `method`. Dispatch it as a *direct* call to
-        // `Class::method` with `recv` prepended as the arg-0 receiver, so writes the callee
-        // makes to `this.<member>` flow back to `recv.<member>` (param 0 is `ByRef`) and a
-        // returned member flows out. This is data-driven on the neutral `local_types`/
-        // `classes` maps (empty for C, so this branch never fires there) — no language branch.
-        if func_node.kind() == "field_expression" {
-            let recv_node = func_node
-                .child_by_field_name("argument")
-                .expect("field_expression always has an argument");
-            let field_node = func_node
-                .child_by_field_name("field")
-                .expect("field_expression always has a field");
-            if recv_node.kind() == "identifier" {
-                let recv_name = to_str(&recv_node, source);
-                let method = to_str(&field_node, source);
-                // Clone the resolved class/method out so the immutable map borrows end
-                // before `flatten_expr`/`collect_arguments` take `&mut self` below.
-                let dispatch = self.local_types.get(recv_name).and_then(|class| {
-                    self.classes.get(class).and_then(|info| {
-                        info.methods
-                            .contains(method)
-                            .then(|| format!("{class}::{method}"))
-                    })
-                });
-                if let Some(qualified) = dispatch {
-                    let recv_exp = self.flatten_expr(program, recv_node, source, scope_view)?;
-                    let mut method_args: SmallVec<[Exp; 4]> = smallvec![recv_exp];
-                    method_args
-                        .extend(self.collect_arguments(program, arg_node, source, scope_view)?);
-                    program[scope_view.fidx].blocks[scope_view.blidx].push_back(
-                        Statement::new_kind(StatementKind::CallAssign {
-                            style: CallStyle::DirectCall {
-                                call_edges: CallEdges::Explicit(smallvec![qualified]),
-                            },
-                            rets: vec![VariableRef::new_local(temp_name.clone())].into(),
-                            args: method_args,
-                        }),
-                    );
-                    return Ok(Exp::AccessPath(self.build_access_path(
-                        temp_name.as_str(),
-                        Default::default(),
-                        scope_view,
-                    )));
-                }
-            }
+        // C++ instance-method / chained call: `recv.method(args)` (including a chained
+        // receiver `recv.a(args).b(args2)`). Delegate to `dispatch_call`, which is driven by
+        // the neutral `local_types`/`classes` maps (empty for C, so it returns `None` there —
+        // no language branch). If it lowers the call, its result value is the answer.
+        if let Some(out) =
+            self.dispatch_call(program, node, source, scope_view, temp_name.clone())?
+        {
+            return Ok(out.value);
         }
 
+        let func_node = node.child_by_field_name("function").expect("always has");
+        let arg_node = node.child_by_field_name("arguments").expect("always has");
         let func_name = to_str(&func_node, source);
 
         let call_edges = CallEdges::Explicit(smallvec![func_name.to_string()]);

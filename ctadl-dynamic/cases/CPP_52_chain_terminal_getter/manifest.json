@@ -1,0 +1,6 @@
+{
+  "name": "CPP_52_chain_terminal_getter",
+  "description": "C++ method chaining: sink(b.setV(source()).getV()) — the reference-returning setter's result aliases b, so the terminal getter reads the member the setter just tainted; taint flows",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -744,4 +744,159 @@ mod tests {
             "constructor taint to member `a` must not reach a distinct member `b`, got: {flows:?}"
         );
     }
+
+    /// M3 (spec 007, FR-2) acceptance, end to end: fluent method chaining. `setV`/`setW`
+    /// return `Box&` and `return *this`, so `b.setV(source()).setW(0)` dispatches both setters
+    /// on the same object `b`; `setV` taints `b.v`, which the terminal `b.getV()` reads back —
+    /// mirrors the CPP_51 dynamic case.
+    #[test_log::test]
+    fn cpp_chain_setters_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                int w;
+                Box& setV(int x) { v = x; return *this; }
+                Box& setW(int x) { w = x; return *this; }
+                int getV() { return v; }
+            };
+            int main() {
+                Box b;
+                b.setV(source()).setW(0);
+                sink(b.getV());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp chain-setters flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through a chained setter, got: {flows:?}"
+        );
+    }
+
+    /// M3 (spec 007, FR-2) acceptance, end to end: a terminal getter on the chained object.
+    /// `b.setV(source()).getV()` — `setV`'s result aliases `b`, so the terminal `.getV()`
+    /// reads the member `setV` just tainted — mirrors the CPP_52 dynamic case.
+    #[test_log::test]
+    fn cpp_chain_terminal_getter_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                Box& setV(int x) { v = x; return *this; }
+                int getV() { return v; }
+            };
+            int main() {
+                Box b;
+                sink(b.setV(source()).getV());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp chain terminal-getter flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through a chained terminal getter, got: {flows:?}"
+        );
+    }
+
+    /// M3 (spec 007, FR-1) acceptance, end to end: a reference return bound to a reference
+    /// local. `Box& r = b.setV(source())` aliases `r` to `b` (not the returned temporary), so
+    /// `r.getV()` reads the member `setV` tainted — mirrors the CPP_53 dynamic case.
+    #[test_log::test]
+    fn cpp_ref_return_to_ref_local_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                Box& setV(int x) { v = x; return *this; }
+                int getV() { return v; }
+            };
+            int main() {
+                Box b;
+                Box& r = b.setV(source());
+                sink(r.getV());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp ref-return-to-ref-local flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through a reference-returning method bound to a ref local, got: {flows:?}"
+        );
+    }
+
+    /// M3 (spec 007, FR-2) acceptance, end to end: a member reference getter read from behaves
+    /// like a value getter. `void setV` taints `b.v`; `int& get(){ return v; }` flows it out.
+    #[test_log::test]
+    fn cpp_member_reference_getter_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                void setV(int x) { v = x; }
+                int& get() { return v; }
+            };
+            int main() {
+                Box b;
+                b.setV(source());
+                sink(b.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp member-ref-getter flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through a member-reference getter, got: {flows:?}"
+        );
+    }
+
+    /// Negative control for chaining (field sensitivity through a chain): the chain taints
+    /// member `v` (from `source`) and sets `w = 0` on the same object; the sink reads the
+    /// distinct member `w`. A field-sensitive model must not leak `v`'s taint into `w` just
+    /// because both writes hit the same chained object — mirrors the CPP_54 dynamic case
+    /// (`s=none d=none`).
+    #[test_log::test]
+    fn cpp_chain_distinct_member_no_cross_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                int w;
+                Box& setV(int x) { v = x; return *this; }
+                Box& setW(int x) { w = x; return *this; }
+                int getW() { return w; }
+            };
+            int main() {
+                Box b;
+                b.setV(source()).setW(0);
+                sink(b.getW());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp chain distinct-member flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "a chain tainting member `v` must not reach a distinct member `w`, got: {flows:?}"
+        );
+    }
 }

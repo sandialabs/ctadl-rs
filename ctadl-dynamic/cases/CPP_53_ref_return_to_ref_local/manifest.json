@@ -1,0 +1,6 @@
+{
+  "name": "CPP_53_ref_return_to_ref_local",
+  "description": "C++ reference return bound to a reference local: Box& r = b.setV(source()) aliases r to b; r.getV() reads the member the setter tainted; taint flows",
+  "label": "Test",
+  "expect_flow": true
+}

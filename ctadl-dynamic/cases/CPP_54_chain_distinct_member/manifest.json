@@ -1,0 +1,6 @@
+{
+  "name": "CPP_54_chain_distinct_member",
+  "description": "C++ negative: a chain taints member v (from source) and sets w=0 on the same object; the sink reads the distinct member w, which stays untainted (field-sensitive through the chain); no flow",
+  "label": "Test",
+  "expect_flow": false
+}

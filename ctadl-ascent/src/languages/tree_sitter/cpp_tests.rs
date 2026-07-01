@@ -823,3 +823,164 @@ fn cpp_destructor_definition_parses_and_is_not_lowered() {
         "the destructor must not be lowered as a function\n{prog}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Milestone 3 (spec 007) — reference-returning methods (`return *this`) and method
+// chaining. These assert the *frontend's* lowering; the end-to-end source→sink flows are
+// asserted in `taint_compare::tests::cpp_chain_*` and validated against DFSan by
+// CPP_51..CPP_54.
+// ---------------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_ref_return_this_method_is_discovered_and_returns_receiver() {
+    // FR-1: a reference-returning method (`Box& setV(int){…}`, whose `function_declarator` is
+    // wrapped in a `reference_declarator`) is still discovered and lowered with the implicit
+    // `this` (`ByRef`, param 0). Its `return *this` returns the receiver object `@p0` (not a
+    // copy), which is what makes the call result an alias to arg 0.
+    let src = r"
+        struct Box {
+            int v;
+            Box& setV(int x) { v = x; return *this; }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::setV",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    // A reference return is a value (arity 1) return of the receiver object.
+    check_return_arity(&prog, "Box::setV", 1);
+    check_func_assign_or_update(&prog, "Box::setV", "@p0.v", ["@p1"]);
+    check_func_returns_path(&prog, "Box::setV", "@p0");
+}
+
+#[test_log::test]
+fn cpp_method_chaining_dispatches_on_same_object() {
+    // FR-2: `b.setV(source()).setW(0)` — because `setV` returns `*this` (an alias to the
+    // receiver), the chained `.setW(0)` dispatches on the SAME object `b`, not on a copy of
+    // the returned temporary. Both setters therefore have `b` as their arg-0 receiver, so the
+    // by-ref writeback carries both member writes back into `b`.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Box {
+            int v;
+            int w;
+            Box& setV(int x) { v = x; return *this; }
+            Box& setW(int x) { w = x; return *this; }
+            int getV() { return v; }
+        };
+        int main() {
+            Box b;
+            b.setV(source()).setW(0);
+            sink(b.getV());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "main", "Box::setV");
+    check_has_direct_call(&prog, "main", "Box::setW");
+    // The critical assertion: the chained setter dispatches on `b` (true aliasing), not a temp.
+    check_direct_call_arg0(&prog, "main", "Box::setV", "b");
+    check_direct_call_arg0(&prog, "main", "Box::setW", "b");
+    check_direct_call(&prog, "main", "Box::getV", ["b"]);
+}
+
+#[test_log::test]
+fn cpp_chain_terminal_getter_dispatches_on_object() {
+    // FR-2: `b.setV(source()).getV()` — the terminal getter dispatches on the object `setV`
+    // returned (`b`), so it reads the member `setV` just wrote.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Box {
+            int v;
+            Box& setV(int x) { v = x; return *this; }
+            int getV() { return v; }
+        };
+        int main() {
+            Box b;
+            sink(b.setV(source()).getV());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call_arg0(&prog, "main", "Box::setV", "b");
+    check_direct_call(&prog, "main", "Box::getV", ["b"]);
+}
+
+#[test_log::test]
+fn cpp_ref_return_bound_to_ref_local_aliases_object() {
+    // FR-1/FR-2: `Box& r = b.setV(source())` binds `r` to the object `setV` returned (`b`),
+    // not to the returned temporary — so `r.getV()` dispatches on `b` (arg 0 is `b`).
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Box {
+            int v;
+            Box& setV(int x) { v = x; return *this; }
+            int getV() { return v; }
+        };
+        int main() {
+            Box b;
+            Box& r = b.setV(source());
+            sink(r.getV());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call_arg0(&prog, "main", "Box::setV", "b");
+    check_direct_call(&prog, "main", "Box::getV", ["b"]);
+}
+
+#[test_log::test]
+fn cpp_member_reference_getter_returns_member() {
+    // FR-1: a method returning a member *reference* (`int& get(){ return v; }`) read from
+    // behaves like a value getter — it is discovered (the `reference_declarator` return is
+    // unwrapped) and its `return v` returns `this.v` (`@p0.v`), NOT the receiver, so it is not
+    // marked `returns_self`.
+    let src = r"
+        struct Box {
+            int v;
+            int& get() { return v; }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(&prog, "Box::get", &[ParameterType::ByRef]);
+    check_return_arity(&prog, "Box::get", 1);
+    check_func_returns_path(&prog, "Box::get", "@p0.v");
+}
+
+#[test_log::test]
+fn cpp_out_of_line_ref_return_method_is_discovered() {
+    // FR-1: an out-of-line reference-returning method (`Box& Box::setV(int){…}`, declarator is
+    // a `reference_declarator` wrapping a `qualified_identifier` function declarator) is
+    // discovered and lowered with the implicit `this`, and its `return *this` is a receiver
+    // return that lets `b.setV(source()).getV()` chain on the object.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        class Box {
+          public:
+            int v;
+            Box& setV(int x);
+            int getV();
+        };
+        Box& Box::setV(int x) { v = x; return *this; }
+        int Box::getV() { return v; }
+        int main() {
+            Box b;
+            sink(b.setV(source()).getV());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::setV",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_returns_path(&prog, "Box::setV", "@p0");
+    // Chaining works even though the setter body is out of line.
+    check_direct_call_arg0(&prog, "main", "Box::setV", "b");
+    check_direct_call(&prog, "main", "Box::getV", ["b"]);
+}

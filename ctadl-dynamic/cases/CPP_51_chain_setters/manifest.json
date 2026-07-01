@@ -1,0 +1,6 @@
+{
+  "name": "CPP_51_chain_setters",
+  "description": "C++ method chaining: b.setV(source()).setW(0) dispatches both fluent setters on the same object (return *this aliases the receiver); the chained setter's write to b.v is read back by b.getV(); taint flows",
+  "label": "Test",
+  "expect_flow": true
+}
