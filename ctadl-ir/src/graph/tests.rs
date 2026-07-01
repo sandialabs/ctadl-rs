@@ -58,6 +58,16 @@ impl Successors for TestGraph {
     }
 }
 
+// A label-free view: every edge carries `()`. Enough to exercise the annotated
+// search with annotations that don't care about edge labels.
+impl LabeledSuccessors for TestGraph {
+    type Label = ();
+
+    fn labeled_successors(&self, node: usize) -> impl Iterator<Item = (Self::Node, ())> {
+        self.successors[&node].iter().map(|&n| (n, ()))
+    }
+}
+
 #[test]
 fn find_path_to_set_reaches_nearest_target() {
     // 0 -> 1 -> 2 -> 3, plus a 0 -> 4 branch.
@@ -91,7 +101,7 @@ impl Annotation<TestGraph> for Hops {
     fn start() -> Self {
         Hops(0)
     }
-    fn expand(&self, _graph: &TestGraph, _from: usize, _to: usize) -> Option<Self> {
+    fn expand(&self, _graph: &TestGraph, _from: usize, _label: &(), _to: usize) -> Option<Self> {
         Some(Hops(self.0 + 1))
     }
 }
@@ -105,7 +115,7 @@ impl Annotation<TestGraph> for Budget {
     fn start() -> Self {
         Budget(0)
     }
-    fn expand(&self, _graph: &TestGraph, _from: usize, _to: usize) -> Option<Self> {
+    fn expand(&self, _graph: &TestGraph, _from: usize, _label: &(), _to: usize) -> Option<Self> {
         if self.0 >= 2 {
             None
         } else {
@@ -161,6 +171,136 @@ fn find_annotated_path_expand_prunes_edges() {
 
     // Node 3 needs a 3rd edge, which the budget prunes -> unreachable.
     assert!(find_annotated_path_to_set(&g, 0, |n, _a: &Budget| n == 3).is_none());
+}
+
+/// An edge label mirroring the taint use case: an edge is a call, a return, or
+/// an intraprocedural step. Calls and returns are tagged with the call site so a
+/// return can be matched against the call that must have opened it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Edge {
+    Call(u32),
+    Return(u32),
+    Intra,
+}
+
+/// A graph whose edges carry an [`Edge`] label.
+struct LabeledGraph {
+    num_nodes: usize,
+    successors: HashMap<usize, Vec<(usize, Edge)>>,
+}
+
+impl LabeledGraph {
+    fn new(num_nodes: usize, edges: &[(usize, usize, Edge)]) -> Self {
+        let mut successors: HashMap<usize, Vec<(usize, Edge)>> = HashMap::default();
+        for node in 0..num_nodes {
+            successors.entry(node).or_default();
+        }
+        for &(src, dst, label) in edges {
+            successors.entry(src).or_default().push((dst, label));
+        }
+        Self {
+            num_nodes,
+            successors,
+        }
+    }
+}
+
+impl DirectedGraph for LabeledGraph {
+    type Node = usize;
+
+    fn num_nodes(&self) -> usize {
+        self.num_nodes
+    }
+}
+
+impl LabeledSuccessors for LabeledGraph {
+    type Label = Edge;
+
+    fn labeled_successors(&self, node: usize) -> impl Iterator<Item = (Self::Node, Edge)> {
+        self.successors[&node].iter().cloned()
+    }
+}
+
+/// The call stack accumulated along a path. A `Return(s)` edge is only
+/// traversable when `s` matches the call on top of the stack, so the search only
+/// admits realizable (call/return-balanced) paths.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+struct CallStack(Vec<u32>);
+
+impl Annotation<LabeledGraph> for CallStack {
+    fn start() -> Self {
+        CallStack(Vec::new())
+    }
+
+    fn expand(
+        &self,
+        _graph: &LabeledGraph,
+        _from: usize,
+        label: &Edge,
+        _to: usize,
+    ) -> Option<Self> {
+        match label {
+            Edge::Intra => Some(self.clone()),
+            Edge::Call(site) => {
+                let mut stack = self.0.clone();
+                stack.push(*site);
+                Some(CallStack(stack))
+            }
+            Edge::Return(site) => match self.0.last() {
+                // A return must match the call on top of the stack; a mismatch
+                // is an unrealizable path and prunes the edge.
+                Some(top) if top == site => {
+                    let mut stack = self.0.clone();
+                    stack.pop();
+                    Some(CallStack(stack))
+                }
+                Some(_) => None,
+                // Returning with nothing on the stack is allowed: we may enter a
+                // callee and return to an unknown caller.
+                None => Some(self.clone()),
+            },
+        }
+    }
+}
+
+#[test]
+fn find_annotated_path_matches_calls_and_returns() {
+    // Balanced route 0 =call1=> 1 -> 2 =return1=> 3, plus a shortcut
+    // 1 =return2=> 3 whose return does not match the pending call1.
+    let g = LabeledGraph::new(
+        4,
+        &[
+            (0, 1, Edge::Call(1)),
+            (1, 2, Edge::Intra),
+            (2, 3, Edge::Return(1)),
+            (1, 3, Edge::Return(2)),
+        ],
+    );
+
+    // The mismatched shortcut edge is pruned, so the only path to 3 is the
+    // balanced one, and it arrives with an empty (balanced) stack.
+    let path = find_annotated_path_to_set(&g, 0, |n, _s: &CallStack| n == 3)
+        .expect("path exists");
+    let nodes: Vec<usize> = path.iter().map(|(n, _)| *n).collect();
+    assert_eq!(nodes, vec![0, 1, 2, 3]);
+    assert_eq!(path.last().unwrap().1, CallStack(vec![]));
+}
+
+#[test]
+fn find_annotated_path_prunes_unrealizable_only_route() {
+    // The only route to 3 opens call1 but returns via a mismatched return2.
+    let g = LabeledGraph::new(
+        4,
+        &[(0, 1, Edge::Call(1)), (1, 3, Edge::Return(2))],
+    );
+
+    // No realizable path reaches 3.
+    assert!(find_annotated_path_to_set(&g, 0, |n, _s: &CallStack| n == 3).is_none());
+
+    // But node 1 (reached with call1 still pending) is fine.
+    let path = find_annotated_path_to_set(&g, 0, |n, _s: &CallStack| n == 1)
+        .expect("path exists");
+    assert_eq!(path.last().unwrap().1, CallStack(vec![1]));
 }
 
 #[test]
