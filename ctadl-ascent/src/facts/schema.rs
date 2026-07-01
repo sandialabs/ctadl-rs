@@ -11,7 +11,8 @@ use source_info::FileSpanId;
 use crate::error::{Error, ErrorContext};
 use crate::facts::parquet;
 use crate::facts::{
-    FlowVariable, FormalIndex, FormalType, Function, FunctionId, InsnId, Path, TaintState,
+    FlowVariable, FormalIndex, FormalType, Function, FunctionId, InsnId, PackedInsnSiteId, Path,
+    TaintState,
 };
 use crate::query_engine::QueryEndpoint;
 
@@ -121,6 +122,35 @@ pub mod taint {
     pub type Record = (FunctionId, TaintState, FlowVariable, Path, QueryEndpoint);
     pub const COLUMNS: [&str; 5] = ["func_id", "taint_state", "dst_var", "dst_path", "endpoint"];
     pub const FILENAME: &str = "taint.parquet";
+    save_load!();
+}
+
+pub mod taint_edge {
+    use super::*;
+    /// An edge of the taint graph in execution / data-flow order: the source
+    /// vertex `(src_func, src_var, src_path)` flows to the destination vertex
+    /// `(dst_func, dst_var, dst_path)`. `site` is the call instruction anchoring
+    /// the edge for interprocedural (call/return) edges, and `None` for the
+    /// flow-insensitive intraprocedural (assign/alias) edges.
+    pub type Record = (
+        Option<PackedInsnSiteId>,
+        FunctionId,
+        FlowVariable,
+        Path,
+        FunctionId,
+        FlowVariable,
+        Path,
+    );
+    pub const COLUMNS: [&str; 7] = [
+        "site",
+        "src_func",
+        "src_var",
+        "src_path",
+        "dst_func",
+        "dst_var",
+        "dst_path",
+    ];
+    pub const FILENAME: &str = "taint_edge.parquet";
     save_load!();
 }
 
