@@ -135,6 +135,24 @@ fn body_returns_deref_this(body: Node<'_>) -> bool {
     false
 }
 
+/// Whether an inline member `function_definition` declares a **virtual** method: either the
+/// `virtual` keyword — a `virtual` node that is a direct child of the definition
+/// (`virtual int get(){…}`) — or a trailing `override`/`final` — a `virtual_specifier` node under
+/// its `function_declarator` (`int get() override {…}`). Both mark the method for CHA dispatch
+/// (an `override` of a virtual base method is itself virtual even without the keyword). `func_`
+/// `declr` is the already-unwrapped `function_declarator`. Inert for C (neither node exists in a
+/// C tree).
+fn method_is_virtual_def(fdef: Node<'_>, func_declr: Node<'_>) -> bool {
+    let mut fc = fdef.walk();
+    if fdef.children(&mut fc).any(|ch| ch.kind() == "virtual") {
+        return true;
+    }
+    let mut dc = func_declr.walk();
+    func_declr
+        .children(&mut dc)
+        .any(|ch| ch.kind() == "virtual_specifier")
+}
+
 /// The namespace qualifier prefix (`ns::`, or nested `a::b::`) of every `namespace_`
 /// `definition` enclosing `node`, outermost first, or `""` if `node` is at file scope. A
 /// namespaced entity is lowered under its fully-qualified IR name (`ns::f`, `ns::Box`), so a
@@ -321,6 +339,27 @@ fn flatten_inherited_members(ctx: &mut Context<'_>) {
     }
 }
 
+/// Build the neutral **subclass** hierarchy — the reverse of each class's `bases` — into
+/// [`Context::subclasses`], so a virtual call can walk a static type's subclass subtree and
+/// gather every override (CHA). Run once after every class is discovered (so a base declared
+/// after its derived class is still linked). For each class we register it as a direct subclass
+/// of every class in its `bases`. Empty for C and for every base-less C++ class (no `bases`
+/// edges), so it adds nothing there and the C path is unchanged.
+fn build_subclasses(ctx: &mut Context<'_>) {
+    let edges: Vec<(String, String)> = ctx
+        .classes
+        .iter()
+        .flat_map(|(name, info)| {
+            info.bases
+                .iter()
+                .map(move |base| (base.clone(), name.clone()))
+        })
+        .collect();
+    for (base, sub) in edges {
+        ctx.subclasses.entry(base).or_default().push(sub);
+    }
+}
+
 /// Discover C++ instance methods and constructors — inline *and* out-of-line — and lower
 /// them through the shared core.
 ///
@@ -483,6 +522,12 @@ fn cpp_collect_methods<'a>(
                         if returns_self {
                             info.returns_self.insert(name.clone());
                         }
+                        // A `virtual`/`override` method is recorded for CHA dispatch: a call to
+                        // it through a base pointer/reference resolves to every override in the
+                        // static type's subclass subtree, not just the static type's method.
+                        if method_is_virtual_def(child, func_declr) {
+                            info.virtual_methods.insert(name.clone());
+                        }
                         methods.push(MethodDef {
                             class: qualified_name.clone(),
                             name,
@@ -510,6 +555,11 @@ fn cpp_collect_methods<'a>(
     // still hold only its own members. `bases` is empty for every C and base-less class, so this
     // adds nothing there. Done before phase 2b lowers the bodies, which read `members`.
     flatten_inherited_members(ctx);
+
+    // Build the subclass hierarchy (reverse of `bases`) now that every class is known, so a
+    // virtual call lowered in phase 2b — or in a later top-level body — can walk a static type's
+    // subclass subtree to gather every override (CHA). Empty for C and base-less C++ classes.
+    build_subclasses(ctx);
 
     // Phase 1.5: discover out-of-line method definitions — a top-level `function_definition`
     // whose declarator names a `qualified_identifier` (`ret Class::m(params){…}`). The

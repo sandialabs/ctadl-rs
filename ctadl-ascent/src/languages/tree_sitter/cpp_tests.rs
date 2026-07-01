@@ -1532,3 +1532,229 @@ fn cpp_base_less_class_dispatch_unchanged() {
     check_direct_call_arg0(&prog, "main", "Box::set", "b");
     check_direct_call(&prog, "main", "Box::get", ["b"]);
 }
+
+// ---------------------------------------------------------------------------
+// Milestone 6 (spec 012) — C++ virtual dispatch via class-hierarchy analysis (CHA).
+// A virtual method called through a base pointer/reference lowers to a *multi-target*
+// `DirectCall` listing every override in the static type's subclass subtree; a non-virtual
+// method stays single-target static dispatch (spec 011).
+// ---------------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_virtual_call_through_base_pointer_is_multi_target() {
+    // FR-2: `virtual int get()` overridden in `Derived`, called through `Base* p = &d`. The
+    // edge lists BOTH overrides in the subtree (`Base::get`, `Derived::get`) — CHA, a sound
+    // superset of the single dynamic target — with the pointer receiver `p` as arg 0. Static
+    // dispatch would name only `Base::get` (unsound, since `p` points at a `Derived`).
+    let src = r#"
+        int source();
+        void sink(int);
+        struct Base {
+            int v;
+            void set(int x) { v = x; }
+            virtual int get() { return 0; }
+        };
+        struct Derived : Base {
+            int get() override { return v; }
+        };
+        int main() {
+            Derived d;
+            Base* p = &d;
+            p->set(source());
+            int y = p->get();
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // Both overrides are targets of the single virtual call.
+    let get_edges: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .map(|(edges, _)| edges)
+        .filter(|edges| edges.iter().any(|e| e.ends_with("::get")))
+        .collect();
+    assert_eq!(
+        get_edges.len(),
+        1,
+        "expected exactly one get() call site\n{prog}"
+    );
+    let edges = &get_edges[0];
+    assert!(
+        edges.iter().any(|e| e == "Base::get") && edges.iter().any(|e| e == "Derived::get"),
+        "virtual get() must dispatch to BOTH Base::get and Derived::get (CHA); got {edges:?}\n{prog}"
+    );
+    // The pointer receiver `p` is the arg-0 by-ref receiver of the virtual call.
+    check_direct_call_arg0(&prog, "main", "Base::get", "p");
+    check_direct_call_arg0(&prog, "main", "Derived::get", "p");
+}
+
+#[test_log::test]
+fn cpp_base_pointer_static_type_is_declared_class() {
+    // FR-2: a base pointer's static type is its **declared** class (`Base`), not the derived
+    // type of its initializer (`&d`). So dispatch resolves against `Base`'s hierarchy — the
+    // virtual `get()` is virtual on `Base`, hence multi-target. (If the static type were
+    // `Derived`, the CHA root would be `Derived` and `Base::get` would be dropped.)
+    let src = r#"
+        struct Base {
+            int v;
+            virtual int get() { return 0; }
+        };
+        struct Derived : Base {
+            int get() override { return v; }
+        };
+        int main() {
+            Derived d;
+            Base* p = &d;
+            int y = p->get();
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // Rooting CHA at the declared `Base` includes the base's own `get` in the target set.
+    check_has_direct_call(&prog, "main", "Base::get");
+    check_has_direct_call(&prog, "main", "Derived::get");
+}
+
+#[test_log::test]
+fn cpp_non_virtual_through_base_pointer_stays_single_target() {
+    // FR-3: a **non-virtual** method called through a base pointer stays single-target static
+    // dispatch (spec 011) — `p->set(...)` resolves to just `Base::set`, no CHA expansion, even
+    // though `Base` also has a virtual method. Only `virtual` methods go multi-target.
+    let src = r#"
+        int source();
+        void sink(int);
+        struct Base {
+            int v;
+            void set(int x) { v = x; }
+            virtual int get() { return 0; }
+        };
+        struct Derived : Base {
+            int get() override { return v; }
+        };
+        int main() {
+            Derived d;
+            Base* p = &d;
+            p->set(source());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    let set_edges: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .map(|(edges, _)| edges)
+        .filter(|edges| edges.iter().any(|e| e.ends_with("::set")))
+        .collect();
+    assert_eq!(set_edges, vec![vec!["Base::set".to_string()]], "{prog}");
+}
+
+#[test_log::test]
+fn cpp_virtual_recorded_and_inherited_override_is_virtual() {
+    // FR-1: both a `virtual`-keyword base method and an `override` derived method are recorded
+    // virtual — so the override dispatches by CHA even though it lacks the `virtual` keyword.
+    // We assert the derived override, called on a `Derived*`, still lists both subtree targets
+    // (virtualness is inherited from the base; the `override` also marks it directly).
+    let src = r#"
+        struct Base {
+            int v;
+            virtual int get() { return v; }
+        };
+        struct Derived : Base {
+            int get() override { return 0; }
+        };
+        int main() {
+            Derived d;
+            Derived* p = &d;
+            int y = p->get();
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // Rooted at `Derived` (the pointer's static type): the subtree is just `Derived`, but the
+    // static-type resolution walks up to nothing new — CHA root `Derived` defines `get`, so the
+    // single subtree target is `Derived::get`. Virtualness is what makes it a CHA edge at all.
+    check_has_direct_call(&prog, "main", "Derived::get");
+    // `Derived` has no subclasses, so `Base::get` is NOT a target of a `Derived*` receiver
+    // (CHA descends the subtree, it does not ascend).
+    assert!(
+        !direct_calls_in(&prog, "main")
+            .iter()
+            .any(|(edges, _)| edges.iter().any(|e| e == "Base::get")),
+        "a Derived* virtual call descends its subtree, not up to Base::get\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_virtual_multi_level_gathers_whole_subtree() {
+    // FR-2 (transitive CHA): a three-level chain `A <- B <- C`, `get` virtual in `A` and
+    // overridden in both `B` and `C`. A call through `A* p` gathers the whole subtree —
+    // `A::get`, `B::get`, `C::get` — a sound superset of whichever the dynamic type selects.
+    let src = r#"
+        struct A {
+            int v;
+            virtual int get() { return 0; }
+        };
+        struct B : A {
+            int get() override { return v; }
+        };
+        struct C : B {
+            int get() override { return v; }
+        };
+        int main() {
+            C c;
+            A* p = &c;
+            int y = p->get();
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    let get_edges: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .map(|(edges, _)| edges)
+        .filter(|edges| edges.iter().any(|e| e.ends_with("::get")))
+        .collect();
+    assert_eq!(get_edges.len(), 1, "one get() call site\n{prog}");
+    let edges = &get_edges[0];
+    for want in ["A::get", "B::get", "C::get"] {
+        assert!(
+            edges.iter().any(|e| e == want),
+            "CHA subtree must include {want}; got {edges:?}\n{prog}"
+        );
+    }
+}
+
+#[test_log::test]
+fn cpp_non_polymorphic_class_dispatch_unchanged() {
+    // FR-5 regression guard: a class with no `virtual` method keeps an empty `virtual_methods`
+    // set, so even an inherited-method call through a base pointer stays single-target static
+    // dispatch — byte-for-byte the spec-011 behavior (the CHA path is a no-op when nothing is
+    // virtual).
+    let src = r#"
+        struct Base {
+            int v;
+            void set(int x) { v = x; }
+            int get() { return v; }
+        };
+        struct Derived : Base {};
+        int main() {
+            Derived d;
+            Base* p = &d;
+            p->set(0);
+            int y = p->get();
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // Non-virtual: single-target static dispatch to the defining base, receiver `p`.
+    let calls = direct_calls_in(&prog, "main");
+    for method in ["set", "get"] {
+        let edges: Vec<Vec<String>> = calls
+            .iter()
+            .map(|(edges, _)| edges.clone())
+            .filter(|edges| edges.iter().any(|e| e.ends_with(&format!("::{method}"))))
+            .collect();
+        assert_eq!(
+            edges,
+            vec![vec![format!("Base::{method}")]],
+            "non-virtual {method} must stay single-target Base::{method}\n{prog}"
+        );
+    }
+}

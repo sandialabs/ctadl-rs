@@ -447,6 +447,14 @@ struct ClassInfo {
     /// ([`Context::resolve_method_class`]). Empty for every C class and every base-less C++ class,
     /// so the base-chain walk is a no-op there and the C path is unchanged. Never branched on.
     bases: Vec<String>,
+    /// Method names the class declares **`virtual`** (or that `override` a virtual base method) —
+    /// the set that makes a call through a base pointer/reference dispatch by class-hierarchy
+    /// analysis (CHA) rather than by static type. Recorded per class by the C++ discovery hook
+    /// (both the `virtual` keyword and a trailing `override` mark a method here). A call is
+    /// virtual on a static type iff some class in its base chain records the method here
+    /// ([`Context::method_is_virtual`]). Empty for C and for every non-polymorphic C++ class, so
+    /// dispatch stays single-target static there and the C path is unchanged. Never branched on.
+    virtual_methods: HashSet<String>,
 }
 
 /// The object a C++ instance-method receiver resolves to: the access-path expression to
@@ -627,6 +635,14 @@ struct Context<'a> {
     /// identity there and the C path — and every non-overloaded C++ name — is unchanged. Never
     /// branched on: the four touchpoints just consult it through the neutral mangler.
     overloads: HashMap<String, HashSet<usize>>,
+    /// The class-hierarchy in the **subclass** direction — a class mapped to its **direct**
+    /// subclasses (the reverse of each [`ClassInfo::bases`] edge). Built once by the C++
+    /// discovery hook after every class is known, it lets a virtual call over-approximate by
+    /// CHA: [`Context::cha_targets`] walks a static type's subclass subtree to gather every
+    /// override. Populated **only** under C++ (empty for C, where `classes` is empty), and read
+    /// only when a call is virtual — so it is a no-op on the C path and for non-polymorphic C++.
+    /// Never branched on.
+    subclasses: HashMap<String, Vec<String>>,
 }
 
 impl Context<'_> {
@@ -647,6 +663,7 @@ impl Context<'_> {
             current_method_class: None,
             reference_aliases: HashMap::default(),
             overloads: HashMap::default(),
+            subclasses: HashMap::default(),
         }
     }
 
@@ -2353,6 +2370,68 @@ impl<'a> Context<'a> {
         None
     }
 
+    /// Whether `method` is **virtual** on static type `class` — declared `virtual` (or
+    /// `override`) on `class` itself or on any class in its base chain, transitively. A virtual
+    /// method dispatches by class-hierarchy analysis (all subtree overrides); a non-virtual one
+    /// stays single-target static dispatch. Driven by the neutral [`ClassInfo::virtual_methods`]
+    /// sets, which are empty for C and for non-polymorphic C++ classes — so this is always
+    /// `false` there and dispatch is unchanged. The base-chain walk mirrors
+    /// [`Self::resolve_method_class`] (a `seen` guard against a malformed cycle).
+    fn method_is_virtual(&self, class: &str, method: &str) -> bool {
+        let mut level = vec![class.to_string()];
+        let mut seen: HashSet<String> = HashSet::default();
+        while let Some(c) = level.pop() {
+            if !seen.insert(c.clone()) {
+                continue;
+            }
+            if let Some(info) = self.classes.get(&c) {
+                if info.virtual_methods.contains(method) {
+                    return true;
+                }
+                level.extend(info.bases.iter().cloned());
+            }
+        }
+        false
+    }
+
+    /// The class-hierarchy-analysis (CHA) target set for a virtual call of `method` on static
+    /// type `static_class`, given the class `defining_class` that owns `method` for that static
+    /// type (from [`Self::resolve_method_class`]): the static-type target `defining_class::method`
+    /// **plus** `sub::method` for every transitive subclass `sub` of `static_class` that declares
+    /// its **own** `method` (an override). This is a sound superset of the single override the
+    /// dynamic type actually selects (Principle I). Names are bare `Class::method` (the caller
+    /// arity-mangles each). Duplicate-free and order-stable; the subclass subtree is walked via
+    /// the neutral [`Self::subclasses`] map (empty for C, so this reduces to the single
+    /// static-type target there). A `seen` guard bounds a malformed hierarchy.
+    fn cha_targets(&self, static_class: &str, defining_class: &str, method: &str) -> Vec<String> {
+        let mut targets: Vec<String> = vec![format!("{defining_class}::{method}")];
+        // Walk the subclass subtree rooted at `static_class`, collecting each subclass that
+        // defines its own override of `method`.
+        let mut stack: Vec<String> = self
+            .subclasses
+            .get(static_class)
+            .cloned()
+            .unwrap_or_default();
+        let mut seen: HashSet<String> = HashSet::default();
+        while let Some(sub) = stack.pop() {
+            if !seen.insert(sub.clone()) {
+                continue;
+            }
+            if let Some(info) = self.classes.get(&sub)
+                && info.methods.contains(method)
+            {
+                let edge = format!("{sub}::{method}");
+                if !targets.contains(&edge) {
+                    targets.push(edge);
+                }
+            }
+            if let Some(subs) = self.subclasses.get(&sub) {
+                stack.extend(subs.iter().cloned());
+            }
+        }
+        targets
+    }
+
     /// Resolve a C++ instance-method call receiver node into the object to dispatch on — its
     /// arg-0 (`ByRef`) access-path expression and its class — or `None` if it is not a known
     /// class object. Handles a plain identifier local (`b.m()`), the implicit receiver
@@ -2463,25 +2542,36 @@ impl<'a> Context<'a> {
             Some(found) => found,
             None => return Ok(None),
         };
-        // Emit the edge to the class that *defines* the method (`DefiningClass::method`), so an
-        // inherited method reaches the base's lowered body.
-        let base = format!("{defining_class}::{method}");
-
         let arg_node = call_node
             .child_by_field_name("arguments")
             .expect("call_expression always has arguments");
         let explicit_args = self.collect_arguments(program, arg_node, source, scope_view)?;
-        // Resolve an overloaded method to its arity-matching overload by the explicit-argument
-        // count (`b.f(x, y)` -> the `Box::f#2` edge); a non-overloaded method stays bare. The
-        // `methods`/`returns_self` sets are keyed by the bare method name (an overload-set
-        // property), so only the callee/definition *string* changes here.
-        let qualified = self.overload_name(&base, explicit_args.len());
+        // Build the call's target edge(s). A **non-virtual** method is a single static-type
+        // target: the class that *defines* the method (`DefiningClass::method`), so an inherited
+        // method reaches the base's lowered body (spec 011). A method that is **virtual** on the
+        // receiver's static class dispatches by class-hierarchy analysis — the target set is the
+        // static-type resolution *plus* every override in the static type's subclass subtree
+        // ([`Self::cha_targets`]), a sound superset of the single dynamically-selected override.
+        // `virtual_methods`/`subclasses` are empty for C and non-polymorphic C++, so this stays a
+        // single-target static edge there (no language branch). Each target is arity-mangled by
+        // the explicit-argument count (`b.f(x, y)` -> `Box::f#2`); a non-overloaded name stays
+        // bare (the `methods`/`returns_self`/`virtual_methods` sets are keyed by the bare method
+        // name, an overload-set property, so only the callee *string* changes).
+        let bases: Vec<String> = if self.method_is_virtual(&recv.class, method) {
+            self.cha_targets(&recv.class, &defining_class, method)
+        } else {
+            vec![format!("{defining_class}::{method}")]
+        };
+        let targets: SmallVec<[String; 4]> = bases
+            .iter()
+            .map(|b| self.overload_name(b, explicit_args.len()))
+            .collect();
         let mut method_args: SmallVec<[Exp; 4]> = smallvec![recv.exp.clone()];
         method_args.extend(explicit_args);
         program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
             StatementKind::CallAssign {
                 style: CallStyle::DirectCall {
-                    call_edges: CallEdges::Explicit(smallvec![qualified]),
+                    call_edges: CallEdges::Explicit(targets),
                 },
                 rets: vec![VariableRef::new_local(temp_name.clone())].into(),
                 args: method_args,

@@ -761,6 +761,11 @@ fn clang_compiles(prog: &str, static_markers: &str, lang: Lang) -> bool {
     let mut cmd = Command::new(lang.compiler());
     if lang == Lang::Cpp {
         cmd.arg("-nostdlib++");
+        // `-fno-rtti`: a `virtual` program's vtable references RTTI type-info
+        // (`vtable for __cxxabiv1::__class_type_info`), which does not link under this box's
+        // DFSan recipe; disabling RTTI (no `dynamic_cast`/`typeid` in scope) fixes the link
+        // and changes no taint semantics.
+        cmd.arg("-fno-rtti");
     }
     let ok = cmd
         .args(["-O0", "-w", "-o"])
@@ -797,6 +802,10 @@ fn run_dfsan(
     compile.arg("-fsanitize=dataflow");
     if lang == Lang::Cpp {
         compile.arg("-nostdlib++");
+        // See `clang_compiles`: `-fno-rtti` lets a `virtual` program link under DFSan (the
+        // vtable's RTTI type-info reference is otherwise undefined). No RTTI is in scope, so
+        // this is taint-neutral and regresses no existing C or C++ case.
+        compile.arg("-fno-rtti");
     }
     let compiled = compile
         .args(["-O0", "-w", "-o"])

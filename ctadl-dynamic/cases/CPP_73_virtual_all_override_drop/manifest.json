@@ -1,0 +1,6 @@
+{
+  "name": "CPP_73_virtual_all_override_drop",
+  "description": "C++ virtual dispatch (CHA) all-drop NEGATIVE: both Base::get (virtual) and Derived::get (override) return 0. A Derived object through Base* p calls p->get() virtually; the CHA union {Base::get, Derived::get} carries no taint since neither override returns the member. CHA does not invent a spurious flow. DFSan runs Derived::get (returns 0). s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

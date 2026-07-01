@@ -1,0 +1,6 @@
+{
+  "name": "CPP_72_virtual_base_object",
+  "description": "C++ virtual dispatch (CHA) base-object case, POSITIVE: Base::get is virtual and flows; Derived::get overrides and drops. A Base object used through Base* p runs Base::get (flows). CTADL's CHA union over Base's subtree {Base::get, Derived::get} is dominated by the flowing Base::get, so the flow is reported soundly. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

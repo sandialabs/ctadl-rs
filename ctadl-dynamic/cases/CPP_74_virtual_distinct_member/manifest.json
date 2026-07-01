@@ -1,0 +1,6 @@
+{
+  "name": "CPP_74_virtual_distinct_member",
+  "description": "C++ virtual dispatch (CHA) field-sensitivity NEGATIVE: a virtual setter seta taints member a; a virtual getter getb reads a distinct member b=0. Both called virtually through Base* at a Derived object (multi-target edges). a and b are separate field-named paths, so the taint in a never reaches getb's b. CHA dispatch preserves field sensitivity -- no spurious flow. DFSan agrees. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}
