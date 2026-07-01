@@ -1045,3 +1045,86 @@ fn aggregate_initializer_list_lowers_to_element_stores() {
     let prog = program_from_string(src).0;
     check_assign_or_update(&prog, "a.[0]", ["@p0"], None); // a[0] <- s (param 0)
 }
+
+#[test_log::test]
+fn labeled_empty_statement_parses() {
+    // A label on an empty statement (`done: ;`), e.g. a `goto` target that jumps over a
+    // kill, must ingest cleanly: the empty `expression_statement` (just `;`) carries no
+    // expression to lower. Previously the bare `;` reached `flatten_expr`'s catch-all and
+    // failed ingestion (ERR 78). `program_from_string` asserts a clean parse with no
+    // dangling (terminator-less) block; we also confirm the pre-goto `r = s` flow survives.
+    let src = r"
+        int f() {
+            int s = source();
+            int r = s;
+            goto done;
+            r = 0;
+        done:
+            ;
+            return r;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "r", ["s"], None); // r = s, before the goto
+}
+
+#[test_log::test]
+fn addr_of_local_write_through_taints_pointee() {
+    // F3 (soundness): writing through a local's address must write the *pointee*, not just
+    // the pointer. CTADL models pointers as value copies (`int *p = &x` -> `assign p = x`,
+    // `*p = src` -> `assign p = src`), which is sound for reads but drops the write-back, so
+    // `x` never becomes tainted. Resolving `*p` to its same-block address-of pointee makes
+    // the store `*p = src` lower to `assign x = src` -- a real def of `x` -- so a later
+    // `sink(x)` observes the taint (corpus case 34_addr_of_local_alias).
+    let src = r"
+        int f() {
+            int x = 0;
+            int src = source();
+            int *p = &x;
+            *p = src;
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "x", ["src"], None); // *p = src  ==>  x = src
+}
+
+#[test_log::test]
+fn addr_of_local_read_through_resolves_pointee() {
+    // Reading through the alias (`int *p = &x; int y = *p;`) resolves `*p` to `x`, so `y`
+    // reads the current `x` (corpus case 14). This was already sound under the value-copy
+    // model; the fix keeps it working while making the read path consistent with the write
+    // path (both route the dereference to the pointee).
+    let src = r"
+        int f() {
+            int x = source();
+            int *p = &x;
+            int y = *p;
+            return y;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "y", ["x"], None); // y = *p  ==>  y = x
+}
+
+#[test_log::test]
+fn addr_of_alias_does_not_cross_basic_blocks() {
+    // The must-points-to is confined to the straight-line block the `p = &x` binding was
+    // recorded in. Once control flow intervenes, a later `*p` falls back to the value-copy
+    // model (writing `p`, not the pointee) rather than unsoundly resolving a possibly-stale
+    // alias across a branch. Here the store lands after an `if`, so it writes `p`, and the
+    // only write to `x` is its initializer.
+    let src = r"
+        int f(int c) {
+            int x = 0;
+            int src = source();
+            int *p = &x;
+            if (c) { int z = 1; }
+            *p = src;
+            return x;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "p", ["src"], None); // fallback: *p = src  ==>  p = src
+    assert_eq!(
+        count_writes_to(&prog, "x"),
+        1,
+        "only `int x = 0` should write x; the post-if `*p = src` must not resolve to x across a block boundary"
+    );
+}

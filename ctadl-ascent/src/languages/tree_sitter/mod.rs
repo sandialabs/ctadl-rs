@@ -423,6 +423,18 @@ struct Context<'a> {
     /// (unlike `break`/`continue` targets, which ride on `ScopeView`) the blocks are
     /// created in a pre-scan over the whole body and looked up here. Reset per function.
     label_blocks: HashMap<String, BasicBlockIdx>,
+    /// Intraprocedural must-points-to for address-taken locals: maps a pointer variable
+    /// `p` to the access path it was taken to (`x` after `p = &x`) together with the basic
+    /// block in which that binding was established. Used to resolve a dereference `*p` --
+    /// as a store LHS (`*p = v`) or a load RHS (`y = *p`) -- to the pointee `x`, so a write
+    /// through the alias taints `x` (the F3 soundness gap: CTADL models pointers as value
+    /// copies, which is sound for reads but drops the write-back). The block key confines
+    /// each binding to the straight-line region it was recorded in: a lookup only trusts an
+    /// entry whose block matches the current `blidx`, so once control flow moves to another
+    /// block the alias is dropped and we fall back to the value-copy model. That keeps the
+    /// must-points-to exact (no cross-branch may-alias reasoning) and never less sound than
+    /// before. Reset per function.
+    addr_alias: HashMap<VariableRef, (AccessPath, BasicBlockIdx)>,
 }
 
 pub struct MatchExtractor<'q, 'cursor, 'tree> {
@@ -684,6 +696,43 @@ impl<'a> Context<'a> {
         }
 
         self.add_assign_to_program(program, scope_view, &target_var, &rhs_var, right_op);
+
+        // Maintain the address-of must-points-to map (see `Context::addr_alias`). Only a
+        // plain, whole assignment to a variable (`p = &x`, or a declarator initializer)
+        // updates it; a store through a dereference (`*p = ...`, whose `target_node` is
+        // itself a `pointer_expression`) writes *through* the alias and must not disturb it.
+        if target_node.kind() != "pointer_expression"
+            && let Exp::AccessPath(dest_ap) = &target_var
+            && dest_ap.path.is_empty()
+        {
+            let is_plain_assign = operator_node.is_none_or(|op| op.kind() == "=");
+            let addr_of_pointee = if is_plain_assign
+                && expr_node.kind() == "pointer_expression"
+                && expr_node
+                    .child_by_field_name("operator")
+                    .is_some_and(|op| to_str(&op, source) == "&")
+                && let Exp::AccessPath(pointee) = &rhs_var
+            {
+                // `p = &x`: `rhs_var` is the pointee's access path (`&x` flattened to `x`).
+                Some(pointee.clone())
+            } else {
+                None
+            };
+            match addr_of_pointee {
+                Some(pointee) => {
+                    self.addr_alias
+                        .insert(dest_ap.variable_ref.clone(), (pointee, scope_view.blidx));
+                }
+                // Any other assignment to `p` (a different pointer, a computed value, a
+                // compound `+=`) makes its pointee unknown -- drop the stale binding so a
+                // later `*p` falls back to the value-copy model instead of resolving to the
+                // wrong local.
+                None => {
+                    self.addr_alias.remove(&dest_ap.variable_ref);
+                }
+            }
+        }
+
         Ok(target_var)
     }
 
@@ -808,7 +857,13 @@ impl<'a> Context<'a> {
                 self.flatten_expr(program, child, source, scope_view)?;
             }
             "expression_statement" | "update_expression" => {
-                if let Some(inner_child) = child.child(0) {
+                // An empty statement (`;`) -- e.g. the body of a label, `done: ;` -- parses as
+                // an `expression_statement` whose only child is the `;` token. There is no
+                // expression to lower, so skip it; otherwise the bare `;` falls through to
+                // `flatten_expr`'s catch-all and fails ingestion (ERR 78).
+                if let Some(inner_child) = child.child(0)
+                    && !_is_empty(&inner_child)
+                {
                     self.flatten_expr(program, inner_child, source, scope_view)?;
                 }
             }
@@ -1767,13 +1822,32 @@ impl<'a> Context<'a> {
                     .expect("always has operator"),*/
                 node.child_by_field_name("operator"),
             ),
-            "pointer_expression" => self.flatten_expr(
-                program,
-                node.child_by_field_name("argument")
-                    .expect("always a argument for the * operator"),
-                source,
-                scope_view,
-            ),
+            // Both dereference (`*p`) and address-of (`&x`) parse as `pointer_expression`;
+            // the operator child distinguishes them. Historically CTADL passed the operand
+            // straight through for both (`*p` -> `p`, `&x` -> `x`), a value-copy model that
+            // is sound for reads but drops writes through a pointer (F3). For a dereference
+            // whose operand is a plain variable with a known same-block address-of alias
+            // (`p = &x`), resolve `*p` to the pointee `x` so a store `*p = v` becomes a real
+            // write to `x` (and a load `y = *p` reads the current `x`). Everything else --
+            // `&x`, a dereference of a non-aliased/compound operand -- keeps the pass-through.
+            "pointer_expression" => {
+                let arg = node
+                    .child_by_field_name("argument")
+                    .expect("always a argument for the * operator");
+                let is_deref = node
+                    .child_by_field_name("operator")
+                    .is_some_and(|op| to_str(&op, source) == "*");
+                let arg_exp = self.flatten_expr(program, arg, source, scope_view)?;
+                if is_deref
+                    && let Exp::AccessPath(ptr_ap) = &arg_exp
+                    && ptr_ap.path.is_empty()
+                    && let Some((pointee, blk)) = self.addr_alias.get(&ptr_ap.variable_ref)
+                    && *blk == scope_view.blidx
+                {
+                    return Ok(Exp::AccessPath(pointee.clone()));
+                }
+                Ok(arg_exp)
+            }
             "subscript_expression" => self.flatten_subscript(program, node, source, scope_view),
             "call_expression" => {
                 let x = self.allocator.next_temp();
@@ -2189,6 +2263,8 @@ impl<'a> Context<'a> {
             // Pre-create a block for every `goto` label in this function so forward
             // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
             self.label_blocks.clear();
+            // Address-of aliases are function-local and confined to a straight-line block.
+            self.addr_alias.clear();
             let mut labels = Vec::new();
             collect_labels(body_node, source, &mut labels);
             for label in labels {

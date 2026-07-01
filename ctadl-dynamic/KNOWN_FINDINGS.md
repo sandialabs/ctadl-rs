@@ -12,8 +12,8 @@ frontend ingestion gaps — and tracks their disposition.
 | switch_statement not ingested | frontend | 25–29 | ✅ resolved (`5d5a695`) |
 | F2 — multiple funcptr stores into an aggregate drop taint | soundness | 30, 33 | ✅ resolved (index-engine path fix) |
 | initializer_list (`{...}`) not ingested | frontend | 31 | ✅ resolved (frontend lowering, 2026-06-30) |
-| **labeled_empty_statement (`L: ;`) not ingested** | frontend | 32 | 🟡 open |
-| **F3 — write through a local's address doesn't taint the local** | soundness | 34 | 🔴 open |
+| labeled_empty_statement (`L: ;`) not ingested | frontend | 32 | ✅ resolved (frontend lowering, 2026-07-01) |
+| F3 — write through a local's address doesn't taint the local | soundness | 34 | ✅ resolved (frontend address-of alias, 2026-07-01) |
 | **F4 — union field overlap not modeled** | soundness | 35 | 🔴 open |
 | **F5 — non-constant subscript doesn't may-alias a constant index** | soundness | 36 | 🔴 open |
 | cast_expression not ingested | frontend | 37 | ✅ resolved (frontend lowering, 2026-06-30) |
@@ -32,9 +32,13 @@ plus positional `initializer_list` (31) were then FIXED this session** in
 `ctadl-ascent/src/languages/tree_sitter/mod.rs` — cast/sizeof/ternary arms in `flatten_expr`, a
 parens/deref peel in `extract_field_expression`, and an `initializer_list` lowering that handles the
 positional **and** designated (`{.a = e}`) forms — with matching unit tests in `tests.rs`; cases
-`31`/`37`/`38`/`39`/`40`/`41` now run as plain `OK`. **4 findings remain open** (3 soundness:
-F3/F4/F5; 1 frontend: `labeled_empty_statement` (32)). The frontend fixes here are also being
-applied to `treesitter_feature_branch` (where the aspirational `#[ignore]` tests get un-ignored).
+`31`/`37`/`38`/`39`/`40`/`41` now run as plain `OK`. **`labeled_empty_statement` (case 32) was also
+fixed (2026-07-01)** — `walk_statement` skips an empty `;` body (guards `child.child(0)` with
+`!_is_empty`) — closing the last open frontend ingestion gap. **F3 (case 34) was also fixed
+(2026-07-01)** — the frontend resolves a same-block dereference `*p` to its address-of pointee, so a
+write `*p = src` through `int *p = &x` taints `x`. **2 findings remain open** (soundness: F4/F5). The
+frontend fixes here are also on `treesitter_feature_branch` (which carries the un-ignored / live
+aspirational tests).
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
 (soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see
@@ -87,25 +91,53 @@ field from the manifest **and** mark the entry below RESOLVED.
 
 ---
 
-## F3 — Write through a local's address doesn't taint the local (OPEN)
+## F3 — Write through a local's address doesn't taint the local (RESOLVED)
 
-- **Status:** **open.** Allowlisted `"known_gap": "F3"` in
-  [`cases/34_addr_of_local_alias`](cases/34_addr_of_local_alias/).
-- **Symptom:** taking a local's address and writing through it (`int *p = &x; *p = src;`) does not
-  taint `x`, so a later read of `x` is clean. CTADL handles **reading** through a pointer alias
-  (case `14`) and `*out = src` through a pointer **parameter** (case `15`), but does not model a
-  *local's* address being captured and written through:
+- **Status:** **resolved** (2026-07-01, frontend address-of aliasing). The `known_gap: "F3"`
+  allowlist was removed from [`cases/34_addr_of_local_alias`](cases/34_addr_of_local_alias/), which
+  now runs as plain `OK` (`static=flow dynamic=flow`).
+- **Was:** taking a local's address and writing through it (`int *p = &x; *p = src;`) did not taint
+  `x`, so a later read of `x` was clean. CTADL handled **reading** through a pointer alias (case `14`)
+  and `*out = src` through a pointer **parameter** (case `15`), but not a *local's* address being
+  captured and written through:
   ```c
-  int x = 0; int *p = &x; *p = src; sink(x);   // F3: static=none, dynamic=flow
+  int x = 0; int *p = &x; *p = src; sink(x);   // was: static=none, dynamic=flow
   ```
-- **Reproduces with:** [`cases/34_addr_of_local_alias`](cases/34_addr_of_local_alias/) →
-  `static=none dynamic=flow` (`known-gap F3`). The contrast with cases `14`/`15` (both `OK`)
-  localizes the gap to write-through a *local* alias (`&local`), not pointer handling in general.
+
+### Root cause (frontend value-copy pointer model)
+
+The tree-sitter C frontend models pointers as **value copies** and does not distinguish `&`/`*` from
+a plain access (`flatten_expr`'s `pointer_expression` arm passed the operand straight through). So
+`int *p = &x` lowered to `assign p = x` and `*p = src` to `assign p = src` — the *pointer* `p`, not
+the *pointee* `x`, received the value. This is sound for **reads** (`y = *p` → `y = p`, and `p`
+carries `x`'s taint by the copy) but drops the **write-back**: the store deposited taint on `p`, and
+nothing flowed from `p` back to `x`. The interprocedural out-param case (`15`) works via a different
+mechanism (a `byref` formal + the call-site summary binding writes back to the caller's `&x`); there
+is no such binding for a purely-local alias.
+
+### The fix
+
+An intraprocedural must-points-to for address-taken locals, entirely in the frontend
+(`ctadl-ascent/src/languages/tree_sitter/mod.rs`): `collect_assignment` records `p = &x` in a
+`Context::addr_alias` map (pointer `VariableRef` → pointee `AccessPath`, tagged with the current
+basic block); `flatten_expr`'s `pointer_expression` arm then resolves a dereference `*p` — whether it
+appears as a store LHS (`*p = src`) or a load RHS (`y = *p`) — to the pointee `x`, so the store lowers
+to `assign x = src` (a real def of `x`). The binding is **keyed by basic block**, so it only applies
+within the straight-line region where `&x` was taken; once control flow intervenes (or `p` is
+reassigned to anything but `&x`), the lookup falls back to the value-copy model. That keeps the
+must-points-to exact and never less sound than before (cross-branch may-alias is deliberately not
+modeled). No backend/index-engine changes.
+
+### Confirmed by DFSan
+
+Before: `34_addr_of_local_alias` reported `static=none dynamic=flow`. After: `static=flow
+dynamic=flow` (`OK`); `scan cases/` drops from 3 to 2 soundness-disagree (only F4/F5 remain).
+Regression tests in `tests.rs`: `addr_of_local_write_through_taints_pointee`,
+`addr_of_local_read_through_resolves_pointee`, `addr_of_alias_does_not_cross_basic_blocks`. The full
+`ctadl-ascent` suite stays green (111 lib tests).
+
 - **Found by / cross-validated:** the `treesitter_feature_branch` aspirational unit test
-  `address_of_local_aliases` (`#[ignore]`); reproduced here as a DFSan case.
-- **Root cause:** not yet investigated. Candidate: `p = &x` doesn't bind `p`'s pointee to `x`, so
-  the `*p = src` store updates an abstract pointee rather than `x` (needs local points-to / address-of
-  modeling).
+  `address_of_local_aliases` (`#[ignore]`); reproduced here as DFSan case `34`.
 
 ---
 
@@ -236,12 +268,16 @@ compare against the moment the frontend learns to ingest it (the harness will th
 - **Found by:** the broadened M7 generator (its array-of-function-pointers transform used a brace
   initializer; switching to element assignment dodged this and exposed F2).
 
-## labeled_empty_statement — a label on an empty statement (`L: ;`) doesn't parse (OPEN)
+## labeled_empty_statement — a label on an empty statement (`L: ;`) (RESOLVED)
 
-- **Status:** **open.** Allowlisted as `"known_frontend_gap": "labeled_empty_statement"` in
-  [`cases/32_label_empty_statement`](cases/32_label_empty_statement/).
-- **Symptom:** a `labeled_statement` whose body is the null statement (`done: ;`) fails — the bare
-  `;` reaches `flatten_expr`'s catch-all (`ERR 78`). A label on a **real** statement
+- **Status:** **resolved** (2026-07-01, frontend lowering). Fixed in `walk_statement`: the
+  `expression_statement`/`update_expression` arm now guards `child.child(0)` with `!_is_empty(..)`,
+  so an empty `;` body carries no expression to lower and is skipped (rather than falling through to
+  `flatten_expr`'s catch-all). The `known_frontend_gap` allowlist was removed from
+  [`cases/32_label_empty_statement`](cases/32_label_empty_statement/) (now plain `OK`); regression
+  test `labeled_empty_statement_parses` in `tests.rs`. Already live on `treesitter_feature_branch`.
+- **Was:** a `labeled_statement` whose body is the null statement (`done: ;`) failed — the bare
+  `;` reached `flatten_expr`'s catch-all (`ERR 78`). A label on a **real** statement
   (`done: r = r;`) ingests fine, so the gap is specific to the empty-statement body. (`goto` and
   labels generally work — added in `d1ccd07`; this is the one residual form.)
 - **Reproduces with:** [`cases/32_label_empty_statement`](cases/32_label_empty_statement/) →

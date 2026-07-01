@@ -1,7 +1,6 @@
 {
   "name": "addr_of_local_alias",
-  "description": "F3 (soundness): writing through a local's address (int *p = &x; *p = src) does not taint x -- CTADL drops the local-alias write-back; DFSan sees the flow. Contrast case 14 (read through alias) and 15 (*out=src through a pointer param), both of which work.",
+  "description": "writing through a local's address (int *p = &x; *p = src) taints x -- contrast case 14 (read through alias) and 15 (*out=src through a pointer param). [RESOLVED: frontend resolves a same-block `*p` to its address-of pointee; plain OK regression case]",
   "label": "Test",
-  "expect_flow": true,
-  "known_gap": "F3"
+  "expect_flow": true
 }
