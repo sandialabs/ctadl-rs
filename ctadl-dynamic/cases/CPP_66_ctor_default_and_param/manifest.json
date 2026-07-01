@@ -1,0 +1,6 @@
+{
+  "name": "CPP_66_ctor_default_and_param",
+  "description": "C++ constructor overloading (default + param): Box has Box() [arity 0] and Box(int) [arity 1]; both lower distinctly (Box::Box#0 / Box::Box#1); Box b(source()) has one explicit arg, resolves to Box::Box#1 which writes v from its arg, so taint reaches the sink",
+  "label": "Test",
+  "expect_flow": true
+}

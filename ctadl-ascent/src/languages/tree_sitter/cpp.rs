@@ -160,20 +160,25 @@ fn enclosing_class_qualified_name(node: Node<'_>, source: &str) -> Option<String
 }
 
 /// The IR **base name** and explicit **arity** of a `function_definition`, for overload
-/// discovery — or `None` if it is not a name this slice overloads (a constructor, a
-/// destructor, or an unrecognized declarator shape). It mirrors *exactly* the naming the four
-/// registration/call touchpoints use, so the recorded arity set keys the same string the
-/// mangler is later asked about:
+/// discovery — or `None` if it is not a name this slice overloads (a destructor, or an
+/// unrecognized declarator shape). It mirrors *exactly* the naming the registration/call
+/// touchpoints use, so the recorded arity set keys the same string the mangler is later
+/// asked about:
 /// - a free function (`identifier` name) at file scope → the bare `f`; inside a namespace →
-///   the qualified `ns::f` — but an inline **constructor** (an `identifier`-named member,
-///   inside a class body) is excluded (constructor overloading is out of scope);
+///   the qualified `ns::f`;
+/// - an inline **constructor** (an `identifier`-named member equal to the enclosing class's
+///   simple name, `Box(int){…}`) → the qualified ctor name `Class::Class` (`ns::Box::ns::Box`);
+///   any other `identifier`-named member is not lowered, so it yields `None`;
 /// - an inline **method** (`field_identifier` name) → `Class::method`, the class qualified by
 ///   any enclosing namespace;
-/// - an **out-of-line** method (`qualified_identifier` name `Class::m`) → `Class::m` — but an
-///   out-of-line constructor (`Box::Box`, name == scope) is excluded.
+/// - an **out-of-line** method (`qualified_identifier` name `Class::m`) → `Class::m`, including
+///   an out-of-line **constructor** (`Box::Box`, name == scope) → `Box::Box`.
 ///
-/// A reference-returning definition (`Box& setV(…)`) is unwrapped first, exactly as discovery
-/// does elsewhere. Every shape matched here is C++-only, so this yields `None` for all of C.
+/// Constructors are **included** (spec 010): a class's ctors form an overload set keyed on
+/// `Class::Class`, so ctors of ≥2 distinct arities each get an arity-mangled name and a
+/// construction resolves to the matching one. A reference-returning definition (`Box& setV(…)`)
+/// is unwrapped first, exactly as discovery does elsewhere. Every shape matched here is
+/// C++-only, so this yields `None` for all of C.
 fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
     let declr = fdef.child_by_field_name("declarator")?;
     let func_declr = unwrap_reference_declarator(declr);
@@ -184,9 +189,19 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
     let arity = param_arity(params);
     let name_node = func_declr.child_by_field_name("declarator")?;
     match name_node.kind() {
-        // A free function — unless it is an inline constructor / identifier-named member.
+        // A free function, or an inline constructor / identifier-named member.
         "identifier" => {
             if is_class_member_definition(name_node) {
+                // An identifier-named class member is a **constructor** iff its name equals the
+                // enclosing class's simple name (`Box(int){…}` inside `struct Box`); model it
+                // under the qualified ctor name `Class::Class` (`ns::Box::ns::Box`) — the same
+                // string ctor registration and the construction edge build. Any other
+                // identifier-named member is not lowered, so it is not overloadable here.
+                let class = enclosing_class_qualified_name(fdef, source)?;
+                let simple = class.rsplit("::").next().unwrap_or(class.as_str());
+                if to_str(&name_node, source) == simple {
+                    return Some((format!("{class}::{class}"), arity));
+                }
                 return None;
             }
             let base = format!(
@@ -201,15 +216,13 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
             let class = enclosing_class_qualified_name(fdef, source)?;
             Some((format!("{class}::{}", to_str(&name_node, source)), arity))
         }
-        // An out-of-line method `Class::m` — but not an out-of-line constructor (`Box::Box`).
+        // An out-of-line method `Class::m`, or an out-of-line constructor `Box::Box` (name ==
+        // scope) — both keyed on `scope::name`, exactly as registration builds them.
         "qualified_identifier" => {
             let scope = name_node.child_by_field_name("scope")?;
             let name = name_node.child_by_field_name("name")?;
             let scope_s = to_str(&scope, source);
             let name_s = to_str(&name, source);
-            if scope_s == name_s {
-                return None;
-            }
             Some((format!("{scope_s}::{name_s}"), arity))
         }
         _ => None,
@@ -222,10 +235,12 @@ fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
 /// one's IR base name and explicit-parameter arity via [`overload_base_name`], and records the
 /// arity into the neutral [`Context::overloads`] map. A base name that ends up with **≥2**
 /// distinct arities is thereby marked overloaded, so [`Context::overload_name`] mangles it
-/// (`id#1`/`id#2`, `Box::f#1`/`Box::f#2`) at all four touchpoints; a single-arity name stays
-/// bare. Constructors are excluded by `overload_base_name`, so a class's `Class::Class` name
-/// never enters the map and construction is unaffected. Inert for C: no C tree contains any of
-/// the shapes matched here, so nothing is recorded and the map stays empty.
+/// (`id#1`/`id#2`, `Box::f#1`/`Box::f#2`) at every touchpoint; a single-arity name stays bare.
+/// Constructors are **included** (spec 010): a class's ctors are keyed on `Class::Class`, so a
+/// class with ctors of ≥2 arities gets `Box::Box#1`/`Box::Box#2` and a construction resolves to
+/// the matching one; a single-ctor class keeps the bare `Class::Class` and is unchanged. Inert
+/// for C: no C tree contains any of the shapes matched here, so nothing is recorded and the map
+/// stays empty.
 fn cpp_discover_overloads<'a>(
     ctx: &mut Context<'a>,
     source: &'a str,
@@ -520,10 +535,11 @@ fn cpp_collect_methods<'a>(
 
     // Phase 2a: register a function index for every method, so a method calling another
     // method (or a top-level body calling one) resolves it regardless of definition order.
-    // An **overloaded** method (`Box::f#1`, `Box::f#2`) reserves a distinct `FunctionIdx` per
-    // arity via the neutral mangler; a non-overloaded method (and every constructor, which is
-    // never in the overloads map) stays bare — the same `Class::method` string a `recv.m(…)`
-    // dispatch and the `construct` hook build.
+    // An **overloaded** method or constructor (`Box::f#1`/`Box::f#2`, `Box::Box#1`/`Box::Box#2`)
+    // reserves a distinct `FunctionIdx` per arity via the neutral mangler; a non-overloaded
+    // method and a single-arity constructor stay bare — the same `Class::method` / `Class::Class`
+    // string a `recv.m(…)` dispatch and the `construct` hook build. (Spec 010 lifted the
+    // constructor exclusion, so a class with ctors of ≥2 arities mangles them here too.)
     for md in &methods {
         let base = format!("{}::{}", md.class, md.name);
         let qualified = ctx.overload_name(&base, param_arity(md.params));
@@ -674,11 +690,13 @@ fn ctor_member_inits<'t>(fdef: Node<'t>, source: &str) -> Vec<(String, Node<'t>)
 /// calls this when the declaration's type names a known class (the `classes` map is empty
 /// for C, so the C path never reaches here). Recognized forms, all requiring the class to
 /// declare a constructor (`has_ctor`):
-/// - **direct** `Box b(args)` — tree-sitter parses this as a function declaration (the
-///   "most vexing parse"): a `function_declarator` whose declarator is the object
-///   `identifier` and whose `parameters` hold the arguments shredded into
-///   `parameter_declaration`s, which [`reconstruct_mvp_arg`] turns back into argument
-///   expressions;
+/// - **direct** `Box b(args)` — with **all** arguments type-like (`Box b(source())`),
+///   tree-sitter parses this as a function declaration (the "most vexing parse"): a
+///   `function_declarator` whose declarator is the object `identifier` and whose `parameters`
+///   hold the arguments shredded into `parameter_declaration`s, which [`reconstruct_mvp_arg`]
+///   turns back into argument expressions. When an argument is **not** type-like (e.g. a
+///   literal, `Box b(0, source())`) the MVP does not apply and the object is instead an
+///   `init_declarator` whose `value` is the constructor `argument_list`;
 /// - **copy** `Box b = Box(args)` — an `init_declarator` whose value is a `call_expression`
 ///   on the class name;
 /// - **brace** `Box b{args}` — an `init_declarator` whose value is an `initializer_list`.
@@ -770,6 +788,17 @@ fn cpp_try_construct<'a>(
                     }
                     (obj_node, args)
                 }
+                // Direct init `Box b(a, b)` whose arguments are **not** all type-like — e.g.
+                // one is a literal (`Box b(0, source())`). Because a literal cannot be a
+                // parameter declaration, tree-sitter does **not** most-vexing-parse this as a
+                // function declaration: the object is an `init_declarator` whose `value` is the
+                // constructor `argument_list`. (The all-type-like direct form `Box b(source())`
+                // is MVP-mangled and handled by the `function_declarator` arm above.) Collect
+                // the arguments exactly as a call's argument list.
+                "argument_list" => {
+                    let args = ctx.collect_arguments(program, value, source, scope_view)?;
+                    (obj_node, args)
+                }
                 _ => return Ok(false),
             }
         }
@@ -843,6 +872,12 @@ fn reconstruct_mvp_arg<'a>(
 /// as the plain arg-0 access path (by-ref semantics come from the constructor's param 0
 /// being `ByRef`, exactly as for an ordinary method receiver). The void constructor's
 /// result goes to a throwaway temp, as method-call lowering already does.
+///
+/// The ctor edge is arity-resolved (spec 010): the callee name is
+/// `overload_name("Class::Class", <explicit-arg-count>)`, so a class with ctors of ≥2 arities
+/// resolves the construction to the ctor with exactly that many parameters (`Box::Box#1` vs
+/// `Box::Box#2`); a single-ctor class keeps the bare `Class::Class` (identity mangler), so
+/// every existing construction is byte-for-byte unchanged.
 fn emit_construction<'a>(
     ctx: &mut Context<'a>,
     source: &'a str,
@@ -864,10 +899,11 @@ fn emit_construction<'a>(
         .insert(obj_name.to_string(), class.to_string());
 
     let recv = Exp::AccessPath(ctx.build_access_path(obj_name, Default::default(), scope_view));
+    let arity = ctor_args.len();
     let mut args: SmallVec<[Exp; 4]> = smallvec![recv];
     args.extend(ctor_args);
 
-    let qualified = format!("{class}::{class}");
+    let qualified = ctx.overload_name(&format!("{class}::{class}"), arity);
     let temp = ctx.allocator.next_temp();
     program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
         StatementKind::CallAssign {

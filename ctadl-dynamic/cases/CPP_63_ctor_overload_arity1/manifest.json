@@ -1,0 +1,6 @@
+{
+  "name": "CPP_63_ctor_overload_arity1",
+  "description": "C++ constructor overloading POSITIVE (arity 1): Box has Box(int) and Box(int,int); Box b(source()) has one explicit arg, resolves to the arity-1 ctor Box::Box#1 which writes v from its arg, so taint reaches the sink",
+  "label": "Test",
+  "expect_flow": true
+}

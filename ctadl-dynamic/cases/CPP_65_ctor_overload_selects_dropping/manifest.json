@@ -1,0 +1,6 @@
+{
+  "name": "CPP_65_ctor_overload_selects_dropping",
+  "description": "C++ constructor overloading NEGATIVE: Box(int)->v=arg (flows) and Box(int,int)->v=0 (drops); Box b(source(), 0) resolves precisely to the arity-2 ctor Box::Box#2 which discards its args, never cross-resolving to the flowing Box::Box#1, so no taint reaches the sink",
+  "label": "Test",
+  "expect_flow": false
+}

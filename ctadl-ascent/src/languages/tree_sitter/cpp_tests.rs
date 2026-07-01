@@ -1243,3 +1243,160 @@ fn cpp_non_overloaded_name_stays_bare() {
     );
     check_direct_call(&prog, "main", "id", ["x"]);
 }
+
+#[test_log::test]
+fn cpp_ctor_overloads_lowered_distinctly_and_resolved_by_arity() {
+    // Spec 010 FR-1/FR-2: a class with constructors of two distinct arities lowers each under
+    // an arity-mangled ctor name (`Box::Box#1`, `Box::Box#2`) as a DISTINCT function — neither
+    // clobbers the other, and the bare `Box::Box` is never registered. A construction resolves
+    // to the ctor whose parameter count equals its explicit-argument count: `Box b(source())`
+    // → `Box::Box#1` (writes `v` from its one arg), `Box c(0, source())` → `Box::Box#2` (writes
+    // `v` from its 2nd arg). The mixed-literal direct form `Box c(0, source())` parses as an
+    // `init_declarator` with an `argument_list` value (not the most-vexing-parse), exercising
+    // that construction path too.
+    let src = r#"
+        extern "C" int source();
+        struct Box {
+            int v;
+            Box(int x) { v = x; }
+            Box(int x, int y) { v = y; }
+            int get() { return v; }
+        };
+        int main() {
+            Box b(source());
+            Box c(0, source());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // Two distinct ctor overloads, each with implicit `this` (ByRef) at param 0.
+    check_func_params(
+        &prog,
+        "Box::Box#1",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_params(
+        &prog,
+        "Box::Box#2",
+        &[
+            ParameterType::ByRef,
+            ParameterType::ByVal,
+            ParameterType::ByVal,
+        ],
+    );
+    // Each writes the member from a different parameter (its body is not clobbered).
+    check_func_assign_or_update(&prog, "Box::Box#1", "@p0.v", ["@p1"]);
+    check_func_assign_or_update(&prog, "Box::Box#2", "@p0.v", ["@p2"]);
+    // The overloaded ctor name is NOT also registered bare.
+    assert!(
+        function_named(&prog, "Box::Box").is_none(),
+        "overloaded ctor `Box::Box` must not be registered under its bare name\n{prog}"
+    );
+    // Constructions resolve by explicit-argument count; the object is arg 0 either way.
+    check_direct_call_arg0(&prog, "main", "Box::Box#1", "b");
+    check_direct_call_arg0(&prog, "main", "Box::Box#2", "c");
+}
+
+#[test_log::test]
+fn cpp_ctor_default_and_param_overload_resolves() {
+    // Spec 010 FR-2: a default ctor (arity 0) and a parameterized ctor (arity 1) form an
+    // overload set of two arities, so each is mangled (`Box::Box#0`, `Box::Box#1`) and both
+    // are lowered (the default is not clobbered). `Box b(source())` has one explicit argument,
+    // so it resolves to `Box::Box#1`, whose body writes the member from that argument.
+    let src = r#"
+        extern "C" int source();
+        struct Box {
+            int v;
+            Box() { v = 0; }
+            Box(int x) { v = x; }
+            int get() { return v; }
+        };
+        int main() {
+            Box b(source());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    assert!(
+        function_named(&prog, "Box::Box#0").is_some(),
+        "the default constructor must be lowered as `Box::Box#0`\n{prog}"
+    );
+    check_func_params(
+        &prog,
+        "Box::Box#1",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_assign_or_update(&prog, "Box::Box#1", "@p0.v", ["@p1"]);
+    // Construction with one explicit argument resolves to the arity-1 ctor.
+    check_direct_call_arg0(&prog, "main", "Box::Box#1", "b");
+    assert!(
+        function_named(&prog, "Box::Box").is_none(),
+        "overloaded ctor `Box::Box` must not be registered under its bare name\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_ctor_overload_selects_dropping_no_cross_resolution() {
+    // Spec 010 FR-3 (the negative): `Box(int x){v=x;}` (arity 1, flows) and
+    // `Box(int x,int y){v=0;}` (arity 2, DROPS). The construction `Box d(source(), 0)` has two
+    // explicit arguments, so it must resolve to the arity-2 ctor `Box::Box#2` (which discards
+    // its args, writing the constant 0) and NEVER cross-resolve to the flowing arity-1 sibling
+    // `Box::Box#1`. A merge — or a wrong pick of `#1` — would leak `source` into `d.v`
+    // (`s=flow` where DFSan sees none). This is the precise-selection discriminator.
+    let src = r#"
+        extern "C" int source();
+        struct Box {
+            int v;
+            Box(int x) { v = x; }
+            Box(int x, int y) { v = 0; }
+            int get() { return v; }
+        };
+        int main() {
+            Box d(source(), 0);
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_func_assign_or_update(&prog, "Box::Box#1", "@p0.v", ["@p1"]);
+    check_func_assign_or_update(&prog, "Box::Box#2", "@p0.v", ["#0"]);
+    check_direct_call_arg0(&prog, "main", "Box::Box#2", "d");
+    let calls = direct_calls_in(&prog, "main");
+    assert!(
+        !calls
+            .iter()
+            .any(|(callees, _)| callees.iter().any(|c| c == "Box::Box#1")),
+        "Box d(source(), 0) must resolve to Box::Box#2, never cross-resolve to Box::Box#1\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_single_ctor_stays_bare() {
+    // Spec 010 FR-1 (regression guard): a class with a SINGLE constructor is not an overload
+    // set, so the ctor keeps its bare IR name `Box::Box` (no `#arity` suffix) and the
+    // construction edge is bare — byte-for-byte identical to spec 006. This proves the mangler
+    // is the identity for a single-ctor class (so every existing 006/008 construction is
+    // unchanged).
+    let src = r#"
+        extern "C" int source();
+        struct Box {
+            int v;
+            Box(int x) { v = x; }
+            int get() { return v; }
+        };
+        int main() {
+            Box b(source());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::Box",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    assert!(
+        function_named(&prog, "Box::Box#1").is_none(),
+        "a single-ctor class must not arity-mangle its constructor\n{prog}"
+    );
+    check_direct_call_arg0(&prog, "main", "Box::Box", "b");
+}
