@@ -108,6 +108,32 @@ fn body_returns_deref_this(body: Node<'_>) -> bool {
     false
 }
 
+/// The namespace qualifier prefix (`ns::`, or nested `a::b::`) of every `namespace_`
+/// `definition` enclosing `node`, outermost first, or `""` if `node` is at file scope. A
+/// namespaced entity is lowered under its fully-qualified IR name (`ns::f`, `ns::Box`), so a
+/// qualified reference at the use site (`ns::f(…)`, `ns::Box b;`) resolves to it. Walks the
+/// ancestor chain for named `namespace_definition`s and joins their names with `::`. C trees
+/// have no `namespace_definition`, so this is always `""` for C.
+fn enclosing_namespace_prefix(node: Node<'_>, source: &str) -> String {
+    let mut names: Vec<&str> = Vec::new();
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        if n.kind() == "namespace_definition"
+            && let Some(name) = n.child_by_field_name("name")
+        {
+            names.push(to_str(&name, source));
+        }
+        cur = n.parent();
+    }
+    names.reverse();
+    let mut prefix = String::new();
+    for name in names {
+        prefix.push_str(name);
+        prefix.push_str("::");
+    }
+    prefix
+}
+
 /// Discover C++ instance methods and constructors — inline *and* out-of-line — and lower
 /// them through the shared core.
 ///
@@ -169,7 +195,18 @@ fn cpp_collect_methods<'a>(
     let mut it = cursor.matches(&query, root, source.as_bytes());
     while let Some(m) = it.next() {
         let extract = MatchExtractor::new(&query, m);
-        let class_name = to_str(&extract.get("class.name")?, source).to_string();
+        // A class in a named namespace is registered — and its methods/ctor keyed — under its
+        // **qualified** name (`ns::Box`), so a qualified declaration `ns::Box b;` dispatches;
+        // an inline constructor still names the class by its **simple** name (`Box(int){…}`),
+        // so `simple_name` is what the ctor identifier is compared against. At file scope the
+        // prefix is empty and the two coincide (no change to the non-namespaced path).
+        let class_name_node = extract.get("class.name")?;
+        let simple_name = to_str(&class_name_node, source);
+        let qualified_name = format!(
+            "{}{}",
+            enclosing_namespace_prefix(class_name_node, source),
+            simple_name
+        );
         let body = extract.get("class.body")?;
 
         let mut info = ClassInfo::default();
@@ -211,12 +248,16 @@ fn cpp_collect_methods<'a>(
                         continue;
                     };
                     let is_ctor = name_node.kind() == "identifier"
-                        && to_str(&name_node, source) == class_name;
+                        && to_str(&name_node, source) == simple_name;
                     if name_node.kind() != "field_identifier" && !is_ctor {
                         continue;
                     }
+                    // A constructor's method name is the class's **qualified** name, so its IR
+                    // name is `{qualified}::{qualified}` (`ns::Box::ns::Box`) — the same key the
+                    // `construct` hook builds via `format!("{class}::{class}")`. An ordinary
+                    // method keeps its simple name (`set`), qualified to `ns::Box::set`.
                     let name = if is_ctor {
-                        class_name.clone()
+                        qualified_name.clone()
                     } else {
                         to_str(&name_node, source).to_string()
                     };
@@ -229,7 +270,7 @@ fn cpp_collect_methods<'a>(
                         // initializer list (`: v(x)`) so construction can lower it.
                         info.has_ctor = true;
                         methods.push(MethodDef {
-                            class: class_name.clone(),
+                            class: qualified_name.clone(),
                             name,
                             params,
                             body: method_body,
@@ -247,7 +288,7 @@ fn cpp_collect_methods<'a>(
                             info.returns_self.insert(name.clone());
                         }
                         methods.push(MethodDef {
-                            class: class_name.clone(),
+                            class: qualified_name.clone(),
                             name,
                             params,
                             body: method_body,
@@ -260,7 +301,7 @@ fn cpp_collect_methods<'a>(
                 _ => {}
             }
         }
-        ctx.classes.insert(class_name, info);
+        ctx.classes.insert(qualified_name, info);
     }
     drop(it);
     drop(cursor);
@@ -384,6 +425,87 @@ fn cpp_collect_methods<'a>(
             md.body,
             Some(&md.class),
             &md.member_inits,
+        )?;
+    }
+
+    cpp_collect_namespaced_functions(ctx, source, root, program, global_sidx)?;
+    Ok(())
+}
+
+/// Discover **namespaced free functions** — a `function_definition` that is a direct child
+/// of a named namespace's `declaration_list` — and lower each under its fully-qualified IR
+/// name (`ns::f`), so a qualified call `ns::f(args)` resolves to it. The direct-child
+/// constraint excludes methods (those live inside a class's `field_declaration_list`, not the
+/// namespace's `declaration_list`). The shared `collect_functions` skips these (they are
+/// nested in a `namespace_definition`), so they are not also registered under their bare name.
+///
+/// A namespaced free function is an ordinary free function (no implicit `this`), so it is
+/// lowered with `implicit_this = None` and no member-initializer list — only its **name** is
+/// qualified. Inert for C (no `namespace_definition`).
+fn cpp_collect_namespaced_functions<'a>(
+    ctx: &mut Context<'a>,
+    source: &'a str,
+    root: Node<'_>,
+    program: &mut Program,
+    global_sidx: usize,
+) -> anyhow::Result<(), Error> {
+    let query = ctx.compile_query(
+        r#"
+        (namespace_definition
+            body: (declaration_list
+                (function_definition
+                    declarator: (function_declarator
+                        declarator: (identifier) @func.name
+                        parameters: (parameter_list) @params)
+                    body: (compound_statement) @body) @def))
+        "#,
+    );
+
+    struct NsFn<'t> {
+        qualified: String,
+        params: Node<'t>,
+        body: Node<'t>,
+        void: bool,
+    }
+    let mut ns_fns: Vec<NsFn<'_>> = Vec::new();
+    {
+        let mut cursor = QueryCursor::new();
+        let mut it = cursor.matches(&query, root, source.as_bytes());
+        while let Some(m) = it.next() {
+            let extract = MatchExtractor::new(&query, m);
+            let def = extract.get("def")?;
+            let fname = to_str(&extract.get("func.name")?, source);
+            let qualified = format!("{}{}", enclosing_namespace_prefix(def, source), fname);
+            let void = def
+                .child_by_field_name("type")
+                .is_some_and(|t| to_str(&t, source).eq_ignore_ascii_case("void"));
+            ns_fns.push(NsFn {
+                qualified,
+                params: extract.get("params")?,
+                body: extract.get("body")?,
+                void,
+            });
+        }
+    }
+
+    // Register every qualified name first (so an inter-function reference resolves regardless
+    // of order), then lower each body as an ordinary free function keyed on the qualified name.
+    for f in &ns_fns {
+        ctx.functions
+            .entry(f.qualified.clone())
+            .or_insert_with(|| program.new_function());
+    }
+    for f in ns_fns {
+        ctx.lower_function(
+            source,
+            program,
+            global_sidx,
+            &f.qualified,
+            f.void,
+            f.params,
+            f.body,
+            None,
+            &[],
         )?;
     }
     Ok(())

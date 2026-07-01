@@ -899,4 +899,126 @@ mod tests {
             "a chain tainting member `v` must not reach a distinct member `w`, got: {flows:?}"
         );
     }
+
+    /// M4 (spec 008, FR-1) acceptance, end to end: a free function defined in a named
+    /// namespace is lowered under its qualified IR name (`ns::id`), and the qualified call
+    /// `ns::id(t)` resolves to it, so taint flows through the namespaced function — mirrors
+    /// the CPP_55 dynamic case.
+    #[test_log::test]
+    fn cpp_namespaced_free_function_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            namespace ns {
+                int id(int x) { return x; }
+            }
+            int main() {
+                int t = source();
+                sink(ns::id(t));
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp namespaced free-function flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through a namespaced free function ns::id, got: {flows:?}"
+        );
+    }
+
+    /// M4 (spec 008, FR-2) acceptance, end to end: a class defined in a named namespace is
+    /// registered under its qualified name (`ns::Box`); `ns::Box b;` records the local's type
+    /// as `ns::Box` so `b.set(…)`/`b.get()` dispatch to `ns::Box::set`/`ns::Box::get` and taint
+    /// flows in through the setter and out through the getter — mirrors the CPP_56 dynamic case.
+    #[test_log::test]
+    fn cpp_namespaced_class_method_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            namespace ns {
+                struct Box {
+                    int v;
+                    void set(int x) { v = x; }
+                    int get() { return v; }
+                };
+            }
+            int main() {
+                ns::Box b;
+                b.set(source());
+                sink(b.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp namespaced class-method flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through a namespaced class's methods, got: {flows:?}"
+        );
+    }
+
+    /// M4 (spec 008, FR-2) acceptance, end to end: construction of a namespaced class at a
+    /// declaration (`ns::Box b(source())`) lowers to `DirectCall ns::Box::ns::Box(&b, source())`,
+    /// so the constructor's member write lands in `b`; `sink(b.get())` reads it back out —
+    /// mirrors the CPP_57 dynamic case.
+    #[test_log::test]
+    fn cpp_namespaced_construction_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            namespace ns {
+                struct Box {
+                    int v;
+                    Box(int x) { v = x; }
+                    int get() { return v; }
+                };
+            }
+            int main() {
+                ns::Box b(source());
+                sink(b.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp namespaced construction flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through a namespaced constructor, got: {flows:?}"
+        );
+    }
+
+    /// Negative control (spec 008, FR-3): a namespace declares two distinct free functions,
+    /// `keep(x){return x;}` and `drop(x){return 0;}`. The call `ns::drop(source())` must resolve
+    /// to `ns::drop` (which discards its argument), NOT to `ns::keep` — so no taint reaches the
+    /// sink. This pins that a qualified call resolves *precisely* to the same-named definition
+    /// (no cross-resolution to a sibling) — mirrors the CPP_58 dynamic case (`s=none d=none`).
+    #[test_log::test]
+    fn cpp_namespaced_distinct_function_no_cross_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            namespace ns {
+                int keep(int x) { return x; }
+                int drop(int x) { return 0; }
+            }
+            int main() {
+                sink(ns::drop(source()));
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp namespaced distinct-function flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "ns::drop discards its argument and must not resolve to ns::keep, got: {flows:?}"
+        );
+    }
 }

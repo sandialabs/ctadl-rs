@@ -1102,10 +1102,14 @@ impl<'a> Context<'a> {
         // If this declaration's type names a known class (only ever true under C++, where
         // the `collect_aux` hook has populated `self.classes`), remember the class of each
         // local it declares so a later `recv.method(…)` call can dispatch on it. For C the
-        // `classes` map is empty, so this is always `None` and records nothing.
+        // `classes` map is empty, so this is always `None` and records nothing. A namespaced
+        // class type is a `qualified_identifier` (`ns::Box`) rather than a plain
+        // `type_identifier`; its full text (`ns::Box`) is the qualified key the C++ hook
+        // registered the class under. `qualified_identifier` never occurs under the C grammar,
+        // so accepting it is a neutral node-shape check, not a language branch.
         let class_type: Option<String> = node
             .child_by_field_name("type")
-            .filter(|t| t.kind() == "type_identifier")
+            .filter(|t| matches!(t.kind(), "type_identifier" | "qualified_identifier"))
             .map(|t| to_str(&t, source))
             .filter(|name| self.classes.contains_key(*name))
             .map(str::to_string);
@@ -2063,6 +2067,18 @@ impl<'a> Context<'a> {
                 Default::default(),
                 scope_view,
             ))),
+            // A C++ qualified name used as a value or callee (`ns::f`, `ns::Box::m`). Its
+            // source text is the fully-qualified string (`ns::f`), which resolves to a global
+            // by that name — so a qualified call `ns::f(args)` (whose `function` child is this
+            // node) lowers via `collect_call` to a `DirectCall Explicit(["ns::f"])` that
+            // matches the namespaced definition lowered under the same qualified IR name. A
+            // `qualified_identifier` node never occurs under the C grammar, so this is inert
+            // for C.
+            "qualified_identifier" => Ok(Exp::AccessPath(self.build_access_path(
+                text,
+                Default::default(),
+                scope_view,
+            ))),
             "subscript_expression" => self.flatten_subscript(program, node, source, scope_view),
             "call_expression" => {
                 let x = self.allocator.next_temp();
@@ -2517,10 +2533,12 @@ impl<'a> Context<'a> {
             if let Ok(name_node) = extract.get("func.name") {
                 // The `function_definition` query matches at any depth. A C++ inline
                 // constructor (`Box(int){…}`) is a `function_definition` whose name is a
-                // plain `identifier` *inside a class body*, so it matches too — but it is a
-                // member the `collect_aux` hook already owns. Skip it here so it is not also
-                // registered/lowered as a bogus free function. Inert for C (no class bodies).
-                if is_class_member_definition(name_node) {
+                // plain `identifier` *inside a class body*, and a namespaced free function
+                // (`namespace ns { int f(){…} }`) is one whose name is a plain `identifier`
+                // *inside a namespace* — both match too, but each is owned by the `collect_aux`
+                // hook (lowered as `Class::Class` / `ns::f`). Skip them here so they are not
+                // also registered/lowered bare. Inert for C (no class/namespace bodies).
+                if is_class_member_definition(name_node) || is_namespaced_definition(name_node) {
                     continue;
                 }
                 let func_name = to_str(&name_node, source);
@@ -2547,9 +2565,12 @@ impl<'a> Context<'a> {
             //boo, so TREE_SITTER doesn't add a node for an implicit int function type
             let return_type = extract.get_opt("return_type");
             let func_name_node = extract.get("func.name")?;
-            // A C++ inline constructor matches this query but is a class member owned by the
-            // `collect_aux` hook; skip it so it is not double-lowered (inert for C).
-            if is_class_member_definition(func_name_node) {
+            // A C++ inline constructor or a namespaced free function matches this query but is
+            // owned by the `collect_aux` hook (lowered as `Class::Class` / `ns::f`); skip it so
+            // it is not double-lowered (inert for C).
+            if is_class_member_definition(func_name_node)
+                || is_namespaced_definition(func_name_node)
+            {
                 continue;
             }
             let param_list = extract.get("param_list")?;
@@ -2868,6 +2889,26 @@ fn is_class_member_definition(node: Node<'_>) -> bool {
     while let Some(n) = cur {
         match n.kind() {
             "field_declaration_list" => return true,
+            "translation_unit" => return false,
+            _ => cur = n.parent(),
+        }
+    }
+    false
+}
+
+/// Whether `node` sits inside a `namespace_definition`. A C++ free function defined in a
+/// named namespace (`namespace ns { int f(){…} }`) is a `function_definition` with a plain
+/// `identifier` name — indistinguishable to the top-level `function_definition` query in
+/// [`Context::collect_functions`] from a global free function — but it must be lowered under
+/// its *qualified* name (`ns::f`) by the C++ `collect_aux` hook, not registered bare here.
+/// The shared loop uses this neutral structural ancestor check (mirroring
+/// [`is_class_member_definition`]) to skip it. C trees contain no `namespace_definition`, so
+/// this returns `false` for every C definition and the C path is unaffected.
+fn is_namespaced_definition(node: Node<'_>) -> bool {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        match n.kind() {
+            "namespace_definition" => return true,
             "translation_unit" => return false,
             _ => cur = n.parent(),
         }

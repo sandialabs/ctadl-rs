@@ -984,3 +984,126 @@ fn cpp_out_of_line_ref_return_method_is_discovered() {
     check_direct_call_arg0(&prog, "main", "Box::setV", "b");
     check_direct_call(&prog, "main", "Box::getV", ["b"]);
 }
+
+// ---- Milestone 4 (spec 008): namespaces ----
+
+#[test_log::test]
+fn cpp_namespaced_free_function_qualified_name() {
+    // FR-1: a free function in a named namespace is lowered under its *qualified* IR name
+    // (`ns::id`), and a qualified call `ns::id(t)` emits a direct call to that name. The bare
+    // name `id` must NOT also be registered as a global function (no duplicate registration).
+    let src = r"
+        namespace ns {
+            int id(int x) { return x; }
+        }
+        int main() {
+            int t = 0;
+            int r = ns::id(t);
+            return r;
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    // The namespaced function exists under its qualified name...
+    check_return_arity(&prog, "ns::id", 1);
+    check_func_returns_path(&prog, "ns::id", "@p0");
+    // ...and NOT under its bare name.
+    assert!(
+        function_named(&prog, "id").is_none(),
+        "bare `id` must not be a resolvable global function\n{prog}"
+    );
+    // The qualified call resolves to the qualified definition.
+    check_has_direct_call(&prog, "main", "ns::id");
+}
+
+#[test_log::test]
+fn cpp_namespaced_method_dispatch() {
+    // FR-2: a class in a named namespace registers under `ns::Box`; a `ns::Box b;` local
+    // dispatches `b.set(…)`/`b.get()` to the qualified method names `ns::Box::set`/`ns::Box::get`
+    // with `b` as the arg-0 receiver. The methods are lowered under their qualified names.
+    let src = r"
+        namespace ns {
+            struct Box {
+                int v;
+                void set(int x) { v = x; }
+                int get() { return v; }
+            };
+        }
+        int main() {
+            ns::Box b;
+            b.set(0);
+            int g = b.get();
+            return g;
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    // Methods lowered under qualified names, each with an implicit `this` (ByRef) at param 0.
+    check_func_params(
+        &prog,
+        "ns::Box::set",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_params(&prog, "ns::Box::get", &[ParameterType::ByRef]);
+    // Dispatch on the namespaced-class local passes `b` as arg 0.
+    check_direct_call_arg0(&prog, "main", "ns::Box::set", "b");
+    check_direct_call(&prog, "main", "ns::Box::get", ["b"]);
+}
+
+#[test_log::test]
+fn cpp_namespaced_construction_dispatch() {
+    // FR-2: constructing a namespaced-class local (`ns::Box b(y)`) lowers to a direct call to
+    // the qualified constructor `ns::Box::ns::Box` with `b` as the arg-0 receiver, and a later
+    // `b.get()` dispatches to `ns::Box::get`.
+    let src = r"
+        namespace ns {
+            struct Box {
+                int v;
+                Box(int x) { v = x; }
+                int get() { return v; }
+            };
+        }
+        int main() {
+            int y = 0;
+            ns::Box b(y);
+            int g = b.get();
+            return g;
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    // The constructor is `ns::Box::ns::Box(this: ByRef, x: ByVal)`.
+    check_func_params(
+        &prog,
+        "ns::Box::ns::Box",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_direct_call_arg0(&prog, "main", "ns::Box::ns::Box", "b");
+    check_direct_call(&prog, "main", "ns::Box::get", ["b"]);
+}
+
+#[test_log::test]
+fn cpp_namespaced_distinct_functions_resolve_precisely() {
+    // FR-3 negative: two distinct namespaced free functions are each lowered under their own
+    // qualified name; `ns::drop(t)` resolves to `ns::drop` (which discards its arg), NOT to the
+    // similarly-scoped `ns::keep`. Pins that qualified calls do not cross-resolve to a sibling.
+    let src = r"
+        namespace ns {
+            int keep(int x) { return x; }
+            int drop(int x) { return 0; }
+        }
+        int main() {
+            int t = 0;
+            return ns::drop(t);
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    check_func_returns_path(&prog, "ns::keep", "@p0");
+    check_returns_const(&prog, "ns::drop", "0");
+    // The call resolves to `ns::drop`, and never to `ns::keep`.
+    check_has_direct_call(&prog, "main", "ns::drop");
+    let calls = direct_calls_in(&prog, "main");
+    assert!(
+        !calls
+            .iter()
+            .any(|(callees, _)| callees.iter().any(|c| c == "ns::keep")),
+        "ns::drop(t) must not resolve to ns::keep\n{prog}"
+    );
+}
