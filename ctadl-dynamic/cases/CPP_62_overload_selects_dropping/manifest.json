@@ -1,0 +1,6 @@
+{
+  "name": "CPP_62_overload_selects_dropping",
+  "description": "C++ overloading NEGATIVE: g(int)->arg (flows) and g(int,int)->0 (drops); g(source(), 0) resolves precisely to the arity-2 overload g#2 which discards its args, never cross-resolving to the flowing g#1, so no taint reaches the sink",
+  "label": "Test",
+  "expect_flow": false
+}

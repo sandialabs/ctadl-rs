@@ -1107,3 +1107,139 @@ fn cpp_namespaced_distinct_functions_resolve_precisely() {
         "ns::drop(t) must not resolve to ns::keep\n{prog}"
     );
 }
+
+// ---- Milestone 4 (spec 009): overloading (by arity) ----
+// The end-to-end source→sink flows for these are asserted in `taint_compare::tests::
+// cpp_overload_*` and validated against DFSan by CPP_59..CPP_62.
+
+#[test_log::test]
+fn cpp_overloaded_free_functions_lowered_distinctly_and_resolved_by_arity() {
+    // FR-1: `id` has definitions of two distinct arities, so each is lowered under an
+    // arity-mangled IR name (`id#1`, `id#2`) as a DISTINCT function — neither clobbers the
+    // other — and the bare name `id` is never registered. A call resolves to the overload whose
+    // parameter count equals its explicit-argument count: `id(x)` → `id#1` (returns its one
+    // arg, `@p0`), `id(x, y)` → `id#2` (returns its 2nd, `@p1`).
+    let src = r"
+        int id(int a) { return a; }
+        int id(int a, int b) { return b; }
+        int main() {
+            int x = 0;
+            int y = 0;
+            int r1 = id(x);
+            int r2 = id(x, y);
+            return r1 + r2;
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    // Two distinct overloads, each with its own body; neither merged into the other.
+    check_return_arity(&prog, "id#1", 1);
+    check_return_arity(&prog, "id#2", 1);
+    check_func_returns_path(&prog, "id#1", "@p0");
+    check_func_returns_path(&prog, "id#2", "@p1");
+    // The overloaded name is NOT also registered bare.
+    assert!(
+        function_named(&prog, "id").is_none(),
+        "overloaded `id` must not be registered under its bare name\n{prog}"
+    );
+    // Calls resolve by explicit-argument count.
+    check_direct_call(&prog, "main", "id#1", ["x"]);
+    check_direct_call(&prog, "main", "id#2", ["x", "y"]);
+}
+
+#[test_log::test]
+fn cpp_overloaded_methods_resolved_by_arity() {
+    // FR-2: a class with same-name methods of two arities lowers `Box::f#1`/`Box::f#2` (each
+    // with an implicit `this` ByRef at param 0); `b.f(x)` dispatches to the arity-1 method,
+    // `b.f(x, y)` to the arity-2 one, with `b` as the arg-0 receiver either way. The bare
+    // qualified name `Box::f` is never registered.
+    let src = r"
+        struct Box {
+            int v;
+            int f(int a) { return a; }
+            int f(int a, int b) { return b; }
+        };
+        int main() {
+            Box b;
+            int x = 0;
+            int y = 0;
+            int r1 = b.f(x);
+            int r2 = b.f(x, y);
+            return r1 + r2;
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::f#1",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_params(
+        &prog,
+        "Box::f#2",
+        &[
+            ParameterType::ByRef,
+            ParameterType::ByVal,
+            ParameterType::ByVal,
+        ],
+    );
+    // `this` is param 0, so the 1st explicit arg is `@p1`, the 2nd `@p2`.
+    check_func_returns_path(&prog, "Box::f#1", "@p1");
+    check_func_returns_path(&prog, "Box::f#2", "@p2");
+    // Dispatch resolves by explicit-argument count; `b` is arg 0 in both.
+    check_direct_call_arg0(&prog, "main", "Box::f#1", "b");
+    check_direct_call_arg0(&prog, "main", "Box::f#2", "b");
+    assert!(
+        function_named(&prog, "Box::f").is_none(),
+        "overloaded method `Box::f` must not be registered under its bare qualified name\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_overload_selects_dropping_overload_no_cross_resolution() {
+    // FR-3 (the negative): `g(x, y)` (2 explicit args) resolves to the arity-2 overload `g#2`,
+    // which discards its args (returns the constant 0) — and NEVER cross-resolves to the
+    // flowing arity-1 sibling `g#1` (returns its arg). This is the precise-selection guard: a
+    // merge, or a wrong pick of `g#1`, would leak taint (`s=flow` where DFSan sees none).
+    let src = r"
+        int g(int a) { return a; }
+        int g(int a, int b) { return 0; }
+        int main() {
+            int x = 0;
+            int y = 0;
+            return g(x, y);
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    check_func_returns_path(&prog, "g#1", "@p0");
+    check_returns_const(&prog, "g#2", "0");
+    check_has_direct_call(&prog, "main", "g#2");
+    let calls = direct_calls_in(&prog, "main");
+    assert!(
+        !calls
+            .iter()
+            .any(|(callees, _)| callees.iter().any(|c| c == "g#1")),
+        "g(x, y) must resolve to g#2, never cross-resolve to the flowing g#1\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_non_overloaded_name_stays_bare() {
+    // FR-1 (regression guard): a name with a SINGLE definition is not overloaded, so it keeps
+    // its bare IR name (no `#arity` suffix) and its call resolves bare — proving the mangler is
+    // the identity for non-overloaded names (hence for all of C, whose `overloads` map is empty).
+    let src = r"
+        int id(int a) { return a; }
+        int main() {
+            int x = 0;
+            return id(x);
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    check_return_arity(&prog, "id", 1);
+    check_func_returns_path(&prog, "id", "@p0");
+    assert!(
+        function_named(&prog, "id#1").is_none(),
+        "a non-overloaded name must not be arity-mangled\n{prog}"
+    );
+    check_direct_call(&prog, "main", "id", ["x"]);
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_59_overload_free_function",
+  "description": "C++ overloading POSITIVE (free, arity 1): id is overloaded id(int)->arg and id(int,int)->2nd; id(source()) resolves to the 1-arg overload id#1 (returns its arg), so taint reaches the sink",
+  "label": "Test",
+  "expect_flow": true
+}

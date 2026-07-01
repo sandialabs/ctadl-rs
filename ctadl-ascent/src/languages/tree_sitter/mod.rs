@@ -519,6 +519,16 @@ struct GrammarHooks {
         Node<'t>,
         &'s str,
     ) -> anyhow::Result<bool, Error>,
+    /// Populate [`Context::overloads`] — the neutral arity-overload map — *before* any
+    /// function is registered or lowered. C has no overloading, so its hook is a no-op (the
+    /// map stays empty and [`Context::overload_name`] is the identity). C++ uses it to scan
+    /// every `function_definition` (free, namespaced, and member), grouping by IR base name and
+    /// recording each definition's explicit-parameter arity, so the mangler can tell — at all
+    /// four touchpoints, definition-side and call-side alike — which names are overloaded. It
+    /// runs first (ahead of the top-level pre-pass and `collect_aux`) so the map is complete
+    /// before the first `functions.entry(...)`.
+    collect_overloads:
+        for<'a, 't> fn(&mut Context<'a>, &'a str, Node<'t>) -> anyhow::Result<(), Error>,
 }
 
 impl GrammarHooks {
@@ -534,6 +544,9 @@ impl GrammarHooks {
         collect_aux: |_ctx, _source, _root, _program, _global_sidx| Ok(()),
         // C has no classes/constructors, so no declaration is ever a construction.
         construct: |_ctx, _source, _program, _scope_view, _node, _class| Ok(false),
+        // C has no overloading: the `overloads` map stays empty and `overload_name` is the
+        // identity, so every C (and every non-overloaded) name is registered/resolved bare.
+        collect_overloads: |_ctx, _source, _root| Ok(()),
         // The historical C parameter query, verbatim: plain, pointer (`@is_ref`), array
         // (`@is_ref`), and function-pointer declarators. C has no `reference_declarator`.
         param_query: r#"
@@ -597,6 +610,16 @@ struct Context<'a> {
     /// `reference_declarator`), so it is empty for C and the C path is unchanged. Reset per
     /// function in [`Context::lower_function`].
     reference_aliases: HashMap<String, AccessPath>,
+    /// Overloaded-by-arity names: an IR **base name** (a free function's bare/qualified name
+    /// `f` / `ns::f`, or a method's qualified `Class::method`) mapped to the set of explicit
+    /// **arities** (parameter counts, `this` excluded) defined under it. A name is *overloaded*
+    /// iff its arity set has **≥2** members; those are lowered — and their calls resolved —
+    /// under an arity-mangled name (`f#1`, `f#2`, `Box::area#0`) so a call reaches exactly the
+    /// arity-matching overload. Populated **only** by the C++ `collect_overloads` hook
+    /// (`cpp::cpp_discover_overloads`); **empty for C**, so [`Self::overload_name`] is the
+    /// identity there and the C path — and every non-overloaded C++ name — is unchanged. Never
+    /// branched on: the four touchpoints just consult it through the neutral mangler.
+    overloads: HashMap<String, HashSet<usize>>,
 }
 
 impl Context<'_> {
@@ -616,6 +639,22 @@ impl Context<'_> {
             local_types: HashMap::default(),
             current_method_class: None,
             reference_aliases: HashMap::default(),
+            overloads: HashMap::default(),
+        }
+    }
+
+    /// The neutral overload mangler consulted at all four overloading touchpoints (free- and
+    /// method-function registration, free-call and method-dispatch edges). If `base` names an
+    /// **overloaded** entity — present in [`Self::overloads`] with **≥2** distinct arities — it
+    /// returns the arity-mangled IR name `base#arity`; otherwise it returns `base` unchanged.
+    /// Because [`Self::overloads`] is empty for C (and holds a single arity for every
+    /// non-overloaded C++ name), this is the **identity** for all of C and for every ordinary
+    /// non-overloaded call — so wiring it into a touchpoint changes only genuinely overloaded
+    /// names, and never introduces a language branch.
+    fn overload_name(&self, base: &str, arity: usize) -> String {
+        match self.overloads.get(base) {
+            Some(arities) if arities.len() >= 2 => format!("{base}#{arity}"),
+            _ => base.to_string(),
         }
     }
 
@@ -2378,7 +2417,7 @@ impl<'a> Context<'a> {
         };
         // Resolve `method` against the receiver's class; bail to ordinary lowering if it is
         // not a known method (e.g. a function-pointer member `s.fp(x)` on a plain struct).
-        let (qualified, returns_self) = match self.classes.get(&recv.class) {
+        let (base, returns_self) = match self.classes.get(&recv.class) {
             Some(info) if info.methods.contains(method) => (
                 format!("{}::{}", recv.class, method),
                 info.returns_self.contains(method),
@@ -2389,8 +2428,14 @@ impl<'a> Context<'a> {
         let arg_node = call_node
             .child_by_field_name("arguments")
             .expect("call_expression always has arguments");
+        let explicit_args = self.collect_arguments(program, arg_node, source, scope_view)?;
+        // Resolve an overloaded method to its arity-matching overload by the explicit-argument
+        // count (`b.f(x, y)` -> the `Box::f#2` edge); a non-overloaded method stays bare. The
+        // `methods`/`returns_self` sets are keyed by the bare method name (an overload-set
+        // property), so only the callee/definition *string* changes here.
+        let qualified = self.overload_name(&base, explicit_args.len());
         let mut method_args: SmallVec<[Exp; 4]> = smallvec![recv.exp.clone()];
-        method_args.extend(self.collect_arguments(program, arg_node, source, scope_view)?);
+        method_args.extend(explicit_args);
         program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
             StatementKind::CallAssign {
                 style: CallStyle::DirectCall {
@@ -2451,9 +2496,13 @@ impl<'a> Context<'a> {
         let arg_node = node.child_by_field_name("arguments").expect("always has");
         let func_name = to_str(&func_node, source);
 
-        let call_edges = CallEdges::Explicit(smallvec![func_name.to_string()]);
-
         let args = self.collect_arguments(program, arg_node, source, scope_view)?;
+
+        // Resolve an overloaded free callee to its arity-matching overload by the number of
+        // explicit arguments (`id(a, b)` -> the `id#2` edge); a non-overloaded callee (all of
+        // C, and every C++ name with a single arity) stays bare via the identity mangler. Only
+        // the `DirectCall` (`GlobalHeap`) arm below consults this; a funcptr call ignores it.
+        let call_edges = CallEdges::Explicit(smallvec![self.overload_name(func_name, args.len())]);
 
         // Resolve the callee. A plain `foo(...)` is an identifier; the legacy
         // dereference form `(*op_func)(...)` wraps the pointer in a
@@ -2522,6 +2571,12 @@ impl<'a> Context<'a> {
 
         let query = self.compile_query(query_src);
 
+        // Overload discovery FIRST — before any `functions.entry(...)` below or in the
+        // `collect_aux` hook — so the neutral `overloads` map is complete and the mangler can
+        // tell which names are overloaded at registration time. No-op for C (map stays empty).
+        let discover = self.hooks.collect_overloads;
+        discover(self, source, tree.root_node())?;
+
         // Pre-pass: register every function name up front so a function-pointer
         // reference to a function defined LATER in the file (`fp = later;`) is already
         // known when its using function is lowered. Without this, `flatten_expr` would
@@ -2542,8 +2597,16 @@ impl<'a> Context<'a> {
                     continue;
                 }
                 let func_name = to_str(&name_node, source);
+                // Register under the (possibly arity-mangled) overload name so an overloaded
+                // free function reserves a *distinct* `FunctionIdx` per arity (`id#1`, `id#2`)
+                // instead of colliding on the bare `id`; a non-overloaded name stays bare.
+                let arity = extract
+                    .get("param_list")
+                    .map(param_arity)
+                    .unwrap_or_default();
+                let registered = self.overload_name(func_name, arity);
                 self.functions
-                    .entry(func_name.to_string())
+                    .entry(registered)
                     .or_insert_with(|| program.new_function());
             }
         }
@@ -2581,11 +2644,15 @@ impl<'a> Context<'a> {
             // `void` is arity 0.
             let return_is_void =
                 return_type.is_some_and(|rt| to_str(&rt, source).eq_ignore_ascii_case("void"));
+            // Lower under the (possibly arity-mangled) overload name, matching the pre-pass
+            // registration and the call-site edge so `id#1`/`id#2` are two distinct functions
+            // (neither clobbers the other); a non-overloaded name stays bare.
+            let lowered_name = self.overload_name(func_name, param_arity(param_list));
             self.lower_function(
                 source,
                 program,
                 global_sidx,
-                func_name,
+                &lowered_name,
                 return_is_void,
                 param_list,
                 body_node,
@@ -2884,6 +2951,19 @@ pub fn debug_print_tree(
 /// discovered and lowered by the C++ `collect_aux` hook, so the shared loop uses this to
 /// skip them and avoid double-lowering. C trees contain no `field_declaration_list`, so
 /// this returns `false` for every C definition and the C path is unaffected.
+/// The **arity** of a `parameter_list` — the number of explicit `parameter_declaration`
+/// children (a method's implicit `this` is never in the list, so this is the count the call
+/// site's explicit-argument count matches). Used to key the neutral overload map and to
+/// mangle an overloaded definition's IR name. Ignores punctuation and any variadic/`void`
+/// marker (out of scope for arity-overloading), so an ordinary `f(int, int)` counts 2.
+fn param_arity(param_list: Node<'_>) -> usize {
+    let mut cursor = param_list.walk();
+    param_list
+        .children(&mut cursor)
+        .filter(|c| c.kind() == "parameter_declaration")
+        .count()
+}
+
 fn is_class_member_definition(node: Node<'_>) -> bool {
     let mut cur = node.parent();
     while let Some(n) = cur {

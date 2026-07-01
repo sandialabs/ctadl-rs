@@ -1021,4 +1021,111 @@ mod tests {
             "ns::drop discards its argument and must not resolve to ns::keep, got: {flows:?}"
         );
     }
+
+    /// M4 (spec 009, FR-1) acceptance, end to end: an overloaded free function resolves by
+    /// arity. `id` has an arity-1 overload (returns its arg) and an arity-2 overload; the 1-arg
+    /// call `id(source())` resolves to the arity-1 overload, so taint reaches the sink — mirrors
+    /// the CPP_59 dynamic case (`s=flow d=flow`).
+    #[test_log::test]
+    fn cpp_overload_free_function_arity1_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            int id(int a) { return a; }
+            int id(int a, int b) { return b; }
+            int main() {
+                sink(id(source()));
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp overload free arity-1 flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through the arity-1 overload id#1, got: {flows:?}"
+        );
+    }
+
+    /// M4 (spec 009, FR-2) acceptance, end to end: an overloaded *method* resolves by arity.
+    /// `Box::f` has an arity-1 overload (returns its arg) and an arity-2 one; `b.f(source())`
+    /// dispatches to the arity-1 method, so taint reaches the sink — mirrors the CPP_60 case.
+    #[test_log::test]
+    fn cpp_overload_method_arity1_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                int f(int a) { return a; }
+                int f(int a, int b) { return b; }
+            };
+            int main() {
+                Box b;
+                sink(b.f(source()));
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp overload method arity-1 flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through the arity-1 method overload Box::f#1, got: {flows:?}"
+        );
+    }
+
+    /// M4 (spec 009, FR-1) acceptance, end to end: the arity-2 overload is selected and taint
+    /// follows *its* body. `id(0, source())` resolves to the arity-2 overload (returns its 2nd
+    /// argument), so source (the 2nd arg) reaches the sink — mirrors the CPP_61 case.
+    #[test_log::test]
+    fn cpp_overload_arity2_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            int id(int a) { return a; }
+            int id(int a, int b) { return b; }
+            int main() {
+                sink(id(0, source()));
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp overload arity-2 flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through the arity-2 overload id#2 (returns its 2nd arg), got: {flows:?}"
+        );
+    }
+
+    /// Negative control (spec 009, FR-3): precise selection. `g` has an arity-1 overload that
+    /// flows its arg and an arity-2 overload that drops its args (returns 0). `g(source(), 0)`
+    /// must resolve to the arity-2 overload (which drops), NEVER cross-resolving to the flowing
+    /// arity-1 sibling — so no taint reaches the sink. A merge (or wrong pick) would leak taint;
+    /// mirrors the CPP_62 dynamic case (`s=none d=none`).
+    #[test_log::test]
+    fn cpp_overload_selects_dropping_no_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            int g(int a) { return a; }
+            int g(int a, int b) { return 0; }
+            int main() {
+                sink(g(source(), 0));
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp overload selects-dropping flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "g(source(), 0) must resolve to the dropping arity-2 overload g#2, not the flowing g#1, got: {flows:?}"
+        );
+    }
 }

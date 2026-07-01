@@ -26,7 +26,10 @@ use smallvec::{SmallVec, smallvec};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, QueryCursor};
 
-use super::{ClassInfo, Context, GrammarHooks, MatchExtractor, ScopeView, VarKind, markup, to_str};
+use super::{
+    ClassInfo, Context, GrammarHooks, MatchExtractor, ScopeView, VarKind,
+    is_class_member_definition, markup, param_arity, to_str,
+};
 use crate::error::Error;
 
 /// Map a C++ `if`/`while`/`switch` `condition` field to the expression to flatten.
@@ -132,6 +135,118 @@ fn enclosing_namespace_prefix(node: Node<'_>, source: &str) -> String {
         prefix.push_str("::");
     }
     prefix
+}
+
+/// The fully-qualified name of the `class_specifier`/`struct_specifier` enclosing `node`
+/// (any namespace prefix + the class's simple name), or `None` if `node` is not inside a
+/// class. Matches the `qualified_name` [`cpp_collect_methods`] registers a class and its
+/// methods under, so an inline method's discovered overload base name (`Box::f`, `ns::Box::f`)
+/// is byte-identical to the string the dispatch edge and phase-2 registration build.
+fn enclosing_class_qualified_name(node: Node<'_>, source: &str) -> Option<String> {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        if (n.kind() == "class_specifier" || n.kind() == "struct_specifier")
+            && let Some(name) = n.child_by_field_name("name")
+        {
+            return Some(format!(
+                "{}{}",
+                enclosing_namespace_prefix(name, source),
+                to_str(&name, source)
+            ));
+        }
+        cur = n.parent();
+    }
+    None
+}
+
+/// The IR **base name** and explicit **arity** of a `function_definition`, for overload
+/// discovery — or `None` if it is not a name this slice overloads (a constructor, a
+/// destructor, or an unrecognized declarator shape). It mirrors *exactly* the naming the four
+/// registration/call touchpoints use, so the recorded arity set keys the same string the
+/// mangler is later asked about:
+/// - a free function (`identifier` name) at file scope → the bare `f`; inside a namespace →
+///   the qualified `ns::f` — but an inline **constructor** (an `identifier`-named member,
+///   inside a class body) is excluded (constructor overloading is out of scope);
+/// - an inline **method** (`field_identifier` name) → `Class::method`, the class qualified by
+///   any enclosing namespace;
+/// - an **out-of-line** method (`qualified_identifier` name `Class::m`) → `Class::m` — but an
+///   out-of-line constructor (`Box::Box`, name == scope) is excluded.
+///
+/// A reference-returning definition (`Box& setV(…)`) is unwrapped first, exactly as discovery
+/// does elsewhere. Every shape matched here is C++-only, so this yields `None` for all of C.
+fn overload_base_name(fdef: Node<'_>, source: &str) -> Option<(String, usize)> {
+    let declr = fdef.child_by_field_name("declarator")?;
+    let func_declr = unwrap_reference_declarator(declr);
+    if func_declr.kind() != "function_declarator" {
+        return None;
+    }
+    let params = func_declr.child_by_field_name("parameters")?;
+    let arity = param_arity(params);
+    let name_node = func_declr.child_by_field_name("declarator")?;
+    match name_node.kind() {
+        // A free function — unless it is an inline constructor / identifier-named member.
+        "identifier" => {
+            if is_class_member_definition(name_node) {
+                return None;
+            }
+            let base = format!(
+                "{}{}",
+                enclosing_namespace_prefix(fdef, source),
+                to_str(&name_node, source)
+            );
+            Some((base, arity))
+        }
+        // An inline method: qualify the enclosing class, then `Class::method`.
+        "field_identifier" => {
+            let class = enclosing_class_qualified_name(fdef, source)?;
+            Some((format!("{class}::{}", to_str(&name_node, source)), arity))
+        }
+        // An out-of-line method `Class::m` — but not an out-of-line constructor (`Box::Box`).
+        "qualified_identifier" => {
+            let scope = name_node.child_by_field_name("scope")?;
+            let name = name_node.child_by_field_name("name")?;
+            let scope_s = to_str(&scope, source);
+            let name_s = to_str(&name, source);
+            if scope_s == name_s {
+                return None;
+            }
+            Some((format!("{scope_s}::{name_s}"), arity))
+        }
+        _ => None,
+    }
+}
+
+/// Discover **arity-overloaded** names — the C++ `GrammarHooks::collect_overloads`
+/// implementation, run once before any function is registered. It scans every
+/// `function_definition` (free, namespaced, inline-method, out-of-line-method), computes each
+/// one's IR base name and explicit-parameter arity via [`overload_base_name`], and records the
+/// arity into the neutral [`Context::overloads`] map. A base name that ends up with **≥2**
+/// distinct arities is thereby marked overloaded, so [`Context::overload_name`] mangles it
+/// (`id#1`/`id#2`, `Box::f#1`/`Box::f#2`) at all four touchpoints; a single-arity name stays
+/// bare. Constructors are excluded by `overload_base_name`, so a class's `Class::Class` name
+/// never enters the map and construction is unaffected. Inert for C: no C tree contains any of
+/// the shapes matched here, so nothing is recorded and the map stays empty.
+fn cpp_discover_overloads<'a>(
+    ctx: &mut Context<'a>,
+    source: &'a str,
+    root: Node<'_>,
+) -> anyhow::Result<(), Error> {
+    let query = ctx.compile_query(r#"(function_definition) @def"#);
+    let mut pairs: Vec<(String, usize)> = Vec::new();
+    {
+        let mut cursor = QueryCursor::new();
+        let mut it = cursor.matches(&query, root, source.as_bytes());
+        while let Some(m) = it.next() {
+            let extract = MatchExtractor::new(&query, m);
+            if let Some(pair) = overload_base_name(extract.get("def")?, source) {
+                pairs.push(pair);
+            }
+        }
+    }
+    for (base, arity) in pairs {
+        ctx.overloads.entry(base).or_default().insert(arity);
+    }
+    Ok(())
 }
 
 /// Discover C++ instance methods and constructors — inline *and* out-of-line — and lower
@@ -405,8 +520,13 @@ fn cpp_collect_methods<'a>(
 
     // Phase 2a: register a function index for every method, so a method calling another
     // method (or a top-level body calling one) resolves it regardless of definition order.
+    // An **overloaded** method (`Box::f#1`, `Box::f#2`) reserves a distinct `FunctionIdx` per
+    // arity via the neutral mangler; a non-overloaded method (and every constructor, which is
+    // never in the overloads map) stays bare — the same `Class::method` string a `recv.m(…)`
+    // dispatch and the `construct` hook build.
     for md in &methods {
-        let qualified = format!("{}::{}", md.class, md.name);
+        let base = format!("{}::{}", md.class, md.name);
+        let qualified = ctx.overload_name(&base, param_arity(md.params));
         ctx.functions
             .entry(qualified)
             .or_insert_with(|| program.new_function());
@@ -414,7 +534,8 @@ fn cpp_collect_methods<'a>(
     // Phase 2b: lower each method body with an implicit `this` of its class. A constructor
     // additionally emits its member-initializer list before the body.
     for md in methods {
-        let qualified = format!("{}::{}", md.class, md.name);
+        let base = format!("{}::{}", md.class, md.name);
+        let qualified = ctx.overload_name(&base, param_arity(md.params));
         ctx.lower_function(
             source,
             program,
@@ -475,13 +596,19 @@ fn cpp_collect_namespaced_functions<'a>(
             let extract = MatchExtractor::new(&query, m);
             let def = extract.get("def")?;
             let fname = to_str(&extract.get("func.name")?, source);
-            let qualified = format!("{}{}", enclosing_namespace_prefix(def, source), fname);
+            let params = extract.get("params")?;
+            // Qualified name (`ns::f`), then arity-mangled if this namespaced free function is
+            // itself overloaded (`ns::f#1`/`ns::f#2`) — matching the call-site edge. A
+            // non-overloaded namespaced function stays bare-qualified (identity mangler), so
+            // the existing namespace cases are unchanged.
+            let base = format!("{}{}", enclosing_namespace_prefix(def, source), fname);
+            let qualified = ctx.overload_name(&base, param_arity(params));
             let void = def
                 .child_by_field_name("type")
                 .is_some_and(|t| to_str(&t, source).eq_ignore_ascii_case("void"));
             ns_fns.push(NsFn {
                 qualified,
-                params: extract.get("params")?,
+                params,
                 body: extract.get("body")?,
                 void,
             });
@@ -766,6 +893,10 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     // to a constructor `DirectCall`. Only invoked by the shared walker for a declaration
     // whose type is a known class, so it is inert on the C path.
     construct: cpp_try_construct,
+    // Discover arity-overloaded free functions and methods, populating the neutral
+    // `overloads` map before any function is registered so the mangler can distinguish
+    // overloaded names (`id#1`/`id#2`, `Box::f#1`/`Box::f#2`) at every touchpoint.
+    collect_overloads: cpp_discover_overloads,
     // The C declarator shapes plus the C++-only `reference_declarator` (`T& r`), captured
     // `@is_ref_cpp`. The shared classifier maps a non-const reference to `ByRef` (write-back)
     // and a `const T&` to `ByVal` (inbound only), reading the grammar-neutral `const`

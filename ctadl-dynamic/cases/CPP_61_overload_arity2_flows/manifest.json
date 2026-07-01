@@ -1,0 +1,6 @@
+{
+  "name": "CPP_61_overload_arity2_flows",
+  "description": "C++ overloading POSITIVE (free, arity 2): id(int,int) returns its 2nd arg; id(0, source()) resolves to the 2-arg overload id#2 and returns source (the 2nd arg), so taint reaches the sink",
+  "label": "Test",
+  "expect_flow": true
+}

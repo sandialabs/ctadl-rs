@@ -1,0 +1,6 @@
+{
+  "name": "CPP_60_overload_method",
+  "description": "C++ overloading POSITIVE (method, arity 1): Box::f is overloaded f(int)->arg and f(int,int)->2nd; b.f(source()) dispatches to the 1-arg overload Box::f#1 (returns its arg), so taint reaches the sink",
+  "label": "Test",
+  "expect_flow": true
+}
