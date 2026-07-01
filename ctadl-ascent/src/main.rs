@@ -28,11 +28,8 @@ pub enum Command {
     /// The index is stored under the project name.
     Index(IndexArgs),
 
-    /// Run a taint analysis query. (See 'index' for prerequisites)
+    /// Run a taint analysis query and format the results as SARIF. (See 'index' for prerequisites)
     Query(QueryArgs),
-
-    /// Format the last query results for the named project
-    Format(FormatArgs),
 
     /// One-shot: import artifacts, index them under name, query, and format output
     Go(GoArgs),
@@ -217,21 +214,19 @@ pub struct QueryArgs {
     /// Can be specified multiple times to load multiple model files.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
-}
 
-#[derive(Debug, Args)]
-pub struct FormatArgs {
-    /// Analysis project (index) name
-    pub name: String,
     /// Output as compact as possible (for the sarif extension)
     #[arg(long, short, action)]
     pub compact: bool,
+
     /// Output file path (defaults to results.sarif)
     #[arg(long, short, default_value = "results.sarif")]
     pub output: PathBuf,
+
     /// SARIF profile
     #[arg(long, value_enum, default_value_t = SarifProfile::Human)]
     pub sarif_profile: SarifProfile,
+
     /// Dump the taint graph to a dot file
     #[arg(long)]
     pub dump_taint_graph: Option<PathBuf>,
@@ -308,10 +303,6 @@ fn main() -> anyhow::Result<()> {
             query_project(args)
                 .with_context(|| format!("running 'query' project: {:?}", args.name))?;
         }
-        Command::Format(args) => {
-            format_project(args)
-                .with_context(|| format!("running 'format' project: {:?}", args.name))?;
-        }
         Command::Inspect(args) => {
             inspect_artifact(args)
                 .with_context(|| format!("running 'inspect' artifact: {:?}", args.name))?;
@@ -347,18 +338,12 @@ fn main() -> anyhow::Result<()> {
             query_project(&QueryArgs {
                 name: args.name.clone(),
                 models: args.models.clone(),
-            })
-            .with_context(|| format!("running 'query' project: {:?}", args.name))?;
-
-            eprintln!("Formatting...");
-            format_project(&FormatArgs {
-                name: args.name.clone(),
                 compact: args.compact,
                 output: args.output.clone(),
                 sarif_profile: args.sarif_profile,
                 dump_taint_graph: args.dump_taint_graph.clone(),
             })
-            .with_context(|| format!("running 'format' project: {:?}", args.name))?;
+            .with_context(|| format!("running 'query' project: {:?}", args.name))?;
         }
         Command::LegacyPcodeCli(args) => {
             handle_legacy_pcode_cli(args).context("running 'legacy-pcode-cli'")?;
@@ -493,22 +478,16 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
 
             let mut models = args.models.clone();
             models.push(query_args.query_file.clone());
-            // 1. Run query
+            // Run the query and format the output (compact=true for Ghidra).
             let q_args = QueryArgs {
                 name: legacy_name.to_string(),
                 models,
-            };
-            query_project(&q_args)?;
-
-            // 2. Format output (compact=true for Ghidra)
-            let f_args = FormatArgs {
-                name: legacy_name.to_string(),
                 compact: true,
                 output: PathBuf::from("results.sarif"),
                 sarif_profile: SarifProfile::Human,
                 dump_taint_graph: None,
             };
-            format_project(&f_args)?;
+            query_project(&q_args)?;
         }
     }
 
@@ -578,15 +557,9 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
 fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
     let project = project::AnalysisProject::try_load_name(&args.name)
         .with_context(|| format!("loading project: '{}'", args.name))?;
-    cli::query(&project, &args.models)?;
-    Ok(())
-}
-
-fn format_project(args: &FormatArgs) -> anyhow::Result<()> {
-    let project = project::AnalysisProject::try_load_name(&args.name)
-        .with_context(|| format!("loading project: '{}'", args.name))?;
-    cli::format(
+    cli::query(
         &project,
+        &args.models,
         args.compact,
         &args.output,
         args.sarif_profile,

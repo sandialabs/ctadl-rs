@@ -208,7 +208,7 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
     }
     exec::run_checked(dx, "dx")?;
 
-    // Analyze: import / index / query / format.
+    // Analyze: import / index / query (query also formats the SARIF output).
     let project = format!("{name}_test");
     let sarif = work.join(format!("{name}_output.sarif"));
     run_ctadl(
@@ -220,12 +220,14 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
     run_ctadl(
         &work,
         &state,
-        &["query", &project, "-m", &config.to_string_lossy()],
-    )?;
-    run_ctadl(
-        &work,
-        &state,
-        &["format", &project, "-o", &sarif.to_string_lossy()],
+        &[
+            "query",
+            &project,
+            "-m",
+            &config.to_string_lossy(),
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
     )?;
 
     // Build the offset -> line map.
@@ -340,13 +342,14 @@ fn run_pcode(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
         &work,
         &state,
         &pcode_env,
-        &["query", &project, "-m", &query.to_string_lossy()],
-    )?;
-    run_ctadl_env(
-        &work,
-        &state,
-        &pcode_env,
-        &["format", &project, "-o", &sarif.to_string_lossy()],
+        &[
+            "query",
+            &project,
+            "-m",
+            &query.to_string_lossy(),
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
     )?;
 
     // Prefer the section-relative offsets the analyzer now emits (image base

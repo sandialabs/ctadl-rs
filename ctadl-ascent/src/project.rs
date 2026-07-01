@@ -262,22 +262,6 @@ impl AnalysisProject {
         Ok(path)
     }
 
-    /// The path to the folder where the result of 'query' should be stored. Ensures the path is
-    /// created.
-    ///
-    /// # Errors
-    ///
-    /// If there is an error creating the path
-    #[inline]
-    pub fn query_path(&self) -> Result<PathBuf, Error> {
-        // use index path so it's easy to duckdb the dir and inspect
-        let path = self.dir.join("index");
-        std::fs::create_dir_all(&path)
-            .map_err(Error::Io)
-            .err_context(|| format!("in create query dir: '{}'", path.display()))?;
-        Ok(path)
-    }
-
     /// Save the analysis project configuration
     ///
     /// # Errors

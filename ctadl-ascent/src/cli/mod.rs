@@ -26,7 +26,7 @@ use crate::index_engine::{
 use crate::languages::{dex, jvm, pcode};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
-use crate::query_engine::{QueryFactsBuilder, QueryResult, taint_analysis};
+use crate::query_engine::{QueryFactsBuilder, taint_analysis};
 use ctadl_ir::graph::is_connected;
 use ctadl_ir::ssa;
 use ctadl_ir::{ProgramInfo, encode};
@@ -185,10 +185,27 @@ pub fn index(
     Ok(())
 }
 
-/// Runs a taint query
-pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result<(), Error> {
+/// Runs a taint query and formats the results as SARIF.
+///
+/// Taint results are computed in memory and handed straight to the formatter; they are
+/// not persisted. The `profile` selects what the SARIF reports: path profiles enumerate
+/// source -> sink paths, closure profiles list every tainted instruction (see
+/// [`query_engine::formatter`]).
+pub fn query(
+    project: &AnalysisProject,
+    models: &[std::path::PathBuf],
+    compact: bool,
+    output: &Path,
+    profile: query_engine::formatter::SarifProfile,
+    dump_taint_graph: Option<&Path>,
+) -> Result<(), Error> {
     let index_path = project.index_path()?;
     let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
+    // Load the index tables once; they seed the query and are reused to format the results.
+    let index_facts = IndexFacts::try_load(&index_path).err_context(|| "loading index facts")?;
+    let index_result =
+        IndexResult::try_load(&index_path).err_context(|| "loading index result")?;
+
     let facts = {
         let mut models_batch: Option<crate::models::ModelsBatch> = None;
         for model_path in models {
@@ -204,7 +221,6 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
             }
         }
         let mut builder = QueryFactsBuilder::default();
-        let index_facts = IndexFacts::try_load(&index_path)?;
         let mut endpoints = Vec::new();
         // Slightly ugly special case for flowy artifacts. Since the query is built in, take it
         // into account here
@@ -232,16 +248,15 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
             .count();
         eprintln!("Matched {} sources and {} sinks", sources, sinks);
 
+        // The index tables are reused by the formatter below, so the query facts take
+        // clones and the originals feed `FormatFacts`.
         builder
             .endpoints(endpoints)
             .formal_param(formal_params)
-            .actual_param(index_facts.actual_param)
-            .call(index_facts.call);
-        let index_result = IndexResult::try_load(&index_path)?;
-        builder
-            .assign(index_result.assign_like)
-            .paths(index_result.paths);
-        // Insert model-derived endpoints if present
+            .actual_param(index_facts.actual_param.clone())
+            .call(index_facts.call.clone())
+            .assign(index_result.assign_like.clone())
+            .paths(index_result.paths.clone());
         builder.build().unwrap()
     };
 
@@ -249,57 +264,29 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
     for import in project.iter_imports() {
         let import = import?;
         if import.language == ArtifactLanguage::Flowy {
-            let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
             crate::codegen::flowy::query_check(&import, &result, &ids)?;
         }
     }
-    let path = project.query_path()?;
-    result
-        .try_save(&path)
-        .err_context(|| format!("saving query: {}", path.display()))?;
-    Ok(())
-}
 
-/// Formats the last query's results as SARIF
-pub fn format(
-    project: &AnalysisProject,
-    compact: bool,
-    output: &Path,
-    profile: query_engine::formatter::SarifProfile,
-    dump_taint_graph: Option<&Path>,
-) -> Result<(), Error> {
-    let index_path = project.index_path()?;
-    let query_path = project.query_path()?;
-    {
-        let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading id map")?;
-        let index_facts =
-            IndexFacts::try_load(&index_path).err_context(|| "loading index facts")?;
-        let index_result =
-            IndexResult::try_load(&index_path).err_context(|| "loading index result")?;
-        let taint_result =
-            QueryResult::try_load(&query_path).err_context(|| "loading query result")?;
+    let mut b = query_engine::formatter::FormatFactsBuilder::default();
+    b.taint(result.taint)
+        .taint_edge(result.taint_edge)
+        .formal_param(result.formal_param)
+        .index_actual_param(index_facts.actual_param)
+        .call(index_facts.call)
+        .assign(index_result.assign_like)
+        .paths(index_result.paths)
+        .external_function(index_result.external_function)
+        .id_to_name(ids.get_id_to_name_map());
+    let facts = b.build().unwrap();
 
-        let formal_params = taint_result.formal_param.clone();
+    query_engine::formatter::format_sarif(project, facts.clone(), compact, output, profile)
+        .err_context(|| "formatting sarif")?;
 
-        let mut b = query_engine::formatter::FormatFactsBuilder::default();
-        b.taint(taint_result.taint)
-            .taint_edge(taint_result.taint_edge)
-            .formal_param(formal_params)
-            .index_actual_param(index_facts.actual_param)
-            .call(index_facts.call)
-            .assign(index_result.assign_like)
-            .paths(index_result.paths)
-            .external_function(index_result.external_function)
-            .id_to_name(ids.get_id_to_name_map());
-        let facts = b.build().unwrap();
+    if let Some(dot_path) = dump_taint_graph {
+        dump_taint_graph_dot(&facts, &index_path, dot_path)?;
+    }
 
-        query_engine::formatter::format_sarif(project, facts.clone(), compact, output, profile)
-            .err_context(|| "formatting sarif")?;
-
-        if let Some(dot_path) = dump_taint_graph {
-            dump_taint_graph_dot(&facts, &index_path, dot_path)?;
-        }
-    };
     if output.to_str() != Some("-") {
         eprintln!("Wrote '{}'", output.display());
     }

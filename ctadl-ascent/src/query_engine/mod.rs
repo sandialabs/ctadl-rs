@@ -8,17 +8,23 @@ We want to enable some queries:
 - Path queries. Finds a path from each source to each sink.
 - Closure queries. Finds all the vertices/instructions tainted by each source or sink.
 
-Path queries are the most common and should be efficient.
-- Start with sources.
-*/
+Each (set-of-sources/sinks, direction, label) is an independent search. They induce a taint graph.
 
-use std::path;
+Path queries are the most common and should be efficient. Here is a batching strategy:
+- Make a set of current functions, seed it with the functions from the sources.
+- Fan out and load all data from all the functions that are distance $n$ away from the current set.
+- If no data is loaded, terminate.
+- If new data is loaded, do an annotated taint graph search on the loaded taint graph, making sources and sinks as covered when we find a path between them.
+Note that if you set $n = num_functions$, then the algorithm above just loads all the data and performs a single graph search.
+
+Closure queries are useful for debugging as well as some clients.
+- Seed the graph in the same way and fan out to load the records.
+*/
 
 use ascent::ascent;
 use derive_builder::Builder;
 use packed_struct::prelude::*;
 
-use crate::error::Error;
 use crate::facts::{
     CallArgId, FlowEdge, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
     FunctionId, IdMap, InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection,
@@ -176,34 +182,6 @@ impl QueryResult {
         }
     }
 
-    pub fn try_save<P: AsRef<path::Path>>(self, dir: P) -> Result<(), Error> {
-        use crate::facts::schema::*;
-        taint::try_save(&dir, self.taint)?;
-        taint_edge::try_save(&dir, self.taint_edge)?;
-        formal_param::try_save(
-            &dir,
-            self.formal_param
-                .iter()
-                .filter_map(|(fid, v, ty)| v.as_formal().map(|i| (*fid, i, *ty))),
-        )?;
-        Ok(())
-    }
-
-    /// Load the query results from disk. Loads both forward and backward taint
-    pub fn try_load<P: AsRef<path::Path>>(dir: P) -> Result<QueryResult, Error> {
-        use crate::facts::schema::*;
-        let taint = taint::try_load(&dir)?;
-        let taint_edge = taint_edge::try_load(&dir)?;
-        let formal_param = formal_param::try_load(&dir)?
-            .into_iter()
-            .map(|(fid, idx, ty)| (fid, FlowVariable::formal_index(idx), ty))
-            .collect();
-        Ok(QueryResult {
-            taint,
-            taint_edge,
-            formal_param,
-        })
-    }
 }
 
 impl std::fmt::Display for QueryResult {
