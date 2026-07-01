@@ -156,8 +156,7 @@ pub trait Annotation<G: LabeledSuccessors>: Clone + Eq + std::hash::Hash {
     /// `from -> to` (whose label is `label`), given `self`, the annotation
     /// carried by `from`. Returning `None` prunes the edge, so `to` is not
     /// reached along this path.
-    fn expand(&self, graph: &G, from: G::Node, label: &G::Label, to: G::Node)
-    -> Option<Self>;
+    fn expand(&self, graph: &G, from: G::Node, label: &G::Label, to: G::Node) -> Option<Self>;
 }
 
 /// Find a path from `start` to the nearest node whose `(node, annotation)` state

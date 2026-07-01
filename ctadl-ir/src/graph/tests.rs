@@ -129,8 +129,7 @@ fn find_annotated_path_threads_annotation() {
     // 0 -> 1 -> 2 -> 3.
     let g = TestGraph::new(0, &[(0, 1), (1, 2), (2, 3)]);
 
-    let path =
-        find_annotated_path_to_set(&g, 0, |n, _a: &Hops| n == 3).expect("path exists");
+    let path = find_annotated_path_to_set(&g, 0, |n, _a: &Hops| n == 3).expect("path exists");
     let nodes: Vec<usize> = path.iter().map(|(n, _)| *n).collect();
     assert_eq!(nodes, vec![0, 1, 2, 3]);
     // The annotation counts edges traversed: 0 hops at the start, 3 at the goal.
@@ -152,8 +151,8 @@ fn find_annotated_path_target_depends_on_annotation() {
     // Accept the goal only when reached in exactly 3 hops. A node-keyed search
     // would mark node 4 visited via the 2-hop route and give up; keying on
     // `(node, annotation)` lets the 3-hop route through.
-    let path = find_annotated_path_to_set(&g, 0, |n, Hops(h)| n == 4 && *h == 3)
-        .expect("path exists");
+    let path =
+        find_annotated_path_to_set(&g, 0, |n, Hops(h)| n == 4 && *h == 3).expect("path exists");
     let nodes: Vec<usize> = path.iter().map(|(n, _)| *n).collect();
     assert_eq!(nodes, vec![0, 2, 3, 4]);
     assert_eq!(path.last().unwrap().1, Hops(3));
@@ -165,9 +164,11 @@ fn find_annotated_path_expand_prunes_edges() {
     let g = TestGraph::new(0, &[(0, 1), (1, 2), (2, 3)]);
 
     // Within budget: node 2 sits 2 hops out and is reachable.
-    let path =
-        find_annotated_path_to_set(&g, 0, |n, _a: &Budget| n == 2).expect("path exists");
-    assert_eq!(path.iter().map(|(n, _)| *n).collect::<Vec<_>>(), vec![0, 1, 2]);
+    let path = find_annotated_path_to_set(&g, 0, |n, _a: &Budget| n == 2).expect("path exists");
+    assert_eq!(
+        path.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
 
     // Node 3 needs a 3rd edge, which the budget prunes -> unreachable.
     assert!(find_annotated_path_to_set(&g, 0, |n, _a: &Budget| n == 3).is_none());
@@ -279,8 +280,7 @@ fn find_annotated_path_matches_calls_and_returns() {
 
     // The mismatched shortcut edge is pruned, so the only path to 3 is the
     // balanced one, and it arrives with an empty (balanced) stack.
-    let path = find_annotated_path_to_set(&g, 0, |n, _s: &CallStack| n == 3)
-        .expect("path exists");
+    let path = find_annotated_path_to_set(&g, 0, |n, _s: &CallStack| n == 3).expect("path exists");
     let nodes: Vec<usize> = path.iter().map(|(n, _)| *n).collect();
     assert_eq!(nodes, vec![0, 1, 2, 3]);
     assert_eq!(path.last().unwrap().1, CallStack(vec![]));
@@ -289,17 +289,13 @@ fn find_annotated_path_matches_calls_and_returns() {
 #[test]
 fn find_annotated_path_prunes_unrealizable_only_route() {
     // The only route to 3 opens call1 but returns via a mismatched return2.
-    let g = LabeledGraph::new(
-        4,
-        &[(0, 1, Edge::Call(1)), (1, 3, Edge::Return(2))],
-    );
+    let g = LabeledGraph::new(4, &[(0, 1, Edge::Call(1)), (1, 3, Edge::Return(2))]);
 
     // No realizable path reaches 3.
     assert!(find_annotated_path_to_set(&g, 0, |n, _s: &CallStack| n == 3).is_none());
 
     // But node 1 (reached with call1 still pending) is fine.
-    let path = find_annotated_path_to_set(&g, 0, |n, _s: &CallStack| n == 1)
-        .expect("path exists");
+    let path = find_annotated_path_to_set(&g, 0, |n, _s: &CallStack| n == 1).expect("path exists");
     assert_eq!(path.last().unwrap().1, CallStack(vec![1]));
 }
 
