@@ -7,14 +7,20 @@ variable access), we focus on instruction locations.
 
 The main entry point is [`format_sarif`]. It reads the last query and formats its results in SARIF.
 
-The schema of tables for formatting is:
+Format has four profiles:
+- Human (the default)
+- Machine
+- Agent
+- Debug
 
-```text
-function_id:
-id (int), function_name (string)
-
-
-```
+The human profile is designed for loading results into a visualizer for a human to look at.
+It emphasizes clarity and the important steps that explain the finding.
+The agent profile is almost an extension of the human, including sources & sinks found &
+details of exactly what is tainted in each place. It's intended to communicate high level
+findings as well as how exactly to reason about the chain. It also includes functions that
+absorb taint, which allows agents to produce their own models to further the analysis.
+The machine profile contains explicit detail about each individual finding -- tainted
+instructions. The debug profile contains as much information as has been useful for debugging.
 
 */
 use std::fs::File;

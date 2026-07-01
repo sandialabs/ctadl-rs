@@ -1,10 +1,16 @@
-//! Taint analysis on the index graph.
+/*! Taint analysis on the index graph
 
-// TODO when converting to graphs, add these rules:
-//
-// taint_edge(infunc, insn, a.direction.clone(), v1, p13.clone(), v2, p23.clone()),
-// taint_edge(infunc, insn, a.direction.clone(), v1.clone(), p2.clone(), v2, p2.clone()),
-// taint_edge(infunc, insn, a.direction.clone(), formal_var.clone(), p2.clone(), v2, p2.clone()),
+Taint analysis is a matter of following direct intraprocedural flow and stitching edges
+between calls and returns.
+
+We want to enable some queries:
+
+- Path queries. Finds a path from each source to each sink.
+- Closure queries. Finds all the vertices/instructions tainted by each source or sink.
+
+Path queries are the most common and should be efficient.
+- Start with sources.
+*/
 
 use std::path;
 
