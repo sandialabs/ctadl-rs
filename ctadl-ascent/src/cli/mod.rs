@@ -260,6 +260,7 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
     Ok(())
 }
 
+/// Formats the last query's results as SARIF
 pub fn format(
     project: &AnalysisProject,
     compact: bool,

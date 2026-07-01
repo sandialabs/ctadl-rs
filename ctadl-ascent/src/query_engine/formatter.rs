@@ -5,6 +5,8 @@ this module is to compute location information for each tainted vertex and instr
 most frontends only store instruction location information (as opposed to locations for each
 variable access), we focus on instruction locations.
 
+The main entry point is [`format_sarif`]. It reads the last query
+
 The schema of tables for formatting is:
 
 ```text
@@ -1509,14 +1511,16 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             let mut source_functions: BTreeSet<String> = BTreeSet::new();
             let mut sink_functions: BTreeSet<String> = BTreeSet::new();
             for (src, sink_opt, _lbl) in &details {
-                if let Some(name) =
-                    source_data.id_to_name.get(&endpoint_callee(src, &call_callee).id)
+                if let Some(name) = source_data
+                    .id_to_name
+                    .get(&endpoint_callee(src, &call_callee).id)
                 {
                     source_functions.insert(name.clone());
                 }
                 if let Some(sink) = sink_opt
-                    && let Some(name) =
-                        source_data.id_to_name.get(&endpoint_callee(sink, &call_callee).id)
+                    && let Some(name) = source_data
+                        .id_to_name
+                        .get(&endpoint_callee(sink, &call_callee).id)
                 {
                     sink_functions.insert(name.clone());
                 }
