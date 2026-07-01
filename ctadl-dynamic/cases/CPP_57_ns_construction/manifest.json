@@ -1,0 +1,6 @@
+{
+  "name": "CPP_57_ns_construction",
+  "description": "C++ namespaces: constructing a namespaced-class local ns::Box b(source()) lowers to DirectCall ns::Box::ns::Box(&b, source()); the constructor's member write lands in b, read back by b.get(); taint flows",
+  "label": "Test",
+  "expect_flow": true
+}

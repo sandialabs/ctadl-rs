@@ -1,0 +1,6 @@
+{
+  "name": "CPP_56_ns_class_method",
+  "description": "C++ namespaces: a class ns::Box in a named namespace registers under its qualified name; ns::Box b dispatches b.set(source())/b.get() to ns::Box::set/ns::Box::get; taint flows through the namespaced methods",
+  "label": "Test",
+  "expect_flow": true
+}

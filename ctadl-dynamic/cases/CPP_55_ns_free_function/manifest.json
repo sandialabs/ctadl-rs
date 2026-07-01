@@ -1,0 +1,6 @@
+{
+  "name": "CPP_55_ns_free_function",
+  "description": "C++ namespaces: a free function ns::id in a named namespace is lowered under its qualified name and the qualified call ns::id(source()) resolves to it; taint flows through the namespaced function",
+  "label": "Test",
+  "expect_flow": true
+}

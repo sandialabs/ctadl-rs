@@ -1,0 +1,6 @@
+{
+  "name": "CPP_58_ns_distinct_function",
+  "description": "C++ namespaces NEGATIVE: ns has keep(x){return x;} and drop(x){return 0;}; ns::drop(source()) resolves precisely to ns::drop (discards its arg) and never to ns::keep, so no taint reaches the sink",
+  "label": "Test",
+  "expect_flow": false
+}
