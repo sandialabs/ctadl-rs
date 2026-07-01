@@ -1,0 +1,6 @@
+{
+  "name": "designated_initializer",
+  "description": "A designated initializer struct S s = {.a = x} -- the designated form of initializer_list, distinct from the positional form (case 31). Still unparsed here (ERR 78); on treesitter_feature_branch the positional form was fixed but the designated form remains a gap, so it is tracked separately. DFSan sees the flow. [RESOLVED: frontend now lowers this; plain OK regression case]",
+  "label": "Test",
+  "expect_flow": true
+}

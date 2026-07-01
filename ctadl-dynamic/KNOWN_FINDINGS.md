@@ -11,27 +11,30 @@ frontend ingestion gaps — and tracks their disposition.
 | array_declarator not ingested | frontend | 18 | ✅ resolved (`d1ccd07`) |
 | switch_statement not ingested | frontend | 25–29 | ✅ resolved (`5d5a695`) |
 | F2 — multiple funcptr stores into an aggregate drop taint | soundness | 30, 33 | ✅ resolved (index-engine path fix) |
-| **initializer_list (`{...}`) not ingested** | frontend | 31 | 🟠 open |
+| initializer_list (`{...}`) not ingested | frontend | 31 | ✅ resolved (frontend lowering, 2026-06-30) |
 | **labeled_empty_statement (`L: ;`) not ingested** | frontend | 32 | 🟡 open |
 | **F3 — write through a local's address doesn't taint the local** | soundness | 34 | 🔴 open |
 | **F4 — union field overlap not modeled** | soundness | 35 | 🔴 open |
 | **F5 — non-constant subscript doesn't may-alias a constant index** | soundness | 36 | 🔴 open |
-| **cast_expression not ingested** | frontend | 37 | 🟠 open |
-| **conditional_expression (ternary) not ingested** | frontend | 38 | 🟠 open |
-| **sizeof_expression not ingested** | frontend | 39 | 🟠 open |
-| **designated_initializer not ingested** | frontend | 40 | 🟠 open |
-| **deref_paren_field (`(*p).x`) panics** | frontend | 41 | 🟠 open |
+| cast_expression not ingested | frontend | 37 | ✅ resolved (frontend lowering, 2026-06-30) |
+| conditional_expression (ternary) not ingested | frontend | 38 | ✅ resolved (frontend lowering, 2026-06-30) |
+| sizeof_expression not ingested | frontend | 39 | ✅ resolved (frontend lowering, 2026-06-30) |
+| designated_initializer not ingested | frontend | 40 | ✅ resolved (frontend lowering, 2026-06-30) |
+| deref_paren_field (`(*p).x`) panics | frontend | 41 | ✅ resolved (frontend lowering, 2026-06-30) |
 
 F2 and the two `31`/`32` frontend findings were surfaced by the **broadened M7 generator** (it
 threads taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at
 volume). **F3–F5 and the five `37`–`41` frontend gaps (cases 34–41, added 2026-06-30) were
 cross-validated from `treesitter_feature_branch`'s aspirational `#[ignore]` unit tests** — each
 documented static gap was reproduced as a DFSan case, and the runtime ground truth confirmed every
-one (3 `soundness-disagree`, 5 `frontend-error`). Resolved entries are kept as a record of what the
-approach caught and how each was fixed. **10 findings remain open** (3 soundness: F3/F4/F5; 7
-frontend ingestion: `initializer_list`, `labeled_empty_statement`, `cast_expression`,
-`conditional_expression`, `sizeof_expression`, `designated_initializer`, `deref_paren_field`).
-NB: `31`/`32` are fixed on `treesitter_feature_branch` but still open on this branch until merged.
+one (3 `soundness-disagree`, 5 `frontend-error`). **The five expression-level frontend gaps (37–41)
+plus positional `initializer_list` (31) were then FIXED this session** in
+`ctadl-ascent/src/languages/tree_sitter/mod.rs` — cast/sizeof/ternary arms in `flatten_expr`, a
+parens/deref peel in `extract_field_expression`, and an `initializer_list` lowering that handles the
+positional **and** designated (`{.a = e}`) forms — with matching unit tests in `tests.rs`; cases
+`31`/`37`/`38`/`39`/`40`/`41` now run as plain `OK`. **4 findings remain open** (3 soundness:
+F3/F4/F5; 1 frontend: `labeled_empty_statement` (32)). The frontend fixes here are also being
+applied to `treesitter_feature_branch` (where the aspirational `#[ignore]` tests get un-ignored).
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
 (soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see

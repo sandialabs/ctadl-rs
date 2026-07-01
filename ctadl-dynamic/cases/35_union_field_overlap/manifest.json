@@ -1,0 +1,7 @@
+{
+  "name": "union_field_overlap",
+  "description": "F4 (soundness): union aliasing -- u.a = src then read u.b carries taint (shared storage), but CTADL models a union as an ordinary field-sensitive struct (disjoint .a/.b) and drops the flow; DFSan sees it.",
+  "label": "Test",
+  "expect_flow": true,
+  "known_gap": "F4"
+}

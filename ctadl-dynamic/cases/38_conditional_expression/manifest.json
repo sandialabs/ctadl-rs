@@ -1,0 +1,6 @@
+{
+  "name": "conditional_expression",
+  "description": "A ternary c ? x : 0 yields x when c is truthy, but the frontend has no conditional_expression arm (ERR 78); DFSan sees the flow. Expected result once it lowers: flow (both arms should flow). [RESOLVED: frontend now lowers this; plain OK regression case]",
+  "label": "Test",
+  "expect_flow": true
+}

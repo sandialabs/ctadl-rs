@@ -964,3 +964,84 @@ fn field_increment_is_update() {
     // an unpinnable flatten temp, so we assert only that exactly one such update exists.
     check_writes_to(&prog, "@p0.x", 1);
 }
+
+// --- frontend gap fixes: expression-level constructs the C frontend now lowers ----------
+// Each used to fail ingestion (ERR 78, or a panic for `(*p).x`) and is now lowered.
+// Cross-validated against DFSan runtime ground truth (ctadl-dynamic cases 37/38/39/41).
+
+#[test_log::test]
+fn cast_passthrough() {
+    // A cast is value-preserving for taint: `(long)a` still carries `a` to the return.
+    let src = r"
+        int f(int a) {
+            return (long)a;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn ternary_both_arms_flow() {
+    // A ternary `a ? b : c` can yield either arm, so both b and c flow to the result (here
+    // the return). The condition a is a control dependence, not a data source.
+    let src = r"
+        int f(int a, int b, int c) {
+            return a ? b : c;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 1, ""); // b (consequent arm)
+    check_returns_param(&s, 2, ""); // c (alternative arm)
+}
+
+#[test_log::test]
+fn sizeof_does_not_evaluate() {
+    // `sizeof(*p)` does not evaluate its operand -- it yields a compile-time size, never
+    // reading through `p` -- so the parameter must NOT reach the return.
+    let src = r"
+        int f(int *p) {
+            return sizeof(*p);
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_does_not_return_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn deref_paren_field_equivalent() {
+    // `(*p).x` is the same field access as `p->x`, yielding @p0.x -> return. The frontend
+    // used to panic on the parenthesized-deref-then-field shape.
+    let src = r"
+        int f(Field *p) {
+            return (*p).x;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "x");
+}
+
+#[test_log::test]
+fn designated_initializer_flows() {
+    // A designated initializer `Thing v = {.a = src}` taints field `a`, so `return v.a`
+    // carries src. The designator gives the member name, so the store lands at `v.a` --
+    // exactly where the `v.a` read resolves. (`src` is a scalar param, so it reaches the
+    // return at path "" -- the field path lives on the local `v`, not on the param.)
+    let src = r"
+        int f(int src) {
+            Thing v = {.a = src};
+            return v.a;
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn aggregate_initializer_list_lowers_to_element_stores() {
+    // A positional aggregate initializer `int a[2] = { s, 0 }` lowers to per-element stores
+    // into synthetic index fields `a.[i]` -- the base the `initializer_list` handling needed
+    // (designated init builds on it). Taint deposited in the initializer is read back at a[0].
+    let src = r"
+        int f(int s) {
+            int a[2] = { s, 0 };
+            return a[0];
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "a.[0]", ["@p0"], None); // a[0] <- s (param 0)
+}

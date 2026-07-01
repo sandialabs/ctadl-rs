@@ -1,0 +1,6 @@
+{
+  "name": "cast_expression",
+  "description": "A cast (long)x is value-preserving for taint, but the tree-sitter frontend has no cast_expression arm (ERR 78); DFSan sees the flow. Expected result once it lowers: flow. [RESOLVED: frontend now lowers this; plain OK regression case]",
+  "label": "Test",
+  "expect_flow": true
+}

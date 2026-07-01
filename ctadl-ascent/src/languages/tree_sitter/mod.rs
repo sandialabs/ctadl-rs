@@ -906,8 +906,103 @@ impl<'a> Context<'a> {
                 None,
             );
             if let Some(vc) = nest_decl.child_by_field_name("value") {
-                self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;
+                if vc.kind() == "initializer_list" {
+                    // Aggregate brace initializer (`int a[2] = { s, 0 }`,
+                    // `struct S s = { .a = x }`): lower to per-element stores. Without this
+                    // the `initializer_list` reaches `flatten_expr`'s catch-all -> ERR 78.
+                    self.collect_initializer_list(source, program, scope_view, decl_ident, vc)?;
+                } else {
+                    self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;
+                }
             };
+        }
+        Ok(())
+    }
+
+    /// Lower an aggregate brace initializer (`int a[2] = { s, 0 }`,
+    /// `struct S s = { .a = x }`) into per-element stores. `decl_ident` is the declarator
+    /// being initialized (an `array_declarator` for arrays, an `identifier` for structs /
+    /// scalars); flattening it yields -- and registers -- the base access path.
+    fn collect_initializer_list(
+        &mut self,
+        source: &str,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        decl_ident: Node<'_>,
+        init_list: Node<'_>,
+    ) -> Result<(), Error> {
+        let base = self.flatten_expr(program, decl_ident, source, scope_view)?;
+        let Exp::AccessPath(base_ap) = base else {
+            return Err(Error::TreeSitterParse(
+                "initializer target was not an access path".to_owned(),
+            ));
+        };
+        self.lower_initializer_list(source, program, scope_view, &base_ap, init_list)
+    }
+
+    /// Walk the elements of an `initializer_list`, storing each into a sub-field of
+    /// `base_ap`. Positional elements (`{ e0, e1 }`) go into successive synthetic index
+    /// fields `[i]` -- the same `[N]` shape a constant-index subscript read resolves to
+    /// (see `flatten_subscript`), so taint deposited here is observed at the read.
+    /// Designated elements (`{ .a = e }` / `{ [n] = e }`) go into the named member `.a`
+    /// (matching a `.a` field read) / the index `[n]`. Nested aggregates recurse.
+    fn lower_initializer_list(
+        &mut self,
+        source: &str,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        base_ap: &AccessPath,
+        init_list: Node<'_>,
+    ) -> Result<(), Error> {
+        let mut cursor = init_list.walk();
+        let mut idx = 0usize;
+        for elem in init_list.children(&mut cursor) {
+            if !elem.is_named() {
+                continue; // skip the `{`, `,`, `}` tokens
+            }
+            // Pick this element's target sub-field + its value node.
+            let (field, value_node) = if elem.kind() == "initializer_pair" {
+                // Designated: `.member = e` or `[n] = e`.
+                let designator = elem
+                    .child_by_field_name("designator")
+                    .expect("initializer_pair always has a designator");
+                let value = elem
+                    .child_by_field_name("value")
+                    .expect("initializer_pair always has a value");
+                let dtext = to_str(&designator, source);
+                let field = if let Some(member) = dtext.strip_prefix('.') {
+                    // `.a` -> Symbol("a"), matching how a `.a` field read is lowered.
+                    FieldAccess::Symbol(ArcIntern::<str>::from(member.trim()))
+                } else {
+                    // `[n]` array designator -> the same `[n]` symbol a subscript read uses.
+                    FieldAccess::Symbol(ArcIntern::<str>::from(dtext.trim()))
+                };
+                (field, value)
+            } else {
+                // Positional element -> successive `[i]`.
+                let field =
+                    FieldAccess::Symbol(ArcIntern::<str>::from(format!("[{idx}]")));
+                idx += 1;
+                (field, elem)
+            };
+            let mut fields = base_ap.path.fields.clone();
+            fields.push(field);
+            let elem_ap = ctadl_ir::mir::AccessPath {
+                variable_ref: base_ap.variable_ref.clone(),
+                path: fields.into_iter().collect(),
+            };
+            if value_node.kind() == "initializer_list" {
+                self.lower_initializer_list(source, program, scope_view, &elem_ap, value_node)?;
+            } else {
+                let rhs = self.flatten_expr(program, value_node, source, scope_view)?;
+                self.add_assign_to_program(
+                    program,
+                    scope_view,
+                    &Exp::AccessPath(elem_ap),
+                    &rhs,
+                    None,
+                );
+            }
         }
         Ok(())
     }
@@ -1684,6 +1779,54 @@ impl<'a> Context<'a> {
                 let x = self.allocator.next_temp();
                 self.collect_call(program, node, source, scope_view, x)
             }
+            // A cast is value-preserving for taint: the target type is irrelevant to
+            // dataflow, so lower the cast operand and pass it straight through
+            // (`(long)x` carries `x`). Mirrors the `unary_expression` pass-through.
+            "cast_expression" => {
+                let value = node
+                    .child_by_field_name("value")
+                    .expect("cast_expression always has a value");
+                self.flatten_expr(program, value, source, scope_view)
+            }
+            // `sizeof` does NOT evaluate its operand -- it yields a compile-time size --
+            // so it must not carry taint from the operand. Lower it as a constant (the
+            // source text), exactly like a numeric literal; the operand is never visited.
+            "sizeof_expression" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
+            // A ternary `c ? a : b` is path-insensitive here: either arm may be the
+            // value, so blend both into a temp (like `flatten_binary`). The condition is
+            // a control dependence, not a data source -- evaluate it for side effects but
+            // don't blend it into the result.
+            "conditional_expression" => {
+                let cond = node
+                    .child_by_field_name("condition")
+                    .expect("conditional_expression always has a condition");
+                let cons = node
+                    .child_by_field_name("consequence")
+                    .expect("conditional_expression always has a consequence");
+                let alt = node
+                    .child_by_field_name("alternative")
+                    .expect("conditional_expression always has an alternative");
+                self.flatten_expr(program, cond, source, scope_view)?;
+                let cons_val = self.flatten_expr(program, cons, source, scope_view)?;
+                let alt_val = self.flatten_expr(program, alt, source, scope_view)?;
+                let temp_name = self.allocator.next_temp();
+                let target = Exp::AccessPath(self.build_access_path(
+                    temp_name.as_str(),
+                    Default::default(),
+                    scope_view,
+                ));
+                self.add_assign_to_program(
+                    program,
+                    scope_view,
+                    &target,
+                    &cons_val,
+                    Some(&alt_val),
+                );
+                Ok(Exp::AccessPath(ctadl_ir::mir::AccessPath {
+                    variable_ref: VariableRef::new_local(temp_name),
+                    path: Default::default(),
+                }))
+            }
             _ => {
                 debug_print_tree(node, 0, None, None);
                 Err(Error::TreeSitterParse(format!(
@@ -2199,18 +2342,38 @@ pub fn debug_print_tree(
 // in the variable field, while the rest (the out_vec) is the path
 
 fn extract_field_expression<'a>(
-    chain: Node<'a>,
+    mut chain: Node<'a>,
     source: &'a str,
     out_vec: &mut Vec<&'a str>,
 ) -> anyhow::Result<&'a str, Error> {
+    // Peel parentheses and pointer derefs so `(*p).x` / `(p)->x` resolve the same as
+    // `p->x` (CTADL does not distinguish `*p` from `p`). Without this the object of a
+    // `field_expression` could be a `parenthesized_expression` / `pointer_expression`,
+    // which used to trip the assert below (a panic on `(*p).x`).
+    loop {
+        match chain.kind() {
+            "parenthesized_expression" => {
+                chain = chain.child(1).expect("parenthesized_expression inner");
+            }
+            "pointer_expression" => {
+                chain = chain
+                    .child_by_field_name("argument")
+                    .expect("pointer_expression always has an argument");
+            }
+            _ => break,
+        }
+    }
     if chain.kind() == "identifier" {
         return Ok(to_str(&chain, source));
     }
     //otherwise, we have a field expression, and expect 2 children.
-    assert!(
-        chain.kind() == "field_expression",
-        "Expected only nodes of kind field_expression"
-    );
+    if chain.kind() != "field_expression" {
+        debug_print_tree(chain, 0, None, None);
+        return Err(Error::TreeSitterParse(format!(
+            "ERR 78: Unsupported object in field access: {}",
+            chain.kind()
+        )));
+    }
     let argument = chain
         .child_by_field_name("argument")
         .expect("expected all field_expressions have argument,field children");

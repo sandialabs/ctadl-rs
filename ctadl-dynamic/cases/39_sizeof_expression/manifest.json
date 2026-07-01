@@ -1,0 +1,6 @@
+{
+  "name": "sizeof_expression",
+  "description": "sizeof(x) is a compile-time size and does NOT evaluate x (no real flow), but the frontend can't parse sizeof_expression (ERR 78); DFSan correctly observes no flow. expect_flow=false: once it lowers, this becomes a no-flow regression test (the operand must stay unevaluated). [RESOLVED: frontend now lowers this; plain OK regression case]",
+  "label": "Test",
+  "expect_flow": false
+}

@@ -1,7 +1,6 @@
 {
   "name": "aggregate_initializer",
-  "description": "aggregate initializer list int a[2] = { s, 0 } -- frontend can't ingest initializer_list (ERR 78); DFSan sees the flow",
+  "description": "aggregate initializer list int a[2] = { s, 0 } -- frontend can't ingest initializer_list (ERR 78); DFSan sees the flow [RESOLVED: frontend now lowers this; plain OK regression case]",
   "label": "Test",
-  "expect_flow": true,
-  "known_frontend_gap": "initializer_list"
+  "expect_flow": true
 }

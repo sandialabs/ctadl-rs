@@ -1,0 +1,6 @@
+{
+  "name": "deref_paren_field",
+  "description": "(*p).x should be identical to p->x, but CTADL panics on the parenthesized-deref-then-field node shape in mod.rs (caught by the runner's catch_unwind and reported as frontend-error); DFSan sees the flow. Expected result once it lowers: flow. [RESOLVED: frontend now lowers this; plain OK regression case]",
+  "label": "Test",
+  "expect_flow": true
+}
