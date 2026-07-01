@@ -1,0 +1,6 @@
+{
+  "name": "CPP_50_ctor_distinct_member",
+  "description": "C++ constructor negative: the constructor taints member a but the sink reads a distinct member b set to a constant; no cross-member taint despite real taint elsewhere",
+  "label": "Test",
+  "expect_flow": false
+}

@@ -650,3 +650,176 @@ fn cpp_reference_receiver_dispatches_to_referent() {
     check_direct_call_arg0(&prog, "main", "Box::set", "b");
     check_direct_call(&prog, "main", "Box::get", ["b"]);
 }
+
+// ---------------------------------------------------------------------------
+// Milestone 3 (spec 006) — C++ constructors. A constructor is modeled as the function
+// `Class::Class` with an implicit `this` (`ByRef`) param 0; construction at a declaration
+// is a `DirectCall Class::Class` with the new object as the arg-0 receiver. These assert
+// the *frontend's* lowering; the end-to-end source→sink flows are asserted in
+// `taint_compare::tests::cpp_ctor_*` and validated against DFSan by CPP_47..CPP_50.
+// ---------------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_ctor_discovery_this_param_shape() {
+    // FR-1: an inline constructor `Box(int x){…}` lowers to the function `Box::Box` whose
+    // parameter 0 is an implicit `this` (`ByRef`) with the declared params following; it
+    // returns no value (arity 0). The body's `v = x` writes the member through `this`
+    // (`@p0.v := @p1`), exactly like a setter.
+    let src = r"
+        struct Box {
+            int v;
+            Box(int x) { v = x; }
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::Box",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_return_arity(&prog, "Box::Box", 0);
+    check_func_assign_or_update(&prog, "Box::Box", "@p0.v", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_ctor_init_list_writes_member() {
+    // FR-2: a member-initializer list `Box(int x) : v(x) {}` lowers each `member(expr)` as a
+    // write `this.member = expr` (`@p0.v := @p1`) before the body — identical to writing
+    // `v = x` in the body.
+    let src = r"
+        struct Box {
+            int v;
+            Box(int x) : v(x) {}
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::Box",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_assign_or_update(&prog, "Box::Box", "@p0.v", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_ctor_init_list_target_is_member_under_param_shadowing() {
+    // FR-2 (shadowing): in `Box(int v) : v(v) {}` the initializer's *left* side is always the
+    // member `this.v` (`@p0.v`), even though the param `v` shadows the member name on the
+    // right (the init expression resolves to the param `@p1`). Guards that the init-list LHS
+    // is built directly as `this.<member>`, not via shadowing-aware name resolution.
+    let src = r"
+        struct Box {
+            int v;
+            Box(int v) : v(v) {}
+        };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_assign_or_update(&prog, "Box::Box", "@p0.v", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_ctor_out_of_line_discovered_and_lowered() {
+    // FR-1: an out-of-line constructor `Box::Box(int x){…}` (declarator is a
+    // `qualified_identifier` whose scope and name are both the class) is discovered and
+    // lowered with the same implicit `this` (`ByRef`, param 0) and `this.<member>`
+    // resolution as an inline one — its body's `v = x` becomes an update of `@p0.v`.
+    let src = r"
+        struct Box {
+            int v;
+            Box(int x);
+        };
+        Box::Box(int x) { v = x; }";
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(
+        &prog,
+        "Box::Box",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_return_arity(&prog, "Box::Box", 0);
+    check_func_assign_or_update(&prog, "Box::Box", "@p0.v", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_construction_direct_calls_ctor_with_receiver_arg0() {
+    // FR-3: `Box b(source())` (which tree-sitter parses as a function declaration — the most
+    // vexing parse) lowers to a DIRECT call to `Box::Box` with the new object `b` prepended
+    // as the arg-0 receiver; the constructor's `this.v` write thus lands in `b`. The
+    // argument `source()` is reconstructed into a direct call to `source`. `b.get()` then
+    // dispatches with `b` as its receiver.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Box {
+            int v;
+            Box(int x) { v = x; }
+            int get() { return v; }
+        };
+        int main() {
+            Box b(source());
+            sink(b.get());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_has_direct_call(&prog, "main", "Box::Box");
+    check_direct_call_arg0(&prog, "main", "Box::Box", "b");
+    // The most-vexing-parse argument `source()` was reconstructed as a real call.
+    check_has_direct_call(&prog, "main", "source");
+    // The constructed object is usable as a method receiver afterwards.
+    check_direct_call(&prog, "main", "Box::get", ["b"]);
+}
+
+#[test_log::test]
+fn cpp_construction_three_syntaxes_all_call_ctor() {
+    // FR-3: direct `Box b1(arg)`, copy `Box b2 = Box(arg)`, and brace `Box b3{arg}` all lower
+    // to a `DirectCall Box::Box` with the respective object as the arg-0 receiver.
+    let src = r#"
+        extern "C" int source();
+        struct Box {
+            int v;
+            Box(int x) { v = x; }
+        };
+        int main() {
+            Box b1(source());
+            Box b2 = Box(source());
+            Box b3{source()};
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call_arg0(&prog, "main", "Box::Box", "b1");
+    check_direct_call_arg0(&prog, "main", "Box::Box", "b2");
+    check_direct_call_arg0(&prog, "main", "Box::Box", "b3");
+}
+
+#[test_log::test]
+fn cpp_destructor_definition_parses_and_is_not_lowered() {
+    // FR-1: a destructor *definition* `~Box(){}` must parse (no tree-sitter error) and must
+    // not be mis-lowered as a function — only the constructor and methods are lowered. The
+    // C++ path stays clean: there is no free function named `Box` (the constructor is
+    // `Box::Box`) and no `~Box`.
+    let src = r"
+        struct Box {
+            int v;
+            Box(int x) { v = x; }
+            ~Box() {}
+            int get() { return v; }
+        };";
+    let (prog, has_error, _dump) = super::parse_cpp_program(src).expect("parse C++");
+    assert!(
+        !has_error,
+        "destructor definition should parse without error"
+    );
+    // Constructor + getter lowered as members; the destructor is ingested but not lowered.
+    check_func_params(
+        &prog,
+        "Box::Box",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_returns_path(&prog, "Box::get", "@p0.v");
+    assert!(
+        function_named(&prog, "Box").is_none(),
+        "the inline constructor must not leak as a free function `Box`\n{prog}"
+    );
+    assert!(
+        function_named(&prog, "~Box").is_none(),
+        "the destructor must not be lowered as a function\n{prog}"
+    );
+}

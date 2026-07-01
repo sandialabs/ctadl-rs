@@ -1,0 +1,6 @@
+{
+  "name": "CPP_47_ctor_param_to_member",
+  "description": "C++ constructor: a constructor argument flows into a member via the constructor body, then out through a getter",
+  "label": "Test",
+  "expect_flow": true
+}

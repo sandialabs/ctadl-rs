@@ -624,4 +624,124 @@ mod tests {
             "tainting a different object than the one sunk must not flow, got: {flows:?}"
         );
     }
+
+    /// M3 (spec 006, FR-1/FR-3) acceptance, end to end: a constructor argument flows into a
+    /// member through the constructor body, then out through a getter. `Box b(source())`
+    /// lowers to `DirectCall Box::Box(&b, source())`, so the constructor's `v = x` write
+    /// lands in `b.v` — mirrors the CPP_47 dynamic case (`s=flow d=flow`).
+    #[test_log::test]
+    fn cpp_ctor_param_to_member_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                Box(int x) { v = x; }
+                int get() { return v; }
+            };
+            int main() {
+                Box b(source());
+                sink(b.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp ctor param-to-member flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a source->sink flow through a constructor, got: {flows:?}"
+        );
+    }
+
+    /// M3 (spec 006, FR-2) acceptance, end to end: a member-initializer list `: v(x)` carries
+    /// the constructor argument's taint into the member, identically to a body write — mirrors
+    /// the CPP_48 dynamic case (`s=flow d=flow`).
+    #[test_log::test]
+    fn cpp_ctor_init_list_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                Box(int x) : v(x) {}
+                int get() { return v; }
+            };
+            int main() {
+                Box b(source());
+                sink(b.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp ctor init-list flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a source->sink flow through a member-initializer list, got: {flows:?}"
+        );
+    }
+
+    /// M3 (spec 006, FR-1) acceptance, end to end: an out-of-line constructor definition
+    /// `Box::Box(int){…}` carries the argument's taint into the member just like an inline
+    /// one — mirrors the CPP_49 dynamic case (`s=flow d=flow`).
+    #[test_log::test]
+    fn cpp_ctor_out_of_line_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                Box(int x);
+                int get() { return v; }
+            };
+            Box::Box(int x) { v = x; }
+            int main() {
+                Box b(source());
+                sink(b.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp ctor out-of-line flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a source->sink flow through an out-of-line constructor, got: {flows:?}"
+        );
+    }
+
+    /// Negative control for constructors (field sensitivity): the constructor taints member
+    /// `a` from its argument and sets `b` to a constant; the sink reads the distinct member
+    /// `b`. Real taint enters the program (`bx.a`), but no `a`→`b` flow is reported — mirrors
+    /// the CPP_50 dynamic case (`s=none d=none`).
+    #[test_log::test]
+    fn cpp_ctor_distinct_member_no_cross_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int a;
+                int b;
+                Box(int x) { a = x; b = 0; }
+                int getb() { return b; }
+            };
+            int main() {
+                Box bx(source());
+                sink(bx.getb());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp ctor distinct-member flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "constructor taint to member `a` must not reach a distinct member `b`, got: {flows:?}"
+        );
+    }
 }

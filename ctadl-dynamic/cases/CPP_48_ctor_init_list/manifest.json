@@ -1,0 +1,6 @@
+{
+  "name": "CPP_48_ctor_init_list",
+  "description": "C++ constructor: a member-initializer list (: v(x)) carries the argument's taint into the member",
+  "label": "Test",
+  "expect_flow": true
+}

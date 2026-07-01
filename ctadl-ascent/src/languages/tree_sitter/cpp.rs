@@ -21,11 +21,12 @@
 //! the shared core. C++-only constructs (classes, methods, references, namespaces,
 //! templates, …) are later milestones and may still error.
 
-use ctadl_ir::mir::Program;
+use ctadl_ir::mir::{CallEdges, CallStyle, Exp, Program, Statement, StatementKind, VariableRef};
+use smallvec::{SmallVec, smallvec};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, QueryCursor};
 
-use super::{ClassInfo, Context, GrammarHooks, MatchExtractor, markup, to_str};
+use super::{ClassInfo, Context, GrammarHooks, MatchExtractor, ScopeView, VarKind, markup, to_str};
 use crate::error::Error;
 
 /// Map a C++ `if`/`while`/`switch` `condition` field to the expression to flatten.
@@ -67,14 +68,16 @@ fn member_name<'a>(decl: Node<'_>, source: &'a str) -> Option<&'a str> {
     }
 }
 
-/// Discover C++ instance methods — inline *and* out-of-line — and lower them through the
-/// shared core.
+/// Discover C++ instance methods and constructors — inline *and* out-of-line — and lower
+/// them through the shared core.
 ///
 /// The top-level `function_definition` query in `Context::collect_functions` only matches
 /// definitions whose name is a plain `identifier`; a member function's name is either a
 /// `field_identifier` nested inside a `class_specifier`/`struct_specifier` (inline body) or
 /// a `qualified_identifier` `Class::m` at top level (out-of-line body) — both invisible to
-/// it. This hook (installed only for C++) finds each class, records its data members and
+/// it. A constructor is the special case whose name is the class name (`Box(int){…}` inline,
+/// or `Box::Box(int){…}` out of line): it is modeled as the function `Class::Class` with the
+/// same implicit `this`, plus any member-initializer list lowered before the body. This hook (installed only for C++) finds each class, records its data members and
 /// method names into `Context::classes` (the neutral map the shared core consults for member
 /// resolution and `recv.method(…)` dispatch), and lowers every method body via
 /// `Context::lower_function` with an implicit `this` (`ByRef`) parameter. An out-of-line body
@@ -110,6 +113,9 @@ fn cpp_collect_methods<'a>(
         params: Node<'t>,
         body: Node<'t>,
         void: bool,
+        /// A constructor's member-initializer list as `(member, init-expr)` pairs; empty
+        /// for an ordinary method and for a constructor written without one.
+        member_inits: Vec<(String, Node<'t>)>,
     }
     let mut methods: Vec<MethodDef<'_>> = Vec::new();
 
@@ -136,8 +142,12 @@ fn cpp_collect_methods<'a>(
                 }
                 "function_definition" => {
                     // A member function: declarator is a `function_declarator` whose own
-                    // declarator is the method-name `field_identifier`. Out-of-line defs,
-                    // constructors, etc. don't match this shape and are skipped (later specs).
+                    // declarator is either the method-name `field_identifier` (an ordinary
+                    // method) or a plain `identifier` equal to the class name (an inline
+                    // **constructor** — `Box(int x){…}`, modeled as `Class::Class`). A
+                    // destructor's `destructor_name` declarator matches neither and is
+                    // ingested-but-not-lowered (its definition still parses). Out-of-line
+                    // defs are handled in phase 1.5.
                     let Some(declr) = child.child_by_field_name("declarator") else {
                         continue;
                     };
@@ -151,21 +161,43 @@ fn cpp_collect_methods<'a>(
                     ) else {
                         continue;
                     };
-                    if name_node.kind() != "field_identifier" {
+                    let is_ctor = name_node.kind() == "identifier"
+                        && to_str(&name_node, source) == class_name;
+                    if name_node.kind() != "field_identifier" && !is_ctor {
                         continue;
                     }
-                    let name = to_str(&name_node, source).to_string();
+                    let name = if is_ctor {
+                        class_name.clone()
+                    } else {
+                        to_str(&name_node, source).to_string()
+                    };
                     let void = child
                         .child_by_field_name("type")
                         .is_some_and(|t| to_str(&t, source).eq_ignore_ascii_case("void"));
-                    info.methods.insert(name.clone());
-                    methods.push(MethodDef {
-                        class: class_name.clone(),
-                        name,
-                        params,
-                        body: method_body,
-                        void,
-                    });
+                    if is_ctor {
+                        // A constructor returns no value and writes the object via `this`;
+                        // model it as a void `Class::Class` method and record the member-
+                        // initializer list (`: v(x)`) so construction can lower it.
+                        info.has_ctor = true;
+                        methods.push(MethodDef {
+                            class: class_name.clone(),
+                            name,
+                            params,
+                            body: method_body,
+                            void: true,
+                            member_inits: ctor_member_inits(child, source),
+                        });
+                    } else {
+                        info.methods.insert(name.clone());
+                        methods.push(MethodDef {
+                            class: class_name.clone(),
+                            name,
+                            params,
+                            body: method_body,
+                            void,
+                            member_inits: Vec::new(),
+                        });
+                    }
                 }
                 _ => {}
             }
@@ -193,7 +225,7 @@ fn cpp_collect_methods<'a>(
             body: (compound_statement) @body) @def
         "#,
     );
-    let mut out_of_line: Vec<MethodDef<'_>> = Vec::new();
+    let mut out_of_line: Vec<(bool, MethodDef<'_>)> = Vec::new();
     {
         let mut ool_cursor = QueryCursor::new();
         let mut ool_it = ool_cursor.matches(&ool_query, root, source.as_bytes());
@@ -207,27 +239,45 @@ fn cpp_collect_methods<'a>(
                 continue;
             }
             let name = to_str(&extract.get("method")?, source).to_string();
+            let def = extract.get("def")?;
             let params = extract.get("params")?;
             let body = extract.get("body")?;
-            let void = extract
-                .get("def")?
-                .child_by_field_name("type")
-                .is_some_and(|t| to_str(&t, source).eq_ignore_ascii_case("void"));
-            out_of_line.push(MethodDef {
-                class,
-                name,
-                params,
-                body,
-                void,
-            });
+            // `Box::Box(…)` (name == class) is an out-of-line **constructor**: model it as a
+            // void `Class::Class` and carry its member-initializer list. An ordinary
+            // out-of-line method keeps its declared return arity and has no init list.
+            let is_ctor = name == class;
+            let void = is_ctor
+                || def
+                    .child_by_field_name("type")
+                    .is_some_and(|t| to_str(&t, source).eq_ignore_ascii_case("void"));
+            let member_inits = if is_ctor {
+                ctor_member_inits(def, source)
+            } else {
+                Vec::new()
+            };
+            out_of_line.push((
+                is_ctor,
+                MethodDef {
+                    class,
+                    name,
+                    params,
+                    body,
+                    void,
+                    member_inits,
+                },
+            ));
         }
     }
     // Register each out-of-line method's name on its class (so `recv.m(…)` dispatches even
-    // though the body lives outside the class body), then queue it for lowering alongside the
-    // inline methods.
-    for md in out_of_line {
+    // though the body lives outside the class body), or mark the class as having a
+    // constructor; then queue it for lowering alongside the inline methods.
+    for (is_ctor, md) in out_of_line {
         if let Some(info) = ctx.classes.get_mut(&md.class) {
-            info.methods.insert(md.name.clone());
+            if is_ctor {
+                info.has_ctor = true;
+            } else {
+                info.methods.insert(md.name.clone());
+            }
         }
         methods.push(md);
     }
@@ -240,7 +290,8 @@ fn cpp_collect_methods<'a>(
             .entry(qualified)
             .or_insert_with(|| program.new_function());
     }
-    // Phase 2b: lower each method body with an implicit `this` of its class.
+    // Phase 2b: lower each method body with an implicit `this` of its class. A constructor
+    // additionally emits its member-initializer list before the body.
     for md in methods {
         let qualified = format!("{}::{}", md.class, md.name);
         ctx.lower_function(
@@ -252,19 +303,267 @@ fn cpp_collect_methods<'a>(
             md.params,
             md.body,
             Some(&md.class),
+            &md.member_inits,
         )?;
     }
     Ok(())
 }
 
+/// Extract a constructor's member-initializer list from its `function_definition` node as
+/// `(member, init-expression)` pairs. The list (`: v(x), w(y)`) appears as an unnamed
+/// `field_initializer_list` child between the declarator and the body; each
+/// `field_initializer` names a `field_identifier` member followed by an `argument_list`
+/// (`v(x)`) or `initializer_list` (`v{x}`) holding the initializer. We take the first
+/// initializer expression for each member (scalar members, this slice). A base-class
+/// initializer (`: Base(x)`, inheritance — out of scope) names a type, not a
+/// `field_identifier`, and is skipped. Returns empty when there is no init list.
+fn ctor_member_inits<'t>(fdef: Node<'t>, source: &str) -> Vec<(String, Node<'t>)> {
+    let mut inits = Vec::new();
+    let mut fc = fdef.walk();
+    for child in fdef.children(&mut fc) {
+        if child.kind() != "field_initializer_list" {
+            continue;
+        }
+        let mut ic = child.walk();
+        for fi in child.children(&mut ic) {
+            if fi.kind() != "field_initializer" {
+                continue;
+            }
+            let Some(member) = fi.named_child(0).filter(|n| n.kind() == "field_identifier") else {
+                continue;
+            };
+            if let Some(expr) = fi.named_child(1).and_then(|args| args.named_child(0)) {
+                inits.push((to_str(&member, source).to_string(), expr));
+            }
+        }
+    }
+    inits
+}
+
+/// Try to lower a class-typed declaration as an **object construction** — the C++
+/// `GrammarHooks::construct` implementation. The shared [`Context::walk_declaration`] only
+/// calls this when the declaration's type names a known class (the `classes` map is empty
+/// for C, so the C path never reaches here). Recognized forms, all requiring the class to
+/// declare a constructor (`has_ctor`):
+/// - **direct** `Box b(args)` — tree-sitter parses this as a function declaration (the
+///   "most vexing parse"): a `function_declarator` whose declarator is the object
+///   `identifier` and whose `parameters` hold the arguments shredded into
+///   `parameter_declaration`s, which [`reconstruct_mvp_arg`] turns back into argument
+///   expressions;
+/// - **copy** `Box b = Box(args)` — an `init_declarator` whose value is a `call_expression`
+///   on the class name;
+/// - **brace** `Box b{args}` — an `init_declarator` whose value is an `initializer_list`.
+///
+/// Each lowers to: register the local object, then `DirectCall Class::Class` with the
+/// object as the arg-0 (`ByRef`) receiver and the constructor arguments following — so the
+/// constructor's `this.<member>` writes propagate back into the object (exactly like a
+/// setter call). Returns `true` when it recognized and lowered a construction, `false`
+/// otherwise (e.g. `Box b;`, or a class without a constructor) so the caller handles the
+/// declaration normally.
+fn cpp_try_construct<'a>(
+    ctx: &mut Context<'a>,
+    source: &'a str,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    decl_node: Node<'_>,
+    class: &str,
+) -> anyhow::Result<bool, Error> {
+    if !ctx.classes.get(class).is_some_and(|info| info.has_ctor) {
+        return Ok(false);
+    }
+    let Some(declr) = decl_node.child_by_field_name("declarator") else {
+        return Ok(false);
+    };
+
+    // Recover the object's name and the constructor argument nodes, by form.
+    let (obj_node, args): (Node<'_>, SmallVec<[Exp; 4]>) = match declr.kind() {
+        // Most-vexing-parse direct init: `Box b(args)`.
+        "function_declarator" => {
+            let Some(obj_node) = declr
+                .child_by_field_name("declarator")
+                .filter(|d| d.kind() == "identifier")
+            else {
+                return Ok(false);
+            };
+            let Some(params) = declr.child_by_field_name("parameters") else {
+                return Ok(false);
+            };
+            let mut pcursor = params.walk();
+            let pds: Vec<Node<'_>> = params
+                .children(&mut pcursor)
+                .filter(|c| c.kind() == "parameter_declaration")
+                .collect();
+            if pds.is_empty() {
+                // `Box b()` is a function prototype, not a construction (no default-ctor
+                // call in this slice); let the normal declarator handling deal with it.
+                return Ok(false);
+            }
+            let mut args: SmallVec<[Exp; 4]> = SmallVec::new();
+            for pd in pds {
+                args.push(reconstruct_mvp_arg(ctx, source, program, scope_view, pd)?);
+            }
+            (obj_node, args)
+        }
+        // Copy/brace init: `Box b = Box(args)` / `Box b{args}`.
+        "init_declarator" => {
+            let Some(obj_node) = declr
+                .child_by_field_name("declarator")
+                .filter(|d| d.kind() == "identifier")
+            else {
+                return Ok(false);
+            };
+            let Some(value) = declr.child_by_field_name("value") else {
+                return Ok(false);
+            };
+            match value.kind() {
+                "call_expression" => {
+                    // Only a call on the class name itself is construction (`Box(args)`).
+                    let on_class = value
+                        .child_by_field_name("function")
+                        .filter(|f| f.kind() == "identifier")
+                        .is_some_and(|f| to_str(&f, source) == class);
+                    if !on_class {
+                        return Ok(false);
+                    }
+                    let arg_list = value
+                        .child_by_field_name("arguments")
+                        .expect("call_expression always has arguments");
+                    let args = ctx.collect_arguments(program, arg_list, source, scope_view)?;
+                    (obj_node, args)
+                }
+                "initializer_list" => {
+                    let mut lcursor = value.walk();
+                    let mut args: SmallVec<[Exp; 4]> = SmallVec::new();
+                    for elem in value.children(&mut lcursor) {
+                        if elem.is_named() {
+                            args.push(ctx.flatten_expr(program, elem, source, scope_view)?);
+                        }
+                    }
+                    (obj_node, args)
+                }
+                _ => return Ok(false),
+            }
+        }
+        _ => return Ok(false),
+    };
+
+    emit_construction(ctx, source, program, scope_view, class, obj_node, args);
+    Ok(true)
+}
+
+/// Reconstruct one most-vexing-parse constructor argument from the `parameter_declaration`
+/// tree-sitter produced for it. `Box b(source())` parses the argument `source()` as a
+/// parameter of type `source` with an `abstract_function_declarator` (`()`); `Box b(y)`
+/// parses `y` as a parameter of type `y` with no declarator. We map the former to a call
+/// `source(…)` (recursing on any nested arguments) and the latter to a reference to the
+/// named value. Anything else falls back to a reference to the type name.
+fn reconstruct_mvp_arg<'a>(
+    ctx: &mut Context<'a>,
+    source: &'a str,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    pd: Node<'_>,
+) -> anyhow::Result<Exp, Error> {
+    let name = pd
+        .child_by_field_name("type")
+        .map(|t| to_str(&t, source))
+        .ok_or_else(|| {
+            Error::TreeSitterParse("constructor argument parameter_declaration has no type".into())
+        })?;
+    match pd.child_by_field_name("declarator") {
+        Some(d) if d.kind() == "abstract_function_declarator" => {
+            // The argument is a call `name(nested args)`.
+            let mut call_args: SmallVec<[Exp; 4]> = SmallVec::new();
+            if let Some(nested) = d.child_by_field_name("parameters") {
+                let mut ncursor = nested.walk();
+                let inner: Vec<Node<'_>> = nested
+                    .children(&mut ncursor)
+                    .filter(|c| c.kind() == "parameter_declaration")
+                    .collect();
+                for pd in inner {
+                    call_args.push(reconstruct_mvp_arg(ctx, source, program, scope_view, pd)?);
+                }
+            }
+            let temp = ctx.allocator.next_temp();
+            program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+                StatementKind::CallAssign {
+                    style: CallStyle::DirectCall {
+                        call_edges: CallEdges::Explicit(smallvec![name.to_string()]),
+                    },
+                    rets: vec![VariableRef::new_local(temp.clone())].into(),
+                    args: call_args,
+                },
+            ));
+            Ok(Exp::AccessPath(ctx.build_access_path(
+                &temp,
+                Default::default(),
+                scope_view,
+            )))
+        }
+        // A bare value reference (`y`), or a fallback.
+        _ => Ok(Exp::AccessPath(ctx.build_access_path(
+            name,
+            Default::default(),
+            scope_view,
+        ))),
+    }
+}
+
+/// Register the constructed local and emit the `DirectCall Class::Class(&obj, args…)`. The
+/// object is registered in `local_types` so a later `obj.method(…)` dispatches, and passed
+/// as the plain arg-0 access path (by-ref semantics come from the constructor's param 0
+/// being `ByRef`, exactly as for an ordinary method receiver). The void constructor's
+/// result goes to a throwaway temp, as method-call lowering already does.
+fn emit_construction<'a>(
+    ctx: &mut Context<'a>,
+    source: &'a str,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    class: &str,
+    obj_node: Node<'_>,
+    ctor_args: SmallVec<[Exp; 4]>,
+) {
+    let obj_name = to_str(&obj_node, source);
+    ctx.scope_tree.add_variable(
+        scope_view.sidx,
+        obj_name.to_string(),
+        VarKind::Local,
+        None,
+        None,
+    );
+    ctx.local_types
+        .insert(obj_name.to_string(), class.to_string());
+
+    let recv = Exp::AccessPath(ctx.build_access_path(obj_name, Default::default(), scope_view));
+    let mut args: SmallVec<[Exp; 4]> = smallvec![recv];
+    args.extend(ctor_args);
+
+    let qualified = format!("{class}::{class}");
+    let temp = ctx.allocator.next_temp();
+    program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+        StatementKind::CallAssign {
+            style: CallStyle::DirectCall {
+                call_edges: CallEdges::Explicit(smallvec![qualified]),
+            },
+            rets: vec![VariableRef::new_local(temp)].into(),
+            args,
+        },
+    ));
+}
+
 /// The C++ grammar-shape adapters installed on the lowering [`Context`]. The first two
 /// bridge the only C-subset node-shape divergences between the two grammars (per the
-/// spec-002 triage); [`cpp_collect_methods`] adds C++ instance-method discovery, which the
-/// top-level function query cannot see. The shared core is otherwise grammar-neutral.
+/// spec-002 triage); [`cpp_collect_methods`] adds C++ instance-method/constructor discovery,
+/// which the top-level function query cannot see, and [`cpp_try_construct`] lowers object
+/// construction at a declaration. The shared core is otherwise grammar-neutral.
 pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     condition_expr: cpp_condition_expr,
     subscript_index: cpp_subscript_index,
     collect_aux: cpp_collect_methods,
+    // Recognize and lower object construction (`Box b(args)` and the copy/brace variants)
+    // to a constructor `DirectCall`. Only invoked by the shared walker for a declaration
+    // whose type is a known class, so it is inert on the C path.
+    construct: cpp_try_construct,
     // The C declarator shapes plus the C++-only `reference_declarator` (`T& r`), captured
     // `@is_ref_cpp`. The shared classifier maps a non-const reference to `ByRef` (write-back)
     // and a `const T&` to `ByVal` (inbound only), reading the grammar-neutral `const`

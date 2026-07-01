@@ -429,6 +429,12 @@ struct ClassInfo {
     members: HashSet<String>,
     /// Names of inline member functions (resolve a `recv.<method>(…)` call to `Class::method`).
     methods: HashSet<String>,
+    /// Whether the class declares a (user-defined) constructor, modeled as the function
+    /// `Class::Class` with an implicit `this` (`ByRef`) param 0. Set by the C++ method
+    /// discovery hook; consulted by the `construct` hook so a class-typed declaration with
+    /// arguments (`Box b(args)` etc.) lowers to a `DirectCall Class::Class(&b, args…)`.
+    /// Always `false` for C (the `classes` map is empty), so construction never fires there.
+    has_ctor: bool,
 }
 
 /// Grammar-shape adapters for the *few* places tree-sitter-cpp and tree-sitter-c expose
@@ -471,6 +477,24 @@ struct GrammarHooks {
         &mut Program,
         usize,
     ) -> anyhow::Result<(), Error>,
+    /// Try to lower a *declaration* as an **object construction** (C++ only). The shared
+    /// [`Context::walk_declaration`] calls this for a declaration whose type names a known
+    /// class (so it is never invoked for C, where [`Context::classes`] is empty). C++ uses
+    /// it to recognize `Box b(args)` / `Box b = Box(args)` / `Box b{args}` — a construction
+    /// of a class that declares a constructor — and lower it to a `DirectCall Class::Class`
+    /// with the new object as the arg-0 (`ByRef`) receiver, so the constructor's member
+    /// writes flow back into the object. Returns `true` if it recognized and fully lowered
+    /// the declaration (the caller then skips its normal declarator handling), `false`
+    /// otherwise (a plain `Box b;`, a non-class type, or a class with no constructor —
+    /// handled normally). The C hook always returns `false`.
+    construct: for<'a, 't, 's> fn(
+        &mut Context<'a>,
+        &'a str,
+        &mut Program,
+        &'s ScopeView,
+        Node<'t>,
+        &'s str,
+    ) -> anyhow::Result<bool, Error>,
 }
 
 impl GrammarHooks {
@@ -484,6 +508,8 @@ impl GrammarHooks {
         },
         // C has no functions hidden from the top-level query: no methods, no classes.
         collect_aux: |_ctx, _source, _root, _program, _global_sidx| Ok(()),
+        // C has no classes/constructors, so no declaration is ever a construction.
+        construct: |_ctx, _source, _program, _scope_view, _node, _class| Ok(false),
         // The historical C parameter query, verbatim: plain, pointer (`@is_ref`), array
         // (`@is_ref`), and function-pointer declarators. C has no `reference_declarator`.
         param_query: r#"
@@ -1059,6 +1085,19 @@ impl<'a> Context<'a> {
             .map(|t| to_str(&t, source))
             .filter(|name| self.classes.contains_key(*name))
             .map(str::to_string);
+
+        // A class-typed declaration may be an object *construction* (`Box b(args)` and the
+        // copy/brace variants). Delegate that recognition + lowering to the C++ `construct`
+        // hook: if it handles the declaration, we are done. Only reached when the type names
+        // a known class — empty for C, so the C path never calls the hook (its hook is a
+        // no-op returning `false` regardless). No language branch here; this is data-driven
+        // on the neutral `classes` map.
+        if let Some(class) = &class_type {
+            let construct = self.hooks.construct;
+            if construct(self, source, program, scope_view, node, class)? {
+                return Ok(());
+            }
+        }
 
         let mut cursor = node.walk();
 
@@ -2327,6 +2366,14 @@ impl<'a> Context<'a> {
         while let Some(m) = name_matches.next() {
             let extract = MatchExtractor::new(&query, m);
             if let Ok(name_node) = extract.get("func.name") {
+                // The `function_definition` query matches at any depth. A C++ inline
+                // constructor (`Box(int){…}`) is a `function_definition` whose name is a
+                // plain `identifier` *inside a class body*, so it matches too — but it is a
+                // member the `collect_aux` hook already owns. Skip it here so it is not also
+                // registered/lowered as a bogus free function. Inert for C (no class bodies).
+                if is_class_member_definition(name_node) {
+                    continue;
+                }
                 let func_name = to_str(&name_node, source);
                 self.functions
                     .entry(func_name.to_string())
@@ -2351,6 +2398,11 @@ impl<'a> Context<'a> {
             //boo, so TREE_SITTER doesn't add a node for an implicit int function type
             let return_type = extract.get_opt("return_type");
             let func_name_node = extract.get("func.name")?;
+            // A C++ inline constructor matches this query but is a class member owned by the
+            // `collect_aux` hook; skip it so it is not double-lowered (inert for C).
+            if is_class_member_definition(func_name_node) {
+                continue;
+            }
             let param_list = extract.get("param_list")?;
             let body_node = extract.get("body")?;
             //debug_print_tree(body_node, 0, None, Some(50));
@@ -2368,6 +2420,7 @@ impl<'a> Context<'a> {
                 param_list,
                 body_node,
                 None,
+                &[],
             )?;
         }
         Ok(())
@@ -2384,6 +2437,13 @@ impl<'a> Context<'a> {
     /// the declared parameters number from 1, and `current_method_class` is set so the body's
     /// unqualified member names resolve to `this.<member>`. `func_name` is the IR name and the
     /// resolution key — a free function's bare name, or a method's qualified `Class::method`.
+    ///
+    /// `member_inits` carries a C++ constructor's member-initializer list (`Box(int x) : v(x)`)
+    /// as neutral `(member-name, init-expression-node)` pairs gathered by the C++ discovery
+    /// hook; each is emitted as `this.<member> = <init-expr>` *before* the body (matching C++
+    /// initialization order), reusing the same `this`-by-ref write that a body assignment
+    /// `v = x` produces. It is always empty for a free function and for C, so nothing is
+    /// emitted there.
     #[allow(clippy::too_many_arguments)]
     fn lower_function(
         &mut self,
@@ -2395,6 +2455,7 @@ impl<'a> Context<'a> {
         param_list: Node<'_>,
         body_node: Node<'_>,
         implicit_this: Option<&str>,
+        member_inits: &[(String, Node<'_>)],
     ) -> anyhow::Result<(), Error> {
         self.allocator.reset();
         // Per-function state: a fresh local→class-type map (filled as we walk declarations),
@@ -2489,6 +2550,21 @@ impl<'a> Context<'a> {
                 &format!("label:{label}"),
             )?;
             self.label_blocks.insert(label, label_block.blidx);
+        }
+
+        // A C++ constructor's member-initializer list runs before the body. Each
+        // `member(expr)` becomes `this.<member> = <expr>`: the target is `@p0.<member>`
+        // (built directly so a parameter that shadows the member — `Box(int v) : v(v)` —
+        // does not redirect the *left* side away from `this`), and the init expression is
+        // flattened with the shared expression lowering (so a param reference resolves to
+        // its `@pN`). Empty for every free function and for C, so nothing is emitted there.
+        for (member, init_expr) in member_inits {
+            let target = Exp::AccessPath(AccessPath {
+                variable_ref: VariableRef::new_parameter(0u32.into()),
+                path: std::iter::once(FieldAccess::Symbol(member.as_str().into())).collect(),
+            });
+            let val = self.flatten_expr(program, *init_expr, source, &block_scope_view)?;
+            self.add_assign_to_program(program, &block_scope_view, &target, &val, None);
         }
 
         self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
@@ -2631,6 +2707,25 @@ pub fn debug_print_tree(
 /// `p->m(…)` / `r.m(…)` call can look up its class — `to_str` of the wrapping declarator
 /// would otherwise yield `*p`, which never matches the receiver identifier. Returns `None`
 /// for shapes that name no single identifier (e.g. a function declarator).
+/// Whether `node` sits inside a class/struct body (a `field_declaration_list`). The
+/// top-level `function_definition` query in [`Context::collect_functions`] matches at any
+/// depth, so a C++ inline constructor — a `function_definition` whose name is a plain
+/// `identifier` *inside a class* — matches it just like a free function. Such members are
+/// discovered and lowered by the C++ `collect_aux` hook, so the shared loop uses this to
+/// skip them and avoid double-lowering. C trees contain no `field_declaration_list`, so
+/// this returns `false` for every C definition and the C path is unaffected.
+fn is_class_member_definition(node: Node<'_>) -> bool {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        match n.kind() {
+            "field_declaration_list" => return true,
+            "translation_unit" => return false,
+            _ => cur = n.parent(),
+        }
+    }
+    false
+}
+
 fn declarator_leaf_ident<'s>(decl: Node<'_>, source: &'s str) -> Option<&'s str> {
     match decl.kind() {
         "identifier" => Some(to_str(&decl, source)),

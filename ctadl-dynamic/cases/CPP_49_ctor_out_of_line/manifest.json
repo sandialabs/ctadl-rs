@@ -1,0 +1,6 @@
+{
+  "name": "CPP_49_ctor_out_of_line",
+  "description": "C++ constructor: an out-of-line Box::Box(int) definition carries the argument's taint into the member",
+  "label": "Test",
+  "expect_flow": true
+}
