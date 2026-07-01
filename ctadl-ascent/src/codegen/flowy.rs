@@ -396,6 +396,7 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
     // profile.
     let format_facts = format_facts_builder
         .taint(query_result.taint.clone())
+        .taint_edge(query_result.taint_edge.clone())
         .formal_param(query_result.formal_param.clone())
         .build()
         .expect("building format facts");

@@ -135,6 +135,41 @@ fn test_basic2_source_sink() {
                 && r.3 == ss.source.vertex.1)
             .is_some()
     );
+
+    // The taint graph is oriented in execution / data-flow order, so a forward walk over
+    // `taint_edge` from the source vertex must reach the sink vertex. This only holds if
+    // backward (sink-seeded) edges were reversed into execution order.
+    assert!(!query_result.taint_edge.is_empty());
+    let mut adj: std::collections::BTreeMap<
+        (fx::FunctionId, fx::FlowVariable, fx::Path),
+        Vec<(fx::FunctionId, fx::FlowVariable, fx::Path)>,
+    > = std::collections::BTreeMap::new();
+    for (_edge, sf, sv, sp, df, dv, dp) in &query_result.taint_edge {
+        adj.entry((*sf, *sv, *sp))
+            .or_default()
+            .push((*df, *dv, *dp));
+    }
+    let start = (h_id, ss.source.vertex.0, ss.source.vertex.1);
+    let goal = (h_id, ss.sink.vertex.0, ss.sink.vertex.1);
+    let mut seen = std::collections::BTreeSet::new();
+    let mut queue = std::collections::VecDeque::from([start]);
+    seen.insert(start);
+    let mut reached_sink = false;
+    while let Some(node) = queue.pop_front() {
+        if node == goal {
+            reached_sink = true;
+            break;
+        }
+        for next in adj.get(&node).into_iter().flatten() {
+            if seen.insert(*next) {
+                queue.push_back(*next);
+            }
+        }
+    }
+    assert!(
+        reached_sink,
+        "forward walk over taint_edge should reach the sink vertex"
+    );
 }
 
 // Test Phi instruction with control flow

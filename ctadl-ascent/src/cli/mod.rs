@@ -260,6 +260,7 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
     Ok(())
 }
 
+/// Formats the last query's results as SARIF
 pub fn format(
     project: &AnalysisProject,
     compact: bool,
@@ -282,6 +283,7 @@ pub fn format(
 
         let mut b = query_engine::formatter::FormatFactsBuilder::default();
         b.taint(taint_result.taint)
+            .taint_edge(taint_result.taint_edge)
             .formal_param(formal_params)
             .index_actual_param(index_facts.actual_param)
             .call(index_facts.call)
@@ -336,8 +338,6 @@ fn dump_taint_graph_dot(
     use crate::facts::TaintDirection;
     use crate::graphviz::Cone;
 
-    let taint_results = query_engine::formatter::compute_taint_results(facts);
-
     // Classify every tainted node by cone membership: a node carrying a
     // Forward endpoint is in the forward cone, a Backward endpoint puts
     // it in the backward cone, and both makes it a "meet" (Cone::Both)
@@ -354,19 +354,20 @@ fn dump_taint_graph_dot(
             .or_insert(cone);
     }
 
-    // Orient each edge in data-flow direction (so arrows match
-    // `find_path`: source → sink) and dedup, recording which cone(s)
-    // produced it. The edge tuple is (df, dv, dp, sf, sv, sp, dir),
-    // meaning (df,dv,dp) was tainted *from* (sf,sv,sp). Forward
-    // propagation means data flows sf → df; backward propagation
-    // (which walks assignments in reverse) means it flows df → sf.
+    // The persisted taint edges are already in data-flow (execution) order
+    // (source → derived, matching `find_path`) and no longer carry the
+    // exploration direction, so draw each edge as-is and dedup. Approximate an
+    // edge's cone from the cones its endpoints already carry (from the
+    // authoritative `facts.taint` classification above); a `Call`/`Return`/`Intra`
+    // label does not itself imply forward vs backward.
     let mut oriented: std::collections::BTreeMap<_, Cone> = std::collections::BTreeMap::new();
-    for (df, _dts, dv, dp, sf, _sts, sv, sp, dir, _site) in &taint_results.edges {
-        let derived = (*df, *dv, *dp);
-        let origin = (*sf, *sv, *sp);
-        let (src, dst, cone) = match dir {
-            TaintDirection::Forward => (origin, derived, Cone::Forward),
-            TaintDirection::Backward => (derived, origin, Cone::Backward),
+    for (_edge, sf, sv, sp, df, dv, dp) in &facts.taint_edge {
+        let src = (*sf, *sv, *sp);
+        let dst = (*df, *dv, *dp);
+        let cone = match (node_cone.get(&src), node_cone.get(&dst)) {
+            (Some(a), Some(b)) => a.join(*b),
+            (Some(c), None) | (None, Some(c)) => *c,
+            (None, None) => Cone::Both,
         };
         oriented
             .entry((src, dst))
