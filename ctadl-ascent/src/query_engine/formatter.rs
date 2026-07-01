@@ -5,7 +5,7 @@ this module is to compute location information for each tainted vertex and instr
 most frontends only store instruction location information (as opposed to locations for each
 variable access), we focus on instruction locations.
 
-The main entry point is [`format_sarif`]. It reads the last query
+The main entry point is [`format_sarif`]. It reads the last query and formats its results in SARIF.
 
 The schema of tables for formatting is:
 
@@ -14,21 +14,6 @@ function_id:
 id (int), function_name (string)
 
 
-source-info:
-metadata:
-hash_algorithm, hash_len, version
-
-artifacts:
-artifact_id, canonical_path, sub_artifact_id, encoding, content_hash
-
-files:
-file_id, artifact_id
-
-spans:
-span_id, start, len_tag, len_value
-
-file_spans:
-file_span_id, file_id, span_id
 ```
 
 */
