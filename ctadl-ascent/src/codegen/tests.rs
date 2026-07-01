@@ -144,7 +144,7 @@ fn test_basic2_source_sink() {
         (fx::FunctionId, fx::FlowVariable, fx::Path),
         Vec<(fx::FunctionId, fx::FlowVariable, fx::Path)>,
     > = std::collections::BTreeMap::new();
-    for (_site, sf, sv, sp, df, dv, dp) in &query_result.taint_edge {
+    for (_edge, sf, sv, sp, df, dv, dp) in &query_result.taint_edge {
         adj.entry((*sf, *sv, *sp))
             .or_default()
             .push((*df, *dv, *dp));

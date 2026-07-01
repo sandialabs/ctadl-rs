@@ -61,8 +61,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::{Error, ErrorContext};
 use crate::facts::schema;
 use crate::facts::{
-    CallArgId, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId, InsnSiteId,
-    Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintState, isout,
+    CallArgId, FlowEdge, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId,
+    InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintState, isout,
 };
 use crate::project::{AnalysisProject, ArtifactLanguage};
 use crate::query_engine::QueryEndpoint;
@@ -155,15 +155,15 @@ pub struct TaintedInstructions {
 
 pub struct TaintAnalysisResults {
     /// Taint-flow edges. Each tuple is
-    /// `(df, dts, dv, dp, sf, sts, sv, sp, direction, site)`: the node
+    /// `(df, dts, dv, dp, sf, sts, sv, sp, direction, edge)`: the node
     /// `(df,dts,dv,dp)` was tainted *from* `(sf,sts,sv,sp)` while propagating in
     /// `direction`. Each endpoint carries its [`TaintState`] (second column, as
     /// in the `taint` relation) so the call/return-matching distinction survives
     /// into the graph and `FlowNode`s can be rebuilt unambiguously. The data-flow
     /// orientation depends on `direction` — see the consumers (SARIF path graph,
-    /// `--dump-taint-graph`). `site` is the call instruction anchoring the edge
-    /// when it is a call/return propagation, and `None` for the flow-insensitive
-    /// assign/alias edges.
+    /// `--dump-taint-graph`). `edge` is the [`FlowEdge`] classifying the step as
+    /// `Intra`, `Call`, or `Return`; call/return edges carry the anchoring call
+    /// instruction.
     pub edges: Vec<(
         FunctionId,
         TaintState,
@@ -174,7 +174,7 @@ pub struct TaintAnalysisResults {
         FlowVariable,
         Path,
         TaintDirection,
-        Option<PackedInsnSiteId>,
+        FlowEdge,
     )>,
     pub tainted_insns: TaintedInstructions,
     pub absorbing_functions: Vec<(FunctionId, QueryEndpoint, FormalIndex)>,
@@ -201,16 +201,16 @@ impl FormatFactsBuilder {
 pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
     ascent! {
         struct FormatterEngine;
-        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sts:expr, $sv:expr, $sp:expr, $site:expr) {
+        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sts:expr, $sv:expr, $sp:expr, $edge:expr) {
             taint($df, $dts, $dv, $dp, $a),
-            taint_edge($df, $dts, $dv, $dp, $sf, $sts, $sv, $sp, ($a).direction, $site)
+            taint_edge($df, $dts, $dv, $dp, $sf, $sts, $sv, $sp, ($a).direction, $edge)
         }
-        // Each taint-flow edge carries the call instruction that anchors it, when
-        // there is one. Call/return propagation (the formal<->actual rules) records
-        // the call site; the flow-insensitive assign/alias rules have no instruction
-        // and record `None`. This is what lets `codeFlows` attribute each step of a
-        // path to its own call site instead of guessing from the variable alone.
-        relation taint_edge(FunctionId, TaintState, FlowVariable, Path, FunctionId, TaintState, FlowVariable, Path, TaintDirection, Option<PackedInsnSiteId>);
+        // Each taint-flow edge carries a [`FlowEdge`] classifying the step. Call/return
+        // propagation (the formal<->actual rules) records a `Call`/`Return` anchored at
+        // the crossed call instruction; the flow-insensitive assign/alias rules record
+        // `Intra`. This is what lets `codeFlows` attribute each step of a path to its own
+        // call site instead of guessing from the variable alone.
+        relation taint_edge(FunctionId, TaintState, FlowVariable, Path, FunctionId, TaintState, FlowVariable, Path, TaintDirection, FlowEdge);
         relation tainted_var_at_insn(PackedInsnSiteId, Label, FlowVariable, Path);
         relation external_function(FunctionId);
         relation absorbing_functions(FunctionId, QueryEndpoint, FormalIndex);
@@ -361,7 +361,7 @@ pub fn build_taint_flow_graph(
             id_to_node.push(src_n);
         }
     }
-    for (df, dts, dv, dp, sf, sts, sv, sp, _dir, _site) in taint_edge {
+    for (df, dts, dv, dp, sf, sts, sv, sp, _dir, _edge) in taint_edge {
         let src_n = (*sf, *sts, *sv, *sp);
         if let Entry::Vacant(e) = node_to_id.entry(src_n) {
             e.insert(id_to_node.len() as u32);
@@ -382,7 +382,7 @@ pub fn build_taint_flow_graph(
     // A real source -> sink flow is a forward walk to a node the sink names, so
     // we keep forward edges and search those alone.
     let mut edges: Vec<(u32, u32)> = Vec::with_capacity(taint_edge.len());
-    for (df, dts, dv, dp, sf, sts, sv, sp, dir, site) in taint_edge {
+    for (df, dts, dv, dp, sf, sts, sv, sp, dir, edge) in taint_edge {
         if *dir != TaintDirection::Forward {
             continue;
         }
@@ -393,8 +393,9 @@ pub fn build_taint_flow_graph(
         edges.push((src_id, dst_id));
         // Anchor this edge to its call instruction so the code-flow step walking
         // src_id -> dst_id resolves to *this* call site rather than whatever site
-        // happened to be recorded first for the variable.
-        if let Some(packed) = site
+        // happened to be recorded first for the variable. Only Call/Return edges
+        // carry a site; Intra edges contribute nothing.
+        if let Some(packed) = edge.site()
             && let Ok(s) = InsnSiteId::try_from(packed)
         {
             site_by_edge.insert((src_id, dst_id), s);
@@ -1910,7 +1911,7 @@ mod tests {
             FlowVariable,
             Path,
             TaintDirection,
-            Option<PackedInsnSiteId>,
+            FlowEdge,
         )>,
     ) -> TaintAnalysisResults {
         TaintAnalysisResults {
@@ -1940,7 +1941,7 @@ mod tests {
         FlowVariable,
         Path,
         TaintDirection,
-        Option<PackedInsnSiteId>,
+        FlowEdge,
     ) {
         (
             dst.0,
@@ -1952,7 +1953,7 @@ mod tests {
             src.2,
             src.3,
             TaintDirection::Forward,
-            None,
+            FlowEdge::Intra,
         )
     }
 

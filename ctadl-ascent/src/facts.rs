@@ -1123,6 +1123,45 @@ pub enum TaintState {
     Restricted,
 }
 
+/// The kind of a taint-graph edge, in execution / data-flow order.
+///
+/// An `Intra` edge is a flow-insensitive intraprocedural step (assign/alias) and
+/// carries no instruction. `Call` and `Return` are interprocedural steps anchored
+/// at the call instruction they cross: `Call` runs from an actual argument in the
+/// caller into the corresponding formal of the callee, and `Return` runs from a
+/// callee formal/return back out to the caller's actual. The anchoring site is
+/// what lets a path step be attributed to *this* call rather than guessed from the
+/// variable alone, and the call/return tags are what a call/return-matched
+/// (realizable-path) graph search consumes.
+#[derive(Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Default)]
+pub enum FlowEdge {
+    #[default]
+    Intra,
+    Call(PackedInsnSiteId),
+    Return(PackedInsnSiteId),
+}
+
+impl FlowEdge {
+    /// The call instruction anchoring this edge, or `None` for an [`Intra`](FlowEdge::Intra) edge.
+    #[inline]
+    pub fn site(&self) -> Option<PackedInsnSiteId> {
+        match self {
+            FlowEdge::Intra => None,
+            FlowEdge::Call(s) | FlowEdge::Return(s) => Some(*s),
+        }
+    }
+}
+
+impl Display for FlowEdge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FlowEdge::Intra => write!(f, "intra"),
+            FlowEdge::Call(s) => write!(f, "call({s})"),
+            FlowEdge::Return(s) => write!(f, "return({s})"),
+        }
+    }
+}
+
 /// Taint label
 #[derive(Clone, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Default, Serialize, Deserialize)]
 pub struct Label(pub Str);

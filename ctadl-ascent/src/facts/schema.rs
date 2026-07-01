@@ -11,8 +11,7 @@ use source_info::FileSpanId;
 use crate::error::{Error, ErrorContext};
 use crate::facts::parquet;
 use crate::facts::{
-    FlowVariable, FormalIndex, FormalType, Function, FunctionId, InsnId, PackedInsnSiteId, Path,
-    TaintState,
+    FlowEdge, FlowVariable, FormalIndex, FormalType, Function, FunctionId, InsnId, Path, TaintState,
 };
 use crate::query_engine::QueryEndpoint;
 
@@ -129,11 +128,11 @@ pub mod taint_edge {
     use super::*;
     /// An edge of the taint graph in execution / data-flow order: the source
     /// vertex `(src_func, src_var, src_path)` flows to the destination vertex
-    /// `(dst_func, dst_var, dst_path)`. `site` is the call instruction anchoring
-    /// the edge for interprocedural (call/return) edges, and `None` for the
-    /// flow-insensitive intraprocedural (assign/alias) edges.
+    /// `(dst_func, dst_var, dst_path)`. `edge` classifies the step as a
+    /// flow-insensitive intraprocedural (assign/alias) edge or as an
+    /// interprocedural call/return edge anchored at a call instruction.
     pub type Record = (
-        Option<PackedInsnSiteId>,
+        FlowEdge,
         FunctionId,
         FlowVariable,
         Path,
@@ -142,13 +141,7 @@ pub mod taint_edge {
         Path,
     );
     pub const COLUMNS: [&str; 7] = [
-        "site",
-        "src_func",
-        "src_var",
-        "src_path",
-        "dst_func",
-        "dst_var",
-        "dst_path",
+        "edge", "src_func", "src_var", "src_path", "dst_func", "dst_var", "dst_path",
     ];
     pub const FILENAME: &str = "taint_edge.parquet";
     save_load!();
@@ -176,4 +169,63 @@ pub mod external_function {
     pub const COLUMNS: [&str; 1] = ["func_id"];
     pub const FILENAME: &str = "external_function.parquet";
     save_load!();
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::facts::{FlowEdge, FlowVariable, FunctionId, InsnId, PackedInsnSiteId, Path};
+
+    /// The `taint_edge` schema encodes a [`FlowEdge`] into a tag column plus a
+    /// nullable site column; every variant must survive a parquet round-trip,
+    /// including the anchoring call site of `Call`/`Return` edges.
+    #[test]
+    fn taint_edge_flow_edge_round_trips() {
+        let site = PackedInsnSiteId::try_from_parts(FunctionId::new(7), InsnId::new(42)).unwrap();
+        let var = FlowVariable::default();
+        let node = |f: u32| (FunctionId::new(f), var, Path::empty());
+        let records: Vec<super::taint_edge::Record> = vec![
+            (
+                FlowEdge::Intra,
+                node(1).0,
+                node(1).1,
+                node(1).2,
+                node(2).0,
+                node(2).1,
+                node(2).2,
+            ),
+            (
+                FlowEdge::Call(site),
+                node(2).0,
+                node(2).1,
+                node(2).2,
+                node(3).0,
+                node(3).1,
+                node(3).2,
+            ),
+            (
+                FlowEdge::Return(site),
+                node(3).0,
+                node(3).1,
+                node(3).2,
+                node(4).0,
+                node(4).1,
+                node(4).2,
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::taint_edge::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::taint_edge::try_load(dir.path()).unwrap();
+
+        let edges: Vec<FlowEdge> = loaded.iter().map(|r| r.0).collect();
+        assert_eq!(
+            edges,
+            vec![
+                FlowEdge::Intra,
+                FlowEdge::Call(site),
+                FlowEdge::Return(site)
+            ]
+        );
+        assert_eq!(loaded, records);
+    }
 }
