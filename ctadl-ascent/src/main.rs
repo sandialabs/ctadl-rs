@@ -234,8 +234,9 @@ pub struct QueryArgs {
 
 #[derive(Debug, Args)]
 pub struct GoArgs {
-    /// Analysis project (index) name
-    pub name: String,
+    /// Analysis project (index) name. Inferred from the first artifact by default
+    #[arg(long, short)]
+    pub name: Option<String>,
 
     /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
     /// multiple times to load multiple model files.
@@ -308,6 +309,26 @@ fn main() -> anyhow::Result<()> {
                 .with_context(|| format!("running 'inspect' artifact: {:?}", args.name))?;
         }
         Command::Go(args) => {
+            // Use the user-provided name or one derived from the first artifact.
+            let name = match &args.name {
+                Some(n) => n.clone(),
+                None => {
+                    let first = &args.artifacts[0];
+                    let inferred = project::artifact_name(first)?
+                        .as_os_str()
+                        .to_str()
+                        .ok_or_else(|| anyhow::anyhow!("error converting filename to string"))?
+                        .to_string();
+                    if args.artifacts.len() > 1 {
+                        eprintln!(
+                            "Warning: no project name given (-n); using '{}' inferred from the first artifact",
+                            inferred
+                        );
+                    }
+                    inferred
+                }
+            };
+
             let mut imported_names = Vec::new();
             for artifact in &args.artifacts {
                 let import_args = ImportArgs {
@@ -324,7 +345,7 @@ fn main() -> anyhow::Result<()> {
 
             eprintln!("Indexing...");
             index_artifacts_to_store(&IndexArgs {
-                name: args.name.clone(),
+                name: name.clone(),
                 progs: imported_names.clone(),
                 summary: vec![],
                 models: args.models.clone(),
@@ -336,14 +357,14 @@ fn main() -> anyhow::Result<()> {
 
             eprintln!("Querying...");
             query_project(&QueryArgs {
-                name: args.name.clone(),
+                name: name.clone(),
                 models: args.models.clone(),
                 compact: args.compact,
                 output: args.output.clone(),
                 sarif_profile: args.sarif_profile,
                 dump_taint_graph: args.dump_taint_graph.clone(),
             })
-            .with_context(|| format!("running 'query' project: {:?}", args.name))?;
+            .with_context(|| format!("running 'query' project: {:?}", name))?;
         }
         Command::LegacyPcodeCli(args) => {
             handle_legacy_pcode_cli(args).context("running 'legacy-pcode-cli'")?;
