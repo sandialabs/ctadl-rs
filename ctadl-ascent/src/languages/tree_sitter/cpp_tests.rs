@@ -1925,3 +1925,121 @@ fn cpp_delete_parses_and_moves_no_taint() {
         "delete must not emit a call edge; got {callees:?}\n{prog}"
     );
 }
+
+// ---- Spec 015: static methods & static data members ------------------------
+
+#[test_log::test]
+fn cpp_static_data_member_is_class_scoped_global() {
+    // A `static` data member is a single class-scoped GLOBAL, not a per-object field: an
+    // unqualified reference inside the class's methods binds to the global `Counter::total`
+    // (`$globals.Counter::total`), so a write through one static method is read by another.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Counter {
+            static int total;
+            static void add(int x) { total = x; }
+            static int get() { return total; }
+        };
+        int Counter::total = 0;
+        int main() {
+            Counter::add(source());
+            sink(Counter::get());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // The static member write/read both bind to the class-scoped global, not `this.total`.
+    check_func_assign_or_update(&prog, "Counter::add", "$globals.Counter::total", ["@p0"]);
+    check_func_returns_path(&prog, "Counter::get", "$globals.Counter::total");
+    // Both static methods are invoked as receiver-less qualified calls.
+    check_has_direct_call(&prog, "main", "Counter::add");
+    check_has_direct_call(&prog, "main", "Counter::get");
+}
+
+#[test_log::test]
+fn cpp_static_method_has_no_implicit_this() {
+    // A `static` member function is lowered WITHOUT the implicit `this`: its parameters are
+    // exactly the declared ones (`x` at index 0, ByVal — not ByRef `this` then `x` at 1), and
+    // the argument reaches the return with no receiver shift.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct C {
+            static int identity(int x) { return x; }
+        };
+        int main() {
+            sink(C::identity(source()));
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(&prog, "C::identity", &[ParameterType::ByVal]);
+    check_func_returns_path(&prog, "C::identity", "@p0");
+    check_has_direct_call(&prog, "main", "C::identity");
+}
+
+#[test_log::test]
+fn cpp_static_member_shared_across_instance_and_static_method() {
+    // A static member is one shared global regardless of access: a NON-static method keeps its
+    // implicit `this` (ByRef at 0, `x` at 1) but its write to the static member still binds to
+    // the class-scoped global `Counter::total` — the same key the static getter reads — so the
+    // two methods share the location.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Counter {
+            static int total;
+            void bump(int x) { total = x; }
+            static int get() { return total; }
+        };
+        int Counter::total = 0;
+        int main() {
+            Counter c;
+            c.bump(source());
+            sink(Counter::get());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // The non-static method has an implicit `this` (so `x` is @p1), yet the static member is the
+    // global, not `this.total`.
+    check_func_params(
+        &prog,
+        "Counter::bump",
+        &[ParameterType::ByRef, ParameterType::ByVal],
+    );
+    check_func_assign_or_update(&prog, "Counter::bump", "$globals.Counter::total", ["@p1"]);
+    // The static getter has no `this` and reads the same global.
+    check_func_params(&prog, "Counter::get", &[]);
+    check_func_returns_path(&prog, "Counter::get", "$globals.Counter::total");
+}
+
+#[test_log::test]
+fn cpp_distinct_static_members_are_distinct_globals() {
+    // Field sensitivity among statics: two distinct static members are two distinct globals
+    // (`Counter::a` vs `Counter::b`), so a write to `a` does not reach a read of `b`.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Counter {
+            static int a;
+            static int b;
+            static void seta(int x) { a = x; }
+            static int getb() { return b; }
+        };
+        int Counter::a = 0;
+        int Counter::b = 0;
+        int main() {
+            Counter::seta(source());
+            sink(Counter::getb());
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // The setter writes the global `Counter::a`; the getter returns the *distinct* global
+    // `Counter::b`. Two distinct global keys ⇒ no `a`→`b` flow (the end-to-end negative in
+    // `taint_compare::tests::cpp_static_distinct_member_no_flow` confirms the absent flow).
+    check_func_assign_or_update(&prog, "Counter::seta", "$globals.Counter::a", ["@p0"]);
+    check_func_returns_path(&prog, "Counter::getb", "$globals.Counter::b");
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_85_static_member_cross_method",
+  "description": "C++ static data member shared across methods (spec 015), POSITIVE: a non-static method bump (with implicit this) writes Counter::total and a static getter get (no this) reads it. Both bind to the same class-scoped global, so the taint flows from the instance method's write to the static getter's read. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

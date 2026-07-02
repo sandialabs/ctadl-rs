@@ -1,0 +1,6 @@
+{
+  "name": "CPP_83_static_member_flow",
+  "description": "C++ static data member (spec 015), POSITIVE: Counter::total is a static (class-scoped global) member; a static setter Counter::add writes it and a static getter Counter::get reads it across separate calls. Modeling the member as the global Counter::total and the static methods without an implicit this closes the prior soundness gap (was s=none d=flow). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

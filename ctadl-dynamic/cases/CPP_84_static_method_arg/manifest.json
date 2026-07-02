@@ -1,0 +1,6 @@
+{
+  "name": "CPP_84_static_method_arg",
+  "description": "C++ static member function (spec 015), POSITIVE: C::identity is static (no implicit this), called C::identity(args) like a namespaced free function. Its single declared parameter x is returned. Lowering it without a this parameter makes the source argument reach the return. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

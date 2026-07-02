@@ -1499,4 +1499,127 @@ mod tests {
             "delete must parse/lower as a taint no-op without disturbing the pre-delete flow, got: {flows:?}"
         );
     }
+
+    /// M8 (spec 015, FR-1/FR-3) acceptance, end to end: a `static` data member is a class-scoped
+    /// GLOBAL, not a per-object field. A static setter writes it and a static getter reads it
+    /// across separate calls (no object), so the source→sink path runs through the global
+    /// `Counter::total`. Modeling the member as a global and the static methods without an
+    /// implicit `this` closes the prior soundness gap — mirrors the CPP_83 dynamic case.
+    #[test_log::test]
+    fn cpp_static_member_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Counter {
+                static int total;
+                static void add(int x) { total = x; }
+                static int get() { return total; }
+            };
+            int Counter::total = 0;
+            int main() {
+                Counter::add(source());
+                sink(Counter::get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp static member flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow through the static data member global Counter::total, got: {flows:?}"
+        );
+    }
+
+    /// M8 (spec 015, FR-2/FR-3) acceptance, end to end: a `static` member function has NO implicit
+    /// `this`, so `C::identity(source())` passes the source as the method's first (and only)
+    /// parameter, which is returned straight to the sink — mirrors the CPP_84 dynamic case.
+    #[test_log::test]
+    fn cpp_static_method_arg_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct C {
+                static int identity(int x) { return x; }
+            };
+            int main() {
+                sink(C::identity(source()));
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp static method arg flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected the static method argument to reach the return (no receiver shift), got: {flows:?}"
+        );
+    }
+
+    /// M8 (spec 015, FR-3) acceptance, end to end: a static data member is one shared global
+    /// regardless of how it is accessed. A NON-static method (with an implicit `this`) writes it
+    /// and a `static` getter reads it — both bind to the same global `Counter::total`, so the
+    /// taint flows across the two methods — mirrors the CPP_85 dynamic case.
+    #[test_log::test]
+    fn cpp_static_member_cross_method_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Counter {
+                static int total;
+                void bump(int x) { total = x; }
+                static int get() { return total; }
+            };
+            int Counter::total = 0;
+            int main() {
+                Counter c;
+                c.bump(source());
+                sink(Counter::get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp static cross-method flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a flow from the instance method's static-member write to the static getter's read, got: {flows:?}"
+        );
+    }
+
+    /// Negative control for statics (field sensitivity among class-scoped globals): a static
+    /// setter taints member `a`, but the sink reads a *distinct* static member `b` (always 0).
+    /// Each static member is its own global (`Counter::a` vs `Counter::b`), so no spurious
+    /// `a`→`b` flow is reported — mirrors the CPP_86 dynamic case (`s=none d=none`).
+    #[test_log::test]
+    fn cpp_static_distinct_member_no_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Counter {
+                static int a;
+                static int b;
+                static void seta(int x) { a = x; }
+                static int getb() { return b; }
+            };
+            int Counter::a = 0;
+            int Counter::b = 0;
+            int main() {
+                Counter::seta(source());
+                sink(Counter::getb());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp static distinct-member flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "expected no cross-member flow among distinct statics (field sensitivity), got: {flows:?}"
+        );
+    }
 }

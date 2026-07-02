@@ -455,6 +455,15 @@ struct ClassInfo {
     /// ([`Context::method_is_virtual`]). Empty for C and for every non-polymorphic C++ class, so
     /// dispatch stays single-target static there and the C path is unchanged. Never branched on.
     virtual_methods: HashSet<String>,
+    /// Names of the class's **`static`** data members — modeled as class-scoped **globals**
+    /// (`Class::<member>`) rather than per-object `this.<member>` (spec 015). A subset of
+    /// [`Self::members`], recorded per class (its **own** static members, *not* flattened into
+    /// subclasses) by the C++ discovery hook. When an unqualified member name inside a method
+    /// (static or instance) resolves here, [`Context::build_access_path`] binds it to the global
+    /// `<declaring-class>::<member>` — the same key a qualified `Class::<member>` read resolves
+    /// to — so taint written through one method is read by another. Empty for C and for every
+    /// class with no static members, so the resolution is unchanged there. Never branched on.
+    static_members: HashSet<String>,
 }
 
 /// The object a C++ instance-method receiver resolves to: the access-path expression to
@@ -1890,12 +1899,24 @@ impl<'a> Context<'a> {
                 .get(class)
                 .is_some_and(|info| info.members.contains(name_pre_scope))
         {
-            // Inside a method body, an unqualified name that is a data member of the
-            // enclosing class (and was not shadowed by a local/parameter — those are found
-            // above) resolves to `this.<member>`: the implicit `this` is parameter 0
-            // (installed by `lower_function`), so the member becomes the leading field on it.
-            // Any trailing `field_path` (rare for the in-scope method slice) follows. This is
-            // data-driven on the neutral `classes` map, which is empty for C — no language branch.
+            // Inside a method body, an unqualified name that is a data member of the enclosing
+            // class (and was not shadowed by a local/parameter — those are found above) resolves
+            // to a member of the enclosing object. A **`static`** data member, though, is not
+            // per-object: it is a single class-scoped **global** `<declaring-class>::<member>`, so
+            // resolve it to that global (the same key a qualified `Class::<member>` read resolves
+            // to) — taint written through one method is then read by another. This is what a
+            // static method (which has *no* `this`) and any method sharing the static member need
+            // (spec 015). An ordinary per-object member instead becomes `this.<member>`: the
+            // implicit `this` is parameter 0 (installed by `lower_function`), so the member is the
+            // leading field on it, with any trailing `field_path` following. Both cases are
+            // data-driven on the neutral `classes`/`static_members` maps, which are empty for C —
+            // no language branch.
+            if let Some(decl_class) = self.static_member_class(class, name_pre_scope) {
+                return AccessPath::new_global(
+                    format!("{decl_class}::{name_pre_scope}").as_str(),
+                    field_path,
+                );
+            }
             return ctadl_ir::mir::AccessPath {
                 variable_ref: VariableRef::new_parameter(0u32.into()),
                 path: std::iter::once(FieldAccess::Symbol(name_pre_scope.into()))
@@ -2382,6 +2403,32 @@ impl<'a> Context<'a> {
         None
     }
 
+    /// If `member` names a **`static`** data member visible from `class` — declared `static` on
+    /// `class` itself or on some class in its base chain — return the name of the class that
+    /// **declares** it (the key its class-scoped global uses, `<declaring-class>::<member>`);
+    /// otherwise `None` (an ordinary per-object member, which [`Self::build_access_path`] resolves
+    /// to `this.<member>`). Walks the neutral [`ClassInfo::bases`] chain like
+    /// [`Self::resolve_method_class`], reading each class's **own** [`ClassInfo::static_members`]
+    /// (which are not flattened into subclasses, so the declaring class is recoverable). A `seen`
+    /// guard bounds a malformed base cycle. Empty `static_members`/`bases` for C and non-static
+    /// classes, so this is always `None` there and member resolution is unchanged.
+    fn static_member_class(&self, class: &str, member: &str) -> Option<String> {
+        let mut level = vec![class.to_string()];
+        let mut seen: HashSet<String> = HashSet::default();
+        while let Some(c) = level.pop() {
+            if !seen.insert(c.clone()) {
+                continue;
+            }
+            if let Some(info) = self.classes.get(&c) {
+                if info.static_members.contains(member) {
+                    return Some(c);
+                }
+                level.extend(info.bases.iter().cloned());
+            }
+        }
+        None
+    }
+
     /// Whether `method` is **virtual** on static type `class` — declared `virtual` (or
     /// `override`) on `class` itself or on any class in its base chain, transitively. A virtual
     /// method dispatches by class-hierarchy analysis (all subtree overrides); a non-virtual one
@@ -2801,6 +2848,7 @@ impl<'a> Context<'a> {
                 param_list,
                 body_node,
                 None,
+                false,
                 &[],
             )?;
         }
@@ -2812,12 +2860,16 @@ impl<'a> Context<'a> {
     /// collect parameters, pre-create `goto`-label blocks, and walk the body.
     ///
     /// Both frontend entry points funnel through here. A free function passes
-    /// `implicit_this = None`. A C++ instance method passes `Some(class_name)`: an implicit
-    /// `this` parameter (`ByRef`) is installed at index 0 (so writes the body makes to
-    /// `this.<member>` propagate back to the caller's receiver, exactly like an out-param),
-    /// the declared parameters number from 1, and `current_method_class` is set so the body's
-    /// unqualified member names resolve to `this.<member>`. `func_name` is the IR name and the
-    /// resolution key — a free function's bare name, or a method's qualified `Class::method`.
+    /// `class_context = None, has_implicit_this = false`. A C++ **instance** method / constructor
+    /// passes `Some(class_name), true`: an implicit `this` parameter (`ByRef`) is installed at
+    /// index 0 (so writes the body makes to `this.<member>` propagate back to the caller's
+    /// receiver, exactly like an out-param), the declared parameters number from 1, and
+    /// `current_method_class` is set so the body's unqualified member names resolve. A C++
+    /// **static** method (spec 015) passes `Some(class_name), false`: it has a class context (so an
+    /// unqualified `static` data member resolves to its class-scoped global `Class::<member>`) but
+    /// *no* `this`, so its declared parameters number from 0, exactly like a free function.
+    /// `func_name` is the IR name and the resolution key — a free function's bare name, a method's
+    /// qualified `Class::method`, or a static method's likewise-qualified `Class::method`.
     ///
     /// `member_inits` carries a C++ constructor's member-initializer list (`Box(int x) : v(x)`)
     /// as neutral `(member-name, init-expression-node)` pairs gathered by the C++ discovery
@@ -2835,16 +2887,18 @@ impl<'a> Context<'a> {
         return_is_void: bool,
         param_list: Node<'_>,
         body_node: Node<'_>,
-        implicit_this: Option<&str>,
+        class_context: Option<&str>,
+        has_implicit_this: bool,
         member_inits: &[(String, Node<'_>)],
     ) -> anyhow::Result<(), Error> {
         self.allocator.reset();
         // Per-function state: a fresh local→class-type map (filled as we walk declarations),
         // a fresh reference-alias map (`T& r = x`), and the enclosing class for member
-        // resolution (set only for a method body).
+        // resolution (set for an instance *or* static method body — a static method has a class
+        // context but no `this`, so its unqualified static-member names still resolve).
         self.local_types.clear();
         self.reference_aliases.clear();
-        self.current_method_class = implicit_this.map(str::to_string);
+        self.current_method_class = class_context.map(str::to_string);
 
         let fidx = *self
             .functions
@@ -2871,10 +2925,12 @@ impl<'a> Context<'a> {
             explainer: "params".to_string(),
         };
 
-        // A method gets an implicit `this` at parameter 0, passed `ByRef` so the existing
-        // out-param machinery carries member writes back to the caller. The declared params
-        // follow, numbered from 1.
-        let start_idx = if implicit_this.is_some() {
+        // An instance method / constructor gets an implicit `this` at parameter 0, passed `ByRef`
+        // so the existing out-param machinery carries member writes back to the caller; the
+        // declared params follow, numbered from 1. A **static** method has a class context (for
+        // static-member resolution) but *no* `this`, so its declared params number from 0 — like
+        // a free function (spec 015).
+        let start_idx = if has_implicit_this {
             fdat.params.push(ParameterType::ByRef);
             self.param_names
                 .entry(func_name.to_string())

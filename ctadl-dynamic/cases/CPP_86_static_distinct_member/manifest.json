@@ -1,0 +1,6 @@
+{
+  "name": "CPP_86_static_distinct_member",
+  "description": "C++ distinct static data members (spec 015), NEGATIVE: Counter::a and Counter::b are two distinct static (class-scoped global) members. A static setter taints a; the sink reads b (constant 0). Each static member is its own global, so a's taint never reaches b -- field sensitivity among statics. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

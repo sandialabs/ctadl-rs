@@ -73,6 +73,19 @@ fn member_name<'a>(decl: Node<'_>, source: &'a str) -> Option<&'a str> {
     }
 }
 
+/// Whether a class-member node carries the **`static`** storage-class specifier — a
+/// `field_declaration` (`static int total;`) or a member `function_definition`
+/// (`static void add(…)`). tree-sitter-cpp exposes it as a `storage_class_specifier` child whose
+/// source text is `static` (the same node kind also spells `extern`, `register`, `thread_local`,
+/// …, so we check the text). A `static` data member is modeled as a class-scoped global and a
+/// `static` member function is lowered without the implicit `this` (spec 015). Inert for C: a C
+/// struct field has no such child, and the C path never reaches class-member discovery.
+fn has_static_specifier(node: Node<'_>, source: &str) -> bool {
+    let mut c = node.walk();
+    node.children(&mut c)
+        .any(|ch| ch.kind() == "storage_class_specifier" && to_str(&ch, source) == "static")
+}
+
 /// Extract the **direct base-class names** of a `struct_specifier`/`class_specifier` from its
 /// `base_class_clause`. The clause (`: Base`, `: public Base`) is an unnamed child of the
 /// specifier holding, per base, an optional `access_specifier` / `virtual` keyword followed by
@@ -411,6 +424,12 @@ fn cpp_collect_methods<'a>(
         /// (`Class& m()`) whose body does `return *this`. Recorded in `ClassInfo.returns_self`
         /// so a chained `recv.m(…).n(…)` dispatches `n` on the same object.
         returns_self: bool,
+        /// Whether this is a **`static`** member function — lowered *without* the implicit `this`
+        /// (its parameters are exactly the declared ones), like a receiver-less free function
+        /// keyed `Class::method` (spec 015). A static method is not an instance method, so it is
+        /// not registered in [`ClassInfo::methods`] (an `obj.m()` dispatch must not resolve to it)
+        /// and is never `returns_self`/virtual. `false` for every ordinary method and constructor.
+        is_static: bool,
         /// A constructor's member-initializer list as `(member, init-expr)` pairs; empty
         /// for an ordinary method and for a constructor written without one.
         member_inits: Vec<(String, Node<'t>)>,
@@ -451,10 +470,18 @@ fn cpp_collect_methods<'a>(
         for child in body.children(&mut bc) {
             match child.kind() {
                 "field_declaration" => {
+                    // A `static` data member (`static int total;`) is a class-scoped **global**,
+                    // not a per-object field: record it in `static_members` too so an unqualified
+                    // reference inside a method resolves to the global `Class::<member>` rather
+                    // than `this.<member>` (spec 015). A plain data member is not static.
+                    let is_static = has_static_specifier(child, source);
                     let mut dc = child.walk();
                     for declr in child.children_by_field_name("declarator", &mut dc) {
                         if let Some(name) = member_name(declr, source) {
                             info.members.insert(name.to_string());
+                            if is_static {
+                                info.static_members.insert(name.to_string());
+                            }
                         }
                     }
                 }
@@ -513,22 +540,33 @@ fn cpp_collect_methods<'a>(
                             body: method_body,
                             void: true,
                             returns_self: false,
+                            is_static: false,
                             member_inits: ctor_member_inits(child, source),
                         });
                     } else {
+                        // A `static` member function has no implicit `this`: it is a receiver-less
+                        // function keyed `Class::method`, called `Class::method(args)` (spec 015).
+                        // It is therefore NOT an instance method — it is not registered in
+                        // `info.methods` (an `obj.m()` dispatch, out of scope, must not resolve to
+                        // it) and is never `returns_self`/virtual. An ordinary (non-static) method
+                        // registers as before.
+                        let is_static = has_static_specifier(child, source);
                         // A reference-returning method that returns `*this` (a fluent setter)
-                        // has a result aliasing the receiver object.
-                        let returns_self =
-                            is_reference_return && body_returns_deref_this(method_body);
-                        info.methods.insert(name.clone());
-                        if returns_self {
-                            info.returns_self.insert(name.clone());
-                        }
-                        // A `virtual`/`override` method is recorded for CHA dispatch: a call to
-                        // it through a base pointer/reference resolves to every override in the
-                        // static type's subclass subtree, not just the static type's method.
-                        if method_is_virtual_def(child, func_declr) {
-                            info.virtual_methods.insert(name.clone());
+                        // has a result aliasing the receiver object — never a static method.
+                        let returns_self = !is_static
+                            && is_reference_return
+                            && body_returns_deref_this(method_body);
+                        if !is_static {
+                            info.methods.insert(name.clone());
+                            if returns_self {
+                                info.returns_self.insert(name.clone());
+                            }
+                            // A `virtual`/`override` method is recorded for CHA dispatch: a call to
+                            // it through a base pointer/reference resolves to every override in the
+                            // static type's subclass subtree, not just the static type's method.
+                            if method_is_virtual_def(child, func_declr) {
+                                info.virtual_methods.insert(name.clone());
+                            }
                         }
                         methods.push(MethodDef {
                             class: qualified_name.clone(),
@@ -537,6 +575,7 @@ fn cpp_collect_methods<'a>(
                             body: method_body,
                             void,
                             returns_self,
+                            is_static,
                             member_inits: Vec::new(),
                         });
                     }
@@ -638,6 +677,10 @@ fn cpp_collect_methods<'a>(
                     body,
                     void,
                     returns_self,
+                    // Out-of-line static methods are out of this slice's scope (the `static`
+                    // keyword appears only on the in-class declaration, not the out-of-line
+                    // definition); an out-of-line definition here is always an instance method.
+                    is_static: false,
                     member_inits,
                 },
             ));
@@ -674,8 +717,12 @@ fn cpp_collect_methods<'a>(
             .entry(qualified)
             .or_insert_with(|| program.new_function());
     }
-    // Phase 2b: lower each method body with an implicit `this` of its class. A constructor
-    // additionally emits its member-initializer list before the body.
+    // Phase 2b: lower each method body under its class context. An **instance** method or
+    // constructor installs an implicit `this` of its class (`has_implicit_this = true`), so member
+    // writes flow back through the by-ref receiver; a constructor additionally emits its
+    // member-initializer list before the body. A **static** method (`is_static`) has the same
+    // class context — so an unqualified `static` data member resolves to its class-scoped global —
+    // but **no** `this` (spec 015), so its declared params number from 0 like a free function.
     for md in methods {
         let base = format!("{}::{}", md.class, md.name);
         let qualified = ctx.overload_name(&base, param_arity(md.params));
@@ -688,6 +735,7 @@ fn cpp_collect_methods<'a>(
             md.params,
             md.body,
             Some(&md.class),
+            !md.is_static,
             &md.member_inits,
         )?;
     }
@@ -775,6 +823,7 @@ fn cpp_collect_namespaced_functions<'a>(
             f.params,
             f.body,
             None,
+            false,
             &[],
         )?;
     }
