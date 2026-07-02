@@ -1307,6 +1307,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-c",
  "trie",
+ "url",
  "which",
 ]
 

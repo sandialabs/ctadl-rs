@@ -12,9 +12,40 @@ use anyhow::{bail, Context, Result};
 /// Locate an executable on `PATH`, mirroring `command -v`.
 pub fn which(program: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(program))
-        .find(|candidate| candidate.is_file())
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(program);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        #[cfg(windows)]
+        {
+            for ext in windows_pathext() {
+                let with_ext = candidate.with_extension(ext.trim_start_matches('.'));
+                if with_ext.is_file() {
+                    return Some(with_ext);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn windows_pathext() -> Vec<String> {
+    std::env::var_os("PATHEXT")
+        .map(|v| {
+            std::env::split_paths(&v)
+                .filter_map(|p| p.to_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            vec![
+                ".COM".to_string(),
+                ".EXE".to_string(),
+                ".BAT".to_string(),
+                ".CMD".to_string(),
+            ]
+        })
 }
 
 /// Run `cmd` to completion, capturing output. Errors if it cannot be spawned or

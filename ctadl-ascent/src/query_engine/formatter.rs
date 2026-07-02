@@ -490,6 +490,30 @@ pub fn find_endpoint_paths(
     paths
 }
 
+/// Path string for DataFusion / object_store local parquet reads.
+///
+/// Project paths on Windows are often canonicalized to verbatim `\\?\` form. Naive
+/// backslash-to-slash rewriting breaks absolute-path detection, so DataFusion treats
+/// the path as relative to the process cwd (e.g. a scratch dir containing
+/// `ArrayFlow.class`) and object_store fails URL conversion.
+fn object_store_path(path: &path::Path) -> String {
+    let parsed = url::Url::from_file_path(path);
+    #[cfg(windows)]
+    let parsed = parsed.or_else(|_| {
+        let s = path.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            url::Url::from_file_path(stripped)
+        } else {
+            Err(())
+        }
+    });
+    parsed.map(|url| url.to_string()).unwrap_or_else(|_| {
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        let normalized = normalized.strip_prefix("//?/").unwrap_or(&normalized);
+        format!("file:///{normalized}")
+    })
+}
+
 pub fn format_sarif(
     project: &AnalysisProject,
     facts: FormatFacts,
@@ -578,7 +602,7 @@ async fn async_format_sarif(
     for import in project.iter_imports() {
         let import = import?;
         let dir = import.source_info_dir();
-        parquet_dir = String::from(dir.to_string_lossy());
+        parquet_dir = object_store_path(&dir);
         let ctx = ProjectContext {
             source_spans: &source_spans,
             index_dir: index_dir.clone(),
@@ -798,7 +822,7 @@ async fn populate_source_info<P: AsRef<path::Path>>(
     ctx_session
         .register_parquet(
             "file_spans",
-            dir.join("file_spans.parquet").to_string_lossy(),
+            object_store_path(&dir.join("file_spans.parquet")),
             ParquetReadOptions::default(),
         )
         .await
@@ -806,7 +830,7 @@ async fn populate_source_info<P: AsRef<path::Path>>(
     ctx_session
         .register_parquet(
             "spans",
-            dir.join("spans.parquet").to_string_lossy(),
+            object_store_path(&dir.join("spans.parquet")),
             ParquetReadOptions::default(),
         )
         .await
@@ -814,7 +838,7 @@ async fn populate_source_info<P: AsRef<path::Path>>(
     ctx_session
         .register_parquet(
             "files",
-            dir.join("files.parquet").to_string_lossy(),
+            object_store_path(&dir.join("files.parquet")),
             ParquetReadOptions::default(),
         )
         .await
@@ -822,7 +846,7 @@ async fn populate_source_info<P: AsRef<path::Path>>(
     ctx_session
         .register_parquet(
             "artifacts",
-            dir.join("artifacts.parquet").to_string_lossy(),
+            object_store_path(&dir.join("artifacts.parquet")),
             ParquetReadOptions::default(),
         )
         .await
@@ -830,7 +854,7 @@ async fn populate_source_info<P: AsRef<path::Path>>(
     ctx_session
         .register_parquet(
             "function_id",
-            index_dir.join("function_id.parquet").to_string_lossy(),
+            object_store_path(&index_dir.join("function_id.parquet")),
             ParquetReadOptions::default(),
         )
         .await
@@ -1747,7 +1771,7 @@ pub async fn find_source_ids(
     let mut ctx = SessionContext::new();
     ctx.register_parquet(
         "index_source_map",
-        source_map.to_string_lossy(),
+        object_store_path(source_map),
         ParquetReadOptions::default(),
     )
     .await

@@ -97,6 +97,13 @@
           release = false;
         };
 
+        # `jvm-reader` is workspace-excluded for the same reason; build its bin
+        # for the JVM E2E linemap step rather than expecting it in packages.default.
+        jvm-reader = naersk-lib.buildPackage {
+          src = ./jvm-reader;
+          release = false;
+        };
+
         # The two classes jvm-reader's `flow.rs` unit tests load at runtime,
         # compiled from the committed sample sources (no `.class` is committed).
         # Passed to the `jvm-reader-tests` check via JVM_READER_TEST_FIXTURES.
@@ -114,8 +121,8 @@
             '';
 
         # Non-interactive environment that mirrors the tools the regression
-        # scripts expect on PATH (ctadl, dex-reader, javac, dx, gcc/addr2line,
-        # ghidra, jq, python3).
+        # scripts expect on PATH (ctadl, dex-reader, jvm-reader, javac, dx,
+        # gcc/addr2line, ghidra, jq, python3).
         testEnv = pkgs.buildEnv {
           name = "ctadl-nightly-test-env";
           # gcc-wrapper and binutils-wrapper both ship a few binutils shims
@@ -133,6 +140,7 @@
             pkgs.binutils
             self.packages.${system}.default
             dex-reader
+            jvm-reader
             androidSdk.androidsdk
             jdk
             baksmali

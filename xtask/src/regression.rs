@@ -24,6 +24,29 @@ use crate::jvm;
 /// this is only used when `relativeAddress` is absent.
 const PCODE_BASE_ADDRESS: i64 = 0x10_0000;
 
+/// JVM E2E cases whose failures count toward the suite exit code. All other
+/// `Jvm:*` taint cases run for visibility but report as XFAIL when they fail.
+const JVM_E2E_ENFORCED: &[&str] = &[
+    "Jvm:AnotherExample",
+    "Jvm:ArrayFlow",
+    "Jvm:ArrayFlowComplex",
+    "Jvm:ArrayListFlow",
+    "Jvm:ArrayListIteratorFlow",
+    "Jvm:BranchingFlow",
+    "Jvm:CrossClassStaticFieldFlow",
+    "Jvm:ExceptionFlow",
+    "Jvm:FieldFlow",
+    "Jvm:FieldSensitivity",
+    "Jvm:InstanceMethodFlow",
+    "Jvm:LoopFlow",
+    "Jvm:MethodCallFlow",
+    "Jvm:ObjectSensitivity",
+    "Jvm:Reassignment",
+    "Jvm:SourceSinkExample",
+    "Jvm:StaticFieldFlow",
+    "Jvm:StringBuilderFlow",
+];
+
 #[derive(Default)]
 pub struct Options {
     pub filter: Option<String>,
@@ -36,6 +59,8 @@ pub(crate) enum Outcome {
     Pass,
     Fail(String),
     Skip(String),
+    /// Expected failure on a non-enforced JVM E2E case; does not fail the suite.
+    Xfail(String),
 }
 
 /// Run the suite. Returns `Ok(true)` if every selected case passed or was
@@ -48,10 +73,9 @@ pub fn run(opts: &Options) -> Result<bool> {
         cases.retain(|c| c.name.contains(filter));
     }
 
-    // ctadl/dex-reader are only needed for the DEX/pcode cases; don't require
-    // them when (say) `--filter jvm` selects only the jvm-reader checks.
+    // ctadl/dex-reader/jvm-reader are only needed for the matching case kinds.
     if !cases.is_empty() {
-        preflight()?;
+        preflight(&cases)?;
     }
 
     let mut results: Vec<(String, Outcome)> = Vec::new();
@@ -59,7 +83,7 @@ pub fn run(opts: &Options) -> Result<bool> {
         // Infrastructure failures (analyzer crashed, tool missing, etc.) are
         // reported as a failed case rather than aborting the whole run.
         let outcome = run_case(case).unwrap_or_else(|err| Outcome::Fail(format!("{err:#}")));
-        results.push((case.name.clone(), outcome));
+        results.push((case.name.clone(), apply_jvm_allowlist(&case.name, outcome)));
     }
 
     // The jvm-reader and dex-reader checks share the same Java sample sources:
@@ -102,7 +126,7 @@ pub fn run(opts: &Options) -> Result<bool> {
         tests_dir.display()
     );
 
-    let (mut passed, mut skipped, mut failures) = (0, 0, 0);
+    let (mut passed, mut skipped, mut failures, mut xfails) = (0, 0, 0, 0);
     for (name, outcome) in &results {
         match outcome {
             Outcome::Pass => {
@@ -120,11 +144,18 @@ pub fn run(opts: &Options) -> Result<bool> {
                     why.replace('\n', "\n        ")
                 );
             }
+            Outcome::Xfail(why) => {
+                xfails += 1;
+                println!(
+                    "  XFAIL {name}\n        {}",
+                    why.replace('\n', "\n        ")
+                );
+            }
         }
     }
 
     println!(
-        "\n{passed} passed, {skipped} skipped, {failures} failed of {} case(s)",
+        "\n{passed} passed, {skipped} skipped, {failures} failed, {xfails} xfail of {} case(s)",
         results.len()
     );
     Ok(failures == 0)
@@ -157,20 +188,35 @@ fn resolve_dex_apk(override_path: Option<&Path>) -> Option<PathBuf> {
     .find(|p| p.is_file())
 }
 
-/// Ensure the executables the suite always needs are on `PATH`, failing early
-/// with a clear message (the old `tests.sh` did the same for ctadl/dex-reader).
-fn preflight() -> Result<()> {
-    for tool in ["ctadl", "dex-reader"] {
-        if exec::which(tool).is_none() {
-            bail!("`{tool}` not found on PATH");
-        }
+/// Ensure the executables needed for the selected cases are on `PATH`.
+fn preflight(cases: &[TestCase]) -> Result<()> {
+    ctadl_bin()?;
+    let needs_dex = cases.iter().any(|c| matches!(c.kind, Kind::Dex { .. }));
+    let needs_jvm = cases.iter().any(|c| matches!(c.kind, Kind::Jvm { .. }));
+    if needs_dex && exec::which("dex-reader").is_none() {
+        bail!("`dex-reader` not found on PATH");
+    }
+    if needs_jvm && exec::which("jvm-reader").is_none() {
+        bail!("`jvm-reader` not found on PATH");
     }
     Ok(())
+}
+
+/// Non-enforced JVM E2E failures are reported as XFAIL so the suite can stay
+/// green while the frontend matures.
+fn apply_jvm_allowlist(name: &str, outcome: Outcome) -> Outcome {
+    match outcome {
+        Outcome::Fail(why) if name.starts_with("Jvm:") && !JVM_E2E_ENFORCED.contains(&name) => {
+            Outcome::Xfail(why)
+        }
+        other => other,
+    }
 }
 
 fn run_case(case: &TestCase) -> Result<Outcome> {
     match &case.kind {
         Kind::Dex { java, config } => run_dex(&case.name, java, config),
+        Kind::Jvm { java, config } => run_jvm(&case.name, java, config),
         Kind::Pcode { source, query } => run_pcode(&case.name, source, query),
     }
 }
@@ -240,8 +286,97 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
 
     let expected = assertions::read_expected_lines(config)?;
     let offsets = assertions::collect_byte_offsets(&sarif)?;
+    check_byte_offset_lines(expected, offsets, &linemap)
+}
 
-    // Negative test: no flow expected.
+// --- JVM / Java -----------------------------------------------------------
+
+fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
+    for tool in ["javac", "jar"] {
+        if exec::which(tool).is_none() {
+            return Ok(Outcome::Skip(format!("`{tool}` not on PATH")));
+        }
+    }
+
+    let stem = java
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .with_context(|| format!("bad java file name {}", java.display()))?;
+
+    let work = scratch_dir(case_name)?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+
+    // Compile to a JAR inside the scratch dir. We copy only this source so the
+    // class output cannot pick up unrelated classes.
+    let src = work.join(format!("{stem}.java"));
+    std::fs::copy(java, &src)
+        .with_context(|| format!("failed to copy {} into scratch dir", java.display()))?;
+
+    let class_dir = work.join("classes");
+    std::fs::create_dir_all(&class_dir)?;
+
+    let mut javac = Command::new("javac");
+    javac
+        .current_dir(&work)
+        .args(["--release", "8", "-d"])
+        .arg(&class_dir)
+        .arg(&src);
+    exec::run_checked(javac, "javac")?;
+
+    let jar = work.join(format!("{stem}.jar"));
+    let mut jar_cmd = Command::new("jar");
+    jar_cmd
+        .arg("cf")
+        .arg(&jar)
+        .arg("-C")
+        .arg(&class_dir)
+        .arg(".");
+    exec::run_checked(jar_cmd, "jar")?;
+
+    // Analyze: import / index / query / format.
+    let project = format!("{stem}_jvm_test");
+    let sarif = work.join(format!("{stem}_output.sarif"));
+    run_ctadl(
+        &work,
+        &state,
+        &["import", "--name", &project, &jar_arg(&jar)],
+    )?;
+    run_ctadl(&work, &state, &["index", &project])?;
+    run_ctadl(
+        &work,
+        &state,
+        &["query", &project, "-m", &config.to_string_lossy()],
+    )?;
+    run_ctadl(
+        &work,
+        &state,
+        &["format", &project, "-o", &sarif.to_string_lossy()],
+    )?;
+
+    // Build the offset -> line map.
+    let linemap = work.join(format!("{stem}_linemap.json"));
+    let mut reader = Command::new("jvm-reader");
+    reader
+        .current_dir(&work)
+        .arg("--jar")
+        .arg(&jar)
+        .arg("--linemap-json")
+        .arg(&linemap);
+    exec::run_checked(reader, "jvm-reader")?;
+
+    let expected = assertions::read_expected_lines(config)?;
+    let offsets = assertions::collect_byte_offsets(&sarif)?;
+    check_byte_offset_lines(expected, offsets, &linemap)
+}
+
+/// DEX/JVM pass criterion: at least one expected line among mapped offsets,
+/// or no flows when `expected_lines` is empty.
+fn check_byte_offset_lines(
+    expected: Vec<i64>,
+    offsets: BTreeSet<i64>,
+    linemap: &Path,
+) -> Result<Outcome> {
     if expected.is_empty() {
         return Ok(if offsets.is_empty() {
             Outcome::Pass
@@ -256,13 +391,12 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
         return Ok(Outcome::Fail("no byte offsets in SARIF output".to_string()));
     }
 
-    let entries = assertions::load_linemap(&linemap)?;
+    let entries = assertions::load_linemap(linemap)?;
     let mapped: BTreeSet<i64> = offsets
         .iter()
         .filter_map(|&off| assertions::map_offset_to_line(&entries, off))
         .collect();
 
-    // PASS if at least one expected line is present (the DEX criterion).
     if expected.iter().any(|line| mapped.contains(line)) {
         Ok(Outcome::Pass)
     } else {
@@ -286,8 +420,29 @@ fn dex_arg(dex: &Path) -> String {
     dex.to_string_lossy().into_owned()
 }
 
+fn jar_arg(jar: &Path) -> String {
+    jar.to_string_lossy().into_owned()
+}
+
+fn ctadl_bin() -> Result<PathBuf> {
+    // Prefer the workspace build so regression tracks the tree under test.
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        for subdir in ["release", "debug"] {
+            let candidate = PathBuf::from(&manifest)
+                .join("..")
+                .join("target")
+                .join(subdir)
+                .join(if cfg!(windows) { "ctadl.exe" } else { "ctadl" });
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+    exec::which("ctadl").context("`ctadl` not found on PATH or in target/{release,debug}")
+}
+
 fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {
-    let mut cmd = Command::new("ctadl");
+    let mut cmd = Command::new(ctadl_bin()?);
     cmd.current_dir(work)
         .env("XDG_STATE_HOME", state)
         .args(args);
@@ -480,7 +635,7 @@ fn is_writable(dir: &Path) -> bool {
 }
 
 fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&str]) -> Result<()> {
-    let mut cmd = Command::new("ctadl");
+    let mut cmd = Command::new(ctadl_bin()?);
     cmd.current_dir(work)
         .env("XDG_STATE_HOME", state)
         .args(args);
@@ -497,7 +652,9 @@ fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&s
 // --- shared ----------------------------------------------------------------
 
 fn scratch_dir(name: &str) -> Result<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("ctadl_xtask_{name}"));
+    // Colons are invalid in Windows directory names (e.g. `Jvm:Foo`).
+    let safe_name = name.replace(':', "_");
+    let dir = std::env::temp_dir().join(format!("ctadl_xtask_{safe_name}"));
     exec::fresh_dir(&dir)?;
     Ok(dir)
 }
