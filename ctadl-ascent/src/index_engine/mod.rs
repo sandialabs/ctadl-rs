@@ -883,15 +883,15 @@ pub fn taint_index_with_config(
             if n1 != *n2 || p1 != p2;
 
         // aliasing summary rule (context-free flows only).
-        summary(infunc, n1, p1.clone(), n2, bp) <--
-            config(c),
-            if c.alias_rule,
-            // this is the alias: v1 <- n1
-            locals(infunc, v1, Path::empty(), n1, Path::empty(), SmallestCallString::top()),
-            // v1.p1 <- n2.bp
-            locals(infunc, v1, p1, n2, bp, SmallestCallString::top()),
-            if !p1.is_empty(),
-            if n1 != n2 || *p1 != *bp;
+        // summary(infunc, n1, p1.clone(), n2, bp) <--
+        //     config(c),
+        //     if c.alias_rule,
+        //     // this is the alias: v1 <- n1
+        //     locals(infunc, v1, Path::empty(), n1, Path::empty(), SmallestCallString::top()),
+        //     // v1.p1 <- n2.bp
+        //     locals(infunc, v1, p1, n2, bp, SmallestCallString::top()),
+        //     if !p1.is_empty(),
+        //     if n1 != n2 || *p1 != *bp;
 
         // Hybrid Inlining Rules:
         // Phase 1: propagate up the stack from indirect calls
