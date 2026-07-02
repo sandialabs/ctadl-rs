@@ -741,6 +741,18 @@ pub fn taint_index_with_config(
             (func_id, dst.0, src.0)
         })
         .collect();
+    // Real field-stores from the ORIGINAL program: an assignment whose DESTINATION access path is
+    // non-empty (`v.p = ...`). Used to gate the aliasing rule so it only summarizes aliases that are
+    // actually stored through, killing spurious summaries from mere reachability.
+    let prog_store: Vec<_> = facts
+        .assign
+        .iter()
+        .filter(|(_, dst, _)| !dst.1.is_empty())
+        .map(|(site, dst, _)| {
+            let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&**site).unwrap();
+            (func_id, dst.0, dst.1)
+        })
+        .collect();
     let assign_like: Vec<_> = facts
         .assign
         .into_iter()
@@ -811,6 +823,8 @@ pub fn taint_index_with_config(
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path) = assign_like;
         // Whole-variable copy edges (`dst = src`) from ORIGINAL program assignments only.
         relation copy_edge(FunctionId, FlowVariable, FlowVariable) = copy_edge;
+        // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
+        relation prog_store(FunctionId, FlowVariable, Path) = prog_store;
         // A variable that whole-aliases a formal purely through original program copies. This is
         // the copy-closure of `locals(v, empty, formal, empty)` restricted to original assigns:
         // it finds strictly fewer aliases (drops inter-procedural / summary-derived copies) but
@@ -943,6 +957,9 @@ pub fn taint_index_with_config(
             // v1.p1 <- n2.bp  (delta driver)
             locals(infunc, v1, p1, n2, bp),
             if !p1.is_empty(),
+            // v1.p1 is actually stored through in the program (not just reachable): membership
+            // probe by (func,var,path). Restricts summaries to genuine aliased writes.
+            prog_store(infunc, v1, p1),
             // this is the alias: v1 <- n1, established by original program copies only
             alias_of_formal(infunc, v1, n1),
             config(c),
