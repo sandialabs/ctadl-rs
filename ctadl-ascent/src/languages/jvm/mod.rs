@@ -5,8 +5,8 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 
-use hashbrown::hash_map::HashMap;
 use hashbrown::HashSet;
+use hashbrown::hash_map::HashMap;
 use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
 
@@ -257,14 +257,13 @@ impl Context {
                                         stmt.source_info = source_info;
                                         bb_data.push_back(stmt);
                                         if let Some(ret_loc) = call_info.return_value.as_ref() {
-                                            let mut assign = Statement::new_kind(
-                                                StatementKind::Assign {
+                                            let mut assign =
+                                                Statement::new_kind(StatementKind::Assign {
                                                     dest: self.convert_location_to_var_ref(ret_loc),
                                                     sources: smallvec![Exp::new_access_path(
                                                         AccessPath::without_fields(Self::ret()),
                                                     )],
-                                                },
-                                            );
+                                                });
                                             assign.source_info = source_info;
                                             Self::note_assign_aliases(&assign, &mut stack_aliases);
                                             bb_data.push_back(assign);
@@ -333,9 +332,9 @@ impl Context {
                                             TerminatorKind::Return {
                                                 args: smallvec![
                                                     empty_exp(),
-                                                    Exp::new_access_path(AccessPath::without_fields(
-                                                        Self::except(),
-                                                    )),
+                                                    Exp::new_access_path(
+                                                        AccessPath::without_fields(Self::except(),)
+                                                    ),
                                                 ],
                                             }
                                         } else {
@@ -609,9 +608,7 @@ impl Context {
 
     fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> mir::FieldAccess {
         let class = format!("L{};", f.class_name);
-        mir::FieldAccess::Symbol(
-            format!("<{}->{}:{}>", class, f.field_name, f.descriptor).into(),
-        )
+        mir::FieldAccess::Symbol(format!("<{}->{}:{}>", class, f.field_name, f.descriptor).into())
     }
 
     fn stack_exp(&self, loc: &Location) -> Exp {
@@ -935,10 +932,7 @@ impl Context {
                         .expect("putstatic value"),
                 );
                 smallvec![Statement::new_kind(StatementKind::update(
-                    AccessPath::new(
-                        VariableRef::new_global(),
-                        [Self::jvm_field_symbol(field)],
-                    ),
+                    AccessPath::new(VariableRef::new_global(), [Self::jvm_field_symbol(field)],),
                     value,
                 ))]
             }
@@ -998,13 +992,8 @@ impl Context {
             // *aload
             0x2e..=0x35 if Self::array_base(&data.sources).is_some() => {
                 let base = Self::array_base(&data.sources).expect("aload base");
-                let object = self.field_object_base(
-                    base,
-                    aliases,
-                    last_aload_reg,
-                    block_instrs,
-                    instr_idx,
-                );
+                let object =
+                    self.field_object_base(base, aliases, last_aload_reg, block_instrs, instr_idx);
                 smallvec![Statement::new_kind(StatementKind::Assign {
                     dest: self.convert_location_to_var_ref(&data.destination),
                     sources: smallvec![Exp::new_access_path(AccessPath::new(
@@ -1023,18 +1012,10 @@ impl Context {
                         .next()
                         .expect("astore value"),
                 );
-                let object = self.field_object_base(
-                    base,
-                    aliases,
-                    last_aload_reg,
-                    block_instrs,
-                    instr_idx,
-                );
+                let object =
+                    self.field_object_base(base, aliases, last_aload_reg, block_instrs, instr_idx);
                 smallvec![Statement::new_kind(StatementKind::update(
-                    AccessPath::new(
-                        object,
-                        [mir::FieldAccess::Symbol("[]".into())],
-                    ),
+                    AccessPath::new(object, [mir::FieldAccess::Symbol("[]".into())],),
                     value,
                 ))]
             }

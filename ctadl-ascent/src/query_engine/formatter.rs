@@ -292,13 +292,11 @@ fn object_store_path(path: &path::Path) -> String {
             Err(())
         }
     });
-    parsed
-        .map(|url| url.to_string())
-        .unwrap_or_else(|_| {
-            let normalized = path.to_string_lossy().replace('\\', "/");
-            let normalized = normalized.strip_prefix("//?/").unwrap_or(&normalized);
-            format!("file:///{normalized}")
-        })
+    parsed.map(|url| url.to_string()).unwrap_or_else(|_| {
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        let normalized = normalized.strip_prefix("//?/").unwrap_or(&normalized);
+        format!("file:///{normalized}")
+    })
 }
 
 pub fn format_sarif(

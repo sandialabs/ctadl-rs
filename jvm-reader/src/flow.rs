@@ -1825,7 +1825,10 @@ mod tests {
         let class_file = classes.join("LoopFlow.class");
         std::fs::create_dir_all(&classes).unwrap();
         std::fs::copy(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/../nightly/tests/java/LoopFlow.java"),
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../nightly/tests/java/LoopFlow.java"
+            ),
             &java,
         )
         .unwrap();
