@@ -927,20 +927,26 @@ pub fn taint_index_with_config(
         alias_of_formal(infunc, v1, i) <--
             formal_param(infunc, v1, _),
             if let Some(i) = v1.as_formal();
-        // A destination of an original copy inherits the source's formal-aliases.
+        // A destination of an original copy inherits the source's formal-aliases. Recursive
+        // relation FIRST so the join drives by the `alias_of_formal` delta and probes `copy_edge`
+        // via its `0_2` index, rather than re-scanning all of `copy_edge` each iteration.
         alias_of_formal(infunc, dst, i) <--
-            copy_edge(infunc, dst, src),
-            alias_of_formal(infunc, src, i);
+            alias_of_formal(infunc, src, i),
+            copy_edge(infunc, dst, src);
 
         // aliasing summary rule (context-free flows only).
+        // Clause order matters: `locals` FIRST so Ascent drives the join by the `locals` DELTA and
+        // probes `alias_of_formal` via its `0_1` index. Writing `alias_of_formal` first instead
+        // makes Ascent full-scan all of `alias_of_formal` every fixpoint iteration (a scan whose
+        // per-iteration cost is |alias_of_formal|, catastrophic on binaries with many SSA copies).
         summary(infunc, n1, p1.clone(), n2, bp) <--
-            config(c),
-            if c.alias_rule,
-            // this is the alias: v1 <- n1, established by original program copies only
-            alias_of_formal(infunc, v1, n1),
-            // v1.p1 <- n2.bp
+            // v1.p1 <- n2.bp  (delta driver)
             locals(infunc, v1, p1, n2, bp),
             if !p1.is_empty(),
+            // this is the alias: v1 <- n1, established by original program copies only
+            alias_of_formal(infunc, v1, n1),
+            config(c),
+            if c.alias_rule,
             if n1 != n2 || *p1 != *bp;
 
         // Hybrid Inlining Rules:
