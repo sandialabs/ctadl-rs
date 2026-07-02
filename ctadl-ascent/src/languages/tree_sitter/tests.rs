@@ -1492,13 +1492,12 @@ fn out_param_write_propagates() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational: address-of aliasing not modeled -- `int *p = &x; *p = src;` parses but does \
-            not taint x (contrast out_param_write_propagates, which works through a by-ref param)"]
 fn address_of_local_aliases() {
-    // Taking a local's address and writing through it (`int *p = &x; *p = src;`) should taint x, so a
-    // later `return x` carries src. Exercises address-of plus write-through-alias. Today the &x
-    // aliasing is dropped (the node lowers, but p = &x / *p = src reassign p's local, not x), so src
-    // never reaches the return -- documented here until aliasing lands.
+    // Taking a local's address and writing through it (`int *p = &x; *p = src;`) taints x, so a
+    // later `return x` carries src. Exercises address-of plus write-through-alias -- here `x` is a
+    // by-ref-able parameter, complementing the local-variable cases in
+    // `addr_of_local_write_through_taints_pointee`. Resolved (F3): the frontend records `p = &x` and
+    // resolves the same-block `*p` to its pointee, so the store lands on x.
     let src = r"
         int f(int x, int src) {
             int *p = &x;
@@ -1665,9 +1664,6 @@ fn post_increment_value_is_operand() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational: a non-constant subscript a[n] lowers to a distinct `[_elem_]` field symbol \
-            that does NOT alias a constant index `[0]`, so the sound a[n]->a[0] over-approximation is \
-            missed (node lowers, flow dropped)"]
 fn nonconstant_subscript_may_alias_constant() {
     // A non-constant subscript is sound only if it may-alias every concrete index: writing `a[n]` and
     // reading `a[0]` should carry taint, because `n` could be 0. The frontend instead lowers `a[n]` to
@@ -1686,14 +1682,16 @@ fn nonconstant_subscript_may_alias_constant() {
 }
 
 #[test_log::test]
-#[ignore = "aspirational: a union is treated as an ordinary field-sensitive struct (no overlap model), \
-            so a write to u.a does not taint a read of u.b -- node lowers, flow dropped"]
+#[ignore = "limitation: union member overlap is modeled only for variables declared with an explicit \
+            `union_specifier` (see `union_member_write_aliases_other_member`, live). This uses a bare \
+            `U u;` whose type is a `type_identifier` (typedef/undeclared union), which the collapse \
+            does not recognize, so `.a`/`.b` stay disjoint. Un-ignore once typedef-union tracking lands."]
 fn union_write_overlaps_other_field() {
-    // A union aliases its fields: writing `u.a` and reading `u.b` should carry taint, because they
-    // share storage. The sound taint answer is a flow. Confirmed by observation: the frontend lowers a
-    // union like any struct (field-sensitive, no union model), keeps `.a` and `.b` disjoint, and drops
-    // the flow -- src does NOT reach the return. Asserting the ideal (overlap flows) documents the
-    // unsoundness until a union/overlap model lands.
+    // A union aliases its fields: writing `u.a` and reading `u.b` should carry taint (shared storage).
+    // The overlap model (F4) collapses union members to one field -- but only for a variable declared
+    // with an explicit `union { .. }` type. Here `U` is a bare type name (typedef/undeclared), so the
+    // frontend can't tell `u` is a union and keeps `.a`/`.b` disjoint; the flow is still dropped. This
+    // documents the remaining typedef-union gap; the supported form is covered live elsewhere.
     let src = r"
         int f(int src) {
             U u;
