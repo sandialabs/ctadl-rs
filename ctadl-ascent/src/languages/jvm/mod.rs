@@ -307,16 +307,12 @@ impl Context {
                                             Self::note_assign_aliases(&stmt, &mut stack_aliases);
                                             if let StatementKind::Assign { dest, sources } =
                                                 &stmt.kind
+                                                && let [Exp::AccessPath(ap)] = sources.as_slice()
+                                                && ap.path.is_empty()
+                                                && Self::is_stack_var(dest)
+                                                && Self::aload_source_var(&ap.variable_ref)
                                             {
-                                                if let [Exp::AccessPath(ap)] = sources.as_slice() {
-                                                    if ap.path.is_empty()
-                                                        && Self::is_stack_var(dest)
-                                                        && Self::aload_source_var(&ap.variable_ref)
-                                                    {
-                                                        last_aload_reg =
-                                                            Some(ap.variable_ref.clone());
-                                                    }
-                                                }
+                                                last_aload_reg = Some(ap.variable_ref.clone());
                                             }
                                             bb_data.push_back(stmt);
                                         }
@@ -624,19 +620,19 @@ impl Context {
         ))
     }
 
-    fn field_ref_in<'a>(locs: &'a [Location]) -> Option<&'a jvm_reader::flow::FieldRef> {
+    fn field_ref_in(locs: &[Location]) -> Option<&jvm_reader::flow::FieldRef> {
         locs.iter().find_map(|l| match l {
             Location::FieldRef(f) => Some(f),
             _ => None,
         })
     }
 
-    fn stack_sources<'a>(locs: &'a [Location]) -> impl Iterator<Item = &'a Location> {
+    fn stack_sources(locs: &[Location]) -> impl Iterator<Item = &Location> {
         locs.iter()
             .filter(|l| matches!(l, Location::StackSlot(_) | Location::StackInput(_)))
     }
 
-    fn array_base<'a>(locs: &'a [Location]) -> Option<&'a Location> {
+    fn array_base(locs: &[Location]) -> Option<&Location> {
         locs.iter().find_map(|l| match l {
             Location::ArrayElement { base, .. } => Some(base.as_ref()),
             _ => None,
@@ -652,32 +648,29 @@ impl Context {
     }
 
     fn note_assign_aliases(stmt: &Statement, aliases: &mut HashMap<String, VariableRef>) {
-        match &stmt.kind {
-            StatementKind::Assign { dest, sources } => {
-                if let [src] = sources.as_slice() {
-                    if let Exp::AccessPath(ap) = src {
-                        if ap.path.is_empty() {
-                            let base = aliases
-                                .get(&ap.variable_ref.to_string())
-                                .cloned()
-                                .unwrap_or_else(|| ap.variable_ref.clone());
-                            if Self::is_stack_var(dest)
-                                && (Self::is_register_var(&ap.variable_ref)
-                                    || Self::aload_source_var(&ap.variable_ref))
-                            {
-                                aliases.insert(dest.to_string(), ap.variable_ref.clone());
-                            } else {
-                                aliases.insert(dest.to_string(), base);
-                            }
-                            return;
-                        }
-                    }
-                    if matches!(src, Exp::ObjectRef(_)) {
-                        aliases.insert(dest.to_string(), dest.clone());
-                    }
+        if let StatementKind::Assign { dest, sources } = &stmt.kind
+            && let [src] = sources.as_slice()
+        {
+            if let Exp::AccessPath(ap) = src
+                && ap.path.is_empty()
+            {
+                let base = aliases
+                    .get(&ap.variable_ref.to_string())
+                    .cloned()
+                    .unwrap_or_else(|| ap.variable_ref.clone());
+                if Self::is_stack_var(dest)
+                    && (Self::is_register_var(&ap.variable_ref)
+                        || Self::aload_source_var(&ap.variable_ref))
+                {
+                    aliases.insert(dest.to_string(), ap.variable_ref.clone());
+                } else {
+                    aliases.insert(dest.to_string(), base);
                 }
+                return;
             }
-            _ => {}
+            if matches!(src, Exp::ObjectRef(_)) {
+                aliases.insert(dest.to_string(), dest.clone());
+            }
         }
     }
 
@@ -704,7 +697,7 @@ impl Context {
     ) -> Option<VariableRef> {
         let target_slot = Self::stack_slot_index(object_loc)?;
         for inst in block_instrs[..current_idx].iter().rev() {
-            if matches!(inst.opcode, 0x15..=0x19 | 0x1a..=0x2d) {
+            if matches!(inst.opcode, 0x15..=0x2d) {
                 for df in &inst.dataflow {
                     if Self::stack_slot_index(&df.destination) != Some(target_slot) {
                         continue;
@@ -741,12 +734,12 @@ impl Context {
         aliases.get(&v.to_string()).cloned().unwrap_or(v)
     }
 
-    fn aload_register_before<'a>(
-        block_instrs: &'a [jvm_reader::flow::InstructionFlowInfo<'_>],
+    fn aload_register_before(
+        block_instrs: &[jvm_reader::flow::InstructionFlowInfo<'_>],
         current_idx: usize,
     ) -> Option<VariableRef> {
         for inst in block_instrs[..current_idx].iter().rev() {
-            if matches!(inst.opcode, 0x15..=0x19 | 0x1a..=0x2d) {
+            if matches!(inst.opcode, 0x15..=0x2d) {
                 for df in &inst.dataflow {
                     for loc in &df.sources {
                         match loc {
@@ -779,12 +772,12 @@ impl Context {
     ) -> VariableRef {
         // Prefer a stable register/parameter for this stack slot when it differs from the
         // most recent aload (e.g. aload_0; aload_1; putfield must use this, not the arg).
-        if let Some(slot_base) = Self::stack_slot_alias(loc, aliases) {
-            if !Self::is_stack_var(&slot_base) {
-                let conflicts_with_last = last_aload_reg.is_some_and(|r| r != &slot_base);
-                if conflicts_with_last {
-                    return slot_base;
-                }
+        if let Some(slot_base) = Self::stack_slot_alias(loc, aliases)
+            && !Self::is_stack_var(&slot_base)
+        {
+            let conflicts_with_last = last_aload_reg.is_some_and(|r| r != &slot_base);
+            if conflicts_with_last {
+                return slot_base;
             }
         }
         if let Some(reg) = last_aload_reg {
@@ -905,7 +898,7 @@ impl Context {
 
         match opcode {
             // new / newarray / anewarray
-            0xbb | 0xbc | 0xbd => {
+            0xbb..=0xbd => {
                 let class_name = data
                     .sources
                     .iter()

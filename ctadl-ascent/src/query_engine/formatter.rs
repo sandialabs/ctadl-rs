@@ -282,17 +282,17 @@ impl<N: Idx> Predecessors for TaintGraph<N> {
 /// the path as relative to the process cwd (e.g. a scratch dir containing
 /// `ArrayFlow.class`) and object_store fails URL conversion.
 fn object_store_path(path: &path::Path) -> String {
-    url::Url::from_file_path(path)
-        .or_else(|_| {
-            #[cfg(windows)]
-            {
-                let s = path.to_string_lossy();
-                if let Some(stripped) = s.strip_prefix(r"\\?\") {
-                    return url::Url::from_file_path(stripped);
-                }
-            }
+    let parsed = url::Url::from_file_path(path);
+    #[cfg(windows)]
+    let parsed = parsed.or_else(|_| {
+        let s = path.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            url::Url::from_file_path(stripped)
+        } else {
             Err(())
-        })
+        }
+    });
+    parsed
         .map(|url| url.to_string())
         .unwrap_or_else(|_| {
             let normalized = path.to_string_lossy().replace('\\', "/");
