@@ -195,8 +195,10 @@ pub struct IndexArgs {
 
     /// Prune unreachable CFG nodes before SSA transformation.
     ///
-    /// Passing `--prune-unreachable-cfg-nodes` enables pruning. Passing
-    /// `--prune-unreachable-cfg-nodes=false` disables it explicitly.
+    /// On by default: SSA/dominator construction requires every block to be
+    /// reachable from entry, and real disassembled binaries routinely contain
+    /// unreachable blocks. Pass `--prune-unreachable-cfg-nodes=false` to disable
+    /// pruning explicitly (e.g. for inputs known to be fully connected).
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     pub prune_unreachable_cfg_nodes: Option<bool>,
 
@@ -569,7 +571,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         &args.summary,
         &args.models,
         args.strategy,
-        args.prune_unreachable_cfg_nodes.unwrap_or(false),
+        args.prune_unreachable_cfg_nodes.unwrap_or(true),
         args.dump_index_graph.as_deref(),
     )?;
     Ok(())

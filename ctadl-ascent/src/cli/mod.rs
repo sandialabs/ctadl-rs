@@ -469,11 +469,14 @@ pub fn save_program_info(
         if f.blocks.is_empty() {
             continue;
         }
-        assert!(
-            is_connected(&f.blocks),
-            "Function has unreachable blocks: {}",
-            f.name
-        );
+        // Real disassembled binaries routinely contain functions with blocks
+        // that are unreachable from entry (Ghidra CFG recovery artifacts). This
+        // is not an import error: indexing prunes unreachable blocks before the
+        // SSA/dominator pass (see `--prune-unreachable-cfg-nodes`, on by
+        // default), so record but don't reject them here.
+        if !is_connected(&f.blocks) {
+            log::debug!("function has blocks unreachable from entry: {}", f.name);
+        }
     }
     let data = encode::encode_program(&obj).map_err(Error::Bitcode)?;
     std::fs::write(path, data)
