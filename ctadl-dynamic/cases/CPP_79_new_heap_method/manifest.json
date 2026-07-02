@@ -1,0 +1,6 @@
+{
+  "name": "CPP_79_new_heap_method",
+  "description": "C++ heap object via new (spec 014), POSITIVE: `new Box()` allocates a heap object with no constructor; the pointer p aliases it, so p->set(source()) taints member v and sink(p->get()) reads it back. `delete p` is a taint no-op. CTADL models the heap object as an anonymous constructed object the pointer aliases and captures the flow. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

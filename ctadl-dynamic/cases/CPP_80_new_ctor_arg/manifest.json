@@ -1,0 +1,6 @@
+{
+  "name": "CPP_80_new_ctor_arg",
+  "description": "C++ heap object with a constructor argument (spec 014), POSITIVE: `new Box(source())` runs Box::Box(int) on the synthetic heap object so the tainted argument lands in member v; p aliases the object and sink(p->get()) reads v back. `delete p` is a taint no-op. CTADL reuses ctor lowering (006/010) on the heap object. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

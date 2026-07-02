@@ -21,13 +21,15 @@
 //! the shared core. C++-only constructs (classes, methods, references, namespaces,
 //! templates, …) are later milestones and may still error.
 
-use ctadl_ir::mir::{CallEdges, CallStyle, Exp, Program, Statement, StatementKind, VariableRef};
+use ctadl_ir::mir::{
+    AccessPath, CallEdges, CallStyle, Exp, Program, Statement, StatementKind, VariableRef,
+};
 use smallvec::{SmallVec, smallvec};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, QueryCursor};
 
 use super::{
-    ClassInfo, Context, GrammarHooks, MatchExtractor, ScopeView, VarKind,
+    ClassInfo, Context, GrammarHooks, MatchExtractor, ScopeView, VarKind, declarator_leaf_ident,
     is_class_member_definition, markup, param_arity, to_str,
 };
 use crate::error::Error;
@@ -840,6 +842,12 @@ fn cpp_try_construct<'a>(
     decl_node: Node<'_>,
     class: &str,
 ) -> anyhow::Result<bool, Error> {
+    // Heap allocation `Type* p = new AllocType(args)`. Checked before the `has_ctor` gate: the
+    // *declared* pointer type (`Base`) may declare no constructor while the *allocated* type
+    // (`Derived`) does, and even a ctor-less `new` must still bind the pointer to a heap object.
+    if cpp_try_new(ctx, source, program, scope_view, decl_node, class)? {
+        return Ok(true);
+    }
     if !ctx.classes.get(class).is_some_and(|info| info.has_ctor) {
         return Ok(false);
     }
@@ -1022,7 +1030,24 @@ fn emit_construction<'a>(
     );
     ctx.local_types
         .insert(obj_name.to_string(), class.to_string());
+    emit_ctor_call(ctx, program, scope_view, class, obj_name, ctor_args);
+}
 
+/// Emit the constructor `DirectCall Class::Class#<arity>(&obj, args…)` for an **already-
+/// registered** local `obj_name`. Its access path is the arg-0 (`ByRef`) receiver, so the
+/// constructor's `this.<member>` writes land in the object; the void result goes to a
+/// throwaway temp. The callee name is arity-resolved via the neutral mangler (spec 010), so a
+/// class with ctors of ≥2 arities resolves to the matching `Box::Box#1`/`Box::Box#2` and a
+/// single-ctor class keeps the bare `Class::Class`. Shared by stack construction
+/// ([`emit_construction`]) and heap `new` ([`lower_new_expression`]).
+fn emit_ctor_call(
+    ctx: &mut Context<'_>,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    class: &str,
+    obj_name: &str,
+    ctor_args: SmallVec<[Exp; 4]>,
+) {
     let recv = Exp::AccessPath(ctx.build_access_path(obj_name, Default::default(), scope_view));
     let arity = ctor_args.len();
     let mut args: SmallVec<[Exp; 4]> = smallvec![recv];
@@ -1039,6 +1064,132 @@ fn emit_construction<'a>(
             args,
         },
     ));
+}
+
+/// Lower a C++ `new_expression` (`new Type(args)`) to a **synthetic heap object** and return
+/// its access path. Allocates a fresh local `O`, registers `O`'s type in `local_types` when
+/// `Type` is a known class, and — if `Type` declares a constructor — runs it via
+/// [`emit_ctor_call`] (`Type::Type#<arity>(&O, args…)`), reusing the exact construction edge
+/// stack construction uses (specs 006/010). The caller binds the pointer local to `O` (an
+/// alias, like a reference — [`cpp_try_new`]), so a later `p->m(…)` operates on `O`'s storage.
+///
+/// A heap object is, for taint, an anonymous constructed object the pointer aliases — the same
+/// field-named member access paths a stack object has — so no new taint analysis is needed.
+/// Array-`new` (`new T[n]`, a `declarator` field) and placement-`new` (a `placement` argument
+/// list) are out of this slice's scope and yield `None`, leaving the caller to fall through.
+/// `new_expression` never occurs under the C grammar, so this is unreachable for C.
+fn lower_new_expression<'a>(
+    ctx: &mut Context<'a>,
+    source: &'a str,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    new_expr: Node<'_>,
+) -> anyhow::Result<Option<AccessPath>, Error> {
+    // Array-new / placement-new are out of scope; leave them unrecognized.
+    if new_expr.child_by_field_name("declarator").is_some()
+        || new_expr.child_by_field_name("placement").is_some()
+    {
+        return Ok(None);
+    }
+    let Some(type_node) = new_expr.child_by_field_name("type") else {
+        return Ok(None);
+    };
+    let alloc_type = to_str(&type_node, source);
+
+    // The constructor arguments: a parenthesized `argument_list` (`new Box(source())`) or a
+    // braced `initializer_list` (`new Box{source()}`); absent for `new Box`/`new Box()`.
+    let ctor_args: SmallVec<[Exp; 4]> = match new_expr.child_by_field_name("arguments") {
+        Some(args) if args.kind() == "argument_list" => {
+            ctx.collect_arguments(program, args, source, scope_view)?
+        }
+        Some(args) if args.kind() == "initializer_list" => {
+            let mut cursor = args.walk();
+            let mut collected: SmallVec<[Exp; 4]> = SmallVec::new();
+            for elem in args.children(&mut cursor) {
+                if elem.is_named() {
+                    collected.push(ctx.flatten_expr(program, elem, source, scope_view)?);
+                }
+            }
+            collected
+        }
+        _ => SmallVec::new(),
+    };
+
+    // Allocate the synthetic object as a fresh local, recording its (allocated) class so a
+    // direct dispatch on it would resolve; the pointer that aliases it carries the *declared*
+    // static type for CHA (set by the caller).
+    let obj = ctx.allocator.next_temp();
+    ctx.scope_tree
+        .add_variable(scope_view.sidx, obj.clone(), VarKind::Local, None, None);
+    if ctx.classes.contains_key(alloc_type) {
+        ctx.local_types.insert(obj.clone(), alloc_type.to_string());
+    }
+    // Run the constructor iff the allocated type declares one (reuse the ctor edge). A
+    // ctor-less allocation (`new Box()` with no user ctor) just yields the fresh object.
+    if ctx
+        .classes
+        .get(alloc_type)
+        .is_some_and(|info| info.has_ctor)
+    {
+        emit_ctor_call(ctx, program, scope_view, alloc_type, &obj, ctor_args);
+    }
+    Ok(Some(ctx.build_access_path(
+        &obj,
+        Default::default(),
+        scope_view,
+    )))
+}
+
+/// Recognize and lower a heap-object declaration `Type* p = new AllocType(args)` — the `new`
+/// arm of the C++ `construct` hook. Lowers the `new_expression` to a synthetic heap object
+/// ([`lower_new_expression`]) and binds the pointer local `p` as an **alias** of that object
+/// (via [`Context::reference_aliases`], exactly as a reference binds — so every use of `p`,
+/// receiver or read, resolves to the object's storage), recording `p`'s **declared** static
+/// type (`Base` in `Base* p = new Derived()`) in `local_types` so a later virtual `p->m(…)`
+/// dispatches by CHA over that static type's subtree (spec 012).
+///
+/// Returns `true` when it handled a `new`-declaration, `false` otherwise (so the caller
+/// proceeds to ordinary construction / declarator handling). Only the pointer-local form in
+/// this slice's scope is recognized; anything else falls through. `new_expression` never
+/// occurs under the C grammar, so this never fires for C.
+fn cpp_try_new<'a>(
+    ctx: &mut Context<'a>,
+    source: &'a str,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    decl_node: Node<'_>,
+    declared_class: &str,
+) -> anyhow::Result<bool, Error> {
+    let Some(declr) = decl_node.child_by_field_name("declarator") else {
+        return Ok(false);
+    };
+    // A `new`-initialized pointer is an `init_declarator` whose `value` is a `new_expression`.
+    if declr.kind() != "init_declarator" {
+        return Ok(false);
+    }
+    let Some(value) = declr.child_by_field_name("value") else {
+        return Ok(false);
+    };
+    if value.kind() != "new_expression" {
+        return Ok(false);
+    }
+    // The pointer's leaf identifier (`p` in `Base* p` — its declarator is a `pointer_declarator`
+    // wrapping the identifier).
+    let Some(ptr_name) = declr
+        .child_by_field_name("declarator")
+        .and_then(|d| declarator_leaf_ident(d, source))
+    else {
+        return Ok(false);
+    };
+
+    let Some(obj_path) = lower_new_expression(ctx, source, program, scope_view, value)? else {
+        return Ok(false);
+    };
+    // Bind the pointer as an alias of the heap object and record its declared static type.
+    ctx.reference_aliases.insert(ptr_name.to_string(), obj_path);
+    ctx.local_types
+        .insert(ptr_name.to_string(), declared_class.to_string());
+    Ok(true)
 }
 
 /// The C++ grammar-shape adapters installed on the lowering [`Context`]. The first two

@@ -1337,4 +1337,166 @@ mod tests {
             "virtual setter taints v; sink reads distinct member w through a reference — no flow, got: {flows:?}"
         );
     }
+
+    /// Spec 014 (heap objects), end to end — mirrors the CPP_79 dynamic case. `new Box()`
+    /// allocates a heap object with no constructor; the pointer `p` aliases it, so `p->set`
+    /// taints the object's member and `p->get()` reads it back. `delete p` is a taint no-op.
+    #[test_log::test]
+    fn cpp_new_heap_method_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                void set(int x) { v = x; }
+                int get() { return v; }
+            };
+            int main() {
+                Box* p = new Box();
+                p->set(source());
+                sink(p->get());
+                delete p;
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp new heap-method flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a source->sink flow through a heap object's setter/getter, got: {flows:?}"
+        );
+    }
+
+    /// Spec 014 (heap objects), end to end — mirrors the CPP_80 dynamic case. `new Box(source())`
+    /// runs the constructor on the synthetic heap object, so the argument's taint lands in the
+    /// member; the pointer aliases the object and `p->get()` reads it back out.
+    #[test_log::test]
+    fn cpp_new_ctor_arg_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                Box(int x) { v = x; }
+                int get() { return v; }
+            };
+            int main() {
+                Box* p = new Box(source());
+                sink(p->get());
+                delete p;
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp new ctor-arg flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a source->sink flow through a heap constructor argument, got: {flows:?}"
+        );
+    }
+
+    /// Spec 014 (heap objects, FR-2), end to end — mirrors the CPP_81 dynamic case. A `Derived`
+    /// is heap-allocated through a `Base*` (`Base* p = new Derived()`), so `p->get()` is a
+    /// VIRTUAL call: CHA over the declared static type `Base`'s subtree captures the overriding
+    /// `Derived::get` (which flows), the sound target the runtime actually runs.
+    #[test_log::test]
+    fn cpp_new_virtual_dispatch_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Base {
+                int v;
+                void set(int x) { v = x; }
+                virtual int get() { return 0; }
+            };
+            struct Derived : Base {
+                int get() override { return v; }
+            };
+            int main() {
+                Base* p = new Derived();
+                p->set(source());
+                sink(p->get());
+                delete p;
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp new virtual-dispatch flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a virtual-dispatch flow through a heap object (p->get() -> Derived::get), got: {flows:?}"
+        );
+    }
+
+    /// Spec 014 (heap objects), end-to-end negative — mirrors the CPP_82 dynamic case. The
+    /// setter taints member `a` on a heap object; the sink reads a distinct member `b` (0).
+    /// Field sensitivity holds through the heap alias, so no `a` -> `b` flow is reported.
+    #[test_log::test]
+    fn cpp_new_distinct_member_no_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int a;
+                int b;
+                void seta(int x) { a = x; }
+                int getb() { return b; }
+            };
+            int main() {
+                Box* p = new Box();
+                p->b = 0;
+                p->seta(source());
+                sink(p->getb());
+                delete p;
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp new distinct-member flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "heap setter taints member `a`; sink reads distinct member `b` — no flow, got: {flows:?}"
+        );
+    }
+
+    /// Spec 014 (FR-3): a program containing `delete p;` parses and lowers without a
+    /// frontend error, and `delete` moves no taint (its presence changes no flow).
+    #[test_log::test]
+    fn cpp_delete_is_taint_no_op() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Box {
+                int v;
+                void set(int x) { v = x; }
+                int get() { return v; }
+            };
+            int main() {
+                Box* p = new Box();
+                p->set(source());
+                int r = p->get();
+                delete p;
+                sink(r);
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        // The value was read into `r` before `delete p`, so the flow still holds; the point is
+        // that `delete p;` lowered without error (a `frontend-error` would panic `analyze`).
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp delete no-op flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "delete must parse/lower as a taint no-op without disturbing the pre-delete flow, got: {flows:?}"
+        );
+    }
 }

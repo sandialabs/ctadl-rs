@@ -1,0 +1,6 @@
+{
+  "name": "CPP_81_new_virtual_dispatch",
+  "description": "C++ heap polymorphism (spec 014), POSITIVE: `Base* p = new Derived()`. Base::get is virtual and drops; Derived::get overrides and flows. A Derived heap object used through Base* makes p->get() virtual -- runtime selects Derived::get (flows). Static dispatch on the declared Base type would miss it (unsound). CTADL models it as CHA over Base's subtree, capturing the flow. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

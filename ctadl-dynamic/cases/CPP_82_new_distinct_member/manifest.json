@@ -1,0 +1,6 @@
+{
+  "name": "CPP_82_new_distinct_member",
+  "description": "C++ heap object field sensitivity (spec 014), NEGATIVE: the setter taints member a on a heap object; the sink reads a distinct member b (set to 0). A field-sensitive model must not leak a's taint into distinct member b through the same heap object. `delete p` is a taint no-op. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

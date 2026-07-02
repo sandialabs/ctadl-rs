@@ -766,6 +766,12 @@ fn clang_compiles(prog: &str, static_markers: &str, lang: Lang) -> bool {
         // DFSan recipe; disabling RTTI (no `dynamic_cast`/`typeid` in scope) fixes the link
         // and changes no taint semantics.
         cmd.arg("-fno-rtti");
+        // `-fno-exceptions`: `new T(args)` with a non-trivial constructor emits an exception
+        // cleanup landing pad (`operator delete` if the ctor throws) referencing the C++
+        // personality routine `__gxx_personality_v0`, undefined under `-nostdlib++`. Exceptions
+        // are out of scope (spec 014), so disabling them removes the landing pad, fixes the
+        // link, and changes no taint semantics.
+        cmd.arg("-fno-exceptions");
     }
     let ok = cmd
         .args(["-O0", "-w", "-o"])
@@ -806,6 +812,11 @@ fn run_dfsan(
         // vtable's RTTI type-info reference is otherwise undefined). No RTTI is in scope, so
         // this is taint-neutral and regresses no existing C or C++ case.
         compile.arg("-fno-rtti");
+        // `-fno-exceptions`: `new T(args)` with a non-trivial constructor emits an exception
+        // cleanup landing pad referencing `__gxx_personality_v0`, undefined under `-nostdlib++`.
+        // Exceptions are out of scope (spec 014), so disabling them fixes the link and is
+        // taint-neutral (regresses no existing case).
+        compile.arg("-fno-exceptions");
     }
     let compiled = compile
         .args(["-O0", "-w", "-o"])

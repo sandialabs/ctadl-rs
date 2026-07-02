@@ -2147,6 +2147,18 @@ impl<'a> Context<'a> {
                 let x = self.allocator.next_temp();
                 self.collect_call(program, node, source, scope_view, x)
             }
+            // C++ `delete p;` — destroying a heap object is a taint **no-op** (the object is
+            // gone; its taint is irrelevant afterward), so this lowers to nothing that moves
+            // taint and yields a fresh throwaway temp. A `delete_expression` node never occurs
+            // under the C grammar, so this arm is inert for C (like the `this` arm above).
+            "delete_expression" => {
+                let temp = self.allocator.next_temp();
+                Ok(Exp::AccessPath(self.build_access_path(
+                    temp.as_str(),
+                    Default::default(),
+                    scope_view,
+                )))
+            }
             _ => {
                 debug_print_tree(node, 0, None, None);
                 Err(Error::TreeSitterParse(format!(

@@ -15,10 +15,24 @@
  */
 #include <sanitizer/dfsan_interface.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* Single taint label for v1. Must match the runner's label->bit mapping
  * (label "Test" -> bit value 1). */
 #define LABEL_TEST 1
+
+/*
+ * Allocation operators for `new`/`delete` programs (spec 014). Under `-nostdlib++`
+ * the C++ runtime's `operator new`/`operator delete` are absent, so a `new Box()` /
+ * `delete p` program fails to link (`undefined reference to 'operator new(unsigned
+ * long) [clone .dfsan]'`). Defining them here — backed by malloc/free and compiled
+ * with DFSan alongside each case, so the `.dfsan` clones exist — fixes the link. This
+ * is taint-neutral (malloc/free move no labels) and regresses nothing: no existing
+ * case uses `new`, and a program without `new`/`delete` never references these.
+ */
+void* operator new(unsigned long n) { return malloc(n); }
+void operator delete(void* p) noexcept { free(p); }
+void operator delete(void* p, unsigned long) noexcept { free(p); }
 
 extern "C" int source() {
     int v = 0x7a; /* value is irrelevant; the shadow (label) is what propagates */

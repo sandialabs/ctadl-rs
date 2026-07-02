@@ -1802,3 +1802,126 @@ fn cpp_non_polymorphic_class_dispatch_unchanged() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Spec 014 — `new` / `delete` heap objects. `new Type(args)` allocates a synthetic heap
+// object, runs its constructor, and binds the pointer as an alias so `p->m()` (including
+// virtual, via CHA) operates on it; `delete p` parses and moves no taint.
+// ---------------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_new_runs_constructor_on_heap_object() {
+    // FR-1: `new Box(source())` emits the constructor `DirectCall Box::Box` on the synthetic
+    // heap object (arg 0 the object, arg 1 the ctor argument), and the pointer `p` aliases that
+    // object so `p->get()` dispatches to `Box::get` on it.
+    let src = r#"
+        int source();
+        void sink(int);
+        struct Box {
+            int v;
+            Box(int x) { v = x; }
+            int get() { return v; }
+        };
+        int main() {
+            Box* p = new Box(source());
+            int y = p->get();
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // The constructor call exists on the heap object (2 args: the object + the ctor arg).
+    let ctor_calls: Vec<usize> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .filter(|(edges, _)| edges.iter().any(|e| e == "Box::Box"))
+        .map(|(_, args)| args.len())
+        .collect();
+    assert_eq!(
+        ctor_calls,
+        vec![2],
+        "expected one Box::Box ctor call with 2 args (object + ctor arg)\n{prog}"
+    );
+    // The getter dispatches to Box::get (the pointer aliases the heap object).
+    check_has_direct_call(&prog, "main", "Box::get");
+}
+
+#[test_log::test]
+fn cpp_new_heap_virtual_call_is_multi_target() {
+    // FR-2: a `Derived` heap-allocated through `Base* p = new Derived()` makes `p->get()` a
+    // VIRTUAL call. CHA over the declared static type `Base`'s subtree lists BOTH overrides
+    // (`Base::get`, `Derived::get`) — the pointer's static type, not the allocated `Derived`,
+    // roots the dispatch — a sound superset of the single dynamic target.
+    let src = r#"
+        int source();
+        void sink(int);
+        struct Base {
+            int v;
+            void set(int x) { v = x; }
+            virtual int get() { return 0; }
+        };
+        struct Derived : Base {
+            int get() override { return v; }
+        };
+        int main() {
+            Base* p = new Derived();
+            p->set(source());
+            int y = p->get();
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    let get_edges: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .map(|(edges, _)| edges)
+        .filter(|edges| edges.iter().any(|e| e.ends_with("::get")))
+        .collect();
+    assert_eq!(
+        get_edges.len(),
+        1,
+        "expected exactly one get() call site\n{prog}"
+    );
+    let edges = &get_edges[0];
+    assert!(
+        edges.iter().any(|e| e == "Base::get") && edges.iter().any(|e| e == "Derived::get"),
+        "heap virtual get() must dispatch to BOTH Base::get and Derived::get (CHA); got {edges:?}\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_delete_parses_and_moves_no_taint() {
+    // FR-3: `delete p;` parses without error and lowers to nothing that moves taint — it emits
+    // no `DirectCall` of its own, leaving only the constructor and method dispatch.
+    let src = r#"
+        int source();
+        void sink(int);
+        struct Box {
+            int v;
+            void set(int x) { v = x; }
+            int get() { return v; }
+        };
+        int main() {
+            Box* p = new Box();
+            p->set(source());
+            int y = p->get();
+            delete p;
+            return 0;
+        }
+    "#;
+    let (prog, has_error, _dump) = super::parse_cpp_program(src).expect("parse C++");
+    assert!(
+        !has_error,
+        "a program with `delete p;` must parse without error"
+    );
+    // `delete` introduces no call edge; only the setter and getter dispatch remain.
+    let callees: Vec<String> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .flat_map(|(edges, _)| edges)
+        .collect();
+    assert!(
+        callees.iter().any(|c| c == "Box::set") && callees.iter().any(|c| c == "Box::get"),
+        "expected the setter/getter dispatch to survive alongside delete; got {callees:?}\n{prog}"
+    );
+    assert!(
+        !callees.iter().any(|c| c.contains("delete")),
+        "delete must not emit a call edge; got {callees:?}\n{prog}"
+    );
+}
