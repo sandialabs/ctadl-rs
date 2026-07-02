@@ -728,6 +728,19 @@ pub fn taint_index_with_config(
         .flat_map(|(_, dst, src)| std::iter::once(dst.1).chain(std::iter::once(src.1)))
         .map(|p| (p,))
         .collect();
+    // Whole-variable copies (`x = y`, both sides empty path) from the ORIGINAL program
+    // assignments only -- NOT the derived `assign_like` closure (which also contains
+    // inter-procedural argument copies and summary-induced edges). Used to compute
+    // `alias_of_formal` for the aliasing summary rule.
+    let copy_edge: Vec<_> = facts
+        .assign
+        .iter()
+        .filter(|(_, dst, src)| dst.1.is_empty() && src.1.is_empty())
+        .map(|(site, dst, src)| {
+            let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&**site).unwrap();
+            (func_id, dst.0, src.0)
+        })
+        .collect();
     let assign_like: Vec<_> = facts
         .assign
         .into_iter()
@@ -796,6 +809,13 @@ pub fn taint_index_with_config(
         // but unused and now holds exactly those flows.
         relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path) = assign_like;
+        // Whole-variable copy edges (`dst = src`) from ORIGINAL program assignments only.
+        relation copy_edge(FunctionId, FlowVariable, FlowVariable) = copy_edge;
+        // A variable that whole-aliases a formal purely through original program copies. This is
+        // the copy-closure of `locals(v, empty, formal, empty)` restricted to original assigns:
+        // it finds strictly fewer aliases (drops inter-procedural / summary-derived copies) but
+        // ALL aliases established by original program assignments. Feeds the aliasing summary rule.
+        relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
         relation java_obj_assign_like(FunctionId, FlowVariable, Path, Symbol);
         relation model_paths(Path) = summary_paths.into_iter().collect();
         relation program_paths(Path) = program_paths;
@@ -903,12 +923,21 @@ pub fn taint_index_with_config(
             if isout(&n1, *formal_ty, p1),
             if n1 != *n2 || p1 != p2;
 
+        // A formal aliases itself; base case of the copy closure.
+        alias_of_formal(infunc, v1, i) <--
+            formal_param(infunc, v1, _),
+            if let Some(i) = v1.as_formal();
+        // A destination of an original copy inherits the source's formal-aliases.
+        alias_of_formal(infunc, dst, i) <--
+            copy_edge(infunc, dst, src),
+            alias_of_formal(infunc, src, i);
+
         // aliasing summary rule (context-free flows only).
         summary(infunc, n1, p1.clone(), n2, bp) <--
             config(c),
             if c.alias_rule,
-            // this is the alias: v1 <- n1
-            locals(infunc, v1, Path::empty(), n1, Path::empty()),
+            // this is the alias: v1 <- n1, established by original program copies only
+            alias_of_formal(infunc, v1, n1),
             // v1.p1 <- n2.bp
             locals(infunc, v1, p1, n2, bp),
             if !p1.is_empty(),
