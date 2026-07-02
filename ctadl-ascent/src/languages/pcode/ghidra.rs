@@ -62,6 +62,17 @@ pub fn run_ghidra_export(artifact_path: &Path, output_dir: &Path) -> Result<(), 
         )));
     }
 
+    // Ghidra's analyzeHeadless exits 0 even when the import itself fails (e.g. no
+    // load spec for the artifact), leaving the facts directory empty. Detect that
+    // here and propagate it, otherwise the failure only surfaces later as a
+    // confusing "missing fact file" error while reading the (absent) facts.
+    if fs::read_dir(&facts_dir)?.next().is_none() {
+        return Err(Error::PcodeConversion(format!(
+            "Ghidra produced no pcode facts in {} — check the Ghidra output above for an import error",
+            facts_dir.display()
+        )));
+    }
+
     Ok(())
 }
 
