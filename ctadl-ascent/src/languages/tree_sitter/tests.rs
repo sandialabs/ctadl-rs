@@ -1176,3 +1176,48 @@ fn struct_members_stay_disjoint() {
     let (s, _si) = get_summary(prog).unwrap();
     check_summary_count(&s, 0); // s.a = src does not reach `return s.b`
 }
+
+#[test_log::test]
+fn nonconstant_subscript_may_alias_constant() {
+    // F5 (soundness): a non-constant subscript `a[n]` lowers to the field symbol `[_elem_]`
+    // and a constant `a[0]` to `[0]`; the taint index matched field paths exactly, so a write
+    // through `a[n]` never reached a read of `a[0]` even though `n` could be 0. `[_elem_]` now
+    // may-aliases every concrete `[N]` in `match_prefix`, so the flow is carried -- in both
+    // directions (write-nonconst/read-const and write-const/read-nonconst). DFSan corpus case
+    // 36_nonconstant_subscript confirms the runtime flow.
+    let write_nonconst = r"
+        int f(int src) {
+            int a[4];
+            int n = src;   // non-constant index
+            a[n] = src;
+            return a[0];   // constant index -- must see a[n]'s write (n could be 0)
+        }";
+    let (s, _si) = get_summary(program_from_string(write_nonconst).0).unwrap();
+    check_summary_count(&s, 1); // a[n] = src reaches return a[0]
+    check_returns_param(&s, 0, "");
+
+    let write_const = r"
+        int f(int src) {
+            int a[4];
+            int n = src;
+            a[0] = src;
+            return a[n];   // non-constant read -- must see a[0]'s write
+        }";
+    let (s, _si) = get_summary(program_from_string(write_const).0).unwrap();
+    check_summary_count(&s, 1); // a[0] = src reaches return a[n]
+}
+
+#[test_log::test]
+fn distinct_constant_subscripts_stay_disjoint() {
+    // Precision control for the F5 fix: two *constant* indices are genuinely disjoint, so a
+    // write to `a[0]` must NOT reach a read of `a[1]`. Only `[_elem_]` may-aliases; distinct
+    // concrete indices keep their disjointness (sound precision), so there is no flow.
+    let src = r"
+        int f(int src) {
+            int a[4];
+            a[0] = src;
+            return a[1];
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_summary_count(&s, 0); // a[0] = src does NOT reach return a[1]
+}

@@ -1,7 +1,6 @@
 {
   "name": "nonconstant_subscript",
-  "description": "F5 (soundness): a[n] with n==0 at runtime writes a[0], but CTADL lowers a[n] to a distinct [_elem_] field symbol vs a[0] -> [0] and treats them as disjoint, dropping the may-alias flow; DFSan sees it. Contrast the correct precision of distinguishing two CONSTANT indices.",
+  "description": "a[n] with n==0 at runtime writes a[0]; a non-constant subscript may-aliases every concrete index while two CONSTANT indices stay disjoint. [RESOLVED: [_elem_] may-aliases [N] in the taint-index path matcher; plain OK regression case]",
   "label": "Test",
-  "expect_flow": true,
-  "known_gap": "F5"
+  "expect_flow": true
 }

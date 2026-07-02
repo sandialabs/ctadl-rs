@@ -15,7 +15,7 @@ frontend ingestion gaps — and tracks their disposition.
 | labeled_empty_statement (`L: ;`) not ingested | frontend | 32 | ✅ resolved (frontend lowering, 2026-07-01) |
 | F3 — write through a local's address doesn't taint the local | soundness | 34 | ✅ resolved (frontend address-of alias, 2026-07-01) |
 | F4 — union field overlap not modeled | soundness | 35 | ✅ resolved (frontend union-member collapse, 2026-07-01) |
-| **F5 — non-constant subscript doesn't may-alias a constant index** | soundness | 36 | 🔴 open |
+| F5 — non-constant subscript doesn't may-alias a constant index | soundness | 36 | ✅ resolved (taint-index path may-alias, 2026-07-01) |
 | cast_expression not ingested | frontend | 37 | ✅ resolved (frontend lowering, 2026-06-30) |
 | conditional_expression (ternary) not ingested | frontend | 38 | ✅ resolved (frontend lowering, 2026-06-30) |
 | sizeof_expression not ingested | frontend | 39 | ✅ resolved (frontend lowering, 2026-06-30) |
@@ -38,8 +38,11 @@ fixed (2026-07-01)** — `walk_statement` skips an empty `;` body (guards `child
 (2026-07-01)** — the frontend resolves a same-block dereference `*p` to its address-of pointee, so a
 write `*p = src` through `int *p = &x` taints `x`. **F4 (case 35) was also fixed (2026-07-01)** — a
 variable declared with a `union` type has its member accesses collapsed to one synthetic field, so
-`u.a` and `u.b` alias (structs are untouched). **1 finding remains open** (soundness: F5). The
-frontend fixes here are also on `treesitter_feature_branch` (which carries the un-ignored / live
+`u.a` and `u.b` alias (structs are untouched). **F5 (case 36) was also fixed (2026-07-01)** — the
+taint-index path matcher (`match_prefix`) treats the non-constant-subscript symbol `[_elem_]` as
+may-aliasing every concrete `[N]`, so `a[n] = src` reaches `sink(a[0])` while distinct constant
+indices stay disjoint. **All findings are now resolved (0 open).** The frontend fixes here are also
+on `treesitter_feature_branch` (which carries the un-ignored / live
 aspirational tests).
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
@@ -51,25 +54,48 @@ field from the manifest **and** mark the entry below RESOLVED.
 
 ---
 
-## F5 — Non-constant subscript doesn't may-alias a constant index (OPEN)
+## F5 — Non-constant subscript doesn't may-alias a constant index (RESOLVED)
 
-- **Status:** **open.** Allowlisted `"known_gap": "F5"` in
-  [`cases/36_nonconstant_subscript`](cases/36_nonconstant_subscript/).
-- **Symptom:** writing `a[n]` (with `n` non-constant) then reading `a[0]` drops taint. CTADL lowers
-  a non-constant subscript to a distinct `[_elem_]` field symbol and a constant subscript `a[0]` to
-  `[0]`, and treats the two as **disjoint** field paths — so `a[n] = src` never reaches `a[0]`. A
-  sound analysis must let `a[n]` may-alias every concrete index (`n` could be 0):
+- **Status:** **resolved** (2026-07-01, taint-index path may-alias). The `known_gap: "F5"` allowlist
+  was removed from [`cases/36_nonconstant_subscript`](cases/36_nonconstant_subscript/), which now runs
+  as plain `OK` (`static=flow dynamic=flow`).
+- **Was:** writing `a[n]` (with `n` non-constant) then reading `a[0]` dropped taint. The frontend
+  lowers a non-constant subscript to the field symbol `[_elem_]` and a constant subscript `a[0]` to
+  `[0]`, and the taint-index treated the two as **disjoint** — so `a[n] = src` never reached `a[0]`,
+  even though `n` could be 0:
   ```c
-  int a[4]; int n = /* 0 at runtime */; a[n] = src; sink(a[0]);   // F5: static=none, dynamic=flow
+  int a[4]; int n = /* 0 at runtime */; a[n] = src; sink(a[0]);   // was: static=none, dynamic=flow
   ```
-- **Reproduces with:** [`cases/36_nonconstant_subscript`](cases/36_nonconstant_subscript/) (`n` is
-  read from a `volatile` so it isn't constant-folded) → `static=none dynamic=flow` (`known-gap F5`).
-  Contrast: keeping two **constant** indices distinct (`a[0]` vs `a[1]`) is correct precision, not a
-  bug — that distinction is what makes this a may-alias question, not a collapse.
+
+### Root cause (exact field-path matching in the taint index)
+
+Field-path propagation in both the index engine and the query engine goes through
+`match_prefix`/`substitute_prefix` (`ctadl-ascent/src/facts.rs`), which compared field symbols by
+**exact string equality**. `"[_elem_]"` and `"[0]"` are distinct interned symbols, so a store to
+`a.[_elem_]` never matched a load of `a.[0]` (and vice versa). This is correct for two *constant*
+indices (`[0]` vs `[1]` genuinely don't alias — sound precision) but wrong for the non-constant case,
+which can be any element.
+
+### The fix
+
+Make `match_prefix` treat the non-constant-subscript sentinel `[_elem_]` as **may-aliasing** every
+concrete bracketed index `[N]` (in either matching position), so a write/read through one is observed
+at the other. Distinct constant indices are never `[_elem_]`, so they stay disjoint; the bracket
+check keeps `[_elem_]` from aliasing non-subscript field symbols (struct members). One match arm plus
+a small `subscripts_may_alias` helper in `facts.rs` — no frontend, codegen, or datalog-rule changes,
+and it fixes both the index-engine and query-engine propagation (both call `match_prefix`).
+
+### Confirmed by DFSan
+
+Before: `36_nonconstant_subscript` reported `static=none dynamic=flow`. After: `static=flow
+dynamic=flow` (`OK`); `scan cases/` reports **0 soundness-disagree** (only the 3 expected
+precision-gaps remain). Tests: `nonconstant_subscript_may_alias_constant` and
+`distinct_constant_subscripts_stay_disjoint` (`tree_sitter/tests.rs`, end-to-end) plus
+`test_subscript_may_alias` (`facts.rs`, direct `match_prefix` unit test). Full `ctadl-ascent` suite
+green (116 lib tests).
+
 - **Found by / cross-validated:** the `treesitter_feature_branch` aspirational unit test
-  `nonconstant_subscript_may_alias_constant` (`#[ignore]`); reproduced here as a DFSan case.
-- **Root cause:** not yet investigated. Candidate: a non-constant `[_elem_]` subscript should
-  may-alias its constant-index siblings (`[N]`) in the taint-index field model.
+  `nonconstant_subscript_may_alias_constant` (`#[ignore]`); reproduced here as DFSan case `36`.
 
 ---
 
