@@ -1,0 +1,6 @@
+{
+  "name": "CPP_78_ref_distinct_member",
+  "description": "C++ virtual dispatch (CHA) through a base REFERENCE, field-sensitivity NEGATIVE: a virtual setter setv (overridden in Derived) taints member v; the sink reads a distinct member w set to 0. The virtual call writes only v; v and w are separate access paths, so taint never crosses. s=none d=none agree -- field sensitivity holds through a virtual call on a reference.",
+  "label": "Test",
+  "expect_flow": false
+}

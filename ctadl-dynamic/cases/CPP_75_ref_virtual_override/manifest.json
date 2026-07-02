@@ -1,0 +1,6 @@
+{
+  "name": "CPP_75_ref_virtual_override",
+  "description": "C++ virtual dispatch (CHA) through a base REFERENCE, POSITIVE (reference twin of CPP_71): Base::get is virtual and drops, Derived::get overrides and flows; a Derived object bound to Base& r means r.get() is virtual -- runtime selects Derived::get (flows). Static dispatch on the Base static type would miss it (unsound). CTADL models it as a multi-target DirectCall over Base's subtree. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

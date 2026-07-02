@@ -1,0 +1,6 @@
+{
+  "name": "CPP_77_ref_all_override_drop",
+  "description": "C++ virtual dispatch (CHA) through a base REFERENCE, NEGATIVE (reference twin of CPP_73): both Base::get and Derived::get drop; a Derived object bound to Base& r means r.get()'s CHA target set is the whole subtree, but no override flows, so no taint reaches the sink. s=none d=none agree -- CHA over-approximation does not fabricate a flow.",
+  "label": "Test",
+  "expect_flow": false
+}

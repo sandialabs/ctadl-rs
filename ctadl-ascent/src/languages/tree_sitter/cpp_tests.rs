@@ -1588,6 +1588,50 @@ fn cpp_virtual_call_through_base_pointer_is_multi_target() {
 }
 
 #[test_log::test]
+fn cpp_virtual_call_through_base_reference_is_multi_target() {
+    // Spec 013 (base references): reference twin of
+    // `cpp_virtual_call_through_base_pointer_is_multi_target`. `virtual int get()` overridden in
+    // `Derived`, called through `Base& r = d` (`r.get()`, dot not arrow). The edge lists BOTH
+    // overrides in the subtree (`Base::get`, `Derived::get`) — CHA. 012's machinery resolves a
+    // reference receiver the same as a pointer receiver; this locks that in with a regression test.
+    let src = r#"
+        int source();
+        void sink(int);
+        struct Base {
+            int v;
+            void set(int x) { v = x; }
+            virtual int get() { return 0; }
+        };
+        struct Derived : Base {
+            int get() override { return v; }
+        };
+        int main() {
+            Derived d;
+            Base& r = d;
+            r.set(source());
+            int y = r.get();
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    let get_edges: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .map(|(edges, _)| edges)
+        .filter(|edges| edges.iter().any(|e| e.ends_with("::get")))
+        .collect();
+    assert_eq!(
+        get_edges.len(),
+        1,
+        "expected exactly one get() call site\n{prog}"
+    );
+    let edges = &get_edges[0];
+    assert!(
+        edges.iter().any(|e| e == "Base::get") && edges.iter().any(|e| e == "Derived::get"),
+        "virtual get() through a base reference must dispatch to BOTH Base::get and Derived::get (CHA); got {edges:?}\n{prog}"
+    );
+}
+
+#[test_log::test]
 fn cpp_base_pointer_static_type_is_declared_class() {
     // FR-2: a base pointer's static type is its **declared** class (`Base`), not the derived
     // type of its initializer (`&d`). So dispatch resolves against `Base`'s hierarchy — the

@@ -1265,4 +1265,76 @@ mod tests {
             "inherited setter taints d.v; sink reads distinct derived member d.w — no flow, got: {flows:?}"
         );
     }
+
+    /// Spec 013 (base references), end-to-end positive — reference twin of CPP_75. A `virtual`
+    /// `get()` overridden in `Derived` to flow, called through a **base reference** `Base& r = d`
+    /// (`r.get()`, dot not arrow). CHA over `Base`'s subtree includes `Derived::get`, so taint
+    /// flows end to end — static dispatch on the reference's `Base` static type would miss it.
+    /// This locks in behavior 012's machinery already provides for a reference receiver.
+    #[test_log::test]
+    fn cpp_virtual_dispatch_through_base_reference_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Base {
+                int v;
+                void set(int x) { v = x; }
+                virtual int get() { return 0; }
+            };
+            struct Derived : Base {
+                int get() override { return v; }
+            };
+            int main() {
+                Derived d;
+                Base& r = d;
+                r.set(source());
+                sink(r.get());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp virtual-through-reference flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "expected a virtual-dispatch flow through a base reference (r.get() -> Derived::get), got: {flows:?}"
+        );
+    }
+
+    /// Spec 013 (base references), end-to-end negative — reference twin of CPP_78. A `virtual`
+    /// setter taints member `v`; the sink reads a distinct member `w` (set to 0). Field
+    /// sensitivity holds through a virtual call on a reference, so no taint crosses `v` -> `w`.
+    #[test_log::test]
+    fn cpp_virtual_dispatch_through_base_reference_distinct_member_no_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Base {
+                int v;
+                int w;
+                virtual void setv(int x) { v = x; }
+                int getw() { return w; }
+            };
+            struct Derived : Base {
+                void setv(int x) override { v = x; }
+            };
+            int main() {
+                Derived d;
+                d.w = 0;
+                Base& r = d;
+                r.setv(source());
+                sink(r.getw());
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp virtual-through-reference distinct-member flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "virtual setter taints v; sink reads distinct member w through a reference — no flow, got: {flows:?}"
+        );
+    }
 }

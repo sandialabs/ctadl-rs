@@ -1,0 +1,6 @@
+{
+  "name": "CPP_76_ref_base_object",
+  "description": "C++ virtual dispatch (CHA) through a base REFERENCE, base-object case, POSITIVE (reference twin of CPP_72): Base::get is virtual and flows, Derived::get overrides and drops; a Base object bound to Base& r means r.get() runs Base::get (flows). CHA target set is the whole subtree but the union is dominated by the flowing Base::get. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}
