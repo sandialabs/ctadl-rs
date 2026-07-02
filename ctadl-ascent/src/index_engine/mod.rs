@@ -788,10 +788,13 @@ pub fn taint_index_with_config(
 
         // Derived:
 
-        // LOCALS-LATTICE VARIANT: `locals` carries the call-string context as a SmallestCallString
-        // lattice value (empty cs = context-free = lattice top). Context flows propagate through
-        // locals.
-        lattice locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
+        // Context-free field-sensitive reachability -- the dominant relation. Kept as a PLAIN
+        // relation (no call-string lattice column) so Ascent materializes it under far fewer
+        // indices than a 6-col lattice: on C/binary targets ~100% of reachability is context-free,
+        // and the lattice column plus the 4 indices keyed on it were pure overhead. The rare
+        // context-carrying flows live in `context_locals` (below), which was previously declared
+        // but unused and now holds exactly those flows.
+        relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path) = assign_like;
         relation java_obj_assign_like(FunctionId, FlowVariable, Path, Symbol);
         relation model_paths(Path) = summary_paths.into_iter().collect();
@@ -814,6 +817,10 @@ pub fn taint_index_with_config(
         // the last column, so the remaining (key) columns determine one call string per
         // tuple — the *smallest* one (shortest, then lexicographically least).
         lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, SmallestCallString);
+        // Context-carrying field-sensitive reachability (non-empty call string). Seeded by rule
+        // 3.2 from `context_assign` and propagated by its own forward-field rules below. Rare on C
+        // targets (0 rows when there is no resolvable indirect/virtual dispatch); the lattice
+        // column keeps the smallest call string per (func,var,path,formal,fpath).
         lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
         lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, SmallestCallString);
 
@@ -836,20 +843,34 @@ pub fn taint_index_with_config(
         paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
         paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
 
-        // Initialize locals with formals (context-free: empty call string)
-        locals(infunc, v1, p1.clone(), i, p1.clone(), SmallestCallString::top()) <--
+        // Initialize locals with formals (context-free)
+        locals(infunc, v1, p1.clone(), i, p1.clone()) <--
             formal_param(infunc, v1, _),
             if let Some(i) = v1.as_formal(),
             let p1 = Path::empty();
 
-        // Forward field propagation, carrying the call-string context.
-        locals(infunc, v1, p13.clone(), a, p4, cs_lat.clone()) <--
-            locals(infunc, v2, p23, a, p4, cs_lat),
+        // Forward field propagation (context-free).
+        locals(infunc, v1, p13.clone(), a, p4) <--
+            locals(infunc, v2, p23, a, p4),
             assign_like(infunc, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
-        locals(infunc, v1, p1, a, p43.clone(), cs_lat.clone()) <--
-            locals(infunc, v2, p2, a, p4, cs_lat),
+        locals(infunc, v1, p1, a, p43.clone()) <--
+            locals(infunc, v2, p2, a, p4),
+            assign_like(infunc, v1, p1, v2, p23),
+            if let Some(p43) = p23.substitute_prefix(p2, p4),
+            paths(&p43);
+
+        // Forward field propagation (context-carrying) -- identical shape to the two rules above,
+        // threading the call string through so a context-specific flow keeps its context as it
+        // moves across assignments.
+        context_locals(infunc, v1, p13.clone(), a, p4, cs_lat.clone()) <--
+            context_locals(infunc, v2, p23, a, p4, cs_lat),
+            assign_like(infunc, v1, p1, v2, p2),
+            if let Some(p13) = p23.substitute_prefix(p2, p1),
+            paths(&p13);
+        context_locals(infunc, v1, p1, a, p43.clone(), cs_lat.clone()) <--
+            context_locals(infunc, v2, p2, a, p4, cs_lat),
             assign_like(infunc, v1, p1, v2, p23),
             if let Some(p43) = p23.substitute_prefix(p2, p4),
             paths(&p43);
@@ -874,7 +895,7 @@ pub fn taint_index_with_config(
         // Compute summaries from local reachability. Context-free flows (empty cs) only;
         // context-specific flows feed `context_summary` and are popped back to callers.
         summary(infunc, n1, p1, n2, p2) <--
-            locals(infunc, dst_var, p1, n2, p2, SmallestCallString::top()),
+            locals(infunc, dst_var, p1, n2, p2),
             // join with formal_param here instead of using if so that we don't have to traverse all of
             // locals
             formal_param(infunc, dst_var, formal_ty),
@@ -901,14 +922,14 @@ pub fn taint_index_with_config(
         // 1.1: Base Critical Summary. Indirect call or Java Call found. (context-free)
         critical_summary(func_id, n, p_n) <--
             (indirect_call(func_id, _, v, p_call) | java_call(func_id, _, v, p_call, _, _)),
-            locals(func_id, v, p_call, n, p_n, SmallestCallString::top());
+            locals(func_id, v, p_call, n, p_n);
 
         // 1.2: Propagate Critical Summary (context-free)
         critical_summary(caller_func_id, n, p_n) <--
             call(caller_func_id, caller_insn_id, tgt),
             critical_summary(tgt, n_tgt, p_tgt),
             let arg = call_arg!(*caller_insn_id, *n_tgt),
-            locals(caller_func_id, arg, p_tgt, n, p_n, SmallestCallString::top());
+            locals(caller_func_id, arg, p_tgt, n, p_n);
 
         // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
         //   resolvent in parameters of summary
@@ -936,7 +957,7 @@ pub fn taint_index_with_config(
             // (resolvent probed by (func_id,n,p)).
             call(caller, call_insn, f),
             resolvent(caller, n, p, resolvent_obj, cs_lat),
-            locals(caller, v2, p2, n, p, SmallestCallString::top()),
+            locals(caller, v2, p2, n, p),
             critical_summary(f, n2, p2),
             if let SmallestCallString::Value(cs) = cs_lat,
             let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
@@ -948,7 +969,7 @@ pub fn taint_index_with_config(
         // than carrying the site through critical_summary/resolvent.
         context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(cs.clone())) <--
             java_call(caller, call_insn, v_rec, p_rec, meth_name, meth_desc),
-            locals(caller, v_rec, p_rec, n, p, SmallestCallString::top()),
+            locals(caller, v_rec, p_rec, n, p),
             resolvent(caller, n, p, resolvent_obj, cs_lat),
             if let Resolvent::Object(cls) = resolvent_obj,
             if let SmallestCallString::Value(cs) = cs_lat,
@@ -959,7 +980,7 @@ pub fn taint_index_with_config(
             let v1 = call_arg!(*call_insn, *n1_sum);
         context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(cs.clone())) <--
             indirect_call(caller, call_insn, v_rec, p_rec),
-            locals(caller, v_rec, p_rec, n, p, SmallestCallString::top()),
+            locals(caller, v_rec, p_rec, n, p),
             resolvent(caller, n, p, resolvent_obj, cs_lat),
             if let Resolvent::Function(resolvent_func) = resolvent_obj,
             if let SmallestCallString::Value(cs) = cs_lat,
@@ -973,16 +994,16 @@ pub fn taint_index_with_config(
         // the context forward THROUGH locals. Guards kept AFTER both relations so `context_assign`
         // and `locals` are adjacent first-two clauses => Ascent treats it as a SIMPLE JOIN and
         // drives by the smaller (delta) side instead of full-scanning `context_assign`.
-        locals(func_id, v1.clone(), p13.clone(), a.clone(), p4.clone(), cs_lat.clone()) <--
+        context_locals(func_id, v1.clone(), p13.clone(), a.clone(), p4.clone(), cs_lat.clone()) <--
             context_assign(func_id, v1, p1, v2, p2, cs_lat),
-            locals(func_id, v2, p23, a, p4, SmallestCallString::top()),
+            locals(func_id, v2, p23, a, p4),
             if let SmallestCallString::Value(cs) = cs_lat,
             if !cs.is_empty(),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
-        locals(func_id, v1.clone(), p1.clone(), a.clone(), p43.clone(), cs_lat.clone()) <--
+        context_locals(func_id, v1.clone(), p1.clone(), a.clone(), p43.clone(), cs_lat.clone()) <--
             context_assign(func_id, v1, p1, v2, p23, cs_lat),
-            locals(func_id, v2, p2, a, p4, SmallestCallString::top()),
+            locals(func_id, v2, p2, a, p4),
             if let SmallestCallString::Value(cs) = cs_lat,
             if !cs.is_empty(),
             if let Some(p43) = p23.substitute_prefix(p2, p4),
@@ -991,7 +1012,7 @@ pub fn taint_index_with_config(
         // 3.3: a context-specific flow (non-empty cs) that reaches an out-formal becomes a
         // conditional summary tagged with its call string; 3.4 pops it back to the caller.
         context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), cs_lat.clone()) <--
-            locals(func_id, dst_var, p1, n2, p2, cs_lat),
+            context_locals(func_id, dst_var, p1, n2, p2, cs_lat),
             if let SmallestCallString::Value(cs) = cs_lat,
             if !cs.is_empty(),
             formal_param(func_id, dst_var, formal_ty),
