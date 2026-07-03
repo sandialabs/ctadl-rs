@@ -692,6 +692,36 @@ pub fn taint_index(facts: IndexFacts) -> IndexResult {
     taint_index_with_config(facts, IndexConfig::default(), None)
 }
 
+/// Computes `alias_of_formal`: the whole-variable copy-closure of the formals over ORIGINAL program
+/// copies. A variable `v` aliases formal `i` (in function `f`) when `v` is reachable from `f`'s
+/// formal purely through whole-variable copies (`copy_edge`) present in the original program.
+///
+/// This depends only on `formal_param` and `copy_edge`, so it is computed in its own small fixpoint
+/// BEFORE the main ascent. Doing so keeps `copy_edge` out of the main engine entirely (one fewer
+/// relation + index there) and lets the aliasing summary rule consume `alias_of_formal` as a plain
+/// pre-populated input.
+fn compute_alias_of_formal(
+    formal_param: &[(FunctionId, FlowVariable, FormalType)],
+    copy_edge: Vec<(FunctionId, FlowVariable, FlowVariable)>,
+) -> Vec<(FunctionId, FlowVariable, FormalIndex)> {
+    // Base case: a formal whole-aliases itself.
+    let alias_base: Vec<_> = formal_param
+        .iter()
+        .filter_map(|(infunc, v1, _)| v1.as_formal().map(|i| (*infunc, *v1, i)))
+        .collect();
+    let pre = ascent_run! {
+        relation alias_of_formal(FunctionId, FlowVariable, FormalIndex) = alias_base;
+        relation copy_edge(FunctionId, FlowVariable, FlowVariable) = copy_edge;
+        // A destination of an original copy inherits the source's formal-aliases. Recursive
+        // relation FIRST so the join drives by the `alias_of_formal` delta and probes `copy_edge`
+        // via its `0_2` index, rather than re-scanning all of `copy_edge` each iteration.
+        alias_of_formal(infunc, dst, i) <--
+            alias_of_formal(infunc, src, i),
+            copy_edge(infunc, dst, src);
+    };
+    pre.alias_of_formal
+}
+
 pub fn taint_index_with_config(
     facts: IndexFacts,
     config: IndexConfig,
@@ -777,6 +807,11 @@ pub fn taint_index_with_config(
         })
         .collect();
     let config_val = vec![(config,)];
+
+    // Precompute `alias_of_formal` in its own small fixpoint, BEFORE the main ascent -- see
+    // `compute_alias_of_formal`. This is what lets `copy_edge` stay out of the main engine.
+    let alias_of_formal = compute_alias_of_formal(&facts.formal_param, copy_edge);
+
     let prog = ascent_run! {
         #![measure_rule_times]
         // Facts:
@@ -829,15 +864,14 @@ pub fn taint_index_with_config(
         #[ds(crate::index_engine::locals_trie)]
         relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path) = assign_like;
-        // Whole-variable copy edges (`dst = src`) from ORIGINAL program assignments only.
-        relation copy_edge(FunctionId, FlowVariable, FlowVariable) = copy_edge;
         // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
         relation prog_store(FunctionId, FlowVariable, Path) = prog_store;
         // A variable that whole-aliases a formal purely through original program copies. This is
         // the copy-closure of `locals(v, empty, formal, empty)` restricted to original assigns:
         // it finds strictly fewer aliases (drops inter-procedural / summary-derived copies) but
         // ALL aliases established by original program assignments. Feeds the aliasing summary rule.
-        relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
+        // Precomputed above in its own fixpoint (see the `alias_of_formal` let-binding).
+        relation alias_of_formal(FunctionId, FlowVariable, FormalIndex) = alias_of_formal;
         relation java_obj_assign_like(FunctionId, FlowVariable, Path, Symbol);
         relation model_paths(Path) = summary_paths.into_iter().collect();
         relation program_paths(Path) = program_paths;
@@ -943,17 +977,6 @@ pub fn taint_index_with_config(
             if let Some(n1) = dst_var.as_formal(),
             if isout(&n1, *formal_ty, p1),
             if n1 != *n2 || p1 != p2;
-
-        // A formal aliases itself; base case of the copy closure.
-        alias_of_formal(infunc, v1, i) <--
-            formal_param(infunc, v1, _),
-            if let Some(i) = v1.as_formal();
-        // A destination of an original copy inherits the source's formal-aliases. Recursive
-        // relation FIRST so the join drives by the `alias_of_formal` delta and probes `copy_edge`
-        // via its `0_2` index, rather than re-scanning all of `copy_edge` each iteration.
-        alias_of_formal(infunc, dst, i) <--
-            alias_of_formal(infunc, src, i),
-            copy_edge(infunc, dst, src);
 
         // aliasing summary rule (context-free flows only).
         // Clause order matters: `locals` FIRST so Ascent drives the join by the `locals` DELTA and
