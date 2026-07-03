@@ -167,6 +167,55 @@ where
         }
     }
 
+    /// Phase-0 instrumentation: estimate the heap bytes held by the forward trie vs. the
+    /// inverse map, so we can see *which* structure dominates before optimizing (external
+    /// `phys_footprint` can't attribute bytes to a sub-structure). Estimates are
+    /// allocation-size approximations that include hashbrown load-factor slack; they are for
+    /// *relative* comparison (fwd vs inv), not exact accounting. O(groups+leaves), one pass.
+    pub fn heap_report(&self) -> HeapReport {
+        // hashbrown allocates `buckets` slots (a power of two sized so that 7/8*buckets >=
+        // capacity), each `size_of::<T>()` bytes, plus one control byte per bucket (+ a
+        // group-width mirror). Approximate that from the map's reported `capacity()`.
+        fn hb_bytes(capacity: usize, elem: usize) -> usize {
+            if capacity == 0 {
+                return 0;
+            }
+            let buckets = ((capacity * 8 + 6) / 7).next_power_of_two().max(8);
+            buckets * (elem + 1) + 16
+        }
+
+        let sz_outer = std::mem::size_of::<((F, V), Map<P, Set<(M, Fp)>>)>();
+        let sz_inner = std::mem::size_of::<(P, Set<(M, Fp)>)>();
+        let sz_leaf = std::mem::size_of::<(M, Fp)>();
+        let sz_inv_key = std::mem::size_of::<((F, M, Fp), Vec<(V, P)>)>();
+        let sz_inv_val = std::mem::size_of::<(V, P)>();
+
+        let mut r = HeapReport {
+            rows: self.len,
+            fv_groups: self.fwd.len(),
+            p_entries: 0,
+            leaf_elems: 0,
+            fwd_bytes: hb_bytes(self.fwd.capacity(), sz_outer),
+            inv_keys: self.inv.len(),
+            inv_vals: 0,
+            inv_bytes: hb_bytes(self.inv.capacity(), sz_inv_key),
+            elem_sizes: (sz_outer, sz_inner, sz_leaf, sz_inv_key, sz_inv_val),
+        };
+        for pm in self.fwd.values() {
+            r.p_entries += pm.len();
+            r.fwd_bytes += hb_bytes(pm.capacity(), sz_inner);
+            for set in pm.values() {
+                r.leaf_elems += set.len();
+                r.fwd_bytes += hb_bytes(set.capacity(), sz_leaf);
+            }
+        }
+        for vec in self.inv.values() {
+            r.inv_vals += vec.len();
+            r.inv_bytes += vec.capacity() * sz_inv_val;
+        }
+        r
+    }
+
     /// Merge `from` into `self` (union). Used by the delta->total move.
     fn absorb(&mut self, from: &mut Self) {
         for ((f, v), pm) in from.fwd.drain() {
@@ -184,6 +233,62 @@ where
             self.inv.entry(k).or_default().extend(vec);
         }
         from.len = 0;
+    }
+}
+
+/// Per-structure byte estimate for the `locals` store (see [`LocalsIndCommon::heap_report`]).
+#[derive(Debug, Clone)]
+pub struct HeapReport {
+    /// Logical row count (== `locals` size).
+    pub rows: usize,
+    /// Number of distinct `(F,V)` groups (outer forward keys).
+    pub fv_groups: usize,
+    /// Number of `(F,V,P)` inner entries across all groups.
+    pub p_entries: usize,
+    /// Number of `(M,Fp)` leaf elements across all leaves (== rows).
+    pub leaf_elems: usize,
+    /// Estimated bytes for the whole forward trie (outer map + inner maps + leaf sets).
+    pub fwd_bytes: usize,
+    /// Number of distinct `(F,M,Fp)` inverse keys.
+    pub inv_keys: usize,
+    /// Number of `(V,P)` values across all inverse vectors (== rows).
+    pub inv_vals: usize,
+    /// Estimated bytes for the inverse map (outer map + value vectors).
+    pub inv_bytes: usize,
+    /// Element sizes `(outer, inner, leaf, inv_key, inv_val)` for reference.
+    pub elem_sizes: (usize, usize, usize, usize, usize),
+}
+
+impl std::fmt::Display for HeapReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mb = |b: usize| b as f64 / (1024.0 * 1024.0);
+        let total = self.fwd_bytes + self.inv_bytes;
+        let pct = |b: usize| if total == 0 { 0.0 } else { 100.0 * b as f64 / total as f64 };
+        let (o, i, l, ik, iv) = self.elem_sizes;
+        write!(
+            f,
+            "locals store estimate: total {:.1} MB over {} rows ({:.0} B/row) | \
+             fwd {:.1} MB ({:.0}%): {} (F,V) groups, {} (F,V,P) entries, {} leaves | \
+             inv {:.1} MB ({:.0}%): {} (F,M,Fp) keys, {} (V,P) vals | \
+             elem sizes o={} i={} l={} ik={} iv={} B",
+            mb(total),
+            self.rows,
+            if self.rows == 0 { 0.0 } else { total as f64 / self.rows as f64 },
+            mb(self.fwd_bytes),
+            pct(self.fwd_bytes),
+            self.fv_groups,
+            self.p_entries,
+            self.leaf_elems,
+            mb(self.inv_bytes),
+            pct(self.inv_bytes),
+            self.inv_keys,
+            self.inv_vals,
+            o,
+            i,
+            l,
+            ik,
+            iv,
+        )
     }
 }
 

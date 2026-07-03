@@ -1177,6 +1177,8 @@ pub fn taint_index_with_config(
             call(func_id, _, tgt);
     };
     log::info!("index scc times: {}", prog.scc_times_summary());
+    // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
+    log::info!("{}", prog.__locals_ind_common.heap_report());
     log::trace!(
         "hybrid inlining relations:\n{}",
         HybridInliningRelations {

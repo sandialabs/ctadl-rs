@@ -168,12 +168,117 @@ unchanged.
 
 ---
 
-## 7. Resume checklist / commands
+## 7. Benchmark corpus + reproducible import/index (DON'T re-derive this)
+
+The benchmarks are raw firmware ELF binaries from the **Karonte** dataset at
+`../karonte/firmware` (relative to the repo root). They are **pcode** targets (32-bit ARM/MIPS
+ELFs), NOT Java. The canonical variants below were pinned by matching the `locals` row count
+against §3 (there are many same-named variants — `smbd` alone has ~36 — so the count is the
+fingerprint). **Active corpus = these 3** (imported under these exact names):
+
+| benchmark      | import name | size | arch | rows (current) | §3 rows | Δ | path (under `../karonte/firmware/`) |
+|----------------|-------------|-----:|------|---------------:|--------:|--:|-------------------------------------|
+| pluto          | `pluto`          | 1.4M | ARM | 194,565,083 | 194,565,083 | **0** (exact) | `d-link/analyzed/DIR-885L_fw_revA_1-13_eu_multi_20170119/_DIR885LA1_FW113b03.bin.extracted/squashfs-root/usr/libexec/ipsec/pluto` |
+| smbd           | `smbd`           | 2.7M | ARM | 130,139,048 | 130,139,075 | 27 | `NETGEAR/analyzed/R7800/firmware/squashfs-root/usr/sbin/smbd` |
+| wpa_supplicant | `wpa_supplicant` | 1.1M | ARM | 35,776,521  | 35,779,394  | 2,876 | `NETGEAR/analyzed/_XR500-V2.1.0.4.img.extracted/squashfs-root/usr/sbin/wpa_supplicant` |
+
+The tiny Δ (≤2,876 rows out of tens of millions) is the recent perf commits (`prog_store filter`,
+`Precompute alias of formal`); pluto reproduces byte-for-byte. **The corpus is deliberately
+NOT single-firmware** — earlier "use DIR-885L for everything" and "use Tenda smbd" guesses were
+wrong (Tenda smbd = 95.4M, DIR-885L smbd = 41.8M — neither is 130M). Only the exact paths above
+reproduce §3.
+
+**Aspirational (not yet handled):**
+
+| benchmark        | size | arch | why aspirational | path |
+|------------------|-----:|------|------------------|------|
+| samba_multicall  |  15M | ARM  | 15M binary — import/index doesn't scale to this yet; deliberately out of the active corpus. Revisit once memory work lands. | `NETGEAR/analyzed/_XR500-V2.1.0.4.img.extracted/squashfs-root/usr/sbin/samba_multicall` |
+| amuled           | 1.3–4.0M | ARM | **Reachability explosion on the current code — see below.** No known-good build; excluded from the active corpus until the blow-up is understood (may be a real regression, not a corpus problem). | see pathological table |
+
+**Pathological cases (recorded for later investigation — do NOT use as the benchmark):**
+
+`amuled` explodes on **every** build tried on this branch (doc §3 expected a tame ~55.4M rows):
+
+| amuled build | size | rows / peak | path |
+|--------------|-----:|-------------|------|
+| NETGEAR R7800 | 1.3M | **1,502,664,397 rows / ~68.8 GB** (802% of vars reached, 87,819 per formal) | `NETGEAR/analyzed/R7800/firmware/squashfs-root/usr/bin/amuled` |
+| NETGEAR R7500 | 1.3M | killed at 21 GB, still climbing (same 1.3M build class) | `NETGEAR/analyzed/R7500/_R7500v2-V1.0.3.16.img.extracted/squashfs-root/usr/bin/amuled` |
+| NETGEAR R7000 | 4.0M | killed at 28 GB, still climbing (a *different*, larger build — also explodes) | `NETGEAR/analyzed/R7000/fw/_R7000P-V1.3.0.8_1.0.93.chk.extracted/squashfs-root/usr/sbin/amuled` |
+
+> ⚠️ **Suspected aliasing regression.** The doc's §3 amuled was 55.4M rows / 8.61 GB — tame. That
+> *all* amuled builds (both the 1.3M and the distinct 4.0M) now blow up to 1.5B rows / tens of GB,
+> while smbd/pluto/wpa still match §3, points at a change on this branch that amuled specifically
+> triggers — the recent aliasing/order commits (`prog_store filter`, `Precompute alias of formal`,
+> `Try to reorder`) are the prime suspects. Investigate with `git bisect` on amuled's row count
+> BEFORE trusting the trie-memory numbers on it. This is independent of the trie work.
+
+**The import/index scheme (this is the whole thing — no Ghidra wrangling needed):**
+`ctadl import -l pcode <ELF>` invokes Ghidra `analyzeHeadless` *itself* (see
+`ctadl-ascent/src/languages/pcode/ghidra.rs`; it writes `pcode-reader/ExportPcode.java` to a temp
+dir and post-scripts it). The CLI help calls `-l pcode` a "Ghidra pcode facts directory" — that is
+**misleading**; passing a raw ELF works and is the intended path. Ghidra 12.x comes from Nix.
+
+```bash
+# one benchmark, end to end (aliasing is ON by default: IndexConfig{alias_rule:true})
+B=smbd
+BIN=../karonte/firmware/NETGEAR/analyzed/R7800/firmware/squashfs-root/usr/sbin/smbd
+./target/release/ctadl import -l pcode "$BIN" -n "$B"   # Ghidra extract -> import (slow, once)
+RUST_LOG=info ./target/release/ctadl index "$B"         # reindex is cheap; re-run for each phase
+#   the index run prints:  "locals store estimate: total … | fwd …% | inv …%"   (Phase-0 heap_report)
+#   and:                   "relation increase: locals: <ROWS>, …"                (byte-identical gate)
+```
+
+⚠️ **Pass the import name exactly ONCE.** `ctadl index <name>` alone uses the project name as the
+sole program. `ctadl index <name> <name>` co-indexes `<name>` twice — historically this
+double-added its codegen facts. Fixed in `AnalysisProject::try_create` (`project.rs`), which now
+order-preserving-dedups the import list, but don't rely on it: one arg is the intended form.
+
+Imports are cached under `~/.local/state/ctadl/imports/<name>/`, so **you only import once**; every
+subsequent phase just re-runs `ctadl index` against the cached import. NOTE the import is not
+complete until `ir-program.bitcode` exists in that dir — Ghidra prints "Import succeeded" *before*
+the facts→bitcode conversion finishes, so indexing too early fails with a missing-file i/o error.
+
+## 8. Phase-0 heap instrumentation (DONE) — where the bytes actually go
+
+`LocalsIndCommon::heap_report()` (in `locals_trie.rs`) estimates fwd-trie vs inverse-map bytes
+(allocation-size approximations incl. hashbrown load-factor slack; for *relative* fwd-vs-inv
+comparison, not exact accounting) and is logged after the fixpoint (`mod.rs`, right after "index
+scc times"). It exists so we optimize by measurement, not guess.
+
+**The fwd/inv split is strongly regime-dependent — measure on the firmware corpus, not Java.**
+
+| index (regime)          | rows   | total     | **fwd** | **inv** | rows/(F,V) group |
+|-------------------------|-------:|----------:|--------:|--------:|-----------------:|
+| fx (Java, low-share)    | 4.64M  | 1,126 MB  | 89%     | 11%     | 3.3 |
+| downloader (Java)       | 3.11M  | 1,015 MB  | 91%     |  9%     | 2.4 |
+| **wpa_supplicant** (fw) | 35.8M  | 2,466 MB  | 69%     | **31%** | 50 |
+| **smbd** (fw)           | 130.1M | 7,370 MB  | 59%     | **41%** | 143 |
+| **pluto** (fw)          | 194.6M | 10,207 MB | 57%     | **43%** | 324 |
+
+**Conclusion — on the firmware corpus that actually matters, `inv` is 31–43% of the store, NOT the
+~10% the Java samples show.** Firmware has heavy prefix-sharing (up to ~324 `locals` rows per
+`(F,V)` group vs ~3 on Java), so the forward trie's per-node hashbrown overhead amortizes away,
+while `inv` stays at a flat, unshared full copy of every `(V,P)` — its share *rises* with sharing.
+This **revises §6**, which deprioritized `inv` as a ~10% footnote. Revised priority:
+
+1. **§6.1/§6.2 sorted packed `SmallVec` leaves** — still the safe first win; kills per-leaf
+   hashbrown minimum-allocation slack on the many `Set<(M,Fp)>`.
+2. **§6.3 sorted-vec inner P-map** — kills the per-`(F,V)` inner-`Map<P,…>` minimum-allocation slack.
+3. **`inv` is now a FIRST-CLASS target (promoted from last):** at 31–43% it is the second-largest
+   component on firmware. Its floor is the inherent `(V,P)` copy (`rows × ~16 B` ≈ pluto 3.1 GB /
+   smbd 2.0 GB), so packing `(V,P)` + `shrink_to_fit` recovers the slack, and the `0_3_4` view it
+   serves is a *single cold probe site* (rule 2.2, `mod.rs:1042`, driven by the small `resolvent`
+   relation) — making "derive `0_3_4` by scan, drop `inv` entirely" genuinely attractive here.
+   Re-measure this decision against the firmware numbers, not the Java ones.
+
+> Byte-rate sanity: firmware runs ~59–72 B/row; the `(V,P)` inverse copy alone is ~16 B/row, i.e.
+> ~a quarter of the whole store is the unshared inverse. That is the lever §6 was missing.
+
+## 9. Resume checklist / commands
 
 ```bash
 # where things stand
-git status --short          # expect: A locals_trie.rs, M mod.rs, ?? results.sarif
-git -C . diff --staged --stat
+git status --short          # expect: ?? results.sarif  (prototype now committed on this branch)
 
 # fast correctness
 cargo test -p ctadl-ascent
@@ -183,8 +288,7 @@ nix build .#checks.aarch64-darwin.regression -L   # expect "33 passed, 0 skipped
 
 # memory measurement: build release, run `ctadl index`, poll phys_footprint peak
 #   (see the measure-process-memory skill: use `footprint -p PID -f bytes`, peak, poll ~4s)
-#   scratchpad had run_new.sh / sweep.sh drivers using ./target/release/ctadl with
-#   XDG_STATE_HOME pointed at a scratch store and cached imports.
+#   the per-structure heap_report line (see §8) tells you fwd-vs-inv bytes directly.
 ```
 
 **Not yet done (needs a decision):** commit the two changes; then start compact nodes at
