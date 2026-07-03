@@ -52,6 +52,7 @@ use crate::facts::{
 };
 use ctadl_ir::Symbol;
 
+pub mod locals_trie;
 pub mod source_info;
 
 /// An assignment statement. The order is destination vertex then source vertex.
@@ -819,6 +820,13 @@ pub fn taint_index_with_config(
         // and the lattice column plus the 4 indices keyed on it were pure overhead. The rare
         // context-carrying flows live in `context_locals` (below), which was previously declared
         // but unused and now holds exactly those flows.
+        //
+        // Stored via a prefix-sharing (trie-like) BYODS data structure: one shared store
+        // whose forward map `(F,V) -> P -> {(M,Fp)}` serves the none/0_1/0_1_2/existence
+        // views (sharing the (F,V) and P prefixes) and whose inverse map serves 0_3_4. This
+        // replaces the ~6× full-tuple replication of the default relation storage. See
+        // `locals_trie`.
+        #[ds(crate::index_engine::locals_trie)]
         relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path) = assign_like;
         // Whole-variable copy edges (`dst = src`) from ORIGINAL program assignments only.
