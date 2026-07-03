@@ -198,10 +198,19 @@ impl AnalysisProject {
         let dir = canonicalize(&path)
             .map_err(Error::Io)
             .err_context(|| format!("in canonicalize project dir: {}", path.display()))?;
+        // Dedup import names (order-preserving): `index` co-indexes every argument, so a
+        // repeated program name (e.g. `index amuled amuled`) would codegen its facts twice and
+        // inflate every relation. Indexing the same import twice is never meaningful.
+        let mut seen = std::collections::HashSet::new();
+        let imports: Vec<String> = import_names
+            .iter()
+            .map(|s| s.as_ref().to_owned())
+            .filter(|n| seen.insert(n.clone()))
+            .collect();
         let result = Self {
             name: name.to_owned(),
             dir,
-            imports: import_names.iter().map(|s| s.as_ref().to_owned()).collect(),
+            imports,
         };
         result.save()?;
         Ok(result)
