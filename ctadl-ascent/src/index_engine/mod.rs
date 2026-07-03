@@ -934,8 +934,7 @@ pub fn taint_index_with_config(
             let v2 = call_arg!(*insn_id, *n2),
             let p2 = src_path.clone();
 
-        // Compute summaries from local reachability. Context-free flows (empty cs) only;
-        // context-specific flows feed `context_summary` and are popped back to callers.
+        // Compute context-free summaries from local reachability.
         summary(infunc, n1, p1, n2, p2) <--
             locals(infunc, dst_var, p1, n2, p2),
             // join with formal_param here instead of using if so that we don't have to traverse all of
