@@ -1014,7 +1014,7 @@ pub fn taint_index_with_config(
             locals(caller_func_id, arg, p_tgt, n, p_n);
 
         // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
-        //   resolvent in parameters of summary
+        // resolvent in parameters of summary
         resolvent(f, n, p.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
             critical_summary(f, n, p),
             call(caller, call_insn, f),
