@@ -105,7 +105,7 @@ fn const_wide16_assign() {
     assert_eq!(assigns.len(), 2);
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 3 + i);
-        assert_eq!(*var.variable, Variable::Local(expected_reg.into()));
+        assert_eq!(*var.variable, Variable::Local(expected_reg));
         assert_eq!(exp, &Exp::new_bytes((0x1234i16).to_be_bytes().to_vec()));
     }
 }
@@ -120,7 +120,7 @@ fn const_wide32_assign() {
     assert_eq!(assigns.len(), 2);
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 5 + i);
-        assert_eq!(*var.variable, Variable::Local(expected_reg.into()));
+        assert_eq!(*var.variable, Variable::Local(expected_reg));
         assert_eq!(
             exp,
             &Exp::new_bytes((0xdeadbeefu32 as i32).to_be_bytes().to_vec())
@@ -138,7 +138,7 @@ fn const_wide_assign() {
     assert_eq!(assigns.len(), 2);
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 7 + i);
-        assert_eq!(*var.variable, Variable::Local(expected_reg.into()));
+        assert_eq!(*var.variable, Variable::Local(expected_reg));
         assert_eq!(
             exp,
             &Exp::new_bytes(0x1122334455667788i64.to_be_bytes().to_vec())
@@ -157,7 +157,7 @@ fn const_wide_high16_assign() {
     let shifted = (0x1234i16 as i64) << 48;
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 10 + i);
-        assert_eq!(*var.variable, Variable::Local(expected_reg.into()));
+        assert_eq!(*var.variable, Variable::Local(expected_reg));
         assert_eq!(exp, &Exp::new_bytes(shifted.to_be_bytes().to_vec()));
     }
 }

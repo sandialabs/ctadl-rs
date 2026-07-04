@@ -24,13 +24,11 @@ fn all_flowy_tests() -> anyhow::Result<()> {
         .collect();
     match fs::read_dir(&dir_path) {
         Ok(entries) => {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    // Check if the file has a .tnt extension
-                    if path.extension().and_then(|s| s.to_str()) == Some("tnt") {
-                        tnt_test(&path)?;
-                    }
+            for entry in entries.flatten() {
+                let path = entry.path();
+                // Check if the file has a .tnt extension
+                if path.extension().and_then(|s| s.to_str()) == Some("tnt") {
+                    tnt_test(&path)?;
                 }
             }
         }

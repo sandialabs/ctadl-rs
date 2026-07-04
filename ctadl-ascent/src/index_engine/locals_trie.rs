@@ -28,7 +28,8 @@ use std::ops::Index;
 use std::rc::Rc;
 
 use ascent::internal::{
-    RelFullIndexRead, RelFullIndexWrite, RelIndexMerge, RelIndexRead, RelIndexReadAll, RelIndexWrite, ToRelIndex,
+    RelFullIndexRead, RelFullIndexWrite, RelIndexMerge, RelIndexRead, RelIndexReadAll,
+    RelIndexWrite, ToRelIndex,
 };
 
 type Map<K, V> = hashbrown::HashMap<K, V>;
@@ -46,7 +47,10 @@ pub struct CountingVec<T> {
 }
 impl<T> Default for CountingVec<T> {
     fn default() -> Self {
-        Self { len: 0, _p: PhantomData }
+        Self {
+            len: 0,
+            _p: PhantomData,
+        }
     }
 }
 impl<T> CountingVec<T> {
@@ -101,7 +105,10 @@ impl<T> Iterator for DynIter<'_, T> {
 }
 impl<T> Clone for DynIter<'_, T> {
     fn clone(&self) -> Self {
-        Self { iter: (self.producer)(), producer: self.producer.clone() }
+        Self {
+            iter: (self.producer)(),
+            producer: self.producer.clone(),
+        }
     }
 }
 
@@ -190,7 +197,7 @@ where
             if capacity == 0 {
                 return 0;
             }
-            let buckets = ((capacity * 8 + 6) / 7).next_power_of_two().max(8);
+            let buckets = (capacity * 8).div_ceil(7).next_power_of_two().max(8);
             buckets * (elem + 1) + 16
         }
 
@@ -280,7 +287,13 @@ impl std::fmt::Display for HeapReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mb = |b: usize| b as f64 / (1024.0 * 1024.0);
         let total = self.fwd_bytes + self.fidx_bytes;
-        let pct = |b: usize| if total == 0 { 0.0 } else { 100.0 * b as f64 / total as f64 };
+        let pct = |b: usize| {
+            if total == 0 {
+                0.0
+            } else {
+                100.0 * b as f64 / total as f64
+            }
+        };
         let (o, i, l, fo, fv) = self.elem_sizes;
         write!(
             f,
@@ -290,7 +303,11 @@ impl std::fmt::Display for HeapReport {
              elem sizes o={} i={} l={} fo={} fv={} B",
             mb(total),
             self.rows,
-            if self.rows == 0 { 0.0 } else { total as f64 / self.rows as f64 },
+            if self.rows == 0 {
+                0.0
+            } else {
+                total as f64 / self.rows as f64
+            },
             mb(self.fwd_bytes),
             pct(self.fwd_bytes),
             self.fv_groups,
@@ -318,7 +335,11 @@ where
     Fp: Clone + Eq + Hash,
 {
     fn default() -> Self {
-        Self { fwd: Map::default(), fidx: Map::default(), len: 0 }
+        Self {
+            fwd: Map::default(),
+            fidx: Map::default(),
+            len: 0,
+        }
     }
 }
 
@@ -331,7 +352,11 @@ where
     Fp: Clone + Eq + Hash,
 {
     fn clone(&self) -> Self {
-        Self { fwd: self.fwd.clone(), fidx: self.fidx.clone(), len: self.len }
+        Self {
+            fwd: self.fwd.clone(),
+            fidx: self.fidx.clone(),
+            len: self.len,
+        }
     }
 }
 
@@ -460,7 +485,10 @@ macro_rules! marker {
                 Self: 'a,
                 LocalsIndCommon<F, V, P, M, Fp>: 'a;
             #[inline]
-            fn to_rel_index<'a>(&'a self, rel: &'a LocalsIndCommon<F, V, P, M, Fp>) -> Self::RelIndex<'a> {
+            fn to_rel_index<'a>(
+                &'a self,
+                rel: &'a LocalsIndCommon<F, V, P, M, Fp>,
+            ) -> Self::RelIndex<'a> {
                 $view(rel)
             }
             type RelIndexWrite<'a>
@@ -538,7 +566,8 @@ where
         let c = self.0;
         Some(DynIter::new(move || {
             c.fwd.iter().flat_map(|((f, v), pm)| {
-                pm.iter().flat_map(move |(p, set)| set.iter().map(move |(m, fp)| (f, v, p, m, fp)))
+                pm.iter()
+                    .flat_map(move |(p, set)| set.iter().map(move |(m, fp)| (f, v, p, m, fp)))
             })
         }))
     }
@@ -585,7 +614,8 @@ where
     fn index_get(&'a self, key: &(F, V)) -> Option<Self::IteratorType> {
         let pm = self.0.fwd.get(key)?;
         Some(DynIter::new(move || {
-            pm.iter().flat_map(|(p, set)| set.iter().map(move |(m, fp)| (p, m, fp)))
+            pm.iter()
+                .flat_map(|(p, set)| set.iter().map(move |(m, fp)| (p, m, fp)))
         }))
     }
     #[inline]
@@ -608,7 +638,10 @@ where
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
         Box::new(self.0.fwd.iter().map(|((f, v), pm)| {
-            let it = DynIter::new(move || pm.iter().flat_map(|(p, set)| set.iter().map(move |(m, fp)| (p, m, fp))));
+            let it = DynIter::new(move || {
+                pm.iter()
+                    .flat_map(|(p, set)| set.iter().map(move |(m, fp)| (p, m, fp)))
+            });
             ((f, v), it)
         }))
     }
@@ -628,7 +661,11 @@ where
     type IteratorType = DynIter<'a, Self::Value>;
     #[inline]
     fn index_get(&'a self, key: &(F, V, P)) -> Option<Self::IteratorType> {
-        let set = self.0.fwd.get(&(key.0.clone(), key.1.clone()))?.get(&key.2)?;
+        let set = self
+            .0
+            .fwd
+            .get(&(key.0.clone(), key.1.clone()))?
+            .get(&key.2)?;
         Some(DynIter::new(move || set.iter().map(|(m, fp)| (m, fp))))
     }
     #[inline]
@@ -687,16 +724,19 @@ where
                 let (f, m, fp) = (f.clone(), m.clone(), fp.clone());
                 vs.iter().flat_map(move |v| {
                     let (m, fp) = (m.clone(), fp.clone());
-                    c.fwd.get(&(f.clone(), v.clone())).into_iter().flat_map(move |pm| {
-                        let (m, fp) = (m.clone(), fp.clone());
-                        pm.iter().filter_map(move |(p, set)| {
-                            if set.contains(&(m.clone(), fp.clone())) {
-                                Some((v, p))
-                            } else {
-                                None
-                            }
+                    c.fwd
+                        .get(&(f.clone(), v.clone()))
+                        .into_iter()
+                        .flat_map(move |pm| {
+                            let (m, fp) = (m.clone(), fp.clone());
+                            pm.iter().filter_map(move |(p, set)| {
+                                if set.contains(&(m.clone(), fp.clone())) {
+                                    Some((v, p))
+                                } else {
+                                    None
+                                }
+                            })
                         })
-                    })
                 })
             })
         }))
@@ -795,7 +835,10 @@ where
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
         Box::new(self.0.fwd.iter().flat_map(|((f, v), pm)| {
-            pm.iter().flat_map(move |(p, set)| set.iter().map(move |(m, fp)| ((f, v, p, m, fp), std::iter::once(&()))))
+            pm.iter().flat_map(move |(p, set)| {
+                set.iter()
+                    .map(move |(m, fp)| ((f, v, p, m, fp), std::iter::once(&())))
+            })
         }))
     }
 }

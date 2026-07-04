@@ -41,12 +41,12 @@ fn test_file() -> PathBuf {
 }
 
 /// Wrap the body of your store tests in this. See the note at the top of the file.
-fn run_store_test<F>(test: F) -> ()
+fn run_store_test<F>(test: F)
 where
-    F: FnOnce() -> () + std::panic::UnwindSafe,
+    F: FnOnce() + std::panic::UnwindSafe,
 {
     initialize();
-    let result = std::panic::catch_unwind(|| test());
+    let result = std::panic::catch_unwind(test);
     assert!(result.is_ok())
 }
 
@@ -64,7 +64,7 @@ fn test_cli_import() {
         assert!(import.name == "test_import");
         assert!(import.program_path().is_file());
         assert!(import.config_path().is_file());
-        let data = std::fs::read(&import.program_path()).unwrap();
+        let data = std::fs::read(import.program_path()).unwrap();
         assert!(ctadl_ir::encode::decode_program(&data).is_ok());
         assert!(ArtifactImport::load_by_name("test_import").is_ok());
     });

@@ -203,8 +203,7 @@ pub fn query(
     let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
     // Load the index tables once; they seed the query and are reused to format the results.
     let index_facts = IndexFacts::try_load(&index_path).err_context(|| "loading index facts")?;
-    let index_result =
-        IndexResult::try_load(&index_path).err_context(|| "loading index result")?;
+    let index_result = IndexResult::try_load(&index_path).err_context(|| "loading index result")?;
 
     let facts = {
         let mut models_batch: Option<crate::models::ModelsBatch> = None;
@@ -273,8 +272,7 @@ pub fn query(
         }
     }
 
-    let taint_results =
-        query_engine::formatter::TaintAnalysisResults::from_query_result(&result);
+    let taint_results = query_engine::formatter::TaintAnalysisResults::from_query_result(&result);
     let mut b = query_engine::formatter::FormatFactsBuilder::default();
     b.taint(result.taint)
         .taint_edge(result.taint_edge)

@@ -70,8 +70,10 @@ fn function_f() -> FunctionData {
 //  return c;
 //}
 fn function_g() -> FunctionData {
-    let mut g = FunctionData::default();
-    g.name = "G".to_string();
+    let mut g = FunctionData {
+        name: "G".to_string(),
+        ..Default::default()
+    };
     g.set_return_type(ReturnType { arity: 1 });
     g.params.push(ParameterType::ByVal);
     let a = AccessPath {
@@ -117,8 +119,10 @@ fn function_g() -> FunctionData {
 //  return c1;
 //}
 fn function_g1() -> FunctionData {
-    let mut g = FunctionData::default();
-    g.name = "G1".to_string();
+    let mut g = FunctionData {
+        name: "G1".to_string(),
+        ..Default::default()
+    };
     g.set_return_type(ReturnType { arity: 1 });
     g.params.push(ParameterType::ByVal);
     let a = AccessPath {
