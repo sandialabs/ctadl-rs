@@ -132,6 +132,7 @@ pub fn index(
     models: &[std::path::PathBuf],
     strategy: CallResolutionStrategy,
     prune_unreachable_cfg_nodes: bool,
+    alias_rule: bool,
     dump_index_graph: Option<&Path>,
 ) -> Result<(), Error> {
     let mut facts = IndexFacts::default();
@@ -162,7 +163,7 @@ pub fn index(
     facts.clone().try_save(&path)?;
     inspect_index_facts(&facts, Some(&source_info.sites)).unwrap();
     source_info.clone().try_save(&path)?;
-    let config = crate::index_engine::IndexConfig::default();
+    let config = crate::index_engine::IndexConfig { alias_rule };
     let result = taint_index_with_config(facts, config, Some(&source_info.sites));
 
     // Slightly ugly special case for flowy artifacts. Since they have specific assertions at index

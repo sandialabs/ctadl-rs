@@ -202,6 +202,14 @@ pub struct IndexArgs {
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     pub prune_unreachable_cfg_nodes: Option<bool>,
 
+    /// Enable the aliasing summary rule during indexing.
+    ///
+    /// On by default. The rule turns aliased stores into summaries that re-enter as assignments,
+    /// which can cause combinatorial blowup of the `locals` relation on pointer-heavy binaries.
+    /// Pass `--alias-rule=false` to disable it.
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+    pub alias_rule: Option<bool>,
+
     /// Dump the index graph to a dot file
     #[arg(long)]
     pub dump_index_graph: Option<PathBuf>,
@@ -353,6 +361,7 @@ fn main() -> anyhow::Result<()> {
                 models: args.models.clone(),
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
+                alias_rule: None,
                 dump_index_graph: args.dump_index_graph.clone(),
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
@@ -384,7 +393,7 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
     // Link to the schema to enable IDE features like autocomplete and hover documentation.
     // Adjust the path to match your installation if necessary.
     "$schema": "https://raw.githubusercontent.com/sandialabs/ctadl-rs/refs/heads/main/ctadl-ascent/src/models/ctadl-model-generator.schema.json",
-    
+
     "model_generators": [
         {
             // Example 1: Define a data source using a signature pattern.
@@ -483,6 +492,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 models: args.models.clone(),
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
+                alias_rule: None,
                 dump_index_graph: None,
             };
             index_artifacts_to_store(&index_args)?;
@@ -572,6 +582,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         &args.models,
         args.strategy,
         args.prune_unreachable_cfg_nodes.unwrap_or(true),
+        args.alias_rule.unwrap_or(true),
         args.dump_index_graph.as_deref(),
     )?;
     Ok(())
