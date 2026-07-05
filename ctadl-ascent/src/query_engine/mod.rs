@@ -1,18 +1,20 @@
-//! Taint analysis on the index graph.
+/*! Taint analysis on the index graph
 
-// TODO when converting to graphs, add these rules:
-//
-// taint_edge(infunc, insn, a.direction.clone(), v1, p13.clone(), v2, p23.clone()),
-// taint_edge(infunc, insn, a.direction.clone(), v1.clone(), p2.clone(), v2, p2.clone()),
-// taint_edge(infunc, insn, a.direction.clone(), formal_var.clone(), p2.clone(), v2, p2.clone()),
+Taint analysis is a matter of following direct intraprocedural flow and stitching edges
+between calls and returns.
 
-use std::path;
+We want to enable some queries:
+
+- Path queries. Finds a path from each source to each sink.
+- Closure queries. Finds all the vertices/instructions tainted by each source or sink.
+
+The way we do this is simply by computing the closure and then doing cheap path analysis after the fact.
+*/
 
 use ascent::ascent;
 use derive_builder::Builder;
 use packed_struct::prelude::*;
 
-use crate::error::Error;
 use crate::facts::{
     CallArgId, FlowEdge, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
     FunctionId, IdMap, InsnSiteId, Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection,
@@ -128,6 +130,10 @@ pub struct QueryFacts {
     pub assign: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
     #[builder(default)]
     pub paths: Vec<(Path,)>,
+    /// External (unmodeled) functions. Used to derive `absorbing_functions`: an
+    /// external function that receives tainted data as an argument absorbs it.
+    #[builder(default)]
+    pub external_function: Vec<(FunctionId,)>,
     /// Sources and sinks for query. Data flow is followed forward from sources and backward from
     /// sinks
     #[builder(default)]
@@ -150,8 +156,14 @@ pub struct QueryResult {
         FlowVariable,
         Path,
     )>,
-    // Queries may introduce new formals for models, so we need to save them for the format phase.
-    pub formal_param: Vec<(FunctionId, FlowVariable, FormalType)>,
+    /// Tainted call-argument vertices keyed by call instruction, for
+    /// instruction-level reporting: `(site, label, variable, access path)`.
+    /// Derived from the taint closure in the same pass.
+    pub tainted_insn: Vec<(PackedInsnSiteId, Label, FlowVariable, Path)>,
+    /// External functions that receive tainted data as an argument (they "absorb"
+    /// the taint): `(function, tainting endpoint, formal index)`. Derived from the
+    /// taint closure in the same pass.
+    pub absorbing_functions: Vec<(FunctionId, QueryEndpoint, FormalIndex)>,
 }
 
 impl QueryResult {
@@ -159,7 +171,8 @@ impl QueryResult {
         Self {
             taint: Default::default(),
             taint_edge: Default::default(),
-            formal_param: Default::default(),
+            tainted_insn: Default::default(),
+            absorbing_functions: Default::default(),
         }
     }
 
@@ -168,35 +181,6 @@ impl QueryResult {
             result: self,
             id_map,
         }
-    }
-
-    pub fn try_save<P: AsRef<path::Path>>(self, dir: P) -> Result<(), Error> {
-        use crate::facts::schema::*;
-        taint::try_save(&dir, self.taint)?;
-        taint_edge::try_save(&dir, self.taint_edge)?;
-        formal_param::try_save(
-            &dir,
-            self.formal_param
-                .iter()
-                .filter_map(|(fid, v, ty)| v.as_formal().map(|i| (*fid, i, *ty))),
-        )?;
-        Ok(())
-    }
-
-    /// Load the query results from disk. Loads both forward and backward taint
-    pub fn try_load<P: AsRef<path::Path>>(dir: P) -> Result<QueryResult, Error> {
-        use crate::facts::schema::*;
-        let taint = taint::try_load(&dir)?;
-        let taint_edge = taint_edge::try_load(&dir)?;
-        let formal_param = formal_param::try_load(&dir)?
-            .into_iter()
-            .map(|(fid, idx, ty)| (fid, FlowVariable::formal_index(idx), ty))
-            .collect();
-        Ok(QueryResult {
-            taint,
-            taint_edge,
-            formal_param,
-        })
     }
 }
 
@@ -251,72 +235,15 @@ impl<'a> std::fmt::Display for QueryResultDisplay<'a> {
 pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     ascent! {
         struct QueryEngine;
-        // Besides recording `taint`, every propagation records a `taint_edge` for the
-        // taint graph. The graph is oriented in execution / data-flow order, but taint
-        // is discovered both forward (from sources) and backward (from sinks). A forward
-        // step already runs source -> derived in execution order, so it is emitted as-is;
-        // a backward step discovers the *upstream* vertex, so it must be reversed to keep
-        // the edge in execution order. The macro cannot branch in a rule head, so it emits
-        // a direction-tagged `taint_edge_directed`, and the two rules below orient it.
-        // `$edge` is the execution-order [`FlowEdge`] classifying the step (Intra/Call/
-        // Return); orienting the vertices below leaves it unchanged. The taint states are
-        // unused for the graph and discarded here.
-        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sts:expr, $sv:expr, $sp:expr, $edge:expr) {
-            taint($df, $dts, $dv, $dp, $a),
-            taint_edge_directed($edge, $df, $dv, $dp, $sf, $sv, $sp, ($a).direction)
-        }
-        include_source!(crate::query_engine::ascent_code::taint_analysis_rules);
-
-        // Direction-tagged edge as produced by `produce_taint!`: destination vertex
-        // `(func, var, path)` derived from source vertex `(func, var, path)`, classified by
-        // `edge` (the execution-order [`FlowEdge`]), tagged with the direction of the
-        // endpoint the propagation belongs to.
-        relation taint_edge_directed(FlowEdge, FunctionId, FlowVariable, Path, FunctionId, FlowVariable, Path, TaintDirection);
-        // The taint graph, in execution / data-flow order (source-then-destination):
-        // `(edge, src_func, src_var, src_path, dst_func, dst_var, dst_path)`.
-        relation taint_edge(FlowEdge, FunctionId, FlowVariable, Path, FunctionId, FlowVariable, Path);
-
-        // Forward: the produced edge already runs source -> derived in execution order.
-        taint_edge(*edge, *sf, sv.clone(), sp.clone(), *df, dv.clone(), dp.clone()) <--
-            taint_edge_directed(edge, df, dv, dp, sf, sv, sp, dir),
-            if *dir == TaintDirection::Forward;
-
-        // Backward: the produced (derived) vertex is upstream, so reverse the edge to
-        // keep it in execution order. The edge classification already describes the
-        // execution-order step, so it is unchanged.
-        taint_edge(*edge, *df, dv.clone(), dp.clone(), *sf, sv.clone(), sp.clone()) <--
-            taint_edge_directed(edge, df, dv, dp, sf, sv, sp, dir),
-            if *dir == TaintDirection::Backward;
-    }
-
-    let mut engine = QueryEngine {
-        formal_param: facts.formal_param,
-        call: facts.call,
-        assign_like: facts.assign,
-        paths: facts.paths,
-        sources: facts.endpoints,
-        ..Default::default()
-    };
-    engine.run();
-
-    log::trace!(
-        "query result: {}",
-        DisplayTaint {
-            taint: &engine.taint,
-            id_map,
-        }
-    );
-    QueryResult {
-        taint: engine.taint,
-        taint_edge: engine.taint_edge,
-        formal_param: engine.formal_param,
-    }
-}
-
-pub mod ascent_code {
-    ascent::ascent_source! {
-            taint_analysis_rules:
-
+        // Besides recording `taint`, every propagation rule records a `taint_edge` for
+        // the taint graph. The graph is oriented in execution / data-flow order, but
+        // taint is discovered both forward (from sources) and backward (from sinks). A
+        // forward step already runs source -> derived in execution order; a backward step
+        // discovers the *upstream* vertex, so the edge must be reversed to keep it in
+        // execution order. Each rule head emits the derived vertex `(func, var, path)`
+        // paired with the source vertex it came from as a direction-tagged
+        // `taint_edge_directed`; the two rules below orient it into `taint_edge`.
+        // Orientation can't be chosen in a rule head, so it is deferred to those rules.
         relation formal_param(FunctionId, FlowVariable, FormalType);
         relation call(PackedInsnSiteId, FunctionId);
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
@@ -333,14 +260,16 @@ pub mod ascent_code {
             let FlowVertex(v, p) = vertex;
 
         // Propagate taint locally onto fields
-        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, ts, v2.clone(), p23.clone(), FlowEdge::Intra) <--
+        taint(infunc, ts, v1.clone(), p13.clone(), a.clone()),
+        taint_edge_directed(FlowEdge::Intra, infunc, v1.clone(), p13.clone(), infunc, v2.clone(), p23.clone(), a.direction) <--
             taint(infunc, ts, v2, p23, a),
             if a.direction == TaintDirection::Forward,
             assign_like(infunc, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(p13.clone());
 
-        produce_taint!(infunc, ts, v1.clone(), p13.clone(), a.clone(), infunc, ts, v2.clone(), p23.clone(), FlowEdge::Intra) <--
+        taint(infunc, ts, v1.clone(), p13.clone(), a.clone()),
+        taint_edge_directed(FlowEdge::Intra, infunc, v1.clone(), p13.clone(), infunc, v2.clone(), p23.clone(), a.direction) <--
             taint(infunc, ts, v2, p23, a),
             if a.direction == TaintDirection::Backward,
             assign_like(infunc, v2, p2, v1, p1),
@@ -348,7 +277,8 @@ pub mod ascent_code {
             paths(p13.clone());
 
         // Formal-to-actual (Return in forward mode, Call in backward mode).
-        produce_taint!(func_id, TaintState::Free, v1.clone(), p2.clone(), a.clone(), infunc, TaintState::Free, v2.clone(), p2.clone(), if a.direction == TaintDirection::Forward { FlowEdge::Return(*site_id) } else { FlowEdge::Call(*site_id) }) <--
+        taint(func_id, TaintState::Free, v1.clone(), p2.clone(), a.clone()),
+        taint_edge_directed(if a.direction == TaintDirection::Forward { FlowEdge::Return(*site_id) } else { FlowEdge::Call(*site_id) }, func_id, v1.clone(), p2.clone(), infunc, v2.clone(), p2.clone(), a.direction) <--
             taint(infunc, TaintState::Free, v2, p2, a),
             formal_param(infunc, v2, formal_ty),
             if let Some(n2) = v2.as_formal(),
@@ -360,7 +290,8 @@ pub mod ascent_code {
             let v1 = FlowVariable::call_arg_packed(call_arg_packed);
 
         // Actual-to-formal (Call in forward mode, Return in backward mode).
-        produce_taint!(func, TaintState::Restricted, formal_var.clone(), p2.clone(), a.clone(), infunc, sts, v2.clone(), p2.clone(), if a.direction == TaintDirection::Forward { FlowEdge::Call(site_id) } else { FlowEdge::Return(site_id) }) <--
+        taint(func, TaintState::Restricted, formal_var.clone(), p2.clone(), a.clone()),
+        taint_edge_directed(if a.direction == TaintDirection::Forward { FlowEdge::Call(site_id) } else { FlowEdge::Return(site_id) }, func, formal_var.clone(), p2.clone(), infunc, v2.clone(), p2.clone(), a.direction) <--
             taint(infunc, sts, v2, p2, a),
             if let Some(packed) = v2.as_call_arg(),
             let CallArgId { insn_id, formal: formal_raw } = CallArgId::try_from(packed).unwrap(),
@@ -387,12 +318,14 @@ pub mod ascent_code {
             assign_like(infunc, x, Path::empty(), a, Path::empty());
 
         // Propagates taint on a variable into its alias.
-        produce_taint!(infunc, st, v1.clone(), p.clone(), a.clone(), infunc, st, v2.clone(), Path::empty(), FlowEdge::Intra) <--
+        taint(infunc, st, v1.clone(), p.clone(), a.clone()),
+        taint_edge_directed(FlowEdge::Intra, infunc, v1.clone(), p.clone(), infunc, v2.clone(), Path::empty(), a.direction) <--
             taint(infunc, st, v2, Path::empty(), a),
             if a.direction == TaintDirection::Forward,
             alias_of_field(infunc, v2, v1, p);
 
-        produce_taint!(infunc, st, v1.clone(), p12.clone(), a.clone(), infunc, st, v2.clone(), p2.clone(), FlowEdge::Intra) <--
+        taint(infunc, st, v1.clone(), p12.clone(), a.clone()),
+        taint_edge_directed(FlowEdge::Intra, infunc, v1.clone(), p12.clone(), infunc, v2.clone(), p2.clone(), a.direction) <--
             taint(infunc, st, v2, p2, a),
             if a.direction == TaintDirection::Forward,
             alias_of_field(infunc, v2, v1, p1),
@@ -400,17 +333,93 @@ pub mod ascent_code {
             paths(p12.clone());
 
         // Backward alias propagation
-        produce_taint!(infunc, st, v1.clone(), Path::empty(), a.clone(), infunc, st, v2.clone(), p.clone(), FlowEdge::Intra) <--
+        taint(infunc, st, v1.clone(), Path::empty(), a.clone()),
+        taint_edge_directed(FlowEdge::Intra, infunc, v1.clone(), Path::empty(), infunc, v2.clone(), p.clone(), a.direction) <--
             taint(infunc, st, v2, p, a),
             if a.direction == TaintDirection::Backward,
             alias_of_field(infunc, v1, v2, p);
 
-        produce_taint!(infunc, st, v2.clone(), p2.clone(), a.clone(), infunc, st, v1.clone(), p12.clone(), FlowEdge::Intra) <--
+        taint(infunc, st, v2.clone(), p2.clone(), a.clone()),
+        taint_edge_directed(FlowEdge::Intra, infunc, v2.clone(), p2.clone(), infunc, v1.clone(), p12.clone(), a.direction) <--
             taint(infunc, st, v1, p12, a),
             if a.direction == TaintDirection::Backward,
             alias_of_field(infunc, v1, v2, p1),
             if let Some(p2) = p12.substitute_prefix(p1, &Path::empty()),
             paths(p2.clone());
+
+        // Direction-tagged edge as produced by the propagation rules above: destination
+        // vertex `(func, var, path)` derived from source vertex `(func, var, path)`,
+        // classified by `edge` (the execution-order [`FlowEdge`]), tagged with the
+        // direction of the endpoint the propagation belongs to.
+        relation taint_edge_directed(FlowEdge, FunctionId, FlowVariable, Path, FunctionId, FlowVariable, Path, TaintDirection);
+        // The taint graph, in execution / data-flow order (source-then-destination):
+        // `(edge, src_func, src_var, src_path, dst_func, dst_var, dst_path)`.
+        relation taint_edge(FlowEdge, FunctionId, FlowVariable, Path, FunctionId, FlowVariable, Path);
+
+        // Forward: the produced edge already runs source -> derived in execution order.
+        taint_edge(*edge, *sf, sv.clone(), sp.clone(), *df, dv.clone(), dp.clone()) <--
+            taint_edge_directed(edge, df, dv, dp, sf, sv, sp, dir),
+            if *dir == TaintDirection::Forward;
+
+        // Backward: the produced (derived) vertex is upstream, so reverse the edge to
+        // keep it in execution order. The edge classification already describes the
+        // execution-order step, so it is unchanged.
+        taint_edge(*edge, *df, dv.clone(), dp.clone(), *sf, sv.clone(), sp.clone()) <--
+            taint_edge_directed(edge, df, dv, dp, sf, sv, sp, dir),
+            if *dir == TaintDirection::Backward;
+
+        // Instruction-level facts derived from the taint closure in this same pass
+        // (they used to be recomputed by a second engine in the formatter). Both are
+        // non-recursive projections of `taint`.
+        relation external_function(FunctionId);
+        relation absorbing_functions(FunctionId, QueryEndpoint, FormalIndex);
+        relation tainted_var_at_insn(PackedInsnSiteId, Label, FlowVariable, Path);
+
+        // An external (unmodeled) function that receives tainted data as an argument
+        // absorbs it.
+        absorbing_functions(target, src, formal.clone()) <--
+            taint(infunc, _, v, _, src),
+            if let Some(packed) = v.as_call_arg(),
+            let call_arg_id = CallArgId::try_from(packed).unwrap(),
+            let formal = call_arg_id.formal(),
+            let id = PackedInsnSiteId::try_from_parts(*infunc, call_arg_id.insn_id).unwrap(),
+            call(id, target),
+            external_function(target);
+
+        // Tainted call-argument vertices, keyed by the call instruction.
+        tainted_var_at_insn(id, label, v2, p2) <--
+            taint(infunc, _, v2, p2, src),
+            if !v2.is_globals(),
+            if let Some(packed) = v2.as_call_arg(),
+            let call_arg_id = CallArgId::try_from(packed).unwrap(),
+            let id = PackedInsnSiteId::try_from_parts(*infunc, call_arg_id.insn_id).unwrap(),
+            if *call_arg_id.formal() >= 0,
+            let label = src.label.clone();
+    }
+
+    let mut engine = QueryEngine {
+        formal_param: facts.formal_param,
+        call: facts.call,
+        assign_like: facts.assign,
+        paths: facts.paths,
+        external_function: facts.external_function,
+        sources: facts.endpoints,
+        ..Default::default()
+    };
+    engine.run();
+
+    log::trace!(
+        "query result: {}",
+        DisplayTaint {
+            taint: &engine.taint,
+            id_map,
+        }
+    );
+    QueryResult {
+        taint: engine.taint,
+        taint_edge: engine.taint_edge,
+        tainted_insn: engine.tainted_var_at_insn.into_iter().collect(),
+        absorbing_functions: engine.absorbing_functions.into_iter().collect(),
     }
 }
 

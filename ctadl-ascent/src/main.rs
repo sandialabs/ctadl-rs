@@ -28,11 +28,8 @@ pub enum Command {
     /// The index is stored under the project name.
     Index(IndexArgs),
 
-    /// Run a taint analysis query. (See 'index' for prerequisites)
+    /// Run a taint analysis query and format the results as SARIF. (See 'index' for prerequisites)
     Query(QueryArgs),
-
-    /// Format the last query results for the named project
-    Format(FormatArgs),
 
     /// One-shot: import artifacts, index them under name, query, and format output
     Go(GoArgs),
@@ -198,10 +195,20 @@ pub struct IndexArgs {
 
     /// Prune unreachable CFG nodes before SSA transformation.
     ///
-    /// Passing `--prune-unreachable-cfg-nodes` enables pruning. Passing
-    /// `--prune-unreachable-cfg-nodes=false` disables it explicitly.
+    /// On by default: SSA/dominator construction requires every block to be
+    /// reachable from entry, and real disassembled binaries routinely contain
+    /// unreachable blocks. Pass `--prune-unreachable-cfg-nodes=false` to disable
+    /// pruning explicitly (e.g. for inputs known to be fully connected).
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     pub prune_unreachable_cfg_nodes: Option<bool>,
+
+    /// Enable the aliasing summary rule during indexing.
+    ///
+    /// On by default. The rule turns aliased stores into summaries that re-enter as assignments,
+    /// which can cause combinatorial blowup of the `locals` relation on pointer-heavy binaries.
+    /// Pass `--alias-rule=false` to disable it.
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+    pub alias_rule: Option<bool>,
 
     /// Dump the index graph to a dot file
     #[arg(long)]
@@ -217,21 +224,19 @@ pub struct QueryArgs {
     /// Can be specified multiple times to load multiple model files.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
-}
 
-#[derive(Debug, Args)]
-pub struct FormatArgs {
-    /// Analysis project (index) name
-    pub name: String,
     /// Output as compact as possible (for the sarif extension)
     #[arg(long, short, action)]
     pub compact: bool,
+
     /// Output file path (defaults to results.sarif)
     #[arg(long, short, default_value = "results.sarif")]
     pub output: PathBuf,
+
     /// SARIF profile
     #[arg(long, value_enum, default_value_t = SarifProfile::Human)]
     pub sarif_profile: SarifProfile,
+
     /// Dump the taint graph to a dot file
     #[arg(long)]
     pub dump_taint_graph: Option<PathBuf>,
@@ -239,8 +244,9 @@ pub struct FormatArgs {
 
 #[derive(Debug, Args)]
 pub struct GoArgs {
-    /// Analysis project (index) name
-    pub name: String,
+    /// Analysis project (index) name. Inferred from the first artifact by default
+    #[arg(long, short)]
+    pub name: Option<String>,
 
     /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
     /// multiple times to load multiple model files.
@@ -308,15 +314,31 @@ fn main() -> anyhow::Result<()> {
             query_project(args)
                 .with_context(|| format!("running 'query' project: {:?}", args.name))?;
         }
-        Command::Format(args) => {
-            format_project(args)
-                .with_context(|| format!("running 'format' project: {:?}", args.name))?;
-        }
         Command::Inspect(args) => {
             inspect_artifact(args)
                 .with_context(|| format!("running 'inspect' artifact: {:?}", args.name))?;
         }
         Command::Go(args) => {
+            // Use the user-provided name or one derived from the first artifact.
+            let name = match &args.name {
+                Some(n) => n.clone(),
+                None => {
+                    let first = &args.artifacts[0];
+                    let inferred = project::artifact_name(first)?
+                        .as_os_str()
+                        .to_str()
+                        .ok_or_else(|| anyhow::anyhow!("error converting filename to string"))?
+                        .to_string();
+                    if args.artifacts.len() > 1 {
+                        eprintln!(
+                            "Warning: no project name given (-n); using '{}' inferred from the first artifact",
+                            inferred
+                        );
+                    }
+                    inferred
+                }
+            };
+
             let mut imported_names = Vec::new();
             for artifact in &args.artifacts {
                 let import_args = ImportArgs {
@@ -333,32 +355,27 @@ fn main() -> anyhow::Result<()> {
 
             eprintln!("Indexing...");
             index_artifacts_to_store(&IndexArgs {
-                name: args.name.clone(),
+                name: name.clone(),
                 progs: imported_names.clone(),
                 summary: vec![],
                 models: args.models.clone(),
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
+                alias_rule: None,
                 dump_index_graph: args.dump_index_graph.clone(),
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
             eprintln!("Querying...");
             query_project(&QueryArgs {
-                name: args.name.clone(),
+                name: name.clone(),
                 models: args.models.clone(),
-            })
-            .with_context(|| format!("running 'query' project: {:?}", args.name))?;
-
-            eprintln!("Formatting...");
-            format_project(&FormatArgs {
-                name: args.name.clone(),
                 compact: args.compact,
                 output: args.output.clone(),
                 sarif_profile: args.sarif_profile,
                 dump_taint_graph: args.dump_taint_graph.clone(),
             })
-            .with_context(|| format!("running 'format' project: {:?}", args.name))?;
+            .with_context(|| format!("running 'query' project: {:?}", name))?;
         }
         Command::LegacyPcodeCli(args) => {
             handle_legacy_pcode_cli(args).context("running 'legacy-pcode-cli'")?;
@@ -376,7 +393,7 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
     // Link to the schema to enable IDE features like autocomplete and hover documentation.
     // Adjust the path to match your installation if necessary.
     "$schema": "https://raw.githubusercontent.com/sandialabs/ctadl-rs/refs/heads/main/ctadl-ascent/src/models/ctadl-model-generator.schema.json",
-    
+
     "model_generators": [
         {
             // Example 1: Define a data source using a signature pattern.
@@ -475,6 +492,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 models: args.models.clone(),
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
+                alias_rule: None,
                 dump_index_graph: None,
             };
             index_artifacts_to_store(&index_args)?;
@@ -493,22 +511,16 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
 
             let mut models = args.models.clone();
             models.push(query_args.query_file.clone());
-            // 1. Run query
+            // Run the query and format the output (compact=true for Ghidra).
             let q_args = QueryArgs {
                 name: legacy_name.to_string(),
                 models,
-            };
-            query_project(&q_args)?;
-
-            // 2. Format output (compact=true for Ghidra)
-            let f_args = FormatArgs {
-                name: legacy_name.to_string(),
                 compact: true,
                 output: PathBuf::from("results.sarif"),
                 sarif_profile: SarifProfile::Human,
                 dump_taint_graph: None,
             };
-            format_project(&f_args)?;
+            query_project(&q_args)?;
         }
     }
 
@@ -569,7 +581,8 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         &args.summary,
         &args.models,
         args.strategy,
-        args.prune_unreachable_cfg_nodes.unwrap_or(false),
+        args.prune_unreachable_cfg_nodes.unwrap_or(true),
+        args.alias_rule.unwrap_or(true),
         args.dump_index_graph.as_deref(),
     )?;
     Ok(())
@@ -578,15 +591,9 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
 fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
     let project = project::AnalysisProject::try_load_name(&args.name)
         .with_context(|| format!("loading project: '{}'", args.name))?;
-    cli::query(&project, &args.models)?;
-    Ok(())
-}
-
-fn format_project(args: &FormatArgs) -> anyhow::Result<()> {
-    let project = project::AnalysisProject::try_load_name(&args.name)
-        .with_context(|| format!("loading project: '{}'", args.name))?;
-    cli::format(
+    cli::query(
         &project,
+        &args.models,
         args.compact,
         &args.output,
         args.sarif_profile,

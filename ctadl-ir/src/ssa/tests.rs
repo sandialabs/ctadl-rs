@@ -248,9 +248,11 @@ fn test_ssa_function_h() {
 
 #[test]
 fn test_prune_unreachable() {
-    let mut f = FunctionData::default();
-    f.name = "PruneMe".to_string();
-    f.return_type = ReturnType { arity: 0 };
+    let mut f = FunctionData {
+        name: "PruneMe".to_string(),
+        return_type: ReturnType { arity: 0 },
+        ..Default::default()
+    };
     let blocks = f.blocks.blocks_mut();
 
     // Block 0: goto 1

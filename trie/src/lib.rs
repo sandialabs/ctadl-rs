@@ -682,23 +682,23 @@ mod tests {
     fn test_insert_and_contains() {
         let mut trie = Trie::new();
         trie.insert(vec![1, 2, 3], "val1");
-        assert!(trie.contains_key(&[1, 2, 3]));
-        assert_eq!(trie.get(&[1, 2, 3]), Some(&"val1"));
-        assert!(!trie.contains_key(&[1, 2]));
-        assert!(!trie.contains_key(&[1, 2, 3, 4]));
+        assert!(trie.contains_key([1, 2, 3]));
+        assert_eq!(trie.get([1, 2, 3]), Some(&"val1"));
+        assert!(!trie.contains_key([1, 2]));
+        assert!(!trie.contains_key([1, 2, 3, 4]));
 
         trie.insert(vec![1, 2], "val2");
-        assert!(trie.contains_key(&[1, 2]));
-        assert_eq!(trie.get(&[1, 2]), Some(&"val2"));
+        assert!(trie.contains_key([1, 2]));
+        assert_eq!(trie.get([1, 2]), Some(&"val2"));
     }
 
     #[test]
     fn test_contains_prefix() {
         let mut trie = Trie::new();
         trie.insert(vec!['a', 'b', 'c'], 1);
-        assert!(trie.contains_prefix(&['a', 'b']));
-        assert!(trie.contains_prefix(&['a', 'b', 'c']));
-        assert!(!trie.contains_prefix(&['a', 'd']));
+        assert!(trie.contains_prefix(['a', 'b']));
+        assert!(trie.contains_prefix(['a', 'b', 'c']));
+        assert!(!trie.contains_prefix(['a', 'd']));
     }
 
     #[test]
@@ -725,7 +725,7 @@ mod tests {
 
         trie.insert(vec![1, 2, 3], "c"); // update value
         assert_eq!(trie.len(), 2);
-        assert_eq!(trie.get(&[1, 2, 3]), Some(&"c"));
+        assert_eq!(trie.get([1, 2, 3]), Some(&"c"));
 
         let mut t2 = Trie::new();
         t2.insert(vec![4, 5], "d");
@@ -969,7 +969,7 @@ mod tests {
         assert!(!t2.is_subset(&t1));
         assert!(!t1.is_superset(&t2));
 
-        let mut t3 = t1.clone();
+        let mut t3 = t1;
         assert!(t1.is_subset(&t3));
         assert!(t3.is_subset(&t1));
 
