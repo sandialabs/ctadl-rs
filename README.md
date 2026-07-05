@@ -17,7 +17,7 @@ for the full, current set of flags.
 | `index` | Index one or more imported programs into an analysis project, resolving calls and building SSA. Can load prior summaries and propagation models. |
 | `query` | Run a taint-analysis query over an indexed project and write results as SARIF. |
 | `go` | One-shot convenience: import, index, and query in a single invocation. |
-| `init-model` | Emit a template JSON5 model file for defining sources, sinks, and external-function behavior. |
+| `init-model` | Emit a template JSON5 model file for defining sources, sinks, and external function propagation models. |
 | `inspect` | Inspect the contents of the CTADL store (artifacts, projects). |
 | `legacy-pcode-cli` | Legacy `index`/`query` commands kept for Ghidra pcode integration. |
 
