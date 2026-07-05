@@ -343,3 +343,84 @@ staged/modified in the working tree.
 
 **Next step (needs a decision):** commit; then start compact nodes at §6.1 (sorted packed
 `SmallVec` leaves) — now the single biggest remaining lever, since `inv` is gone.
+
+---
+
+## 10. Larger-benchmark blowup study (4 new Karonte binaries, all bigger than smbd)
+
+**Question asked:** pick 4 Karonte binaries *bigger* than the current corpus (>2.7 MB smbd),
+measure how bad the RAM blowup gets, whether it's consistent, and what causes it. All runs on this
+branch, trie prototype, **aliasing ON**, 128 GB machine / 0 swap, 100 GB `phys_footprint` guard.
+
+**The 4 picks (deliberately spanning arch + program type):**
+
+| import name | size | arch | bitcode | path (under `../karonte/firmware/`) |
+|-------------|-----:|------|--------:|-------------------------------------|
+| `crtmpserver` | 3.3M | MIPS MSB | 121M | `d-link/analyzed/_DCS-935L_A1_FW_1.10.01_20161128_r4156.bin.extracted/squashfs-root/usr/sbin/rtmp/crtmpserver` |
+| `minidlna`    | 3.7M | MIPS     | 115M | `d-link/analyzed/_DIR826LA1_FW105B13.bin.extracted/squashfs-root/sbin/minidlna` |
+| `lk_latest`   | 4.1M | ARM (static) | 15M | `lk/lk_latest` |
+| `libndr`      | 5.1M | ARM      | 137M | `NETGEAR/analyzed/R8500/_R8500-V1.0.2.106_1.0.85.chk.extracted/squashfs-root/lib/libndr-standard.so.0` |
+
+**Results (peak `phys_footprint`; store = heap_report estimate; rows = final `locals`):**
+
+| benchmark | rows | reached/formal | %vars reached | store | B/row | rows/(F,V) grp | **peak** | wall | verdict |
+|-----------|-----:|---------------:|--------------:|------:|------:|---------------:|---------:|-----:|---------|
+| `libndr`      | 13,869,817 | **508** | **2.85%** | 2.4 GB | 182 | 6 | **6.56 GB** | 65 s | TAME (largest file, most formals — 27,320) |
+| `lk_latest`   | 11,150,599 | **2,429** | **16.86%** | 494.8 MB | 47 | 44 | **1.0 GB** | 57 s | TAME |
+| `minidlna`    | did not converge in ~2 h | — | — | — | — | — | **39.4 GB** (killed) | >7,100 s | **BLOWUP** — mem saturated 39.4 GB flat ~1 h, `locals` still not at fixpoint at 2 h; killed |
+| `crtmpserver` | **1,782,414,636** (1.78 B) | **101,643** | **568.60%** | 52.3 GB | 31 | 1,877 | **68.4 GB** | 4,250 s | **BLOWUP** — converged |
+
+### How bad — and is it consistent? **NO, it is not consistent, and it does not track binary size.**
+
+The 4 bigger binaries split **2 tame / 2 blow-up**, and the split is *inverted* vs size: the two
+**largest** files (`libndr` 5.1M, `lk_latest` 4.1M) are the two **tamest** (6.6 GB, 1.0 GB), while
+the two **smaller** ones (`crtmpserver` 3.3M, `minidlna` 3.7M) are the blow-ups (68 GB, ≥39 GB).
+`crtmpserver` at **1.78 billion `locals` rows / 68 GB** is worse than anything in the existing
+corpus and rivals the `amuled` pathology (doc §7); `minidlna` never even reached fixpoint in 2 h.
+
+### What causes it — the `locals` formal-reachability closure, NOT the trie storage
+
+The trie storage layer behaves *perfectly* on the blow-up cases: `crtmpserver` stores its 1.78 B
+rows at **31 B/row** with excellent sharing (1,877 rows per `(F,V)` group, `fwd` 100%, `fidx`
+13.8 MB). The blow-up is the **raw row count** of the `locals(Func,Var,Path,FormalIdx,Path)`
+relation — an upstream analysis explosion the storage optimization cannot help.
+
+The clean predictor is **`reached per formal`** (= `final_locals / formals`, `mod.rs:318-322`) — a
+proxy for pointer-aliasing density. It spans a **200×** range and lines up monotonically with peak
+RAM, independent of binary size:
+
+```
+reached/formal:  libndr 508 < lk 2,429 < wpa 2,629 < smbd 4,281  <<  pluto 24,482 < crtmpserver 101,643
+peak RAM:        6.6 GB     1.0 GB      2.5 GB       6.3 GB          8.1 GB        68 GB
+```
+
+Peak RAM ≈ total rows = `reached_per_formal × formals`. `smbd` has the *most* formals (30,398) yet
+stays at 6 GB because its per-formal rate is tame (4,281); `crtmpserver` has fewer formals (17,536)
+but 101,643 each → 1.78 B rows. `%vars reached > 100%` (pluto 135%, crtmpserver 569%) literally
+means `locals` has more rows than the program has variables — each variable reached by many
+`(formal, path)` combinations.
+
+**Mechanism** (all in `ctadl-ascent/src/index_engine/mod.rs`): the forward field-propagation rules
+(`929-938`) push `(formal, path)` reachability across every `assign_like` edge with path
+substitution (bounded only by the `paths` set); the aliasing summary rule (`986-997`, gated by
+`alias_rule`, ON by default for correctness) turns every aliased store
+(`locals × prog_store × alias_of_formal`) into a `summary`, which re-enters as `assign_like`
+(`963-969`) → yet more `locals`. On code with dense pointer aliasing (large `alias_of_formal`) and
+many distinct access paths — media-server C/C++ like `crtmpserver` (RTMP) and `minidlna` (DLNA), and
+`amuled` — each formal reaches a combinatorial number of `(var, path)` pairs. Simpler code
+(`lk_latest` bootloader; `libndr` NDR marshalling = many tiny independent serializers with little
+cross-procedural aliasing) stays tame regardless of file size.
+
+**Takeaways:**
+- The trie's ~2.5–3× memory win is real but **orthogonal** to this blow-up; it lowers the constant
+  (B/row) but 1.78 B rows × 31 B/row is still 52 GB. Compact nodes (§6.1) won't fix blow-up cases —
+  only reduce the tame/moderate ones further.
+- The blow-up is the **same class** as the `amuled` case flagged in §7 (suspected
+  `alias_rule` over-approximation), now reproduced on two independent d-link MIPS media-server
+  binaries. This is an **analysis-semantics** issue (bound the `locals` closure / cap
+  `reached_per_formal` / revisit the `alias_rule`), not a storage issue.
+- `crtmpserver` is a good *new* stress benchmark: it **converges** (unlike `amuled`/`minidlna`), so
+  it gives a stable 1.78 B-row / 68 GB target to measure future memory work against.
+- These four are recorded here, not promoted into the active §3 corpus: the two tame ones add little
+  over `smbd`, and the two blow-ups are pathological (out-of-scope like `amuled` until the closure
+  explosion is addressed).
