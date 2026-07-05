@@ -210,9 +210,26 @@ records a manual call. `score` alone is enough for the day-to-day loop.
 ### Matching
 
 Findings join **address-primary** within a binary: both tools reference the
-same binary address space, so the sink call-site address is the discriminator
-(`--addr-tolerance` absorbs any angr↔ghidra base delta). `sink_func` refines it
-and is the fallback when an address is missing on one side.
+same binary address space, so the sink call-site address is the discriminator.
+`sink_func` refines it and is the fallback when an address is missing on one
+side.
+
+Two address details make the join exact (`--addr-tolerance 0`):
+
+1. **Base rebasing.** Ghidra loads PIE ELFs at `0x100000` and non-PIE at
+   `0x400000`; Mango/angr loads *every* binary at `0x400000`. CTADL's SARIF
+   `address` object carries a base-independent `relativeAddress` (RVA);
+   `normalize_ctadl` rebases it onto the angr base (`ANGR_LOAD_BASE`) so PIE and
+   non-PIE alike land in Mango's space.
+2. **Call-site vs callee entry.** CTADL anchors each result's top-level
+   `location` at the sink *callee's* entry (its PLT thunk on these ELFs) — that
+   is hundreds of bytes off from Mango, which reports the `call` instruction.
+   The real call site is inside the `codeFlows`: the step whose message begins
+   `call-arg(...)` is the call that passes tainted data into the sink.
+   `normalize_ctadl._callsite_addrs` takes the last such step per threadFlow
+   (one result can carry several codeFlows → several distinct call sites, which
+   Mango counts as separate bugs) and emits one finding each. With both fixes the
+   addresses match Mango exactly.
 
 > CTADL's SARIF now emits the **source and sink function names** directly on
 > each `C0001.tainted-path` result (added in
@@ -235,11 +252,70 @@ property); a synthetic Mango result ingested with correct source classification
 (`http_passwd`→NVRAM, `recv`→NETWORK); `compare` produced a correct 2×2 (1
 matched, 1 mango-only FN candidate); `stats` summarized.
 
-### One open item to finalize on the first real pcode binary
+### Corpus status (Operation Mango tests, cta@2d322dd)
 
-**Sink call-site address in CTADL SARIF.** On the `.tnt`/C frontends the sink
-location is line/col; pcode encodes the instruction address. The normalizer
-captures whatever is present and tags `sink_site_kind` (`address` vs `line`).
-Confirm the pcode encoding (likely `region.startLine` or a location property)
-and adjust `normalize_ctadl._sink_site` if needed. (The sink *callee name* is no
-longer an open item — CTADL now emits it directly; see Matching above.)
+Run over all 15 Operation Mango test binaries (`operation-mango-public`), scored
+against 24 Mango known bugs with `--addr-tolerance 0`:
+
+```
+19 TP / 5 FN / 12 extra   (recall 79.2%)   15/15 binaries run OK
+```
+
+The remaining 5 FN are genuine CTADL analysis gaps, not harness artifacts.
+Diagnosed by dumping the index/taint graphs (`--dump-index-graph` /
+`--dump-taint-graph`) and the debug SARIF profile (`--sarif-profile debug`,
+which exposes `C0002.tainted-instruction` = where forward+backward taint *meet*,
+`C0003.taint-source`, `C0004.taint-sink`):
+
+| Binary | Symptom | Root cause |
+|--------|---------|-----------|
+| `execve`   | sink+source labels **meet**, no `C0001` path | base↔offset deref gap (below) |
+| `off_shoot`| sink+source labels **meet**, no `C0001` path | base↔offset deref gap (below) |
+| `nvram`    | **0 sinks matched** | unlinked ET_REL object (below) |
+| `layered`  | 1 of 2 system call sites found | second call site missed |
+
+**`execve` + `off_shoot` — incomplete base↔offset deref reconciliation on the
+precise path.** In both, the model's source/propagation/sink ports are all at
+offset-0 (`Argument(n).deref`), but the real taint lands at a *nonzero* stack /
+array offset:
+
+* `execve`: source `argv_input` is at `call-arg(47,1).[-40].deref` (the argv
+  element `args[2] = argv[1]`), while the `execve` sink port `Argument(1).deref`
+  reads offset 0 (`args[0]`, the constant `"./other_prog"`).
+* `off_shoot`: source `file_input` (from `read(0, extras, …)`) is at
+  `call-arg(…,1).[-88].deref` (the `extras` stack buffer), while the `system`
+  sink port `Argument(0).deref` is at offset 0.
+
+Forward and backward taint over-approximately **meet** (the debug profile emits a
+`C0002` node carrying both labels), but the precise `C0001.tainted-path` query
+can't cross the base↔offset boundary, so no flow is reported. This is exactly
+what the `Normalize offset 0 away` / `Taint from base into offset derefs`
+commits address — the bridging is complete enough for the over-approx meet but
+not yet for precise path reconstruction. Fix is engine-side (offset-insensitive
+base↔element deref on the C0001 path), not model-side.
+
+**`nvram` — unlinked ELF relocatable object.** `nvram/program` is `ET_REL`
+(`file` reports "relocatable", `main` at 0x0, `system`/`acosNvramConfig_get` are
+unresolved `R_X86_64_PLT32` relocs) — the Makefile's generic rule compiles
+`program.c` without linking `nvram_lib.c`. angr/Mango load object files and
+apply relocations; the Ghidra-pcode frontend does not, so the `call system`
+sites (`e8 00000000`, reloc unapplied) never bind to the external `system`
+function. Result: the calls appear only under `function(main)\ncall-arg(...)`
+with no callee resolution (contrast `execve`, which has
+`function(execve)\ncall-arg(47,...)`), so **0 sinks match** and no flow can form.
+Irrelevant to real firmware (linked images); to exercise this test either link
+it (`gcc program.c nvram_lib.c`) or teach the Ghidra import to apply ET_REL
+relocations.
+
+The 12 extras are all in `early_resolve` (4) and `multi_input` (8) — extra
+NETWORK/FILE/ENV source→system flows Mango's GT doesn't list (`multi_input` is
+built with several input channels), likely `cta_advantage` rather than FP;
+needs triage to confirm.
+
+### Resolved: sink call-site address in CTADL SARIF
+
+Pcode encodes the sink instruction address in the SARIF `address` object, but
+the result's top-level `location` points at the callee PLT entry, not the call
+site. Resolved in `normalize_ctadl` by extracting the call site from the
+`codeFlows` `call-arg` steps and rebasing onto the angr base — see **Matching**
+above. This is what took corpus recall from a broken 4.2% to 79.2%.
