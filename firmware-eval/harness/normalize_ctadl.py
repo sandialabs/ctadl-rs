@@ -122,10 +122,52 @@ def _sink_site(result: dict) -> tuple[Optional[int], Optional[str]]:
     return None, None
 
 
+def _rebased_addr(addr: dict) -> Optional[int]:
+    """A codeFlow/location `address` object -> a VA in Mango's (angr) space.
+    Prefer the base-independent relativeAddress (RVA) rebased onto the angr load
+    base; fall back to absoluteAddress. Mirrors `_sink_site`'s rebasing so PIE and
+    non-PIE binaries land in the same address space as the Mango ground truth."""
+    if not isinstance(addr, dict):
+        return None
+    rel = F.parse_addr(addr.get("relativeAddress"))
+    if rel is not None:
+        return rel + ANGR_LOAD_BASE
+    return F.parse_addr(addr.get("absoluteAddress"))
+
+
+def _callsite_addrs(result: dict) -> list[int]:
+    """The sink *call-site* instruction address(es) for this flow.
+
+    CTADL anchors the result's top-level `location` at the sink callee's entry
+    (its PLT thunk on these ELFs), NOT at the call instruction -- so that address
+    is ~hundreds of bytes off from Mango, which reports the `call` site. The real
+    call site is in the codeFlow: the step whose message is `call-arg(...)` is the
+    call that passes tainted data into the sink. Per threadFlow we take the LAST
+    such step (closest to the sink, past any wrapper-call hops); one result can
+    carry several codeFlows -> several distinct call sites, which Mango counts as
+    separate bugs. Returns the distinct rebased addresses, preserving order."""
+    seen: dict[int, None] = {}
+    for cf in result.get("codeFlows") or []:
+        for tf in cf.get("threadFlows") or []:
+            last: Optional[int] = None
+            for step in tf.get("locations") or []:
+                loc = step.get("location") or {}
+                msg = (loc.get("message") or {}).get("text", "") or ""
+                if msg.startswith("call-arg"):
+                    a = _rebased_addr((loc.get("physicalLocation") or {}).get("address"))
+                    if a is not None:
+                        last = a
+            if last is not None:
+                seen.setdefault(last, None)
+    return list(seen)
+
+
 def parse_sarif(sarif: dict, sha256: str) -> list[F.Finding]:
     out: list[F.Finding] = []
+    seen: set = set()
     for run in sarif.get("runs", []):
         run_names = _logical_names(run)
+        parquet = (run.get("properties") or {}).get("parquet_dir")
         for res in run.get("results", []):
             rid = res.get("ruleId", "")
             if not rid.startswith("C0001"):  # tainted-path only
@@ -141,25 +183,36 @@ def parse_sarif(sarif: dict, sha256: str) -> list[F.Finding]:
             src_funcs = props.get("sourceFunctions") or []
             if F.classify_source(src_raw) == "UNKNOWN" and src_funcs:
                 src_raw = src_funcs[0]
-            site, kind = _sink_site(res)
+            sink_func = _sink_callee(res)
+            source_class = F.classify_source(src_raw)
+            source_sites = src_funcs or labels
             locs = res.get("locations") or [{}]
             container = _resolve_logical(run_names, locs[0]) if locs else None
-            out.append(F.Finding(
-                binary_sha256=sha256,
-                tool="cta",
-                sink_func=_sink_callee(res),
-                sink_callsite=site,
-                sink_site_kind=kind,
-                sink_argpos=0,
-                source_class=F.classify_source(src_raw),
-                source_sites=src_funcs or labels,
-                reach_from_main=None,
-                sanitized=None,
-                confidence=None,
-                raw_path={"container": container,
-                          "codeFlows": res.get("codeFlows"),
-                          "parquet_dir": (run.get("properties") or {}).get("parquet_dir")},
-            ))
+
+            # One finding per real call site (from the codeFlow). Fall back to the
+            # result's anchored location when no call-arg step is present.
+            sites = [(a, "address") for a in _callsite_addrs(res)] or [_sink_site(res)]
+            for site, kind in sites:
+                dedup = (sink_func, site, source_class, tuple(source_sites))
+                if dedup in seen:
+                    continue
+                seen.add(dedup)
+                out.append(F.Finding(
+                    binary_sha256=sha256,
+                    tool="cta",
+                    sink_func=sink_func,
+                    sink_callsite=site,
+                    sink_site_kind=kind,
+                    sink_argpos=0,
+                    source_class=source_class,
+                    source_sites=source_sites,
+                    reach_from_main=None,
+                    sanitized=None,
+                    confidence=None,
+                    raw_path={"container": container,
+                              "codeFlows": res.get("codeFlows"),
+                              "parquet_dir": parquet},
+                ))
     return out
 
 

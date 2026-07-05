@@ -94,7 +94,7 @@ def run_one(ctadl: Path, model: Path, entry: dict, timeout_s: int) -> tuple[F.Ru
     project = "cta_" + sha[:12]
 
     with tempfile.TemporaryDirectory() as td:
-        cmd = [str(ctadl), "go", project]
+        cmd = [str(ctadl), "go", "-n", project]
         if language:
             cmd += ["-l", language]
         cmd += ["--models", str(model), str(artifact)]
