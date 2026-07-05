@@ -336,7 +336,7 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
         .arg(".");
     exec::run_checked(jar_cmd, "jar")?;
 
-    // Analyze: import / index / query / format.
+    // Analyze: import / index / query (query also formats the SARIF output).
     let project = format!("{stem}_jvm_test");
     let sarif = work.join(format!("{stem}_output.sarif"));
     run_ctadl(
@@ -348,12 +348,14 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
     run_ctadl(
         &work,
         &state,
-        &["query", &project, "-m", &config.to_string_lossy()],
-    )?;
-    run_ctadl(
-        &work,
-        &state,
-        &["format", &project, "-o", &sarif.to_string_lossy()],
+        &[
+            "query",
+            &project,
+            "-m",
+            &config.to_string_lossy(),
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
     )?;
 
     // Build the offset -> line map.
