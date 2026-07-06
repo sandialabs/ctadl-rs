@@ -1816,32 +1816,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn loop_flow_main_stack_normalizes() {
-        use std::process::Command;
-
-        let dir = std::env::temp_dir().join("jvm_reader_loop_flow_test");
-        let java = dir.join("LoopFlow.java");
-        let classes = dir.join("classes");
-        let class_file = classes.join("LoopFlow.class");
-        std::fs::create_dir_all(&classes).unwrap();
-        std::fs::copy(
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../nightly/tests/java/LoopFlow.java"
-            ),
-            &java,
-        )
-        .unwrap();
-        let status = Command::new("javac")
-            .args(["--release", "8", "-d"])
-            .arg(&classes)
-            .arg(&java)
-            .status()
-            .expect("javac");
-        assert!(status.success(), "javac failed");
-
-        let bytes = std::fs::read(&class_file).unwrap();
-        let parser = ClassFileParser::parse(&bytes).expect("parse");
+        let bytes = &fixture("LoopFlow.class");
+        let parser = ClassFileParser::parse(bytes).expect("parse");
         let cf = parser.class_file();
         let method = cf
             .methods

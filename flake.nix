@@ -117,7 +117,7 @@
             }
             ''
               mkdir -p "$out"
-              javac -d "$out" "$src/HelloWorld.java" "$src/ArrayFlow.java"
+              javac -d "$out" "$src/HelloWorld.java" "$src/ArrayFlow.java" "$src/LoopFlow.java"
             '';
 
         # Non-interactive environment that mirrors the tools the regression
