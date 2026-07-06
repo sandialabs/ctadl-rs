@@ -77,6 +77,12 @@
     // ---------------------------------------------------------------------
     // SINKS -- command injection (Mango COMMAND_INJECTION_SINKS)
     // Command string at Mango param 1 => CTADL Argument(0).deref
+    //
+    // The command data is the *string* at Argument(0), so we anchor the port at
+    // `.deref` (the pointed-to bytes) rather than the raw pointer -- anchoring at
+    // bare `Argument(0)` also seeds the pointer value and inflates false
+    // positives. Wildcard matching (the default for sinks) still covers any
+    // sub-field extension of the string (`.deref.[k]`, byte-level derefs, etc.).
     // ---------------------------------------------------------------------
     {
       find: "methods",
@@ -106,15 +112,15 @@
     // same argv -> exec* argument-injection flow.
     //
     //  * Variadic form  execl(path, arg0, arg1, ..., NULL): each arg is its own
-    //    positional parameter -> Argument(1..N).deref. We cap N at 8 (covers
-    //    realistic command builders; raise if a target passes more).
+    //    positional parameter, a char* -> the tainted data is the string
+    //    `Argument(1..N).deref`. We cap N at 8 (covers realistic command
+    //    builders; raise if a target passes more).
     //  * Array form     execv(path, argv[], ...): argv is a single pointer at
-    //    Argument(1); element argv[i] is `Argument(1).[8*i].deref`. The sink port
-    //    `Argument(1).deref` only covers argv[0] (array offset 0) -- a tainted
-    //    argv[i>0] needs an offset-insensitive array-deref in the backward cone,
-    //    which CTADL's field model does not provide (and which would be a coarse,
-    //    blowup-prone alias). So the array form catches argv[0]-element taint
-    //    only; the general element case is a known engine limitation.
+    //    Argument(1); element argv[i] is `Argument(1).[8*i].deref` -- the offset
+    //    sits *before* the deref, so it is not a suffix of `.deref`. We anchor at
+    //    the bare `Argument(1)` and rely on wildcard matching (default) to cover
+    //    every element `Argument(1).[k].deref`, so a tainted argv[i>0] (e.g.
+    //    `args[2] = argv[1]`) is flagged, not just argv[0].
     // ---------------------------------------------------------------------
     {
       find: "methods",
@@ -133,7 +139,7 @@
     {
       find: "methods",
       where: [{ constraint: "signature_pattern", pattern: "^(execv|execvp|execvpe|execve)$" }],
-      model: { sinks: [{ port: "Argument(1).deref", kind: "command_injection" }] }
+      model: { sinks: [{ port: "Argument(1)", kind: "command_injection" }] }
     },
 
     // ---------------------------------------------------------------------

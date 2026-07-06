@@ -252,16 +252,16 @@ property); a synthetic Mango result ingested with correct source classification
 (`http_passwd`→NVRAM, `recv`→NETWORK); `compare` produced a correct 2×2 (1
 matched, 1 mango-only FN candidate); `stats` summarized.
 
-### Corpus status (Operation Mango tests, cta@2d322dd)
+### Corpus status (Operation Mango tests, cta@b06b137)
 
 Run over all 15 Operation Mango test binaries (`operation-mango-public`), scored
 against 24 Mango known bugs with `--addr-tolerance 0`:
 
 ```
-19 TP / 5 FN / 12 extra   (recall 79.2%)   15/15 binaries run OK
+20 TP / 4 FN / 12 extra   (recall 83.3%)   15/15 binaries run OK
 ```
 
-The remaining 5 FN are genuine CTADL analysis gaps, not harness artifacts.
+The remaining 4 FN are genuine CTADL analysis gaps, not harness artifacts.
 Diagnosed by dumping the index/taint graphs (`--dump-index-graph` /
 `--dump-taint-graph`) and the debug SARIF profile (`--sarif-profile debug`,
 which exposes `C0002.tainted-instruction` = where forward+backward taint *meet*,
@@ -269,30 +269,28 @@ which exposes `C0002.tainted-instruction` = where forward+backward taint *meet*,
 
 | Binary | Symptom | Root cause |
 |--------|---------|-----------|
-| `execve`   | sink+source labels **meet**, no `C0001` path | base↔offset deref gap (below) |
 | `off_shoot`| sink+source labels **meet**, no `C0001` path | base↔offset deref gap (below) |
 | `nvram`    | **0 sinks matched** | unlinked ET_REL object (below) |
 | `layered`  | 1 of 2 system call sites found | second call site missed |
 
-**`execve` + `off_shoot` — incomplete base↔offset deref reconciliation on the
-precise path.** In both, the model's source/propagation/sink ports are all at
-offset-0 (`Argument(n).deref`), but the real taint lands at a *nonzero* stack /
-array offset:
+(`execve` was in this list until wildcard sink ports landed — see **Resolved:
+wildcard sink ports** below.)
 
-* `execve`: source `argv_input` is at `call-arg(47,1).[-40].deref` (the argv
-  element `args[2] = argv[1]`), while the `execve` sink port `Argument(1).deref`
-  reads offset 0 (`args[0]`, the constant `"./other_prog"`).
-* `off_shoot`: source `file_input` (from `read(0, extras, …)`) is at
-  `call-arg(…,1).[-88].deref` (the `extras` stack buffer), while the `system`
-  sink port `Argument(0).deref` is at offset 0.
-
-Forward and backward taint over-approximately **meet** (the debug profile emits a
-`C0002` node carrying both labels), but the precise `C0001.tainted-path` query
-can't cross the base↔offset boundary, so no flow is reported. This is exactly
-what the `Normalize offset 0 away` / `Taint from base into offset derefs`
-commits address — the bridging is complete enough for the over-approx meet but
-not yet for precise path reconstruction. Fix is engine-side (offset-insensitive
-base↔element deref on the C0001 path), not model-side.
+**`off_shoot` — incomplete base↔offset deref reconciliation on the precise
+path.** The model's source/propagation/sink ports are at offset-0
+(`Argument(n).deref`), but the real taint lands at a *nonzero* stack offset:
+source `file_input` (from `read(0, extras, …)`) is at `call-arg(…,1).[-88].deref`
+(the `extras` stack buffer), while the flow is blocked upstream at the
+auto-derived `alter_command` summary. Forward and backward taint
+over-approximately **meet** (the debug profile emits a `C0002` node carrying both
+labels), but the precise `C0001.tainted-path` query can't cross the base↔offset
+boundary, so no flow is reported. This is the same base↔offset class the
+`Normalize offset 0 away` / `Taint from base into offset derefs` commits address:
+the bridging is complete enough for the over-approx meet but not yet for precise
+path reconstruction. Unlike `execve` (which was a *sink*-matching gap, now fixed
+by wildcard ports), this block is at an intra-procedural summary, so the sink
+wildcard does not reach it — the fix is engine-side (offset-insensitive
+base↔element deref on the C0001 path).
 
 **`nvram` — unlinked ELF relocatable object.** `nvram/program` is `ET_REL`
 (`file` reports "relocatable", `main` at 0x0, `system`/`acosNvramConfig_get` are
@@ -311,6 +309,26 @@ The 12 extras are all in `early_resolve` (4) and `multi_input` (8) — extra
 NETWORK/FILE/ENV source→system flows Mango's GT doesn't list (`multi_input` is
 built with several input channels), likely `cta_advantage` rather than FP;
 needs triage to confirm.
+
+### Resolved: wildcard sink ports (recovers `execve`)
+
+Sink ports now carry a boolean `wildcard` property (**default `true`**): a sink
+port matches any concrete access-path **extension** of the port — any path that
+has the port path as a prefix. So `Argument(1)` matches `Argument(1).deref`,
+`Argument(1).[12].deref`, etc.; it does *not* match unrelated paths. On sink
+instantiation the port is expanded against the program's path universe into the
+concrete matching vertices, one seeded endpoint each (sinks seed backward taint
+and the formatter resolves endpoints by exact path equality, so the wildcard
+can't be left abstract). `wildcard` is sink-only (rejected on sources /
+propagations); see the model schema `source-sink-model.wildcard`.
+
+This recovered `execve`: the argv element `args[2] = argv[1]` reaches the sink at
+`Argument(1).[-40].deref` (the offset sits *before* the deref, so it is not a
+suffix of `.deref`). Anchoring the array-form sink at the bare `Argument(1)` +
+wildcard makes that element an extension, so the flow is flagged — while
+`system`/`popen`/`execl` keep their `.deref` string ports (anchoring at the bare
+pointer there only inflated FPs: it took `extra` 12→20 with no recall gain).
+Net effect: recall 79.2%→83.3% (19→20 TP), `extra` unchanged at 12.
 
 ### Resolved: sink call-site address in CTADL SARIF
 
