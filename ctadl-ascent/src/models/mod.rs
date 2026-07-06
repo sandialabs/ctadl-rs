@@ -689,6 +689,9 @@ pub struct EndpointBuilder {
     label: StringBuilder,
     /// Use `true` for the forward direction and `false` for backward
     direction: BooleanBuilder,
+    /// Sink-only: `true` matches any access-path extension of the port (see
+    /// [`crate::facts::Path::is_extension_of`]). Always `false` for sources.
+    wildcard: BooleanBuilder,
     /// Access path length table: `id` and `len`
     ap_len: AccessPathBuilder,
     /// Access path field table: `id`
@@ -712,6 +715,7 @@ impl EndpointBuilder {
             path_id: UInt64Builder::new(),
             label: Default::default(),
             direction: BooleanBuilder::new(),
+            wildcard: BooleanBuilder::new(),
             ap_len: AccessPathBuilder::new("", ap_fld.clone()),
             ap_fld,
         }
@@ -723,6 +727,8 @@ impl EndpointBuilder {
     /// `ap` – access‑path components (as string slices).
     /// `label` – label associated with the endpoint.
     /// `direction` – true for forward (source), false for backward (sink).
+    /// `wildcard` – sink-only: match any access-path extension of the port. Pass
+    ///   `false` for sources (enforced by the parser).
     pub fn append(
         &mut self,
         function: &str,
@@ -730,6 +736,7 @@ impl EndpointBuilder {
         ap: &[&str],
         label: &str,
         direction: TaintDirection,
+        wildcard: bool,
     ) {
         let (tag, opt_idx) = idx;
         self.func.append_value(function);
@@ -739,6 +746,7 @@ impl EndpointBuilder {
         self.label.append_value(label);
         self.direction
             .append_value(direction == TaintDirection::Forward);
+        self.wildcard.append_value(wildcard);
     }
 
     #[inline]
@@ -798,8 +806,17 @@ impl EndpointBuilder {
             )]))),
             vec![Arc::new(self.direction.finish())],
         )?;
+        // wildcard column (boolean)
+        let wild = RecordBatch::try_new(
+            Arc::new(Schema::new(Fields::from(vec![Field::new(
+                "wildcard",
+                DataType::Boolean,
+                false,
+            )]))),
+            vec![Arc::new(self.wildcard.finish())],
+        )?;
 
-        // Build final schema: function, index fields, path_id, label, direction
+        // Build final schema: function, index fields, path_id, label, direction, wildcard
         let endpoint_schema: SchemaRef = {
             let mut b = SchemaBuilder::new();
             b.push(Field::new("function", DataType::Utf8, false));
@@ -807,6 +824,7 @@ impl EndpointBuilder {
             b.push(Field::new("path_id", DataType::UInt64, false));
             b.push(Field::new("label", DataType::Utf8, false));
             b.push(Field::new("direction", DataType::Boolean, false));
+            b.push(Field::new("wildcard", DataType::Boolean, false));
             b.finish().into()
         };
         // Assemble columns in the same order as the schema
@@ -816,6 +834,7 @@ impl EndpointBuilder {
         data.extend(path_id.columns().iter().cloned());
         data.extend(lbl.columns().iter().cloned());
         data.extend(dir.columns().iter().cloned());
+        data.extend(wild.columns().iter().cloned());
 
         let records = RecordBatch::try_new(endpoint_schema.clone(), data)?;
         // Access‑path auxiliary tables
@@ -847,7 +866,7 @@ impl EndpointBatch {
     }
 
     /// Iterate over endpoint records.
-    /// Yields `(function, selector_ty, index, path_id, label, direction)`.
+    /// Yields `(function, selector_ty, index, path_id, label, direction, wildcard)`.
     pub fn iter_endpoints(
         &self,
     ) -> impl Iterator<
@@ -858,6 +877,7 @@ impl EndpointBatch {
             u64,
             &str,
             TaintDirection,
+            bool,
         ),
     > {
         izip![
@@ -921,6 +941,15 @@ impl EndpointBatch {
                         TaintDirection::Backward
                     }
                 }),
+            self.endpoints
+                .column_by_name("wildcard")
+                .unwrap()
+                .as_ref()
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap()
+                .iter()
+                .map(|b| b.unwrap()),
         ]
     }
 }

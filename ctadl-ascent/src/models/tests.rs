@@ -12,6 +12,7 @@ fn endpoint_builder_basic() {
         &["field1", "sub"],
         "lbl1",
         TaintDirection::Forward,
+        false,
     );
     // Second endpoint with an empty access path and no index
     builder.append(
@@ -20,6 +21,7 @@ fn endpoint_builder_basic() {
         &[],
         "lbl2",
         TaintDirection::Backward,
+        true,
     );
     assert_eq!(builder.len(), 2);
     let batch = builder.finish().expect("finish failed");
@@ -31,6 +33,7 @@ fn endpoint_builder_basic() {
         "path_id",
         "label",
         "direction",
+        "wildcard",
     ];
     let actual: Vec<_> = batch
         .endpoints
@@ -56,6 +59,7 @@ fn endpoint_batch_iter_endpoints() {
         &["fieldA"],
         "lbl1",
         TaintDirection::Forward,
+        false,
     );
     // Second endpoint with an empty access path and no index
     builder.append(
@@ -64,6 +68,7 @@ fn endpoint_batch_iter_endpoints() {
         &[],
         "lbl2",
         TaintDirection::Backward,
+        true,
     );
     let batch = builder.finish().expect("finish failed");
     let endpoints: Vec<_> = batch.iter_endpoints().collect();
@@ -77,6 +82,7 @@ fn endpoint_batch_iter_endpoints() {
             0u64,
             "lbl1",
             TaintDirection::Forward,
+            false,
         ),
     );
     assert_eq!(
@@ -88,6 +94,7 @@ fn endpoint_batch_iter_endpoints() {
             1u64,
             "lbl2",
             TaintDirection::Backward,
+            true,
         ),
     );
 }
