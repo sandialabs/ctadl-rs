@@ -19,12 +19,14 @@ pub fn run_ghidra_export(artifact_path: &Path, output_dir: &Path) -> Result<(), 
     let facts_dir = output_dir.join("facts");
     fs::create_dir_all(&facts_dir)?;
 
-    let temp_project_dir = tempfile::tempdir()?;
+    // Use a dot-free temp-dir prefix: Ghidra 12 rejects project-path elements
+    // that start with '.', and tempfile's default prefix is ".tmp".
+    let temp_project_dir = tempfile::Builder::new().prefix("ctadl-ghidra").tempdir()?;
     let project_path = temp_project_dir.path().to_string_lossy().to_string();
     let project_name = "headless";
 
     // Write ExportPcode.java to a temporary directory
-    let script_temp_dir = tempfile::tempdir()?;
+    let script_temp_dir = tempfile::Builder::new().prefix("ctadl-ghidra").tempdir()?;
     let export_script_path = script_temp_dir.path().join("ExportPcode.java");
     fs::write(
         &export_script_path,
