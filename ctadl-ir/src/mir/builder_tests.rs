@@ -2,7 +2,6 @@ use crate::index::idx::Idx;
 use crate::mir::builder::BasicBlockBuilder;
 use crate::mir::call::CallStyle;
 use crate::mir::{BasicBlockData, BasicBlockIdx, Exp, ParameterIdx, StatementIdx};
-use smallvec::smallvec;
 
 #[test]
 fn test_builder_basic_operations() {
@@ -86,7 +85,7 @@ fn test_builder_call_statement() {
 
     // Create a call statement
     let call_style = CallStyle::DirectCall {
-        call_edges: crate::mir::call::CallEdges::Explicit(smallvec!["test".to_string()]),
+        call_edges: crate::mir::call::CallEdges::Explicit(thin_vec::thin_vec!["test".to_string()]),
     };
 
     builder.create_call(

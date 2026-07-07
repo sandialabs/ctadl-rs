@@ -104,7 +104,8 @@ use std::{fmt, fmt::Display};
 use hashbrown::{hash_map::HashMap, hash_set::HashSet};
 use internment::ArcIntern;
 use pest::{Parser, Span, iterators::Pair};
-use smallvec::{SmallVec, smallvec};
+use ctadl_ir::{ThinVec, thin_vec};
+use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::parse::{FlowyParser, Rule};
@@ -733,7 +734,7 @@ impl FlowyCtx {
                     }
                 };
 
-                let args: SmallVec<[Exp; 4]> = {
+                let args: ThinVec<Exp> = {
                     if let CallStyle::DirectCall {
                         call_edges: CallEdges::Explicit(edges),
                     } = &style
@@ -763,7 +764,7 @@ impl FlowyCtx {
                 let tmp = VariableRef::new_local(format!("t{}?", self.counter.next()));
                 let call = CallAssign {
                     style,
-                    rets: smallvec![tmp.clone()],
+                    rets: thin_vec![tmp.clone()],
                     args,
                 };
                 data.push_back(Statement::new(call, source_info));
@@ -828,7 +829,7 @@ impl FlowyCtx {
                     }
                 };
 
-                let args: SmallVec<[Exp; 4]> = if let CallStyle::DirectCall {
+                let args: ThinVec<Exp> = if let CallStyle::DirectCall {
                     call_edges: CallEdges::Explicit(edges),
                 } = &style
                     && (edges[0] == "sink" || edges[0] == "errsink")
@@ -836,7 +837,7 @@ impl FlowyCtx {
                     // Parses `sink(x.y.z, Test)` into `t0 = x.y.z; sink(t0, Test)` so that when
                     // the sink call is removed, x.y.z remains in the program
                     let tmp = VariableRef::new_local(format!("t{}?", self.counter.next()));
-                    let mut args = SmallVec::with_capacity(actuals.len());
+                    let mut args = ThinVec::with_capacity(actuals.len());
                     // first two original args
                     let mut orig_args: SmallVec<[Exp; 4]> = SmallVec::new();
                     for (i, x) in actuals.into_iter().enumerate() {
@@ -858,7 +859,7 @@ impl FlowyCtx {
                 } else {
                     actuals.into_iter().collect()
                 };
-                let rets = smallvec![];
+                let rets = thin_vec![];
                 //let args = actuals.into_iter().map(|x| Exp::AccessPath(x));
                 let call = CallAssign { style, rets, args };
                 data.push_back(Statement::new(call, source_info));

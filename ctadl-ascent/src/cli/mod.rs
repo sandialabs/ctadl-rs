@@ -197,6 +197,10 @@ pub fn index(
         }
 
         log::trace!("summary length: {}", models_batch.summary.num_rows());
+        // Fuse single-use copy temporaries before SSA. Cuts the statement /
+        // variable count that SSA and the datalog fact base pay for. A no-op
+        // on programs already in SSA form (e.g. flowy imports).
+        ssa::coalesce_copies(&mut program_info.program);
         ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
         codegen_program(program_info, &mut facts, &mut source_info, strategy);
         log::trace!("summary length: {}", facts.summary.len());

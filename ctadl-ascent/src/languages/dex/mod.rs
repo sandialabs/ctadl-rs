@@ -477,7 +477,7 @@ impl Context {
         };
 
         // Convert argument registers into IR expressions.
-        let args: SmallVec<[Exp; 4]> = args_regs
+        let args: ctadl_ir::ThinVec<Exp> = args_regs
             .iter()
             .map(|reg| AccessPath::without_fields(reg_to_var(code, *reg)).into())
             .collect();
@@ -501,7 +501,7 @@ impl Context {
         self.catch_result = Some(throwval.clone());
         Some(Statement::new_kind(StatementKind::CallAssign {
             style,
-            rets: smallvec![retval, throwval],
+            rets: ctadl_ir::thin_vec![retval, throwval],
             args: if is_static {
                 args
             } else {
