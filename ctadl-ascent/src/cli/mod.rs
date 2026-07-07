@@ -92,8 +92,8 @@ fn build_query_endpoints(
             let mut seen: HashSet<facts::Path> = HashSet::new();
             let mut expanded = Vec::new();
             for candidate in std::iter::once(&ap).chain(paths.iter().map(|(p,)| p)) {
-                if candidate.is_extension_of(&ap) && seen.insert(candidate.clone()) {
-                    expanded.push(candidate.clone());
+                if candidate.is_extension_of(&ap) && seen.insert(*candidate) {
+                    expanded.push(*candidate);
                 }
             }
             expanded

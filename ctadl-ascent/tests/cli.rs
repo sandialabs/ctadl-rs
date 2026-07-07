@@ -77,8 +77,7 @@ fn test_cli_import_skip_existing() {
         // Before any import exists, nothing is up to date.
         assert!(!ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
 
-        let import =
-            ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
+        let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
         // Destination not yet written and no hash recorded: still not up to date.
         assert!(!ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
 
