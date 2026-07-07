@@ -10,7 +10,6 @@ use datafusion::datasource::MemTable;
 use datafusion::prelude::*;
 use packed_struct::prelude::*;
 use serde::Serialize;
-use serde_sarif::sarif::{Message, Result as SarifResult};
 
 use ctadl_ascent::error::Error;
 use ctadl_ascent::facts::{
@@ -22,7 +21,7 @@ use ctadl_ascent::query_engine::formatter::{
     FormatFactsBuilder, build_taint_flow_graph, compute_taint_results,
 };
 use ctadl_ascent::query_engine::{QueryEndpoint, QueryFacts, taint_analysis};
-use ctadl_ir::graph::{Predecessors, Successors, find_path};
+use ctadl_ir::graph::{Successors, find_path};
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
 pub enum TaintDirection {
@@ -95,7 +94,8 @@ pub struct CtadlNodeInfo {
 
 #[derive(Serialize)]
 pub struct CtadlDataResult {
-    pub result: SarifResult,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "byteOffset")]
+    pub byte_offset: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "inNode")]
     pub in_node: Option<CtadlNodeInfo>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "outNode")]
@@ -237,6 +237,46 @@ async fn run() -> Result<(), Error> {
         }
     }
 
+    // Now query for all locations
+    let mut site_to_loc: BTreeMap<(u32, u64), (String, u64)> = BTreeMap::new();
+    let loc_sql = "
+        SELECT index_source_map.func_id, index_source_map.insn_id, a.canonical_path, s.start
+        FROM index_source_map
+        JOIN file_spans fs ON index_source_map.source_span_id = fs.file_span_id
+        JOIN files f ON f.file_id = fs.file_id
+        JOIN artifacts a ON a.artifact_id = f.artifact_id
+        JOIN spans s ON s.span_id = fs.span_id
+    ";
+    let mut loc_batches = ctx.sql(loc_sql).await?.collect().await?;
+    for batch in loc_batches.drain(..) {
+        let func_ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .unwrap();
+        let insn_ids = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .unwrap();
+        let uris = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringViewArray>()
+            .unwrap();
+        let offsets = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .unwrap();
+        for i in 0..batch.num_rows() {
+            site_to_loc.insert(
+                (func_ids.value(i), insn_ids.value(i)),
+                (uris.value(i).to_string(), offsets.value(i) as u64),
+            );
+        }
+    }
+
     let mut target_vertices = Vec::new();
     for (site_packed, _, vertex) in &index_facts.actual_param {
         let site = InsnSiteId::unpack(site_packed).unwrap();
@@ -334,7 +374,13 @@ async fn run() -> Result<(), Error> {
 
                 for leaf in reachable_leaves {
                     if let Some(path_ids) = find_path(&graph, start_id, leaf) {
-                        let path = build_path(&path_ids, &id_to_node, &id_to_name);
+                        let path = build_path(
+                            &path_ids,
+                            &id_to_node,
+                            &id_to_name,
+                            &node_to_site,
+                            &site_to_loc,
+                        );
                         output.fwd.push(path);
                     }
                 }
@@ -342,25 +388,32 @@ async fn run() -> Result<(), Error> {
                 let mut visited = vec![false; id_to_node.len()];
                 let mut queue = vec![start_id];
                 visited[start_id as usize] = true;
-                let mut reachable_roots = Vec::new();
+                let mut reachable_leaves = Vec::new();
 
                 while let Some(curr) = queue.pop() {
-                    let mut has_preds = false;
-                    for pred in graph.predecessors(curr) {
-                        has_preds = true;
-                        if !visited[pred as usize] {
-                            visited[pred as usize] = true;
-                            queue.push(pred);
+                    let mut has_succs = false;
+                    for succ in graph.successors(curr) {
+                        has_succs = true;
+                        if !visited[succ as usize] {
+                            visited[succ as usize] = true;
+                            queue.push(succ);
                         }
                     }
-                    if !has_preds {
-                        reachable_roots.push(curr);
+                    if !has_succs {
+                        reachable_leaves.push(curr);
                     }
                 }
 
-                for root in reachable_roots {
-                    if let Some(path_ids) = find_path(&graph, root, start_id) {
-                        let path = build_path(&path_ids, &id_to_node, &id_to_name);
+                for leaf in reachable_leaves {
+                    if let Some(mut path_ids) = find_path(&graph, start_id, leaf) {
+                        path_ids.reverse();
+                        let path = build_path(
+                            &path_ids,
+                            &id_to_node,
+                            &id_to_name,
+                            &node_to_site,
+                            &site_to_loc,
+                        );
                         output.bwd.push(path);
                     }
                 }
@@ -377,6 +430,8 @@ fn build_path(
     path_ids: &[u32],
     id_to_node: &[(FunctionId, FlowVariable, Path)],
     id_to_name: &BTreeMap<u32, String>,
+    node_to_site: &BTreeMap<(FunctionId, FlowVariable, Path), (FunctionId, InsnId)>,
+    site_to_loc: &BTreeMap<(u32, u64), (String, u64)>,
 ) -> Vec<CtadlDataResult> {
     let mut path = Vec::new();
     for window in path_ids.windows(2) {
@@ -395,8 +450,14 @@ fn build_path(
             _ => format!("{}", out_node.1),
         };
 
-        let in_mth_name = id_to_name.get(&in_node.0.id).cloned().unwrap_or_else(|| format!("{}", in_node.0.id));
-        let out_mth_name = id_to_name.get(&out_node.0.id).cloned().unwrap_or_else(|| format!("{}", out_node.0.id));
+        let in_mth_name = id_to_name
+            .get(&in_node.0.id)
+            .cloned()
+            .unwrap_or_else(|| format!("{}", in_node.0.id));
+        let out_mth_name = id_to_name
+            .get(&out_node.0.id)
+            .cloned()
+            .unwrap_or_else(|| format!("{}", out_node.0.id));
 
         let in_class = in_mth_name.split(";->").next().map(|s| s.to_string());
         let out_class = out_mth_name.split(";->").next().map(|s| s.to_string());
@@ -415,12 +476,15 @@ fn build_path(
             ap: Some(out_node.2.to_dot_string()),
         };
 
-        let result = SarifResult::builder()
-            .message(Message::builder().text(format!("Flow from {} {} to {} {}", in_mth_name, in_node.1, out_mth_name, out_node.1)).build())
-            .build();
+        let mut byte_offset = None;
+        if let Some(site) = node_to_site.get(out_node) {
+            if let Some((_, offset)) = site_to_loc.get(&(site.0.id, site.1.id)) {
+                byte_offset = Some(*offset);
+            }
+        }
 
         path.push(CtadlDataResult {
-            result,
+            byte_offset,
             in_node: Some(in_node_info),
             out_node: Some(out_node_info),
         });
