@@ -11,6 +11,8 @@ We want to enable some queries:
 The way we do this is simply by computing the closure and then doing cheap path analysis after the fact.
 */
 
+use std::sync::Arc;
+
 use ascent::ascent;
 use derive_builder::Builder;
 use packed_struct::prelude::*;
@@ -142,7 +144,17 @@ pub struct QueryFacts {
 
 #[derive(Default, Debug, Clone)]
 pub struct QueryResult {
-    pub taint: Vec<(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)>,
+    /// The taint closure. The endpoint is shared behind an [`Arc`]: a vertex is
+    /// typically tainted by few endpoints but an endpoint taints millions of
+    /// vertices, so records store a pointer to one allocation per endpoint
+    /// rather than an inline copy each.
+    pub taint: Vec<(
+        FunctionId,
+        TaintState,
+        FlowVariable,
+        Path,
+        Arc<QueryEndpoint>,
+    )>,
     /// Edges of the taint graph, in execution / data-flow order (source-then-destination):
     /// `(edge, src_func, src_var, src_path, dst_func, dst_var, dst_path)`. `edge` is the
     /// [`FlowEdge`] classifying the step as `Intra`, `Call`, or `Return`; call/return edges
@@ -235,15 +247,14 @@ impl<'a> std::fmt::Display for QueryResultDisplay<'a> {
 pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     ascent! {
         struct QueryEngine;
-        // Besides recording `taint`, every propagation rule records a `taint_edge` for
-        // the taint graph. The graph is oriented in execution / data-flow order, but
-        // taint is discovered both forward (from sources) and backward (from sinks). A
-        // forward step already runs source -> derived in execution order; a backward step
-        // discovers the *upstream* vertex, so the edge must be reversed to keep it in
-        // execution order. Each rule head emits the derived vertex `(func, var, path)`
-        // paired with the source vertex it came from as a direction-tagged
-        // `taint_edge_directed`; the two rules below orient it into `taint_edge`.
-        // Orientation can't be chosen in a rule head, so it is deferred to those rules.
+        // Besides recording `taint`, every propagation rule records a taint-graph edge.
+        // The graph is oriented in execution / data-flow order, but taint is discovered
+        // both forward (from sources) and backward (from sinks). A forward step already
+        // runs source -> derived in execution order; a backward step discovers the
+        // *upstream* vertex, so the edge must be reversed to keep it in execution
+        // order. Each rule head emits the derived vertex `(func, var, path)` paired
+        // with the source vertex it came from as a direction-tagged
+        // `taint_edge_directed`.
         relation formal_param(FunctionId, FlowVariable, FormalType);
         relation call(PackedInsnSiteId, FunctionId);
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
@@ -251,10 +262,10 @@ pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult 
         relation sources(QueryEndpoint);
 
         relation alias_of_field(FunctionId, FlowVariable, FlowVariable, Path);
-        relation taint(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint);
+        relation taint(FunctionId, TaintState, FlowVariable, Path, Arc<QueryEndpoint>);
 
         // Initialize taint with source
-        taint(infunc, TaintState::Free, v.clone(), p.clone(), s) <--
+        taint(infunc, TaintState::Free, v.clone(), p.clone(), Arc::new(s.clone())) <--
             sources(s),
             let QueryEndpoint { infunc, vertex, label, direction, call_site: _ } = s,
             let FlowVertex(v, p) = vertex;
@@ -350,29 +361,15 @@ pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult 
         // Direction-tagged edge as produced by the propagation rules above: destination
         // vertex `(func, var, path)` derived from source vertex `(func, var, path)`,
         // classified by `edge` (the execution-order [`FlowEdge`]), tagged with the
-        // direction of the endpoint the propagation belongs to.
+        // direction of the endpoint the propagation belongs to. Oriented into
+        // execution-order `QueryResult::taint_edge` after the run (see above).
         relation taint_edge_directed(FlowEdge, FunctionId, FlowVariable, Path, FunctionId, FlowVariable, Path, TaintDirection);
-        // The taint graph, in execution / data-flow order (source-then-destination):
-        // `(edge, src_func, src_var, src_path, dst_func, dst_var, dst_path)`.
-        relation taint_edge(FlowEdge, FunctionId, FlowVariable, Path, FunctionId, FlowVariable, Path);
-
-        // Forward: the produced edge already runs source -> derived in execution order.
-        taint_edge(*edge, *sf, sv.clone(), sp.clone(), *df, dv.clone(), dp.clone()) <--
-            taint_edge_directed(edge, df, dv, dp, sf, sv, sp, dir),
-            if *dir == TaintDirection::Forward;
-
-        // Backward: the produced (derived) vertex is upstream, so reverse the edge to
-        // keep it in execution order. The edge classification already describes the
-        // execution-order step, so it is unchanged.
-        taint_edge(*edge, *df, dv.clone(), dp.clone(), *sf, sv.clone(), sp.clone()) <--
-            taint_edge_directed(edge, df, dv, dp, sf, sv, sp, dir),
-            if *dir == TaintDirection::Backward;
 
         // Instruction-level facts derived from the taint closure in this same pass
         // (they used to be recomputed by a second engine in the formatter). Both are
         // non-recursive projections of `taint`.
         relation external_function(FunctionId);
-        relation absorbing_functions(FunctionId, QueryEndpoint, FormalIndex);
+        relation absorbing_functions(FunctionId, Arc<QueryEndpoint>, FormalIndex);
         relation tainted_var_at_insn(PackedInsnSiteId, Label, FlowVariable, Path);
 
         // An external (unmodeled) function that receives tainted data as an argument
@@ -415,18 +412,46 @@ pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult 
             id_map,
         }
     );
+
+    // Orient the direction-tagged edges into execution order (see the comment at the
+    // top of the ascent block). A forward step already runs source -> derived in
+    // execution order; a backward step discovered the upstream vertex, so its edge is
+    // reversed. This is a pure projection of `taint_edge_directed`, done here rather
+    // than as a datalog rule so the engine never materializes (and indexes) a second
+    // copy of the whole taint graph. Dropping the direction tag can collapse distinct
+    // directed tuples, so sort + dedup to keep `taint_edge`'s set semantics.
+    let mut taint_edge: Vec<_> = std::mem::take(&mut engine.taint_edge_directed)
+        .into_iter()
+        .map(|(edge, df, dv, dp, sf, sv, sp, dir)| match dir {
+            TaintDirection::Forward => (edge, sf, sv, sp, df, dv, dp),
+            TaintDirection::Backward => (edge, df, dv, dp, sf, sv, sp),
+        })
+        .collect();
+    taint_edge.sort_unstable();
+    taint_edge.dedup();
+
     QueryResult {
         taint: engine.taint,
-        taint_edge: engine.taint_edge,
+        taint_edge,
         tainted_insn: engine.tainted_var_at_insn.into_iter().collect(),
-        absorbing_functions: engine.absorbing_functions.into_iter().collect(),
+        absorbing_functions: engine
+            .absorbing_functions
+            .into_iter()
+            .map(|(f, ep, formal)| (f, (*ep).clone(), formal))
+            .collect(),
     }
 }
 
 pub mod formatter;
 
 struct DisplayTaint<'a> {
-    taint: &'a [(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)],
+    taint: &'a [(
+        FunctionId,
+        TaintState,
+        FlowVariable,
+        Path,
+        Arc<QueryEndpoint>,
+    )],
     id_map: Option<&'a IdMap>,
 }
 
