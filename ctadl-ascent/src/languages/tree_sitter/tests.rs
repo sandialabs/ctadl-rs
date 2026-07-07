@@ -1933,3 +1933,34 @@ fn struct_members_stay_disjoint() {
     let (s, _si) = get_summary(prog).unwrap();
     check_summary_count(&s, 0); // s.a = src does not reach `return s.b`
 }
+
+#[test_log::test]
+fn char_literal_ingests_as_constant() {
+    // A character literal (`'a'`) is a compile-time constant, lowered like a numeric literal (no
+    // taint). Previously it hit `flatten_expr`'s catch-all and failed ingestion (ERR 78), so *any*
+    // program containing a char literal could not be analyzed. `program_from_string` asserts a
+    // clean parse; we also confirm the adjacent real dataflow (`r = s`) still lowers.
+    let src = r"
+        int f(int s) {
+            char c = 'a';
+            int r = s;
+            return r;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "r", ["@p0"], None); // r = s (param 0); the char const carries no taint
+}
+
+#[test_log::test]
+fn char_literal_in_expression_flows() {
+    // A char literal inside a larger expression (`s + 'a'`) and as a comparison guard (`x == 'z'`)
+    // must ingest too; taint still flows from the parameter to the return through the surrounding
+    // dataflow, while the constants `'a'`/`'z'` contribute none.
+    let src = r"
+        int f(int s) {
+            int x = s + 'a';
+            if (x == 'z') { x = s; }
+            return x;
+        }";
+    let (sm, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&sm, 0, ""); // param 0 (s) reaches the return
+}
