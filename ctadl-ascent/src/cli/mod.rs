@@ -36,7 +36,13 @@ fn build_query_endpoints(
     batch: &crate::models::EndpointBatch,
     facts: &IndexFacts,
     idmap: &facts::IdMap,
-    paths: &[(facts::Path,)],
+    assign_like: &[(
+        facts::FunctionId,
+        FlowVariable,
+        facts::Path,
+        FlowVariable,
+        facts::Path,
+    )],
 ) -> (
     Vec<(crate::query_engine::QueryEndpoint,)>,
     Vec<(facts::FunctionId, facts::FlowVariable, facts::FormalType)>,
@@ -44,6 +50,19 @@ fn build_query_endpoints(
     use crate::models::FormalIndexTypeTag;
     let ap_map = batch.aps.build_ap_map();
     let func_num_params = facts.compute_arg_arity();
+
+    // Field access paths that actually occur on each `(function, variable)` vertex
+    // in the index graph. Used to expand a wildcard sink port into only the paths
+    // that live on the sink call's *argument* vertex -- not the whole program's
+    // path universe. Seeding the entire universe (~23k paths) onto every wildcard
+    // sink call arg is what blew the query up to tens of GB, since each seed is a
+    // distinct endpoint carried through the taint fixpoint.
+    let mut vertex_paths: HashMap<(facts::FunctionId, FlowVariable), BTreeSet<facts::Path>> =
+        HashMap::new();
+    for (func, v1, p1, v2, p2) in assign_like {
+        vertex_paths.entry((*func, *v1)).or_default().insert(*p1);
+        vertex_paths.entry((*func, *v2)).or_default().insert(*p2);
+    }
 
     let mut out_eps = Vec::new();
     let mut out_formals = Vec::new();
@@ -80,26 +99,16 @@ fn build_query_endpoints(
 
         let ap: facts::Path = ap_map[&path_id].iter().cloned().collect();
 
-        // A wildcard sink port denotes the whole subtree beneath `ap`: it matches
-        // every concrete access path that is an extension of the port. Sinks seed
-        // *backward* taint and the formatter resolves each endpoint vertex to a
-        // graph node by exact `Path` equality, so a wildcard cannot be left abstract
-        // -- expand it here into the concrete paths that exist in the program's path
-        // universe (plus the port path itself). Over-seeding is harmless: paths that
-        // aren't real nodes on this variable simply resolve to nothing.
-        let aps: Vec<facts::Path> = if wildcard && direction == facts::TaintDirection::Backward {
-            use std::collections::HashSet;
-            let mut seen: HashSet<facts::Path> = HashSet::new();
-            let mut expanded = Vec::new();
-            for candidate in std::iter::once(&ap).chain(paths.iter().map(|(p,)| p)) {
-                if candidate.is_extension_of(&ap) && seen.insert(*candidate) {
-                    expanded.push(*candidate);
-                }
-            }
-            expanded
-        } else {
-            vec![ap]
-        };
+        // A wildcard sink port denotes the whole subtree beneath `ap` on the sink
+        // call's argument: it matches every concrete access path, rooted at that
+        // argument, that extends the port. Sinks seed *backward* taint and the
+        // formatter resolves each endpoint vertex to a graph node by exact `Path`
+        // equality, so the wildcard cannot be left abstract -- it is expanded below
+        // into concrete paths. Crucially the expansion is scoped to the paths that
+        // actually live on the anchored argument vertex (`vertex_paths`), so it
+        // stays proportional to that argument's fields rather than the whole
+        // program's path universe.
+        let expand_wildcard = wildcard && direction == facts::TaintDirection::Backward;
 
         // Build label and direction.
         let lbl = Label(label_str.into());
@@ -110,21 +119,43 @@ fn build_query_endpoints(
             if var.is_formal() {
                 out_formals.push((infunc, var, facts::FormalType::ByRef));
             }
-            for concrete_ap in &aps {
-                // Anchor at the call sites of `infunc` (the modeled function) so flows that
-                // share a formal but differ by call site stay distinct.
-                let base = crate::query_engine::QueryEndpoint {
-                    infunc,
-                    vertex: FlowVertex(var, *concrete_ap),
-                    label: lbl.clone(),
-                    direction,
-                    call_site: None,
-                };
-                let fanned = match var.as_formal() {
-                    Some(formal) => base.anchored_at_callsites(formal, &facts.call),
-                    None => vec![base],
-                };
-                for ep in fanned {
+            // Anchor at the call sites of `infunc` (the modeled function) so flows that
+            // share a formal but differ by call site stay distinct. Anchoring uses the
+            // port path; wildcard expansion (if any) then happens per anchored vertex.
+            let base = crate::query_engine::QueryEndpoint {
+                infunc,
+                vertex: FlowVertex(var, ap),
+                label: lbl.clone(),
+                direction,
+                call_site: None,
+            };
+            let fanned = match var.as_formal() {
+                Some(formal) => base.anchored_at_callsites(formal, &facts.call),
+                None => vec![base],
+            };
+            for ep in fanned {
+                if !expand_wildcard {
+                    out_eps.push((ep,));
+                    continue;
+                }
+                // Seed every concrete field path that lives on THIS call's argument
+                // vertex and extends the port, always including the port path itself.
+                let mut seeded_port = false;
+                if let Some(paths) = vertex_paths.get(&(ep.infunc, ep.vertex.0)) {
+                    for p in paths {
+                        if !p.is_extension_of(&ap) {
+                            continue;
+                        }
+                        if *p == ap {
+                            seeded_port = true;
+                        }
+                        out_eps.push((crate::query_engine::QueryEndpoint {
+                            vertex: FlowVertex(ep.vertex.0, *p),
+                            ..ep.clone()
+                        },));
+                    }
+                }
+                if !seeded_port {
                     out_eps.push((ep,));
                 }
             }
@@ -259,8 +290,12 @@ pub fn query(
         }
         let mut formal_params = index_facts.formal_param.clone();
         if let Some(ref batch) = models_batch {
-            let (eps, model_formals) =
-                build_query_endpoints(&batch.endpoint, &index_facts, &ids, &index_result.paths);
+            let (eps, model_formals) = build_query_endpoints(
+                &batch.endpoint,
+                &index_facts,
+                &ids,
+                &index_result.assign_like,
+            );
             endpoints.extend(eps);
             formal_params.extend(model_formals);
         }
