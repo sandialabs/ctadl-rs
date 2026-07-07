@@ -28,6 +28,58 @@ impl HashAlgorithm {
     }
 }
 
+/// Computes the SHA-256 digest of `bytes`, returning the raw 32-byte hash.
+///
+/// This is the canonical content hash used throughout source info (see
+/// [`HashAlgorithm::Sha256`]).
+pub fn sha256(bytes: &[u8]) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher.finalize().to_vec()
+}
+
+/// Incremental SHA-256 hasher for computing the content hash of an artifact that
+/// is read in pieces (e.g. a directory of files, or a large file streamed in
+/// chunks). Feed bytes with [`ContentHasher::update`] and call
+/// [`ContentHasher::finalize`] to obtain the raw digest.
+pub struct ContentHasher {
+    inner: sha2::Sha256,
+}
+
+impl ContentHasher {
+    /// Creates a new SHA-256 content hasher.
+    pub fn new() -> Self {
+        use sha2::Digest;
+        Self {
+            inner: sha2::Sha256::new(),
+        }
+    }
+
+    /// Feeds more bytes into the running hash.
+    pub fn update(&mut self, bytes: &[u8]) {
+        use sha2::Digest;
+        self.inner.update(bytes);
+    }
+
+    /// Consumes the hasher and returns the raw digest.
+    pub fn finalize(self) -> Vec<u8> {
+        use sha2::Digest;
+        self.inner.finalize().to_vec()
+    }
+
+    /// The hash algorithm this hasher implements.
+    pub fn algorithm(&self) -> HashAlgorithm {
+        HashAlgorithm::Sha256
+    }
+}
+
+impl Default for ContentHasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// How artifact content is encoded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

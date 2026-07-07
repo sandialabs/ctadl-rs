@@ -36,6 +36,7 @@ fn build_query_endpoints(
     batch: &crate::models::EndpointBatch,
     facts: &IndexFacts,
     idmap: &facts::IdMap,
+    paths: &[(facts::Path,)],
 ) -> (
     Vec<(crate::query_engine::QueryEndpoint,)>,
     Vec<(facts::FunctionId, facts::FlowVariable, facts::FormalType)>,
@@ -46,7 +47,9 @@ fn build_query_endpoints(
 
     let mut out_eps = Vec::new();
     let mut out_formals = Vec::new();
-    for (func_name, selector_ty, idx_opt, path_id, label_str, direction) in batch.iter_endpoints() {
+    for (func_name, selector_ty, idx_opt, path_id, label_str, direction, wildcard) in
+        batch.iter_endpoints()
+    {
         // Resolve function name → FunctionId; skip if not present.
         let infunc = match idmap.get_function_id(crate::facts::Function(func_name.into())) {
             Some(id) => id,
@@ -77,6 +80,27 @@ fn build_query_endpoints(
 
         let ap: facts::Path = ap_map[&path_id].iter().cloned().collect();
 
+        // A wildcard sink port denotes the whole subtree beneath `ap`: it matches
+        // every concrete access path that is an extension of the port. Sinks seed
+        // *backward* taint and the formatter resolves each endpoint vertex to a
+        // graph node by exact `Path` equality, so a wildcard cannot be left abstract
+        // -- expand it here into the concrete paths that exist in the program's path
+        // universe (plus the port path itself). Over-seeding is harmless: paths that
+        // aren't real nodes on this variable simply resolve to nothing.
+        let aps: Vec<facts::Path> = if wildcard && direction == facts::TaintDirection::Backward {
+            use std::collections::HashSet;
+            let mut seen: HashSet<facts::Path> = HashSet::new();
+            let mut expanded = Vec::new();
+            for candidate in std::iter::once(&ap).chain(paths.iter().map(|(p,)| p)) {
+                if candidate.is_extension_of(&ap) && seen.insert(*candidate) {
+                    expanded.push(*candidate);
+                }
+            }
+            expanded
+        } else {
+            vec![ap]
+        };
+
         // Build label and direction.
         let lbl = Label(label_str.into());
 
@@ -86,21 +110,23 @@ fn build_query_endpoints(
             if var.is_formal() {
                 out_formals.push((infunc, var, facts::FormalType::ByRef));
             }
-            // Anchor at the call sites of `infunc` (the modeled function) so flows that
-            // share a formal but differ by call site stay distinct.
-            let base = crate::query_engine::QueryEndpoint {
-                infunc,
-                vertex: FlowVertex(var, ap),
-                label: lbl.clone(),
-                direction,
-                call_site: None,
-            };
-            let fanned = match var.as_formal() {
-                Some(formal) => base.anchored_at_callsites(formal, &facts.call),
-                None => vec![base],
-            };
-            for ep in fanned {
-                out_eps.push((ep,));
+            for concrete_ap in &aps {
+                // Anchor at the call sites of `infunc` (the modeled function) so flows that
+                // share a formal but differ by call site stay distinct.
+                let base = crate::query_engine::QueryEndpoint {
+                    infunc,
+                    vertex: FlowVertex(var, *concrete_ap),
+                    label: lbl.clone(),
+                    direction,
+                    call_site: None,
+                };
+                let fanned = match var.as_formal() {
+                    Some(formal) => base.anchored_at_callsites(formal, &facts.call),
+                    None => vec![base],
+                };
+                for ep in fanned {
+                    out_eps.push((ep,));
+                }
             }
         }
     }
@@ -233,7 +259,8 @@ pub fn query(
         }
         let mut formal_params = index_facts.formal_param.clone();
         if let Some(ref batch) = models_batch {
-            let (eps, model_formals) = build_query_endpoints(&batch.endpoint, &index_facts, &ids);
+            let (eps, model_formals) =
+                build_query_endpoints(&batch.endpoint, &index_facts, &ids, &index_result.paths);
             endpoints.extend(eps);
             formal_params.extend(model_formals);
         }

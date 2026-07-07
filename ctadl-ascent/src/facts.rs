@@ -226,6 +226,28 @@ impl Path {
                 Path::from_accesses(iter)
             })
     }
+
+    /// True iff `self` starts with `port` structurally: `self` is `port` followed
+    /// by zero or more additional [`FieldAccess`](mir::FieldAccess) components,
+    /// compared component-wise (innermost-first) with **no** offset arithmetic
+    /// (unlike [`match_prefix`], whose last component merges offsets). An empty
+    /// `port` matches every path.
+    ///
+    /// This is the "extension of the port" predicate used to expand wildcard sink
+    /// ports into the concrete access paths that live beneath them: a port
+    /// `Argument(3)` (empty path) matches `Argument(3).deref`, `Argument(3).[12].deref`,
+    /// etc.; a port `Argument(3).deref` matches `Argument(3).deref.foo` but not
+    /// `Argument(3).[12].deref` (the offset precedes the deref, so it is not a suffix).
+    pub fn is_extension_of(&self, port: &Path) -> bool {
+        let mut self_it = self.iter();
+        for p in port.iter() {
+            match self_it.next() {
+                Some(c) if c == p => {}
+                _ => return false,
+            }
+        }
+        true
+    }
 }
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord)]
@@ -1462,6 +1484,41 @@ mod tests {
         let r: Path = ".y".into();
         let e: Path = ".y.[1].f".into();
         assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
+    }
+
+    #[test]
+    fn test_is_extension_of() {
+        let empty = Path::empty();
+        let deref: Path = ".deref".into();
+        let off_deref: Path = ".[-40].deref".into();
+        let foo: Path = ".foo".into();
+
+        // An empty port (bare `Argument(n)`) matches every path.
+        assert!(empty.is_extension_of(&empty));
+        assert!(deref.is_extension_of(&empty));
+        assert!(off_deref.is_extension_of(&empty));
+
+        // Exact match is an extension (zero-length suffix).
+        assert!(deref.is_extension_of(&deref));
+
+        // A strict extension: the port followed by one more component.
+        let deref_foo = deref.concat(&foo); // .deref.foo
+        assert!(deref_foo.is_extension_of(&deref));
+
+        // The motivating case: the args-array element `.[-40].deref` is an
+        // extension of the bare argument port but NOT of `.deref` -- the offset
+        // precedes the deref, so it is not a suffix of `.deref`. This is why the
+        // execve sink port must be the bare `Argument(1)`.
+        assert!(!off_deref.is_extension_of(&deref));
+
+        // A different leading component is not an extension.
+        assert!(!deref.is_extension_of(&foo));
+
+        // No offset arithmetic (unlike match_prefix): `.[8]` is not an extension
+        // of `.[4]`.
+        let off4: Path = ".[4]".into();
+        let off8: Path = ".[8]".into();
+        assert!(!off8.is_extension_of(&off4));
     }
 
     #[test]

@@ -298,6 +298,15 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Sends the methods in `self.methods[n]` to the SummaryBuilder
     fn visit_propagation(&mut self, n: usize, value: &serde_json::Value) {
         self.super_propagation(n, value);
+        // `wildcard` is sink-only; reject it on a propagation.
+        if value.get("wildcard").is_some() {
+            self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                index: n,
+                field_name: "wildcard".to_string(),
+                message: "'wildcard' is only valid on sink ports".to_string(),
+            });
+            return;
+        }
         if let Some(FindMethod::Methods) = self.find_method.get(n) {
             let input_str = match value.get("input") {
                 Some(v) => match v.as_str() {
@@ -398,6 +407,16 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             }
         };
 
+        // `wildcard` is sink-only; reject it here.
+        if value.get("wildcard").is_some() {
+            self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                index: n,
+                field_name: "wildcard".to_string(),
+                message: "'wildcard' is only valid on sink ports".to_string(),
+            });
+            return;
+        }
+
         match parse_port(port_str, n) {
             Ok((tag, index, ap)) => {
                 for func in matched_functions(&self.methods[n], self.vmt) {
@@ -407,6 +426,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         &ap,
                         label,
                         TaintDirection::Forward,
+                        false,
                     );
                 }
             }
@@ -455,6 +475,22 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             }
         };
 
+        // `wildcard` (sink-only, default true): match any access-path extension of
+        // the port. Must be a boolean if present.
+        let wildcard = match value.get("wildcard") {
+            None => true,
+            Some(v) => match v.as_bool() {
+                Some(b) => b,
+                None => {
+                    self.add_json_error(crate::error::JsonModelError::FieldNotString {
+                        index: n,
+                        field_name: "wildcard".to_string(),
+                    });
+                    return;
+                }
+            },
+        };
+
         match parse_port(port_str, n) {
             Ok((tag, index, ap)) => {
                 for func in matched_functions(&self.methods[n], self.vmt) {
@@ -464,6 +500,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         &ap,
                         label,
                         TaintDirection::Backward,
+                        wildcard,
                     );
                 }
             }
