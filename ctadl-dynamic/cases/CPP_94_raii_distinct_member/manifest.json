@@ -1,0 +1,6 @@
+{
+  "name": "CPP_94_raii_distinct_member",
+  "description": "C++ scope-exit / RAII destructors (spec 017), NEGATIVE: field sensitivity through the scope-exit destructor. The setter taints member `v`; `~Widget(){ w = 0; sink(w); }` sinks a DISTINCT member `w` (=0). The destructor runs at the block's `}` (a scope-exit call), but `v` and `w` are separate access paths, so the taint never crosses — the destructor sinks an untainted member. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

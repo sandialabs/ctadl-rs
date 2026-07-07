@@ -1,0 +1,6 @@
+{
+  "name": "CPP_92_raii_derived_scope_exit",
+  "description": "C++ scope-exit / RAII destructors (spec 017), POSITIVE: a stack `Derived d` (base `~Base(){}`) with `~Derived(){ sink(v); }` is tainted via an inherited setter. A stack object's dynamic type equals its declared type, so scope exit is the single-target exact-type destructor `Derived::~Derived` (no CHA), which sinks the tainted member at the block's `}`. Before spec 017 a stack destructor never ran (s=none d=flow); now s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

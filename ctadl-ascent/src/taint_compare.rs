@@ -1571,6 +1571,92 @@ mod tests {
         );
     }
 
+    /// Spec 017 (scope-exit / RAII destructors) acceptance, end to end — the soundness fix, mirrors
+    /// the CPP_91 dynamic case. A stack `Widget w` in a bare inner block is tainted (`w.set(source())`)
+    /// and has `~Widget(){ sink(v); }`. At runtime the destructor runs at the block's closing `}`
+    /// (no `delete`), sinking the tainted member. Before this slice destructors ran only at `delete`
+    /// (spec 016), so CTADL reported `s=none` while DFSan observed the flow (a soundness-disagree);
+    /// now the scope-exit destructor is emitted and the flow is reported.
+    #[test_log::test]
+    fn cpp_scope_exit_destructor_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Widget {
+                int v;
+                void set(int x) { v = x; }
+                ~Widget() { sink(v); }
+            };
+            int main() {
+                { Widget w; w.set(source()); }
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp scope-exit-destructor flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "a stack Widget's destructor runs at the block's `}}`, sinking the tainted member — a flow, got: {flows:?}"
+        );
+    }
+
+    /// Spec 017 (FR-2), end to end — a DERIVED stack object destroys as its exact declared type.
+    /// `Derived d` (base `~Base(){}`) with `~Derived(){ sink(v); }`; the destructor at scope exit is
+    /// exactly `Derived::~Derived`, sinking the tainted member. Mirrors the CPP_92 dynamic case.
+    #[test_log::test]
+    fn cpp_scope_exit_derived_destructor_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Base { int v; void set(int x) { v = x; } ~Base() {} };
+            struct Derived : Base { ~Derived() { sink(v); } };
+            int main() {
+                { Derived d; d.set(source()); }
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp scope-exit-derived-destructor flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "a stack Derived's `~Derived` runs at scope exit, sinking the tainted member — a flow, got: {flows:?}"
+        );
+    }
+
+    /// Spec 017 (FR-3), end-to-end negative — mirrors the CPP_94 dynamic case. The destructor sinks
+    /// a DISTINCT member `w` (set to 0) while the tainted member is `v`. Field sensitivity holds
+    /// through the scope-exit destructor call: no `v` -> `w` flow, so no `source` -> `sink` flow —
+    /// the scope-exit destructor edge invents no spurious taint.
+    #[test_log::test]
+    fn cpp_scope_exit_destructor_distinct_member_no_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Widget {
+                int v;
+                int w;
+                void set(int x) { v = x; }
+                ~Widget() { w = 0; sink(w); }
+            };
+            int main() {
+                { Widget wi; wi.set(source()); }
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp scope-exit-destructor distinct-member flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "the destructor sinks a distinct member `w`; the tainted member is `v` — no flow, got: {flows:?}"
+        );
+    }
+
     /// M8 (spec 015, FR-1/FR-3) acceptance, end to end: a `static` data member is a class-scoped
     /// GLOBAL, not a per-object field. A static setter writes it and a static getter reads it
     /// across separate calls (no object), so the source→sink path runs through the global

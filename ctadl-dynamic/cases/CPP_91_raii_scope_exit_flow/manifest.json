@@ -1,0 +1,6 @@
+{
+  "name": "CPP_91_raii_scope_exit_flow",
+  "description": "C++ scope-exit / RAII destructors (spec 017), POSITIVE: a stack `Widget w` in a bare inner block is tainted (`w.set(source())`) and has `~Widget(){ sink(v); }`. At runtime the destructor runs automatically at the block's closing `}` (no `delete`), sinking the tainted member. Spec 016 emitted destructors only at `delete`, so CTADL never ran `~Widget` for a stack object (s=none d=flow soundness-disagree); spec 017 emits a single-target exact-type `Widget::~Widget(w)` at the scope's fall-through exit, capturing the flow. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

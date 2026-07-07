@@ -1109,6 +1109,13 @@ fn emit_construction<'a>(
     );
     ctx.local_types
         .insert(obj_name.to_string(), class.to_string());
+    // Record this constructed stack object in the enclosing scope's destructor frame so its
+    // destructor runs at the scope's closing `}` (spec 017). Heap `new` objects go through
+    // [`emit_ctor_call`] directly (not here), so they are not recorded and get no scope-exit
+    // destructor. The frame is empty for C (no class objects), so this never fires on the C path.
+    if let Some(frame) = ctx.dtor_frames.last_mut() {
+        frame.push((obj_name.to_string(), class.to_string()));
+    }
     emit_ctor_call(ctx, program, scope_view, class, obj_name, ctor_args);
 }
 
@@ -1399,8 +1406,23 @@ fn cpp_lower_delete<'a>(
     } else {
         smallvec![format!("{defining}::~{}", simple_class_name(&defining))]
     };
-    // Emit `DirectCall <targets>(recv)` — the referent as the arg-0 by-ref receiver (a niladic
-    // destructor takes no other args); the void result goes to a throwaway temp.
+    // Emit `DirectCall <targets>(recv)` — the referent `*p` as the arg-0 by-ref receiver.
+    emit_dtor_call(ctx, program, scope_view, targets, recv.exp);
+    Ok(())
+}
+
+/// Emit a destructor `DirectCall <targets>(recv)` — the object as the arg-0 (`ByRef`) receiver (a
+/// destructor is niladic beyond its implicit `this`); the void result goes to a throwaway temp.
+/// Shared by the two destructor triggers that differ only in receiver and target set: `delete p`
+/// ([`cpp_lower_delete`], receiver `*p`, CHA-or-single targets) and scope exit ([`cpp_scope_exit`],
+/// the object itself, single exact-type target).
+fn emit_dtor_call(
+    ctx: &mut Context<'_>,
+    program: &mut Program,
+    scope_view: &ScopeView,
+    targets: SmallVec<[String; 4]>,
+    recv: Exp,
+) {
     let temp = ctx.allocator.next_temp();
     program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
         StatementKind::CallAssign {
@@ -1408,9 +1430,44 @@ fn cpp_lower_delete<'a>(
                 call_edges: CallEdges::Explicit(targets),
             },
             rets: vec![VariableRef::new_local(temp)].into(),
-            args: smallvec![recv.exp],
+            args: smallvec![recv],
         },
     ));
+}
+
+/// The C++ `scope_exit` hook (spec 017): at a scope's normal fall-through exit, emit the destructor
+/// of each class-typed **stack** (automatic) object constructed in that scope, in **reverse**
+/// construction order (LIFO, matching C++). Each object was recorded in the scope's destructor frame
+/// ([`Context::dtor_frames`]) at its birthplace (`walk_declaration`'s value declarator, or
+/// [`emit_construction`]); for each whose class (or a base) declares a destructor
+/// ([`dtor_defining_class`]) we emit a **single-target exact-type** destructor `DirectCall` — a
+/// stack object's dynamic type equals its declared type, so scope exit is always the non-virtual
+/// exact-type branch (no CHA; even a `virtual ~Base` stack `Base b` destroys as exactly
+/// `Base::~Base`), reusing [`emit_dtor_call`] with the object itself as the arg-0 (`ByRef`)
+/// receiver. A destructor-less object emits nothing (spec 014's no-op). The top frame is empty for
+/// C (which constructs no class objects), so this is inert on the C path.
+fn cpp_scope_exit<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    scope_view: &ScopeView,
+) -> anyhow::Result<(), Error> {
+    // Clone the current scope's frame so we can emit while mutating `ctx` (allocator/program); the
+    // frame itself is popped by `walk_compound_statement`.
+    let Some(frame) = ctx.dtor_frames.last().cloned() else {
+        return Ok(());
+    };
+    for (obj_name, class) in frame.into_iter().rev() {
+        // Only a class whose hierarchy declares a destructor produces a call; a destructor-less
+        // stack object emits nothing (unchanged from spec 014).
+        let Some(defining) = dtor_defining_class(ctx, &class) else {
+            continue;
+        };
+        let targets: SmallVec<[String; 4]> =
+            smallvec![format!("{defining}::~{}", simple_class_name(&defining))];
+        let recv =
+            Exp::AccessPath(ctx.build_access_path(&obj_name, Default::default(), scope_view));
+        emit_dtor_call(ctx, program, scope_view, targets, recv);
+    }
     Ok(())
 }
 
@@ -1436,6 +1493,10 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     // hierarchy stays 014's no-op. Only reached for a `delete_expression`, which never occurs in
     // a C tree, so the C path is untouched.
     delete_expr: cpp_lower_delete,
+    // Emit a stack object's destructor at its enclosing scope's fall-through exit (a single-target
+    // exact-type `DirectCall`, reverse construction order). Driven by the neutral `dtor_frames`
+    // stack (empty for C), so no scope ever emits a destructor on the C path.
+    scope_exit: cpp_scope_exit,
     // The C declarator shapes plus the C++-only `reference_declarator` (`T& r`), captured
     // `@is_ref_cpp`. The shared classifier maps a non-const reference to `ByRef` (write-back)
     // and a `const T&` to `ByVal` (inbound only), reading the grammar-neutral `const`

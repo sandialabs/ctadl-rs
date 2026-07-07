@@ -1,0 +1,6 @@
+{
+  "name": "CPP_93_raii_function_scope_exit",
+  "description": "C++ scope-exit / RAII destructors (spec 017), POSITIVE: the function body is itself a scope. In `void use(int x){ Widget w; w.set(x); }` the stack `Widget w` is destroyed at use()'s closing `}` (no inner block, no `delete`); `~Widget(){ sink(v); }` sinks the tainted member. Called `use(source())`, DFSan observes the flow; spec 017 emits `Widget::~Widget(w)` at the function body's fall-through exit. Before this slice a stack destructor never ran (s=none d=flow); now s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

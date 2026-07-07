@@ -584,6 +584,18 @@ struct GrammarHooks {
         &str,
         &ScopeView,
     ) -> anyhow::Result<(), Error>,
+    /// Emit the destructors of the class-typed **stack** (automatic) objects constructed in a
+    /// scope, at that scope's **normal fall-through exit** — a stack object's destructor runs at
+    /// the closing `}` (spec 017). The shared [`Context::walk_compound_statement`] calls this after
+    /// the statement loop (before the end-of-compound link) when the compound did **not** diverge
+    /// (a `return`/`break`/`continue` in the middle is this slice's out-of-scope early-exit case).
+    /// C has no destructors, so its hook is a **no-op**. C++ drains the current scope's destructor
+    /// frame ([`Context::dtor_frames`]) in **reverse** construction order (LIFO) and, for each
+    /// object whose class (or a base) declares a destructor, emits a single-target exact-type
+    /// destructor `DirectCall` (a stack object's dynamic type equals its declared type, so no CHA)
+    /// with the object itself as the arg-0 (`ByRef`) receiver. The frame is empty for C, so this is
+    /// inert on the C path. No language branch: driven by the neutral `classes`/`dtor_frames` state.
+    scope_exit: for<'a> fn(&mut Context<'a>, &mut Program, &ScopeView) -> anyhow::Result<(), Error>,
 }
 
 impl GrammarHooks {
@@ -605,6 +617,9 @@ impl GrammarHooks {
         // C has no `delete_expression` (nor destructors), so this is never invoked on the C path;
         // the no-op keeps `delete` a taint no-op exactly as spec 014 left it.
         delete_expr: |_ctx, _program, _node, _source, _scope_view| Ok(()),
+        // C constructs no class objects, so every destructor frame is empty and no scope exits ever
+        // emit a destructor — a no-op, exactly as before spec 017.
+        scope_exit: |_ctx, _program, _scope_view| Ok(()),
         // The historical C parameter query, verbatim: plain, pointer (`@is_ref`), array
         // (`@is_ref`), and function-pointer declarators. C has no `reference_declarator`.
         param_query: r#"
@@ -686,6 +701,19 @@ struct Context<'a> {
     /// only when a call is virtual — so it is a no-op on the C path and for non-polymorphic C++.
     /// Never branched on.
     subclasses: HashMap<String, Vec<String>>,
+    /// A stack of **destructor frames**, one per lexical scope currently being walked
+    /// ([`Context::walk_compound_statement`] pushes on entry, pops on exit). Each frame holds the
+    /// `(object-name, class-name)` of every class-typed **stack** (automatic) object constructed in
+    /// that scope, in construction order; at the scope's normal fall-through exit the C++
+    /// `scope_exit` hook drains the top frame in **reverse** order and emits each object's
+    /// destructor (spec 017). Recorded by the two birthplaces of a stack class object — the value
+    /// declarator branch of [`Context::walk_declaration`] (default/copy init, `Widget w;`) and
+    /// `cpp::emit_construction` (constructed, `Widget w(args)`) — both gated on the neutral
+    /// `classes` map (empty for C). A heap `new` object is *not* recorded (it flows through
+    /// `emit_ctor_call` directly), so it gets no scope-exit destructor. Empty for C (which
+    /// constructs no class objects), so the C path never emits a scope-exit destructor. Never
+    /// branched on.
+    dtor_frames: Vec<Vec<(String, String)>>,
 }
 
 impl Context<'_> {
@@ -707,6 +735,7 @@ impl Context<'_> {
             reference_aliases: HashMap::default(),
             overloads: HashMap::default(),
             subclasses: HashMap::default(),
+            dtor_frames: Vec::new(),
         }
     }
 
@@ -1091,20 +1120,59 @@ impl<'a> Context<'a> {
     ) -> Result<(), Error> {
         let mut scope_view = scope_view_meowsers.clone();
 
+        // Open a destructor frame for this scope: each class-typed stack object constructed here is
+        // recorded into it (by `walk_declaration`'s value declarator / `cpp::emit_construction`),
+        // and at the scope's normal fall-through exit its destructor is emitted by the `scope_exit`
+        // hook (spec 017). Pop it on **every** exit path (fall-through and the divergence early-out)
+        // so the frame stack stays balanced; the `walk_compound_body` split lets the pop run
+        // regardless of which path the body took. C constructs no class objects, so every frame is
+        // empty and this is inert on the C path.
+        self.dtor_frames.push(Vec::new());
+        let result = self.walk_compound_body(
+            source,
+            program,
+            &mut scope_view,
+            scope_view_meowsers,
+            compound,
+        );
+        self.dtor_frames.pop();
+        result
+    }
+
+    /// The body of [`Self::walk_compound_statement`], run inside an already-pushed destructor frame.
+    /// Walk each statement; on normal fall-through emit this scope's stack objects' destructors (via
+    /// the `scope_exit` hook) and link out of the compound. Split out so the caller can pop the
+    /// destructor frame on every return path — keeping [`Context::dtor_frames`] balanced across the
+    /// divergence early-out (a `return`/`break`/`continue` that ends the compound early, whose
+    /// scope-exit destructors are intentionally *not* emitted: that early-exit case is out of spec
+    /// 017's scope).
+    fn walk_compound_body(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        scope_view_meowsers: &ScopeView,
+        compound: &CompoundProxy<'_>,
+    ) -> Result<(), Error> {
         for &child in &compound.nodes {
             if !child.is_named() {
                 continue; // we skip , ( stuff like that...
             }
             // A statement that diverges (return/break/continue, or a label whose body
             // diverges) ends the compound; the trailing fall-through link is skipped.
-            if self.walk_statement(source, program, &mut scope_view, child)? {
+            if self.walk_statement(source, program, scope_view, child)? {
                 return Ok(());
             }
         }
 
+        // Normal fall-through: run this scope's stack objects' destructors (reverse construction
+        // order) at the closing `}`, then link out of the compound. The hook is a no-op for C.
+        let scope_exit = self.hooks.scope_exit;
+        scope_exit(self, program, scope_view)?;
+
         //walked off a compound_statement
         log::info!("EOCS linking blocks: ");
-        link_blocks(program, &scope_view, scope_view_meowsers, true)?;
+        link_blocks(program, scope_view, scope_view_meowsers, true)?;
 
         Ok(())
     }
@@ -1293,6 +1361,19 @@ impl<'a> Context<'a> {
                 // `p->m(…)` (whose receiver is the identifier `p`) would not dispatch.
                 let key = declarator_leaf_ident(decl_ident, source).unwrap_or(var_name);
                 self.local_types.insert(key.to_string(), class.clone());
+                // A class-typed **value** local (`Widget w;` / `Widget w = other;`) is a stack
+                // (automatic) object: record it in the enclosing scope's destructor frame so its
+                // destructor runs at scope exit (spec 017). Only a bare `identifier` declarator is a
+                // value object — a pointer (`Widget* p = …`, a `pointer_declarator`) or a reference
+                // (handled earlier as a `reference_declarator`) is *not*, and must not get a
+                // scope-exit destructor. Constructed objects (`Widget w(args)`) are recorded by
+                // `cpp::emit_construction` (the `construct` hook returned early, above). Neutral:
+                // `class_type` is `None` for C, so nothing is recorded and the C path is unchanged.
+                if decl_ident.kind() == "identifier"
+                    && let Some(frame) = self.dtor_frames.last_mut()
+                {
+                    frame.push((key.to_string(), class.clone()));
+                }
             }
             if let Some(vc) = nest_decl.child_by_field_name("value") {
                 self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;

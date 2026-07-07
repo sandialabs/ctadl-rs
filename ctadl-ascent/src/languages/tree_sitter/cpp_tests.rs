@@ -2203,3 +2203,189 @@ fn cpp_distinct_static_members_are_distinct_globals() {
     check_func_assign_or_update(&prog, "Counter::seta", "$globals.Counter::a", ["@p0"]);
     check_func_returns_path(&prog, "Counter::getb", "$globals.Counter::b");
 }
+
+// ---- Spec 017: scope-exit / RAII destructors -------------------------------
+// A class-typed STACK (automatic) object's destructor runs at the closing `}` of its enclosing
+// scope — no `delete`. The `scope_exit` hook emits a single-target exact-type destructor
+// `DirectCall` (the object as the arg-0 by-ref receiver) at the scope's normal fall-through exit,
+// in reverse construction order. These assert the emitted call shape directly; the end-to-end
+// source→sink flow is in `taint_compare::tests::cpp_scope_exit_*`.
+
+#[test_log::test]
+fn cpp_scope_exit_destructor_emitted_with_object_receiver() {
+    // FR-1: a stack `Widget w` in a bare inner block gets its destructor emitted at the block's
+    // `}` — a `DirectCall Widget::~Widget(w)` after the setter call, with the OBJECT itself (`w`,
+    // not `*p`) as the arg-0 by-ref receiver, so the destructor's `this.v` read lands on the
+    // tainted member.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Widget {
+            int v;
+            void set(int x) { v = x; }
+            ~Widget() { sink(v); }
+        };
+        int main() {
+            { Widget w; w.set(source()); }
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    // Exactly one destructor call site, single-target exact-type `Widget::~Widget`.
+    let dtor_edges: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .map(|(e, _)| e)
+        .filter(|e| e.iter().any(|x| x.contains("::~")))
+        .collect();
+    assert_eq!(
+        dtor_edges,
+        vec![vec!["Widget::~Widget".to_string()]],
+        "a stack Widget must get exactly one single-target scope-exit destructor\n{prog}"
+    );
+    // The receiver is the object `w` itself.
+    check_direct_call_arg0(&prog, "main", "Widget::~Widget", "w");
+}
+
+#[test_log::test]
+fn cpp_scope_exit_destructor_less_stack_object_emits_no_call() {
+    // FR-1 (negative): a stack object of a class with NO destructor emits nothing at scope exit —
+    // the destructor frame records it, but the `scope_exit` hook finds no destructor in the
+    // hierarchy and emits no call (spec 014's no-op). The setter dispatch survives.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Plain {
+            int v;
+            void set(int x) { v = x; }
+        };
+        int main() {
+            { Plain w; w.set(source()); }
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    let callees: Vec<String> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .flat_map(|(e, _)| e)
+        .collect();
+    assert!(
+        callees.iter().any(|c| c == "Plain::set"),
+        "the setter dispatch must survive; got {callees:?}\n{prog}"
+    );
+    assert!(
+        !callees.iter().any(|c| c.contains("::~")),
+        "a destructor-less stack object must emit no scope-exit destructor; got {callees:?}\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_scope_exit_destructors_are_reverse_construction_order() {
+    // FR-1: two stack objects `a` then `b` in one scope are destroyed in REVERSE construction
+    // order (LIFO) — `B::~B(b)` before `A::~A(a)` — matching C++.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct A { int v; void set(int x) { v = x; } ~A() { sink(v); } };
+        struct B { int v; void set(int x) { v = x; } ~B() { sink(v); } };
+        int main() {
+            { A a; B b; a.set(source()); b.set(source()); }
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    let dtors: Vec<String> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .flat_map(|(e, _)| e)
+        .filter(|e| e.contains("::~"))
+        .collect();
+    assert_eq!(
+        dtors,
+        vec!["B::~B".to_string(), "A::~A".to_string()],
+        "objects are destroyed in reverse construction order (b before a)\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_scope_exit_derived_object_destroys_as_exact_declared_type() {
+    // FR-2: a stack `Derived d` (base `~Base`) destroys as exactly `Derived::~Derived` — a stack
+    // object's dynamic type equals its declared type, so scope exit is the single-target exact-type
+    // destructor (no CHA, even though `~Base` exists in the hierarchy).
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Base { int v; void set(int x) { v = x; } ~Base() {} };
+        struct Derived : Base { ~Derived() { sink(v); } };
+        int main() {
+            { Derived d; d.set(source()); }
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    let dtor_edges: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .map(|(e, _)| e)
+        .filter(|e| e.iter().any(|x| x.contains("::~")))
+        .collect();
+    assert_eq!(
+        dtor_edges,
+        vec![vec!["Derived::~Derived".to_string()]],
+        "a stack Derived destroys as exactly Derived::~Derived (single-target, no CHA)\n{prog}"
+    );
+    check_direct_call_arg0(&prog, "main", "Derived::~Derived", "d");
+}
+
+#[test_log::test]
+fn cpp_scope_exit_function_body_scope() {
+    // FR-2: the function body is itself a scope — a `Widget w` local is destroyed at the function's
+    // closing `}` (no explicit inner block). The destructor call is emitted in `use`, not `main`.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Widget { int v; void set(int x) { v = x; } ~Widget() { sink(v); } };
+        void use(int x) { Widget w; w.set(x); }
+        int main() { use(source()); return 0; }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_direct_call_arg0(&prog, "use", "Widget::~Widget", "w");
+    // No destructor is emitted in `main` (it constructs no stack object).
+    let main_dtors: Vec<String> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .flat_map(|(e, _)| e)
+        .filter(|e| e.contains("::~"))
+        .collect();
+    assert!(
+        main_dtors.is_empty(),
+        "main constructs no stack object, so it emits no destructor; got {main_dtors:?}\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_heap_pointer_gets_no_scope_exit_destructor() {
+    // FR-4: a heap object reached through a pointer (`Box* p = new Box()`) is NOT a stack object —
+    // it must get no spurious scope-exit destructor. With a single explicit `delete p`, exactly ONE
+    // destructor call is emitted (the delete's), not two. The pointer `p` is not recorded as a
+    // value stack object.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        struct Box { int v; void set(int x) { v = x; } ~Box() { sink(v); } };
+        int main() {
+            Box* p = new Box();
+            p->set(source());
+            delete p;
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    let dtor_edges: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .map(|(e, _)| e)
+        .filter(|e| e.iter().any(|x| x.contains("::~")))
+        .collect();
+    assert_eq!(
+        dtor_edges,
+        vec![vec!["Box::~Box".to_string()]],
+        "a heap pointer's object is destroyed only by its explicit `delete` (one call), \
+         with no spurious scope-exit destructor\n{prog}"
+    );
+}
