@@ -379,38 +379,50 @@ fn build_path(
     id_to_name: &BTreeMap<u32, String>,
 ) -> Vec<CtadlDataResult> {
     let mut path = Vec::new();
-    for &id in path_ids {
-        let node = &id_to_node[id as usize];
+    for window in path_ids.windows(2) {
+        let in_id = window[0];
+        let out_id = window[1];
 
-        let var_str = match node.1.kind() {
+        let in_node = &id_to_node[in_id as usize];
+        let out_node = &id_to_node[out_id as usize];
+
+        let in_var_str = match in_node.1.kind() {
             FlowVariableKind::Local(name) => name.to_string(),
-            _ => format!("{}", node.1),
+            _ => format!("{}", in_node.1),
+        };
+        let out_var_str = match out_node.1.kind() {
+            FlowVariableKind::Local(name) => name.to_string(),
+            _ => format!("{}", out_node.1),
         };
 
-        let mth_name = id_to_name
-            .get(&node.0.id)
-            .cloned()
-            .unwrap_or_else(|| format!("{}", node.0.id));
+        let in_mth_name = id_to_name.get(&in_node.0.id).cloned().unwrap_or_else(|| format!("{}", in_node.0.id));
+        let out_mth_name = id_to_name.get(&out_node.0.id).cloned().unwrap_or_else(|| format!("{}", out_node.0.id));
 
-        let in_node = CtadlNodeInfo {
-            var: Some(var_str),
-            mth: Some(mth_name.clone()),
-            class: None,
-            ap: Some(node.2.to_dot_string()),
+        let in_class = in_mth_name.split(";->").next().map(|s| s.to_string());
+        let out_class = out_mth_name.split(";->").next().map(|s| s.to_string());
+
+        let in_node_info = CtadlNodeInfo {
+            var: Some(in_var_str),
+            mth: Some(in_mth_name.clone()),
+            class: in_class,
+            ap: Some(in_node.2.to_dot_string()),
+        };
+
+        let out_node_info = CtadlNodeInfo {
+            var: Some(out_var_str),
+            mth: Some(out_mth_name.clone()),
+            class: out_class,
+            ap: Some(out_node.2.to_dot_string()),
         };
 
         let result = SarifResult::builder()
-            .message(
-                Message::builder()
-                    .text(format!("Node {} {}", mth_name, node.1))
-                    .build(),
-            )
+            .message(Message::builder().text(format!("Flow from {} {} to {} {}", in_mth_name, in_node.1, out_mth_name, out_node.1)).build())
             .build();
 
         path.push(CtadlDataResult {
             result,
-            in_node: Some(in_node),
-            out_node: None,
+            in_node: Some(in_node_info),
+            out_node: Some(out_node_info),
         });
     }
     path
