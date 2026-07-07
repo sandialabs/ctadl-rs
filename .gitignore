@@ -4,3 +4,4 @@ ascent/**
 /.opencode
 /results.sarif
 .scratch/**
+.claude/**
