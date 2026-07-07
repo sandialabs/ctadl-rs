@@ -305,6 +305,28 @@ compiles these with clang regardless, so each case already carries the runtime g
 compare against the moment the frontend learns to ingest it (the harness will then report
 `resolved-known-frontend-gap`).
 
+## char_literal — character literals (`'a'`) don't parse (RESOLVED)
+
+- **Status:** **resolved** (2026-07-07, frontend lowering). Not found by the differential loop but
+  by a manual frontend-coverage survey; it has no DFSan case (a char literal is a constant and
+  carries no taint). A candidate follow-up is a generator transform that emits char literals so the
+  loop stress-tests it going forward.
+- **Was:** any program containing a character literal failed with `ERR 78: Unsupported expression
+  type: char_literal` — `flatten_expr` matched `number_literal`/`string_literal` but not
+  `char_literal`, so `char c = 'a';` (everyday C) hit the catch-all and the whole program failed to
+  ingest.
+- **Fix:** add `char_literal` to the `number_literal | string_literal` arm in `flatten_expr`
+  (`ctadl-ascent/src/languages/tree_sitter/mod.rs`) — lower it to an `Exp::Str` constant like a
+  numeric literal (no taint). Unit tests `char_literal_ingests_as_constant`,
+  `char_literal_in_expression_flows` in `tests.rs`. Shipped to tfb as
+  `.scratch/char-literal-frontend.patch`.
+
+## Other still-open ingestion gaps (found by the 2026-07-07 survey, no cases yet)
+
+`compound_literal` (`(int[]){...}`), `_Generic` (C11), `offsetof`, nested initializer designators
+(`.a.b = v`), array-range designators (`[0...3]`). Lower-priority / niche; prefer to let a
+generalized generator surface the ones that matter rather than pre-emptively fixing them.
+
 ## initializer_list — aggregate `{...}` initializers don't parse (OPEN)
 
 - **Status:** **open.** Allowlisted as `"known_frontend_gap": "initializer_list"` in

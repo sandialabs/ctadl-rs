@@ -1804,7 +1804,13 @@ impl<'a> Context<'a> {
             "pointer_declarator" | "function_declarator" | "array_declarator" => {
                 self.flatten_nested_decl(program, node, source, scope_view)
             }
-            "number_literal" | "string_literal" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
+            // A character literal (`'a'`, `'\n'`) is a compile-time constant, exactly like a
+            // numeric literal, so lower it to an `Exp::Str` constant (carries no taint). Without
+            // this arm any program containing a char literal hit `flatten_expr`'s catch-all and
+            // failed ingestion (ERR 78) -- a broad gap, since char literals are everyday C.
+            "number_literal" | "string_literal" | "char_literal" => {
+                Ok(Exp::Str(ArcIntern::<str>::from(text)))
+            }
             "unary_expression" => {
                 let ch = node
                     .child_by_field_name("argument")
