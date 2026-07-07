@@ -121,7 +121,7 @@ fn test_basic2_source_sink() {
             .taint
             .iter()
             .find(|r| r.0 == h_id
-                && r.4.clone().to_taint_endpoint(&source_info.sites) == ss.source
+                && (*r.4).clone().to_taint_endpoint(&source_info.sites) == ss.source
                 && r.2 == ss.sink.vertex.0
                 && r.3 == ss.sink.vertex.1)
             .is_some()
@@ -131,7 +131,7 @@ fn test_basic2_source_sink() {
             .taint
             .iter()
             .find(|r| r.0 == h_id
-                && r.4.clone().to_taint_endpoint(&source_info.sites) == ss.sink
+                && (*r.4).clone().to_taint_endpoint(&source_info.sites) == ss.sink
                 && r.2 == ss.source.vertex.0
                 && r.3 == ss.source.vertex.1)
             .is_some()

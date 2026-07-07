@@ -207,7 +207,7 @@ pub fn query_check(
 /// directly.
 fn check_human_profile_paths(
     format_facts: &crate::query_engine::formatter::FormatFacts,
-    taint_results: &crate::query_engine::formatter::TaintAnalysisResults,
+    taint_results: &crate::query_engine::formatter::TaintAnalysisResults<'_>,
     endpoint_requires: &EndpointRequires,
     sites: &fx::IdMap,
 ) -> (usize, usize) {
@@ -392,12 +392,19 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
     // Human-profile formatter check: every declared source/sink pair that is
     // required to flow must surface as a source -> sink path in the human SARIF
     // profile.
-    let taint_results = formatter::TaintAnalysisResults::from_query_result(&query_result);
+    // `query_result` is borrowed here, so the facts take clones; the
+    // taint-results view then lends the taint graph out of the facts rather
+    // than cloning it a second time.
     let format_facts = format_facts_builder
         .taint(query_result.taint.clone())
         .taint_edge(query_result.taint_edge.clone())
         .build()
         .expect("building format facts");
+    let taint_results = formatter::TaintAnalysisResults::new(
+        &format_facts.taint_edge,
+        query_result.tainted_insn.clone(),
+        query_result.absorbing_functions.clone(),
+    );
     let (hpass, hfail) = check_human_profile_paths(
         &format_facts,
         &taint_results,
