@@ -52,11 +52,7 @@ fn build_query_endpoints(
     let func_num_params = facts.compute_arg_arity();
 
     // Field access paths that actually occur on each `(function, variable)` vertex
-    // in the index graph. Used to expand a wildcard sink port into only the paths
-    // that live on the sink call's *argument* vertex -- not the whole program's
-    // path universe. Seeding the entire universe (~23k paths) onto every wildcard
-    // sink call arg is what blew the query up to tens of GB, since each seed is a
-    // distinct endpoint carried through the taint fixpoint.
+    // in the index graph.
     let mut vertex_paths: HashMap<(facts::FunctionId, FlowVariable), BTreeSet<facts::Path>> =
         HashMap::new();
     for (func, v1, p1, v2, p2) in assign_like {
@@ -104,10 +100,7 @@ fn build_query_endpoints(
         // argument, that extends the port. Sinks seed *backward* taint and the
         // formatter resolves each endpoint vertex to a graph node by exact `Path`
         // equality, so the wildcard cannot be left abstract -- it is expanded below
-        // into concrete paths. Crucially the expansion is scoped to the paths that
-        // actually live on the anchored argument vertex (`vertex_paths`), so it
-        // stays proportional to that argument's fields rather than the whole
-        // program's path universe.
+        // into concrete paths.
         let expand_wildcard = wildcard && direction == facts::TaintDirection::Backward;
 
         // Build label and direction.
