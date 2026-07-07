@@ -790,11 +790,13 @@ fn cpp_construction_three_syntaxes_all_call_ctor() {
 }
 
 #[test_log::test]
-fn cpp_destructor_definition_parses_and_is_not_lowered() {
-    // FR-1: a destructor *definition* `~Box(){}` must parse (no tree-sitter error) and must
-    // not be mis-lowered as a function — only the constructor and methods are lowered. The
-    // C++ path stays clean: there is no free function named `Box` (the constructor is
-    // `Box::Box`) and no `~Box`.
+fn cpp_destructor_definition_parses_and_is_lowered() {
+    // Spec 016 FR-1: a destructor *definition* `~Box(){}` parses (no tree-sitter error) and is
+    // lowered as the niladic `this`-method `Box::~Box` — an implicit `this` (`ByRef`) param 0 and
+    // no other params. (Before spec 016 it was ingested-but-not-lowered; spec 014's `delete` was a
+    // no-op. Now `delete p` invokes it, so it must be a real function.) The C++ path stays clean:
+    // there is no free function named `Box` (the constructor is `Box::Box`) and the destructor's
+    // IR name is the qualified `Box::~Box`, not a bare `~Box`.
     let src = r"
         struct Box {
             int v;
@@ -807,20 +809,22 @@ fn cpp_destructor_definition_parses_and_is_not_lowered() {
         !has_error,
         "destructor definition should parse without error"
     );
-    // Constructor + getter lowered as members; the destructor is ingested but not lowered.
+    // Constructor + getter + destructor lowered as members. The destructor is a niladic
+    // `this`-method: exactly one `ByRef` param (`this`), no others.
     check_func_params(
         &prog,
         "Box::Box",
         &[ParameterType::ByRef, ParameterType::ByVal],
     );
     check_func_returns_path(&prog, "Box::get", "@p0.v");
+    check_func_params(&prog, "Box::~Box", &[ParameterType::ByRef]);
     assert!(
         function_named(&prog, "Box").is_none(),
         "the inline constructor must not leak as a free function `Box`\n{prog}"
     );
     assert!(
         function_named(&prog, "~Box").is_none(),
-        "the destructor must not be lowered as a function\n{prog}"
+        "the destructor's IR name is the qualified `Box::~Box`, not a bare `~Box`\n{prog}"
     );
 }
 
@@ -1923,6 +1927,162 @@ fn cpp_delete_parses_and_moves_no_taint() {
     assert!(
         !callees.iter().any(|c| c.contains("delete")),
         "delete must not emit a call edge; got {callees:?}\n{prog}"
+    );
+}
+
+// ---- Spec 016: virtual destructors (`delete` invokes the destructor chain) -----------------
+
+#[test_log::test]
+fn cpp_virtual_destructor_recorded_and_this_param_shape() {
+    // Spec 016 FR-1: `virtual ~Base(){ sink(v); }` lowers `Base::~Base` as a niladic `this`-method
+    // — exactly one `ByRef` param (`this`), no others — and its body reads the member through
+    // `this` (`@p0.v`) into the sink. The `virtual` keyword marks it for CHA, exercised by the
+    // delete-dispatch test below.
+    let src = r#"
+        int source();
+        void sink(int);
+        struct Base {
+            int v;
+            void set(int x) { v = x; }
+            virtual ~Base() { sink(v); }
+        };
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_func_params(&prog, "Base::~Base", &[ParameterType::ByRef]);
+    // The destructor body sinks the member read through `this` (arg-0 receiver).
+    check_direct_call_arg0(&prog, "Base::~Base", "sink", "@p0.v");
+}
+
+#[test_log::test]
+fn cpp_delete_virtual_destructor_is_multi_target_cha() {
+    // Spec 016 FR-2: `Base* p = new Derived(); delete p;` with a `virtual ~Base` overridden by
+    // `~Derived`. `delete p` invokes the destructor of `*p`; because the destructor is virtual it
+    // is a CHA multi-target `DirectCall` over the static type `Base`'s subtree destructors
+    // (`Base::~Base`, `Derived::~Derived`) — a sound superset of the single runtime chain — with
+    // the heap object (aliased by `p`) as the arg-0 by-ref receiver. This is the soundness fix:
+    // static dispatch would never run `~Derived`, missing the sink.
+    let src = r#"
+        int source();
+        void sink(int);
+        struct Base {
+            int v;
+            void set(int x) { v = x; }
+            virtual ~Base() {}
+        };
+        struct Derived : Base {
+            ~Derived() { sink(v); }
+        };
+        int main() {
+            Base* p = new Derived();
+            p->set(source());
+            delete p;
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    let calls = direct_calls_in(&prog, "main");
+    let dtor_edges: Vec<&Vec<String>> = calls
+        .iter()
+        .map(|(edges, _)| edges)
+        .filter(|edges| edges.iter().any(|e| e.contains("::~")))
+        .collect();
+    assert_eq!(
+        dtor_edges.len(),
+        1,
+        "expected exactly one delete/destructor call site\n{prog}"
+    );
+    let edges = dtor_edges[0];
+    assert!(
+        edges.iter().any(|e| e == "Base::~Base") && edges.iter().any(|e| e == "Derived::~Derived"),
+        "virtual delete must dispatch to BOTH Base::~Base and Derived::~Derived (CHA); got {edges:?}\n{prog}"
+    );
+    // The delete's arg-0 receiver is the same heap object the setter wrote (the alias of `p`).
+    let set_arg0 = calls
+        .iter()
+        .find(|(e, _)| e.iter().any(|c| c == "Base::set"))
+        .and_then(|(_, a)| a.first())
+        .cloned();
+    let del_arg0 = calls
+        .iter()
+        .find(|(e, _)| e.iter().any(|c| c == "Base::~Base"))
+        .and_then(|(_, a)| a.first())
+        .cloned();
+    assert!(
+        set_arg0.is_some() && set_arg0 == del_arg0,
+        "delete's receiver must be the same heap object as the setter's; \
+         set={set_arg0:?} del={del_arg0:?}\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_delete_exact_type_non_virtual_is_single_target() {
+    // Spec 016 FR-2: an exact-type `Box* p = new Box(); delete p;` with a non-virtual `~Box`
+    // invokes the single `Box::~Box` — no CHA, no subtree — with the heap object as arg-0.
+    let src = r#"
+        int source();
+        void sink(int);
+        struct Box {
+            int v;
+            void set(int x) { v = x; }
+            ~Box() { sink(v); }
+        };
+        int main() {
+            Box* p = new Box();
+            p->set(source());
+            delete p;
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    let dtor_edges: Vec<Vec<String>> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .map(|(e, _)| e)
+        .filter(|e| e.iter().any(|x| x.contains("::~")))
+        .collect();
+    assert_eq!(
+        dtor_edges.len(),
+        1,
+        "expected exactly one destructor call site\n{prog}"
+    );
+    assert_eq!(
+        dtor_edges[0],
+        vec!["Box::~Box".to_string()],
+        "exact-type non-virtual delete is single-target Box::~Box\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_delete_destructor_less_class_emits_no_call() {
+    // Spec 016 FR-2 (negative): `delete p` on a class with **no** destructor emits no call edge —
+    // unchanged from spec 014's no-op. The setter/getter dispatch survive; nothing named `::~`.
+    let src = r#"
+        int source();
+        void sink(int);
+        struct Plain {
+            int v;
+            void set(int x) { v = x; }
+            int get() { return v; }
+        };
+        int main() {
+            Plain* p = new Plain();
+            p->set(source());
+            sink(p->get());
+            delete p;
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    let callees: Vec<String> = direct_calls_in(&prog, "main")
+        .into_iter()
+        .flat_map(|(edges, _)| edges)
+        .collect();
+    assert!(
+        callees.iter().any(|c| c == "Plain::set") && callees.iter().any(|c| c == "Plain::get"),
+        "expected the setter/getter dispatch to survive; got {callees:?}\n{prog}"
+    );
+    assert!(
+        !callees.iter().any(|c| c.contains("::~")),
+        "a destructor-less delete must emit no destructor call; got {callees:?}\n{prog}"
     );
 }
 

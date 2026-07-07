@@ -1500,6 +1500,77 @@ mod tests {
         );
     }
 
+    /// Spec 016 (virtual destructors) acceptance, end to end — the soundness fix, mirrors the
+    /// CPP_87 dynamic case. A `virtual ~Base` overridden by `~Derived(){ sink(v); }`; a `Derived`
+    /// heap object through a `Base*` is tainted (`p->set(source())`) then `delete p`. `delete`
+    /// runs the destructor, and since it is virtual the CHA target set includes `Derived::~Derived`
+    /// — which sinks the tainted member. Before this slice `delete` was a no-op, so CTADL reported
+    /// `s=none` while DFSan observed the flow (a soundness-disagree); now the flow is reported.
+    #[test_log::test]
+    fn cpp_virtual_destructor_flow_is_reported() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Base {
+                int v;
+                void set(int x) { v = x; }
+                virtual ~Base() {}
+            };
+            struct Derived : Base {
+                ~Derived() { sink(v); }
+            };
+            int main() {
+                Base* p = new Derived();
+                p->set(source());
+                delete p;
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp virtual-destructor flows: {flows:?}");
+        assert!(
+            flows.iter().any(|f| f.label == "Test"),
+            "delete of a Base* to a Derived must run ~Derived (CHA), sinking the tainted member — a flow, got: {flows:?}"
+        );
+    }
+
+    /// Spec 016 (FR-3), end-to-end negative — mirrors the CPP_90 dynamic case. The destructor sinks
+    /// a member that was never tainted (`w`, untouched), while a distinct member `v` is tainted.
+    /// Field sensitivity holds through the destructor call: no `v` -> `w` flow, so no `source` ->
+    /// `sink` flow — the CHA destructor edge invents no spurious taint.
+    #[test_log::test]
+    fn cpp_virtual_destructor_untainted_member_no_flow() {
+        let src = r#"
+            extern "C" int source();
+            extern "C" void sink(int);
+            struct Base {
+                int v;
+                int w;
+                void set(int x) { v = x; }
+                virtual ~Base() {}
+            };
+            struct Derived : Base {
+                ~Derived() { sink(w); }
+            };
+            int main() {
+                Base* p = new Derived();
+                p->set(source());
+                delete p;
+                return 0;
+            }
+            extern "C" int source() { return 0; }
+            extern "C" void sink(int x) { return; }
+        "#;
+        let flows = analyze_cpp_flows(src, test_c_path("markers.json")).expect("analyze");
+        log::info!("cpp virtual-destructor untainted-member flows: {flows:?}");
+        assert!(
+            flows.is_empty(),
+            "the destructor sinks an untainted member `w`; the tainted member is `v` — no flow, got: {flows:?}"
+        );
+    }
+
     /// M8 (spec 015, FR-1/FR-3) acceptance, end to end: a `static` data member is a class-scoped
     /// GLOBAL, not a per-object field. A static setter writes it and a static getter reads it
     /// across separate calls (no object), so the source→sink path runs through the global

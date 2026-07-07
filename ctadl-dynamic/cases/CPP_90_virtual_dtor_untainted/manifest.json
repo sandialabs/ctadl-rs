@@ -1,0 +1,6 @@
+{
+  "name": "CPP_90_virtual_dtor_untainted",
+  "description": "C++ virtual destructors (spec 016), NEGATIVE: the destructor sinks a member that was never tainted. A source exists (`tainted`) but never reaches the object; member `v` is set to a constant 0 and `~Derived(){ sink(v); }` sinks that untainted v at `delete p`. The destructor edge invents no taint the object never carried. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

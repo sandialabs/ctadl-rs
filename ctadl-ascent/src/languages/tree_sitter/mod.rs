@@ -464,6 +464,20 @@ struct ClassInfo {
     /// to — so taint written through one method is read by another. Empty for C and for every
     /// class with no static members, so the resolution is unchanged there. Never branched on.
     static_members: HashSet<String>,
+    /// Whether the class declares its **own** destructor `~Class(){…}` — lowered as the niladic
+    /// `this`-method `Class::~Class` (spec 016). Set by the C++ discovery hook; consulted by the
+    /// `delete_expr` hook so `delete p` invokes the destructor of `p`'s pointed-to object (a
+    /// `DirectCall` with the referent as arg-0 receiver). This records only the class's *own*
+    /// destructor (not an inherited one), so the destructor-call gatherer can find each class
+    /// that contributes a `Sub::~Sub` edge to the chain. `false` for C (no destructors) and for
+    /// any C++ class without a user destructor, so `delete` stays 014's no-op there.
+    has_dtor: bool,
+    /// Whether the class's own destructor is declared **`virtual`** (`virtual ~Base(){…}`, or a
+    /// `~Derived() override`). A `delete p` through a static type whose destructor is virtual (on
+    /// that type or an ancestor) dispatches by class-hierarchy analysis — the subtree's `Sub::~Sub`
+    /// destructors — rather than the single static-type destructor (spec 016). `false` for C and
+    /// for every non-virtual destructor, so a non-polymorphic `delete` stays single-target.
+    dtor_virtual: bool,
 }
 
 /// The object a C++ instance-method receiver resolves to: the access-path expression to
@@ -553,6 +567,23 @@ struct GrammarHooks {
     /// before the first `functions.entry(...)`.
     collect_overloads:
         for<'a, 't> fn(&mut Context<'a>, &'a str, Node<'t>) -> anyhow::Result<(), Error>,
+    /// Lower a C++ `delete p;` — destroying a heap object runs its destructor(s) (spec 016).
+    /// The shared `delete_expression` arm calls this and then yields a throwaway temp for the
+    /// expression's (void) value. C has no `delete`, so its hook is a **no-op** — `delete` never
+    /// occurs in a C tree and the arm is inert for C, exactly as in spec 014. C++ uses it to emit
+    /// the destructor call: when the pointer's static class (or a base) declares a destructor, a
+    /// `DirectCall` over the static type's subtree destructors for a **virtual** destructor (CHA),
+    /// or the single static-type destructor otherwise, with the referent `*p` as the arg-0
+    /// (`ByRef`) receiver — so taint a destructor body moves at `delete` time is captured. A
+    /// hierarchy with no destructor emits nothing (014's no-op). Driven by the neutral
+    /// `classes`/`subclasses`/`local_types` maps (empty for C), so no language branch.
+    delete_expr: for<'a, 't> fn(
+        &mut Context<'a>,
+        &mut Program,
+        Node<'t>,
+        &str,
+        &ScopeView,
+    ) -> anyhow::Result<(), Error>,
 }
 
 impl GrammarHooks {
@@ -571,6 +602,9 @@ impl GrammarHooks {
         // C has no overloading: the `overloads` map stays empty and `overload_name` is the
         // identity, so every C (and every non-overloaded) name is registered/resolved bare.
         collect_overloads: |_ctx, _source, _root| Ok(()),
+        // C has no `delete_expression` (nor destructors), so this is never invoked on the C path;
+        // the no-op keeps `delete` a taint no-op exactly as spec 014 left it.
+        delete_expr: |_ctx, _program, _node, _source, _scope_view| Ok(()),
         // The historical C parameter query, verbatim: plain, pointer (`@is_ref`), array
         // (`@is_ref`), and function-pointer declarators. C has no `reference_declarator`.
         param_query: r#"
@@ -2168,11 +2202,17 @@ impl<'a> Context<'a> {
                 let x = self.allocator.next_temp();
                 self.collect_call(program, node, source, scope_view, x)
             }
-            // C++ `delete p;` — destroying a heap object is a taint **no-op** (the object is
-            // gone; its taint is irrelevant afterward), so this lowers to nothing that moves
-            // taint and yields a fresh throwaway temp. A `delete_expression` node never occurs
-            // under the C grammar, so this arm is inert for C (like the `this` arm above).
+            // C++ `delete p;` — destroying a heap object runs its destructor(s). The
+            // `delete_expr` hook emits the destructor call (a CHA multi-target `DirectCall` for a
+            // virtual destructor, the single static-type destructor otherwise, with the referent
+            // `*p` as the arg-0 receiver) so taint the destructor body moves at `delete` time is
+            // captured (spec 016); a hierarchy with no destructor emits nothing (014's no-op).
+            // `delete` yields no value, so this still returns a fresh throwaway temp. The hook is
+            // a no-op for C — a `delete_expression` node never occurs under the C grammar, so this
+            // arm is inert for C (like the `this` arm above), no language branch.
             "delete_expression" => {
+                let delete_expr = self.hooks.delete_expr;
+                delete_expr(self, program, node, source, scope_view)?;
                 let temp = self.allocator.next_temp();
                 Ok(Exp::AccessPath(self.build_access_path(
                     temp.as_str(),

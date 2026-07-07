@@ -1,0 +1,6 @@
+{
+  "name": "CPP_87_virtual_dtor_flow",
+  "description": "C++ virtual destructors (spec 016), POSITIVE: `Base* p = new Derived(); p->set(source()); delete p;` with `virtual ~Base` and `~Derived(){ sink(v); }`. The virtual destructor makes `delete p` run the dynamic type's chain (~Derived then ~Base), and ~Derived sinks the tainted member. Before spec 016 `delete` was a no-op (s=none d=flow soundness-disagree); now CTADL models it as a CHA call over the subtree destructors, capturing the flow. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

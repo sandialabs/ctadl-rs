@@ -1,0 +1,6 @@
+{
+  "name": "CPP_88_virtual_dtor_base_in_chain",
+  "description": "C++ virtual destructors (spec 016), POSITIVE: the BASE destructor sinks. `virtual ~Base(){ sink(v); }` with an empty `~Derived(){}`; `Base* p = new Derived(); p->set(source()); delete p;`. At runtime delete runs ~Derived then ~Base, and ~Base sinks the tainted member. CTADL's CHA target set for the virtual delete includes the static-type destructor Base::~Base (the base in the chain), so the base destructor's sink is captured. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

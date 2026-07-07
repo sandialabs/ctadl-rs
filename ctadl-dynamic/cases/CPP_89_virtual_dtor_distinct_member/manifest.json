@@ -1,0 +1,6 @@
+{
+  "name": "CPP_89_virtual_dtor_distinct_member",
+  "description": "C++ virtual destructors (spec 016), NEGATIVE: field sensitivity through the destructor. The setter taints member `v`; `~Derived(){ sink(w); }` sinks a DISTINCT member `w` (=0). The destructor runs at `delete p` (a virtual CHA call), but `v` and `w` are separate access paths, so the taint never crosses -- the destructor sinks an untainted member. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

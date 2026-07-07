@@ -513,22 +513,52 @@ fn cpp_collect_methods<'a>(
                     };
                     let is_ctor = name_node.kind() == "identifier"
                         && to_str(&name_node, source) == simple_name;
-                    if name_node.kind() != "field_identifier" && !is_ctor {
+                    // A destructor `~Class(){…}` names a `destructor_name` declarator; it is
+                    // lowered as the niladic `this`-method `Class::~Class` (spec 016). It is
+                    // neither a `field_identifier` method nor the class-named ctor `identifier`.
+                    let is_dtor = name_node.kind() == "destructor_name";
+                    if name_node.kind() != "field_identifier" && !is_ctor && !is_dtor {
                         continue;
                     }
                     // A constructor's method name is the class's **qualified** name, so its IR
                     // name is `{qualified}::{qualified}` (`ns::Box::ns::Box`) — the same key the
-                    // `construct` hook builds via `format!("{class}::{class}")`. An ordinary
+                    // `construct` hook builds via `format!("{class}::{class}")`. A destructor's
+                    // method-name portion is `~{simple}`, so its IR name is `{qualified}::~{simple}`
+                    // (`Box::~Box`) — the same key the `delete_expr` hook builds. An ordinary
                     // method keeps its simple name (`set`), qualified to `ns::Box::set`.
                     let name = if is_ctor {
                         qualified_name.clone()
+                    } else if is_dtor {
+                        format!("~{simple_name}")
                     } else {
                         to_str(&name_node, source).to_string()
                     };
                     let void = child
                         .child_by_field_name("type")
                         .is_some_and(|t| to_str(&t, source).eq_ignore_ascii_case("void"));
-                    if is_ctor {
+                    if is_dtor {
+                        // A destructor returns nothing and writes/reads the object via `this`;
+                        // model it as a void niladic `Class::~Class` method (an implicit `this`
+                        // by-ref param 0 and no other params). Record that the class declares its
+                        // own destructor, and — for a `virtual ~Class()` — that it is virtual, so
+                        // a `delete` through a base pointer dispatches to the subtree's
+                        // destructors (CHA, spec 016). A destructor is never overloaded, static,
+                        // or `returns_self`.
+                        info.has_dtor = true;
+                        if method_is_virtual_def(child, func_declr) {
+                            info.dtor_virtual = true;
+                        }
+                        methods.push(MethodDef {
+                            class: qualified_name.clone(),
+                            name,
+                            params,
+                            body: method_body,
+                            void: true,
+                            returns_self: false,
+                            is_static: false,
+                            member_inits: Vec::new(),
+                        });
+                    } else if is_ctor {
                         // A constructor returns no value and writes the object via `this`;
                         // model it as a void `Class::Class` method and record the member-
                         // initializer list (`: v(x)`) so construction can lower it.
@@ -1241,6 +1271,149 @@ fn cpp_try_new<'a>(
     Ok(true)
 }
 
+/// The simple (unqualified) name of a possibly-namespaced class key — the last `::`-separated
+/// component (`ns::Box` → `Box`, `Box` → `Box`). A class's destructor IR name is
+/// `{class}::~{simple}`, so this recovers the `~{simple}` suffix for a target edge.
+fn simple_class_name(class: &str) -> &str {
+    class.rsplit("::").next().unwrap_or(class)
+}
+
+/// Walk `static_class` then its base chain (transitively) to the nearest class that declares its
+/// **own** destructor ([`ClassInfo::has_dtor`]), returning that class's name — the destructor the
+/// static type statically binds (the "defining class" for a `delete`). `None` if no class in the
+/// chain declares a destructor (a destructor-less hierarchy: `delete` stays 014's no-op). Mirrors
+/// [`Context::resolve_method_class`]'s base-chain walk (own class first, then ancestors), with a
+/// `seen` guard against a malformed base cycle. Empty `bases`/`has_dtor` for C and base-less
+/// classes, so this never fires on the C path.
+fn dtor_defining_class(ctx: &Context<'_>, static_class: &str) -> Option<String> {
+    let mut level = vec![static_class.to_string()];
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    while let Some(c) = level.pop() {
+        if !seen.insert(c.clone()) {
+            continue;
+        }
+        if let Some(info) = ctx.classes.get(&c) {
+            if info.has_dtor {
+                return Some(c);
+            }
+            level.extend(info.bases.iter().cloned());
+        }
+    }
+    None
+}
+
+/// Whether the destructor is **virtual** on static type `static_class` — declared `virtual` on
+/// `static_class` itself or on any class in its base chain (a virtual base destructor makes every
+/// derived destructor virtual too). A virtual destructor makes `delete p` dispatch by
+/// class-hierarchy analysis over the subtree; a non-virtual one stays single-target. Mirrors
+/// [`Context::method_is_virtual`]. `false` for C and every non-virtual destructor.
+fn dtor_is_virtual(ctx: &Context<'_>, static_class: &str) -> bool {
+    let mut level = vec![static_class.to_string()];
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    while let Some(c) = level.pop() {
+        if !seen.insert(c.clone()) {
+            continue;
+        }
+        if let Some(info) = ctx.classes.get(&c) {
+            if info.dtor_virtual {
+                return true;
+            }
+            level.extend(info.bases.iter().cloned());
+        }
+    }
+    false
+}
+
+/// The destructor-call target set for `delete p` on static type `static_class`, given the
+/// `defining` class whose destructor the static type binds (from [`dtor_defining_class`]): the
+/// static-type destructor `defining::~{defining}` **plus** `sub::~{sub}` for every transitive
+/// subclass `sub` of `static_class` that declares its **own** destructor. A sound superset of the
+/// single destructor chain the dynamic type actually runs (Principle I) — whichever `Derived` the
+/// heap object is, its `~Derived` is in the set, and the base `~Base` is the `defining` target.
+/// The per-class destructor naming (`Sub::~Sub`, each named after its own class) is why this
+/// mirrors — rather than reuses — [`Context::cha_targets`] (which shares one method name across the
+/// subtree). Duplicate-free and order-stable; the subtree is walked over the neutral
+/// [`Context::subclasses`] map (empty for C, so this reduces to the single `defining` target). A
+/// `seen` guard bounds a malformed hierarchy.
+fn dtor_cha_targets(ctx: &Context<'_>, static_class: &str, defining: &str) -> Vec<String> {
+    let mut targets: Vec<String> = vec![format!("{defining}::~{}", simple_class_name(defining))];
+    let mut stack: Vec<String> = ctx
+        .subclasses
+        .get(static_class)
+        .cloned()
+        .unwrap_or_default();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    while let Some(sub) = stack.pop() {
+        if !seen.insert(sub.clone()) {
+            continue;
+        }
+        if ctx.classes.get(&sub).is_some_and(|info| info.has_dtor) {
+            let edge = format!("{sub}::~{}", simple_class_name(&sub));
+            if !targets.contains(&edge) {
+                targets.push(edge);
+            }
+        }
+        if let Some(subs) = ctx.subclasses.get(&sub) {
+            stack.extend(subs.iter().cloned());
+        }
+    }
+    targets
+}
+
+/// Lower a C++ `delete p;` (the `delete_expr` hook) as a call to the destructor of `p`'s
+/// pointed-to object — closing the spec-016 soundness gap where a destructor moves taint (e.g.
+/// `~Derived(){ sink(v); }`). The operand `p` resolves (via [`Context::resolve_recv_obj`], reusing
+/// the pointer/reference-receiver machinery) to the referent object and its **static** class; when
+/// that class (or a base) declares a destructor, we emit a `DirectCall` whose targets are the
+/// static type's subtree destructors for a **virtual** destructor ([`dtor_cha_targets`], CHA), or
+/// the single static-type destructor otherwise, with the referent `*p` as the arg-0 (`ByRef`)
+/// receiver — so the destructor body's `this.<member>` reads/writes land on the heap object the
+/// setter already tainted. A destructor-less hierarchy (or a non-class operand) emits nothing,
+/// leaving `delete` a taint no-op exactly as spec 014 left it. Neutral-map-driven, so it never
+/// fires on the C path (`delete_expression` does not occur under the C grammar).
+fn cpp_lower_delete<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    node: Node<'_>,
+    source: &str,
+    scope_view: &ScopeView,
+) -> anyhow::Result<(), Error> {
+    // The operand of `delete <expr>` is its single named child (`p`).
+    let Some(operand) = node.named_child(0) else {
+        return Ok(());
+    };
+    // Resolve the operand to the pointed-to object and its static class. A non-class pointer
+    // (or an unrecognized operand) yields `None` — nothing to destroy in the taint model.
+    let Some(recv) = ctx.resolve_recv_obj(program, operand, source, scope_view)? else {
+        return Ok(());
+    };
+    // The destructor the static type binds — walking to the nearest base that declares one. No
+    // destructor anywhere in the hierarchy ⇒ `delete` is a no-op (unchanged from spec 014).
+    let Some(defining) = dtor_defining_class(ctx, &recv.class) else {
+        return Ok(());
+    };
+    // A virtual destructor dispatches by CHA over the static type's subtree destructors; a
+    // non-virtual one is the single static-type destructor (`defining::~{defining}`).
+    let targets: SmallVec<[String; 4]> = if dtor_is_virtual(ctx, &recv.class) {
+        dtor_cha_targets(ctx, &recv.class, &defining).into()
+    } else {
+        smallvec![format!("{defining}::~{}", simple_class_name(&defining))]
+    };
+    // Emit `DirectCall <targets>(recv)` — the referent as the arg-0 by-ref receiver (a niladic
+    // destructor takes no other args); the void result goes to a throwaway temp.
+    let temp = ctx.allocator.next_temp();
+    program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+        StatementKind::CallAssign {
+            style: CallStyle::DirectCall {
+                call_edges: CallEdges::Explicit(targets),
+            },
+            rets: vec![VariableRef::new_local(temp)].into(),
+            args: smallvec![recv.exp],
+        },
+    ));
+    Ok(())
+}
+
 /// The C++ grammar-shape adapters installed on the lowering [`Context`]. The first two
 /// bridge the only C-subset node-shape divergences between the two grammars (per the
 /// spec-002 triage); [`cpp_collect_methods`] adds C++ instance-method/constructor discovery,
@@ -1258,6 +1431,11 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     // `overloads` map before any function is registered so the mangler can distinguish
     // overloaded names (`id#1`/`id#2`, `Box::f#1`/`Box::f#2`) at every touchpoint.
     collect_overloads: cpp_discover_overloads,
+    // Lower `delete p;` as a call to the destructor of `*p` (a CHA multi-target `DirectCall` for
+    // a virtual destructor, the single static-type destructor otherwise); a destructor-less
+    // hierarchy stays 014's no-op. Only reached for a `delete_expression`, which never occurs in
+    // a C tree, so the C path is untouched.
+    delete_expr: cpp_lower_delete,
     // The C declarator shapes plus the C++-only `reference_declarator` (`T& r`), captured
     // `@is_ref_cpp`. The shared classifier maps a non-const reference to `ByRef` (write-back)
     // and a `const T&` to `ByVal` (inbound only), reading the grammar-neutral `const`
