@@ -32,6 +32,7 @@ The regime:
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::BuildHasherDefault;
+use std::sync::Arc;
 
 use rustc_hash::FxHasher;
 
@@ -381,37 +382,50 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     // Partition the sources by label: endpoints sharing a label participate in
     // the same search. Sinks (backward endpoints) are the targets of every
     // search, keyed by the exact vertex they name.
-    let mut source_sets: BTreeMap<Label, Vec<QueryEndpoint>> = BTreeMap::new();
+    let mut source_sets: BTreeMap<Label, Vec<Arc<QueryEndpoint>>> = BTreeMap::new();
     // Sinks key on the level-agnostic vertex: the taint magnitude is invisible to
     // sink matching (a saturating flow arriving at a sink is just a flow arriving).
-    let mut sink_nodes: HashMap<TaintVertex, Vec<QueryEndpoint>> = HashMap::default();
-    for (ep,) in &facts.endpoints {
+    let mut sink_nodes: HashMap<TaintVertex, Vec<Arc<QueryEndpoint>>> = HashMap::default();
+    // One allocation per endpoint: an endpoint tags many taint rows, so the rows
+    // share a pointer to it rather than each carrying an inline copy.
+    let all_endpoints: Vec<Arc<QueryEndpoint>> = facts
+        .endpoints
+        .iter()
+        .map(|(ep,)| Arc::new(ep.clone()))
+        .collect();
+    for ep in &all_endpoints {
         match ep.direction {
             TaintDirection::Forward => {
                 source_sets
                     .entry(ep.label.clone())
                     .or_default()
-                    .push(ep.clone());
+                    .push(Arc::clone(ep));
             }
             TaintDirection::Backward => {
                 sink_nodes
                     .entry((ep.infunc, ep.vertex.0, ep.vertex.1))
                     .or_default()
-                    .push(ep.clone());
+                    .push(Arc::clone(ep));
             }
         }
     }
 
-    let mut taint: Vec<(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)> = Vec::new();
+    let mut taint: Vec<(
+        FunctionId,
+        TaintState,
+        FlowVariable,
+        Path,
+        Arc<QueryEndpoint>,
+    )> = Vec::new();
     // Seed rows for every endpoint (both directions), as the closure engine's
     // seed rule emitted.
-    for (ep,) in &facts.endpoints {
+    for ep in &all_endpoints {
         taint.push((
             ep.infunc,
             TaintState::Free,
             ep.vertex.0,
             ep.vertex.1,
-            ep.clone(),
+            Arc::clone(ep),
         ));
     }
 
@@ -428,8 +442,13 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     )> = BTreeSet::new();
     // Sink-endpoint tags for on-path nodes; a set because paths to different
     // sinks share prefixes.
-    let mut sink_tags: BTreeSet<(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)> =
-        BTreeSet::new();
+    let mut sink_tags: BTreeSet<(
+        FunctionId,
+        TaintState,
+        FlowVariable,
+        Path,
+        Arc<QueryEndpoint>,
+    )> = BTreeSet::new();
 
     let mut states_total = 0usize;
     for (label, endpoints) in &source_sets {
@@ -551,7 +570,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         if let Some(target) = graph.callee_by_site.get(&site)
             && external.contains(target)
         {
-            absorbing.insert((*target, src.clone(), call_arg_id.formal()));
+            absorbing.insert((*target, (**src).clone(), call_arg_id.formal()));
         }
     }
 

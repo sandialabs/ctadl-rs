@@ -631,7 +631,9 @@ pub fn query(
         }
     }
 
-    let taint_results = query_engine::formatter::TaintAnalysisResults::from_query_result(&result);
+    // Build the format facts first, moving the query result's pieces in; the
+    // taint-results view then *lends* the taint graph out of `facts.taint_edge`
+    // instead of cloning it (it is by far the largest query artifact).
     let mut b = query_engine::formatter::FormatFactsBuilder::default();
     b.taint(result.taint)
         .taint_edge(result.taint_edge)
@@ -639,6 +641,11 @@ pub fn query(
         .call(index_facts.call)
         .id_to_name(ids.get_id_to_name_map());
     let facts = b.build().unwrap();
+    let taint_results = query_engine::formatter::TaintAnalysisResults::new(
+        &facts.taint_edge,
+        result.tainted_insn,
+        result.absorbing_functions,
+    );
 
     let execution_successful = query_engine::formatter::format_sarif(
         project,
