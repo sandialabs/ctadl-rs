@@ -95,60 +95,63 @@ pub struct IndexFacts {
 impl IndexFacts {
     /// Saves the `formal_param`, `actual_param`, and `call` members. The others aren't saved
     /// because they are computed as part of an [`IndexResult`].
-    pub fn try_save<P: AsRef<path::Path>>(self, dir: P) -> Result<(), Error> {
+    ///
+    /// Borrows `self`: only the small tuples actually serialized here are cloned. This avoids
+    /// deep-copying the entire fact base (dominated by `assign`, which isn't even written by
+    /// this method) at the call site, which would otherwise stack a full transient copy on top
+    /// of the memory-peak indexing run.
+    pub fn try_save<P: AsRef<path::Path>>(&self, dir: P) -> Result<(), Error> {
         use crate::facts::schema::*;
         formal_param::try_save(
             &dir,
-            self.formal_param.into_iter().map(|(func_id, var, ty)| {
+            self.formal_param.iter().map(|(func_id, var, ty)| {
                 let Some(i) = var.as_formal() else {
                     panic!("formal_param variable is not a formal")
                 };
-                (func_id, i, ty)
+                (*func_id, i, *ty)
             }),
         )?;
         actual_param::try_save(
             &dir,
             self.actual_param
-                .into_iter()
+                .iter()
                 .map(|(site_id, formal_index, vertex)| {
                     let InsnSiteId { func_id, insn_id } =
-                        InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+                        InsnSiteId::unpack_from_slice(&**site_id).unwrap();
                     let FlowVertex(variable, path) = vertex;
-                    (func_id, insn_id, formal_index, variable, path)
+                    (func_id, insn_id, *formal_index, *variable, *path)
                 }),
         )?;
         call::try_save(
             &dir,
-            self.call.into_iter().map(|(site_id, target)| {
+            self.call.iter().map(|(site_id, target)| {
                 let InsnSiteId { func_id, insn_id } =
-                    InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-                (func_id, insn_id, target)
+                    InsnSiteId::unpack_from_slice(&**site_id).unwrap();
+                (func_id, insn_id, *target)
             }),
         )?;
         java_obj_assign::try_save(
             &dir,
             self.java_obj_assign
-                .into_iter()
+                .iter()
                 .map(|(site_id, vertex, class_name)| {
                     let InsnSiteId { func_id, insn_id } =
-                        InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+                        InsnSiteId::unpack_from_slice(&**site_id).unwrap();
                     let FlowVertex(variable, path) = vertex;
-                    (func_id, insn_id, variable, path, class_name)
+                    (func_id, insn_id, *variable, *path, class_name.clone())
                 }),
         )?;
         java_call::try_save(
             &dir,
-            self.java_call
-                .into_iter()
-                .map(|(site_id, vertex, name, desc)| {
-                    let InsnSiteId { func_id, insn_id } =
-                        InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-                    let FlowVertex(variable, path) = vertex;
-                    (func_id, insn_id, variable, path, name, desc)
-                }),
+            self.java_call.iter().map(|(site_id, vertex, name, desc)| {
+                let InsnSiteId { func_id, insn_id } =
+                    InsnSiteId::unpack_from_slice(&**site_id).unwrap();
+                let FlowVertex(variable, path) = vertex;
+                (func_id, insn_id, *variable, *path, name.clone(), desc.clone())
+            }),
         )?;
-        java_resolvents::try_save(&dir, self.java_resolvents)?;
-        external_function::try_save(&dir, self.external_function)?;
+        java_resolvents::try_save(&dir, self.java_resolvents.iter().cloned())?;
+        external_function::try_save(&dir, self.external_function.iter().copied())?;
         Ok(())
     }
 

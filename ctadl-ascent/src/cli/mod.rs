@@ -214,23 +214,25 @@ pub fn index(
     }
 
     let path = project.index_path()?;
-    facts.clone().try_save(&path)?;
+    facts.try_save(&path)?;
     inspect_index_facts(&facts, Some(&source_info.sites)).unwrap();
-    source_info.clone().try_save(&path)?;
+    // Only the (small) site IdMap is needed after saving
+    let sites = source_info.sites.clone();
+    source_info.try_save(&path)?;
     let config = crate::index_engine::IndexConfig { alias_rule };
-    let result = taint_index_with_config(facts, config, Some(&source_info.sites));
+    let result = taint_index_with_config(facts, config, Some(&sites));
 
     // Slightly ugly special case for flowy artifacts. Since they have specific assertions at index
     // time, check them here.
     for import in project.iter_imports() {
         let import = import?;
         if import.language == ArtifactLanguage::Flowy {
-            crate::codegen::flowy::index_check(&import, &result, &source_info.sites)?;
+            crate::codegen::flowy::index_check(&import, &result, &sites)?;
         }
     }
 
     if let Some(dot_path) = dump_index_graph {
-        dump_index_graph_dot(&result.assign_like, &source_info.sites, dot_path)?;
+        dump_index_graph_dot(&result.assign_like, &sites, dot_path)?;
     }
 
     let path = project.index_path()?;
