@@ -160,7 +160,9 @@ pub enum ImportLanguage {
     Apk,
     /// Treat as C files
     C,
-    /// Treat as Ghidra pcode facts directory
+    /// Export pcode via Ghidra. The artifact may be a binary to import, an existing
+    /// local Ghidra project (`<name>.gpr` or its directory), or a Ghidra Server
+    /// repository URL (`ghidra://…`).
     Pcode,
     /// Treat as Flowy file
     Flowy,
@@ -590,7 +592,11 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
     // content hash (and path) so a later `--skip-existing` import can tell the import
     // is up to date.
     let mut config = project::ArtifactImport::load_by_name(name)?;
-    config.record_artifact_hash()?;
+    // A Ghidra Server repository can't be content-hashed (it's remote), so skip the
+    // hash for it; `--skip-existing` simply re-imports such artifacts each time.
+    if !project::is_ghidra_server_url(&config.artifact_path) {
+        config.record_artifact_hash()?;
+    }
     Ok(name.to_string())
 }
 
@@ -675,6 +681,11 @@ fn autodetect_by_extension<P: AsRef<Path>>(
     let path = path.as_ref();
     Ok(match language {
         ImportLanguage::Auto => {
+            // A Ghidra Server repository URL has no filename extension; recognize it
+            // by scheme and route it through the pcode (Ghidra) frontend.
+            if project::is_ghidra_server_url(path) {
+                return Ok(ImportLanguage::Pcode);
+            }
             let ext = path
                 .extension()
                 .and_then(|e| OsStr::to_str(e))
@@ -686,6 +697,8 @@ fn autodetect_by_extension<P: AsRef<Path>>(
                 "class" => ImportLanguage::Jvm,
                 "jar" => ImportLanguage::Jar,
                 "tnt" => ImportLanguage::Flowy,
+                // A Ghidra project file: export pcode from the existing project.
+                "gpr" => ImportLanguage::Pcode,
                 _ => anyhow::bail!("unrecognized filename extension: '{}'", ext),
             }
         }

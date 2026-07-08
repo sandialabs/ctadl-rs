@@ -95,7 +95,14 @@ impl ArtifactImport {
         language: ArtifactLanguage,
         artifact_path: &Path,
     ) -> Result<Self, Error> {
-        let artifact_path = canonicalize(artifact_path)?;
+        // A `ghidra://…` server URL is not a filesystem path, so it can't (and
+        // shouldn't) be canonicalized; keep it verbatim. Everything else is a real
+        // path we canonicalize so stored paths are absolute and comparable.
+        let artifact_path = if is_ghidra_server_url(artifact_path) {
+            artifact_path.to_path_buf()
+        } else {
+            canonicalize(artifact_path)?
+        };
         let import_path = StorePaths::import_path().join(name);
         std::fs::create_dir_all(&import_path)?;
         let result = Self {
@@ -209,6 +216,11 @@ impl ArtifactImport {
     ///
     /// If the artifact path cannot be canonicalized or its contents cannot be hashed.
     pub fn is_up_to_date(name: &str, artifact_path: &Path) -> Result<bool, Error> {
+        // A Ghidra Server repository lives outside the filesystem and cannot be
+        // hashed, so we can never prove it is unchanged: always re-import.
+        if is_ghidra_server_url(artifact_path) {
+            return Ok(false);
+        }
         let config = match Self::load_by_name(name) {
             Ok(config) => config,
             // No (readable) prior import: not up to date, so the caller imports.
@@ -228,6 +240,13 @@ impl ArtifactImport {
         }
         Ok(*stored_hash == hash_artifact(&artifact_path)?)
     }
+}
+
+/// True if `path` is a Ghidra Server repository URL (`ghidra://…`) rather than a
+/// local filesystem path. Such artifacts are addressed remotely: they are neither
+/// canonicalized nor content-hashed.
+pub fn is_ghidra_server_url(path: &Path) -> bool {
+    path.to_string_lossy().starts_with("ghidra://")
 }
 
 /// Computes a stable, hex-encoded SHA-256 content hash of an artifact, which may be a
@@ -506,7 +525,8 @@ pub enum ArtifactLanguage {
     Apk,
     /// Treat as C files
     C,
-    /// Treat as Ghidra pcode facts directory
+    /// Export pcode via Ghidra, from a binary, an existing Ghidra project, or a
+    /// Ghidra Server repository URL (`ghidra://…`).
     Pcode,
     /// Treat as Flowy file
     Flowy,
