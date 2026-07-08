@@ -52,6 +52,7 @@ use crate::facts::{
 };
 use ctadl_ir::Symbol;
 
+pub mod assign_like_trie;
 pub mod locals_trie;
 pub mod source_info;
 
@@ -815,7 +816,7 @@ pub fn taint_index_with_config(
     // `compute_alias_of_formal`. This is what lets `copy_edge` stay out of the main engine.
     let alias_of_formal = compute_alias_of_formal(&facts.formal_param, copy_edge);
 
-    let prog = ascent_run! {
+    let mut prog = ascent_run! {
         #![measure_rule_times]
         // Facts:
 
@@ -866,7 +867,19 @@ pub fn taint_index_with_config(
         // `locals_trie`.
         #[ds(crate::index_engine::locals_trie)]
         relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
-        relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path) = assign_like;
+        // Stored via a prefix-sharing (trie-like) BYODS store keyed on `(F, src-var)` = the only
+        // columns any rule binds when reading `assign_like`. Collapses the default ~3× storage
+        // (physical Vec + full existence index + `0_3` probe index, each replicating the column
+        // data) to a single shared store. See `assign_like_trie`.
+        //
+        // The `= SeedVec::from(..)` seed is the original program assignments — ~94% of the final
+        // relation on binary targets. It is routed into the trie at 1×: `SeedVec` is a physical
+        // store that *drains* its seed into the shared store on Ascent's single index-build
+        // `iter()` pass and holds nothing thereafter, so the seed lives only in the trie for the
+        // duration of the run (never in a second full-size buffer). See `assign_like_trie::SeedVec`.
+        #[ds(crate::index_engine::assign_like_trie)]
+        relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path) =
+            crate::index_engine::assign_like_trie::SeedVec::from(assign_like);
         // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
         relation prog_store(FunctionId, FlowVariable, Path) = prog_store;
         // A variable that whole-aliases a formal purely through original program copies. This is
@@ -1182,6 +1195,7 @@ pub fn taint_index_with_config(
     log::info!("index scc times: {}", prog.scc_times_summary());
     // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
     log::info!("{}", prog.__locals_ind_common.heap_report());
+    log::info!("{}", prog.__assign_like_ind_common.heap_report());
     log::trace!(
         "hybrid inlining relations:\n{}",
         HybridInliningRelations {
@@ -1195,9 +1209,16 @@ pub fn taint_index_with_config(
         }
     );
 
+    // `assign_like` is stored in the BYODS trie (`__assign_like_ind_common`); its physical
+    // relation is a `SeedVec` holding no tuples. Reconstruct the saved output Vec from the store,
+    // and take the row count from the store rather than the (empty) physical relation. Take the
+    // store by value so it drains (frees) as the output Vec fills — this reconstruction is the
+    // run's peak, so a draining rebuild keeps the transient to ~1×.
+    let assign_like_out = std::mem::take(&mut prog.__assign_like_ind_common).into_vec();
+
     let stats = IndexStats {
         initial_assign,
-        final_assign_like: prog.assign_like.len(),
+        final_assign_like: assign_like_out.len(),
         initial_formals,
         final_locals: prog.locals.len(),
         initial_java_obj_assign,
@@ -1218,7 +1239,7 @@ pub fn taint_index_with_config(
 
     let result = IndexResult {
         summary: prog.summary,
-        assign_like: prog.assign_like,
+        assign_like: assign_like_out,
         java_obj_assign_like: prog.java_obj_assign_like,
         paths: prog.paths,
         external_function: facts.external_function,
