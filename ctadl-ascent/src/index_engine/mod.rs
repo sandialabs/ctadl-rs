@@ -692,6 +692,36 @@ macro_rules! call_arg {
 }
 
 /// Creates a data flow graph for taint analysis.
+/// Reads this process's current physical footprint (macOS `phys_footprint`, the same number
+/// Activity Monitor's "Memory" column and `footprint(1)` report) in MB. Used for the
+/// `[mem cp]` derivation checkpoints so we can attribute the pre-fixpoint memory spike to the
+/// individual transient buffers in-process (an external sampler can't see sub-second phases).
+/// Returns -1.0 on non-macOS or on error.
+#[cfg(target_os = "macos")]
+pub(crate) fn phys_footprint_mb() -> f64 {
+    // SAFETY: `proc_pid_rusage` fills a caller-provided `rusage_info_v2` for our own pid. The C
+    // API takes `rusage_info_t *` (== `void **`); per the header contract we pass our struct
+    // pointer reinterpret-cast to that type (NOT the address of a local `void*` — that double
+    // indirection writes past the stack and leaves the struct zeroed).
+    unsafe {
+        let mut info = std::mem::MaybeUninit::<libc::rusage_info_v2>::zeroed();
+        let rc = libc::proc_pid_rusage(
+            libc::getpid(),
+            libc::RUSAGE_INFO_V2,
+            info.as_mut_ptr() as *mut libc::rusage_info_t,
+        );
+        if rc == 0 {
+            info.assume_init().ri_phys_footprint as f64 / (1024.0 * 1024.0)
+        } else {
+            -1.0
+        }
+    }
+}
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn phys_footprint_mb() -> f64 {
+    -1.0
+}
+
 pub fn taint_index(facts: IndexFacts) -> IndexResult {
     taint_index_with_config(facts, IndexConfig::default(), None)
 }
@@ -757,12 +787,25 @@ pub fn taint_index_with_config(
     let initial_summary = facts.summary.len();
     let initial_formals = facts.formal_param.len();
 
+    log::info!(
+        "[mem cp] entry (facts loaded): {:.1} MB | assign={} summary={} formals={}",
+        phys_footprint_mb(),
+        initial_assign,
+        initial_summary,
+        initial_formals
+    );
+
     let program_paths: Vec<_> = facts
         .assign
         .iter()
         .flat_map(|(_, dst, src)| std::iter::once(dst.1).chain(std::iter::once(src.1)))
         .map(|p| (p,))
         .collect();
+    log::info!(
+        "[mem cp] + program_paths ({} rows): {:.1} MB",
+        program_paths.len(),
+        phys_footprint_mb()
+    );
     // Whole-variable copies (`x = y`, both sides empty path) from the ORIGINAL program
     // assignments only -- NOT the derived `assign_like` closure (which also contains
     // inter-procedural argument copies and summary-induced edges). Used to compute
@@ -776,6 +819,11 @@ pub fn taint_index_with_config(
             (func_id, dst.0, src.0)
         })
         .collect();
+    log::info!(
+        "[mem cp] + copy_edge ({} rows): {:.1} MB",
+        copy_edge.len(),
+        phys_footprint_mb()
+    );
     // Real field-stores from the ORIGINAL program: an assignment whose DESTINATION access path is
     // non-empty (`v.p = ...`). Used to gate the aliasing rule so it only summarizes aliases that are
     // actually stored through, killing spurious summaries from mere reachability.
@@ -788,6 +836,11 @@ pub fn taint_index_with_config(
             (func_id, dst.0, dst.1)
         })
         .collect();
+    log::info!(
+        "[mem cp] + prog_store ({} rows): {:.1} MB",
+        prog_store.len(),
+        phys_footprint_mb()
+    );
     let assign_like: Vec<_> = facts
         .assign
         .into_iter()
@@ -796,12 +849,22 @@ pub fn taint_index_with_config(
             (func_id, dst.0, dst.1, src.0, src.1)
         })
         .collect();
+    log::info!(
+        "[mem cp] + assign_like ({} rows, facts.assign consumed): {:.1} MB",
+        assign_like.len(),
+        phys_footprint_mb()
+    );
     // Access paths may be introduced in summaries, so include those.
     let summary_paths: HashSet<_> = facts
         .summary
         .iter()
         .flat_map(|(_, _, p1, _, p2)| [(*p1,), (*p2,)])
         .collect();
+    log::info!(
+        "[mem cp] + summary_paths ({} rows): {:.1} MB",
+        summary_paths.len(),
+        phys_footprint_mb()
+    );
     let call = facts
         .call
         .iter()
@@ -815,6 +878,11 @@ pub fn taint_index_with_config(
     // Precompute `alias_of_formal` in its own small fixpoint, BEFORE the main ascent -- see
     // `compute_alias_of_formal`. This is what lets `copy_edge` stay out of the main engine.
     let alias_of_formal = compute_alias_of_formal(&facts.formal_param, copy_edge);
+    log::info!(
+        "[mem cp] + alias_of_formal ({} rows), about to enter ascent_run: {:.1} MB",
+        alias_of_formal.len(),
+        phys_footprint_mb()
+    );
 
     let mut prog = ascent_run! {
         #![measure_rule_times]
@@ -1192,6 +1260,10 @@ pub fn taint_index_with_config(
             critical_summary(tgt, _, _),
             call(func_id, _, tgt);
     };
+    log::info!(
+        "[mem cp] ascent_run returned (transient input buffers dropped): {:.1} MB",
+        phys_footprint_mb()
+    );
     log::info!("index scc times: {}", prog.scc_times_summary());
     // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
     log::info!("{}", prog.__locals_ind_common.heap_report());

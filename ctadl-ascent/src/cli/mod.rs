@@ -185,11 +185,17 @@ pub fn index(
     alias_rule: bool,
     dump_index_graph: Option<&Path>,
 ) -> Result<(), Error> {
+    use crate::index_engine::phys_footprint_mb;
+    log::info!("[mem cp] index() start: {:.1} MB", phys_footprint_mb());
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
     for import in project.iter_imports() {
         let import = import?;
         let mut program_info = load_program_info_without_source_info(&import)?;
+        log::info!(
+            "[mem cp] loaded IR program (before SSA/codegen): {:.1} MB",
+            phys_footprint_mb()
+        );
         let mut models_batch = crate::models::try_load_default_models(&program_info)?;
         for model_path in models {
             let model = crate::models::try_load_models(&program_info, model_path)?;
@@ -202,7 +208,12 @@ pub fn index(
         // on programs already in SSA form (e.g. flowy imports).
         ssa::coalesce_copies(&mut program_info.program);
         ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
+        log::info!("[mem cp] after SSA transform: {:.1} MB", phys_footprint_mb());
         codegen_program(program_info, &mut facts, &mut source_info, strategy);
+        log::info!(
+            "[mem cp] after codegen_program (IR dropped, facts built): {:.1} MB",
+            phys_footprint_mb()
+        );
         log::trace!("summary length: {}", facts.summary.len());
         codegen_summary(models_batch.summary, &mut facts, &mut source_info);
         log::trace!("summary length: {}", facts.summary.len());
@@ -219,6 +230,10 @@ pub fn index(
     // Only the (small) site IdMap is needed after saving
     let sites = source_info.sites.clone();
     source_info.try_save(&path)?;
+    log::info!(
+        "[mem cp] after facts.try_save: {:.1} MB",
+        phys_footprint_mb()
+    );
     let config = crate::index_engine::IndexConfig { alias_rule };
     let result = taint_index_with_config(facts, config, Some(&sites));
 

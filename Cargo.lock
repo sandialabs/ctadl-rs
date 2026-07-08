@@ -1281,6 +1281,7 @@ dependencies = [
  "json5",
  "jvm-reader",
  "lazy_static",
+ "libc",
  "log",
  "log-once",
  "memmap",
