@@ -25,6 +25,17 @@
 //!     `0_1_2` view is a `partition_point` range over the contiguous `P`-run, and inserts
 //!     keep order with a single shift (groups are ~5 elements, so O(group) is negligible).
 //!
+//! ## Large groups: promote to a hash set
+//!
+//! A sorted `Vec` is wrong for the *rare* dense-aliasing function whose `(F,V)` group grows
+//! to tens of thousands of leaves. The per-iteration delta->total merge re-copies the whole
+//! accumulated group every fixpoint round, so building a group of size `G` costs O(G^2) —
+//! the dominant cost on such inputs (profiled at ~55% of index time; see
+//! memory-investigation.md §7/§8). Once a group exceeds [`GROUP_HASHSET_THRESHOLD`] it
+//! switches to a `HashSet`, making the merge O(delta) (insert only the new leaves) and
+//! existence O(1). Small groups keep the `Vec`: one compact allocation, direct sorted
+//! `0_1_2` range probe, and the quadratic never bites because they stay tiny.
+//!
 //! The forward map `(F,V) -> [ (P,M,Fp) ]` serves `none`, `0_1`, `0_1_2`, existence, and
 //! iteration. The `0_3_4` view is *derived* by scanning (as before) rather than
 //! materializing a full inverse; a small side-index `fidx: F -> {V}` narrows each `0_3_4`
@@ -91,6 +102,156 @@ fn merge_sorted<T: Ord>(dst: &mut Vec<T>, src: Vec<T>) -> usize {
     }
     *dst = merged;
     added
+}
+
+// ---------------------------------------------------------------------------
+// A single `(F,V)` group's leaves. `Small` (the overwhelmingly common case, ~5 leaves)
+// stays a sorted, deduplicated `Vec`; a group that grows past `GROUP_HASHSET_THRESHOLD`
+// switches to a `HashSet` so the per-iteration delta->total merge is O(delta) instead of
+// re-copying the whole accumulated group each round (which made large groups O(N^2)).
+// ---------------------------------------------------------------------------
+
+/// Groups with more than this many leaves switch from a sorted `Vec` to a `HashSet`.
+const GROUP_HASHSET_THRESHOLD: usize = 64;
+
+#[derive(Clone)]
+enum Group<P, M, Fp> {
+    /// Sorted ascending, deduplicated. Existence = `binary_search`; `0_1_2` = `partition_point`.
+    Small(Vec<(P, M, Fp)>),
+    /// Unordered, deduplicated. Existence = hash lookup; merge = per-element insert (O(delta)).
+    Large(Set<(P, M, Fp)>),
+}
+
+/// Iterator over a group's leaves regardless of representation. Order is unspecified for
+/// `Large`; every consumer that uses `iter()` is order-independent (the sorted-only `0_1_2`
+/// range probe reaches into the variants directly instead).
+enum GroupIter<'a, P, M, Fp> {
+    Small(std::slice::Iter<'a, (P, M, Fp)>),
+    Large(hashbrown::hash_set::Iter<'a, (P, M, Fp)>),
+}
+impl<'a, P, M, Fp> Iterator for GroupIter<'a, P, M, Fp> {
+    type Item = &'a (P, M, Fp);
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            GroupIter::Small(i) => i.next(),
+            GroupIter::Large(i) => i.next(),
+        }
+    }
+}
+
+// Bounds-light group ops (no `Ord`): iteration and size, used by the read views.
+impl<P, M, Fp> Group<P, M, Fp>
+where
+    P: Clone + Eq + Hash,
+    M: Clone + Eq + Hash,
+    Fp: Clone + Eq + Hash,
+{
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            Group::Small(v) => v.len(),
+            Group::Large(s) => s.len(),
+        }
+    }
+    #[inline]
+    fn iter(&self) -> GroupIter<'_, P, M, Fp> {
+        match self {
+            Group::Small(v) => GroupIter::Small(v.iter()),
+            Group::Large(s) => GroupIter::Large(s.iter()),
+        }
+    }
+}
+
+// Group ops that maintain / query order need `Ord` on the leaf columns.
+impl<P, M, Fp> Group<P, M, Fp>
+where
+    P: Clone + Eq + Hash + Ord,
+    M: Clone + Eq + Hash + Ord,
+    Fp: Clone + Eq + Hash + Ord,
+{
+    #[inline]
+    fn new() -> Self {
+        Group::Small(Vec::new())
+    }
+
+    #[inline]
+    fn contains(&self, leaf: &(P, M, Fp)) -> bool {
+        match self {
+            Group::Small(v) => v.binary_search(leaf).is_ok(),
+            Group::Large(s) => s.contains(leaf),
+        }
+    }
+
+    /// Convert a `Small` group in place to `Large`. No-op if already `Large`.
+    fn promote(&mut self) {
+        if let Group::Small(v) = self {
+            *self = Group::Large(std::mem::take(v).into_iter().collect());
+        }
+    }
+
+    /// Insert one leaf; returns true if newly added. Promotes to `Large` when a `Small`
+    /// group grows past the threshold.
+    fn insert(&mut self, leaf: (P, M, Fp)) -> bool {
+        match self {
+            Group::Small(v) => match v.binary_search(&leaf) {
+                Ok(_) => false,
+                Err(pos) => {
+                    v.insert(pos, leaf);
+                    if v.len() > GROUP_HASHSET_THRESHOLD {
+                        self.promote();
+                    }
+                    true
+                }
+            },
+            Group::Large(s) => s.insert(leaf),
+        }
+    }
+
+    /// Merge `other` into `self` (union). Returns how many leaves were *newly* added to
+    /// `self`. Small+Small stays a sorted linear merge (may promote); any case touching a
+    /// `Large` side builds the union in a `HashSet` (O(other) inserts, no whole-group
+    /// re-copy — this is what removes the O(N^2) merge on dense groups).
+    fn absorb_group(&mut self, other: Group<P, M, Fp>) -> usize {
+        match (std::mem::replace(self, Group::Small(Vec::new())), other) {
+            (Group::Small(mut dst), Group::Small(src)) => {
+                let added = merge_sorted(&mut dst, src);
+                *self = Group::Small(dst);
+                if self.len() > GROUP_HASHSET_THRESHOLD {
+                    self.promote();
+                }
+                added
+            }
+            (this, other) => {
+                let (mut set, before) = match this {
+                    Group::Large(s) => {
+                        let n = s.len();
+                        (s, n)
+                    }
+                    Group::Small(v) => {
+                        let s: Set<(P, M, Fp)> = v.into_iter().collect();
+                        let n = s.len();
+                        (s, n)
+                    }
+                };
+                match other {
+                    Group::Small(v) => {
+                        for leaf in v {
+                            set.insert(leaf);
+                        }
+                    }
+                    Group::Large(s) => {
+                        for leaf in s {
+                            set.insert(leaf);
+                        }
+                    }
+                }
+                let added = set.len() - before;
+                *self = Group::Large(set);
+                added
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +347,7 @@ where
     /// sorted so existence is a `binary_search` and `0_1_2` is a `partition_point` range over
     /// the contiguous `P`-run. One heap allocation per group replaces the old nested
     /// `HashMap<P, HashSet<(M,Fp)>>` (which was ~91% hashbrown slack on tiny groups).
-    fwd: Map<(F, V), Vec<(P, M, Fp)>>,
+    fwd: Map<(F, V), Group<P, M, Fp>>,
     /// side-index: F -> set of V present for that function. Lets a `0_3_4` probe restrict its
     /// scan to the flow-variables of the probed function instead of walking every `(F,V)` group
     /// in `fwd`. Maintained in lockstep with `fwd`'s outer keys (exactly one V per `(F,V)`
@@ -231,7 +392,7 @@ where
             buckets * (elem + 1) + 16
         }
 
-        let sz_outer = std::mem::size_of::<((F, V), Vec<(P, M, Fp)>)>();
+        let sz_outer = std::mem::size_of::<((F, V), Group<P, M, Fp>)>();
         let sz_leaf = std::mem::size_of::<(P, M, Fp)>();
         let sz_fidx_outer = std::mem::size_of::<(F, Set<V>)>();
         let sz_fidx_val = std::mem::size_of::<V>();
@@ -247,16 +408,30 @@ where
             fidx_bytes: hb_bytes(self.fidx.capacity(), sz_fidx_outer),
             elem_sizes: (sz_outer, 0, sz_leaf, sz_fidx_outer, sz_fidx_val),
         };
-        for vec in self.fwd.values() {
-            r.leaf_elems += vec.len();
-            // Group vec heap buffer: capacity slots of the leaf tuple (no control bytes).
-            r.fwd_bytes += vec.capacity() * sz_leaf;
-            // Distinct P = run boundaries in the sorted vec.
-            let mut last: Option<&P> = None;
-            for (p, _, _) in vec.iter() {
-                if last != Some(p) {
-                    r.p_entries += 1;
-                    last = Some(p);
+        for group in self.fwd.values() {
+            r.leaf_elems += group.len();
+            match group {
+                Group::Small(vec) => {
+                    // Group vec heap buffer: capacity slots of the leaf tuple (no control bytes).
+                    r.fwd_bytes += vec.capacity() * sz_leaf;
+                    // Distinct P = run boundaries in the sorted vec.
+                    let mut last: Option<&P> = None;
+                    for (p, _, _) in vec.iter() {
+                        if last != Some(p) {
+                            r.p_entries += 1;
+                            last = Some(p);
+                        }
+                    }
+                }
+                Group::Large(set) => {
+                    // Hash set buffer: control bytes + leaf slots (with load-factor slack).
+                    r.fwd_bytes += hb_bytes(set.capacity(), sz_leaf);
+                    // Unordered, so count distinct P with a scratch set.
+                    let mut ps: Set<&P> = Set::default();
+                    for (p, _, _) in set.iter() {
+                        ps.insert(p);
+                    }
+                    r.p_entries += ps.len();
                 }
             }
         }
@@ -282,7 +457,7 @@ where
         // (P,M,Fp) are cheap to clone (8-byte handles + i16); avoids a borrow-key helper.
         self.fwd
             .get(&(f.clone(), v.clone()))
-            .is_some_and(|vec| vec.binary_search(&(p.clone(), m.clone(), fp.clone())).is_ok())
+            .is_some_and(|group| group.contains(&(p.clone(), m.clone(), fp.clone())))
     }
 
     /// Insert a full tuple; returns true if newly added to *this* store.
@@ -290,38 +465,33 @@ where
         use hashbrown::hash_map::Entry;
         let (f, v, p, m, fp) = key;
         // Fetch the (F,V) group, recording V in the side-index the first time the group appears.
-        let vec = match self.fwd.entry((f.clone(), v.clone())) {
+        let group = match self.fwd.entry((f.clone(), v.clone())) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
                 self.fidx.entry(f.clone()).or_default().insert(v.clone());
-                e.insert(Vec::new())
+                e.insert(Group::new())
             }
         };
-        let leaf = (p.clone(), m.clone(), fp.clone());
-        match vec.binary_search(&leaf) {
-            Ok(_) => false,
-            Err(pos) => {
-                vec.insert(pos, leaf);
-                self.len += 1;
-                true
-            }
+        if group.insert((p.clone(), m.clone(), fp.clone())) {
+            self.len += 1;
+            true
+        } else {
+            false
         }
     }
 
     /// Merge `from` into `self` (union). Used by the delta->total move.
     fn absorb(&mut self, from: &mut Self) {
         use hashbrown::hash_map::Entry;
-        for ((f, v), fromvec) in from.fwd.drain() {
+        for ((f, v), fromgroup) in from.fwd.drain() {
             match self.fwd.entry((f.clone(), v.clone())) {
                 Entry::Occupied(e) => {
-                    let dst = e.into_mut();
-                    self.len += merge_sorted(dst, fromvec);
+                    self.len += e.into_mut().absorb_group(fromgroup);
                 }
                 Entry::Vacant(e) => {
                     self.fidx.entry(f).or_default().insert(v);
-                    let n = fromvec.len();
-                    e.insert(fromvec);
-                    self.len += n;
+                    self.len += fromgroup.len();
+                    e.insert(fromgroup);
                 }
             }
         }
@@ -636,7 +806,7 @@ where
         Some(DynIter::new(move || {
             c.fwd
                 .iter()
-                .flat_map(|((f, v), vec)| vec.iter().map(move |(p, m, fp)| (f, v, p, m, fp)))
+                .flat_map(|((f, v), group)| group.iter().map(move |(p, m, fp)| (f, v, p, m, fp)))
         }))
     }
     #[inline]
@@ -680,8 +850,8 @@ where
     type IteratorType = DynIter<'a, Self::Value>;
     #[inline]
     fn index_get(&'a self, key: &(F, V)) -> Option<Self::IteratorType> {
-        let vec = self.0.fwd.get(key)?;
-        Some(DynIter::new(move || vec.iter().map(|(p, m, fp)| (p, m, fp))))
+        let group = self.0.fwd.get(key)?;
+        Some(DynIter::new(move || group.iter().map(|(p, m, fp)| (p, m, fp))))
     }
     #[inline]
     fn len_estimate(&self) -> usize {
@@ -702,8 +872,8 @@ where
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        Box::new(self.0.fwd.iter().map(|((f, v), vec)| {
-            let it = DynIter::new(move || vec.iter().map(|(p, m, fp)| (p, m, fp)));
+        Box::new(self.0.fwd.iter().map(|((f, v), group)| {
+            let it = DynIter::new(move || group.iter().map(|(p, m, fp)| (p, m, fp)));
             ((f, v), it)
         }))
     }
@@ -723,16 +893,31 @@ where
     type IteratorType = DynIter<'a, Self::Value>;
     #[inline]
     fn index_get(&'a self, key: &(F, V, P)) -> Option<Self::IteratorType> {
-        let vec = self.0.fwd.get(&(key.0.clone(), key.1.clone()))?;
-        // The group vec is sorted by (P,M,Fp), so all leaves sharing this P are contiguous.
+        let group = self.0.fwd.get(&(key.0.clone(), key.1.clone()))?;
         let p = key.2.clone();
-        let lo = vec.partition_point(|(pp, _, _)| *pp < p);
-        let hi = vec.partition_point(|(pp, _, _)| *pp <= p);
-        if lo == hi {
-            return None;
+        match group {
+            Group::Small(vec) => {
+                // The vec is sorted by (P,M,Fp), so all leaves sharing this P are contiguous.
+                let lo = vec.partition_point(|(pp, _, _)| *pp < p);
+                let hi = vec.partition_point(|(pp, _, _)| *pp <= p);
+                if lo == hi {
+                    return None;
+                }
+                let slice = &vec[lo..hi];
+                Some(DynIter::new(move || slice.iter().map(|(_, m, fp)| (m, fp))))
+            }
+            Group::Large(set) => {
+                // Unordered: filter the set to leaves carrying this P. Returns `Some` of a
+                // possibly-empty iterator (join-equivalent to `None`); the producer re-scans
+                // on each rebuild, which is fine — `0_1_2` is not a hot driver for the dense
+                // groups that become `Large`.
+                Some(DynIter::new(move || {
+                    let p = p.clone();
+                    set.iter()
+                        .filter_map(move |(pp, m, fp)| (*pp == p).then_some((m, fp)))
+                }))
+            }
         }
-        let slice = &vec[lo..hi];
-        Some(DynIter::new(move || slice.iter().map(|(_, m, fp)| (m, fp))))
     }
     #[inline]
     fn len_estimate(&self) -> usize {
@@ -753,26 +938,43 @@ where
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        Box::new(self.0.fwd.iter().flat_map(|((f, v), vec)| {
-            // Split the sorted group vec into contiguous runs of equal P; emit one key per run
-            // so each (F,V,P) is yielded exactly once with all its (M,Fp) leaves.
-            let mut runs: Vec<(usize, usize)> = Vec::new();
-            let mut i = 0;
-            while i < vec.len() {
-                let p0 = &vec[i].0;
-                let mut j = i + 1;
-                while j < vec.len() && &vec[j].0 == p0 {
-                    j += 1;
-                }
-                runs.push((i, j));
-                i = j;
-            }
-            runs.into_iter().map(move |(s, e)| {
-                let slice = &vec[s..e];
-                let p = &vec[s].0;
-                let it = DynIter::new(move || slice.iter().map(|(_, m, fp)| (m, fp)));
-                ((f, v, p), it)
-            })
+        Box::new(self.0.fwd.iter().flat_map(|((f, v), group)| {
+            // Emit one key per distinct (F,V,P), each with all its (M,Fp) leaves.
+            let inner: Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a> =
+                match group {
+                    Group::Small(vec) => {
+                        // Sorted: split into contiguous runs of equal P.
+                        let mut runs: Vec<(usize, usize)> = Vec::new();
+                        let mut i = 0;
+                        while i < vec.len() {
+                            let p0 = &vec[i].0;
+                            let mut j = i + 1;
+                            while j < vec.len() && &vec[j].0 == p0 {
+                                j += 1;
+                            }
+                            runs.push((i, j));
+                            i = j;
+                        }
+                        Box::new(runs.into_iter().map(move |(s, e)| {
+                            let slice = &vec[s..e];
+                            let p = &vec[s].0;
+                            let it = DynIter::new(move || slice.iter().map(|(_, m, fp)| (m, fp)));
+                            ((f, v, p), it)
+                        }))
+                    }
+                    Group::Large(set) => {
+                        // Unordered: bucket leaves by P into borrowed lists, one key per P.
+                        let mut byp: Map<&'a P, Vec<(&'a M, &'a Fp)>> = Map::default();
+                        for (p, m, fp) in set.iter() {
+                            byp.entry(p).or_default().push((m, fp));
+                        }
+                        Box::new(byp.into_iter().map(move |(p, mfs)| {
+                            let it = DynIter::new(move || mfs.clone().into_iter());
+                            ((f, v, p), it)
+                        }))
+                    }
+                };
+            inner
         }))
     }
 }
@@ -808,9 +1010,9 @@ where
                     c.fwd
                         .get(&(f.clone(), v.clone()))
                         .into_iter()
-                        .flat_map(move |vec| {
+                        .flat_map(move |group| {
                             let (m, fp) = (m.clone(), fp.clone());
-                            vec.iter().filter_map(move |(p, mm, ffp)| {
+                            group.iter().filter_map(move |(p, mm, ffp)| {
                                 if *mm == m && *ffp == fp {
                                     Some((v, p))
                                 } else {
@@ -848,8 +1050,8 @@ where
         // ever shows up in a profile, it means some rule started iterating `0_3_4` and a
         // materialized inverse should be reconsidered.
         let mut groups: Map<(&'a F, &'a M, &'a Fp), Vec<(&'a V, &'a P)>> = Map::default();
-        for ((f, v), vec) in self.0.fwd.iter() {
-            for (p, m, fp) in vec.iter() {
+        for ((f, v), group) in self.0.fwd.iter() {
+            for (p, m, fp) in group.iter() {
                 groups.entry((f, m, fp)).or_default().push((v, p));
             }
         }
@@ -913,8 +1115,9 @@ where
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        Box::new(self.0.fwd.iter().flat_map(|((f, v), vec)| {
-            vec.iter()
+        Box::new(self.0.fwd.iter().flat_map(|((f, v), group)| {
+            group
+                .iter()
                 .map(move |(p, m, fp)| ((f, v, p, m, fp), std::iter::once(&())))
         }))
     }
