@@ -28,6 +28,9 @@ use ctadl_ir::mir::call::VirtualMethodTable;
 pub struct ModelGeneratorIngest<'p, 'b> {
     builder: &'b mut ModelBuilders,
     find_method: Vec<FindMethod>,
+    /// Instruction address recorded by an `address` where-constraint, keyed by
+    /// model-generator index. Consumed by `find: "instructions"` sources/sinks.
+    address: HashMap<usize, u64>,
     methods: Vec<UniverseSet<&'p str>>,
 
     vmt: &'p VirtualMethodTable,
@@ -54,9 +57,16 @@ fn return_regex() -> &'static Regex {
     RETURN_REGEX.get_or_init(|| Regex::new(r#"Return(.*)?"#).unwrap())
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FindMethod {
     Methods,
+    /// Match interior program points (instructions). Combined with an `address`
+    /// where-constraint, seeds taint at the vertex(es) defined/used at that
+    /// instruction. Used by Ghidra's plugin for per-variable source/sink marks.
+    Instructions,
+    /// Match variables. Currently treated like `Instructions` (address-pinned);
+    /// name-based resolution is a separate feature.
+    Variables,
 }
 
 impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
@@ -111,6 +121,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         Self {
             builder,
             find_method: Vec::new(),
+            address: HashMap::new(),
             methods: Vec::new(),
             vmt,
             program_method_names,
@@ -123,6 +134,35 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
     /// Add a JSON parsing error to the collection
     fn add_json_error(&mut self, error: crate::error::JsonModelError) {
         self.errors.push(error);
+    }
+
+    /// For a `find: "instructions"`/`"variables"` generator, emit interior-vertex
+    /// endpoints (one per matched function) pinned to the generator's `address`
+    /// constraint. Returns true if the generator is an instruction/variable find
+    /// (handled here); false if it is a method find (handled by the port path).
+    fn emit_vertex_endpoints(&mut self, n: usize, label: &str, direction: TaintDirection) -> bool {
+        match self.find_method.get(n).copied() {
+            Some(FindMethod::Instructions) | Some(FindMethod::Variables) => {}
+            _ => return false,
+        }
+        let Some(&address) = self.address.get(&n) else {
+            self.add_json_error(crate::error::JsonModelError::MissingField {
+                index: n,
+                field_name: "address (required for find: instructions/variables)".to_string(),
+            });
+            return true;
+        };
+        for func in matched_functions(&self.methods[n], self.vmt) {
+            self.builder
+                .vertex_endpoints
+                .push(crate::models::VertexEndpointRow {
+                    function: func,
+                    address,
+                    label: label.to_string(),
+                    direction,
+                });
+        }
+        true
     }
 
     /// Encodes models. It is assumed that each json element of the iterator represents an element of `model_generators`.
@@ -157,6 +197,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.super_find(n, value);
         match value.as_str() {
             Some("methods") => self.find_method.insert(n, FindMethod::Methods),
+            Some("instructions") => self.find_method.insert(n, FindMethod::Instructions),
+            Some("variables") => self.find_method.insert(n, FindMethod::Variables),
             Some(other) => {
                 self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
                     index: n,
@@ -166,6 +208,38 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             None => self.add_json_error(crate::error::JsonModelError::FieldNotString {
                 index: n,
                 field_name: "find".to_string(),
+            }),
+        }
+    }
+
+    /// Records the instruction address for a `find: "instructions"`/`"variables"`
+    /// generator. Accepts an integer or a hex (`0x…`)/decimal string.
+    fn visit_address_constraint(&mut self, n: usize, value: &serde_json::Value) {
+        self.super_address_constraint(n, value);
+        let addr = match value.get("value") {
+            Some(v) if v.is_u64() => v.as_u64(),
+            Some(v) if v.is_i64() => v.as_i64().map(|i| i as u64),
+            Some(serde_json::Value::String(s)) => {
+                let s = s.trim();
+                let parsed = if let Some(hex) = s
+                    .strip_prefix("0x")
+                    .or_else(|| s.strip_prefix("0X"))
+                {
+                    u64::from_str_radix(hex, 16)
+                } else {
+                    s.parse::<u64>()
+                };
+                parsed.ok()
+            }
+            _ => None,
+        };
+        match addr {
+            Some(a) => {
+                self.address.insert(n, a);
+            }
+            None => self.add_json_error(crate::error::JsonModelError::FieldNotString {
+                index: n,
+                field_name: "address value (expected integer or hex/decimal string)".to_string(),
             }),
         }
     }
@@ -387,6 +461,12 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             }
         };
 
+        // Interior-vertex source (find: instructions/variables): seed at the
+        // instruction address rather than a formal port.
+        if self.emit_vertex_endpoints(n, label, TaintDirection::Forward) {
+            return;
+        }
+
         let port_str = match value.get("port") {
             Some(v) => match v.as_str() {
                 Some(s) => s,
@@ -454,6 +534,12 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                 return;
             }
         };
+
+        // Interior-vertex sink (find: instructions/variables): seed at the
+        // instruction address rather than a formal port.
+        if self.emit_vertex_endpoints(n, label, TaintDirection::Backward) {
+            return;
+        }
 
         let port_str = match value.get("port") {
             Some(v) => match v.as_str() {
@@ -657,9 +743,23 @@ pub trait ModelGeneratorVisitor {
             Some("all_of") => self.visit_all_of_constraint(n, value),
             Some("not") => self.visit_not_constraint(n, value),
             Some("uses_field") => self.visit_uses_field_constraint(n, value),
+            Some("address") => self.visit_address_constraint(n, value),
             Some(c) => log::warn!("unhandled model_generator constraint: {c}"),
             None => (),
         }
+    }
+
+    /// An `address` constraint pins a `find: "instructions"`/`"variables"` model
+    /// to a specific instruction address. The value may be an integer or a
+    /// hex/decimal string (e.g. `"0x401136"`).
+    #[inline]
+    fn visit_address_constraint(&mut self, n: usize, value: &serde_json::Value) {
+        self.super_address_constraint(n, value)
+    }
+
+    #[inline]
+    fn super_address_constraint(&mut self, _n: usize, _value: &serde_json::Value) {
+        // Nothing
     }
 
     #[inline]

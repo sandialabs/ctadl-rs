@@ -20,15 +20,33 @@ mod ghidra;
 /// This is hardcoded for now, but should be read from the facts
 const WORD_SIZE: i64 = 8;
 
+/// The canonical marker file an exported pcode facts directory always contains
+/// (the exporter seeds `CTADLLanguage=PCODE`). Used to recognize a directory of
+/// pre-exported facts so we can ingest it directly instead of re-running Ghidra.
+const FACTS_LANGUAGE_MARKER: &str = "CTADLLanguage.facts";
+
+/// Returns true when `path` is a directory of already-exported pcode facts
+/// (i.e. it directly contains the language marker file). Such a directory is
+/// what Ghidra's taint plugin produces and hands to `legacy-pcode-cli index -f`;
+/// it must be ingested directly, never fed back through Ghidra.
+fn is_exported_facts_dir(path: &Path) -> bool {
+    path.is_dir() && path.join(FACTS_LANGUAGE_MARKER).is_file()
+}
+
 /// Import pcode facts from an artifact by running Ghidra and then converting the facts
 pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.artifact_path;
     let import_path = &import.import_path;
 
-    // Run Ghidra to generate facts
-    ghidra::run_ghidra_export(path, import_path)?;
-
-    let facts_dir = import_path.join("facts");
+    // If the artifact is already a directory of exported pcode facts (as produced
+    // by the Ghidra taint plugin's ExportPcode script), read it directly and skip
+    // Ghidra entirely. Otherwise, run Ghidra to generate facts into `import_path`.
+    let facts_dir = if is_exported_facts_dir(path) {
+        path.clone()
+    } else {
+        ghidra::run_ghidra_export(path, import_path)?;
+        import_path.join("facts")
+    };
 
     // Persist Ghidra's image base on the import config so downstream consumers
     // (SARIF address mapping, regression line checks) can recover

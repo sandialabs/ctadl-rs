@@ -184,6 +184,8 @@ pub fn try_load_models_from_values(
 pub struct ModelsBatch {
     pub summary: SummaryBatch,
     pub endpoint: EndpointBatch,
+    /// Interior-vertex sources/sinks from `find: "instructions"` generators.
+    pub vertex_endpoints: Vec<VertexEndpointRow>,
 }
 
 impl ModelsBatch {
@@ -192,6 +194,8 @@ impl ModelsBatch {
     pub fn union_with(&mut self, other: &Self) -> Result<(), Error> {
         self.summary.union_with(&other.summary)?;
         self.endpoint.union_with(&other.endpoint)?;
+        self.vertex_endpoints
+            .extend(other.vertex_endpoints.iter().cloned());
         Ok(())
     }
 }
@@ -351,11 +355,31 @@ impl SummaryBatch {
     }
 }
 
+/// A source/sink seeded at an interior vertex (a `find: "instructions"` model),
+/// identified by a function and an instruction address rather than a formal
+/// port. Resolved to concrete vertices against the `vertex_at_address` index at
+/// query time (see `cli::build_vertex_query_endpoints`). Unlike [`EndpointBuilder`]
+/// entries these are not Arrow-encoded: a query carries only a handful (one per
+/// user mark in the Ghidra plugin), so a plain vector is simpler.
+#[derive(Debug, Clone)]
+pub struct VertexEndpointRow {
+    /// Fully-qualified IR function name containing the vertex.
+    pub function: String,
+    /// Absolute instruction address the vertex is defined/used at.
+    pub address: u64,
+    /// Taint label (`kind`).
+    pub label: String,
+    /// Forward for a source, Backward for a sink.
+    pub direction: TaintDirection,
+}
+
 /// Main data type
 #[derive(Debug)]
 pub struct ModelBuilders {
     pub summary: SummaryBuilder,
     pub endpoint: EndpointBuilder,
+    /// Interior-vertex sources/sinks from `find: "instructions"` generators.
+    pub vertex_endpoints: Vec<VertexEndpointRow>,
 }
 
 impl Default for ModelBuilders {
@@ -369,13 +393,18 @@ impl ModelBuilders {
         Self {
             summary: SummaryBuilder::new(),
             endpoint: EndpointBuilder::new(),
+            vertex_endpoints: Vec::new(),
         }
     }
 
     pub fn finish(&mut self) -> Result<ModelsBatch, Error> {
         let summary = self.summary.finish()?;
         let endpoint = self.endpoint.finish()?;
-        Ok(ModelsBatch { summary, endpoint })
+        Ok(ModelsBatch {
+            summary,
+            endpoint,
+            vertex_endpoints: std::mem::take(&mut self.vertex_endpoints),
+        })
     }
 }
 

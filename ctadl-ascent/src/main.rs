@@ -529,12 +529,23 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
             let mut models = args.models.clone();
             models.push(query_args.query_file.clone());
             // Run the query and format the output (compact=true for Ghidra).
+            // Ghidra's taint plugin reads SARIF from the process's stdout
+            // (AbstractTaintState.readQueryResultsIntoDataFrame reads
+            // p.getInputStream()), so emit to stdout ("-"); all diagnostics go to
+            // stderr.
+            // The Ghidra taint plugin highlights program points from the
+            // per-instruction `C0002.tainted-instruction` results (their
+            // physicalLocation addresses); its per-result handler skips the
+            // `C0001` path results. The Debug profile emits BOTH the tainted
+            // instructions (for highlighting) and the source->sink paths (for the
+            // slice/codeflow view), so it is the closest match to the old
+            // `sarif+all` output the plugin was built against.
             let q_args = QueryArgs {
                 name: legacy_name.to_string(),
                 models,
                 compact: true,
-                output: PathBuf::from("results.sarif"),
-                sarif_profile: SarifProfile::Human,
+                output: PathBuf::from("-"),
+                sarif_profile: SarifProfile::Debug,
                 dump_taint_graph: None,
             };
             query_project(&q_args)?;

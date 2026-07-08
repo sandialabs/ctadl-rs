@@ -157,6 +157,57 @@ fn build_query_endpoints(
     (out_eps, out_formals)
 }
 
+/// Resolves interior-vertex model endpoints (`find: "instructions"`/`"variables"`)
+/// against the `vertex_at_address` index into concrete query endpoints. Every
+/// vertex defined/used at the requested `(function, address)` is seeded as a
+/// source/sink, mirroring the old Souffle plugin's per-variable marks.
+fn build_vertex_query_endpoints(
+    rows: &[crate::models::VertexEndpointRow],
+    idmap: &facts::IdMap,
+    vertex_at_address: &[(facts::FunctionId, u64, FlowVariable, facts::Path)],
+) -> Vec<(crate::query_engine::QueryEndpoint,)> {
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    // Index the interior vertices by (function, address).
+    let mut by_key: HashMap<(facts::FunctionId, u64), Vec<(FlowVariable, facts::Path)>> =
+        HashMap::new();
+    for (func, addr, var, path) in vertex_at_address {
+        by_key
+            .entry((*func, *addr))
+            .or_default()
+            .push((*var, path.clone()));
+    }
+    let mut out = Vec::new();
+    // Dedup identical seeds (the same vertex can be recorded as both a def and a
+    // use across sibling assignments at one instruction).
+    let mut seen: BTreeSet<(facts::FunctionId, FlowVariable, facts::Path, String, bool)> =
+        BTreeSet::new();
+    for row in rows {
+        let Some(infunc) = idmap.get_function_id(facts::Function(row.function.clone().into()))
+        else {
+            continue;
+        };
+        let Some(verts) = by_key.get(&(infunc, row.address)) else {
+            continue;
+        };
+        let forward = row.direction == facts::TaintDirection::Forward;
+        for (var, path) in verts {
+            if !seen.insert((infunc, *var, path.clone(), row.label.clone(), forward)) {
+                continue;
+            }
+            out.push((crate::query_engine::QueryEndpoint {
+                infunc,
+                vertex: FlowVertex(*var, path.clone()),
+                label: Label(row.label.clone().into()),
+                direction: row.direction,
+                call_site: None,
+            },));
+        }
+    }
+    out
+}
+
 // Imports a program for an artifact into the store
 pub fn import(import: &ArtifactImport) -> Result<(), Error> {
     use ArtifactLanguage::*;
@@ -174,6 +225,56 @@ pub fn import(import: &ArtifactImport) -> Result<(), Error> {
     Ok(())
 }
 
+/// Resolves a `FileSpanId` to its byte offset. For binary/pcode artifacts this
+/// offset is the absolute instruction address. `SourceInfo` ids are 1-based (see
+/// `source_info::FileSpanTable`).
+fn file_span_offset(si: &source_info::SourceInfo, fsid: source_info::FileSpanId) -> Option<u32> {
+    let idx = fsid.0 as usize;
+    if idx == 0 {
+        return None;
+    }
+    let fs = si.file_spans.get(idx - 1)?;
+    let span = si.spans.get(fs.span.0 as usize - 1)?;
+    Some(span.start)
+}
+
+/// Collects interior vertices (assignment def/use) keyed by the instruction
+/// address they occur at, for one import. Each site's address is recovered from
+/// the import's on-disk source spans. This feeds the `vertex_at_address` table
+/// that `find: "instructions"` query models resolve against.
+fn collect_vertex_at_address(
+    import: &ArtifactImport,
+    new_assigns: &[crate::index_engine::AssignFlow],
+    source_info: &IndexSourceInfo,
+    out: &mut Vec<crate::facts::schema::vertex_at_address::Record>,
+) {
+    if new_assigns.is_empty() {
+        return;
+    }
+    let si = match source_info::SourceInfo::from_parquet(&import.source_info_dir()) {
+        Ok(si) => si,
+        Err(e) => {
+            log::warn!("vertex_at_address: skipping import, no source info: {e}");
+            return;
+        }
+    };
+    for (site, dst, src) in new_assigns {
+        let Some(&span_id) = source_info.source_map.get(site) else {
+            continue;
+        };
+        let Some(addr) = file_span_offset(&si, span_id) else {
+            continue;
+        };
+        let Ok(facts::InsnSiteId { func_id, .. }) = facts::InsnSiteId::try_from(site) else {
+            continue;
+        };
+        let addr = addr as u64;
+        for FlowVertex(var, path) in [dst, src] {
+            out.push((func_id, addr, *var, path.clone()));
+        }
+    }
+}
+
 /// Indexes a project
 /// If summary_projects is provided, loads summaries from those projects and maps them into the current project.
 pub fn index(
@@ -187,6 +288,10 @@ pub fn index(
 ) -> Result<(), Error> {
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
+    // Interior vertices keyed by instruction address, for `find: "instructions"`
+    // query models. Built per-import so each site resolves against its own
+    // artifact's source spans.
+    let mut vertex_at_address: Vec<crate::facts::schema::vertex_at_address::Record> = Vec::new();
     for import in project.iter_imports() {
         let import = import?;
         let mut program_info = load_program_info_without_source_info(&import)?;
@@ -198,7 +303,14 @@ pub fn index(
 
         log::trace!("summary length: {}", models_batch.summary.num_rows());
         ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
+        let assign_start = facts.assign.len();
         codegen_program(program_info, &mut facts, &mut source_info, strategy);
+        collect_vertex_at_address(
+            &import,
+            &facts.assign[assign_start..],
+            &source_info,
+            &mut vertex_at_address,
+        );
         log::trace!("summary length: {}", facts.summary.len());
         codegen_summary(models_batch.summary, &mut facts, &mut source_info);
         log::trace!("summary length: {}", facts.summary.len());
@@ -211,6 +323,8 @@ pub fn index(
 
     let path = project.index_path()?;
     facts.clone().try_save(&path)?;
+    crate::facts::schema::vertex_at_address::try_save(&path, vertex_at_address)
+        .err_context(|| "saving vertex_at_address")?;
     inspect_index_facts(&facts, Some(&source_info.sites)).unwrap();
     source_info.clone().try_save(&path)?;
     let config = crate::index_engine::IndexConfig { alias_rule };
@@ -255,6 +369,10 @@ pub fn query(
     // Load the index tables once; they seed the query and are reused to format the results.
     let index_facts = IndexFacts::try_load(&index_path).err_context(|| "loading index facts")?;
     let index_result = IndexResult::try_load(&index_path).err_context(|| "loading index result")?;
+    // Interior vertices keyed by instruction address, for `find: "instructions"`
+    // query models. Absent on indexes built before this feature; treat as empty.
+    let vertex_at_address =
+        crate::facts::schema::vertex_at_address::try_load(&index_path).unwrap_or_default();
 
     let facts = {
         let mut models_batch: Option<crate::models::ModelsBatch> = None;
@@ -291,6 +409,12 @@ pub fn query(
             );
             endpoints.extend(eps);
             formal_params.extend(model_formals);
+            // Interior-vertex seeds (find: instructions/variables).
+            endpoints.extend(build_vertex_query_endpoints(
+                &batch.vertex_endpoints,
+                &ids,
+                &vertex_at_address,
+            ));
         }
 
         let sources = endpoints

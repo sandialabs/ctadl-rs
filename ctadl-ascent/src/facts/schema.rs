@@ -155,6 +155,19 @@ pub mod index_source_map {
     save_load!();
 }
 
+/// Interior vertices (locals) keyed by the instruction address they are
+/// defined/used at. Populated at index time from the `assign` facts joined with
+/// per-instruction source spans. Lets `find: "instructions"` models seed taint
+/// at a specific program point (the Ghidra plugin's per-variable marks). The
+/// `address` is the absolute instruction address (same value Ghidra reports).
+pub mod vertex_at_address {
+    use super::*;
+    pub type Record = (FunctionId, u64, FlowVariable, Path);
+    pub const COLUMNS: [&str; 4] = ["func_id", "address", "variable", "path"];
+    pub const FILENAME: &str = "vertex_at_address.parquet";
+    save_load!();
+}
+
 pub mod function_id {
     use super::*;
     pub type Record = (FunctionId, Function);

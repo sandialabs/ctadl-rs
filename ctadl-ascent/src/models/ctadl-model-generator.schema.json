@@ -243,6 +243,21 @@
               "type": "string"
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "constraint": {
+              "description": "Pins a 'find: instructions'/'variables' model to a specific instruction address",
+              "type": "string",
+              "enum": ["address"]
+            },
+            "value": {
+              "description": "Absolute instruction address, as an integer or a hex ('0x...')/decimal string",
+              "type": ["integer", "string"]
+            }
+          }
         }
       ]
     },
