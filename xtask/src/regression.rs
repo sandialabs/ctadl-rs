@@ -116,6 +116,22 @@ pub fn run(opts: &Options) -> Result<bool> {
         results.extend(dex_results);
     }
 
+    // Ghidra existing-project smoke check: drive the pcode importer against an
+    // *existing* Ghidra project (not a fresh binary). Only meaningful when Ghidra
+    // and a target binary are available (guaranteed under the Nix regression env),
+    // and self-skips otherwise, so it is cheap to always attempt.
+    {
+        let (name, outcome) = run_ghidra_project_check().unwrap_or_else(|err| {
+            (
+                GHIDRA_PROJECT_CASE.to_string(),
+                Outcome::Fail(format!("{err:#}")),
+            )
+        });
+        if opts.filter.as_ref().is_none_or(|f| name.contains(f)) {
+            results.push((name, outcome));
+        }
+    }
+
     if results.is_empty() {
         bail!("no test cases selected");
     }
@@ -652,6 +668,151 @@ fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&s
         &format!("ctadl {}", args.first().copied().unwrap_or("")),
     )?;
     Ok(())
+}
+
+// --- Ghidra existing-project import ---------------------------------------
+
+/// Reporting name for the Ghidra existing-project smoke check.
+const GHIDRA_PROJECT_CASE: &str = "Pcode:GhidraProject";
+
+/// A small, self-contained C program used as the import target. Compiled to a
+/// relocatable object (a few KB), it keeps the Ghidra analysis fast and the test
+/// deterministic -- unlike, say, a system `tee`, which under Nix is a symlink to
+/// the ~1.4 MB multicall `coreutils` binary.
+const SMOKE_C: &str = r#"
+#include <string.h>
+int process(const char *s, char *d) { strcpy(d, s); return (int)strlen(d); }
+int main(int argc, char **argv) {
+    char buf[64];
+    if (argc > 1) return process(argv[1], buf);
+    return 0;
+}
+"#;
+
+/// Smoke-test the "import pcode from an existing Ghidra project" feature.
+///
+/// Rather than importing a fresh binary (which Ghidra loads into a throwaway
+/// project), this compiles a tiny C program, builds a *persistent* Ghidra project
+/// by importing the resulting object, then drives `ctadl import -l pcode
+/// <project>.gpr`. That path runs the same `ExportPcode` script via
+/// `analyzeHeadless -process` against the already-populated project. We assert the
+/// importer produced a non-empty IR program in the store.
+///
+/// Self-skips (rather than failing) when Ghidra or a C compiler is unavailable, so
+/// it is harmless to attempt outside the Nix regression environment.
+fn run_ghidra_project_check() -> Result<(String, Outcome)> {
+    let name = GHIDRA_PROJECT_CASE.to_string();
+
+    let Some(analyze_headless) = find_analyze_headless() else {
+        return Ok((
+            name,
+            Outcome::Skip("Ghidra analyzeHeadless not found (set GHIDRA_HOME)".to_string()),
+        ));
+    };
+    let (cc, _addr2line) = pick_toolchain();
+    if exec::which(&cc).is_none() {
+        return Ok((name, Outcome::Skip(format!("`{cc}` not on PATH"))));
+    }
+
+    let work = scratch_dir("Pcode_GhidraProject")?;
+    let state = work.join("state");
+    let proj_loc = work.join("ghidra-project");
+    std::fs::create_dir_all(&state)?;
+    std::fs::create_dir_all(&proj_loc)?;
+
+    // Ghidra needs a writable HOME and its usual Java options; reuse the pcode env.
+    let home = ensure_writable_home()?;
+    let java_tool_options = format!("-Duser.home={}", home.display());
+    let env = pcode_env(&home, &java_tool_options);
+
+    // 1. Compile the tiny program to a small relocatable object.
+    let src = work.join("smoke.c");
+    std::fs::write(&src, SMOKE_C)?;
+    let obj = work.join("smoke.o");
+    let mut compile = Command::new(&cc);
+    compile
+        .current_dir(&work)
+        .args(["-g", "-O0", "-c"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&obj);
+    exec::run_checked(compile, &cc)?;
+
+    // 2. Build a persistent project by importing the object (note: no
+    //    -deleteProject, so the project survives for the `ctadl import` to -process).
+    let proj_name = "ctadl_ghidra_smoke";
+    let mut build = Command::new(&analyze_headless);
+    build
+        .current_dir(&work)
+        .arg(&proj_loc)
+        .arg(proj_name)
+        .arg("-import")
+        .arg(&obj);
+    for (k, v) in &env {
+        build.env(k, v);
+    }
+    exec::run_checked(build, "analyzeHeadless -import")?;
+
+    let gpr = proj_loc.join(format!("{proj_name}.gpr"));
+    if !gpr.is_file() {
+        return Ok((
+            name,
+            Outcome::Fail(format!(
+                "Ghidra did not create project file {}",
+                gpr.display()
+            )),
+        ));
+    }
+
+    // 3. Import pcode from the EXISTING project (exercises `-process`).
+    let import_name = "ghidra_project_smoke";
+    run_ctadl_env(
+        &work,
+        &state,
+        &env,
+        &[
+            "import",
+            "-l",
+            "pcode",
+            &gpr.to_string_lossy(),
+            "-n",
+            import_name,
+        ],
+    )?;
+
+    // 4. A successful import writes a non-empty IR program into the store at
+    //    `<XDG_STATE_HOME>/ctadl/imports/<name>/ir-program.bitcode`.
+    let bitcode = state
+        .join("ctadl")
+        .join("imports")
+        .join(import_name)
+        .join("ir-program.bitcode");
+    match std::fs::metadata(&bitcode) {
+        Ok(m) if m.len() > 0 => Ok((name, Outcome::Pass)),
+        Ok(_) => Ok((
+            name,
+            Outcome::Fail(format!("{} is empty", bitcode.display())),
+        )),
+        Err(e) => Ok((
+            name,
+            Outcome::Fail(format!("missing IR program {}: {e}", bitcode.display())),
+        )),
+    }
+}
+
+/// Locate Ghidra's `analyzeHeadless` launcher. Prefer `$GHIDRA_HOME/support`
+/// (set by the Nix regression check), then fall back to the `ghidra-bin` package
+/// name and the bare launcher on `PATH`.
+fn find_analyze_headless() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("GHIDRA_HOME") {
+        let candidate = PathBuf::from(home).join("support").join("analyzeHeadless");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    ["ghidra-analyzeHeadless", "analyzeHeadless"]
+        .into_iter()
+        .find_map(exec::which)
 }
 
 // --- shared ----------------------------------------------------------------
