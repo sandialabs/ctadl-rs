@@ -1,4 +1,4 @@
-//! A prefix-sharing (trie-like) BYODS data structure for the `locals` relation.
+//! A flat, CSR-style BYODS data structure for the `locals` relation.
 //!
 //! `locals(FunctionId, FlowVariable, Path, FormalIndex, Path)` is the dominant memory
 //! consumer of the index phase. As a normal Ascent relation it is stored ~6× over: the
@@ -7,13 +7,28 @@
 //! the full 5-column tuple is replicated many times.
 //!
 //! This module replaces all of that with a single shared store (the Ascent BYODS
-//! "ind_common"). Every logical index becomes a lightweight *view* over that one store:
-//!   - a forward map `(F,V) -> P -> {(M,Fp)}` serves `none`, `0_1`, `0_1_2`, existence,
-//!     and iteration — the `(F,V)` and `P` prefixes are stored once and shared.
-//!   - the `0_3_4` view is *derived* by scanning the forward store rather than materializing
-//!     a full inverse `(F,M,Fp) -> [(V,P)]` copy (which measured ~53% of the store). A small
-//!     side-index `fidx: F -> {V}` narrows each `0_3_4` probe to the flow-variables of the
-//!     probed function, so the scan touches one function's groups instead of all of `fwd`.
+//! "ind_common"). Every logical index becomes a lightweight *view* over that one store.
+//!
+//! ## Why flat, not a nested trie
+//!
+//! The earlier design stored `(F,V) -> P -> {(M,Fp)}` as `HashMap<(F,V), HashMap<P,
+//! HashSet<(M,Fp)>>>`. Measured on a representative workload the groups are *tiny* — ~5
+//! leaves per `(F,V)` group spread over ~2 distinct `P` — so the two inner hash levels are
+//! nearly empty: each pays hashbrown's 8-bucket minimum allocation to hold ~2 elements.
+//! That structural slack, not the payload, was ~91% of the store (36k inner maps ≈ 53%,
+//! 70k leaf sets ≈ 38%, only ~13% real data + outer map).
+//!
+//! We collapse both inner levels into one **sorted `Vec<(P,M,Fp)>` per `(F,V)` group**:
+//!   - one heap allocation per group instead of `1 + (#distinct P)` tiny hash tables;
+//!   - leaves packed contiguously (24 B each) with no per-element control bytes;
+//!   - the vec is kept sorted by `(P,M,Fp)`, so existence is a `binary_search`, the
+//!     `0_1_2` view is a `partition_point` range over the contiguous `P`-run, and inserts
+//!     keep order with a single shift (groups are ~5 elements, so O(group) is negligible).
+//!
+//! The forward map `(F,V) -> [ (P,M,Fp) ]` serves `none`, `0_1`, `0_1_2`, existence, and
+//! iteration. The `0_3_4` view is *derived* by scanning (as before) rather than
+//! materializing a full inverse; a small side-index `fidx: F -> {V}` narrows each `0_3_4`
+//! probe to the flow-variables of the probed function.
 //!
 //! Correctness note (differs from `ascent_byods_rels::eqrel`): eqrel tolerates Ascent
 //! merging the shared store twice per iteration (once via the ind_common, once via the
@@ -22,6 +37,7 @@
 //! *only* real merge live on the ind_common ([`LocalsIndCommon`]); every index write target
 //! ([`FullWrite`], [`NoopWrite`]) has a no-op `RelIndexMerge`.
 
+use std::cmp::Ordering;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Index;
@@ -34,6 +50,48 @@ use ascent::internal::{
 
 type Map<K, V> = hashbrown::HashMap<K, V>;
 type Set<T> = hashbrown::HashSet<T>;
+
+/// Merge a sorted, deduplicated `src` into a sorted, deduplicated `dst` (both ascending),
+/// keeping `dst` sorted and deduplicated. Returns the number of elements that were *newly*
+/// added to `dst` (i.e. present in `src` but not already in `dst`). Linear two-way merge.
+fn merge_sorted<T: Ord>(dst: &mut Vec<T>, src: Vec<T>) -> usize {
+    if src.is_empty() {
+        return 0;
+    }
+    if dst.is_empty() {
+        let n = src.len();
+        *dst = src;
+        return n;
+    }
+    let old = std::mem::take(dst);
+    let mut merged = Vec::with_capacity(old.len() + src.len());
+    let mut oi = old.into_iter().peekable();
+    let mut si = src.into_iter().peekable();
+    let mut added = 0usize;
+    loop {
+        match (oi.peek(), si.peek()) {
+            (Some(a), Some(b)) => match a.cmp(b) {
+                Ordering::Less => merged.push(oi.next().unwrap()),
+                Ordering::Greater => {
+                    merged.push(si.next().unwrap());
+                    added += 1;
+                }
+                Ordering::Equal => {
+                    merged.push(oi.next().unwrap());
+                    si.next();
+                }
+            },
+            (Some(_), None) => merged.push(oi.next().unwrap()),
+            (None, Some(_)) => {
+                merged.push(si.next().unwrap());
+                added += 1;
+            }
+            (None, None) => break,
+        }
+    }
+    *dst = merged;
+    added
+}
 
 // ---------------------------------------------------------------------------
 // Physical `rel!` storage. Stores no tuples (all data lives in the shared
@@ -123,12 +181,12 @@ where
     M: Clone + Eq + Hash,
     Fp: Clone + Eq + Hash,
 {
-    /// forward: (F,V) -> P -> set of (M, Fp). Serves none / 0_1 / 0_1_2 / existence, and
-    /// the `0_3_4` view by *scanning* rather than a materialized inverse: `0_3_4` is probed at
-    /// exactly one cold site (rule 2.2, mod.rs), driven by the tiny `resolvent` relation
-    /// (measured 2-38 tuples), so deriving those few probes by scanning `fwd` trades a ~53%
-    /// store-size inverse copy for a handful of scans. See `View034`.
-    fwd: Map<(F, V), Map<P, Set<(M, Fp)>>>,
+    /// forward: (F,V) -> sorted `Vec` of `(P, M, Fp)` (ascending, deduplicated). Serves
+    /// none / 0_1 / 0_1_2 / existence, and the `0_3_4` view by *scanning*. The vec is kept
+    /// sorted so existence is a `binary_search` and `0_1_2` is a `partition_point` range over
+    /// the contiguous `P`-run. One heap allocation per group replaces the old nested
+    /// `HashMap<P, HashSet<(M,Fp)>>` (which was ~91% hashbrown slack on tiny groups).
+    fwd: Map<(F, V), Vec<(P, M, Fp)>>,
     /// side-index: F -> set of V present for that function. Lets a `0_3_4` probe restrict its
     /// scan to the flow-variables of the probed function instead of walking every `(F,V)` group
     /// in `fwd`. Maintained in lockstep with `fwd`'s outer keys (exactly one V per `(F,V)`
@@ -137,6 +195,8 @@ where
     len: usize,
 }
 
+// Bounds-light methods (no `Ord` needed): callable from the read views, which are only
+// bounded `Clone + Eq + Hash`.
 impl<F, V, P, M, Fp> LocalsIndCommon<F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
@@ -154,41 +214,11 @@ where
         self.len == 0
     }
 
-    #[inline]
-    fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
-        // (M,Fp) is cheap to clone (i16 + 8-byte handle); avoids a borrow-key helper.
-        self.fwd
-            .get(&(f.clone(), v.clone()))
-            .and_then(|pm| pm.get(p))
-            .is_some_and(|s| s.contains(&(m.clone(), fp.clone())))
-    }
-
-    /// Insert a full tuple; returns true if newly added to *this* store.
-    fn insert(&mut self, key: &(F, V, P, M, Fp)) -> bool {
-        use hashbrown::hash_map::Entry;
-        let (f, v, p, m, fp) = key;
-        // Fetch the (F,V) group, recording V in the side-index the first time the group appears.
-        let pm = match self.fwd.entry((f.clone(), v.clone())) {
-            Entry::Occupied(e) => e.into_mut(),
-            Entry::Vacant(e) => {
-                self.fidx.entry(f.clone()).or_default().insert(v.clone());
-                e.insert(Map::default())
-            }
-        };
-        let leaves = pm.entry(p.clone()).or_default();
-        if leaves.insert((m.clone(), fp.clone())) {
-            self.len += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Phase-0 instrumentation: estimate the heap bytes held by the forward trie vs. the
+    /// Phase-0 instrumentation: estimate the heap bytes held by the forward store vs. the
     /// `fidx` side-index, so we can see *which* structure dominates before optimizing (external
     /// `phys_footprint` can't attribute bytes to a sub-structure). Estimates are
     /// allocation-size approximations that include hashbrown load-factor slack; they are for
-    /// *relative* comparison (fwd vs fidx), not exact accounting. O(groups+leaves), one pass.
+    /// *relative* comparison (fwd vs fidx), not exact accounting. O(rows), one pass.
     pub fn heap_report(&self) -> HeapReport {
         // hashbrown allocates `buckets` slots (a power of two sized so that 7/8*buckets >=
         // capacity), each `size_of::<T>()` bytes, plus one control byte per bucket (+ a
@@ -201,11 +231,8 @@ where
             buckets * (elem + 1) + 16
         }
 
-        let sz_outer = std::mem::size_of::<((F, V), Map<P, Set<(M, Fp)>>)>();
-        let sz_inner = std::mem::size_of::<(P, Set<(M, Fp)>)>();
-        let sz_leaf = std::mem::size_of::<(M, Fp)>();
-        // inverse map removed (option-1): 0_3_4 is a derived scan over `fwd`. The only auxiliary
-        // structure now is the `fidx` side-index (F -> {V}) that narrows the scan (option-2).
+        let sz_outer = std::mem::size_of::<((F, V), Vec<(P, M, Fp)>)>();
+        let sz_leaf = std::mem::size_of::<(P, M, Fp)>();
         let sz_fidx_outer = std::mem::size_of::<(F, Set<V>)>();
         let sz_fidx_val = std::mem::size_of::<V>();
 
@@ -218,14 +245,19 @@ where
             fidx_funcs: self.fidx.len(),
             fidx_vs: 0,
             fidx_bytes: hb_bytes(self.fidx.capacity(), sz_fidx_outer),
-            elem_sizes: (sz_outer, sz_inner, sz_leaf, sz_fidx_outer, sz_fidx_val),
+            elem_sizes: (sz_outer, 0, sz_leaf, sz_fidx_outer, sz_fidx_val),
         };
-        for pm in self.fwd.values() {
-            r.p_entries += pm.len();
-            r.fwd_bytes += hb_bytes(pm.capacity(), sz_inner);
-            for set in pm.values() {
-                r.leaf_elems += set.len();
-                r.fwd_bytes += hb_bytes(set.capacity(), sz_leaf);
+        for vec in self.fwd.values() {
+            r.leaf_elems += vec.len();
+            // Group vec heap buffer: capacity slots of the leaf tuple (no control bytes).
+            r.fwd_bytes += vec.capacity() * sz_leaf;
+            // Distinct P = run boundaries in the sorted vec.
+            let mut last: Option<&P> = None;
+            for (p, _, _) in vec.iter() {
+                if last != Some(p) {
+                    r.p_entries += 1;
+                    last = Some(p);
+                }
             }
         }
         for vs in self.fidx.values() {
@@ -234,24 +266,62 @@ where
         }
         r
     }
+}
+
+// Methods that maintain / query the sorted group vecs need `Ord` on the leaf columns.
+impl<F, V, P, M, Fp> LocalsIndCommon<F, V, P, M, Fp>
+where
+    F: Clone + Eq + Hash,
+    V: Clone + Eq + Hash,
+    P: Clone + Eq + Hash + Ord,
+    M: Clone + Eq + Hash + Ord,
+    Fp: Clone + Eq + Hash + Ord,
+{
+    #[inline]
+    fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
+        // (P,M,Fp) are cheap to clone (8-byte handles + i16); avoids a borrow-key helper.
+        self.fwd
+            .get(&(f.clone(), v.clone()))
+            .is_some_and(|vec| vec.binary_search(&(p.clone(), m.clone(), fp.clone())).is_ok())
+    }
+
+    /// Insert a full tuple; returns true if newly added to *this* store.
+    fn insert(&mut self, key: &(F, V, P, M, Fp)) -> bool {
+        use hashbrown::hash_map::Entry;
+        let (f, v, p, m, fp) = key;
+        // Fetch the (F,V) group, recording V in the side-index the first time the group appears.
+        let vec = match self.fwd.entry((f.clone(), v.clone())) {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => {
+                self.fidx.entry(f.clone()).or_default().insert(v.clone());
+                e.insert(Vec::new())
+            }
+        };
+        let leaf = (p.clone(), m.clone(), fp.clone());
+        match vec.binary_search(&leaf) {
+            Ok(_) => false,
+            Err(pos) => {
+                vec.insert(pos, leaf);
+                self.len += 1;
+                true
+            }
+        }
+    }
 
     /// Merge `from` into `self` (union). Used by the delta->total move.
     fn absorb(&mut self, from: &mut Self) {
         use hashbrown::hash_map::Entry;
-        for ((f, v), pm) in from.fwd.drain() {
-            let dst = match self.fwd.entry((f.clone(), v.clone())) {
-                Entry::Occupied(e) => e.into_mut(),
+        for ((f, v), fromvec) in from.fwd.drain() {
+            match self.fwd.entry((f.clone(), v.clone())) {
+                Entry::Occupied(e) => {
+                    let dst = e.into_mut();
+                    self.len += merge_sorted(dst, fromvec);
+                }
                 Entry::Vacant(e) => {
                     self.fidx.entry(f).or_default().insert(v);
-                    e.insert(Map::default())
-                }
-            };
-            for (p, set) in pm {
-                let dst_set = dst.entry(p).or_default();
-                for mf in set {
-                    if dst_set.insert(mf) {
-                        self.len += 1;
-                    }
+                    let n = fromvec.len();
+                    e.insert(fromvec);
+                    self.len += n;
                 }
             }
         }
@@ -267,11 +337,11 @@ pub struct HeapReport {
     pub rows: usize,
     /// Number of distinct `(F,V)` groups (outer forward keys).
     pub fv_groups: usize,
-    /// Number of `(F,V,P)` inner entries across all groups.
+    /// Number of distinct `(F,V,P)` entries across all groups.
     pub p_entries: usize,
-    /// Number of `(M,Fp)` leaf elements across all leaves (== rows).
+    /// Number of `(P,M,Fp)` leaf elements across all groups (== rows).
     pub leaf_elems: usize,
-    /// Estimated bytes for the whole forward trie (outer map + inner maps + leaf sets).
+    /// Estimated bytes for the whole forward store (outer map + per-group leaf vecs).
     pub fwd_bytes: usize,
     /// Number of distinct functions in the `fidx` side-index (outer keys).
     pub fidx_funcs: usize,
@@ -279,7 +349,7 @@ pub struct HeapReport {
     pub fidx_vs: usize,
     /// Estimated bytes for the `fidx` side-index (outer map + per-function V sets).
     pub fidx_bytes: usize,
-    /// Element sizes `(outer, inner, leaf, fidx_outer, fidx_val)` for reference.
+    /// Element sizes `(outer, _unused, leaf, fidx_outer, fidx_val)` for reference.
     pub elem_sizes: (usize, usize, usize, usize, usize),
 }
 
@@ -294,13 +364,13 @@ impl std::fmt::Display for HeapReport {
                 100.0 * b as f64 / total as f64
             }
         };
-        let (o, i, l, fo, fv) = self.elem_sizes;
+        let (o, _i, l, fo, fv) = self.elem_sizes;
         write!(
             f,
             "locals store estimate: total {:.1} MB over {} rows ({:.0} B/row) | \
              fwd {:.1} MB ({:.0}%): {} (F,V) groups, {} (F,V,P) entries, {} leaves | \
              fidx {:.1} MB ({:.0}%): {} funcs, {} V entries | \
-             elem sizes o={} i={} l={} fo={} fv={} B",
+             elem sizes o={} l={} fo={} fv={} B",
             mb(total),
             self.rows,
             if self.rows == 0 {
@@ -318,7 +388,6 @@ impl std::fmt::Display for HeapReport {
             self.fidx_funcs,
             self.fidx_vs,
             o,
-            i,
             l,
             fo,
             fv,
@@ -365,9 +434,9 @@ impl<F, V, P, M, Fp> RelIndexMerge for LocalsIndCommon<F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
-    M: Clone + Eq + Hash,
-    Fp: Clone + Eq + Hash,
+    P: Clone + Eq + Hash + Ord,
+    M: Clone + Eq + Hash + Ord,
+    Fp: Clone + Eq + Hash + Ord,
 {
     fn move_index_contents(from: &mut Self, to: &mut Self) {
         to.absorb(from);
@@ -414,9 +483,9 @@ impl<'a, F, V, P, M, Fp> RelFullIndexWrite for FullWrite<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
-    M: Clone + Eq + Hash,
-    Fp: Clone + Eq + Hash,
+    P: Clone + Eq + Hash + Ord,
+    M: Clone + Eq + Hash + Ord,
+    Fp: Clone + Eq + Hash + Ord,
 {
     type Key = (F, V, P, M, Fp);
     type Value = ();
@@ -429,9 +498,9 @@ impl<'a, F, V, P, M, Fp> RelIndexWrite for FullWrite<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
-    M: Clone + Eq + Hash,
-    Fp: Clone + Eq + Hash,
+    P: Clone + Eq + Hash + Ord,
+    M: Clone + Eq + Hash + Ord,
+    Fp: Clone + Eq + Hash + Ord,
 {
     type Key = (F, V, P, M, Fp);
     type Value = ();
@@ -565,10 +634,9 @@ where
     fn index_get(&'a self, _key: &()) -> Option<Self::IteratorType> {
         let c = self.0;
         Some(DynIter::new(move || {
-            c.fwd.iter().flat_map(|((f, v), pm)| {
-                pm.iter()
-                    .flat_map(move |(p, set)| set.iter().map(move |(m, fp)| (f, v, p, m, fp)))
-            })
+            c.fwd
+                .iter()
+                .flat_map(|((f, v), vec)| vec.iter().map(move |(p, m, fp)| (f, v, p, m, fp)))
         }))
     }
     #[inline]
@@ -612,11 +680,8 @@ where
     type IteratorType = DynIter<'a, Self::Value>;
     #[inline]
     fn index_get(&'a self, key: &(F, V)) -> Option<Self::IteratorType> {
-        let pm = self.0.fwd.get(key)?;
-        Some(DynIter::new(move || {
-            pm.iter()
-                .flat_map(|(p, set)| set.iter().map(move |(m, fp)| (p, m, fp)))
-        }))
+        let vec = self.0.fwd.get(key)?;
+        Some(DynIter::new(move || vec.iter().map(|(p, m, fp)| (p, m, fp))))
     }
     #[inline]
     fn len_estimate(&self) -> usize {
@@ -637,11 +702,8 @@ where
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        Box::new(self.0.fwd.iter().map(|((f, v), pm)| {
-            let it = DynIter::new(move || {
-                pm.iter()
-                    .flat_map(|(p, set)| set.iter().map(move |(m, fp)| (p, m, fp)))
-            });
+        Box::new(self.0.fwd.iter().map(|((f, v), vec)| {
+            let it = DynIter::new(move || vec.iter().map(|(p, m, fp)| (p, m, fp)));
             ((f, v), it)
         }))
     }
@@ -652,7 +714,7 @@ impl<'a, F, V, P, M, Fp> RelIndexRead<'a> for View012<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
+    P: Clone + Eq + Hash + Ord,
     M: Clone + Eq + Hash,
     Fp: Clone + Eq + Hash,
 {
@@ -661,12 +723,16 @@ where
     type IteratorType = DynIter<'a, Self::Value>;
     #[inline]
     fn index_get(&'a self, key: &(F, V, P)) -> Option<Self::IteratorType> {
-        let set = self
-            .0
-            .fwd
-            .get(&(key.0.clone(), key.1.clone()))?
-            .get(&key.2)?;
-        Some(DynIter::new(move || set.iter().map(|(m, fp)| (m, fp))))
+        let vec = self.0.fwd.get(&(key.0.clone(), key.1.clone()))?;
+        // The group vec is sorted by (P,M,Fp), so all leaves sharing this P are contiguous.
+        let p = key.2.clone();
+        let lo = vec.partition_point(|(pp, _, _)| *pp < p);
+        let hi = vec.partition_point(|(pp, _, _)| *pp <= p);
+        if lo == hi {
+            return None;
+        }
+        let slice = &vec[lo..hi];
+        Some(DynIter::new(move || slice.iter().map(|(_, m, fp)| (m, fp))))
     }
     #[inline]
     fn len_estimate(&self) -> usize {
@@ -677,7 +743,7 @@ impl<'a, F, V, P, M, Fp> RelIndexReadAll<'a> for View012<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
+    P: Clone + Eq + Hash + Ord,
     M: Clone + Eq + Hash,
     Fp: Clone + Eq + Hash,
 {
@@ -687,9 +753,24 @@ where
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        Box::new(self.0.fwd.iter().flat_map(|((f, v), pm)| {
-            pm.iter().map(move |(p, set)| {
-                let it = DynIter::new(move || set.iter().map(|(m, fp)| (m, fp)));
+        Box::new(self.0.fwd.iter().flat_map(|((f, v), vec)| {
+            // Split the sorted group vec into contiguous runs of equal P; emit one key per run
+            // so each (F,V,P) is yielded exactly once with all its (M,Fp) leaves.
+            let mut runs: Vec<(usize, usize)> = Vec::new();
+            let mut i = 0;
+            while i < vec.len() {
+                let p0 = &vec[i].0;
+                let mut j = i + 1;
+                while j < vec.len() && &vec[j].0 == p0 {
+                    j += 1;
+                }
+                runs.push((i, j));
+                i = j;
+            }
+            runs.into_iter().map(move |(s, e)| {
+                let slice = &vec[s..e];
+                let p = &vec[s].0;
+                let it = DynIter::new(move || slice.iter().map(|(_, m, fp)| (m, fp)));
                 ((f, v, p), it)
             })
         }))
@@ -711,10 +792,10 @@ where
     #[inline]
     fn index_get(&'a self, key: &(F, M, Fp)) -> Option<Self::IteratorType> {
         // Derived (no materialized inverse): for the probed function `f`, visit only its
-        // flow-variables via the `fidx` side-index, then yield every `(v, p)` whose leaf
-        // contains `(m, fp)`. This touches one function's `(F,V)` groups instead of scanning all
-        // of `fwd`. Cold path (rule 2.2, ~tens of probes). Returns `Some` of a possibly-empty
-        // iterator; an empty result is join-equivalent to `None`, keeping this a single pass.
+        // flow-variables via the `fidx` side-index, then yield every `(v, p)` whose group vec
+        // contains a leaf with this `(m, fp)`. This touches one function's `(F,V)` groups
+        // instead of scanning all of `fwd`. Cold path (rule 2.2, ~tens of probes). Returns
+        // `Some` of a possibly-empty iterator; an empty result is join-equivalent to `None`.
         let c = self.0;
         let (f, m, fp) = key.clone();
         Some(DynIter::new(move || {
@@ -727,10 +808,10 @@ where
                     c.fwd
                         .get(&(f.clone(), v.clone()))
                         .into_iter()
-                        .flat_map(move |pm| {
+                        .flat_map(move |vec| {
                             let (m, fp) = (m.clone(), fp.clone());
-                            pm.iter().filter_map(move |(p, set)| {
-                                if set.contains(&(m.clone(), fp.clone())) {
+                            vec.iter().filter_map(move |(p, mm, ffp)| {
+                                if *mm == m && *ffp == fp {
                                     Some((v, p))
                                 } else {
                                     None
@@ -764,14 +845,12 @@ where
     fn iter_all(&'a self) -> Self::AllIteratorType {
         // Not on any hot path: `0_3_4` is only ever point-probed (rule 2.2), never iterated as a
         // driver. Provide a correct fallback by transiently inverting `fwd` on demand. If this
-        // ever shows up in a profile, it means some rule started iterating `0_3_4` and the
-        // inverse should be reconsidered.
+        // ever shows up in a profile, it means some rule started iterating `0_3_4` and a
+        // materialized inverse should be reconsidered.
         let mut groups: Map<(&'a F, &'a M, &'a Fp), Vec<(&'a V, &'a P)>> = Map::default();
-        for ((f, v), pm) in self.0.fwd.iter() {
-            for (p, set) in pm.iter() {
-                for (m, fp) in set.iter() {
-                    groups.entry((f, m, fp)).or_default().push((v, p));
-                }
+        for ((f, v), vec) in self.0.fwd.iter() {
+            for (p, m, fp) in vec.iter() {
+                groups.entry((f, m, fp)).or_default().push((v, p));
             }
         }
         Box::new(groups.into_iter().map(|(key, vps)| {
@@ -786,9 +865,9 @@ impl<'a, F, V, P, M, Fp> RelFullIndexRead<'a> for ViewFull<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
-    M: Clone + Eq + Hash,
-    Fp: Clone + Eq + Hash,
+    P: Clone + Eq + Hash + Ord,
+    M: Clone + Eq + Hash + Ord,
+    Fp: Clone + Eq + Hash + Ord,
 {
     type Key = (F, V, P, M, Fp);
     #[inline]
@@ -800,9 +879,9 @@ impl<'a, F, V, P, M, Fp> RelIndexRead<'a> for ViewFull<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash,
-    M: Clone + Eq + Hash,
-    Fp: Clone + Eq + Hash,
+    P: Clone + Eq + Hash + Ord,
+    M: Clone + Eq + Hash + Ord,
+    Fp: Clone + Eq + Hash + Ord,
 {
     type Key = (F, V, P, M, Fp);
     type Value = &'a ();
@@ -834,11 +913,9 @@ where
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        Box::new(self.0.fwd.iter().flat_map(|((f, v), pm)| {
-            pm.iter().flat_map(move |(p, set)| {
-                set.iter()
-                    .map(move |(m, fp)| ((f, v, p, m, fp), std::iter::once(&())))
-            })
+        Box::new(self.0.fwd.iter().flat_map(|((f, v), vec)| {
+            vec.iter()
+                .map(move |(p, m, fp)| ((f, v, p, m, fp), std::iter::once(&())))
         }))
     }
 }
