@@ -39,6 +39,7 @@ to 0.f.
 
 use std::path;
 
+use ascent::ascent;
 use ascent::ascent_run;
 use derive_builder::Builder;
 use hashbrown::hash_map::HashMap;
@@ -46,8 +47,8 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallString, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType, FunctionId,
-    IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, Resolvent,
+    CallArgId, CallString, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
+    FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, Resolvent,
     SmallestCallString, isout,
 };
 use ctadl_ir::Symbol;
@@ -148,7 +149,14 @@ impl IndexFacts {
                 let InsnSiteId { func_id, insn_id } =
                     InsnSiteId::unpack_from_slice(&**site_id).unwrap();
                 let FlowVertex(variable, path) = vertex;
-                (func_id, insn_id, *variable, *path, name.clone(), desc.clone())
+                (
+                    func_id,
+                    insn_id,
+                    *variable,
+                    *path,
+                    name.clone(),
+                    desc.clone(),
+                )
             }),
         )?;
         java_resolvents::try_save(&dir, self.java_resolvents.iter().cloned())?;
@@ -884,40 +892,30 @@ pub fn taint_index_with_config(
         phys_footprint_mb()
     );
 
-    let mut prog = ascent_run! {
+    ascent! {
         #![measure_rule_times]
+        #![generate_run_timeout]
+        struct IndexProg;
         // Facts:
 
-        relation formal_param(FunctionId, FlowVariable, FormalType) = facts.formal_param;
-        relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex) = facts.actual_param;
-        relation call(FunctionId, InsnId, FunctionId) = call;
+        relation formal_param(FunctionId, FlowVariable, FormalType);
+        relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex);
+        relation call(FunctionId, InsnId, FunctionId);
         // func:insn: v = ptr<function_id>
-        relation func_ptr_assign(FunctionId, FlowVertex, FunctionId) = facts.func_ptr_assign.into_iter().map(|(site_id, vx, obj)| {
-            let InsnSiteId {func_id, ..} = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-            (func_id, vx, obj)
-        }).collect();
+        relation func_ptr_assign(FunctionId, FlowVertex, FunctionId);
         // x = new Foo();
-        relation java_obj_assign(FunctionId, FlowVertex, Symbol) = facts.java_obj_assign.into_iter().map(|(site_id, vx, obj)| {
-            let InsnSiteId {func_id, ..} = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-            (func_id, vx, obj)
-        }).collect();
+        relation java_obj_assign(FunctionId, FlowVertex, Symbol);
         // x.virtual_call(args)
-        relation java_call(FunctionId, InsnId, FlowVariable, Path, Symbol, Symbol) = facts.java_call.into_iter().map(|(site_id, vx, a, b)| {
-            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-            (func_id, insn_id, vx.0, vx.1, a, b)
-        }).collect();
-        relation indirect_call(FunctionId, InsnId, FlowVariable, Path) = facts.indirect_call.into_iter().map(|(site_id, vx)| {
-            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-            (func_id, insn_id, vx.0, vx.1)
-        }).collect();
-        relation java_resolvents(Symbol, Symbol, Symbol, FunctionId) = facts.java_resolvents;
+        relation java_call(FunctionId, InsnId, FlowVariable, Path, Symbol, Symbol);
+        relation indirect_call(FunctionId, InsnId, FlowVariable, Path);
+        relation java_resolvents(Symbol, Symbol, Symbol, FunctionId);
 
         // Analysis drivers:
 
         // Set of syntactic access paths
         relation paths(Path);
-        relation summary(FunctionId, FormalIndex, Path, FormalIndex, Path) = facts.summary;
-        relation config(IndexConfig) = config_val;
+        relation summary(FunctionId, FormalIndex, Path, FormalIndex, Path);
+        relation config(IndexConfig);
 
         // Derived:
 
@@ -946,19 +944,18 @@ pub fn taint_index_with_config(
         // `iter()` pass and holds nothing thereafter, so the seed lives only in the trie for the
         // duration of the run (never in a second full-size buffer). See `assign_like_trie::SeedVec`.
         #[ds(crate::index_engine::assign_like_trie)]
-        relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path) =
-            crate::index_engine::assign_like_trie::SeedVec::from(assign_like);
+        relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
         // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
-        relation prog_store(FunctionId, FlowVariable, Path) = prog_store;
+        relation prog_store(FunctionId, FlowVariable, Path);
         // A variable that whole-aliases a formal purely through original program copies. This is
         // the copy-closure of `locals(v, empty, formal, empty)` restricted to original assigns:
         // it finds strictly fewer aliases (drops inter-procedural / summary-derived copies) but
         // ALL aliases established by original program assignments. Feeds the aliasing summary rule.
         // Precomputed above in its own fixpoint (see the `alias_of_formal` let-binding).
-        relation alias_of_formal(FunctionId, FlowVariable, FormalIndex) = alias_of_formal;
+        relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
         relation java_obj_assign_like(FunctionId, FlowVariable, Path, Symbol);
-        relation model_paths(Path) = summary_paths.into_iter().collect();
-        relation program_paths(Path) = program_paths;
+        relation model_paths(Path);
+        relation program_paths(Path);
 
         // Hybrid Inlining relations:
         // critical_summary(f, n, p). f(n.p = obj) invokes obj at some critical
@@ -1116,17 +1113,22 @@ pub fn taint_index_with_config(
             let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
             if let Some(new_cs) = CallString::new().push(call_site_id);
 
+        // Tracks resolvent to the call arg
+        relation call_arg_resolvent(PackedCallArg, Path, Resolvent, SmallestCallString);
+        call_arg_resolvent(arg_p, p, obj, cs_lat) <--
+            resolvent(f, n2, p2, obj, cs_lat),
+            locals(f, v, p, n2, p2),
+            if let Some(arg_p) = v.as_call_arg();
+
         // 2.2: Propagate Resolvent
-        resolvent(f, n2, p2.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
-            // Ordered so the fixed-size call graph drives the outer loop instead of full-scanning
-            // the growing `resolvent` relation every iteration. Every join below hits an index
-            // (resolvent probed by (func_id,n,p)).
-            call(caller, call_insn, f),
-            resolvent(caller, n, p, resolvent_obj, cs_lat),
-            locals(caller, v2, p2, n, p),
-            critical_summary(f, n2, p2),
+        resolvent(f, n, p.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
+            call_arg_resolvent(arg_p, p, resolvent_obj, cs_lat),
+            let arg = CallArgId::unpack_from_slice(&**arg_p).unwrap(),
+            call(caller, arg.insn_id, f),
+            let n = FormalIndex::new(arg.formal),
+            critical_summary(f, n, p),
             if let SmallestCallString::Value(cs) = cs_lat,
-            let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
+            let call_site_id = PackedInsnSiteId::try_from_parts(*caller, arg.insn_id).unwrap(),
             if let Some(new_cs) = cs.push(call_site_id);
 
         // 3.1: Contextual Assignment (instantiate)
@@ -1259,7 +1261,74 @@ pub fn taint_index_with_config(
         critical_call(func_id) <--
             critical_summary(tgt, _, _),
             call(func_id, _, tgt);
-    };
+    }
+
+    // Declared-struct form (was `ascent_run!`) so we get `run_timeout`. Relation inputs that
+    // used to be inline `= <init>` initializers are set here instead, because the declared-struct
+    // `Default::default()` where ascent would otherwise place them has no access to these locals.
+    let mut prog = IndexProg::default();
+    prog.formal_param = facts.formal_param;
+    prog.actual_param = facts.actual_param;
+    prog.call = call;
+    prog.func_ptr_assign = facts
+        .func_ptr_assign
+        .into_iter()
+        .map(|(site_id, vx, obj)| {
+            let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+            (func_id, vx, obj)
+        })
+        .collect();
+    prog.java_obj_assign = facts
+        .java_obj_assign
+        .into_iter()
+        .map(|(site_id, vx, obj)| {
+            let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+            (func_id, vx, obj)
+        })
+        .collect();
+    prog.java_call = facts
+        .java_call
+        .into_iter()
+        .map(|(site_id, vx, a, b)| {
+            let InsnSiteId { func_id, insn_id } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+            (func_id, insn_id, vx.0, vx.1, a, b)
+        })
+        .collect();
+    prog.indirect_call = facts
+        .indirect_call
+        .into_iter()
+        .map(|(site_id, vx)| {
+            let InsnSiteId { func_id, insn_id } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
+            (func_id, insn_id, vx.0, vx.1)
+        })
+        .collect();
+    prog.java_resolvents = facts.java_resolvents;
+    prog.summary = facts.summary;
+    prog.config = config_val;
+    prog.assign_like = crate::index_engine::assign_like_trie::SeedVec::from(assign_like);
+    prog.prog_store = prog_store;
+    prog.alias_of_formal = alias_of_formal;
+    prog.model_paths = summary_paths.into_iter().collect();
+    prog.program_paths = program_paths;
+
+    // Optional wall-clock cap on the fixpoint, gated by env var so normal runs are unaffected
+    // (default `Duration::MAX` == run to fixpoint, identical to the old `ascent_run!`). Setting
+    // `CTADL_INDEX_TIMEOUT_SECS=<n>` stops the semi-naive loop at the first iteration boundary
+    // past <n>s and returns; the accumulated per-rule / per-scc times are then logged via
+    // `scc_times_summary()` below. This is the tool for profiling which rule(s) dominate a
+    // non-terminating dense-regime run (e.g. the minidlna plateau) as if it hit a fixpoint.
+    let index_timeout = std::env::var("CTADL_INDEX_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(std::time::Duration::MAX);
+    let reached_fixpoint = prog.run_timeout(index_timeout);
+    if !reached_fixpoint {
+        log::warn!(
+            "index run TIMED OUT after {:?} without reaching fixpoint; results and stats below are PARTIAL",
+            index_timeout
+        );
+    }
     log::info!(
         "[mem cp] ascent_run returned (transient input buffers dropped): {:.1} MB",
         phys_footprint_mb()
