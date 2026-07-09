@@ -185,13 +185,13 @@ fn resolve_jvm_samples(override_dir: Option<&Path>) -> Result<Option<PathBuf>> {
             format!("failed to canonicalize {}", dir.display())
         })?));
     }
-    Ok(["jvm-reader/tests/sample", "../jvm-reader/tests/sample"]
+    ["jvm-reader/tests/sample", "../jvm-reader/tests/sample"]
         .into_iter()
         .map(PathBuf::from)
         .find(|p| p.is_dir())
         .map(|p| std::fs::canonicalize(&p))
         .transpose()
-        .with_context(|| "failed to canonicalize jvm sample directory")?)
+        .with_context(|| "failed to canonicalize jvm sample directory")
 }
 
 /// Locate the real-world APK xtask owns for the dex-reader smoke test. With no
@@ -202,7 +202,7 @@ fn resolve_dex_apk(override_path: Option<&Path>) -> Result<Option<PathBuf>> {
             format!("failed to canonicalize {}", path.display())
         })?));
     }
-    Ok([
+    [
         "xtask/tests/dex/com.noto_54.apk",
         "../xtask/tests/dex/com.noto_54.apk",
     ]
@@ -211,7 +211,7 @@ fn resolve_dex_apk(override_path: Option<&Path>) -> Result<Option<PathBuf>> {
     .find(|p| p.is_file())
     .map(|p| std::fs::canonicalize(&p))
     .transpose()
-    .with_context(|| "failed to canonicalize dex apk path")?)
+    .with_context(|| "failed to canonicalize dex apk path")
 }
 
 /// Ensure the executables needed for the selected cases are on `PATH`.
