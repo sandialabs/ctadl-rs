@@ -19,19 +19,18 @@ nix build .#checks.x86_64-linux.regression       # Linux / CI
 
 This is the supported way to run the suite, and it is what the nightly GitHub
 workflow runs on a schedule. Add expensive tests here, not in YAML.
-
-Under the hood the derivation just invokes the `xtask` task runner
-(`xtask/src/`) over the cases. If you are iterating on one case and already have
-the full toolchain (`ctadl`, `dex-reader`, `javac`, `dx`, `gcc`, `addr2line`,
-Ghidra) on `PATH`, you can call it directly — but the flake check above is the
-zero-setup path and the one to trust:
+If you are iterating on individual cases, the flake also provides a local dev
+shell with the full regression toolchain on `PATH`:
 
 ```sh
+nix develop .#regression
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-## How discovery works
+Under the hood both paths invoke the `xtask` task runner (`xtask/src/`) over the
+cases. The flake check above remains the canonical path and the one used in CI.
 
+## How discovery works
 A test case = a source file paired with its config. Drop the two files in and
 they are picked up automatically; no list to edit.
 
@@ -91,7 +90,6 @@ the strict check runs on Linux/CI.
   and the final line reports `N passed, M skipped, K failed`.
 - The runner expects its tools (`ctadl`, `dex-reader`, `javac`, `dx`, `gcc`,
   `addr2line`, Ghidra) on `PATH`. The flake check in [Running](#running) builds
-  and supplies all of them — that is why it is the canonical entry point. Only
-  invoke `cargo xtask regression` directly if you have already put every one of
-  those tools on `PATH` yourself.
+  and supplies all of them and `nix develop .#regression` provides an
+  interactive shell with the same toolchain for local iteration.
 - `scripts/*.py` are unused by the current suite and kept only for reference.
