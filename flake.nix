@@ -279,8 +279,24 @@
               pkgsCross.gnu64.binutils
               nil
               nixd
+              pkg-config
+              bzip2
             ];
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
+          };
+
+          # nix develop .#regression
+          devShells.regression = pkgs.mkShell {
+            packages = [ testEnv ];
+
+            GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
+            ANDROID_SDK_ROOT = "${androidSdk.androidsdk}/libexec/android-sdk";
+            RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
+
+            shellHook = ''
+              export PATH="${androidSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"
+              export HOME="$TMPDIR"
+            '';
           };
       }
     );

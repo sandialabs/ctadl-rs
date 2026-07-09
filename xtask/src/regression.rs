@@ -89,7 +89,7 @@ pub fn run(opts: &Options) -> Result<bool> {
     // The jvm-reader and dex-reader checks share the same Java sample sources:
     // jvm-reader exercises the `.class`/`.jar`, dex-reader the `.dex` they
     // compile down to.
-    let samples_dir = resolve_jvm_samples(opts.jvm_samples.as_deref());
+    let samples_dir = resolve_jvm_samples(opts.jvm_samples.as_deref())?;
 
     // jvm-reader checks: compile the sample .java and exercise jvm-reader on the
     // resulting .class files and a jar built from them.
@@ -107,7 +107,7 @@ pub fn run(opts: &Options) -> Result<bool> {
     // plus a real-world APK that xtask owns.
     if let Some(samples_dir) = &samples_dir {
         let work = scratch_dir("dex")?;
-        let apk = resolve_dex_apk(opts.dex_apk.as_deref());
+        let apk = resolve_dex_apk(opts.dex_apk.as_deref())?;
         let mut dex_results = dex::run_checks(samples_dir, apk.as_deref(), &work)
             .unwrap_or_else(|err| vec![("dex".to_string(), Outcome::Fail(format!("{err:#}")))]);
         if let Some(filter) = &opts.filter {
@@ -179,29 +179,39 @@ pub fn run(opts: &Options) -> Result<bool> {
 
 /// Locate the jvm-reader sample sources. With no override, look where the crate
 /// lives relative to the repo root (`cargo xtask`) or the nightly cwd.
-fn resolve_jvm_samples(override_dir: Option<&Path>) -> Option<PathBuf> {
+fn resolve_jvm_samples(override_dir: Option<&Path>) -> Result<Option<PathBuf>> {
     if let Some(dir) = override_dir {
-        return Some(dir.to_path_buf());
+        return Ok(Some(std::fs::canonicalize(dir).with_context(|| {
+            format!("failed to canonicalize {}", dir.display())
+        })?));
     }
-    ["jvm-reader/tests/sample", "../jvm-reader/tests/sample"]
+    Ok(["jvm-reader/tests/sample", "../jvm-reader/tests/sample"]
         .into_iter()
         .map(PathBuf::from)
         .find(|p| p.is_dir())
+        .map(|p| std::fs::canonicalize(&p))
+        .transpose()
+        .with_context(|| "failed to canonicalize jvm sample directory")?)
 }
 
 /// Locate the real-world APK xtask owns for the dex-reader smoke test. With no
 /// override, look where it lives relative to the repo root or the nightly cwd.
-fn resolve_dex_apk(override_path: Option<&Path>) -> Option<PathBuf> {
+fn resolve_dex_apk(override_path: Option<&Path>) -> Result<Option<PathBuf>> {
     if let Some(path) = override_path {
-        return Some(path.to_path_buf());
+        return Ok(Some(std::fs::canonicalize(path).with_context(|| {
+            format!("failed to canonicalize {}", path.display())
+        })?));
     }
-    [
+    Ok([
         "xtask/tests/dex/com.noto_54.apk",
         "../xtask/tests/dex/com.noto_54.apk",
     ]
     .into_iter()
     .map(PathBuf::from)
     .find(|p| p.is_file())
+    .map(|p| std::fs::canonicalize(&p))
+    .transpose()
+    .with_context(|| "failed to canonicalize dex apk path")?)
 }
 
 /// Ensure the executables needed for the selected cases are on `PATH`.
