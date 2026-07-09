@@ -205,10 +205,7 @@ impl Path {
     /// Substitutes given prefix of path with new_prefix and returns the new path.
     #[inline(always)]
     pub fn substitute_prefix(&self, prefix: &Path, new_prefix: &Path) -> Option<Path> {
-        match_prefix(self, prefix).map(|suffix| {
-            let iter = new_prefix.0.iter().chain(suffix.iter()).cloned();
-            Path::from_accesses(iter)
-        })
+        match_prefix(self, prefix).map(|suffix| Path(prepend_onto(new_prefix, suffix)))
     }
 
     /// Same as substitute_prefix but only returns a new path if the suffix after prefix matching
@@ -221,10 +218,7 @@ impl Path {
     ) -> Option<Path> {
         match_prefix(self, prefix)
             .filter(|s| !s.is_empty())
-            .map(|suffix| {
-                let iter = new_prefix.0.iter().chain(suffix.iter()).cloned();
-                Path::from_accesses(iter)
-            })
+            .map(|suffix| Path(prepend_onto(new_prefix, suffix)))
     }
 
     /// True iff `self` starts with `port` structurally: `self` is `port` followed
@@ -1310,6 +1304,45 @@ pub fn isout(formal_index: &FormalIndex, formal_type: FormalType, ap: &Path) -> 
     }
 }
 
+/// Prepends the components of `new_prefix` (head-first, as `Path::iter` yields them) onto the
+/// already-interned `suffix`, reusing `suffix`'s shared backing structure. Semantically
+/// equivalent to `Path::from_accesses(new_prefix.iter().chain(suffix.iter()).cloned())` but
+/// without rebuilding and re-interning `suffix`.
+///
+/// Every `Path` in the system is built through [`Path::from_accesses`], which collapses runs of
+/// adjacent [`FieldAccess::Offset`]s, so neither an interned `new_prefix` nor a `suffix` returned
+/// by [`match_prefix`] (a tail of an interned path, possibly with an offset-adjusted head) ever
+/// contains internal adjacent offsets. The *only* place `from_accesses` could merge is therefore
+/// the `new_prefix`/`suffix` junction — which this handles explicitly — so the result is
+/// byte-identical to the old rebuild while doing O(|new_prefix|) interns instead of
+/// O(|new_prefix| + |suffix|) (and zero when `new_prefix` is empty, the common copy/load case).
+#[inline]
+fn prepend_onto(
+    new_prefix: &Path,
+    suffix: tailshare::Seq<mir::FieldAccess>,
+) -> tailshare::Seq<mir::FieldAccess> {
+    use mir::{FieldAccess, Offset};
+    // `new_prefix` is a short program access-path prefix (usually 0–2 components).
+    let comps: Vec<FieldAccess> = new_prefix.0.iter().cloned().collect();
+    if comps.is_empty() {
+        return suffix; // result is exactly the shared suffix — no interning at all
+    }
+    // Junction merge: if `new_prefix`'s last component and `suffix`'s head are both offsets, sum
+    // them (matching `from_accesses`) into `suffix`'s head and drop `new_prefix`'s last component.
+    let (mut acc, upto) = match (comps.last(), suffix.head()) {
+        (Some(FieldAccess::Offset(Offset(a))), Some(FieldAccess::Offset(Offset(b)))) => {
+            let merged = FieldAccess::Offset(Offset(a + b));
+            (suffix.map_head(|_| merged), comps.len() - 1)
+        }
+        _ => (suffix, comps.len()),
+    };
+    // Prepend the remaining `new_prefix` components so iteration yields them head-first.
+    for comp in comps[..upto].iter().rev() {
+        acc = acc.push_front(comp.clone());
+    }
+    acc
+}
+
 /// Returns the suffix solving the equation ap = prefix + suffix, if there is one. The suffix may
 /// be empty. Otherwise returns none.
 ///
@@ -1484,6 +1517,42 @@ mod tests {
         let r: Path = ".y".into();
         let e: Path = ".y.[1].f".into();
         assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
+    }
+
+    /// Locks the sharing-preserving `substitute_prefix` (via `prepend_onto`) to the exact output
+    /// of the old rebuild-everything implementation. The subtle case is the `new_prefix`/`suffix`
+    /// junction offset-merge; the common case is an empty `new_prefix` (result is the shared
+    /// suffix, zero interning). A drift here would change analysis results.
+    #[test]
+    fn test_substitute_prefix_matches_rebuild() {
+        // Reference: the pre-optimization behavior — flatten new_prefix ++ suffix and rebuild.
+        fn rebuild(ap: &Path, prefix: &Path, new_prefix: &Path) -> Option<Path> {
+            match_prefix(ap, prefix).map(|suffix| {
+                Path::from_accesses(new_prefix.0.iter().chain(suffix.iter()).cloned())
+            })
+        }
+        // A spread of prefixes/new-prefixes exercising: empty new_prefix (zero-intern path),
+        // junction offset+offset merge, offset-next-to-symbol (no merge), empty suffix, and
+        // non-matching prefix (None).
+        let aps = [
+            ".x.[5].g", ".x.[1].[2]", ".a.b.c", ".[3]", ".x", ".x.[4]", ".p.q.r.s",
+        ];
+        let prefixes = ["", ".x", ".x.[1]", ".a", ".[3]", ".x.[4]", ".p.q", ".nope"];
+        let new_prefixes = ["", ".y", ".y.[3]", ".[7]", ".m.n", ".[0]"];
+        for ap_s in aps {
+            let ap: Path = ap_s.into();
+            for pre_s in prefixes {
+                let pre: Path = pre_s.into();
+                for np_s in new_prefixes {
+                    let np: Path = np_s.into();
+                    assert_eq!(
+                        ap.substitute_prefix(&pre, &np),
+                        rebuild(&ap, &pre, &np),
+                        "substitute_prefix({ap_s}, {pre_s}, {np_s}) diverged from rebuild"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
