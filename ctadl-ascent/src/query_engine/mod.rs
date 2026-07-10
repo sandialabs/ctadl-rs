@@ -304,6 +304,7 @@ pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult 
                 (a.direction == TaintDirection::Backward && isout(&formal, *formal_ty, p2));
 
         alias_of_field(infunc, x.clone(), a.clone(), p.clone()) <--
+            taint(infunc, _, a, _, _),
             assign_like(infunc, x, Path::empty(), a, p),
             if !p.is_empty();
         alias_of_field(infunc, y.clone(), a.clone(), p.clone()) <--
@@ -313,8 +314,10 @@ pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult 
         // Empty-path aliasing implies shared field paths (e.g. call-arg(0) = reg1 and
         // summary write to call-arg(0).field must reach reg1.field for a later call).
         alias_of_field(infunc, x.clone(), a.clone(), Path::empty()) <--
+            taint(infunc, _, a, Path::empty(), _),
             assign_like(infunc, x, Path::empty(), a, Path::empty());
         alias_of_field(infunc, a.clone(), x.clone(), Path::empty()) <--
+            taint(infunc, _, a, Path::empty(), _),
             assign_like(infunc, x, Path::empty(), a, Path::empty());
 
         // Propagates taint on a variable into its alias.
@@ -407,6 +410,20 @@ pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult 
         ..Default::default()
     };
     engine.run();
+
+    if std::env::var("CTADL_QUERY_SIZES").is_ok() {
+        eprintln!(
+            "QUERY_SIZES taint={} taint_edge={} taint_edge_directed={} alias_of_field={} tainted_var_at_insn={} assign_like={} paths={} sources={}",
+            engine.taint.len(),
+            engine.taint_edge.len(),
+            engine.taint_edge_directed.len(),
+            engine.alias_of_field.len(),
+            engine.tainted_var_at_insn.len(),
+            engine.assign_like.len(),
+            engine.paths.len(),
+            engine.sources.len(),
+        );
+    }
 
     log::trace!(
         "query result: {}",
