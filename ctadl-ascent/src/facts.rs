@@ -1374,8 +1374,12 @@ pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<tailshare::Seq<mir::Fiel
     let ap_last = ap_seq.head()?;
 
     match (ap_last, prefix_last) {
-        // The last offsets match with an offset adjustment
-        (FieldAccess::Offset(Offset(an)), FieldAccess::Offset(Offset(pn))) => {
+        // The last offsets match with a nonzero offset adjustment. An exact offset match
+        // (an == pn) is handled by the branch below, which consumes the component: emitting
+        // a leading `Offset(0)` here instead would make the substitution non-injective
+        // (`.x` and `.x.[0]` are distinct paths that concatenate identically), letting a
+        // backward walk pick a preimage whose forward image was a different path.
+        (FieldAccess::Offset(Offset(an)), FieldAccess::Offset(Offset(pn))) if an != pn => {
             let adjust = an - pn;
             Some(ap_seq.map_head(|_| FieldAccess::Offset(Offset(adjust))))
         }
@@ -1517,6 +1521,66 @@ mod tests {
         let r: Path = ".y".into();
         let e: Path = ".y.[1].f".into();
         assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
+    }
+
+    /// An exact offset match must consume the component, exactly like an exact symbol match —
+    /// not leave a residual `.[0]` suffix. Otherwise the forward transfer function along an
+    /// offset junction maps `.x.[2]` (under prefix `.x.[2]`, new prefix `.y`) to `.y.[0]` while
+    /// a backward walk from `.y` also reconstructs `.x.[2]`: two distinct successor states for
+    /// one predecessor, so backward walks could pick a preimage whose forward image was a
+    /// different path and slip past `paths()` feasibility gates the real forward chain failed.
+    #[test]
+    fn test_match_prefix_exact_offset_consumes_component() {
+        use ctadl_ir::mir::{FieldAccess, Offset};
+
+        // Whole-path exact offset match: suffix is empty, not `[Offset(0)]`.
+        let ap: Path = ".x.[2]".into();
+        let prefix: Path = ".x.[2]".into();
+        let suffix = match_prefix(&ap, &prefix).unwrap();
+        assert!(suffix.is_empty());
+
+        // Via substitute_prefix: result is `.y`, not `.y.[0]`.
+        let new_prefix: Path = ".y".into();
+        assert_eq!(ap.substitute_prefix(&prefix, &new_prefix), Some(".y".into()));
+
+        // Exact offset match mid-path: the offset is consumed, suffix starts at `.f`.
+        let ap: Path = ".x.[2].f".into();
+        let suffix = match_prefix(&ap, &prefix).unwrap();
+        assert_eq!(
+            suffix.iter().cloned().collect::<Vec<_>>(),
+            vec![FieldAccess::Symbol(ArcIntern::from("f"))]
+        );
+        assert_eq!(
+            ap.substitute_prefix(&prefix, &new_prefix),
+            Some(".y.f".into())
+        );
+
+        // Round trip: forward then backward substitution is the identity, including the
+        // formerly non-injective exact-offset case.
+        for (ap_s, pre_s, np_s) in [
+            (".x.[2]", ".x.[2]", ".y"),
+            (".x.[2].f", ".x.[2]", ".y"),
+            (".x.[2]", ".x.[2]", ".y.[3]"),
+            (".x.[5]", ".x.[2]", ".y"),
+        ] {
+            let ap: Path = ap_s.into();
+            let pre: Path = pre_s.into();
+            let np: Path = np_s.into();
+            let fwd = ap.substitute_prefix(&pre, &np).unwrap();
+            assert_eq!(
+                fwd.substitute_prefix(&np, &pre),
+                Some(ap),
+                "substitute_prefix({ap_s}, {pre_s}, {np_s}) did not round-trip"
+            );
+        }
+
+        // A nonzero adjustment still merges offsets as before.
+        let ap: Path = ".x.[5]".into();
+        let suffix = match_prefix(&ap, &prefix).unwrap();
+        assert_eq!(
+            suffix.iter().cloned().collect::<Vec<_>>(),
+            vec![FieldAccess::Offset(Offset(3))]
+        );
     }
 
     /// Locks the sharing-preserving `substitute_prefix` (via `prepend_onto`) to the exact output
