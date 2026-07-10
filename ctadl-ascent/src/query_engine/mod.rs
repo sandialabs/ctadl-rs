@@ -8,7 +8,13 @@ We want to enable some queries:
 - Path queries. Finds a path from each source to each sink.
 - Closure queries. Finds all the vertices/instructions tainted by each source or sink.
 
-The way we do this is simply by computing the closure and then doing cheap path analysis after the fact.
+The default regime ([`search`]) is a demand-driven graph search: sources are partitioned
+by label, and each label set runs one multi-start realizable-path search directly over
+the program tables (aliasing consulted through a union-find of the copy classes), with
+sinks as targets. Only the states a search reaches exist at all, and only what the
+reporting consumes is materialized. The datalog closure engi¬ne
+([`taint_analysis_datalog`]) computes the same taint as a fixpoint and materializes it
+in full; it remains available via `CTADL_QUERY_DATALOG=1`.
 */
 
 use ascent::ascent;
@@ -232,10 +238,7 @@ impl<'a> std::fmt::Display for QueryResultDisplay<'a> {
 type CopyKey = (FunctionId, FlowVariable);
 
 /// Union-find `find` with path compression.
-fn copy_find(
-    parent: &mut std::collections::HashMap<CopyKey, CopyKey>,
-    x: CopyKey,
-) -> CopyKey {
+fn copy_find(parent: &mut std::collections::HashMap<CopyKey, CopyKey>, x: CopyKey) -> CopyKey {
     let mut root = x.clone();
     while let Some(p) = parent.get(&root) {
         if *p == root {
@@ -246,10 +249,7 @@ fn copy_find(
     // Path-compress everything on the way to the root.
     let mut cur = x;
     while cur != root {
-        let next = parent
-            .get(&cur)
-            .cloned()
-            .unwrap_or_else(|| root.clone());
+        let next = parent.get(&cur).cloned().unwrap_or_else(|| root.clone());
         parent.insert(cur, root.clone());
         cur = next;
     }
@@ -297,12 +297,28 @@ fn compute_copy_alias(
     out
 }
 
+/// Runs the query-phase taint analysis.
+///
+/// The default regime is the demand-driven graph search ([`search::taint_search`]):
+/// sources are partitioned by label, and each label set runs one multi-start
+/// realizable-path search directly over the program tables, with aliasing
+/// consulted through a union-find of the copy classes. Set `CTADL_QUERY_DATALOG=1`
+/// to fall back to the datalog closure engine ([`taint_analysis_datalog`]).
+pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
+    if std::env::var("CTADL_QUERY_DATALOG").is_ok() {
+        taint_analysis_datalog(facts, id_map)
+    } else {
+        search::taint_search(facts, id_map)
+    }
+}
+
 /// Taint analysis datalog rules.
 ///
 /// Runs taint analysis given the set of query facts, which include relations from the 'index'
 /// phase and a set of taint sources. Returns a relation containing the set of vertices tainted by
-/// each taint source.
-pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
+/// each taint source. This is the closure (fixpoint) engine; the default regime is the
+/// demand-driven search in [`search`], which materializes only what its searches reach.
+pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     ascent! {
         struct QueryEngine;
         // Besides recording `taint`, every propagation rule records a `taint_edge` for
@@ -551,6 +567,7 @@ pub fn taint_analysis(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult 
 }
 
 pub mod formatter;
+pub mod search;
 
 struct DisplayTaint<'a> {
     taint: &'a [(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)],

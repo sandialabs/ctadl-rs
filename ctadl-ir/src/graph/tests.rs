@@ -299,6 +299,134 @@ fn find_annotated_path_prunes_unrealizable_only_route() {
     assert_eq!(path.last().unwrap().1, CallStack(vec![1]));
 }
 
+/// A lazy view of [`LabeledGraph`]: edges are computed on demand from the
+/// successor table, exercising the [`LazySuccessors`] search path.
+impl LazySuccessors for LabeledGraph {
+    type Node = usize;
+    type Label = Edge;
+
+    fn labeled_successors(&self, node: &usize) -> Vec<(usize, Edge)> {
+        self.successors[node].clone()
+    }
+}
+
+/// One-bit call/return matching, the taint use case: a return is only
+/// traversable when no call is pending.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Pending {
+    Free,
+    InCall,
+}
+
+impl LazyAnnotation<LabeledGraph> for Pending {
+    fn start() -> Self {
+        Pending::Free
+    }
+
+    fn expand(
+        &self,
+        _graph: &LabeledGraph,
+        _from: &usize,
+        label: &Edge,
+        _to: &usize,
+    ) -> Option<Self> {
+        match label {
+            Edge::Intra => Some(*self),
+            Edge::Call(_) => Some(Pending::InCall),
+            Edge::Return(_) => match self {
+                Pending::Free => Some(Pending::Free),
+                Pending::InCall => None,
+            },
+        }
+    }
+}
+
+#[test]
+fn find_annotated_paths_from_set_shares_visited_and_finds_all_targets() {
+    // Two starts converge on 2, which fans out to targets 3 and 4; 5 is only
+    // reachable through an unrealizable call-then-return route.
+    let g = LabeledGraph::new(
+        7,
+        &[
+            (0, 2, Edge::Intra),
+            (1, 2, Edge::Intra),
+            (2, 3, Edge::Intra),
+            (2, 4, Edge::Intra),
+            (2, 6, Edge::Call(9)),
+            (6, 5, Edge::Return(9)),
+        ],
+    );
+
+    let targets = [3usize, 4, 5];
+    let search =
+        find_annotated_paths_from_set(&g, [0usize, 1], |n, _a: &Pending| targets.contains(n));
+
+    // 3 and 4 are found; 5 is pruned (return while a call is pending).
+    let found: Vec<usize> = search
+        .targets
+        .iter()
+        .map(|&t| search.states[t as usize].node)
+        .collect();
+    assert_eq!(found, vec![3, 4]);
+
+    // Each target's path starts at one of the starts and is a real walk.
+    for &t in &search.targets {
+        let path = search.path_to(t);
+        let first = search.states[path[0] as usize].node;
+        assert!(first == 0 || first == 1);
+        for w in path.windows(2) {
+            let from = search.states[w[0] as usize].node;
+            let to = search.states[w[1] as usize].node;
+            assert!(g.successors[&from].iter().any(|(s, _)| *s == to));
+            // The traversed edge label is recorded on the child state.
+            assert!(search.states[w[1] as usize].edge.is_some());
+        }
+    }
+
+    // The visited set is shared across starts: node 2 (and everything past it)
+    // is explored once, so the state count stays linear in the reachable
+    // subgraph. Reached states: 0, 1, 2, 3, 4, 6 (5 is pruned).
+    assert_eq!(search.states.len(), 6);
+
+    // A start that is itself a target is reported as a trivial path.
+    let search = find_annotated_paths_from_set(&g, [3usize], |n, _a: &Pending| *n == 3);
+    assert_eq!(search.targets.len(), 1);
+    assert_eq!(search.path_to(search.targets[0]).len(), 1);
+}
+
+#[test]
+fn find_annotated_paths_from_set_revisits_node_under_new_annotation() {
+    // 0 =call=> 1 =return=> 2: unrealizable. But 3 -> 1 (intra) reaches 1 Free,
+    // and from that state the return to 2 is traversable. The node 1 is thus
+    // reached under two annotations, and only the Free one reaches 2.
+    let g = LabeledGraph::new(
+        4,
+        &[
+            (0, 1, Edge::Call(7)),
+            (3, 1, Edge::Intra),
+            (1, 2, Edge::Return(7)),
+        ],
+    );
+
+    let search = find_annotated_paths_from_set(&g, [0usize, 3], |n, _a: &Pending| *n == 2);
+    assert_eq!(search.targets.len(), 1);
+    let path = search.path_to(search.targets[0]);
+    let nodes: Vec<usize> = path
+        .iter()
+        .map(|&i| search.states[i as usize].node)
+        .collect();
+    assert_eq!(nodes, vec![3, 1, 2]);
+    // Node 1 appears twice among the states: once InCall (from 0), once Free
+    // (from 3).
+    let annots_at_1: Vec<Pending> = search
+        .states
+        .iter()
+        .filter(|s| s.node == 1)
+        .map(|s| s.annot)
+        .collect();
+    assert_eq!(annots_at_1.len(), 2);
+}
+
 #[test]
 fn find_path_to_set_handles_deep_graph() {
     // A long linear chain: 0 -> 1 -> ... -> N. A recursive DFS would overflow

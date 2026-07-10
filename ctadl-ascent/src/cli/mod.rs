@@ -208,7 +208,10 @@ pub fn index(
         // on programs already in SSA form (e.g. flowy imports).
         ssa::coalesce_copies(&mut program_info.program);
         ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
-        log::info!("[mem cp] after SSA transform: {:.1} MB", phys_footprint_mb());
+        log::info!(
+            "[mem cp] after SSA transform: {:.1} MB",
+            phys_footprint_mb()
+        );
         codegen_program(program_info, &mut facts, &mut source_info, strategy);
         log::info!(
             "[mem cp] after codegen_program (IR dropped, facts built): {:.1} MB",
@@ -345,7 +348,7 @@ pub fn query(
     for import in project.iter_imports() {
         let import = import?;
         if import.language == ArtifactLanguage::Flowy {
-            crate::codegen::flowy::query_check(&import, &result, &ids)?;
+            crate::codegen::flowy::query_check(&import, &result, &ids, &index_facts.call)?;
         }
     }
 
