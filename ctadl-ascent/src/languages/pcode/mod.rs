@@ -185,12 +185,15 @@ impl Context {
     ) -> BTreeMap<String, pcode_reader::HighFunc> {
         let mut name_to_funcs: BTreeMap<String, Vec<pcode_reader::HighFunc>> = BTreeMap::new();
 
+        let bbs_with_instructions: BTreeSet<&pcode_reader::PcodeBlockBasic> = pcode_facts
+            .pcode_facts
+            .values()
+            .filter_map(|pcode| pcode.bb_id.as_ref())
+            .collect();
+
         // Find all functions that have basic blocks with pcode instructions
         for (bb_id, bb_data) in &pcode_facts.bb_facts {
-            let has_instructions = pcode_facts
-                .pcode_facts
-                .values()
-                .any(|pcode| pcode.bb_id.as_ref() == Some(bb_id));
+            let has_instructions = bbs_with_instructions.contains(bb_id);
 
             if has_instructions
                 && let Some(func_data) = pcode_facts.hfunc_facts.get(&bb_data.hfunc)
