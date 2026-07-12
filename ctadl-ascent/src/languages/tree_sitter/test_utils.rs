@@ -359,6 +359,20 @@ pub(crate) fn check_assign_or_update<I>(
     );
 }
 
+/* Asserts the (single) function contains a `Load` that reads `source_str` (an access-path DSL
+string like `f.[3]` or `$globals.a`). Field reads lower to loads through a temporary, so this is
+the load-based complement to `check_assign_or_update`'s field-path source. Panics if not found. */
+#[track_caller]
+pub(crate) fn check_loads(prog: &Program, source_str: &str) {
+    let ap = access_path_from_str(source_str);
+    let found = statements_of(prog).any(|s| {
+        matches!(&s.kind,
+            StatementKind::Load { source, path, .. }
+                if *source == ap.variable_ref && *path == ap.path)
+    });
+    assert!(found, "could not find a load of `{source_str}`\n{prog}");
+}
+
 /* Iterates every statement of the (single) function, in block-then-statement order. The shared walk
 behind the destination-focused helpers below, and a handy primitive for ad-hoc structural assertions
 that need to scan statements (cf. the dex frontend's "pull out the narrow thing, then assert on it").

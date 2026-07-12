@@ -175,6 +175,14 @@ impl<'a> CodegenVisitor<'a> {
 
     /// Gens the dedup'd paths to the facts
     fn finish(&mut self) {
+        // The empty path (whole-variable flow) must always be in the `paths` gate so the
+        // forward field-propagation rules can reach a scalar. Previously this was implied by
+        // every pathless `Exp::AccessPath` carrying an (empty) field-access list that the
+        // visitor inserted; now that a pathless read is `Exp::Variable` (no field-access list),
+        // insert it explicitly. It is trivially bounded, so it does not affect termination.
+        if std::env::var_os("CTADL_NO_EMPTY_PATH").is_none() {
+            self.paths_dedup.insert((fx::Path::empty(),));
+        }
         let paths = std::mem::take(&mut self.paths_dedup);
         self.facts.paths.extend(paths);
     }
@@ -222,18 +230,13 @@ impl Visitor for CodegenVisitor<'_> {
         for statement in &data.statements {
             match &statement.kind {
                 StatementKind::Assign { dest, sources } => {
-                    for src in sources {
-                        if let Exp::AccessPath(ap) = src
-                            && !ap.path.is_empty()
-                        {
-                            let base_path =
-                                cap_path.get(&ap.variable_ref).cloned().unwrap_or_default();
-                            let path = fx::Path::from_accesses(
-                                base_path.iter().cloned().chain(ap.path.iter().cloned()),
-                            );
-                            self.paths_dedup.insert((path,));
-                            cap_path.insert(dest.clone(), path);
-                        }
+                    // A whole-variable copy `dest = v` carries the captured field path of `v`
+                    // forward, so a Load chain that flows through a copy still composes.
+                    if sources.len() == 1
+                        && let Exp::Variable(v) = &sources[0]
+                        && let Some(base_path) = cap_path.get(v).cloned()
+                    {
+                        cap_path.insert(dest.clone(), base_path);
                     }
                 }
                 StatementKind::Load { dest, source, path } => {
@@ -359,10 +362,7 @@ impl Visitor for CodegenVisitor<'_> {
                     } => {
                         let recv_var = self.trans_variable_ref(receiver);
                         // add receiver as actual arg 0
-                        args.insert(
-                            0,
-                            Exp::new_access_path(AccessPath::without_fields(receiver.clone())),
-                        );
+                        args.insert(0, Exp::Variable(receiver.clone()));
                         let resolvents = self.cha.java_resolvents(
                             cls.clone(),
                             simple_name.clone(),
@@ -584,7 +584,7 @@ impl CodegenVisitor<'_> {
     #[inline]
     fn trans_exp(&mut self, exp: &Exp) -> Option<FlowVertex> {
         match exp {
-            Exp::AccessPath(ap) => Some(self.trans_access_path(ap)),
+            Exp::Variable(v) => Some(FlowVertex(self.trans_variable_ref(v), fx::Path::empty())),
             Exp::ObjectRef(_) => None,
             _ => None,
         }

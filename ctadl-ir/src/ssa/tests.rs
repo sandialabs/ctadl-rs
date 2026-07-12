@@ -41,18 +41,18 @@ fn function_f() -> FunctionData {
         let stmts: IndexVec<StatementIdx, _> = indexvec![
             Statement::new_kind(StatementKind::assign(
                 a.variable_ref.clone(),
-                [Exp::AccessPath(q)]
+                [Exp::from(q)]
             )),
             Statement::new_kind(StatementKind::assign(
                 p.variable_ref.clone(),
-                [Exp::AccessPath(a.clone())]
+                [Exp::from(a.clone())]
             )),
         ];
         // stmts.extend(]));
         let body_block = &mut f[body];
         body_block.extend(stmts);
         body_block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-            args: smallvec![Exp::AccessPath(p)],
+            args: smallvec![Exp::from(p)],
         }));
     }
     f
@@ -92,13 +92,13 @@ fn function_g() -> FunctionData {
         Statement::new_kind(StatementKind::CallAssign {
             style,
             rets: vec![VariableRef::new_local("c".to_string())].into(),
-            args: vec![Exp::AccessPath(a), Exp::AccessPath(b)].into()
+            args: vec![Exp::from(a), Exp::from(b)].into()
         }),
     ];
     let blocks = g.blocks.blocks_mut();
     let body = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Return {
-            args: vec![Exp::AccessPath(c)].into(),
+            args: vec![Exp::from(c)].into(),
         },
     ))));
     let body_block = &mut g[body];
@@ -145,13 +145,13 @@ fn function_g1() -> FunctionData {
         Statement::new_kind(StatementKind::CallAssign {
             style,
             rets: vec![VariableRef::new_local("c".to_string())].into(),
-            args: vec![Exp::AccessPath(a), Exp::AccessPath(b)].into()
+            args: vec![Exp::from(a), Exp::from(b)].into()
         }),
     ];
     let blocks = g.blocks.blocks_mut();
     let body = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Return {
-            args: vec![Exp::AccessPath(c1)].into(),
+            args: vec![Exp::from(c1)].into(),
         },
     ))));
     let body_block = &mut g[body];
@@ -186,7 +186,7 @@ fn program_h() -> Program {
             indexvec![Statement::new_kind(StatementKind::Store {
                 dest: global_ref.clone(),
                 path: ["bar"].into_iter().collect(),
-                value: Exp::AccessPath(p.clone()),
+                value: Exp::from(p.clone()),
             }),];
         let body_block = &mut h[body];
         body_block.extend(stmts);

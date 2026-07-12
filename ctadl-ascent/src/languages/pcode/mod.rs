@@ -433,9 +433,7 @@ impl Context {
                     let stack_top_var = VariableRef::new_local("__stack_top".to_string());
                     let stmt = Statement::new_kind(StatementKind::Assign {
                         dest: sp_var,
-                        sources: smallvec![Exp::AccessPath(AccessPath::without_fields(
-                            stack_top_var
-                        ))],
+                        sources: smallvec![Exp::Variable(stack_top_var)],
                     });
                     func.blocks.blocks_mut()[bb_idx].push_back(stmt);
                 }
@@ -592,7 +590,22 @@ impl Context {
                     "RETURN" => {
                         let mut args = smallvec![];
                         if pcode.inputs.len() >= 2 {
-                            args.push(self.get_exp(&pcode.inputs[1], &pcode_facts.vnode_facts)?);
+                            // The return value may be a field read, which lowers to loads. They
+                            // must execute before the (separately stored) terminator, so append
+                            // them to the end of this block's already-inserted statements.
+                            let mut ret_stmts = Vec::new();
+                            let arg = self.get_exp(
+                                &mut ret_stmts,
+                                &pcode.inputs[1],
+                                &pcode_facts.vnode_facts,
+                            )?;
+                            if !ret_stmts.is_empty()
+                                && let Some(block_stmts) = bb_statements
+                                    .get_mut(&(bb_data.hfunc.clone(), bb_id.clone()))
+                            {
+                                block_stmts.extend(ret_stmts);
+                            }
+                            args.push(arg);
                         }
                         // Ensure return arity matches
                         while args.len() < return_arity as usize {
@@ -828,18 +841,11 @@ impl Context {
         _program: &Program,
         _hfunc_facts: &BTreeMap<pcode_reader::HighFunc, pcode_reader::HFuncData>,
     ) -> Result<Vec<Statement>, Error> {
-        let inputs: Result<SmallVec<[Exp; 2]>, Error> = pcode
-            .inputs
-            .iter()
-            .map(|vn| self.get_exp(vn, vnode_facts))
-            .collect();
         let outputs: Result<SmallVec<[AccessPath; 1]>, Error> = pcode
             .outputs
             .iter()
             .map(|vn| self.get_lvalue(vn, vnode_facts))
             .collect();
-
-        let inputs = inputs?;
         let outputs = outputs?;
 
         if outputs.is_empty() {
@@ -848,16 +854,19 @@ impl Context {
                 .collect());
         }
 
+        let mut stmts = Vec::new();
+        let inputs: SmallVec<[Exp; 2]> = pcode
+            .inputs
+            .iter()
+            .map(|vn| self.get_exp(&mut stmts, vn, vnode_facts))
+            .collect::<Result<_, _>>()?;
+
         let temp = self.create_temp();
-        let mut stmts = vec![Statement::new_kind(StatementKind::assign(
+        stmts.push(Statement::new_kind(StatementKind::assign(
             temp.clone(),
             inputs,
-        ))];
-        self.push_assign_or_store(
-            &mut stmts,
-            outputs[0].clone(),
-            Exp::AccessPath(AccessPath::without_fields(temp)),
-        );
+        )));
+        self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::Variable(temp));
         Ok(stmts)
     }
 
@@ -921,29 +930,28 @@ impl Context {
                 let mut ap = self.get_lvalue(offset_vn, vnode_facts)?;
                 ap.path.fields.push(FieldAccess::Offset(Offset(c)));
                 let mut stmts = Vec::new();
-                self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::AccessPath(ap));
+                let src = Exp::Variable(self.load_ap(&mut stmts, ap));
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), src);
                 Ok(stmts)
             }
             (None, Some(c)) => {
                 let mut ap = self.get_lvalue(base_vn, vnode_facts)?;
                 ap.path.fields.push(FieldAccess::Offset(Offset(c)));
                 let mut stmts = Vec::new();
-                self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::AccessPath(ap));
+                let src = Exp::Variable(self.load_ap(&mut stmts, ap));
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), src);
                 Ok(stmts)
             }
             (None, None) => {
-                let base_exp = self.get_exp(base_vn, vnode_facts)?;
-                let offset_exp = self.get_exp(offset_vn, vnode_facts)?;
+                let mut stmts = Vec::new();
+                let base_exp = self.get_exp(&mut stmts, base_vn, vnode_facts)?;
+                let offset_exp = self.get_exp(&mut stmts, offset_vn, vnode_facts)?;
                 let temp = self.create_temp();
-                let mut stmts = vec![Statement::new_kind(StatementKind::assign(
+                stmts.push(Statement::new_kind(StatementKind::assign(
                     temp.clone(),
                     [base_exp, offset_exp],
-                ))];
-                self.push_assign_or_store(
-                    &mut stmts,
-                    outputs[0].clone(),
-                    Exp::AccessPath(AccessPath::without_fields(temp)),
-                );
+                )));
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::Variable(temp));
                 Ok(stmts)
             }
         }
@@ -995,35 +1003,34 @@ impl Context {
                     .fields
                     .push(FieldAccess::Offset(Offset(idx_c * s_val)));
                 let mut stmts = Vec::new();
-                self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::AccessPath(ap));
+                let src = Exp::Variable(self.load_ap(&mut stmts, ap));
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), src);
                 Ok(stmts)
             }
             (Some(base_c), None) if size_const == Some(1) => {
                 let mut ap = self.get_lvalue(index_vn, vnode_facts)?;
                 ap.path.fields.push(FieldAccess::Offset(Offset(base_c)));
                 let mut stmts = Vec::new();
-                self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::AccessPath(ap));
+                let src = Exp::Variable(self.load_ap(&mut stmts, ap));
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), src);
                 Ok(stmts)
             }
             _ => {
-                let base_exp = self.get_exp(base_vn, vnode_facts)?;
-                let index_exp = self.get_exp(index_vn, vnode_facts)?;
+                let mut stmts = Vec::new();
+                let base_exp = self.get_exp(&mut stmts, base_vn, vnode_facts)?;
+                let index_exp = self.get_exp(&mut stmts, index_vn, vnode_facts)?;
                 let size_exp = if let Some(s) = size_const {
                     self.exp_from_const_value(size_vn, vnode_facts, s)
                 } else {
-                    self.get_exp(size_vn, vnode_facts)?
+                    self.get_exp(&mut stmts, size_vn, vnode_facts)?
                 };
 
                 let temp = self.create_temp();
-                let mut stmts = vec![Statement::new_kind(StatementKind::assign(
+                stmts.push(Statement::new_kind(StatementKind::assign(
                     temp.clone(),
                     [base_exp, index_exp, size_exp],
-                ))];
-                self.push_assign_or_store(
-                    &mut stmts,
-                    outputs[0].clone(),
-                    Exp::AccessPath(AccessPath::without_fields(temp)),
-                );
+                )));
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::Variable(temp));
                 Ok(stmts)
             }
         }
@@ -1036,9 +1043,9 @@ impl Context {
     ) -> Result<Vec<Statement>, Error> {
         let (inputs, outputs) = (&pcode.inputs, &pcode.outputs);
         if !inputs.is_empty() && !outputs.is_empty() && inputs[0] != outputs[0] {
-            let input_exp = self.get_exp(&inputs[0], vnode_facts)?;
-            let output_var = self.get_lvalue(&outputs[0], vnode_facts)?;
             let mut stmts = Vec::new();
+            let input_exp = self.get_exp(&mut stmts, &inputs[0], vnode_facts)?;
+            let output_var = self.get_lvalue(&outputs[0], vnode_facts)?;
             self.push_assign_or_store(&mut stmts, output_var, input_exp);
             return Ok(stmts);
         }
@@ -1074,11 +1081,7 @@ impl Context {
                 offset_exp.path,
             )));
             if !output_var.path.is_empty() {
-                self.push_assign_or_store(
-                    &mut stmts,
-                    output_var,
-                    Exp::AccessPath(AccessPath::without_fields(dest)),
-                );
+                self.push_assign_or_store(&mut stmts, output_var, Exp::Variable(dest));
             }
             return Ok(stmts);
         }
@@ -1098,13 +1101,16 @@ impl Context {
                 .path
                 .fields
                 .push(FieldAccess::Symbol("deref".into()));
-            let value_exp = self.get_exp(&inputs[2], vnode_facts)?;
+            let mut stmts = Vec::new();
+            let value_exp = self.get_exp(&mut stmts, &inputs[2], vnode_facts)?;
 
             // Store through the address's (composed) field path. Unlike the old Update
-            // lowering, this does NOT redefine the address base variable.
-            return Ok(vec![Statement::new_kind(StatementKind::store(
+            // lowering, this does NOT redefine the address base variable. Any loads needed to
+            // materialize the stored value are emitted first.
+            stmts.push(Statement::new_kind(StatementKind::store(
                 offset_exp, value_exp,
-            ))]);
+            )));
+            return Ok(stmts);
         }
         log::warn!("STORE missing inputs");
         Ok(vec![Statement::new_kind(StatementKind::Nop)])
@@ -1264,6 +1270,9 @@ impl Context {
             .map(|output_id| self.get_lvalue(output_id, vnode_facts))
             .collect();
 
+        // Loads needed to materialize the call arguments are emitted before the call.
+        let mut stmts = Vec::new();
+
         // Try to resolve call target if we have inputs
         let (call_edges, actual_args) = if !pcode.inputs.is_empty() {
             let target_vnode = &pcode.inputs[0];
@@ -1277,7 +1286,7 @@ impl Context {
             let args = pcode.inputs[1..]
                 .iter()
                 .map(|input_id| {
-                    self.get_exp(input_id, vnode_facts)
+                    self.get_exp(&mut stmts, input_id, vnode_facts)
                         .unwrap_or_else(|_| Exp::new_str("unknown"))
                 })
                 .collect();
@@ -1289,15 +1298,11 @@ impl Context {
         let style = if &**pcode.mnemonic == "CALLIND" && call_edges.is_empty() {
             let callee = if !pcode.inputs.is_empty() {
                 let target_vnode = &pcode.inputs[0];
-                let target_exp = self
-                    .get_exp(target_vnode, vnode_facts)
-                    .unwrap_or_else(|_| Exp::new_str("unknown"));
-                match target_exp {
-                    Exp::AccessPath(ap) => ap,
-                    _ => AccessPath::without_fields(VariableRef::new_local(
-                        "unknown_callee".to_string(),
-                    )),
-                }
+                // The callee is a call-target address (a location), not a loaded value, so keep
+                // it as an access path rather than lowering it into a load.
+                self.get_lvalue(target_vnode, vnode_facts).unwrap_or_else(|_| {
+                    AccessPath::without_fields(VariableRef::new_local("unknown_callee".to_string()))
+                })
             } else {
                 AccessPath::without_fields(VariableRef::new_local("unknown_callee".to_string()))
             };
@@ -1311,7 +1316,6 @@ impl Context {
             }
         };
 
-        let mut stmts = Vec::new();
         let outputs = outputs.err_context(|| format!("handling call: {:?}", pcode))?;
         let temps: ctadl_ir::ThinVec<VariableRef> =
             (0..outputs.len()).map(|_| self.create_temp()).collect();
@@ -1323,11 +1327,7 @@ impl Context {
         stmts.push(Statement::new_kind(kind));
         // store temps into outputs
         for (o, t) in outputs.iter().zip(temps) {
-            self.push_assign_or_store(
-                &mut stmts,
-                o.clone(),
-                Exp::AccessPath(AccessPath::without_fields(t)),
-            );
+            self.push_assign_or_store(&mut stmts, o.clone(), Exp::Variable(t));
         }
 
         Ok(stmts)
@@ -1380,24 +1380,39 @@ impl Context {
         ctadl_ir::thin_vec![]
     }
 
+    /// Reads a varnode as an expression. A field read is not expressible as an [`Exp`], so any
+    /// access path with fields is lowered into a sequence of [`StatementKind::Load`]s (appended to
+    /// `stmts`) and the resulting temporary is returned as an [`Exp::Variable`].
     fn get_exp(
         &mut self,
+        stmts: &mut Vec<Statement>,
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
     ) -> Result<Exp, Error> {
         let rep = self.convert_vnode(vnode_id, vnode_facts, &self.register_facts);
         let exp = match rep {
             VnodeRep::Const(value) => self.exp_from_const_value(vnode_id, vnode_facts, value),
-            VnodeRep::Var(var) => Exp::AccessPath(AccessPath::without_fields(var)),
+            VnodeRep::Var(var) => Exp::Variable(var),
             VnodeRep::Offset(var, offset) => {
                 let mut ap = AccessPath::without_fields(var);
                 ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-                Exp::AccessPath(ap)
+                Exp::Variable(self.load_ap(stmts, ap))
             }
-            VnodeRep::StackSlot(offset) => Exp::AccessPath(Self::stack_slot_path(offset)),
-            VnodeRep::Global(address) => Exp::AccessPath(Self::global_path(address)),
+            VnodeRep::StackSlot(offset) => {
+                Exp::Variable(self.load_ap(stmts, Self::stack_slot_path(offset)))
+            }
+            VnodeRep::Global(address) => {
+                Exp::Variable(self.load_ap(stmts, Self::global_path(address)))
+            }
         };
         Ok(exp)
+    }
+
+    /// Lowers a read of `ap` into a sequence of loads (see [`mir::load_access_path`]), appending
+    /// them to `stmts` and returning the variable holding the loaded value. A pathless `ap`
+    /// returns its base variable without emitting anything.
+    fn load_ap(&mut self, stmts: &mut Vec<Statement>, ap: AccessPath) -> VariableRef {
+        mir::load_access_path(ap, stmts, || self.create_temp())
     }
 
     fn get_lvalue(

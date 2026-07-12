@@ -453,19 +453,19 @@ fn function_with_phi() -> FunctionData {
     let mut true_builder = BasicBlockBuilder::new(&mut f[true_branch]);
     true_builder.create_assign_or_store(
         true_builder.new_access_path(x.clone(), Vec::<&str>::new()),
-        Exp::AccessPath(true_builder.new_access_path(a, Vec::<&str>::new())),
+        Exp::from(true_builder.new_access_path(a, Vec::<&str>::new())),
     );
 
     // False branch: x = b (using builder API)
     let mut false_builder = BasicBlockBuilder::new(&mut f[false_branch]);
     false_builder.create_assign_or_store(
         false_builder.new_access_path(x.clone(), Vec::<&str>::new()),
-        Exp::AccessPath(false_builder.new_access_path(b, Vec::<&str>::new())),
+        Exp::from(false_builder.new_access_path(b, Vec::<&str>::new())),
     );
 
     // Merge block will get phi node during SSA conversion (using builder API)
     let mut merge_builder = BasicBlockBuilder::new(&mut f[merge]);
-    merge_builder.create_ret(vec![Exp::AccessPath(
+    merge_builder.create_ret(vec![Exp::from(
         merge_builder.new_access_path(x, Vec::<&str>::new()),
     )]);
 
@@ -509,11 +509,11 @@ fn function_with_update() -> FunctionData {
     // Create update statement using builder API
     builder.create_store(
         s_access,
-        Exp::AccessPath(builder.new_access_path(new_value.clone(), Vec::<&str>::new())),
+        Exp::from(builder.new_access_path(new_value.clone(), Vec::<&str>::new())),
     );
 
     // Create return statement using builder API
-    builder.create_ret(vec![Exp::AccessPath(
+    builder.create_ret(vec![Exp::from(
         builder.new_access_path(s_var, Vec::<&str>::new()),
     )]);
 
@@ -552,7 +552,7 @@ fn function_with_param_to_global_field() -> FunctionData {
     // This is the key assignment: globals.field = local_var
     builder.create_store(
         globals_field_access,
-        Exp::AccessPath(builder.new_access_path(local_var.clone(), Vec::<&str>::new())),
+        Exp::from(builder.new_access_path(local_var.clone(), Vec::<&str>::new())),
     );
 
     // Return globals
@@ -580,22 +580,22 @@ fn test_cap_algorithm() {
     // x = p0
     let x = builder.new_param_var(ParameterIdx::new(0));
 
-    // t1 = x.foo
+    // t1 = load x.foo
     let t1 = builder.new_local_var("t1");
     let x_foo = builder.new_access_path(x.clone(), vec!["foo"]);
-    builder.create_assign(t1.clone(), vec![Exp::AccessPath(x_foo)]);
+    builder.create_load(t1.clone(), x_foo.variable_ref, x_foo.path);
 
-    // t2 = t1.bar
+    // t2 = load t1.bar
     let t2 = builder.new_local_var("t2");
     let t1_bar = builder.new_access_path(t1.clone(), vec!["bar"]);
-    builder.create_assign(t2.clone(), vec![Exp::AccessPath(t1_bar)]);
+    builder.create_load(t2.clone(), t1_bar.variable_ref, t1_bar.path);
 
-    // t3 = t2.baz
+    // t3 = load t2.baz
     let t3 = builder.new_local_var("t3");
     let t2_baz = builder.new_access_path(t2.clone(), vec!["baz"]);
-    builder.create_assign(t3.clone(), vec![Exp::AccessPath(t2_baz)]);
+    builder.create_load(t3.clone(), t2_baz.variable_ref, t2_baz.path);
 
-    builder.create_ret(vec![Exp::AccessPath(
+    builder.create_ret(vec![Exp::from(
         builder.new_access_path(t3, Vec::<&str>::new()),
     )]);
 

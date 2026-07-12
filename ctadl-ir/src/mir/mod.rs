@@ -336,7 +336,11 @@ impl From<Vec<&str>> for FieldAccesses {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Exp {
-    AccessPath(AccessPath),
+    /// A bare variable reference. Reading a field is NOT expressible as an expression: use a
+    /// [`StatementKind::Load`] to load a field path into a variable, then reference that
+    /// variable here. This makes loads explicit in the IR (there is exactly one way to read a
+    /// field).
+    Variable(VariableRef),
     Str(ArcIntern<str>),
     Bytes(Vec<u8>),
     ObjectRef(CallObject),
@@ -711,8 +715,8 @@ impl Deref for FieldAccesses {
 
 impl Exp {
     #[inline]
-    pub fn new_access_path(ap: AccessPath) -> Self {
-        Self::AccessPath(ap)
+    pub fn variable(v: VariableRef) -> Self {
+        Self::Variable(v)
     }
 
     #[inline]
@@ -725,10 +729,11 @@ impl Exp {
         Self::Str(ArcIntern::from(s))
     }
 
+    /// Returns the variable this expression reads, if it is a variable reference.
     #[inline]
-    pub fn access_path(&self) -> Option<&AccessPath> {
+    pub fn variable_ref(&self) -> Option<&VariableRef> {
         match self {
-            Exp::AccessPath(ap) => Some(ap),
+            Exp::Variable(v) => Some(v),
             _ => None,
         }
     }
@@ -953,22 +958,16 @@ impl StatementKind {
         use StatementKind::*;
         match self {
             Assign { dest: _, sources } => Box::new(sources.iter().filter_map(|src| {
-                if matches!(src, Exp::AccessPath(_)) {
-                    let Exp::AccessPath(ap) = src else {
-                        unreachable!()
-                    };
-                    Some(&ap.variable_ref)
+                if let Exp::Variable(v) = src {
+                    Some(v)
                 } else {
                     None
                 }
             })),
             CallAssign { args, style, .. } => {
                 let a: VarIter<'s> = Box::new(args.iter().filter_map(|src| {
-                    if matches!(src, Exp::AccessPath(_)) {
-                        let Exp::AccessPath(ap) = src else {
-                            unreachable!()
-                        };
-                        Some(&ap.variable_ref)
+                    if let Exp::Variable(v) = src {
+                        Some(v)
                     } else {
                         None
                     }
@@ -988,11 +987,8 @@ impl StatementKind {
             } => Box::new(std::iter::once(source)),
             Store { dest, path: _, value } => {
                 let a: VarIter<'s> = Box::new(std::iter::once(dest));
-                let b: VarIter<'s> = if matches!(value, Exp::AccessPath(_)) {
-                    let Exp::AccessPath(ap) = value else {
-                        unreachable!()
-                    };
-                    Box::new(std::iter::once(&ap.variable_ref))
+                let b: VarIter<'s> = if let Exp::Variable(v) = value {
+                    Box::new(std::iter::once(v))
                 } else {
                     Box::new(std::iter::empty())
                 };
@@ -1007,22 +1003,16 @@ impl StatementKind {
         use StatementKind::*;
         match self {
             Assign { dest: _, sources } => Box::new(sources.iter_mut().filter_map(|src| {
-                if matches!(src, Exp::AccessPath(_)) {
-                    let Exp::AccessPath(ap) = src else {
-                        unreachable!()
-                    };
-                    Some(&mut ap.variable_ref)
+                if let Exp::Variable(v) = src {
+                    Some(v)
                 } else {
                     None
                 }
             })),
             CallAssign { args, style, .. } => {
                 let a: VarIterMut<'s> = Box::new(args.iter_mut().filter_map(|src| {
-                    if matches!(src, Exp::AccessPath(_)) {
-                        let Exp::AccessPath(ap) = src else {
-                            unreachable!()
-                        };
-                        Some(&mut ap.variable_ref)
+                    if let Exp::Variable(v) = src {
+                        Some(v)
                     } else {
                         None
                     }
@@ -1044,11 +1034,8 @@ impl StatementKind {
             } => Box::new(std::iter::once(source)),
             Store { dest, path: _, value } => {
                 let a: VarIterMut<'s> = Box::new(std::iter::once(dest));
-                let b: VarIterMut<'s> = if matches!(value, Exp::AccessPath(_)) {
-                    let Exp::AccessPath(ap) = value else {
-                        unreachable!()
-                    };
-                    Box::new(std::iter::once(&mut ap.variable_ref))
+                let b: VarIterMut<'s> = if let Exp::Variable(v) = value {
+                    Box::new(std::iter::once(v))
                 } else {
                     Box::new(std::iter::empty())
                 };
@@ -1085,6 +1072,62 @@ impl StatementKind {
             Nop => Box::new(std::iter::empty()),
         }
     }
+}
+
+/// Lowers a *read* of an access path into a sequence of [`StatementKind::Load`] instructions,
+/// appending them to `out` and returning the variable that holds the loaded value.
+///
+/// Reading a field is not expressible as an [`Exp`] (there is no `Exp::AccessPath`), so every
+/// field read must go through a `Load`. This helper is the one place that turns a chain of
+/// field accesses into loads. The chain is split into one load per pointer dereference: fields
+/// are accumulated and a load is emitted whenever a `deref` field is seen (and once more for any
+/// trailing non-deref fields). Each intermediate value flows through a fresh temporary minted by
+/// `fresh`.
+///
+/// A pathless access path is returned as-is (no load emitted); a purely symbolic field chain with
+/// no `deref` (e.g. `a.f.g`) becomes a single load carrying the whole path.
+pub fn load_access_path(
+    ap: AccessPath,
+    out: &mut Vec<Statement>,
+    mut fresh: impl FnMut() -> VariableRef,
+) -> VariableRef {
+    let AccessPath { variable_ref, path } = ap;
+    if path.fields.is_empty() {
+        return variable_ref;
+    }
+    // Experiment toggle: emit a single load carrying the whole path instead of splitting into
+    // one load per pointer dereference. Per-deref splitting is the points-to-normalized form,
+    // but under the current syntactic index engine it broadens forward propagation (short-path
+    // temporaries reach more variables). Set CTADL_NO_SPLIT_LOADS to measure the single-load form.
+    if std::env::var_os("CTADL_NO_SPLIT_LOADS").is_some() {
+        let dest = fresh();
+        out.push(Statement::new_kind(StatementKind::load(
+            dest.clone(),
+            variable_ref,
+            path,
+        )));
+        return dest;
+    }
+    let n = path.fields.len();
+    let mut cur = variable_ref;
+    let mut seg: ThinVec<FieldAccess> = ThinVec::new();
+    for (i, field) in path.fields.into_iter().enumerate() {
+        let is_deref = matches!(&field, FieldAccess::Symbol(s) if &**s == "deref");
+        seg.push(field);
+        let is_last = i + 1 == n;
+        if is_deref || is_last {
+            let dest = fresh();
+            out.push(Statement::new_kind(StatementKind::load(
+                dest.clone(),
+                cur,
+                FieldAccesses {
+                    fields: std::mem::take(&mut seg),
+                },
+            )));
+            cur = dest;
+        }
+    }
+    cur
 }
 
 impl Params {
@@ -1321,14 +1364,21 @@ impl Display for ReturnType {
 }
 
 impl From<AccessPath> for Exp {
+    /// Converts a *pathless* access path into a variable expression. Reading a field cannot be
+    /// expressed as an [`Exp`]; lower it into a [`StatementKind::Load`] first (see
+    /// [`load_access_path`]). Panics if the access path carries a non-empty field path.
     fn from(ap: AccessPath) -> Self {
-        Exp::new_access_path(ap)
+        assert!(
+            ap.path.is_empty(),
+            "cannot convert a field access path into an Exp; use a Load instruction: {ap}"
+        );
+        Exp::Variable(ap.variable_ref)
     }
 }
 
 impl From<VariableRef> for Exp {
     fn from(v: VariableRef) -> Self {
-        Exp::new_access_path(v.into())
+        Exp::Variable(v)
     }
 }
 
@@ -1343,7 +1393,7 @@ impl Display for Exp {
         match self {
             Exp::Bytes(bytes) => write!(f, "<const: {:?}>", bytes),
             Exp::Str(s) => write!(f, "<const: {s:#?}>"),
-            Exp::AccessPath(ap) => write!(f, "{}", ap),
+            Exp::Variable(v) => write!(f, "{}", v),
             Exp::ObjectRef(obj) => write!(f, "{obj}"),
         }
     }

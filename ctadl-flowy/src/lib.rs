@@ -654,11 +654,12 @@ impl FlowyCtx {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
                 let dst = parse_ap(locals, inner.next().unwrap(), defined_functions)?;
-                // src is comma-separated
+                // src is comma-separated; a field read on the RHS lowers to loads.
                 let src = {
                     let mut result = Vec::new();
                     for p in inner.next().unwrap().into_inner() {
-                        result.push(parse_exp(locals, p, defined_functions));
+                        let r = parse_ref(locals, p, defined_functions);
+                        result.push(lower_ref(&mut self.counter, data, source_info, r));
                     }
                     result
                 };
@@ -684,9 +685,9 @@ impl FlowyCtx {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
                 let lhs = parse_ap(locals, inner.next().unwrap(), defined_functions)?;
-                let callee = match parse_exp(locals, inner.next().unwrap(), defined_functions) {
-                    Exp::AccessPath(ap) => ap,
-                    _ => {
+                let callee = match parse_ref(locals, inner.next().unwrap(), defined_functions) {
+                    ParsedRef::Ap(ap) => ap,
+                    ParsedRef::Value(_) => {
                         return Err(FlowyError::Compile {
                             message: "bad call ap".to_string(),
                             line,
@@ -737,31 +738,23 @@ impl FlowyCtx {
                     }
                 };
 
-                let args: ThinVec<Exp> = {
-                    if let CallStyle::DirectCall {
+                let is_source = matches!(
+                    &style,
+                    CallStyle::DirectCall {
                         call_edges: CallEdges::Explicit(edges),
-                    } = &style
-                        && (edges[0] == "source" || edges[0] == "errsource")
-                    {
-                        // Stringify only the label (index 0); pass any trailing
-                        // actuals (e.g. the path-count int in `source(Label, n)`)
-                        // through unchanged so they reach `ExtractSpec` as-is,
-                        // mirroring how `sink` handles its extra actuals.
-                        actuals
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, x)| {
-                                if i == 0 {
-                                    Exp::Str(format!("{x}").into())
-                                } else {
-                                    x
-                                }
-                            })
-                            .collect()
+                    } if edges[0] == "source" || edges[0] == "errsource"
+                );
+                let mut args: ThinVec<Exp> = ThinVec::new();
+                for (i, x) in actuals.into_iter().enumerate() {
+                    if is_source && i == 0 {
+                        // Stringify only the label (index 0); pass any trailing actuals
+                        // (e.g. the path-count int in `source(Label, n)`) through, lowering
+                        // any field reads, so they reach `ExtractSpec` as-is.
+                        args.push(Exp::Str(format!("{x}").into()));
                     } else {
-                        actuals.into_iter().collect()
+                        args.push(lower_ref(&mut self.counter, data, source_info, x));
                     }
-                };
+                }
 
                 // use a temporary for the result of the call
                 let tmp = VariableRef::new_local(format!("t{}?", self.counter.next()));
@@ -774,15 +767,15 @@ impl FlowyCtx {
 
                 // assign the temporary to the field (if applicable)
                 let assign_lhs =
-                    StatementKind::assign_or_store(lhs.clone(), Exp::AccessPath(tmp.into()));
+                    StatementKind::assign_or_store(lhs.clone(), Exp::Variable(tmp));
                 data.push_back(Statement::new(assign_lhs, source_info));
             }
             Rule::call_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let callee = match parse_exp(locals, inner.next().unwrap(), defined_functions) {
-                    Exp::AccessPath(ap) => ap,
-                    _ => {
+                let callee = match parse_ref(locals, inner.next().unwrap(), defined_functions) {
+                    ParsedRef::Ap(ap) => ap,
+                    ParsedRef::Value(_) => {
                         return Err(FlowyError::Compile {
                             message: "bad call ap".to_string(),
                             line,
@@ -832,34 +825,43 @@ impl FlowyCtx {
                     }
                 };
 
-                let args: ThinVec<Exp> = if let CallStyle::DirectCall {
-                    call_edges: CallEdges::Explicit(edges),
-                } = &style
-                    && (edges[0] == "sink" || edges[0] == "errsink")
-                {
-                    // Parses `sink(x.y.z, Test)` into `t0 = x.y.z; sink(t0, Test)` so that when
-                    // the sink call is removed, x.y.z remains in the program
+                let is_sink = matches!(
+                    &style,
+                    CallStyle::DirectCall {
+                        call_edges: CallEdges::Explicit(edges),
+                    } if edges[0] == "sink" || edges[0] == "errsink"
+                );
+                let args: ThinVec<Exp> = if is_sink {
+                    // Lowers `sink(x.y.z, Test)` into `t0 = x.y.z; sink(t0, Test)` so that when
+                    // the sink call is removed, x.y.z remains in the program.
                     let tmp = VariableRef::new_local(format!("t{}?", self.counter.next()));
                     let mut args = ThinVec::with_capacity(actuals.len());
-                    // first two original args
-                    let mut orig_args: SmallVec<[Exp; 4]> = SmallVec::new();
+                    let mut port_ref: Option<ParsedRef> = None;
                     for (i, x) in actuals.into_iter().enumerate() {
                         if i == 0 {
                             // use a temporary for the sink argument
-                            args.push(Exp::AccessPath(AccessPath::without_fields(tmp.clone())));
-                            orig_args.push(x);
+                            args.push(Exp::Variable(tmp.clone()));
+                            port_ref = Some(x);
                         } else if i == 1 {
                             args.push(Exp::Str(format!("{x}").into()));
-                            orig_args.push(x);
                         } else {
-                            args.push(x)
+                            args.push(lower_ref(&mut self.counter, data, source_info, x));
                         }
                     }
-                    let assign_tmp = StatementKind::assign(tmp.clone(), [orig_args[0].clone()]);
-                    data.push_back(Statement::new(assign_tmp, source_info));
+                    // `t0 = x.y.z` (loading the port's field path if any), keeping the reference
+                    // alive after the sink call is stripped.
+                    if let Some(port) = port_ref {
+                        let port_val = lower_ref(&mut self.counter, data, source_info, port);
+                        let assign_tmp = StatementKind::assign(tmp.clone(), [port_val]);
+                        data.push_back(Statement::new(assign_tmp, source_info));
+                    }
                     args
                 } else {
-                    actuals.into_iter().collect()
+                    let mut args = ThinVec::with_capacity(actuals.len());
+                    for x in actuals {
+                        args.push(lower_ref(&mut self.counter, data, source_info, x));
+                    }
+                    args
                 };
                 let rets = thin_vec![];
                 //let args = actuals.into_iter().map(|x| Exp::AccessPath(x));
@@ -868,17 +870,18 @@ impl FlowyCtx {
             }
             Rule::return_stmt => {
                 let mut inner = stmt_pair.into_inner();
-                let terminator = inner
-                    .next()
-                    .map(|var| {
-                        let src = parse_exp(locals, var, defined_functions);
+                let terminator = match inner.next() {
+                    Some(var) => {
+                        let r = parse_ref(locals, var, defined_functions);
+                        let src = lower_ref(&mut self.counter, data, source_info, r);
                         TerminatorKind::Return {
                             args: vec![src].into(),
                         }
-                    })
-                    .unwrap_or_else(|| TerminatorKind::Return {
+                    }
+                    None => TerminatorKind::Return {
                         args: vec![].into(),
-                    });
+                    },
+                };
                 data.terminator = Some(Terminator::new(terminator, source_info));
             }
             Rule::goto_stmt => panic!("bug: unexpected goto"),
@@ -1042,15 +1045,58 @@ fn parse_p(pair: Pair<'_, Rule>) -> FieldAccess {
     }
 }
 
+/// A parsed operand: either a non-path value (constant / function pointer) or an access path
+/// (`ident ~ p*`). A field read is not expressible as an [`Exp`], so an access path with fields
+/// must be lowered into loads (see [`lower_ref`]) before it can be used as an rvalue; when used
+/// as an lvalue or callee its path is consumed directly.
+enum ParsedRef {
+    Value(Exp),
+    Ap(AccessPath),
+}
+
+impl std::fmt::Display for ParsedRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParsedRef::Value(e) => write!(f, "{e}"),
+            ParsedRef::Ap(ap) => write!(f, "{ap}"),
+        }
+    }
+}
+
+/// Lowers a parsed operand into an rvalue [`Exp`]. A value passes through; an access path is
+/// lowered into a sequence of loads (appended to `data`, tagged with `source_info`) and the
+/// loaded variable is returned. Fresh temporaries come from `counter`.
+fn lower_ref(
+    counter: &mut Counter,
+    data: &mut BasicBlockData,
+    source_info: SourceInfo,
+    r: ParsedRef,
+) -> Exp {
+    match r {
+        ParsedRef::Value(e) => e,
+        ParsedRef::Ap(ap) => {
+            let mut loads = Vec::new();
+            let v = ctadl_ir::mir::load_access_path(ap, &mut loads, || {
+                VariableRef::new_local(format!("t{}?", counter.next()))
+            });
+            for mut s in loads {
+                s.source_info = source_info;
+                data.push_back(s);
+            }
+            Exp::Variable(v)
+        }
+    }
+}
+
 fn parse_ap(
     parameters: &Env,
     pair: Pair<'_, Rule>,
     defined_functions: &HashSet<String>,
 ) -> Result<AccessPath, FlowyError> {
     let (line, col) = pair.line_col();
-    match parse_exp(parameters, pair, defined_functions) {
-        Exp::AccessPath(ap) => Ok(ap),
-        _ => Err(FlowyError::Compile {
+    match parse_ref(parameters, pair, defined_functions) {
+        ParsedRef::Ap(ap) => Ok(ap),
+        ParsedRef::Value(_) => Err(FlowyError::Compile {
             message: "bad lhs ap".to_string(),
             line,
             col,
@@ -1059,35 +1105,36 @@ fn parse_ap(
 }
 
 /// A regular access path is variable + fields (as opposed to a summary access path)
-fn parse_exp(env: &Env, pair: Pair<'_, Rule>, defined_functions: &HashSet<String>) -> Exp {
+fn parse_ref(env: &Env, pair: Pair<'_, Rule>, defined_functions: &HashSet<String>) -> ParsedRef {
     // int | string | ident ~ p* | function_ptr
     let mut iter = pair.into_inner();
     let first = iter.next().unwrap();
     match first.as_rule() {
         Rule::int => {
             let i: u32 = <str>::parse(first.as_str()).unwrap();
-            Exp::Bytes(i.to_be_bytes().to_vec())
+            ParsedRef::Value(Exp::Bytes(i.to_be_bytes().to_vec()))
         }
-        Rule::string => Exp::Str(first.into_inner().next().unwrap().as_str().into()),
+        Rule::string => {
+            ParsedRef::Value(Exp::Str(first.into_inner().next().unwrap().as_str().into()))
+        }
         Rule::function_ptr => {
             let name = first.into_inner().next().unwrap().as_str();
             if !defined_functions.contains(name) {
                 log::warn!("function '{}' is not defined", name);
             }
-            Exp::ObjectRef(CallObject::FunctionPtr(ArcIntern::from(name)))
+            ParsedRef::Value(Exp::ObjectRef(CallObject::FunctionPtr(ArcIntern::from(name))))
         }
         _ => {
             let name: String = first.as_str().into();
             let ps: Vec<FieldAccess> = iter.map(parse_p).collect();
             let field_accesses = FieldAccesses::from_iter(ps.clone());
-            env.parameters
+            let ap = env
+                .parameters
                 .get(&name)
                 // try the parameter
-                .map(|v| {
-                    Exp::AccessPath(AccessPath {
-                        variable_ref: v.clone(),
-                        path: field_accesses.clone(),
-                    })
+                .map(|v| AccessPath {
+                    variable_ref: v.clone(),
+                    path: field_accesses.clone(),
                 })
                 // try the global
                 .or_else(|| {
@@ -1098,21 +1145,20 @@ fn parse_exp(env: &Env, pair: Pair<'_, Rule>, defined_functions: &HashSet<String
                         global_field_accesses
                             .fields
                             .extend(field_accesses.fields.clone());
-                        Some(Exp::AccessPath(AccessPath {
+                        Some(AccessPath {
                             variable_ref: VariableRef::new_global(),
                             path: global_field_accesses,
-                        }))
+                        })
                     } else {
                         None
                     }
                 })
                 // treat it as local
-                .unwrap_or_else(|| {
-                    Exp::AccessPath(AccessPath {
-                        variable_ref: VariableRef::new_local(name.clone()),
-                        path: field_accesses,
-                    })
-                })
+                .unwrap_or_else(|| AccessPath {
+                    variable_ref: VariableRef::new_local(name.clone()),
+                    path: field_accesses,
+                });
+            ParsedRef::Ap(ap)
         }
     }
 }
@@ -1121,10 +1167,10 @@ fn parse_actuals(
     locals: &Env,
     pair: Pair<'_, Rule>,
     defined_functions: &HashSet<String>,
-) -> Vec<Exp> {
+) -> Vec<ParsedRef> {
     assert!(pair.as_rule() == Rule::actuals);
     pair.into_inner()
-        .map(|ap| parse_exp(locals, ap, defined_functions))
+        .map(|ap| parse_ref(locals, ap, defined_functions))
         .collect()
 }
 
@@ -1178,9 +1224,8 @@ impl MutVisitor for ExtractSpec {
         // copies of a parameter (or of an already-tracked variable) carry the index.
         if let Assign { dest, sources } = stmt
             && sources.len() == 1
-            && let Exp::AccessPath(ap) = &sources[0]
-            && ap.path.is_empty()
-            && let Some(formal) = self.formal_of(&ap.variable_ref)
+            && let Exp::Variable(v) = &sources[0]
+            && let Some(formal) = self.formal_of(v)
         {
             self.param_of.insert(dest.clone(), formal);
         }
@@ -1226,8 +1271,8 @@ impl MutVisitor for ExtractSpec {
                 "sink" | "errsink" => {
                     let infunc = &self.function;
                     let port = (
-                        args[0].access_path().unwrap().variable_ref.clone(),
-                        args[0].access_path().unwrap().path.clone(),
+                        args[0].variable_ref().unwrap().clone(),
+                        FieldAccesses::empty(),
                     );
                     // The port is the `t? = x` temp the front-end sinks; recover the
                     // parameter index it copies so the endpoint anchors at call sites.

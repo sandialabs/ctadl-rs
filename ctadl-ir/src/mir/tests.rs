@@ -68,7 +68,7 @@ fn test_parameter_does_not_exist_error() {
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
     let stmt = Statement::new_kind(StatementKind::assign(
         VariableRef::new_local("tmp".to_string()),
-        [Exp::AccessPath(AccessPath::without_fields(var.clone()))],
+        [Exp::Variable(var.clone())],
     ));
     block.statements.push_back(stmt);
     // Run verification; we don't assert on the result because the behavior may be buggy.

@@ -232,7 +232,7 @@ impl Context {
                             if handler_pcs.contains(&bb.start_pc) {
                                 bb_data.push_back(Statement::new_kind(StatementKind::Assign {
                                     dest: VariableRef::new_local("stack0".to_string()),
-                                    sources: smallvec![Exp::new_access_path(
+                                    sources: smallvec![Exp::from(
                                         AccessPath::without_fields(Self::except()),
                                     )],
                                 }));
@@ -260,7 +260,7 @@ impl Context {
                                             let mut assign =
                                                 Statement::new_kind(StatementKind::Assign {
                                                     dest: self.convert_location_to_var_ref(ret_loc),
-                                                    sources: smallvec![Exp::new_access_path(
+                                                    sources: smallvec![Exp::from(
                                                         AccessPath::without_fields(Self::ret()),
                                                     )],
                                                 });
@@ -306,12 +306,11 @@ impl Context {
                                             Self::note_assign_aliases(&stmt, &mut stack_aliases);
                                             if let StatementKind::Assign { dest, sources } =
                                                 &stmt.kind
-                                                && let [Exp::AccessPath(ap)] = sources.as_slice()
-                                                && ap.path.is_empty()
+                                                && let [Exp::Variable(v)] = sources.as_slice()
                                                 && Self::is_stack_var(dest)
-                                                && Self::aload_source_var(&ap.variable_ref)
+                                                && Self::aload_source_var(v)
                                             {
-                                                last_aload_reg = Some(ap.variable_ref.clone());
+                                                last_aload_reg = Some(v.clone());
                                             }
                                             bb_data.push_back(stmt);
                                         }
@@ -332,7 +331,7 @@ impl Context {
                                             TerminatorKind::Return {
                                                 args: smallvec![
                                                     empty_exp(),
-                                                    Exp::new_access_path(
+                                                    Exp::from(
                                                         AccessPath::without_fields(Self::except(),)
                                                     ),
                                                 ],
@@ -612,7 +611,7 @@ impl Context {
     }
 
     fn stack_exp(&self, loc: &Location) -> Exp {
-        Exp::new_access_path(AccessPath::without_fields(
+        Exp::from(AccessPath::without_fields(
             self.convert_location_to_var_ref(loc),
         ))
     }
@@ -648,18 +647,15 @@ impl Context {
         if let StatementKind::Assign { dest, sources } = &stmt.kind
             && let [src] = sources.as_slice()
         {
-            if let Exp::AccessPath(ap) = src
-                && ap.path.is_empty()
-            {
+            if let Exp::Variable(v) = src {
                 let base = aliases
-                    .get(&ap.variable_ref.to_string())
+                    .get(&v.to_string())
                     .cloned()
-                    .unwrap_or_else(|| ap.variable_ref.clone());
+                    .unwrap_or_else(|| v.clone());
                 if Self::is_stack_var(dest)
-                    && (Self::is_register_var(&ap.variable_ref)
-                        || Self::aload_source_var(&ap.variable_ref))
+                    && (Self::is_register_var(v) || Self::aload_source_var(v))
                 {
-                    aliases.insert(dest.to_string(), ap.variable_ref.clone());
+                    aliases.insert(dest.to_string(), v.clone());
                 } else {
                     aliases.insert(dest.to_string(), base);
                 }
@@ -797,7 +793,7 @@ impl Context {
     fn assign_var(dest: VariableRef, src: VariableRef) -> Statement {
         Statement::new_kind(StatementKind::Assign {
             dest,
-            sources: smallvec![Exp::new_access_path(AccessPath::without_fields(src))],
+            sources: smallvec![Exp::from(AccessPath::without_fields(src))],
         })
     }
 
@@ -912,13 +908,12 @@ impl Context {
             // getstatic
             0xb2 => {
                 let field = Self::field_ref_in(&data.sources).expect("getstatic field");
-                smallvec![Statement::new_kind(StatementKind::Assign {
-                    dest: self.convert_location_to_var_ref(&data.destination),
-                    sources: smallvec![Exp::new_access_path(AccessPath::new(
-                        VariableRef::new_global(),
-                        [Self::jvm_field_symbol(field)],
-                    ))],
-                })]
+                let ap = AccessPath::new(VariableRef::new_global(), [Self::jvm_field_symbol(field)]);
+                smallvec![Statement::new_kind(StatementKind::load(
+                    self.convert_location_to_var_ref(&data.destination),
+                    ap.variable_ref,
+                    ap.path,
+                ))]
             }
             // putstatic
             0xb3 => {
@@ -948,13 +943,12 @@ impl Context {
                     block_instrs,
                     instr_idx,
                 );
-                smallvec![Statement::new_kind(StatementKind::Assign {
-                    dest: self.convert_location_to_var_ref(&data.destination),
-                    sources: smallvec![Exp::new_access_path(AccessPath::new(
-                        object,
-                        [Self::jvm_field_symbol(field)],
-                    ))],
-                })]
+                let ap = AccessPath::new(object, [Self::jvm_field_symbol(field)]);
+                smallvec![Statement::new_kind(StatementKind::load(
+                    self.convert_location_to_var_ref(&data.destination),
+                    ap.variable_ref,
+                    ap.path,
+                ))]
             }
             // putfield
             0xb5 => {
@@ -994,13 +988,12 @@ impl Context {
                 let base = Self::array_base(&data.sources).expect("aload base");
                 let object =
                     self.field_object_base(base, aliases, last_aload_reg, block_instrs, instr_idx);
-                smallvec![Statement::new_kind(StatementKind::Assign {
-                    dest: self.convert_location_to_var_ref(&data.destination),
-                    sources: smallvec![Exp::new_access_path(AccessPath::new(
-                        object,
-                        [mir::FieldAccess::Symbol("[]".into())],
-                    ))],
-                })]
+                let ap = AccessPath::new(object, [mir::FieldAccess::Symbol("[]".into())]);
+                smallvec![Statement::new_kind(StatementKind::load(
+                    self.convert_location_to_var_ref(&data.destination),
+                    ap.variable_ref,
+                    ap.path,
+                ))]
             }
             // *astore
             0x4f..=0x55 if dest_is_array => {
@@ -1034,7 +1027,7 @@ impl Context {
 
     fn convert_location_to_exp(&self, loc: &Location) -> Exp {
         match loc {
-            Location::StackSlot(_) | Location::StackInput(_) => Exp::new_access_path(
+            Location::StackSlot(_) | Location::StackInput(_) => Exp::from(
                 AccessPath::without_fields(self.convert_location_to_var_ref(loc)),
             ),
             Location::Constant(ConstantValue::Integer(n)) => {
@@ -1042,11 +1035,14 @@ impl Context {
             }
             Location::Constant(ConstantValue::String(s)) => Exp::new_str(s),
             Location::Allocation(class_name) => Self::allocation_exp(class_name),
-            Location::FieldRef(f) => Exp::new_access_path(AccessPath::new(
+            // A field read is not expressible as an Exp; genuine field reads are lowered to
+            // Load instructions in the getfield/getstatic/aload opcode arms. This &self helper
+            // cannot emit a load, so a FieldRef reaching here (a rare generic-source fallback)
+            // degrades to its base variable.
+            Location::FieldRef(_) => Exp::from(AccessPath::without_fields(
                 self.convert_location_to_var_ref(loc),
-                [mir::FieldAccess::Symbol(f.field_name.clone().into())],
             )),
-            _ => Exp::new_access_path(AccessPath::without_fields(
+            _ => Exp::from(AccessPath::without_fields(
                 self.convert_location_to_var_ref(loc),
             )),
         }

@@ -102,12 +102,11 @@ pub fn coalesce_function(function: &mut FunctionData) {
                     // Whole-statement fuse of a whole-variable copy `x = t`:
                     // accepts multi-source defs.
                     let whole_var_copy_of = if sources.len() == 1
-                        && let Exp::AccessPath(ap) = &sources[0]
-                        && ap.variable_ref.version.is_none()
-                        && ap.path.is_empty()
-                        && pending.contains_key(&ap.variable_ref.variable)
+                        && let Exp::Variable(v) = &sources[0]
+                        && v.version.is_none()
+                        && pending.contains_key(&v.variable)
                     {
-                        Some(ap.variable_ref.variable.clone())
+                        Some(v.variable.clone())
                     } else {
                         None
                     };
@@ -161,15 +160,13 @@ pub fn coalesce_function(function: &mut FunctionData) {
                 let mut src_vars: SmallVec<[ArcIntern<Variable>; 2]> = SmallVec::new();
                 let mut ok = true;
                 for src in sources.iter() {
-                    if let Exp::AccessPath(ap) = src {
+                    if let Exp::Variable(v) = src {
                         // Versioned reads shouldn't exist pre-SSA; bail if seen.
-                        if ap.variable_ref.version.is_some()
-                            || ap.variable_ref.variable == dest.variable
-                        {
+                        if v.version.is_some() || v.variable == dest.variable {
                             ok = false;
                             break;
                         }
-                        src_vars.push(ap.variable_ref.variable.clone());
+                        src_vars.push(v.variable.clone());
                     }
                 }
                 if ok {
@@ -211,49 +208,37 @@ pub fn coalesce_function(function: &mut FunctionData) {
 }
 
 /// If `exp` is the (single) read of a pending pure-copy def, substitute the
-/// def's source into it and mark the def dead. `t = y.f` with read `t.g`
-/// composes to `y.f.g`; a non-access-path source only substitutes a
-/// field-free read.
+/// def's source into it and mark the def dead. Since a field read is no longer
+/// expressible as an [`Exp`] (field reads are [`StatementKind::Load`]s, which
+/// this pass leaves untouched), substitution is a plain variable/const copy:
+/// `t = y; use t` becomes `use y`.
 fn try_subst_exp(
     exp: &mut Exp,
     pending: &mut HashMap<ArcIntern<Variable>, Pending>,
     dead: &mut Vec<usize>,
 ) {
-    let Exp::AccessPath(ap) = exp else {
+    let Exp::Variable(vref) = exp else {
         return;
     };
-    if ap.variable_ref.version.is_some() {
+    if vref.version.is_some() {
         return;
     }
-    let Some(p) = pending.get(&ap.variable_ref.variable) else {
+    let Some(p) = pending.get(&vref.variable) else {
         return;
     };
     // Only pure copies substitute at expression granularity.
     if p.sources.len() != 1 {
         return;
     }
-    match &p.sources[0] {
-        Exp::AccessPath(def_src) => {
-            let mut new_ap = def_src.clone();
-            new_ap.path.fields.extend(ap.path.fields.iter().cloned());
-            let p = pending.remove(&ap.variable_ref.variable).expect("checked");
-            dead.push(p.stmt_pos);
-            *exp = Exp::AccessPath(new_ap);
-        }
-        other => {
-            // A constant/object source can only replace a field-free read.
-            if ap.path.is_empty() {
-                let new_exp = other.clone();
-                let p = pending.remove(&ap.variable_ref.variable).expect("checked");
-                dead.push(p.stmt_pos);
-                *exp = new_exp;
-            }
-        }
-    }
+    let new_exp = p.sources[0].clone();
+    let p = pending.remove(&vref.variable).expect("checked");
+    dead.push(p.stmt_pos);
+    *exp = new_exp;
 }
 
 /// [`try_subst_exp`] for a bare [`AccessPath`] read position (indirect-call
-/// callee). Only an access-path source can substitute here.
+/// callee). Only a variable-copy source substitutes here; the callee's own
+/// field path is preserved, with its base variable rewritten to the def's source.
 fn try_subst_access_path(
     ap: &mut AccessPath,
     pending: &mut HashMap<ArcIntern<Variable>, Pending>,
@@ -268,14 +253,13 @@ fn try_subst_access_path(
     if p.sources.len() != 1 {
         return;
     }
-    let Exp::AccessPath(def_src) = &p.sources[0] else {
+    let Exp::Variable(def_var) = &p.sources[0] else {
         return;
     };
-    let mut new_ap = def_src.clone();
-    new_ap.path.fields.extend(ap.path.fields.iter().cloned());
+    let def_var = def_var.clone();
     let p = pending.remove(&ap.variable_ref.variable).expect("checked");
     dead.push(p.stmt_pos);
-    *ap = new_ap;
+    ap.variable_ref = def_var;
 }
 
 #[cfg(test)]
@@ -288,14 +272,7 @@ mod tests {
     }
 
     fn read(name: &str) -> Exp {
-        Exp::AccessPath(AccessPath::without_fields(local(name)))
-    }
-
-    fn read_field(name: &str, field: &str) -> Exp {
-        Exp::AccessPath(AccessPath::new(
-            local(name),
-            [FieldAccess::Symbol(field.into())],
-        ))
+        Exp::Variable(local(name))
     }
 
     fn assign(dest: &str, sources: Vec<Exp>) -> Statement {
@@ -357,32 +334,6 @@ mod tests {
         };
         assert_eq!(dest, &local("x"));
         assert_eq!(sources.as_slice(), &[read("a"), read("b")]);
-    }
-
-    #[test]
-    fn composes_field_paths() {
-        // t = y.f; x = t.g  =>  x = y.f.g
-        let mut f = one_block_function(vec![
-            assign("t", vec![read_field("y", "f")]),
-            assign("x", vec![read_field("t", "g")]),
-        ]);
-        coalesce_function(&mut f);
-        let kinds = block_kinds(&f);
-        assert_eq!(kinds.len(), 1);
-        let StatementKind::Assign { sources, .. } = kinds[0] else {
-            panic!("expected assign");
-        };
-        let Exp::AccessPath(ap) = &sources[0] else {
-            panic!("expected access path");
-        };
-        assert_eq!(ap.variable_ref, local("y"));
-        assert_eq!(
-            ap.path.fields.as_slice(),
-            &[
-                FieldAccess::Symbol("f".into()),
-                FieldAccess::Symbol("g".into())
-            ]
-        );
     }
 
     #[test]
@@ -474,27 +425,15 @@ mod tests {
         let mut f = one_block_function(vec![
             Statement::new_kind(StatementKind::Assign {
                 dest: t.clone(),
-                sources: smallvec![Exp::AccessPath(AccessPath::without_fields(
-                    local("a").with_version(0)
-                ))],
+                sources: smallvec![Exp::Variable(local("a").with_version(0))],
             }),
             Statement::new_kind(StatementKind::Assign {
                 dest: x,
-                sources: smallvec![Exp::AccessPath(AccessPath::without_fields(t))],
+                sources: smallvec![Exp::Variable(t)],
             }),
         ]);
         coalesce_function(&mut f);
         assert_eq!(block_kinds(&f).len(), 2);
     }
 
-    #[test]
-    fn multi_source_def_does_not_substitute_into_field_read() {
-        // t = a, b; x = t.f  =>  unchanged (cannot distribute the field read)
-        let mut f = one_block_function(vec![
-            assign("t", vec![read("a"), read("b")]),
-            assign("x", vec![read_field("t", "f")]),
-        ]);
-        coalesce_function(&mut f);
-        assert_eq!(block_kinds(&f).len(), 2);
-    }
 }

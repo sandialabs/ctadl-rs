@@ -58,7 +58,8 @@ fn simple_assign_global() {
             }
         ";
     let prog = program_from_string(src).0;
-    check_assign_or_update(&prog, "b", ["$globals.a"], None);
+    // Reading the global `a` lowers to a load of `$globals.a` (into a temp that flows to `b`).
+    check_loads(&prog, "$globals.a");
 }
 
 #[test_log::test]
@@ -167,11 +168,13 @@ fn unique_temps() {
     // temporary; this checks the allocator hands out distinct, gap-free names <t0>..<t4> across the
     // whole function (no reuse, no extras). That's a property of how temporaries are numbered, so we
     // read the names off the IR rather than substring-matching the dump.
+    // Operands are parameters (read as bare variables, no load temps) so the only temporaries
+    // are the ones each binary operation allocates.
     let src = r"
-        void fun(){
+        void fun(int n, int p, int r, int q, int a, int b, int m, int x){
             int z = n + p + r + q;   // <t0>, <t1>, <t2>
             int v = a + b;           // <t3>
-            int n = m + x;           // <t4>
+            int w = m + x;           // <t4>
         }
     ";
     let prog = program_from_string(src).0;
@@ -640,8 +643,8 @@ fn subscript_access_paths() {
             f[4] = x;
         }";
     let prog = program_from_string(src).0;
-    check_assign_or_update(&prog, "@p2", ["f.[3]"], None); // x = f[3]
-    check_assign_or_update(&prog, "f.[4]", ["@p2"], None); // f[4] = x  (update)
+    check_loads(&prog, "f.[3]"); // x = f[3]  (read lowers to a load of f.[3])
+    check_assign_or_update(&prog, "f.[4]", ["@p2"], None); // f[4] = x  (store)
 }
 
 #[test_log::test]
