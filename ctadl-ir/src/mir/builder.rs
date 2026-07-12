@@ -115,37 +115,56 @@ impl<'a> BasicBlockBuilder<'a> {
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create and insert an update statement
+    /// Create and insert a load statement
     ///
     /// # Arguments
-    /// * `dest` - Destination access path
-    /// * `source` - Source expression
-    pub fn create_update(
+    /// * `dest` - Destination variable
+    /// * `source` - Source variable
+    /// * `path` - Field path to load (non-empty)
+    pub fn create_load(
         &mut self,
-        dest: impl Into<AccessPath>,
-        source: impl Into<Exp>,
+        dest: VariableRef,
+        source: VariableRef,
+        path: FieldAccesses,
     ) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::update(dest.into(), source.into()));
+        let statement = Statement::new_kind(StatementKind::load(dest, source, path));
         let current_pos = self.insertion_point;
         self.insert_statement(statement);
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create and insert an assign_or_update statement
+    /// Create and insert a store statement. The destination path must be non-empty.
     ///
     /// # Arguments
-    /// * `dest` - Destination access path
+    /// * `dest` - Destination access path (non-empty field path)
     /// * `source` - Source expression
-    pub fn create_assign_or_update(
+    pub fn create_store(
         &mut self,
         dest: impl Into<AccessPath>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
-        let statement =
-            Statement::new_kind(StatementKind::assign_or_update(dest.into(), source.into()));
+        let statement = Statement::new_kind(StatementKind::store(dest.into(), source.into()));
         let current_pos = self.insertion_point;
         self.insert_statement(statement);
         StatementIdx::from(current_pos as u32)
+    }
+
+    /// Create and insert an assign (empty path) or store (single-field path) statement
+    ///
+    /// # Arguments
+    /// * `dest` - Destination access path
+    /// * `source` - Source expression
+    pub fn create_assign_or_store(
+        &mut self,
+        dest: impl Into<AccessPath>,
+        source: impl Into<Exp>,
+    ) -> StatementIdx {
+        let dest = dest.into();
+        if dest.path.is_empty() {
+            self.create_assign(dest.variable_ref, [source.into()])
+        } else {
+            self.create_store(dest, source)
+        }
     }
 
     /// Create and insert a call statement

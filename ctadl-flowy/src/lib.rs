@@ -662,20 +662,23 @@ impl FlowyCtx {
                     }
                     result
                 };
-                let assign = {
-                    if dst.path.is_empty() {
-                        StatementKind::assign(dst.variable_ref, src)
-                    } else if src.len() > 1 {
-                        return Err(FlowyError::Compile {
-                            message: "cannot update a field with multiple sources".to_string(),
-                            line,
-                            col,
-                        });
-                    } else {
-                        StatementKind::assign_or_update(dst, src[0].clone())
-                    }
-                };
-                data.push_back(Statement::new(assign, source_info));
+                if dst.path.is_empty() {
+                    data.push_back(Statement::new(
+                        StatementKind::assign(dst.variable_ref, src),
+                        source_info,
+                    ));
+                } else if src.len() > 1 {
+                    return Err(FlowyError::Compile {
+                        message: "cannot update a field with multiple sources".to_string(),
+                        line,
+                        col,
+                    });
+                } else {
+                    data.push_back(Statement::new(
+                        StatementKind::assign_or_store(dst, src[0].clone()),
+                        source_info,
+                    ));
+                }
             }
             Rule::assign_call_stmt => {
                 let (line, col) = stmt_pair.line_col();
@@ -771,7 +774,7 @@ impl FlowyCtx {
 
                 // assign the temporary to the field (if applicable)
                 let assign_lhs =
-                    StatementKind::assign_or_update(lhs.clone(), Exp::AccessPath(tmp.into()));
+                    StatementKind::assign_or_store(lhs.clone(), Exp::AccessPath(tmp.into()));
                 data.push_back(Statement::new(assign_lhs, source_info));
             }
             Rule::call_stmt => {
@@ -852,8 +855,7 @@ impl FlowyCtx {
                             args.push(x)
                         }
                     }
-                    let assign_tmp =
-                        StatementKind::assign_or_update(tmp.into(), orig_args[0].clone());
+                    let assign_tmp = StatementKind::assign(tmp.clone(), [orig_args[0].clone()]);
                     data.push_back(Statement::new(assign_tmp, source_info));
                     args
                 } else {

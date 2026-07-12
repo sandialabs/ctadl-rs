@@ -121,9 +121,10 @@ pub fn coalesce_function(function: &mut FunctionData) {
                         }
                     }
                 }
-                StatementKind::Update { value, .. } => {
+                StatementKind::Store { value, .. } => {
                     try_subst_exp(value, &mut pending, &mut dead);
                 }
+                StatementKind::Load { .. } => {}
                 StatementKind::CallAssign { args, style, .. } => {
                     for a in args.iter_mut() {
                         try_subst_exp(a, &mut pending, &mut dead);

@@ -126,6 +126,15 @@ impl Context {
         }
     }
 
+    /// Appends a write of `src` to the access path `dest`: a plain assign for a bare variable,
+    /// otherwise a store of the (non-empty) field path.
+    fn push_assign_or_store(&mut self, stmts: &mut Vec<Statement>, dest: AccessPath, src: Exp) {
+        stmts.push(Statement::new_kind(StatementKind::assign_or_store(
+            dest, src,
+        )));
+    }
+
+
     fn process(
         &mut self,
         facts_dir: &Path,
@@ -396,13 +405,13 @@ impl Context {
                             && let Some(addr) = &data.address
                         {
                             // Stack parameter - bind to __stack_top offset
-                            StatementKind::assign_or_update(
+                            StatementKind::store(
                                 Self::stack_slot_path(addr.0),
                                 VariableRef::new_parameter(ParameterIdx::new(i)).into(),
                             )
                         } else {
                             // Other parameter (register, etc.) - bind to local variable
-                            StatementKind::assign_or_update(
+                            StatementKind::assign_or_store(
                                 self.get_lvalue(rep, &pcode_facts.vnode_facts)?,
                                 VariableRef::new_parameter(ParameterIdx::new(i)).into(),
                             )
@@ -776,17 +785,14 @@ impl Context {
             | "POPCOUNT" => {
                 // Handle copy-like and unary operations as assignments
                 self.handle_copy_operation(pcode, vnode_facts)
-                    .map(|s| [s].into_iter().collect())
             }
             "LOAD" => {
                 // Handle load operations
                 self.handle_load_operation(pcode, vnode_facts)
-                    .map(|s| [s].into_iter().collect())
             }
             "STORE" => {
                 // Handle store operations
                 self.handle_store_operation(pcode, vnode_facts)
-                    .map(|s| [s].into_iter().collect())
             }
             "CALL" | "CALLIND" => {
                 // Handle call operations
@@ -810,7 +816,7 @@ impl Context {
             _ => {
                 // For now, treat unknown operations as no-ops
                 log::warn!("Unsupported pcode mnemonic: {}", pcode.mnemonic);
-                Ok(Statement::new_kind(StatementKind::Nop)).map(|s| [s].into_iter().collect())
+                Ok(vec![Statement::new_kind(StatementKind::Nop)])
             }
         }
     }
@@ -843,14 +849,16 @@ impl Context {
         }
 
         let temp = self.create_temp();
-        let stmt1 = StatementKind::assign(temp.clone(), inputs);
-        let stmt2 = StatementKind::assign_or_update(
+        let mut stmts = vec![Statement::new_kind(StatementKind::assign(
+            temp.clone(),
+            inputs,
+        ))];
+        self.push_assign_or_store(
+            &mut stmts,
             outputs[0].clone(),
             Exp::AccessPath(AccessPath::without_fields(temp)),
         );
-        Ok([Statement::new_kind(stmt1), Statement::new_kind(stmt2)]
-            .into_iter()
-            .collect())
+        Ok(stmts)
     }
 
     fn handle_ptrsub(
@@ -877,18 +885,19 @@ impl Context {
             && let pcode_reader::constant_propagation::SymbolicProp::Value(None, addr) = prop
         {
             if let Some(func_name) = self.resolve_address_to_func_name(addr, hfunc_facts, program) {
-                let kind = StatementKind::assign_or_update(
+                let mut stmts = Vec::new();
+                self.push_assign_or_store(
+                    &mut stmts,
                     outputs[0].clone(),
                     Exp::ObjectRef(CallObject::FunctionPtr(func_name.into())),
                 );
                 log::warn!("Found a function pointer, yay");
-                return Ok([Statement::new_kind(kind)].into_iter().collect());
+                return Ok(stmts);
             } else {
-                let kind = StatementKind::assign_or_update(
-                    outputs[0].clone(),
-                    self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr),
-                );
-                return Ok([Statement::new_kind(kind)].into_iter().collect());
+                let src = self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr);
+                let mut stmts = Vec::new();
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), src);
+                return Ok(stmts);
             }
         }
 
@@ -911,25 +920,31 @@ impl Context {
             (Some(c), None) => {
                 let mut ap = self.get_lvalue(offset_vn, vnode_facts)?;
                 ap.path.fields.push(FieldAccess::Offset(Offset(c)));
-                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
-                Ok(vec![Statement::new_kind(kind)])
+                let mut stmts = Vec::new();
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::AccessPath(ap));
+                Ok(stmts)
             }
             (None, Some(c)) => {
                 let mut ap = self.get_lvalue(base_vn, vnode_facts)?;
                 ap.path.fields.push(FieldAccess::Offset(Offset(c)));
-                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
-                Ok(vec![Statement::new_kind(kind)])
+                let mut stmts = Vec::new();
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::AccessPath(ap));
+                Ok(stmts)
             }
             (None, None) => {
                 let base_exp = self.get_exp(base_vn, vnode_facts)?;
                 let offset_exp = self.get_exp(offset_vn, vnode_facts)?;
                 let temp = self.create_temp();
-                let stmt1 = StatementKind::assign(temp.clone(), [base_exp, offset_exp]);
-                let stmt2 = StatementKind::assign_or_update(
+                let mut stmts = vec![Statement::new_kind(StatementKind::assign(
+                    temp.clone(),
+                    [base_exp, offset_exp],
+                ))];
+                self.push_assign_or_store(
+                    &mut stmts,
                     outputs[0].clone(),
                     Exp::AccessPath(AccessPath::without_fields(temp)),
                 );
-                Ok(vec![Statement::new_kind(stmt1), Statement::new_kind(stmt2)])
+                Ok(stmts)
             }
         }
     }
@@ -955,11 +970,10 @@ impl Context {
         if let Some(prop) = self.cp_results.get(&pcode.outputs[0]).cloned()
             && let pcode_reader::constant_propagation::SymbolicProp::Value(None, addr) = prop
         {
-            let kind = StatementKind::assign_or_update(
-                outputs[0].clone(),
-                self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr),
-            );
-            return Ok([Statement::new_kind(kind)].into_iter().collect());
+            let src = self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr);
+            let mut stmts = Vec::new();
+            self.push_assign_or_store(&mut stmts, outputs[0].clone(), src);
+            return Ok(stmts);
         }
 
         let base_vn = &pcode.inputs[0];
@@ -980,14 +994,16 @@ impl Context {
                 ap.path
                     .fields
                     .push(FieldAccess::Offset(Offset(idx_c * s_val)));
-                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
-                Ok(vec![Statement::new_kind(kind)])
+                let mut stmts = Vec::new();
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::AccessPath(ap));
+                Ok(stmts)
             }
             (Some(base_c), None) if size_const == Some(1) => {
                 let mut ap = self.get_lvalue(index_vn, vnode_facts)?;
                 ap.path.fields.push(FieldAccess::Offset(Offset(base_c)));
-                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
-                Ok(vec![Statement::new_kind(kind)])
+                let mut stmts = Vec::new();
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::AccessPath(ap));
+                Ok(stmts)
             }
             _ => {
                 let base_exp = self.get_exp(base_vn, vnode_facts)?;
@@ -999,12 +1015,16 @@ impl Context {
                 };
 
                 let temp = self.create_temp();
-                let stmt1 = StatementKind::assign(temp.clone(), [base_exp, index_exp, size_exp]);
-                let stmt2 = StatementKind::assign_or_update(
+                let mut stmts = vec![Statement::new_kind(StatementKind::assign(
+                    temp.clone(),
+                    [base_exp, index_exp, size_exp],
+                ))];
+                self.push_assign_or_store(
+                    &mut stmts,
                     outputs[0].clone(),
                     Exp::AccessPath(AccessPath::without_fields(temp)),
                 );
-                Ok(vec![Statement::new_kind(stmt1), Statement::new_kind(stmt2)])
+                Ok(stmts)
             }
         }
     }
@@ -1013,22 +1033,23 @@ impl Context {
         &mut self,
         pcode: &pcode_reader::PcodeData,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-    ) -> Result<Statement, Error> {
+    ) -> Result<Vec<Statement>, Error> {
         let (inputs, outputs) = (&pcode.inputs, &pcode.outputs);
         if !inputs.is_empty() && !outputs.is_empty() && inputs[0] != outputs[0] {
             let input_exp = self.get_exp(&inputs[0], vnode_facts)?;
             let output_var = self.get_lvalue(&outputs[0], vnode_facts)?;
-            let kind = StatementKind::assign_or_update(output_var, input_exp);
-            return Ok(Statement::new_kind(kind));
+            let mut stmts = Vec::new();
+            self.push_assign_or_store(&mut stmts, output_var, input_exp);
+            return Ok(stmts);
         }
-        Ok(Statement::new_kind(StatementKind::Nop))
+        Ok(vec![Statement::new_kind(StatementKind::Nop)])
     }
 
     fn handle_load_operation(
         &mut self,
         pcode: &pcode_reader::PcodeData,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-    ) -> Result<Statement, Error> {
+    ) -> Result<Vec<Statement>, Error> {
         let inputs = &pcode.inputs;
         let outputs = &pcode.outputs;
         if inputs.len() >= 2 && !outputs.is_empty() {
@@ -1040,17 +1061,35 @@ impl Context {
                 .push(FieldAccess::Symbol("deref".into()));
             let output_var = self.get_lvalue(&outputs[0], vnode_facts)?;
 
-            let kind = StatementKind::assign_or_update(output_var, Exp::AccessPath(offset_exp));
-            return Ok(Statement::new_kind(kind));
+            let mut stmts = Vec::new();
+            // Load through the address's (composed) field path.
+            let dest = if output_var.path.is_empty() {
+                output_var.variable_ref.clone()
+            } else {
+                self.create_temp()
+            };
+            stmts.push(Statement::new_kind(StatementKind::load(
+                dest.clone(),
+                offset_exp.variable_ref,
+                offset_exp.path,
+            )));
+            if !output_var.path.is_empty() {
+                self.push_assign_or_store(
+                    &mut stmts,
+                    output_var,
+                    Exp::AccessPath(AccessPath::without_fields(dest)),
+                );
+            }
+            return Ok(stmts);
         }
-        Ok(Statement::new_kind(StatementKind::Nop))
+        Ok(vec![Statement::new_kind(StatementKind::Nop)])
     }
 
     fn handle_store_operation(
         &mut self,
         pcode: &pcode_reader::PcodeData,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-    ) -> Result<Statement, Error> {
+    ) -> Result<Vec<Statement>, Error> {
         let (inputs, _) = (&pcode.inputs, &pcode.outputs);
         if inputs.len() >= 3 {
             // STORE <space>, <offset>, <value>
@@ -1061,12 +1100,14 @@ impl Context {
                 .push(FieldAccess::Symbol("deref".into()));
             let value_exp = self.get_exp(&inputs[2], vnode_facts)?;
 
-            // If offset is an access path, we can try to use it as destination
-            let kind = StatementKind::assign_or_update(offset_exp, value_exp);
-            return Ok(Statement::new_kind(kind));
+            // Store through the address's (composed) field path. Unlike the old Update
+            // lowering, this does NOT redefine the address base variable.
+            return Ok(vec![Statement::new_kind(StatementKind::store(
+                offset_exp, value_exp,
+            ))]);
         }
         log::warn!("STORE missing inputs");
-        Ok(Statement::new_kind(StatementKind::Nop))
+        Ok(vec![Statement::new_kind(StatementKind::Nop)])
     }
 
     /// Converts varnode into our internal representation. Constant space varnodes map to a Const
@@ -1281,12 +1322,13 @@ impl Context {
         };
         stmts.push(Statement::new_kind(kind));
         // store temps into outputs
-        outputs.iter().zip(temps).for_each(|(o, t)| {
-            stmts.push(Statement::new_kind(StatementKind::assign_or_update(
+        for (o, t) in outputs.iter().zip(temps) {
+            self.push_assign_or_store(
+                &mut stmts,
                 o.clone(),
                 Exp::AccessPath(AccessPath::without_fields(t)),
-            )))
-        });
+            );
+        }
 
         Ok(stmts)
     }

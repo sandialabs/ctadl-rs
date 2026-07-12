@@ -642,7 +642,7 @@ impl Context {
                     source.cloned().map(|r| reg_to_var(code_item, r).into()),
                 )));
                 // flow temp into field update
-                stmts.push(Statement::new_kind(StatementKind::update(
+                stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::new(
                         VariableRef::new_global(),
                         [mir::FieldAccess::Symbol(name.into())],
@@ -690,7 +690,7 @@ impl Context {
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
                 // flow temp into field update
-                stmts.push(Statement::new_kind(StatementKind::update(
+                stmts.push(Statement::new_kind(StatementKind::store(
                     AccessPath::new(object, [mir::FieldAccess::Symbol(name.into())]),
                     temp_var.into(),
                 )));
@@ -753,7 +753,7 @@ impl Context {
                 )));
                 let array_var = reg_to_var(code_item, f.b);
                 let dest_path = AccessPath::new(array_var, [mir::FieldAccess::Symbol("[]".into())]);
-                stmts.push(Statement::new_kind(StatementKind::update(
+                stmts.push(Statement::new_kind(StatementKind::store(
                     dest_path,
                     temp_var.into(),
                 )));

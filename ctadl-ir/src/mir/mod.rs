@@ -14,7 +14,8 @@ targets of control flow. Terminator instructions are returns and gotos with mult
   on the right-hand side. Multiple assignments can be done in parallel in one statement. Assignments
   such as `a, b = b, a` are expressed in vec form as `[(a,b),(b,a)]` and implement a swap.
 
-- Setting of fields is done through the [`StatementKind::Update`] instruction.
+- Setting of fields is done through the [`StatementKind::Store`] instruction; reading fields can
+  additionally be done through the [`StatementKind::Load`] instruction.
 
 - Calls come in two flavors: direct and indirect. Direct calls are tagged with call edges. Indirect
   calls are tagged with an indirect call style. Calls can be internal or external to a program. Call
@@ -60,7 +61,7 @@ before conversion. For instance, a frontend language expression like `x = a + (b
 linearized as `(t1, t1) = (b, c); (t2, t2) = (a, t1); x = t1`.
 
 Stores into objects and structures often look like `obj.x.y = w` in frontend languages. These are
-modeled as [`StatementKind::Update`] instructions where the source and destination are both `obj`.
+modeled as [`StatementKind::Store`] instructions whose destination is `obj`.
 Statements like `obj.x = F(y.z)` have to be split into two CIR instructions: first, call the
 function and return into a temporary like `t1 = F(y.z)`; next, store the temporary to the
 destination object.
@@ -68,7 +69,7 @@ destination object.
 Globals variables in frontend languages can be modeled using [`Variable::GlobalHeap`] and fields.
 Say you have a global variable `speed`. Loading a global is done with an access path whose variable
 is the global heap and a field called `speed`. Storing to speed is done with an
-[`StatementKind::Update`] instruction to the `speed` field, using the global heap as the source and
+[`StatementKind::Store`] instruction to the `speed` field, using the global heap as the
 destination.
 
 Extern functions (functions that are called, for example, but not defined) are modeled with a
@@ -201,7 +202,7 @@ impl Display for FieldAccess {
 pub enum StatementKind {
     /// Assignment of constants and variables. The first element of the tuple is the destination;
     /// the second element of the tuple is a list of sources. Assignments only set variables, to
-    /// set fields, use the `Update` instruction.
+    /// set fields, use the `Store` instruction.
     ///
     /// The destinations should not overlap. If they do, the right-most destination overwrites the
     /// previous updates, which is probably not what you want.
@@ -210,21 +211,34 @@ pub enum StatementKind {
         sources: SmallVec<[Exp; 2]>,
     },
 
-    /// Update the field of a structure and return the new structure. The `dest` is specified as a
-    /// tuple of the new structure and the field to update. The update is performed on the
-    /// `dest` and the field is set to `value`. It's important to explicitly specify the source
-    /// and destination so that SSA conversion can rename the dest after the update.
-    ///
-    /// It looks like this:
+    /// Load a value from a source variable's field path into a destination variable:
     ///
     /// ```text
-    /// s = update(s.foo := new_value);
+    /// dest = load source.path;
     /// ```
     ///
-    /// This instruction is used to handle local variables with fields and global variables.
-    Update {
-        dest: (VariableRef, FieldAccesses),
+    /// The destination is defined; the source variable is only read. The path must be
+    /// non-empty (a pathless load is just an assign).
+    Load {
+        dest: VariableRef,
         source: VariableRef,
+        path: FieldAccesses,
+    },
+
+    /// Store a value into a destination variable's field path:
+    ///
+    /// ```text
+    /// store dest.path := value;
+    /// ```
+    ///
+    /// Unlike the old functional `Update` instruction, a store defines NO variable: the
+    /// destination base is only read (as a location), so SSA conversion does not create a new
+    /// version of the aggregate on every write. The path must be non-empty (a pathless store
+    /// is just an assign). This instruction is used to handle local variables with fields and
+    /// global variables.
+    Store {
+        dest: VariableRef,
+        path: FieldAccesses,
         /// Value to store
         value: Exp,
     },
@@ -280,7 +294,7 @@ pub struct SourceInfo {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Variable {
     /// A global variable represents a heap for storing globals. This variable may only be written
-    /// in an [`StatementKind::Update`] instruction.
+    /// in a [`StatementKind::Store`] instruction.
     GlobalHeap,
     /// A local variable
     Local(String),
@@ -891,32 +905,32 @@ impl StatementKind {
         }
     }
 
-    /// Constructs an update to a structure. Note: for the IR to be well-formed, the field must be
-    /// non-empty. Use this to update a field of a variable.
-    pub fn update(dest: AccessPath, src: Exp) -> Self {
+    /// Constructs a load of a field path. The path must be non-empty.
+    pub fn load(dest: VariableRef, source: VariableRef, path: FieldAccesses) -> Self {
+        assert!(!path.is_empty(), "load source path must be non-empty");
+        StatementKind::Load { dest, source, path }
+    }
+
+    /// Constructs a store to a structure field path. The destination path must be non-empty.
+    pub fn store(dest: AccessPath, src: Exp) -> Self {
         let AccessPath { variable_ref, path } = dest;
-        StatementKind::Update {
-            dest: (variable_ref.clone(), path),
-            source: variable_ref.clone(),
+        assert!(!path.is_empty(), "store destination path must be non-empty");
+        StatementKind::Store {
+            dest: variable_ref,
+            path,
             value: src,
         }
     }
 
-    /// Generates either an assign or an update depending on whether fields are being set. Use this
-    /// when the caller might or might not be updating a field.
+    /// Generates either an assign or a store depending on whether fields are being set. Use
+    /// this when the caller might or might not be writing a field.
     #[inline]
-    pub fn assign_or_update(dest: AccessPath, src: Exp) -> Self {
+    pub fn assign_or_store(dest: AccessPath, src: Exp) -> Self {
         if !dest.path.is_empty() {
-            let AccessPath { variable_ref, path } = dest;
-            StatementKind::Update {
-                dest: (variable_ref.clone(), path),
-                source: variable_ref.clone(),
-                value: src,
-            }
+            Self::store(dest, src)
         } else {
-            let dest = dest.variable_ref;
             StatementKind::Assign {
-                dest,
+                dest: dest.variable_ref,
                 sources: smallvec![src],
             }
         }
@@ -967,12 +981,13 @@ impl StatementKind {
             }
             Phi { operands, .. } => Box::new(operands.iter().map(|(_, v)| v)),
             ParamFlow { params, global } => Box::new(params.iter().chain(std::iter::once(global))),
-            Update {
+            Load {
                 dest: _,
                 source,
-                value,
-            } => {
-                let a: VarIter<'s> = Box::new(std::iter::once(source));
+                path: _,
+            } => Box::new(std::iter::once(source)),
+            Store { dest, path: _, value } => {
+                let a: VarIter<'s> = Box::new(std::iter::once(dest));
                 let b: VarIter<'s> = if matches!(value, Exp::AccessPath(_)) {
                     let Exp::AccessPath(ap) = value else {
                         unreachable!()
@@ -1022,12 +1037,13 @@ impl StatementKind {
             ParamFlow { params, global } => {
                 Box::new(params.iter_mut().chain(std::iter::once(global)))
             }
-            Update {
+            Load {
                 dest: _,
                 source,
-                value,
-            } => {
-                let a: VarIterMut<'s> = Box::new(std::iter::once(source));
+                path: _,
+            } => Box::new(std::iter::once(source)),
+            Store { dest, path: _, value } => {
+                let a: VarIterMut<'s> = Box::new(std::iter::once(dest));
                 let b: VarIterMut<'s> = if matches!(value, Exp::AccessPath(_)) {
                     let Exp::AccessPath(ap) = value else {
                         unreachable!()
@@ -1047,14 +1063,11 @@ impl StatementKind {
         use StatementKind::*;
         match self {
             Assign { dest, .. } => Box::new(std::iter::once(dest)),
+            Load { dest, .. } => Box::new(std::iter::once(dest)),
             CallAssign { rets, .. } => Box::new(rets.iter()),
             Phi { dest, .. } => Box::new(std::iter::once(dest)),
             ParamFlow { .. } => Box::new(std::iter::empty()),
-            Update {
-                dest: (dest_var, _dest_fields),
-                source: _,
-                value: _,
-            } => Box::new(std::iter::once(dest_var)),
+            Store { .. } => Box::new(std::iter::empty()),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1064,14 +1077,11 @@ impl StatementKind {
         use StatementKind::*;
         match self {
             Assign { dest, sources: _ } => Box::new(std::iter::once(dest)),
+            Load { dest, .. } => Box::new(std::iter::once(dest)),
             CallAssign { rets, .. } => Box::new(rets.iter_mut()),
             Phi { dest: out, .. } => Box::new(std::iter::once(out)),
             ParamFlow { .. } => Box::new(std::iter::empty()),
-            Update {
-                dest: (dest_var, _dest_fields),
-                source: _,
-                value: _,
-            } => Box::new(std::iter::once(dest_var)),
+            Store { .. } => Box::new(std::iter::empty()),
             Nop => Box::new(std::iter::empty()),
         }
     }
@@ -1427,12 +1437,9 @@ impl Display for StatementKind {
                 write!(f, "; {global}")?;
                 Ok(())
             }
-            Update {
-                dest: (dest_var, dest_fields),
-                source,
-                value,
-            } => {
-                write!(f, "{dest_var} = update ({source}{dest_fields} := {value})")
+            Load { dest, source, path } => write!(f, "{dest} = load {source}{path}"),
+            Store { dest, path, value } => {
+                write!(f, "store {dest}{path} := {value}")
             }
             Nop => write!(f, "nop"),
         }

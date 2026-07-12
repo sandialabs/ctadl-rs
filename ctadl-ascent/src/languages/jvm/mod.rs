@@ -931,7 +931,7 @@ impl Context {
                         .next()
                         .expect("putstatic value"),
                 );
-                smallvec![Statement::new_kind(StatementKind::update(
+                smallvec![Statement::new_kind(StatementKind::store(
                     AccessPath::new(VariableRef::new_global(), [Self::jvm_field_symbol(field)],),
                     value,
                 ))]
@@ -972,7 +972,7 @@ impl Context {
                     block_instrs,
                     instr_idx,
                 );
-                smallvec![Statement::new_kind(StatementKind::update(
+                smallvec![Statement::new_kind(StatementKind::store(
                     AccessPath::new(object, [Self::jvm_field_symbol(field)]),
                     value,
                 ))]
@@ -1014,7 +1014,7 @@ impl Context {
                 );
                 let object =
                     self.field_object_base(base, aliases, last_aload_reg, block_instrs, instr_idx);
-                smallvec![Statement::new_kind(StatementKind::update(
+                smallvec![Statement::new_kind(StatementKind::store(
                     AccessPath::new(object, [mir::FieldAccess::Symbol("[]".into())],),
                     value,
                 ))]

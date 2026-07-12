@@ -37,23 +37,21 @@ fn test_unnamed_function_error() {
 }
 
 #[test]
-fn test_empty_field_update_error() {
+fn test_store_verifies() {
     let mut prog = make_program();
-    // Add an Update statement with no fields.
+    // Add a Store statement; verification should succeed.
     let f_idx = FunctionIdx::new(0);
     let f = &mut prog[f_idx];
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
     let var = VariableRef::new_local("x".to_string());
-    let upd = StatementKind::Update {
-        dest: (var.clone(), FieldAccesses::empty()),
-        source: var.clone(),
+    let store = StatementKind::Store {
+        dest: var.clone(),
+        path: FieldAccesses::new([FieldAccess::Symbol("f".into())]),
         value: Exp::new_str("val"),
     };
-    block.statements.push_back(Statement::new_kind(upd));
+    block.statements.push_back(Statement::new_kind(store));
     let result = prog.verify();
-    assert!(
-        matches!(result, Err(e) if e.iter().any(|err| matches!(err, VerifyError::EmptyFieldUpdate { .. })))
-    );
+    assert!(result.is_ok());
 }
 
 // Test for ParameterDoesNotExist (no assertions, just runs verification)

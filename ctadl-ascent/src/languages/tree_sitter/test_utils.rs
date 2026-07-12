@@ -338,7 +338,7 @@ pub(crate) fn check_assign_or_update<I>(
             1,
             "update destination requires exactly one source expression"
         );
-        StatementKind::update(dst_ap, srcs.into_iter().next().unwrap())
+        StatementKind::store(dst_ap, srcs.into_iter().next().unwrap())
     };
 
     let fun = get_only_function(prog).expect("expected exactly one function");
@@ -375,8 +375,8 @@ destination, minus the source constraint. */
 fn writes_dest(kind: &StatementKind, dst: &AccessPath) -> bool {
     match kind {
         StatementKind::Assign { dest, .. } => dst.path.is_empty() && *dest == dst.variable_ref,
-        StatementKind::Update { dest, .. } => {
-            !dst.path.is_empty() && dest.0 == dst.variable_ref && dest.1 == dst.path
+        StatementKind::Store { dest, path, .. } => {
+            !dst.path.is_empty() && *dest == dst.variable_ref && *path == dst.path
         }
         _ => false,
     }

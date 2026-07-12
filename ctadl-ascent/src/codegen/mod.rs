@@ -220,19 +220,31 @@ impl Visitor for CodegenVisitor<'_> {
     ) {
         let mut cap_path: BTreeMap<VariableRef, fx::Path> = BTreeMap::new();
         for statement in &data.statements {
-            if let StatementKind::Assign { dest, sources } = &statement.kind {
-                for src in sources {
-                    if let Exp::AccessPath(ap) = src
-                        && !ap.path.is_empty()
-                    {
-                        let base_path = cap_path.get(&ap.variable_ref).cloned().unwrap_or_default();
-                        let path = fx::Path::from_accesses(
-                            base_path.iter().cloned().chain(ap.path.iter().cloned()),
-                        );
-                        self.paths_dedup.insert((path,));
-                        cap_path.insert(dest.clone(), path);
+            match &statement.kind {
+                StatementKind::Assign { dest, sources } => {
+                    for src in sources {
+                        if let Exp::AccessPath(ap) = src
+                            && !ap.path.is_empty()
+                        {
+                            let base_path =
+                                cap_path.get(&ap.variable_ref).cloned().unwrap_or_default();
+                            let path = fx::Path::from_accesses(
+                                base_path.iter().cloned().chain(ap.path.iter().cloned()),
+                            );
+                            self.paths_dedup.insert((path,));
+                            cap_path.insert(dest.clone(), path);
+                        }
                     }
                 }
+                StatementKind::Load { dest, source, path } => {
+                    let base_path = cap_path.get(source).cloned().unwrap_or_default();
+                    let path = fx::Path::from_accesses(
+                        base_path.iter().cloned().chain(path.iter().cloned()),
+                    );
+                    self.paths_dedup.insert((path,));
+                    cap_path.insert(dest.clone(), path);
+                }
+                _ => {}
             }
         }
         self.super_basic_block_data(function, block, data);
@@ -480,15 +492,24 @@ impl Visitor for CodegenVisitor<'_> {
                     ),
                 ));
             }
-            Update {
-                dest: (dest_var, dest_fields),
-                source,
-                value,
-            } => {
-                let dest_var = self.trans_variable_ref(dest_var);
+            Load { dest, source, path } => {
+                let dest = self.trans_variable_ref(dest);
                 let source = self.trans_variable_ref(source);
-                // dest_var.dest_fields <- value
-                let dest = FlowVertex(dest_var, dest_fields.into());
+                let path = fx::Path::from(path);
+                self.paths_dedup.insert((path,));
+                // dest <- source.path
+                self.facts.assign.push((
+                    site,
+                    FlowVertex(dest, fx::Path::empty()),
+                    FlowVertex(source, path),
+                ));
+            }
+            Store { dest, path, value } => {
+                let dest_var = self.trans_variable_ref(dest);
+                let path = fx::Path::from(path);
+                self.paths_dedup.insert((path,));
+                // dest.path <- value
+                let dest = FlowVertex(dest_var, path);
                 // A function pointer / Java object stored INTO A FIELD (`o.op = id`).
                 // This is the field-store form of the `Assign` arm's object-ref handling:
                 // record the store at its field path so indirect-call resolution can follow
@@ -506,17 +527,7 @@ impl Visitor for CodegenVisitor<'_> {
                         .java_obj_assign
                         .push((site, dest.clone(), cls.0.clone()));
                 }
-                let value = self.trans_exp(value);
-                // dest_var <- source
-                // Multiple field updates of the same src/dst cause duplicate assigns
-                self.facts.assign.push((
-                    site,
-                    FlowVertex(dest_var, fx::Path::empty()),
-                    FlowVertex(source, fx::Path::empty()),
-                ));
-                if !dest_fields.is_empty()
-                    && let Some(value) = value
-                {
+                if let Some(value) = self.trans_exp(value) {
                     self.facts.assign.push((site, dest, value));
                 }
             }

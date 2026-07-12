@@ -1775,9 +1775,10 @@ impl<'a> Context<'a> {
             let sa = if my_path.path.is_empty() {
                 StatementKind::assign(my_path.variable_ref.clone(), fa)
             } else {
-                StatementKind::update(my_path.clone(), val_exp.clone())
+                StatementKind::store(my_path.clone(), val_exp.clone())
             };
             program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(sa));
+            
         }
     }
 }
