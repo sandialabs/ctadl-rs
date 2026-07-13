@@ -88,7 +88,7 @@ fn function_g() -> FunctionData {
         variable_ref: VariableRef::new_local("c".to_string()),
         path: Default::default(),
     };
-    let call_edges = CallEdges::Explicit(smallvec!["F".to_string()]);
+    let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
         Statement::new_kind(StatementKind::assign_or_update(
@@ -137,7 +137,7 @@ fn function_g1() -> FunctionData {
         variable_ref: VariableRef::new_local("c1".to_string()),
         path: Default::default(),
     };
-    let call_edges = CallEdges::Explicit(smallvec!["F".to_string()]);
+    let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
         Statement::new_kind(StatementKind::assign_or_update(

@@ -185,12 +185,15 @@ impl Context {
     ) -> BTreeMap<String, pcode_reader::HighFunc> {
         let mut name_to_funcs: BTreeMap<String, Vec<pcode_reader::HighFunc>> = BTreeMap::new();
 
+        let bbs_with_instructions: BTreeSet<&pcode_reader::PcodeBlockBasic> = pcode_facts
+            .pcode_facts
+            .values()
+            .filter_map(|pcode| pcode.bb_id.as_ref())
+            .collect();
+
         // Find all functions that have basic blocks with pcode instructions
         for (bb_id, bb_data) in &pcode_facts.bb_facts {
-            let has_instructions = pcode_facts
-                .pcode_facts
-                .values()
-                .any(|pcode| pcode.bb_id.as_ref() == Some(bb_id));
+            let has_instructions = bbs_with_instructions.contains(bb_id);
 
             if has_instructions
                 && let Some(func_data) = pcode_facts.hfunc_facts.get(&bb_data.hfunc)
@@ -1189,7 +1192,7 @@ impl Context {
             {
                 self.resolve_call_target(target_vnode, vnode_facts, hfunc_facts, program)
             } else {
-                smallvec![]
+                ctadl_ir::thin_vec![]
             };
             let args = pcode.inputs[1..]
                 .iter()
@@ -1200,7 +1203,7 @@ impl Context {
                 .collect();
             (edges, args)
         } else {
-            (smallvec![], smallvec![])
+            (ctadl_ir::thin_vec![], ctadl_ir::thin_vec![])
         };
 
         let style = if &**pcode.mnemonic == "CALLIND" && call_edges.is_empty() {
@@ -1230,7 +1233,7 @@ impl Context {
 
         let mut stmts = Vec::new();
         let outputs = outputs.err_context(|| format!("handling call: {:?}", pcode))?;
-        let temps: SmallVec<[VariableRef; 4]> =
+        let temps: ctadl_ir::ThinVec<VariableRef> =
             (0..outputs.len()).map(|_| self.create_temp()).collect();
         let kind = StatementKind::CallAssign {
             style,
@@ -1280,7 +1283,7 @@ impl Context {
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
         hfunc_facts: &BTreeMap<pcode_reader::HighFunc, pcode_reader::HFuncData>,
         program: &Program,
-    ) -> SmallVec<[String; 4]> {
+    ) -> ctadl_ir::ThinVec<String> {
         let address = if let Some(vnode_data) = vnode_facts.get(target_vnode) {
             vnode_data.address.as_ref().map(|addr| addr.0)
         } else {
@@ -1290,10 +1293,10 @@ impl Context {
         if let Some(addr) = address
             && let Some(name) = self.resolve_address_to_func_name(addr, hfunc_facts, program)
         {
-            return smallvec![name];
+            return ctadl_ir::thin_vec![name];
         }
 
-        smallvec![]
+        ctadl_ir::thin_vec![]
     }
 
     fn get_exp(

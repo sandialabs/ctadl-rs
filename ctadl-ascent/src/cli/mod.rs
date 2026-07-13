@@ -185,11 +185,17 @@ pub fn index(
     alias_rule: bool,
     dump_index_graph: Option<&Path>,
 ) -> Result<(), Error> {
+    use crate::index_engine::phys_footprint_mb;
+    log::info!("[mem cp] index() start: {:.1} MB", phys_footprint_mb());
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
     for import in project.iter_imports() {
         let import = import?;
         let mut program_info = load_program_info_without_source_info(&import)?;
+        log::info!(
+            "[mem cp] loaded IR program (before SSA/codegen): {:.1} MB",
+            phys_footprint_mb()
+        );
         let mut models_batch = crate::models::try_load_default_models(&program_info)?;
         for model_path in models {
             let model = crate::models::try_load_models(&program_info, model_path)?;
@@ -197,8 +203,20 @@ pub fn index(
         }
 
         log::trace!("summary length: {}", models_batch.summary.num_rows());
+        // Fuse single-use copy temporaries before SSA. Cuts the statement /
+        // variable count that SSA and the datalog fact base pay for. A no-op
+        // on programs already in SSA form (e.g. flowy imports).
+        ssa::coalesce_copies(&mut program_info.program);
         ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
+        log::info!(
+            "[mem cp] after SSA transform: {:.1} MB",
+            phys_footprint_mb()
+        );
         codegen_program(program_info, &mut facts, &mut source_info, strategy);
+        log::info!(
+            "[mem cp] after codegen_program (IR dropped, facts built): {:.1} MB",
+            phys_footprint_mb()
+        );
         log::trace!("summary length: {}", facts.summary.len());
         codegen_summary(models_batch.summary, &mut facts, &mut source_info);
         log::trace!("summary length: {}", facts.summary.len());
@@ -210,23 +228,29 @@ pub fn index(
     }
 
     let path = project.index_path()?;
-    facts.clone().try_save(&path)?;
+    facts.try_save(&path)?;
     inspect_index_facts(&facts, Some(&source_info.sites)).unwrap();
-    source_info.clone().try_save(&path)?;
+    // Only the (small) site IdMap is needed after saving
+    let sites = source_info.sites.clone();
+    source_info.try_save(&path)?;
+    log::info!(
+        "[mem cp] after facts.try_save: {:.1} MB",
+        phys_footprint_mb()
+    );
     let config = crate::index_engine::IndexConfig { alias_rule };
-    let result = taint_index_with_config(facts, config, Some(&source_info.sites));
+    let result = taint_index_with_config(facts, config, Some(&sites));
 
     // Slightly ugly special case for flowy artifacts. Since they have specific assertions at index
     // time, check them here.
     for import in project.iter_imports() {
         let import = import?;
         if import.language == ArtifactLanguage::Flowy {
-            crate::codegen::flowy::index_check(&import, &result, &source_info.sites)?;
+            crate::codegen::flowy::index_check(&import, &result, &sites)?;
         }
     }
 
     if let Some(dot_path) = dump_index_graph {
-        dump_index_graph_dot(&result.assign_like, &source_info.sites, dot_path)?;
+        dump_index_graph_dot(&result.assign_like, &sites, dot_path)?;
     }
 
     let path = project.index_path()?;
@@ -324,7 +348,7 @@ pub fn query(
     for import in project.iter_imports() {
         let import = import?;
         if import.language == ArtifactLanguage::Flowy {
-            crate::codegen::flowy::query_check(&import, &result, &ids)?;
+            crate::codegen::flowy::query_check(&import, &result, &ids, &index_facts.call)?;
         }
     }
 

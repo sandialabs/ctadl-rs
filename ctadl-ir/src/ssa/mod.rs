@@ -22,6 +22,9 @@ use crate::mir::*;
 #[cfg(test)]
 mod tests;
 
+mod coalesce;
+pub use coalesce::{coalesce_copies, coalesce_function};
+
 #[derive(Debug)]
 struct PhiPlace {
     variables: HashSet<ArcIntern<Variable>>,

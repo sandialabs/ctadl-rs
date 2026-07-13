@@ -57,7 +57,6 @@ use ctadl_ir::index::index_vec::IndexVec;
 use ctadl_ir::mir::*;
 
 use internment::ArcIntern;
-use smallvec::{SmallVec, smallvec};
 use streaming_iterator::{IntoStreamingIterator, StreamingIterator};
 use tree_sitter::{Parser, Query, QueryCapture, QueryCursor, QueryMatch, Tree};
 
@@ -1566,8 +1565,8 @@ impl<'a> Context<'a> {
         arg_list: Node<'_>,
         source: &str,
         scope_view: &ScopeView,
-    ) -> Result<SmallVec<[Exp; 4]>, Error> {
-        let mut result = SmallVec::new();
+    ) -> Result<ctadl_ir::ThinVec<Exp>, Error> {
+        let mut result = ctadl_ir::ThinVec::new();
 
         assert_eq!(
             arg_list.kind(),
@@ -1604,7 +1603,7 @@ impl<'a> Context<'a> {
         let func_node = node.child_by_field_name("function").expect("always has");
         let func_name = to_str(&func_node, source);
 
-        let call_edges = CallEdges::Explicit(smallvec![func_name.to_string()]);
+        let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec![func_name.to_string()]);
 
         let arg_node = node.child_by_field_name("arguments").expect("always has");
         let args = self.collect_arguments(program, arg_node, source, scope_view)?;

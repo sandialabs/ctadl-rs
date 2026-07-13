@@ -19,7 +19,7 @@ pub struct Terminator {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TerminatorKind {
     /// Return instruction. All returns must return the same number of values.
-    Return { args: SmallVec<[Exp; 4]> },
+    Return { args: SmallVec<[Exp; 1]> },
 
     /// Non-deterministic jumps to successor blocks.
     Goto {
