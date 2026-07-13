@@ -239,18 +239,18 @@ type CopyKey = (FunctionId, FlowVariable);
 
 /// Union-find `find` with path compression.
 fn copy_find(parent: &mut std::collections::HashMap<CopyKey, CopyKey>, x: CopyKey) -> CopyKey {
-    let mut root = x.clone();
+    let mut root = x;
     while let Some(p) = parent.get(&root) {
         if *p == root {
             break;
         }
-        root = p.clone();
+        root = *p;
     }
     // Path-compress everything on the way to the root.
     let mut cur = x;
     while cur != root {
-        let next = parent.get(&cur).cloned().unwrap_or_else(|| root.clone());
-        parent.insert(cur, root.clone());
+        let next = parent.get(&cur).copied().unwrap_or(root);
+        parent.insert(cur, root);
         cur = next;
     }
     root
@@ -275,10 +275,10 @@ fn compute_copy_alias(
         if !dp.is_empty() || !sp.is_empty() {
             continue;
         }
-        let a: CopyKey = (*f, dst.clone());
-        let b: CopyKey = (*f, src.clone());
-        parent.entry(a.clone()).or_insert_with(|| a.clone());
-        parent.entry(b.clone()).or_insert_with(|| b.clone());
+        let a: CopyKey = (*f, *dst);
+        let b: CopyKey = (*f, *src);
+        parent.entry(a).or_insert(a);
+        parent.entry(b).or_insert(b);
         let ra = copy_find(&mut parent, a);
         let rb = copy_find(&mut parent, b);
         if ra != rb {
@@ -288,7 +288,7 @@ fn compute_copy_alias(
     let keys: Vec<CopyKey> = parent.keys().cloned().collect();
     let mut out = Vec::with_capacity(keys.len());
     for k in keys {
-        let root = copy_find(&mut parent, k.clone());
+        let root = copy_find(&mut parent, k);
         if root != k {
             // dst and src of a copy edge share a function, so k.0 == root.0.
             out.push((k.0, k.1, root.1));

@@ -346,8 +346,8 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         let mut starts: Vec<TaintNode> = Vec::new();
         for (i, ep) in endpoints.iter().enumerate() {
             let node = (ep.infunc, ep.vertex.0, ep.vertex.1);
-            if !start_origin.contains_key(&node) {
-                start_origin.insert(node, i as u32);
+            if let std::collections::hash_map::Entry::Vacant(e) = start_origin.entry(node) {
+                e.insert(i as u32);
                 starts.push(node);
             }
         }
