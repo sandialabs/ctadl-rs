@@ -21,7 +21,7 @@ use ctadl_ascent::query_engine::formatter::{
     FormatFactsBuilder, build_taint_flow_graph, TaintAnalysisResults,
 };
 use ctadl_ascent::query_engine::{QueryEndpoint, QueryFacts, taint_analysis};
-use ctadl_ir::graph::{LabeledSuccessors, find_annotated_path_to_set};
+use ctadl_ir::graph::find_annotated_path_to_set;
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
 pub enum TaintDirection {
@@ -162,17 +162,70 @@ async fn run() -> Result<(), Error> {
     )
     .await?;
 
+    let all_arts_df = ctx.sql("SELECT canonical_path FROM artifacts").await?.collect().await?;
+    let mut artifact_paths = Vec::new();
+    for batch in all_arts_df {
+        let cols = batch.column(0).as_any().downcast_ref::<StringViewArray>().unwrap();
+        for i in 0..batch.num_rows() {
+            artifact_paths.push(cols.value(i).to_string());
+        }
+    }
+
+    let mut matched_queries = queries.clone();
+    for q in &mut matched_queries {
+        let q_uri = &q.binary_uri;
+        let mut best_match = None;
+        let mut max_match_len = 0;
+
+        for art in &artifact_paths {
+            if art == q_uri {
+                best_match = Some(art.clone());
+                break;
+            }
+            if art.ends_with(q_uri) {
+                best_match = Some(art.clone());
+                break;
+            }
+            if q_uri.ends_with(art) {
+                best_match = Some(art.clone());
+                break;
+            }
+
+            // if neither is a suffix of the other, compare from the end
+            let art_parts: Vec<_> = art.split('/').rev().collect();
+            let q_parts: Vec<_> = q_uri.split('/').rev().collect();
+
+            let mut match_len = 0;
+            for (a, b) in art_parts.iter().zip(q_parts.iter()) {
+                if a == b {
+                    match_len += 1;
+                } else {
+                    break;
+                }
+            }
+            if match_len > max_match_len {
+                max_match_len = match_len;
+                best_match = Some(art.clone());
+            }
+        }
+
+        if let Some(best) = best_match {
+            q.binary_uri = best;
+        }
+    }
+
     let schema = Arc::new(Schema::new(vec![
         Field::new("uri", DataType::Utf8View, false),
         Field::new("offset", DataType::UInt64, false),
     ]));
     let uri_array = StringViewArray::from(
-        queries
+        matched_queries
             .iter()
             .map(|q| q.binary_uri.as_str())
             .collect::<Vec<_>>(),
     );
-    let offset_array = UInt64Array::from(queries.iter().map(|q| q.byte_offset).collect::<Vec<_>>());
+    let offset_array = UInt64Array::from(matched_queries.iter().map(|q| q.byte_offset).collect::<Vec<_>>());
+
     let batch = RecordBatch::try_new(
         schema.clone(),
         vec![Arc::new(uri_array), Arc::new(offset_array)],
@@ -212,13 +265,15 @@ async fn run() -> Result<(), Error> {
     let sql = "
         SELECT DISTINCT index_source_map.func_id, index_source_map.insn_id
         FROM queries q
-        JOIN artifacts a ON a.canonical_path = q.uri
+        JOIN artifacts a ON a.canonical_path = q.uri OR a.canonical_path LIKE '%' || q.uri
         JOIN files f ON f.artifact_id = a.artifact_id
         JOIN file_spans fs ON fs.file_id = f.file_id
         JOIN spans s ON s.span_id = fs.span_id AND s.start = q.offset
         JOIN index_source_map ON index_source_map.source_span_id = fs.file_span_id
     ";
     let mut batches = ctx.sql(sql).await?.collect().await?;
+
+
 
     let mut target_sites = BTreeSet::new();
     for batch in batches.drain(..) {
@@ -281,7 +336,34 @@ async fn run() -> Result<(), Error> {
     for (site_packed, _, vertex) in &index_facts.actual_param {
         let site = InsnSiteId::unpack(site_packed).unwrap();
         if target_sites.contains(&(site.func_id.id, site.insn_id.id)) {
-            target_vertices.push((site.func_id, *site_packed, vertex.clone()));
+            target_vertices.push((site.func_id, Some(*site_packed), vertex.clone()));
+        }
+    }
+    for (func_id, v1, p1, v2, p2) in &index_result.assign_like {
+        let is_target = target_sites.iter().any(|(f, i)| {
+            if *f != func_id.id {
+                return false;
+            }
+            if let ctadl_ascent::facts::FlowVariableKind::CallArg(packed) = v1.kind() {
+                if let Ok(call_arg) = ctadl_ascent::facts::CallArgId::try_from(packed) {
+                    if call_arg.insn_id.id == *i {
+                        return true;
+                    }
+                }
+            }
+            if let ctadl_ascent::facts::FlowVariableKind::CallArg(packed) = v2.kind() {
+                if let Ok(call_arg) = ctadl_ascent::facts::CallArgId::try_from(packed) {
+                    if call_arg.insn_id.id == *i {
+                        return true;
+                    }
+                }
+            }
+            false
+        });
+
+        if is_target {
+            target_vertices.push((*func_id, None, ctadl_ascent::facts::FlowVertex(v1.clone(), p1.clone())));
+            target_vertices.push((*func_id, None, ctadl_ascent::facts::FlowVertex(v2.clone(), p2.clone())));
         }
     }
 
@@ -293,7 +375,7 @@ async fn run() -> Result<(), Error> {
                 vertex: vertex.clone(),
                 label: Label("target_fwd".into()),
                 direction: FactsTaintDirection::Forward,
-                call_site: Some(site_packed),
+                call_site: site_packed,
             },));
         }
         if matches!(direction, TaintDirection::Bwd | TaintDirection::All) {
@@ -302,10 +384,11 @@ async fn run() -> Result<(), Error> {
                 vertex: vertex.clone(),
                 label: Label("target_bwd".into()),
                 direction: FactsTaintDirection::Backward,
-                call_site: Some(site_packed),
+                call_site: site_packed,
             },));
         }
     }
+    eprintln!("DEBUG: found {} endpoints for taint_analysis", endpoints.len());
 
     let query_facts = QueryFacts {
         formal_param: index_facts.formal_param.clone(),
@@ -313,8 +396,8 @@ async fn run() -> Result<(), Error> {
         call: index_facts.call.clone(),
         assign: index_result.assign_like.clone(),
         paths: index_result.paths.clone(),
-        external_function: index_result.external_function.clone(),
         endpoints: endpoints.clone(),
+        external_function: index_result.external_function.clone(),
     };
 
     let query_result = taint_analysis(query_facts, None);
@@ -350,78 +433,62 @@ async fn run() -> Result<(), Error> {
 
     for endpoint_tuple in &endpoints {
         let endpoint = &endpoint_tuple.0;
-        let start_n = (endpoint.infunc, endpoint.vertex.0, endpoint.vertex.1);
+        let start_n = (endpoint.infunc, endpoint.vertex.0.clone(), endpoint.vertex.1.clone());
         if let Some(&start_id) = node_to_id.get(&start_n) {
-            if endpoint.direction == FactsTaintDirection::Forward {
-                let mut visited = vec![false; id_to_node.len()];
-                let mut queue = vec![start_id];
-                visited[start_id as usize] = true;
-                let mut reachable_leaves = Vec::new();
+            let start_site = node_to_site.get(&start_n).copied();
 
-                while let Some(curr) = queue.pop() {
-                    let mut has_succs = false;
-                    for (succ, _) in graph.labeled_successors(curr) {
-                        has_succs = true;
-                        if !visited[succ as usize] {
-                            visited[succ as usize] = true;
-                            queue.push(succ);
+            if endpoint.direction == FactsTaintDirection::Forward {
+                if let Some(path) = find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| {
+                    if n == start_id { return false; }
+                    let node = &id_to_node[n as usize];
+                    if let Some(&site) = node_to_site.get(node) {
+                        if let Some(start_s) = start_site {
+                            if site != start_s && target_sites.contains(&(site.0.id, site.1.id)) {
+                                return true;
+                            }
                         }
                     }
-                    if !has_succs {
-                        reachable_leaves.push(curr);
-                    }
-                }
-
-                for leaf in reachable_leaves {
-                    if let Some(path) = find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| n == leaf) {
-                        let path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
-                        let path_res = build_path(
-                            &path_ids,
-                            &id_to_node,
-                            &id_to_name,
-                            &node_to_site,
-                            &site_to_loc,
-                        );
-                        output.fwd.push(path_res);
-                    }
+                    false
+                }) {
+                    let path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
+                    let path_res = build_path(
+                        &path_ids,
+                        &id_to_node,
+                        &id_to_name,
+                        &node_to_site,
+                        &site_to_loc,
+                    );
+                    output.fwd.push(path_res);
                 }
             } else if endpoint.direction == FactsTaintDirection::Backward {
-                let mut visited = vec![false; id_to_node.len()];
-                let mut queue = vec![start_id];
-                visited[start_id as usize] = true;
-                let mut reachable_leaves = Vec::new();
-
-                while let Some(curr) = queue.pop() {
-                    let mut has_succs = false;
-                    for (succ, _) in graph.labeled_successors(curr) {
-                        has_succs = true;
-                        if !visited[succ as usize] {
-                            visited[succ as usize] = true;
-                            queue.push(succ);
+                if let Some(path) = find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| {
+                    if n == start_id { return false; }
+                    let node = &id_to_node[n as usize];
+                    if let Some(&site) = node_to_site.get(node) {
+                        if let Some(start_s) = start_site {
+                            if site != start_s && target_sites.contains(&(site.0.id, site.1.id)) {
+                                return true;
+                            }
                         }
                     }
-                    if !has_succs {
-                        reachable_leaves.push(curr);
-                    }
-                }
-
-                for leaf in reachable_leaves {
-                    if let Some(path) = find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| n == leaf) {
-                        let mut path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
-                        path_ids.reverse();
-                        let path_res = build_path(
-                            &path_ids,
-                            &id_to_node,
-                            &id_to_name,
-                            &node_to_site,
-                            &site_to_loc,
-                        );
-                        output.bwd.push(path_res);
-                    }
+                    false
+                }) {
+                    let mut path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
+                    path_ids.reverse();
+                    let path_res = build_path(
+                        &path_ids,
+                        &id_to_node,
+                        &id_to_name,
+                        &node_to_site,
+                        &site_to_loc,
+                    );
+                    output.bwd.push(path_res);
                 }
             }
         }
     }
+
+
 
     serde_json::to_writer_pretty(std::io::stdout(), &output)?;
 
