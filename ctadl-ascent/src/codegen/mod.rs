@@ -272,7 +272,11 @@ impl Visitor for CodegenVisitor<'_> {
                         _ => {}
                     }
                 }
-                StatementKind::Load { dest, source, field } => {
+                StatementKind::Load {
+                    dest,
+                    source,
+                    field,
+                } => {
                     // The effective field path read is the captured path of the source base
                     // variable, then the source's own (offset) address arithmetic, then the
                     // loaded field, all rooted at the source's root variable.
@@ -307,7 +311,11 @@ impl Visitor for CodegenVisitor<'_> {
                             .iter()
                             .cloned()
                             .chain(dest.path.iter().cloned().map(PathSegment::from))
-                            .chain(field.iter().map(|f| PathSegment::Symbol(f.symbol_ref().clone()))),
+                            .chain(
+                                field
+                                    .iter()
+                                    .map(|f| PathSegment::Symbol(f.symbol_ref().clone())),
+                            ),
                     );
                     self.paths_dedup.insert((path,));
                 }
@@ -557,7 +565,11 @@ impl Visitor for CodegenVisitor<'_> {
                     ),
                 ));
             }
-            Load { dest, source, field } => {
+            Load {
+                dest,
+                source,
+                field,
+            } => {
                 let dest = self.trans_variable_ref(dest);
                 let source_var = self.trans_variable_ref(&source.variable_ref);
                 // The read path is the source's (offset) address arithmetic then the loaded field.
@@ -567,7 +579,9 @@ impl Visitor for CodegenVisitor<'_> {
                         .iter()
                         .cloned()
                         .map(PathSegment::from)
-                        .chain(std::iter::once(PathSegment::Symbol(field.symbol_ref().clone()))),
+                        .chain(std::iter::once(PathSegment::Symbol(
+                            field.symbol_ref().clone(),
+                        ))),
                 );
                 self.paths_dedup.insert((path.clone(),));
                 // dest <- source.field
@@ -598,7 +612,11 @@ impl Visitor for CodegenVisitor<'_> {
                         .iter()
                         .cloned()
                         .chain(dest.path.iter().cloned().map(PathSegment::from))
-                        .chain(field.iter().map(|f| PathSegment::Symbol(f.symbol_ref().clone()))),
+                        .chain(
+                            field
+                                .iter()
+                                .map(|f| PathSegment::Symbol(f.symbol_ref().clone())),
+                        ),
                 );
                 self.paths_dedup.insert((path.clone(),));
                 // dest.field <- value
