@@ -764,6 +764,16 @@ fn compute_alias_of_formal(
     pre.alias_of_formal
 }
 
+// The `ascent!` datalog block below expands to code that trips several style lints
+// (`.clone()` on Copy types, auto-borrows, unit-valued lets, and Default field
+// reassignment). These are artifacts of the macro's generated code, not the
+// hand-written rules, so silence them for this function.
+#[allow(
+    clippy::clone_on_copy,
+    clippy::needless_borrow,
+    clippy::let_unit_value,
+    clippy::field_reassign_with_default
+)]
 pub fn taint_index_with_config(
     facts: IndexFacts,
     config: IndexConfig,
