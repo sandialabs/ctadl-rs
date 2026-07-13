@@ -14,14 +14,14 @@ use serde::Serialize;
 use ctadl_ascent::error::Error;
 use ctadl_ascent::facts::{
     FlowVariable, FlowVariableKind, FunctionId, InsnId, InsnSiteId, Label, Path,
-    TaintDirection as FactsTaintDirection,
+    TaintDirection as FactsTaintDirection, TaintState,
 };
 use ctadl_ascent::index_engine::{IndexFacts, IndexResult};
 use ctadl_ascent::query_engine::formatter::{
-    FormatFactsBuilder, build_taint_flow_graph, compute_taint_results,
+    FormatFactsBuilder, build_taint_flow_graph, TaintAnalysisResults,
 };
 use ctadl_ascent::query_engine::{QueryEndpoint, QueryFacts, taint_analysis};
-use ctadl_ir::graph::{Successors, find_path};
+use ctadl_ir::graph::{LabeledSuccessors, find_annotated_path_to_set};
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
 pub enum TaintDirection {
@@ -281,18 +281,19 @@ async fn run() -> Result<(), Error> {
     for (site_packed, _, vertex) in &index_facts.actual_param {
         let site = InsnSiteId::unpack(site_packed).unwrap();
         if target_sites.contains(&(site.func_id.id, site.insn_id.id)) {
-            target_vertices.push((site.func_id, vertex.clone()));
+            target_vertices.push((site.func_id, *site_packed, vertex.clone()));
         }
     }
 
     let mut endpoints = Vec::new();
-    for (func_id, vertex) in target_vertices {
+    for (func_id, site_packed, vertex) in target_vertices {
         if matches!(direction, TaintDirection::Fwd | TaintDirection::All) {
             endpoints.push((QueryEndpoint {
                 infunc: func_id,
                 vertex: vertex.clone(),
                 label: Label("target_fwd".into()),
                 direction: FactsTaintDirection::Forward,
+                call_site: Some(site_packed),
             },));
         }
         if matches!(direction, TaintDirection::Bwd | TaintDirection::All) {
@@ -301,6 +302,7 @@ async fn run() -> Result<(), Error> {
                 vertex: vertex.clone(),
                 label: Label("target_bwd".into()),
                 direction: FactsTaintDirection::Backward,
+                call_site: Some(site_packed),
             },));
         }
     }
@@ -311,6 +313,7 @@ async fn run() -> Result<(), Error> {
         call: index_facts.call.clone(),
         assign: index_result.assign_like.clone(),
         paths: index_result.paths.clone(),
+        external_function: index_result.external_function.clone(),
         endpoints: endpoints.clone(),
     };
 
@@ -318,15 +321,12 @@ async fn run() -> Result<(), Error> {
 
     let mut b = FormatFactsBuilder::default();
     b.taint(query_result.taint.clone())
-        .formal_param(query_result.formal_param.clone())
+        .taint_edge(query_result.taint_edge.clone())
         .index_actual_param(index_facts.actual_param.clone())
-        .call(index_facts.call.clone())
-        .assign(index_result.assign_like.clone())
-        .paths(index_result.paths.clone())
-        .external_function(index_result.external_function.clone());
+        .call(index_facts.call.clone());
     let format_facts = b.build().unwrap();
 
-    let taint_results = compute_taint_results(&format_facts);
+    let taint_results = TaintAnalysisResults::from_query_result(&query_result);
 
     let fg = build_taint_flow_graph(&format_facts, &taint_results);
     let graph = fg.graph;
@@ -360,7 +360,7 @@ async fn run() -> Result<(), Error> {
 
                 while let Some(curr) = queue.pop() {
                     let mut has_succs = false;
-                    for succ in graph.successors(curr) {
+                    for (succ, _) in graph.labeled_successors(curr) {
                         has_succs = true;
                         if !visited[succ as usize] {
                             visited[succ as usize] = true;
@@ -373,15 +373,16 @@ async fn run() -> Result<(), Error> {
                 }
 
                 for leaf in reachable_leaves {
-                    if let Some(path_ids) = find_path(&graph, start_id, leaf) {
-                        let path = build_path(
+                    if let Some(path) = find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| n == leaf) {
+                        let path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
+                        let path_res = build_path(
                             &path_ids,
                             &id_to_node,
                             &id_to_name,
                             &node_to_site,
                             &site_to_loc,
                         );
-                        output.fwd.push(path);
+                        output.fwd.push(path_res);
                     }
                 }
             } else if endpoint.direction == FactsTaintDirection::Backward {
@@ -392,7 +393,7 @@ async fn run() -> Result<(), Error> {
 
                 while let Some(curr) = queue.pop() {
                     let mut has_succs = false;
-                    for succ in graph.successors(curr) {
+                    for (succ, _) in graph.labeled_successors(curr) {
                         has_succs = true;
                         if !visited[succ as usize] {
                             visited[succ as usize] = true;
@@ -405,16 +406,17 @@ async fn run() -> Result<(), Error> {
                 }
 
                 for leaf in reachable_leaves {
-                    if let Some(mut path_ids) = find_path(&graph, start_id, leaf) {
+                    if let Some(path) = find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| n == leaf) {
+                        let mut path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
                         path_ids.reverse();
-                        let path = build_path(
+                        let path_res = build_path(
                             &path_ids,
                             &id_to_node,
                             &id_to_name,
                             &node_to_site,
                             &site_to_loc,
                         );
-                        output.bwd.push(path);
+                        output.bwd.push(path_res);
                     }
                 }
             }
