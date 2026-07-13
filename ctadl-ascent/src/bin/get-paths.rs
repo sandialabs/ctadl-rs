@@ -114,7 +114,7 @@ async fn run() -> Result<(), Error> {
         .map(|s| parse_pair(s))
         .collect::<Result<_, _>>()?;
 
-    let project = match ctadl_ascent::project::AnalysisProject::try_load_name(&args.project_name) {
+    let mut project = match ctadl_ascent::project::AnalysisProject::try_load_name(&args.project_name) {
         Ok(p) => p,
         Err(e) => {
             let mut err_msg = format!("{}", e);
@@ -129,11 +129,12 @@ async fn run() -> Result<(), Error> {
             std::process::exit(1);
         }
     };
+    project.dir = ctadl_ascent::project::StorePaths::projects_path().join(&args.project_name);
     let parquet_index_path = project.index_path()?;
 
     let mut parquet_source_info_path = PathBuf::new();
     for import_name in &project.imports {
-        let import = match ctadl_ascent::project::ArtifactImport::load_by_name(import_name) {
+        let mut import = match ctadl_ascent::project::ArtifactImport::load_by_name(import_name) {
             Ok(i) => i,
             Err(e) => {
                 let mut err_msg = format!("{}", e);
@@ -150,6 +151,7 @@ async fn run() -> Result<(), Error> {
                 std::process::exit(1);
             }
         };
+        import.import_path = ctadl_ascent::project::StorePaths::import_path().join(&import.name);
         parquet_source_info_path = import.source_info_dir();
     }
     if parquet_source_info_path.as_os_str().is_empty() {
@@ -437,7 +439,8 @@ async fn run() -> Result<(), Error> {
     let index_path = project.index_path()?;
     let ids = ctadl_ascent::facts::IdMap::try_load(&index_path)?;
     for import in project.iter_imports() {
-        let import = import?;
+        let mut import = import?;
+        import.import_path = ctadl_ascent::project::StorePaths::import_path().join(&import.name);
         let program_info = ctadl_ascent::cli::load_program_info_without_source_info(&import)?;
         let s = ctadl_ascent::models::try_load_default_models(&program_info)?;
         let (eps, _formals) = ctadl_ascent::cli::build_query_endpoints(
