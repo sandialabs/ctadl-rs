@@ -169,10 +169,12 @@ where
 
     #[inline]
     fn contains(&self, f: &F, vd: &Vd, pd: &Pd, vs: &Vs, ps: &Ps) -> bool {
-        self.fwd.get(&(f.clone(), vs.clone())).is_some_and(|leaves| {
-            let probe = (vd.clone(), pd.clone(), ps.clone());
-            leaves.contains(&probe)
-        })
+        self.fwd
+            .get(&(f.clone(), vs.clone()))
+            .is_some_and(|leaves| {
+                let probe = (vd.clone(), pd.clone(), ps.clone());
+                leaves.contains(&probe)
+            })
     }
 
     /// Insert a full tuple `(F, Vd, Pd, Vs, Ps)`; returns true if newly added to *this* store.
@@ -221,8 +223,10 @@ where
 
         // Actual trie: outer map (F,Vs) -> Vec, plus each leaf Vec's heap allocation. Also track
         // the largest group, since leaf dedup is O(group size) — a hot group would flag O(N^2).
-        let mut trie =
-            hb_bytes(self.fwd.capacity(), sz_key + std::mem::size_of::<Vec<(Vd, Pd, Ps)>>());
+        let mut trie = hb_bytes(
+            self.fwd.capacity(),
+            sz_key + std::mem::size_of::<Vec<(Vd, Pd, Ps)>>(),
+        );
         let mut max_group = 0usize;
         for leaves in self.fwd.values() {
             trie += leaves.capacity() * sz_leaf;
@@ -241,8 +245,10 @@ where
         let n = self.len;
         let default_vec = n * sz_full;
         let default_full = hb_bytes(n, sz_full);
-        let default_03 = hb_bytes(self.fwd.len(), sz_key + std::mem::size_of::<Vec<(Vd, Pd, Ps)>>())
-            + n * sz_leaf;
+        let default_03 = hb_bytes(
+            self.fwd.len(),
+            sz_key + std::mem::size_of::<Vec<(Vd, Pd, Ps)>>(),
+        ) + n * sz_leaf;
         let default_total = default_vec + default_full + default_03;
         let mb = |b: usize| b as f64 / (1024.0 * 1024.0);
         format!(
@@ -398,8 +404,7 @@ macro_rules! marker {
                 Self(PhantomData)
             }
         }
-        impl<F, Vd, Pd, Vs, Ps> ToRelIndex<AssignTrie<F, Vd, Pd, Vs, Ps>>
-            for $to<F, Vd, Pd, Vs, Ps>
+        impl<F, Vd, Pd, Vs, Ps> ToRelIndex<AssignTrie<F, Vd, Pd, Vs, Ps>> for $to<F, Vd, Pd, Vs, Ps>
         where
             F: Clone + Eq + Hash,
             Vd: Clone + Eq + Hash,
@@ -468,7 +473,9 @@ where
     #[inline]
     fn index_get(&'a self, key: &(F, Vs)) -> Option<Self::IteratorType> {
         let leaves = self.0.fwd.get(key)?;
-        Some(DynIter::new(move || leaves.iter().map(|(vd, pd, ps)| (vd, pd, ps))))
+        Some(DynIter::new(move || {
+            leaves.iter().map(|(vd, pd, ps)| (vd, pd, ps))
+        }))
     }
     #[inline]
     fn len_estimate(&self) -> usize {

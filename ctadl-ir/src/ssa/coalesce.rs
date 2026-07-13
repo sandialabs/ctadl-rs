@@ -141,10 +141,8 @@ pub fn coalesce_function(function: &mut FunctionData) {
             // written by this statement. Calls may write through their
             // arguments (by-ref), so treat their reads as writes too.
             if !pending.is_empty() {
-                let mut written: SmallVec<[ArcIntern<Variable>; 4]> = stmt
-                    .iter_dst_var()
-                    .map(|v| v.variable.clone())
-                    .collect();
+                let mut written: SmallVec<[ArcIntern<Variable>; 4]> =
+                    stmt.iter_dst_var().map(|v| v.variable.clone()).collect();
                 if matches!(stmt.kind, StatementKind::CallAssign { .. }) {
                     written.extend(stmt.iter_src_var().map(|v| v.variable.clone()));
                 }
@@ -454,11 +452,10 @@ mod tests {
     fn substitutes_into_return() {
         // t = y; return t  =>  return y
         let mut f = one_block_function(vec![assign("t", vec![read("y")])]);
-        f.blocks[BasicBlockIdx::ZERO].terminator = Some(Terminator::new_kind(
-            TerminatorKind::Return {
+        f.blocks[BasicBlockIdx::ZERO].terminator =
+            Some(Terminator::new_kind(TerminatorKind::Return {
                 args: smallvec![read("t")],
-            },
-        ));
+            }));
         coalesce_function(&mut f);
         assert_eq!(block_kinds(&f).len(), 0);
         let term = f.blocks[BasicBlockIdx::ZERO].terminator();

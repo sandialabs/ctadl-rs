@@ -1541,7 +1541,10 @@ mod tests {
 
         // Via substitute_prefix: result is `.y`, not `.y.[0]`.
         let new_prefix: Path = ".y".into();
-        assert_eq!(ap.substitute_prefix(&prefix, &new_prefix), Some(".y".into()));
+        assert_eq!(
+            ap.substitute_prefix(&prefix, &new_prefix),
+            Some(".y".into())
+        );
 
         // Exact offset match mid-path: the offset is consumed, suffix starts at `.f`.
         let ap: Path = ".x.[2].f".into();
@@ -1599,7 +1602,13 @@ mod tests {
         // junction offset+offset merge, offset-next-to-symbol (no merge), empty suffix, and
         // non-matching prefix (None).
         let aps = [
-            ".x.[5].g", ".x.[1].[2]", ".a.b.c", ".[3]", ".x", ".x.[4]", ".p.q.r.s",
+            ".x.[5].g",
+            ".x.[1].[2]",
+            ".a.b.c",
+            ".[3]",
+            ".x",
+            ".x.[4]",
+            ".p.q.r.s",
         ];
         let prefixes = ["", ".x", ".x.[1]", ".a", ".[3]", ".x.[4]", ".p.q", ".nope"];
         let new_prefixes = ["", ".y", ".y.[3]", ".[7]", ".m.n", ".[0]"];

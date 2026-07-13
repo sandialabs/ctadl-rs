@@ -101,10 +101,10 @@ local variable and a global variable of the same name.
 */
 use std::{fmt, fmt::Display};
 
+use ctadl_ir::{ThinVec, thin_vec};
 use hashbrown::{hash_map::HashMap, hash_set::HashSet};
 use internment::ArcIntern;
 use pest::{Parser, Span, iterators::Pair};
-use ctadl_ir::{ThinVec, thin_vec};
 use smallvec::SmallVec;
 use thiserror::Error;
 
