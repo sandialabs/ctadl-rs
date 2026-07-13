@@ -32,7 +32,7 @@ use ctadl_ir::ssa;
 use ctadl_ir::{ProgramInfo, encode};
 
 /// Helper: turn model endpoint table into QueryEndpoint vec
-fn build_query_endpoints(
+pub fn build_query_endpoints(
     batch: &crate::models::EndpointBatch,
     facts: &IndexFacts,
     idmap: &facts::IdMap,
@@ -554,7 +554,7 @@ pub fn save_program_info(
 }
 
 /// Load a serialized [`ProgramInfo`] from the import directory. The source info is elided.
-fn load_program_info_without_source_info(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
+pub fn load_program_info_without_source_info(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.program_path();
     log::info!("reading {}", path.display());
     let data = std::fs::read(path)?;

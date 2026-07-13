@@ -429,6 +429,38 @@ async fn run() -> Result<(), Error> {
     }
 
     let mut endpoints = Vec::new();
+
+    // In addition to the target vertices defined via command line input, we must load
+    // the source and sink definitions associated with the current project, as these are
+    // what actually define the true sources and sinks we search for.
+    let mut model_endpoints = Vec::new();
+    let index_path = project.index_path()?;
+    let ids = ctadl_ascent::facts::IdMap::try_load(&index_path)?;
+    for import in project.iter_imports() {
+        let import = import?;
+        let program_info = ctadl_ascent::cli::load_program_info_without_source_info(&import)?;
+        let s = ctadl_ascent::models::try_load_default_models(&program_info)?;
+        let (eps, _formals) = ctadl_ascent::cli::build_query_endpoints(
+            &s.endpoint,
+            &index_facts,
+            &ids,
+            &index_result.assign_like,
+        );
+        for (ep,) in eps {
+            model_endpoints.push(ep);
+        }
+        if import.language == ctadl_ascent::project::ArtifactLanguage::Flowy {
+            let eps = ctadl_ascent::codegen::flowy::get_endpoints(&import, &ids, &index_facts.call)?;
+            for (ep,) in eps {
+                model_endpoints.push(ep);
+            }
+        }
+    }
+
+    for ep in &model_endpoints {
+        endpoints.push((ep.clone(),));
+    }
+
     for (func_id, site_packed, vertex) in target_vertices {
         if matches!(direction, TaintDirection::Fwd | TaintDirection::All) {
             endpoints.push((QueryEndpoint {
@@ -491,8 +523,20 @@ async fn run() -> Result<(), Error> {
             rev_edges.push((succ, i as u32, rev_label));
         }
     }
-    let rev_graph =
-        ctadl_ascent::query_engine::formatter::LabeledTaintGraph::new(graph.num_nodes(), rev_edges);
+    let rev_graph = ctadl_ascent::query_engine::formatter::LabeledTaintGraph::new(graph.num_nodes(), rev_edges);
+
+    let mut all_sources: BTreeSet<&QueryEndpoint> = BTreeSet::new();
+    let mut all_sinks: BTreeSet<&QueryEndpoint> = BTreeSet::new();
+    for ep in &model_endpoints {
+        match ep.direction {
+            FactsTaintDirection::Forward => {
+                all_sources.insert(ep);
+            }
+            FactsTaintDirection::Backward => {
+                all_sinks.insert(ep);
+            }
+        }
+    }
 
     // Map each node to an instruction for location info
     let mut node_to_site: BTreeMap<(FunctionId, FlowVariable, Path), (FunctionId, InsnId)> =
@@ -518,43 +562,47 @@ async fn run() -> Result<(), Error> {
         );
         if let Some(&start_id) = node_to_id.get(&start_n) {
             if endpoint.direction == FactsTaintDirection::Forward {
-                if let Some(path) =
-                    find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| {
-                        if n == start_id {
-                            return false;
+                for sink in &all_sinks {
+                    let end_n = (sink.infunc, sink.vertex.0.clone(), sink.vertex.1.clone());
+                    if let Some(&target_id) = node_to_id.get(&end_n) {
+                        if let Some(path) =
+                            find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| {
+                                n == target_id
+                            })
+                        {
+                            let path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
+                            let path_res = build_path(
+                                &path_ids,
+                                &id_to_node,
+                                &id_to_name,
+                                &node_to_site,
+                                &site_to_loc,
+                            );
+                            output.fwd.push(path_res);
                         }
-                        graph.labeled_successors(n).next().is_none()
-                    })
-                {
-                    let path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
-                    let path_res = build_path(
-                        &path_ids,
-                        &id_to_node,
-                        &id_to_name,
-                        &node_to_site,
-                        &site_to_loc,
-                    );
-                    output.fwd.push(path_res);
+                    }
                 }
             } else if endpoint.direction == FactsTaintDirection::Backward {
-                if let Some(path) =
-                    find_annotated_path_to_set(&rev_graph, start_id, |n, _s: &TaintState| {
-                        if n == start_id {
-                            return false;
+                for source in &all_sources {
+                    let target_n = (source.infunc, source.vertex.0.clone(), source.vertex.1.clone());
+                    if let Some(&target_id) = node_to_id.get(&target_n) {
+                        if let Some(path) =
+                            find_annotated_path_to_set(&rev_graph, start_id, |n, _s: &TaintState| {
+                                n == target_id
+                            })
+                        {
+                            let mut path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
+                            path_ids.reverse();
+                            let path_res = build_path(
+                                &path_ids,
+                                &id_to_node,
+                                &id_to_name,
+                                &node_to_site,
+                                &site_to_loc,
+                            );
+                            output.bwd.push(path_res);
                         }
-                        rev_graph.labeled_successors(n).next().is_none()
-                    })
-                {
-                    let mut path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
-                    path_ids.reverse();
-                    let path_res = build_path(
-                        &path_ids,
-                        &id_to_node,
-                        &id_to_name,
-                        &node_to_site,
-                        &site_to_loc,
-                    );
-                    output.bwd.push(path_res);
+                    }
                 }
             }
         }
