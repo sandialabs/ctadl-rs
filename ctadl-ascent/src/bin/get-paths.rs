@@ -18,10 +18,10 @@ use ctadl_ascent::facts::{
 };
 use ctadl_ascent::index_engine::{IndexFacts, IndexResult};
 use ctadl_ascent::query_engine::formatter::{
-    build_taint_flow_graph, FormatFactsBuilder, TaintAnalysisResults,
+    FormatFactsBuilder, TaintAnalysisResults, build_taint_flow_graph,
 };
-use ctadl_ascent::query_engine::{taint_analysis, QueryEndpoint, QueryFacts};
-use ctadl_ir::graph::find_annotated_path_to_set;
+use ctadl_ascent::query_engine::{QueryEndpoint, QueryFacts, taint_analysis};
+use ctadl_ir::graph::{DirectedGraph, LabeledSuccessors, find_annotated_path_to_set};
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
 pub enum TaintDirection {
@@ -143,7 +143,9 @@ async fn run() -> Result<(), Error> {
                     current_err = source;
                 }
                 eprintln!("Error loading import '{}': {}", import_name, err_msg);
-                eprintln!("This may be missing if run on a different machine or as a different user.");
+                eprintln!(
+                    "This may be missing if run on a different machine or as a different user."
+                );
                 eprintln!("Changing XDG_STATE_HOME can override the default state path.");
                 std::process::exit(1);
             }
@@ -478,6 +480,20 @@ async fn run() -> Result<(), Error> {
     let id_to_node = fg.id_to_node;
     let node_to_id = fg.node_to_id;
 
+    let mut rev_edges = Vec::new();
+    for i in 0..graph.num_nodes() {
+        for (succ, label) in graph.labeled_successors(i as u32) {
+            let rev_label = match label {
+                ctadl_ascent::facts::FlowEdge::Call(s) => ctadl_ascent::facts::FlowEdge::Return(s),
+                ctadl_ascent::facts::FlowEdge::Return(s) => ctadl_ascent::facts::FlowEdge::Call(s),
+                ctadl_ascent::facts::FlowEdge::Intra => ctadl_ascent::facts::FlowEdge::Intra,
+            };
+            rev_edges.push((succ, i as u32, rev_label));
+        }
+    }
+    let rev_graph =
+        ctadl_ascent::query_engine::formatter::LabeledTaintGraph::new(graph.num_nodes(), rev_edges);
+
     // Map each node to an instruction for location info
     let mut node_to_site: BTreeMap<(FunctionId, FlowVariable, Path), (FunctionId, InsnId)> =
         BTreeMap::new();
@@ -501,24 +517,13 @@ async fn run() -> Result<(), Error> {
             endpoint.vertex.1.clone(),
         );
         if let Some(&start_id) = node_to_id.get(&start_n) {
-            let start_site = node_to_site.get(&start_n).copied();
-
             if endpoint.direction == FactsTaintDirection::Forward {
                 if let Some(path) =
                     find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| {
                         if n == start_id {
                             return false;
                         }
-                        let node = &id_to_node[n as usize];
-                        if let Some(&site) = node_to_site.get(node) {
-                            if let Some(start_s) = start_site {
-                                if site != start_s && target_sites.contains(&(site.0.id, site.1.id))
-                                {
-                                    return true;
-                                }
-                            }
-                        }
-                        false
+                        graph.labeled_successors(n).next().is_none()
                     })
                 {
                     let path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
@@ -533,20 +538,11 @@ async fn run() -> Result<(), Error> {
                 }
             } else if endpoint.direction == FactsTaintDirection::Backward {
                 if let Some(path) =
-                    find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| {
+                    find_annotated_path_to_set(&rev_graph, start_id, |n, _s: &TaintState| {
                         if n == start_id {
                             return false;
                         }
-                        let node = &id_to_node[n as usize];
-                        if let Some(&site) = node_to_site.get(node) {
-                            if let Some(start_s) = start_site {
-                                if site != start_s && target_sites.contains(&(site.0.id, site.1.id))
-                                {
-                                    return true;
-                                }
-                            }
-                        }
-                        false
+                        rev_graph.labeled_successors(n).next().is_none()
                     })
                 {
                     let mut path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
