@@ -18,9 +18,9 @@ use ctadl_ascent::facts::{
 };
 use ctadl_ascent::index_engine::{IndexFacts, IndexResult};
 use ctadl_ascent::query_engine::formatter::{
-    FormatFactsBuilder, build_taint_flow_graph, TaintAnalysisResults,
+    build_taint_flow_graph, FormatFactsBuilder, TaintAnalysisResults,
 };
-use ctadl_ascent::query_engine::{QueryEndpoint, QueryFacts, taint_analysis};
+use ctadl_ascent::query_engine::{taint_analysis, QueryEndpoint, QueryFacts};
 use ctadl_ir::graph::find_annotated_path_to_set;
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
@@ -34,11 +34,8 @@ pub enum TaintDirection {
 #[command(name = "get-paths")]
 #[command(about = "Find taint graph paths from binary URI + byte offset pairs")]
 struct Args {
-    #[arg(value_name = "PARQUET_SOURCE_INFO_PATH")]
-    parquet_source_info_path: PathBuf,
-
-    #[arg(value_name = "PARQUET_INDEX_PATH")]
-    parquet_index_path: PathBuf,
+    #[arg(value_name = "PROJECT_NAME")]
+    project_name: String,
 
     #[arg(value_name = "BINARY_URI,BYTE_OFFSET", required = true, num_args = 1..)]
     pairs: Vec<String>,
@@ -117,13 +114,56 @@ async fn run() -> Result<(), Error> {
         .map(|s| parse_pair(s))
         .collect::<Result<_, _>>()?;
 
-    let index_facts = IndexFacts::try_load(&args.parquet_index_path)?;
-    let index_result = IndexResult::try_load(&args.parquet_index_path)?;
+    let project = match ctadl_ascent::project::AnalysisProject::try_load_name(&args.project_name) {
+        Ok(p) => p,
+        Err(e) => {
+            let mut err_msg = format!("{}", e);
+            let mut current_err: &dyn std::error::Error = &e;
+            while let Some(source) = current_err.source() {
+                err_msg.push_str(&format!(": {}", source));
+                current_err = source;
+            }
+            eprintln!("Error loading project '{}': {}", args.project_name, err_msg);
+            eprintln!("This may be missing if run on a different machine or as a different user.");
+            eprintln!("Changing XDG_STATE_HOME can override the default state path.");
+            std::process::exit(1);
+        }
+    };
+    let parquet_index_path = project.index_path()?;
+
+    let mut parquet_source_info_path = PathBuf::new();
+    for import_name in &project.imports {
+        let import = match ctadl_ascent::project::ArtifactImport::load_by_name(import_name) {
+            Ok(i) => i,
+            Err(e) => {
+                let mut err_msg = format!("{}", e);
+                let mut current_err: &dyn std::error::Error = &e;
+                while let Some(source) = current_err.source() {
+                    err_msg.push_str(&format!(": {}", source));
+                    current_err = source;
+                }
+                eprintln!("Error loading import '{}': {}", import_name, err_msg);
+                eprintln!("This may be missing if run on a different machine or as a different user.");
+                eprintln!("Changing XDG_STATE_HOME can override the default state path.");
+                std::process::exit(1);
+            }
+        };
+        parquet_source_info_path = import.source_info_dir();
+    }
+    if parquet_source_info_path.as_os_str().is_empty() {
+        return Err(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "No imports found in project to get source info from",
+        )));
+    }
+
+    let index_facts = IndexFacts::try_load(&parquet_index_path)?;
+    let index_result = IndexResult::try_load(&parquet_index_path)?;
 
     let ctx = SessionContext::new();
     ctx.register_parquet(
         "index_source_map",
-        args.parquet_index_path
+        parquet_index_path
             .join("index_source_map.parquet")
             .to_string_lossy(),
         ParquetReadOptions::default(),
@@ -131,7 +171,7 @@ async fn run() -> Result<(), Error> {
     .await?;
     ctx.register_parquet(
         "file_spans",
-        args.parquet_source_info_path
+        parquet_source_info_path
             .join("file_spans.parquet")
             .to_string_lossy(),
         ParquetReadOptions::default(),
@@ -139,7 +179,7 @@ async fn run() -> Result<(), Error> {
     .await?;
     ctx.register_parquet(
         "spans",
-        args.parquet_source_info_path
+        parquet_source_info_path
             .join("spans.parquet")
             .to_string_lossy(),
         ParquetReadOptions::default(),
@@ -147,7 +187,7 @@ async fn run() -> Result<(), Error> {
     .await?;
     ctx.register_parquet(
         "files",
-        args.parquet_source_info_path
+        parquet_source_info_path
             .join("files.parquet")
             .to_string_lossy(),
         ParquetReadOptions::default(),
@@ -155,17 +195,25 @@ async fn run() -> Result<(), Error> {
     .await?;
     ctx.register_parquet(
         "artifacts",
-        args.parquet_source_info_path
+        parquet_source_info_path
             .join("artifacts.parquet")
             .to_string_lossy(),
         ParquetReadOptions::default(),
     )
     .await?;
 
-    let all_arts_df = ctx.sql("SELECT canonical_path FROM artifacts").await?.collect().await?;
+    let all_arts_df = ctx
+        .sql("SELECT canonical_path FROM artifacts")
+        .await?
+        .collect()
+        .await?;
     let mut artifact_paths = Vec::new();
     for batch in all_arts_df {
-        let cols = batch.column(0).as_any().downcast_ref::<StringViewArray>().unwrap();
+        let cols = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringViewArray>()
+            .unwrap();
         for i in 0..batch.num_rows() {
             artifact_paths.push(cols.value(i).to_string());
         }
@@ -224,7 +272,12 @@ async fn run() -> Result<(), Error> {
             .map(|q| q.binary_uri.as_str())
             .collect::<Vec<_>>(),
     );
-    let offset_array = UInt64Array::from(matched_queries.iter().map(|q| q.byte_offset).collect::<Vec<_>>());
+    let offset_array = UInt64Array::from(
+        matched_queries
+            .iter()
+            .map(|q| q.byte_offset)
+            .collect::<Vec<_>>(),
+    );
 
     let batch = RecordBatch::try_new(
         schema.clone(),
@@ -237,7 +290,7 @@ async fn run() -> Result<(), Error> {
 
     ctx.register_parquet(
         "function_id",
-        args.parquet_index_path
+        parquet_index_path
             .join("function_id.parquet")
             .to_string_lossy(),
         ParquetReadOptions::default(),
@@ -272,8 +325,6 @@ async fn run() -> Result<(), Error> {
         JOIN index_source_map ON index_source_map.source_span_id = fs.file_span_id
     ";
     let mut batches = ctx.sql(sql).await?.collect().await?;
-
-
 
     let mut target_sites = BTreeSet::new();
     for batch in batches.drain(..) {
@@ -362,8 +413,16 @@ async fn run() -> Result<(), Error> {
         });
 
         if is_target {
-            target_vertices.push((*func_id, None, ctadl_ascent::facts::FlowVertex(v1.clone(), p1.clone())));
-            target_vertices.push((*func_id, None, ctadl_ascent::facts::FlowVertex(v2.clone(), p2.clone())));
+            target_vertices.push((
+                *func_id,
+                None,
+                ctadl_ascent::facts::FlowVertex(v1.clone(), p1.clone()),
+            ));
+            target_vertices.push((
+                *func_id,
+                None,
+                ctadl_ascent::facts::FlowVertex(v2.clone(), p2.clone()),
+            ));
         }
     }
 
@@ -388,7 +447,10 @@ async fn run() -> Result<(), Error> {
             },));
         }
     }
-    eprintln!("DEBUG: found {} endpoints for taint_analysis", endpoints.len());
+    eprintln!(
+        "DEBUG: found {} endpoints for taint_analysis",
+        endpoints.len()
+    );
 
     let query_facts = QueryFacts {
         formal_param: index_facts.formal_param.clone(),
@@ -433,23 +495,32 @@ async fn run() -> Result<(), Error> {
 
     for endpoint_tuple in &endpoints {
         let endpoint = &endpoint_tuple.0;
-        let start_n = (endpoint.infunc, endpoint.vertex.0.clone(), endpoint.vertex.1.clone());
+        let start_n = (
+            endpoint.infunc,
+            endpoint.vertex.0.clone(),
+            endpoint.vertex.1.clone(),
+        );
         if let Some(&start_id) = node_to_id.get(&start_n) {
             let start_site = node_to_site.get(&start_n).copied();
 
             if endpoint.direction == FactsTaintDirection::Forward {
-                if let Some(path) = find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| {
-                    if n == start_id { return false; }
-                    let node = &id_to_node[n as usize];
-                    if let Some(&site) = node_to_site.get(node) {
-                        if let Some(start_s) = start_site {
-                            if site != start_s && target_sites.contains(&(site.0.id, site.1.id)) {
-                                return true;
+                if let Some(path) =
+                    find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| {
+                        if n == start_id {
+                            return false;
+                        }
+                        let node = &id_to_node[n as usize];
+                        if let Some(&site) = node_to_site.get(node) {
+                            if let Some(start_s) = start_site {
+                                if site != start_s && target_sites.contains(&(site.0.id, site.1.id))
+                                {
+                                    return true;
+                                }
                             }
                         }
-                    }
-                    false
-                }) {
+                        false
+                    })
+                {
                     let path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
                     let path_res = build_path(
                         &path_ids,
@@ -461,18 +532,23 @@ async fn run() -> Result<(), Error> {
                     output.fwd.push(path_res);
                 }
             } else if endpoint.direction == FactsTaintDirection::Backward {
-                if let Some(path) = find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| {
-                    if n == start_id { return false; }
-                    let node = &id_to_node[n as usize];
-                    if let Some(&site) = node_to_site.get(node) {
-                        if let Some(start_s) = start_site {
-                            if site != start_s && target_sites.contains(&(site.0.id, site.1.id)) {
-                                return true;
+                if let Some(path) =
+                    find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| {
+                        if n == start_id {
+                            return false;
+                        }
+                        let node = &id_to_node[n as usize];
+                        if let Some(&site) = node_to_site.get(node) {
+                            if let Some(start_s) = start_site {
+                                if site != start_s && target_sites.contains(&(site.0.id, site.1.id))
+                                {
+                                    return true;
+                                }
                             }
                         }
-                    }
-                    false
-                }) {
+                        false
+                    })
+                {
                     let mut path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
                     path_ids.reverse();
                     let path_res = build_path(
@@ -487,8 +563,6 @@ async fn run() -> Result<(), Error> {
             }
         }
     }
-
-
 
     serde_json::to_writer_pretty(std::io::stdout(), &output)?;
 
