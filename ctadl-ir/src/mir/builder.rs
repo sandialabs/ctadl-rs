@@ -2,8 +2,8 @@ use crate::index::idx::Idx;
 use crate::mir::call::CallStyle;
 use crate::mir::terminator::{Terminator, TerminatorKind};
 use crate::mir::{
-    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldAccesses, FunctionData, ParameterIdx,
-    ParameterType, Statement, StatementIdx, StatementKind, VariableRef,
+    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldAccesses, FieldPath, FunctionData,
+    ParameterIdx, ParameterType, Statement, StatementIdx, StatementKind, VariableRef,
 };
 
 /// A builder for creating functions.
@@ -115,44 +115,47 @@ impl<'a> BasicBlockBuilder<'a> {
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create and insert a load statement
+    /// Create and insert a load statement `dest = source.field`.
     ///
     /// # Arguments
     /// * `dest` - Destination variable
-    /// * `source` - Source variable
-    /// * `path` - Field path to load (non-empty)
+    /// * `source` - Source address (offset-only access path)
+    /// * `field` - Symbolic field to load
     pub fn create_load(
         &mut self,
         dest: VariableRef,
-        source: VariableRef,
-        path: FieldAccesses,
+        source: impl Into<AccessPath>,
+        field: impl Into<FieldPath>,
     ) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::load(dest, source, path));
+        let statement = Statement::new_kind(StatementKind::load(dest, source, field));
         let current_pos = self.insertion_point;
         self.insert_statement(statement);
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create and insert a store statement. The destination path must be non-empty.
+    /// Create and insert a store statement `store dest.field := source`.
     ///
     /// # Arguments
-    /// * `dest` - Destination access path (non-empty field path)
+    /// * `dest` - Destination address (offset-only access path)
+    /// * `field` - Symbolic field written, or `None` for a field-less offset-address store
     /// * `source` - Source expression
     pub fn create_store(
         &mut self,
         dest: impl Into<AccessPath>,
+        field: impl Into<Option<FieldPath>>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::store(dest.into(), source.into()));
+        let statement =
+            Statement::new_kind(StatementKind::store(dest.into(), field, source.into()));
         let current_pos = self.insertion_point;
         self.insert_statement(statement);
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create and insert an assign (empty path) or store (single-field path) statement
+    /// Create and insert an assign (empty path) or field-less offset store statement.
     ///
     /// # Arguments
-    /// * `dest` - Destination access path
+    /// * `dest` - Destination access path (offset-only)
     /// * `source` - Source expression
     pub fn create_assign_or_store(
         &mut self,
@@ -163,7 +166,7 @@ impl<'a> BasicBlockBuilder<'a> {
         if dest.path.is_empty() {
             self.create_assign(dest.variable_ref, [source.into()])
         } else {
-            self.create_store(dest, source)
+            self.create_store(dest, None, source)
         }
     }
 
@@ -270,50 +273,28 @@ impl<'a> BasicBlockBuilder<'a> {
         VariableRef::new_global()
     }
 
-    /// Create a new access path
+    /// Create a new offset-only access path
     ///
     /// # Arguments
     /// * `variable` - Variable reference
-    /// * `fields` - Field access path
-    pub fn new_access_path<S: AsRef<str>>(
+    /// * `offsets` - Offset (pointer-arithmetic) field accesses
+    pub fn new_access_path(
         &self,
         variable_ref: VariableRef,
-        fields: impl IntoIterator<Item = S>,
+        offsets: impl IntoIterator<Item = i64>,
     ) -> AccessPath {
         AccessPath {
             variable_ref,
-            path: fields.into_iter().collect(),
+            path: FieldAccesses::with_offsets(offsets),
         }
     }
 
-    /// Create a new field access path
-    ///
-    /// # Arguments
-    /// * `fields` - Field names
-    pub fn new_field_path<S: AsRef<str>>(
-        &self,
-        fields: impl IntoIterator<Item = S>,
-    ) -> FieldAccesses {
-        fields.into_iter().collect()
-    }
-
-    /// Create a new field access path with a single offset
+    /// Create a new access path with a single offset
     ///
     /// # Arguments
     /// * `offset` - Numeric offset
     pub fn new_offset_path(&self, offset: i64) -> FieldAccesses {
         FieldAccesses::with_offset(offset)
-    }
-
-    /// Create a new field access path with mixed field accesses
-    ///
-    /// # Arguments
-    /// * `fields` - Sequence of either field names (Ok) or offsets (Err)
-    pub fn new_mixed_field_path<S: AsRef<str>>(
-        &self,
-        fields: impl IntoIterator<Item = Result<S, i64>>,
-    ) -> FieldAccesses {
-        FieldAccesses::mixed(fields)
     }
 
     /// Create a string expression

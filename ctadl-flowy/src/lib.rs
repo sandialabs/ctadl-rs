@@ -142,13 +142,17 @@ impl Display for PortBase {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Port {
     pub base: PortBase,
-    pub fields: FieldAccesses,
+    pub fields: ThinVec<PathSegment>,
 }
 
 impl Display for Port {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Port { base, fields } = self;
-        write!(f, "{base}{fields}")
+        write!(f, "{base}")?;
+        for field in fields {
+            write!(f, ".{field}")?;
+        }
+        Ok(())
     }
 }
 
@@ -653,7 +657,8 @@ impl FlowyCtx {
             Rule::assign_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let dst = parse_ap(locals, inner.next().unwrap(), defined_functions)?;
+                let (dst_base, dst_segments) =
+                    parse_ap(locals, inner.next().unwrap(), defined_functions)?;
                 // src is comma-separated; a field read on the RHS lowers to loads.
                 let src = {
                     let mut result = Vec::new();
@@ -663,9 +668,9 @@ impl FlowyCtx {
                     }
                     result
                 };
-                if dst.path.is_empty() {
+                if dst_segments.is_empty() {
                     data.push_back(Statement::new(
-                        StatementKind::assign(dst.variable_ref, src),
+                        StatementKind::assign(dst_base, src),
                         source_info,
                     ));
                 } else if src.len() > 1 {
@@ -675,38 +680,51 @@ impl FlowyCtx {
                         col,
                     });
                 } else {
-                    data.push_back(Statement::new(
-                        StatementKind::assign_or_store(dst, src[0].clone()),
-                        source_info,
-                    ));
+                    // A field/offset write. A location with intermediate symbolic dereferences
+                    // needs loads before the store, so lower it with `store_access_path`.
+                    let mut stmts = Vec::new();
+                    let counter = &mut self.counter;
+                    ctadl_ir::mir::store_access_path(
+                        dst_base,
+                        dst_segments,
+                        src[0].clone(),
+                        &mut stmts,
+                        || VariableRef::new_local(format!("t{}?", counter.next())),
+                    );
+                    for mut s in stmts {
+                        s.source_info = source_info;
+                        data.push_back(s);
+                    }
                 }
             }
             Rule::assign_call_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let lhs = parse_ap(locals, inner.next().unwrap(), defined_functions)?;
-                let callee = match parse_ref(locals, inner.next().unwrap(), defined_functions) {
-                    ParsedRef::Ap(ap) => ap,
-                    ParsedRef::Value(_) => {
-                        return Err(FlowyError::Compile {
-                            message: "bad call ap".to_string(),
-                            line,
-                            col,
-                        });
-                    }
-                };
-                let AccessPath {
-                    variable_ref: variable,
-                    path,
-                } = callee;
+                let (lhs_base, lhs_segments) =
+                    parse_ap(locals, inner.next().unwrap(), defined_functions)?;
+                let (variable, segments) =
+                    match parse_ref(locals, inner.next().unwrap(), defined_functions) {
+                        ParsedRef::Ap(base, segments) => (base, segments),
+                        ParsedRef::Value(_) => {
+                            return Err(FlowyError::Compile {
+                                message: "bad call ap".to_string(),
+                                line,
+                                col,
+                            });
+                        }
+                    };
                 let actuals = parse_actuals(locals, inner.next().unwrap(), defined_functions);
-                let style = if !path.is_empty() {
-                    // Indirect call
+                let style = if !segments.is_empty() {
+                    // Indirect call: lower symbolic derefs to loads, leaving an offset-only callee.
+                    let callee = lower_callee_addr(
+                        &mut self.counter,
+                        data,
+                        source_info,
+                        variable,
+                        segments,
+                    );
                     CallStyle::FuncPtrCall {
-                        callee: AccessPath {
-                            variable_ref: variable,
-                            path,
-                        },
+                        callee,
                         signature: None,
                     }
                 } else {
@@ -729,10 +747,7 @@ impl FlowyCtx {
                     } else {
                         // Indirect call with parameter, global, or undefined function
                         CallStyle::FuncPtrCall {
-                            callee: AccessPath {
-                                variable_ref: variable,
-                                path,
-                            },
+                            callee: AccessPath::without_fields(variable),
                             signature: None,
                         }
                     }
@@ -765,37 +780,49 @@ impl FlowyCtx {
                 };
                 data.push_back(Statement::new(call, source_info));
 
-                // assign the temporary to the field (if applicable)
-                let assign_lhs =
-                    StatementKind::assign_or_store(lhs.clone(), Exp::Variable(tmp));
-                data.push_back(Statement::new(assign_lhs, source_info));
+                // assign the temporary to the field (if applicable), lowering any intermediate
+                // dereferences into loads plus a store.
+                let mut stmts = Vec::new();
+                let counter = &mut self.counter;
+                ctadl_ir::mir::store_access_path(
+                    lhs_base,
+                    lhs_segments,
+                    Exp::Variable(tmp),
+                    &mut stmts,
+                    || VariableRef::new_local(format!("t{}?", counter.next())),
+                );
+                for mut s in stmts {
+                    s.source_info = source_info;
+                    data.push_back(s);
+                }
             }
             Rule::call_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let callee = match parse_ref(locals, inner.next().unwrap(), defined_functions) {
-                    ParsedRef::Ap(ap) => ap,
-                    ParsedRef::Value(_) => {
-                        return Err(FlowyError::Compile {
-                            message: "bad call ap".to_string(),
-                            line,
-                            col,
-                        });
-                    }
-                };
-                let AccessPath {
-                    variable_ref: variable,
-                    path,
-                } = callee;
+                let (variable, segments) =
+                    match parse_ref(locals, inner.next().unwrap(), defined_functions) {
+                        ParsedRef::Ap(base, segments) => (base, segments),
+                        ParsedRef::Value(_) => {
+                            return Err(FlowyError::Compile {
+                                message: "bad call ap".to_string(),
+                                line,
+                                col,
+                            });
+                        }
+                    };
                 let actuals = parse_actuals(locals, inner.next().unwrap(), defined_functions);
 
-                let style = if !path.is_empty() {
-                    // Indirect call
+                let style = if !segments.is_empty() {
+                    // Indirect call: lower symbolic derefs to loads, leaving an offset-only callee.
+                    let callee = lower_callee_addr(
+                        &mut self.counter,
+                        data,
+                        source_info,
+                        variable,
+                        segments,
+                    );
                     CallStyle::FuncPtrCall {
-                        callee: AccessPath {
-                            variable_ref: variable,
-                            path,
-                        },
+                        callee,
                         signature: None,
                     }
                 } else {
@@ -816,10 +843,7 @@ impl FlowyCtx {
                     } else {
                         // Indirect call with parameter, global, or undefined function
                         CallStyle::FuncPtrCall {
-                            callee: AccessPath {
-                                variable_ref: variable,
-                                path,
-                            },
+                            callee: AccessPath::without_fields(variable),
                             signature: None,
                         }
                     }
@@ -980,8 +1004,7 @@ fn parse_summary_ap(env: &Env, pair: Pair<'_, Rule>) -> Port {
     let mut inner = arm.into_inner();
     // name could be a number, like 3, in which case the P vec is empty
     let name: String = inner.next().unwrap().as_str().into();
-    let ps: Vec<FieldAccess> = inner.map(parse_p).collect();
-    let field_accesses = FieldAccesses::from_iter(ps.clone());
+    let field_accesses: ThinVec<PathSegment> = inner.map(parse_p).collect();
     if name == "return" {
         Port {
             base: PortBase::Return,
@@ -998,12 +1021,10 @@ fn parse_summary_ap(env: &Env, pair: Pair<'_, Rule>) -> Port {
             // try the global
             .or_else(|| {
                 if env.globals.contains(&name) {
-                    let mut global_field_accesses = FieldAccesses::from_iter(std::iter::once(
-                        FieldAccess::Symbol(ArcIntern::from(name.clone())),
-                    ));
-                    global_field_accesses
-                        .fields
-                        .extend(field_accesses.fields.clone());
+                    // A global `name` is modeled as a symbolic field of the global heap.
+                    let mut global_field_accesses: ThinVec<PathSegment> =
+                        thin_vec![PathSegment::symbol(name.clone())];
+                    global_field_accesses.extend(field_accesses.iter().cloned());
                     Some(Port {
                         base: PortBase::Var(VariableRef::new_global()),
                         fields: global_field_accesses,
@@ -1027,19 +1048,19 @@ fn parse_summary_op(pair: &Pair<'_, Rule>) -> FlowSpec {
     }
 }
 
-fn parse_p(pair: Pair<'_, Rule>) -> FieldAccess {
+fn parse_p(pair: Pair<'_, Rule>) -> PathSegment {
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
         Rule::field_p => {
             // skip the leading "."
             let field_name = inner.into_inner().next().unwrap().as_str();
-            FieldAccess::Symbol(ArcIntern::from(field_name))
+            PathSegment::symbol(field_name)
         }
         Rule::offset_p => {
             // Parse the numeric offset from .[int] syntax
             let offset_str = inner.into_inner().next().unwrap().as_str();
             let offset: i64 = offset_str.parse().unwrap();
-            FieldAccess::Offset(Offset(offset))
+            PathSegment::offset(offset)
         }
         _ => panic!("Unexpected field access rule"),
     }
@@ -1051,14 +1072,22 @@ fn parse_p(pair: Pair<'_, Rule>) -> FieldAccess {
 /// as an lvalue or callee its path is consumed directly.
 enum ParsedRef {
     Value(Exp),
-    Ap(AccessPath),
+    /// A base variable plus a (possibly mixed) sequence of path segments. Symbolic segments are
+    /// resolved into loads by [`lower_ref`] (rvalue) or lowered to a store/callee elsewhere.
+    Ap(VariableRef, ThinVec<PathSegment>),
 }
 
 impl std::fmt::Display for ParsedRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ParsedRef::Value(e) => write!(f, "{e}"),
-            ParsedRef::Ap(ap) => write!(f, "{ap}"),
+            ParsedRef::Ap(base, segments) => {
+                write!(f, "{base}")?;
+                for s in segments {
+                    write!(f, ".{s}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -1074,28 +1103,48 @@ fn lower_ref(
 ) -> Exp {
     match r {
         ParsedRef::Value(e) => e,
-        ParsedRef::Ap(ap) => {
+        ParsedRef::Ap(base, segments) => {
             let mut loads = Vec::new();
-            let v = ctadl_ir::mir::load_access_path(ap, &mut loads, || {
+            let addr = ctadl_ir::mir::load_access_path(base, segments, &mut loads, || {
                 VariableRef::new_local(format!("t{}?", counter.next()))
             });
             for mut s in loads {
                 s.source_info = source_info;
                 data.push_back(s);
             }
-            Exp::Variable(v)
+            Exp::access_path(addr)
         }
     }
+}
+
+/// Lowers a parsed callee `base ~ segments` into an offset-only callee [`AccessPath`], emitting
+/// loads (appended to `data`) for any symbolic dereferences (a function pointer read from a field).
+fn lower_callee_addr(
+    counter: &mut Counter,
+    data: &mut BasicBlockData,
+    source_info: SourceInfo,
+    base: VariableRef,
+    segments: ThinVec<PathSegment>,
+) -> AccessPath {
+    let mut loads = Vec::new();
+    let addr = ctadl_ir::mir::load_access_path(base, segments, &mut loads, || {
+        VariableRef::new_local(format!("t{}?", counter.next()))
+    });
+    for mut s in loads {
+        s.source_info = source_info;
+        data.push_back(s);
+    }
+    addr
 }
 
 fn parse_ap(
     parameters: &Env,
     pair: Pair<'_, Rule>,
     defined_functions: &HashSet<String>,
-) -> Result<AccessPath, FlowyError> {
+) -> Result<(VariableRef, ThinVec<PathSegment>), FlowyError> {
     let (line, col) = pair.line_col();
     match parse_ref(parameters, pair, defined_functions) {
-        ParsedRef::Ap(ap) => Ok(ap),
+        ParsedRef::Ap(base, segments) => Ok((base, segments)),
         ParsedRef::Value(_) => Err(FlowyError::Compile {
             message: "bad lhs ap".to_string(),
             line,
@@ -1126,39 +1175,27 @@ fn parse_ref(env: &Env, pair: Pair<'_, Rule>, defined_functions: &HashSet<String
         }
         _ => {
             let name: String = first.as_str().into();
-            let ps: Vec<FieldAccess> = iter.map(parse_p).collect();
-            let field_accesses = FieldAccesses::from_iter(ps.clone());
-            let ap = env
+            let field_accesses: ThinVec<PathSegment> = iter.map(parse_p).collect();
+            let (base, segments) = env
                 .parameters
                 .get(&name)
                 // try the parameter
-                .map(|v| AccessPath {
-                    variable_ref: v.clone(),
-                    path: field_accesses.clone(),
-                })
+                .map(|v| (v.clone(), field_accesses.clone()))
                 // try the global
                 .or_else(|| {
                     if env.globals.contains(&name) {
-                        let mut global_field_accesses = FieldAccesses::from_iter(std::iter::once(
-                            FieldAccess::Symbol(ArcIntern::from(name.clone())),
-                        ));
-                        global_field_accesses
-                            .fields
-                            .extend(field_accesses.fields.clone());
-                        Some(AccessPath {
-                            variable_ref: VariableRef::new_global(),
-                            path: global_field_accesses,
-                        })
+                        // A global `name` is modeled as a symbolic field of the global heap.
+                        let mut global_field_accesses: ThinVec<PathSegment> =
+                            thin_vec![PathSegment::symbol(name.clone())];
+                        global_field_accesses.extend(field_accesses.iter().cloned());
+                        Some((VariableRef::new_global(), global_field_accesses))
                     } else {
                         None
                     }
                 })
                 // treat it as local
-                .unwrap_or_else(|| AccessPath {
-                    variable_ref: VariableRef::new_local(name.clone()),
-                    path: field_accesses,
-                });
-            ParsedRef::Ap(ap)
+                .unwrap_or_else(|| (VariableRef::new_local(name.clone()), field_accesses));
+            ParsedRef::Ap(base, segments)
         }
     }
 }

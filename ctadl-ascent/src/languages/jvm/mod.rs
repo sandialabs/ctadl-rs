@@ -605,9 +605,9 @@ impl Context {
         Exp::new_object_ref(CallObject::JavaObject(JavaClass(jclass.into())))
     }
 
-    fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> mir::FieldAccess {
+    fn jvm_field_symbol(f: &jvm_reader::flow::FieldRef) -> mir::FieldPath {
         let class = format!("L{};", f.class_name);
-        mir::FieldAccess::Symbol(format!("<{}->{}:{}>", class, f.field_name, f.descriptor).into())
+        mir::FieldPath::symbol(format!("<{}->{}:{}>", class, f.field_name, f.descriptor))
     }
 
     fn stack_exp(&self, loc: &Location) -> Exp {
@@ -908,11 +908,10 @@ impl Context {
             // getstatic
             0xb2 => {
                 let field = Self::field_ref_in(&data.sources).expect("getstatic field");
-                let ap = AccessPath::new(VariableRef::new_global(), [Self::jvm_field_symbol(field)]);
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination),
-                    ap.variable_ref,
-                    ap.path,
+                    VariableRef::new_global(),
+                    Self::jvm_field_symbol(field),
                 ))]
             }
             // putstatic
@@ -927,7 +926,8 @@ impl Context {
                         .expect("putstatic value"),
                 );
                 smallvec![Statement::new_kind(StatementKind::store(
-                    AccessPath::new(VariableRef::new_global(), [Self::jvm_field_symbol(field)],),
+                    AccessPath::without_fields(VariableRef::new_global()),
+                    Self::jvm_field_symbol(field),
                     value,
                 ))]
             }
@@ -943,11 +943,10 @@ impl Context {
                     block_instrs,
                     instr_idx,
                 );
-                let ap = AccessPath::new(object, [Self::jvm_field_symbol(field)]);
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination),
-                    ap.variable_ref,
-                    ap.path,
+                    object,
+                    Self::jvm_field_symbol(field),
                 ))]
             }
             // putfield
@@ -967,7 +966,8 @@ impl Context {
                     instr_idx,
                 );
                 smallvec![Statement::new_kind(StatementKind::store(
-                    AccessPath::new(object, [Self::jvm_field_symbol(field)]),
+                    AccessPath::without_fields(object),
+                    Self::jvm_field_symbol(field),
                     value,
                 ))]
             }
@@ -988,11 +988,10 @@ impl Context {
                 let base = Self::array_base(&data.sources).expect("aload base");
                 let object =
                     self.field_object_base(base, aliases, last_aload_reg, block_instrs, instr_idx);
-                let ap = AccessPath::new(object, [mir::FieldAccess::Symbol("[]".into())]);
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination),
-                    ap.variable_ref,
-                    ap.path,
+                    object,
+                    mir::FieldPath::symbol("[]"),
                 ))]
             }
             // *astore
@@ -1008,7 +1007,8 @@ impl Context {
                 let object =
                     self.field_object_base(base, aliases, last_aload_reg, block_instrs, instr_idx);
                 smallvec![Statement::new_kind(StatementKind::store(
-                    AccessPath::new(object, [mir::FieldAccess::Symbol("[]".into())],),
+                    AccessPath::without_fields(object),
+                    mir::FieldPath::symbol("[]"),
                     value,
                 ))]
             }

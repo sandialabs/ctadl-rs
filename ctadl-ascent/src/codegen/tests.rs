@@ -451,23 +451,15 @@ fn function_with_phi() -> FunctionData {
 
     // True branch: x = a (using builder API)
     let mut true_builder = BasicBlockBuilder::new(&mut f[true_branch]);
-    true_builder.create_assign_or_store(
-        true_builder.new_access_path(x.clone(), Vec::<&str>::new()),
-        Exp::from(true_builder.new_access_path(a, Vec::<&str>::new())),
-    );
+    true_builder.create_assign_or_store(x.clone(), Exp::Variable(a));
 
     // False branch: x = b (using builder API)
     let mut false_builder = BasicBlockBuilder::new(&mut f[false_branch]);
-    false_builder.create_assign_or_store(
-        false_builder.new_access_path(x.clone(), Vec::<&str>::new()),
-        Exp::from(false_builder.new_access_path(b, Vec::<&str>::new())),
-    );
+    false_builder.create_assign_or_store(x.clone(), Exp::Variable(b));
 
     // Merge block will get phi node during SSA conversion (using builder API)
     let mut merge_builder = BasicBlockBuilder::new(&mut f[merge]);
-    merge_builder.create_ret(vec![Exp::from(
-        merge_builder.new_access_path(x, Vec::<&str>::new()),
-    )]);
+    merge_builder.create_ret(vec![Exp::Variable(x)]);
 
     f.verify().expect("doesn't verify");
     f
@@ -504,18 +496,16 @@ fn function_with_update() -> FunctionData {
     // Create variables using builder helpers
     let s_var = builder.new_param_var(ParameterIdx::new(0));
     let new_value = builder.new_local_var("new_value");
-    let s_access = builder.new_access_path(s_var.clone(), vec!["field"]);
 
-    // Create update statement using builder API
+    // Create update statement using builder API: s.field = new_value
     builder.create_store(
-        s_access,
-        Exp::from(builder.new_access_path(new_value.clone(), Vec::<&str>::new())),
+        s_var.clone(),
+        ctadl_ir::mir::FieldPath::symbol("field"),
+        Exp::Variable(new_value.clone()),
     );
 
     // Create return statement using builder API
-    builder.create_ret(vec![Exp::from(
-        builder.new_access_path(s_var, Vec::<&str>::new()),
-    )]);
+    builder.create_ret(vec![Exp::Variable(s_var)]);
 
     f.verify().expect("doesn't verify");
     f
@@ -547,12 +537,12 @@ fn function_with_param_to_global_field() -> FunctionData {
 
     // Create globals access and update its field with local_var
     let globals_var = builder.new_global_var();
-    let globals_field_access = builder.new_access_path(globals_var.clone(), vec!["field"]);
 
     // This is the key assignment: globals.field = local_var
     builder.create_store(
-        globals_field_access,
-        Exp::from(builder.new_access_path(local_var.clone(), Vec::<&str>::new())),
+        globals_var.clone(),
+        ctadl_ir::mir::FieldPath::symbol("field"),
+        Exp::Variable(local_var.clone()),
     );
 
     // Return globals
@@ -582,22 +572,17 @@ fn test_cap_algorithm() {
 
     // t1 = load x.foo
     let t1 = builder.new_local_var("t1");
-    let x_foo = builder.new_access_path(x.clone(), vec!["foo"]);
-    builder.create_load(t1.clone(), x_foo.variable_ref, x_foo.path);
+    builder.create_load(t1.clone(), x.clone(), "foo");
 
     // t2 = load t1.bar
     let t2 = builder.new_local_var("t2");
-    let t1_bar = builder.new_access_path(t1.clone(), vec!["bar"]);
-    builder.create_load(t2.clone(), t1_bar.variable_ref, t1_bar.path);
+    builder.create_load(t2.clone(), t1.clone(), "bar");
 
     // t3 = load t2.baz
     let t3 = builder.new_local_var("t3");
-    let t2_baz = builder.new_access_path(t2.clone(), vec!["baz"]);
-    builder.create_load(t3.clone(), t2_baz.variable_ref, t2_baz.path);
+    builder.create_load(t3.clone(), t2.clone(), "baz");
 
-    builder.create_ret(vec![Exp::from(
-        builder.new_access_path(t3, Vec::<&str>::new()),
-    )]);
+    builder.create_ret(vec![Exp::Variable(t3)]);
 
     f.verify().expect("doesn't verify");
 

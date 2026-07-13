@@ -53,6 +53,7 @@ use hashbrown::hash_map::HashMap;
 
 use crate::error::Error;
 
+use ctadl_ir::ThinVec;
 use ctadl_ir::index::index_vec::IndexVec;
 use ctadl_ir::mir::*;
 
@@ -74,6 +75,26 @@ pub enum VarKind {
     Global,
     Local,     // Standard local variable
     Parameter, // Function argument
+}
+
+/// A base variable plus a mixed (offset + symbolic-field) path, before lowering to loads/stores.
+/// Access paths in the IR are offset-only and load/store fields are single symbols, so C member
+/// and subscript accesses are threaded here and lowered via [`mir::load_access_path`] /
+/// [`mir::store_access_path`].
+#[derive(Debug, Clone)]
+struct RawPath {
+    base: VariableRef,
+    fields: ThinVec<PathSegment>,
+}
+
+impl RawPath {
+    fn new(base: VariableRef, fields: ThinVec<PathSegment>) -> Self {
+        Self { base, fields }
+    }
+
+    fn is_pathless(&self) -> bool {
+        self.fields.is_empty()
+    }
 }
 
 enum BlockTypeRequest {
@@ -642,7 +663,7 @@ impl<'a> Context<'a> {
         // operand; read it (a field target lowers to loads) before the write.
         let compound = operator_node.is_some_and(|o| o.kind() != "=");
         let right_op = if compound {
-            Some(Exp::Variable(self.emit_loads(
+            Some(Exp::access_path(self.emit_loads(
                 program,
                 scope_view,
                 target_ap.clone(),
@@ -655,8 +676,8 @@ impl<'a> Context<'a> {
         // The value of an assignment expression is the assigned location, so a chained
         // assignment (`b = a = 5`) flows the target `a` into `b`. A field target (a store) has
         // no bare-variable value, so fall back to the assigned value there.
-        if target_ap.path.is_empty() {
-            Ok(Exp::Variable(target_ap.variable_ref))
+        if target_ap.is_pathless() {
+            Ok(Exp::Variable(target_ap.base))
         } else {
             Ok(rhs_var)
         }
@@ -1187,9 +1208,9 @@ impl<'a> Context<'a> {
     fn build_access_path(
         &self,
         name_pre_scope: &str,
-        field_path: FieldAccesses,
+        mut field_path: ThinVec<PathSegment>,
         scope_view: &ScopeView,
-    ) -> AccessPath {
+    ) -> RawPath {
         let name: String;
         let varkind: VarKind;
         if let Some(vardecl) = self
@@ -1211,19 +1232,19 @@ impl<'a> Context<'a> {
         }
 
         match varkind {
-            VarKind::Global => AccessPath::new_global(name.as_str(), field_path),
-            VarKind::Local => ctadl_ir::mir::AccessPath {
-                variable_ref: VariableRef::new_local(name),
-                path: field_path,
-            },
+            // A global `name` is a symbolic field of the globals object: `$globals.name.<fields>`.
+            VarKind::Global => {
+                let mut fields = ThinVec::with_capacity(field_path.len() + 1);
+                fields.push(PathSegment::symbol(name.as_str()));
+                fields.append(&mut field_path);
+                RawPath::new(VariableRef::new_global(), fields)
+            }
+            VarKind::Local => RawPath::new(VariableRef::new_local(name), field_path),
             VarKind::Parameter => {
                 if let Some(param_idx) =
                     self.get_param_idx(scope_view.func_name.as_str(), name.as_str())
                 {
-                    ctadl_ir::mir::AccessPath {
-                        variable_ref: VariableRef::new_parameter(param_idx),
-                        path: field_path,
-                    }
+                    RawPath::new(VariableRef::new_parameter(param_idx), field_path)
                 } else {
                     panic!("no parameter index for parameters");
                 }
@@ -1335,7 +1356,7 @@ impl<'a> Context<'a> {
                     // field of the globals object), so this may lower to a load; a local is a
                     // bare variable (no load emitted).
                     let ap = self.build_access_path(text, Default::default(), scope_view);
-                    Ok(Exp::Variable(self.emit_loads(program, scope_view, ap)))
+                    Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
                 }
             }
             "comma_expression" => {
@@ -1378,9 +1399,12 @@ impl<'a> Context<'a> {
                 // value. (As an lvalue it is handled by `flatten_lvalue` instead.)
                 let mut path_vec = Vec::<&str>::new();
                 let final_ident = extract_field_expression(node, source, &mut path_vec)?;
-                let ap =
-                    self.build_access_path(final_ident, path_vec.into_iter().collect(), scope_view);
-                Ok(Exp::Variable(self.emit_loads(program, scope_view, ap)))
+                let ap = self.build_access_path(
+                    final_ident,
+                    path_vec.into_iter().map(PathSegment::symbol).collect(),
+                    scope_view,
+                );
+                Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
             }
             "assignment_expression" => self.collect_assignment(
                 source,
@@ -1436,7 +1460,7 @@ impl<'a> Context<'a> {
                     None,
                 );
                 let ap = self.build_access_path(symbol, Default::default(), scope_view);
-                Ok(Exp::Variable(self.emit_loads(program, scope_view, ap)))
+                Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
             } else {
                 //iden was something nested
                 self.flatten_expr(program, iden, source, scope_view)
@@ -1497,14 +1521,14 @@ impl<'a> Context<'a> {
         let argument = node.child_by_field_name("argument").expect("missing left");
         let loc = self.flatten_lvalue(program, argument, source, scope_view)?;
         // Its current value (a field location lowers to loads).
-        let cur = Exp::Variable(self.emit_loads(program, scope_view, loc.clone()));
+        let cur = Exp::access_path(self.emit_loads(program, scope_view, loc.clone()));
         let one = Exp::Str(ArcIntern::<str>::from("1"));
         // temp = cur + 1
         let temp_name = self.allocator.next_temp();
         let target = self.build_access_path(temp_name.as_str(), Default::default(), scope_view);
         self.add_assign_to_program(program, scope_view, &target, &cur, Some(&one));
         // loc = temp
-        let new_val = Exp::Variable(target.variable_ref.clone());
+        let new_val = Exp::Variable(target.base.clone());
         self.add_assign_to_program(program, scope_view, &loc, &new_val, None);
         // The value of the update expression is the updated location's value.
         Ok(new_val)
@@ -1520,7 +1544,7 @@ impl<'a> Context<'a> {
         // A subscript read on the RHS: resolve the location (base path + index field) and lower
         // it to loads. (As an lvalue it is handled by `flatten_lvalue` instead.)
         let ap = self.flatten_lvalue(program, node, source, scope_view)?;
-        Ok(Exp::Variable(self.emit_loads(program, scope_view, ap)))
+        Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
     }
 
     fn collect_arguments(
@@ -1585,19 +1609,24 @@ impl<'a> Context<'a> {
                 .unwrap_or_else(|_| self.build_access_path(func_name, Default::default(), scope_view))
         };
 
-        let var = &*access_path.variable_ref.variable;
-        let style = match var {
+        let var = access_path.base.variable.clone();
+        let style = match &*var {
             Variable::Local(name) => {
                 log::info!("This is an Indirect LOCAL call: {}", name);
+                // The callee is a call-target address. Any symbolic field (e.g. `%o.f`, a
+                // function pointer stored in a field) is lowered to a load, leaving an
+                // offset-only callee address.
+                let callee = self.emit_loads(program, scope_view, access_path);
                 CallStyle::FuncPtrCall {
-                    callee: access_path,
+                    callee,
                     signature: (Some("indirect-call".to_string())),
                 }
             }
             Variable::Param(idx) => {
                 log::info!("This is an Indirect PARAMETER call: {}", idx.get());
+                let callee = self.emit_loads(program, scope_view, access_path);
                 CallStyle::FuncPtrCall {
-                    callee: access_path,
+                    callee,
                     signature: (Some("indirect-call".to_string())),
                 }
             }
@@ -1612,11 +1641,10 @@ impl<'a> Context<'a> {
             },
         ));
         //we return the temp_name, so that the assignment expression for the actual int x = foo() gets the result of foo()
-        Ok(Exp::from(self.build_access_path(
-            temp_name.as_str(),
-            Default::default(),
-            scope_view,
-        )))
+        Ok(Exp::Variable(
+            self.build_access_path(temp_name.as_str(), Default::default(), scope_view)
+                .base,
+        ))
     }
 
     /// parses and creates new functions and parameters
@@ -1724,25 +1752,35 @@ impl<'a> Context<'a> {
         &mut self,
         program: &mut Program,
         scope_view: &ScopeView,
-        target: &AccessPath,
+        target: &RawPath,
         left_op: &Exp,
         right_op: Option<&Exp>,
     ) {
         let val_exp = left_op; //todo get rid of val_exp and just use left_op
-        let mut fa: Vec<Exp> = [val_exp.clone()].into();
-        if let Some(righty) = right_op {
-            fa.push(righty.clone());
-        }
-
-        let sa = if target.path.is_empty() {
-            StatementKind::assign(target.variable_ref.clone(), fa)
+        if target.is_pathless() {
+            let mut fa: Vec<Exp> = [val_exp.clone()].into();
+            if let Some(righty) = right_op {
+                fa.push(righty.clone());
+            }
+            program[scope_view.fidx].blocks[scope_view.blidx]
+                .push_back(Statement::new_kind(StatementKind::assign(target.base.clone(), fa)));
         } else {
             // A store writes a single value into the field path; the field read is not
             // expressible as an operand, so a compound op's second operand is dropped here
-            // (matching the prior behavior for field stores).
-            StatementKind::store(target.clone(), val_exp.clone())
-        };
-        program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(sa));
+            // (matching the prior behavior for field stores). Any intermediate dereferences are
+            // materialized as loads by `store_access_path`.
+            let mut stmts = Vec::new();
+            ctadl_ir::mir::store_access_path(
+                target.base.clone(),
+                target.fields.iter().cloned(),
+                val_exp.clone(),
+                &mut stmts,
+                || VariableRef::new_local(self.allocator.next_temp()),
+            );
+            for s in stmts {
+                program[scope_view.fidx].blocks[scope_view.blidx].push_back(s);
+            }
+        }
     }
 
     /// Resolves an assignable location to its access path WITHOUT emitting loads. Used for the
@@ -1754,7 +1792,7 @@ impl<'a> Context<'a> {
         node: Node<'_>,
         source: &str,
         scope_view: &ScopeView,
-    ) -> Result<AccessPath, Error> {
+    ) -> Result<RawPath, Error> {
         match node.kind() {
             "identifier" => Ok(self.build_access_path(
                 to_str(&node, source),
@@ -1764,7 +1802,11 @@ impl<'a> Context<'a> {
             "field_expression" => {
                 let mut path_vec = Vec::<&str>::new();
                 let final_ident = extract_field_expression(node, source, &mut path_vec)?;
-                Ok(self.build_access_path(final_ident, path_vec.into_iter().collect(), scope_view))
+                Ok(self.build_access_path(
+                    final_ident,
+                    path_vec.into_iter().map(PathSegment::symbol).collect(),
+                    scope_view,
+                ))
             }
             "subscript_expression" => {
                 let base = self.flatten_lvalue(
@@ -1785,7 +1827,7 @@ impl<'a> Context<'a> {
                     "[_elem_]".to_string()
                 };
                 let mut ap = base;
-                ap.path.fields.push(FieldAccess::Symbol(ArcIntern::<str>::from(s)));
+                ap.fields.push(PathSegment::symbol(s));
                 Ok(ap)
             }
             "parenthesized_expression" | "parenthesized_declarator" => {
@@ -1799,7 +1841,7 @@ impl<'a> Context<'a> {
                 scope_view,
             ),
             _ => match self.flatten_expr(program, node, source, scope_view)? {
-                Exp::Variable(v) => Ok(AccessPath::without_fields(v)),
+                Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
                 _ => Err(Error::TreeSitterParse(format!(
                     "not an lvalue: {}",
                     node.kind()
@@ -1808,17 +1850,18 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// Lowers a read of `ap` into a sequence of loads (see [`mir::load_access_path`]) appended to
-    /// the current block, returning the variable that holds the loaded value. A pathless `ap`
-    /// returns its base variable without emitting anything.
+    /// Lowers the symbolic-field reads of `ap` into a sequence of loads (see
+    /// [`mir::load_access_path`]) appended to the current block, returning the residual *address*
+    /// (base variable plus any trailing offsets) as an offset-only access path. A pathless or
+    /// offset-only `ap` is returned unchanged, emitting nothing.
     fn emit_loads(
         &mut self,
         program: &mut Program,
         scope_view: &ScopeView,
-        ap: AccessPath,
-    ) -> VariableRef {
+        ap: RawPath,
+    ) -> AccessPath {
         let mut stmts = Vec::new();
-        let v = ctadl_ir::mir::load_access_path(ap, &mut stmts, || {
+        let v = ctadl_ir::mir::load_access_path(ap.base, ap.fields, &mut stmts, || {
             VariableRef::new_local(self.allocator.next_temp())
         });
         for s in stmts {

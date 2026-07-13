@@ -183,11 +183,11 @@ fn program_h() -> Program {
         };
         let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
         let stmts: IndexVec<StatementIdx, _> =
-            indexvec![Statement::new_kind(StatementKind::Store {
-                dest: global_ref.clone(),
-                path: ["bar"].into_iter().collect(),
-                value: Exp::from(p.clone()),
-            }),];
+            indexvec![Statement::new_kind(StatementKind::store(
+                AccessPath::without_fields(global_ref.clone()),
+                FieldPath::symbol("bar"),
+                Exp::from(p.clone()),
+            )),];
         let body_block = &mut h[body];
         body_block.extend(stmts);
         body_block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {

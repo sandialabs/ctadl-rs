@@ -160,7 +160,9 @@ pub fn coalesce_function(function: &mut FunctionData) {
                 let mut src_vars: SmallVec<[ArcIntern<Variable>; 2]> = SmallVec::new();
                 let mut ok = true;
                 for src in sources.iter() {
-                    if let Exp::Variable(v) = src {
+                    // Any source that reads a variable (a bare copy or an address expression)
+                    // must be tracked, so a later write to it invalidates this pending def.
+                    if let Some(v) = src.base_variable() {
                         // Versioned reads shouldn't exist pre-SSA; bail if seen.
                         if v.version.is_some() || v.variable == dest.variable {
                             ok = false;

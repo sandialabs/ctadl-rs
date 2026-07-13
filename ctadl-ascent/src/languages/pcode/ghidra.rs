@@ -123,6 +123,22 @@ pub fn run_ghidra_export(artifact_path: &Path, output_dir: &Path) -> Result<(), 
 /// projects and server repositories are opened read-only via `-process`, so the
 /// user's data is never modified.
 pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Result<(), Error> {
+    // Benchmark/dev escape hatch: reuse already-exported pcode facts and skip the (slow) Ghidra
+    // run, so re-import only re-runs the facts→IR conversion (which is what changes when the
+    // frontend lowering changes). Enabled by `CTADL_REUSE_FACTS` when the facts dir is non-empty.
+    let facts_dir = output_dir.join("facts");
+    if std::env::var_os("CTADL_REUSE_FACTS").is_some()
+        && std::fs::read_dir(&facts_dir)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false)
+    {
+        log::info!(
+            "CTADL_REUSE_FACTS set: reusing cached pcode facts in {}",
+            facts_dir.display()
+        );
+        return Ok(());
+    }
+
     let ghidra_base = find_ghidra_base()?;
     let analyze_headless = find_analyze_headless(&ghidra_base)?;
     let script_dir = analyze_headless.parent().ok_or_else(|| {
