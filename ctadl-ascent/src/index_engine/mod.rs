@@ -813,7 +813,9 @@ pub fn taint_index_with_config(
         initial_formals
     );
 
-    let mut program_paths: Vec<_> = facts
+    // The assign-derived paths and `facts.paths` overlap heavily, so unify them
+    // in a set to drop duplicates before they seed the `program_paths` relation.
+    let mut program_paths: HashSet<_> = facts
         .assign
         .iter()
         .flat_map(|(_, dst, src)| std::iter::once(dst.1).chain(std::iter::once(src.1)))
@@ -1327,7 +1329,7 @@ pub fn taint_index_with_config(
     prog.prog_store = prog_store;
     prog.alias_of_formal = alias_of_formal;
     prog.model_paths = summary_paths.into_iter().collect();
-    prog.program_paths = program_paths;
+    prog.program_paths = program_paths.into_iter().collect();
 
     // Optional wall-clock cap on the fixpoint, gated by env var so normal runs are unaffected
     // (default `Duration::MAX` == run to fixpoint, identical to the old `ascent_run!`). Setting
