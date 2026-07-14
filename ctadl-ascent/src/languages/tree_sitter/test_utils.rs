@@ -426,7 +426,7 @@ fn writes_dest(kind: &StatementKind, dst: &DslPath) -> bool {
                 .iter()
                 .cloned()
                 .map(PathSegment::from)
-                .chain(field.iter().map(|f| PathSegment::Symbol(f.symbol_ref().clone())))
+                .chain(std::iter::once(PathSegment::Symbol(field.symbol_ref().clone())))
                 .collect();
             !dst.fields.is_empty() && dest.variable_ref == dst.base && full == dst.fields
         }

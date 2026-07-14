@@ -682,6 +682,7 @@ impl FlowyCtx {
                 } else {
                     // A field/offset write. A location with intermediate symbolic dereferences
                     // needs loads before the store, so lower it with `store_access_path`.
+                    check_store_target(&dst_segments, line, col)?;
                     let mut stmts = Vec::new();
                     let counter = &mut self.counter;
                     ctadl_ir::mir::store_access_path(
@@ -716,13 +717,8 @@ impl FlowyCtx {
                 let actuals = parse_actuals(locals, inner.next().unwrap(), defined_functions);
                 let style = if !segments.is_empty() {
                     // Indirect call: lower symbolic derefs to loads, leaving an offset-only callee.
-                    let callee = lower_callee_addr(
-                        &mut self.counter,
-                        data,
-                        source_info,
-                        variable,
-                        segments,
-                    );
+                    let callee =
+                        lower_callee_addr(&mut self.counter, data, source_info, variable, segments);
                     CallStyle::FuncPtrCall {
                         callee,
                         signature: None,
@@ -782,6 +778,7 @@ impl FlowyCtx {
 
                 // assign the temporary to the field (if applicable), lowering any intermediate
                 // dereferences into loads plus a store.
+                check_store_target(&lhs_segments, line, col)?;
                 let mut stmts = Vec::new();
                 let counter = &mut self.counter;
                 ctadl_ir::mir::store_access_path(
@@ -814,13 +811,8 @@ impl FlowyCtx {
 
                 let style = if !segments.is_empty() {
                     // Indirect call: lower symbolic derefs to loads, leaving an offset-only callee.
-                    let callee = lower_callee_addr(
-                        &mut self.counter,
-                        data,
-                        source_info,
-                        variable,
-                        segments,
-                    );
+                    let callee =
+                        lower_callee_addr(&mut self.counter, data, source_info, variable, segments);
                     CallStyle::FuncPtrCall {
                         callee,
                         signature: None,
@@ -1137,6 +1129,22 @@ fn lower_callee_addr(
     addr
 }
 
+/// Rejects a store whose target is an offset-only location with no symbolic field (e.g. `x.[10]`).
+/// A store always writes a symbolic field; a write to a bare offset address is a memory write that
+/// must spell its dereference explicitly (e.g. `x.[10].deref = ..`).
+fn check_store_target(segments: &[PathSegment], line: usize, col: usize) -> Result<(), FlowyError> {
+    if !segments.is_empty() && segments.iter().all(PathSegment::is_offset) {
+        return Err(FlowyError::Compile {
+            message: "cannot store to an offset-only address without a field; a store writes a \
+                      symbolic field, so spell the dereference explicitly (e.g. `x.[10].deref = ..`)"
+                .to_string(),
+            line,
+            col,
+        });
+    }
+    Ok(())
+}
+
 fn parse_ap(
     parameters: &Env,
     pair: Pair<'_, Rule>,
@@ -1171,7 +1179,9 @@ fn parse_ref(env: &Env, pair: Pair<'_, Rule>, defined_functions: &HashSet<String
             if !defined_functions.contains(name) {
                 log::warn!("function '{}' is not defined", name);
             }
-            ParsedRef::Value(Exp::ObjectRef(CallObject::FunctionPtr(ArcIntern::from(name))))
+            ParsedRef::Value(Exp::ObjectRef(CallObject::FunctionPtr(ArcIntern::from(
+                name,
+            ))))
         }
         _ => {
             let name: String = first.as_str().into();

@@ -137,12 +137,12 @@ impl<'a> BasicBlockBuilder<'a> {
     ///
     /// # Arguments
     /// * `dest` - Destination address (offset-only access path)
-    /// * `field` - Symbolic field written, or `None` for a field-less offset-address store
+    /// * `field` - Symbolic field written
     /// * `source` - Source expression
     pub fn create_store(
         &mut self,
         dest: impl Into<AccessPath>,
-        field: impl Into<Option<FieldPath>>,
+        field: impl Into<FieldPath>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
         let statement =
@@ -152,22 +152,27 @@ impl<'a> BasicBlockBuilder<'a> {
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create and insert an assign (empty path) or field-less offset store statement.
+    /// Create and insert an assign (`field` is `None`) or a store of `field` into `dest` (see
+    /// [`StatementKind::assign_or_store`]). Storing to an offset address with no field is an error.
     ///
     /// # Arguments
     /// * `dest` - Destination access path (offset-only)
+    /// * `field` - Symbolic field written, or `None` for a plain assign to a bare variable
     /// * `source` - Source expression
     pub fn create_assign_or_store(
         &mut self,
         dest: impl Into<AccessPath>,
+        field: Option<FieldPath>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
-        let dest = dest.into();
-        if dest.path.is_empty() {
-            self.create_assign(dest.variable_ref, [source.into()])
-        } else {
-            self.create_store(dest, None, source)
-        }
+        let statement = Statement::new_kind(StatementKind::assign_or_store(
+            dest.into(),
+            field,
+            source.into(),
+        ));
+        let current_pos = self.insertion_point;
+        self.insert_statement(statement);
+        StatementIdx::from(current_pos as u32)
     }
 
     /// Create and insert a call statement

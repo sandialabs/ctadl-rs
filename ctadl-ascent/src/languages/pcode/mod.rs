@@ -159,10 +159,19 @@ impl Context {
         }
     }
 
-    /// Appends a write of `src` to the location `dest`: a plain assign for a bare variable, a
-    /// pure-offset store for an offset-only address, or a field store (with any needed loads
-    /// emitted for intermediate dereferences) via [`mir::store_access_path`].
-    fn push_assign_or_store(&mut self, stmts: &mut Vec<Statement>, dest: Addr, src: Exp) {
+    /// Appends a write of `src` to the location `dest`: a plain assign for a bare variable, or a
+    /// field store (with any needed loads emitted for intermediate dereferences) via
+    /// [`mir::store_access_path`].
+    ///
+    /// A store always writes a symbolic field, but a `dest` that resolves to an offset-only address
+    /// (e.g. a stack slot `__stack_top.[k]` or a memory-space varnode) has no field — writing there
+    /// means writing the memory *at* that address. That dereference is a pcode-level detail, so we
+    /// synthesize the canonical `.deref` field here, making the write a `store ....deref := src`
+    /// that aliases the `.deref` reads emitted for the same address (memory loads, stack slots).
+    fn push_assign_or_store(&mut self, stmts: &mut Vec<Statement>, mut dest: Addr, src: Exp) {
+        if !dest.segments.is_empty() && dest.segments.iter().all(PathSegment::is_offset) {
+            dest.push_deref();
+        }
         mir::store_access_path(dest.base, dest.segments, src, stmts, || self.create_temp());
     }
 

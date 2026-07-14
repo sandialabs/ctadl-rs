@@ -311,11 +311,9 @@ impl Visitor for CodegenVisitor<'_> {
                             .iter()
                             .cloned()
                             .chain(dest.path.iter().cloned().map(PathSegment::from))
-                            .chain(
-                                field
-                                    .iter()
-                                    .map(|f| PathSegment::Symbol(f.symbol_ref().clone())),
-                            ),
+                            .chain(std::iter::once(PathSegment::Symbol(
+                                field.symbol_ref().clone(),
+                            ))),
                     );
                     self.paths_dedup.insert((path,));
                 }
@@ -612,11 +610,9 @@ impl Visitor for CodegenVisitor<'_> {
                         .iter()
                         .cloned()
                         .chain(dest.path.iter().cloned().map(PathSegment::from))
-                        .chain(
-                            field
-                                .iter()
-                                .map(|f| PathSegment::Symbol(f.symbol_ref().clone())),
-                        ),
+                        .chain(std::iter::once(PathSegment::Symbol(
+                            field.symbol_ref().clone(),
+                        ))),
                 );
                 self.paths_dedup.insert((path.clone(),));
                 // dest.field <- value

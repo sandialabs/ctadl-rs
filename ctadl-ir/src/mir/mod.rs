@@ -300,7 +300,7 @@ pub enum StatementKind {
     /// non-empty (an otherwise-pathless store is just an assign).
     Store {
         dest: AccessPath,
-        field: Option<FieldPath>,
+        field: FieldPath,
         /// Value to store
         value: Exp,
     },
@@ -1071,29 +1071,31 @@ impl StatementKind {
     }
 
     /// Constructs a store `store dest.field := value` to an offset-only `dest` address and a
-    /// single symbolic `field`. Use `None` for `field` to write the offset address itself (pointer
-    /// arithmetic, no memory field). For a location that includes intermediate symbolic
+    /// single symbolic `field`. For a location that includes intermediate symbolic
     /// dereferences, use [`store_access_path`], which emits the needed loads.
-    pub fn store(dest: AccessPath, field: impl Into<Option<FieldPath>>, value: Exp) -> Self {
+    pub fn store(dest: AccessPath, field: impl Into<FieldPath>, value: Exp) -> Self {
         let field = field.into();
-        assert!(
-            !dest.path.is_empty() || field.is_some(),
-            "store location must write a non-empty field/offset path"
-        );
         StatementKind::Store { dest, field, value }
     }
 
-    /// Generates either an assign (pathless location) or a store (see [`Self::store`]). Use this
-    /// when the caller might or might not be writing a field/offset.
+    /// Emits an [`StatementKind::Assign`] when `field` is `None` (a write with no symbolic field),
+    /// or a [`Self::store`] of `field` into `dest` otherwise. When `field` is `None` the `dest` must
+    /// be a bare variable: storing to an offset address with no field is an error, since a store
+    /// always writes a symbolic field.
     #[inline]
-    pub fn assign_or_store(location: AccessPath, src: Exp) -> Self {
-        if location.path.is_empty() {
-            StatementKind::Assign {
-                dest: location.variable_ref,
-                sources: smallvec![src],
+    pub fn assign_or_store(dest: AccessPath, field: Option<FieldPath>, src: Exp) -> Self {
+        match field {
+            Some(field) => Self::store(dest, field, src),
+            None => {
+                assert!(
+                    dest.path.is_empty(),
+                    "storing to an offset address with no field is an error"
+                );
+                StatementKind::Assign {
+                    dest: dest.variable_ref,
+                    sources: smallvec![src],
+                }
             }
-        } else {
-            Self::store(location, None, src)
         }
     }
 
@@ -1272,10 +1274,11 @@ pub fn load_access_path(
 ///
 /// This is the write-side counterpart of [`load_access_path`]: offsets are pointer arithmetic and
 /// stay on the address; every symbolic field *except the last* is a load (you materialize the
-/// intermediate pointer); the *final* symbolic field is the store's field. A sequence with no
-/// symbolic field is a field-less offset-address store (or an assign when there are no offsets
-/// either). So `store *(x.[8].deref).f := v` (segments `x.[8].deref.f`) lowers to
-/// `t = load x.[8].deref; store t.f := v`, and `store x.[8] := v` is a field-less offset store.
+/// intermediate pointer); the *final* symbolic field is the store's field. So `store *(x.[8].deref).f
+/// := v` (segments `x.[8].deref.f`) lowers to `t = load x.[8].deref; store t.f := v`. A sequence with
+/// no fields or offsets at all is an assign to `base`. An offset-terminated sequence (offsets but no
+/// trailing symbolic field) is an error: a store always writes a symbolic field, so the caller must
+/// terminate a memory write with one (e.g. a frontend synthesizing a `.deref`).
 pub fn store_access_path(
     base: VariableRef,
     segments: impl IntoIterator<Item = PathSegment>,
@@ -1297,18 +1300,12 @@ pub fn store_access_path(
         _ => None,
     };
     let addr = load_access_path(base, segments, out, &mut fresh);
-    if field.is_none() && addr.path.fields.is_empty() {
-        out.push(Statement::new_kind(StatementKind::Assign {
-            dest: addr.variable_ref,
-            sources: smallvec![value],
-        }));
-    } else {
-        out.push(Statement::new_kind(StatementKind::Store {
-            dest: addr,
-            field,
-            value,
-        }));
-    }
+    // A trailing symbol becomes the store's field; no symbol over a bare variable is an assign. An
+    // offset-terminated sequence (offsets but no field) is an error: a store always writes a
+    // symbolic field, so the caller must terminate a memory write with one (see `assign_or_store`).
+    out.push(Statement::new_kind(StatementKind::assign_or_store(
+        addr, field, value,
+    )));
 }
 
 impl Params {
@@ -1672,11 +1669,7 @@ impl Display for StatementKind {
                 field,
             } => write!(f, "{dest} = load {source}{field}"),
             Store { dest, field, value } => {
-                write!(f, "store {dest}")?;
-                if let Some(field) = field {
-                    write!(f, "{field}")?;
-                }
-                write!(f, " := {value}")
+                write!(f, "store {dest}{field} := {value}")
             }
             Nop => write!(f, "nop"),
         }

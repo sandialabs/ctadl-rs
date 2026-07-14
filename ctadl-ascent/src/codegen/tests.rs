@@ -270,8 +270,8 @@ fn function_f() -> FunctionData {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_store(a.clone(), q);
-    b.create_assign_or_store(p.clone(), a);
+    b.create_assign_or_store(a.clone(), None, q);
+    b.create_assign_or_store(p.clone(), None, a);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -306,7 +306,7 @@ fn function_j() -> FunctionData {
     let q = b.new_param_var(ParameterIdx::new(1));
 
     b.create_assign(a.clone(), vec![q.into(), param_b.into()]);
-    b.create_assign_or_store(p.clone(), a);
+    b.create_assign_or_store(p.clone(), None, a);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -373,8 +373,8 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_store(a.clone(), q);
-    b.create_assign_or_store(p.clone(), a);
+    b.create_assign_or_store(a.clone(), None, q);
+    b.create_assign_or_store(p.clone(), None, a);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -451,11 +451,11 @@ fn function_with_phi() -> FunctionData {
 
     // True branch: x = a (using builder API)
     let mut true_builder = BasicBlockBuilder::new(&mut f[true_branch]);
-    true_builder.create_assign_or_store(x.clone(), Exp::Variable(a));
+    true_builder.create_assign_or_store(x.clone(), None, Exp::Variable(a));
 
     // False branch: x = b (using builder API)
     let mut false_builder = BasicBlockBuilder::new(&mut f[false_branch]);
-    false_builder.create_assign_or_store(x.clone(), Exp::Variable(b));
+    false_builder.create_assign_or_store(x.clone(), None, Exp::Variable(b));
 
     // Merge block will get phi node during SSA conversion (using builder API)
     let mut merge_builder = BasicBlockBuilder::new(&mut f[merge]);
