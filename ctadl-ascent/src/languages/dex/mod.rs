@@ -295,9 +295,9 @@ impl Context {
                                         .collect::<SmallVec<[BasicBlockIdx; 4]>>();
 
                                     if succs.is_empty() {
-                                        let throw_exp = Exp::from(
-                                            AccessPath::without_fields(reg_to_var(&code, f.a)),
-                                        );
+                                        let throw_exp = Exp::from(AccessPath::without_fields(
+                                            reg_to_var(&code, f.a),
+                                        ));
                                         let empty_exp = Exp::new_bytes(Vec::new());
                                         TerminatorKind::Return {
                                             args: smallvec![empty_exp, throw_exp],

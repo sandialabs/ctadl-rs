@@ -437,5 +437,4 @@ mod tests {
         coalesce_function(&mut f);
         assert_eq!(block_kinds(&f).len(), 2);
     }
-
 }

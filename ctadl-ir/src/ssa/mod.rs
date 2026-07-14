@@ -176,10 +176,7 @@ fn complete(function: &mut FunctionData) {
         .into_iter()
         .collect(),
         Some(Terminator::new_kind(TerminatorKind::Return {
-            args: retvars
-                .iter()
-                .map(|v| Exp::Variable(v.clone()))
-                .collect(),
+            args: retvars.iter().map(|v| Exp::Variable(v.clone())).collect(),
         })),
     );
 

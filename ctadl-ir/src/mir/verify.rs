@@ -61,7 +61,6 @@ pub enum VerifyError {
         function: String,
         location: Location,
     },
-
 }
 
 /// A list of verification errors

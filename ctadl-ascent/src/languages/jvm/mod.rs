@@ -232,9 +232,9 @@ impl Context {
                             if handler_pcs.contains(&bb.start_pc) {
                                 bb_data.push_back(Statement::new_kind(StatementKind::Assign {
                                     dest: VariableRef::new_local("stack0".to_string()),
-                                    sources: smallvec![Exp::from(
-                                        AccessPath::without_fields(Self::except()),
-                                    )],
+                                    sources: smallvec![Exp::from(AccessPath::without_fields(
+                                        Self::except()
+                                    ),)],
                                 }));
                             }
 
@@ -331,9 +331,9 @@ impl Context {
                                             TerminatorKind::Return {
                                                 args: smallvec![
                                                     empty_exp(),
-                                                    Exp::from(
-                                                        AccessPath::without_fields(Self::except(),)
-                                                    ),
+                                                    Exp::from(AccessPath::without_fields(
+                                                        Self::except(),
+                                                    )),
                                                 ],
                                             }
                                         } else {

@@ -304,7 +304,7 @@ impl Visitor for CodegenVisitor<'_> {
                     let base_path = self
                         .cap_path
                         .get(&dest.variable_ref)
-                        .map(|(_, p)| p.clone())
+                        .map(|(_, p)| *p)
                         .unwrap_or_default();
                     let path = fx::Path::from_accesses(
                         base_path
@@ -581,7 +581,7 @@ impl Visitor for CodegenVisitor<'_> {
                             field.symbol_ref().clone(),
                         ))),
                 );
-                self.paths_dedup.insert((path.clone(),));
+                self.paths_dedup.insert((path,));
                 // dest <- source.field
                 self.facts.assign.push((
                     site,
@@ -614,7 +614,7 @@ impl Visitor for CodegenVisitor<'_> {
                             field.symbol_ref().clone(),
                         ))),
                 );
-                self.paths_dedup.insert((path.clone(),));
+                self.paths_dedup.insert((path,));
                 // dest.field <- value
                 let dest = FlowVertex(dest_var, path);
                 // A function pointer / Java object stored INTO A FIELD (`o.op = id`).

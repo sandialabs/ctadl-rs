@@ -175,7 +175,6 @@ impl Context {
         mir::store_access_path(dest.base, dest.segments, src, stmts, || self.create_temp());
     }
 
-
     fn process(
         &mut self,
         facts_dir: &Path,
@@ -644,8 +643,8 @@ impl Context {
                                 &pcode_facts.vnode_facts,
                             )?;
                             if !ret_stmts.is_empty()
-                                && let Some(block_stmts) = bb_statements
-                                    .get_mut(&(bb_data.hfunc.clone(), bb_id.clone()))
+                                && let Some(block_stmts) =
+                                    bb_statements.get_mut(&(bb_data.hfunc.clone(), bb_id.clone()))
                             {
                                 block_stmts.extend(ret_stmts);
                             }
@@ -1338,9 +1337,11 @@ impl Context {
                 // The callee is a call-target address. Offsets stay on the access path (pointer
                 // arithmetic), but any dereference (e.g. a function pointer read from a stack
                 // slot) is lowered to a load, leaving an offset-only callee address.
-                let ap = self.get_lvalue(target_vnode, vnode_facts).unwrap_or_else(|_| {
-                    Addr::new(VariableRef::new_local("unknown_callee".to_string()))
-                });
+                let ap = self
+                    .get_lvalue(target_vnode, vnode_facts)
+                    .unwrap_or_else(|_| {
+                        Addr::new(VariableRef::new_local("unknown_callee".to_string()))
+                    });
                 self.load_ap(&mut stmts, ap)
             } else {
                 AccessPath::without_fields(VariableRef::new_local("unknown_callee".to_string()))

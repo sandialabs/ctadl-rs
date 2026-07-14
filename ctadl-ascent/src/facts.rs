@@ -1330,7 +1330,7 @@ fn prepend_onto(
     new_prefix: &Path,
     suffix: tailshare::Seq<mir::PathSegment>,
 ) -> tailshare::Seq<mir::PathSegment> {
-    use mir::{PathSegment, Offset};
+    use mir::{Offset, PathSegment};
     // `new_prefix` is a short program access-path prefix (usually 0–2 components).
     let comps: Vec<PathSegment> = new_prefix.0.iter().cloned().collect();
     if comps.is_empty() {
@@ -1365,7 +1365,7 @@ fn prepend_onto(
 /// the suffix is .[1].
 #[inline]
 pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<tailshare::Seq<mir::PathSegment>> {
-    use mir::{PathSegment, Offset};
+    use mir::{Offset, PathSegment};
     let mut ap_seq = ap.0;
     let mut prefix_seq = prefix.0;
 
@@ -1506,7 +1506,7 @@ mod tests {
 
         // Test case: p23.substitute_prefix(p2, p1) where p23=.[1], p2='', p1=.[1] -> .[2]
         // This tests offset merging when matching empty prefix
-        use ctadl_ir::mir::{PathSegment, Offset};
+        use ctadl_ir::mir::{Offset, PathSegment};
 
         // Create p23 = .[1]
         let p23 = Path::from_accesses([PathSegment::Offset(Offset(1))]);
@@ -1546,7 +1546,7 @@ mod tests {
     /// different path and slip past `paths()` feasibility gates the real forward chain failed.
     #[test]
     fn test_match_prefix_exact_offset_consumes_component() {
-        use ctadl_ir::mir::{PathSegment, Offset};
+        use ctadl_ir::mir::{Offset, PathSegment};
 
         // Whole-path exact offset match: suffix is empty, not `[Offset(0)]`.
         let ap: Path = ".x.[2]".into();
@@ -1763,7 +1763,7 @@ mod tests {
     fn test_path_with_offsets() {
         // Test path with numeric offsets
         // Create a path manually with mixed PathSegment types
-        use ctadl_ir::mir::{PathSegment, Offset};
+        use ctadl_ir::mir::{Offset, PathSegment};
         let path = Path::from_accesses([
             PathSegment::Symbol(ArcIntern::from("foo")),
             PathSegment::Offset(Offset(42)),

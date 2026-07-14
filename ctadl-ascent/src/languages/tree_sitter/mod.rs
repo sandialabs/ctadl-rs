@@ -1606,7 +1606,9 @@ impl<'a> Context<'a> {
             // The callee is a call-target location (e.g. `(*op_func)(...)`); resolve it as an
             // lvalue so its access path is preserved rather than lowered into a load.
             self.flatten_lvalue(program, func_node, source, scope_view)
-                .unwrap_or_else(|_| self.build_access_path(func_name, Default::default(), scope_view))
+                .unwrap_or_else(|_| {
+                    self.build_access_path(func_name, Default::default(), scope_view)
+                })
         };
 
         let var = access_path.base.variable.clone();
@@ -1762,8 +1764,9 @@ impl<'a> Context<'a> {
             if let Some(righty) = right_op {
                 fa.push(righty.clone());
             }
-            program[scope_view.fidx].blocks[scope_view.blidx]
-                .push_back(Statement::new_kind(StatementKind::assign(target.base.clone(), fa)));
+            program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+                StatementKind::assign(target.base.clone(), fa),
+            ));
         } else {
             // A store writes a single value into the field path; the field read is not
             // expressible as an operand, so a compound op's second operand is dropped here
@@ -1794,11 +1797,9 @@ impl<'a> Context<'a> {
         scope_view: &ScopeView,
     ) -> Result<RawPath, Error> {
         match node.kind() {
-            "identifier" => Ok(self.build_access_path(
-                to_str(&node, source),
-                Default::default(),
-                scope_view,
-            )),
+            "identifier" => {
+                Ok(self.build_access_path(to_str(&node, source), Default::default(), scope_view))
+            }
             "field_expression" => {
                 let mut path_vec = Vec::<&str>::new();
                 let final_ident = extract_field_expression(node, source, &mut path_vec)?;
@@ -1836,7 +1837,8 @@ impl<'a> Context<'a> {
             }
             "pointer_expression" => self.flatten_lvalue(
                 program,
-                node.child_by_field_name("argument").expect("always a argument"),
+                node.child_by_field_name("argument")
+                    .expect("always a argument"),
                 source,
                 scope_view,
             ),

@@ -396,7 +396,9 @@ pub(crate) fn check_loads(prog: &Program, source_str: &str) {
             .iter()
             .cloned()
             .map(PathSegment::from)
-            .chain(std::iter::once(PathSegment::Symbol(field.symbol_ref().clone())))
+            .chain(std::iter::once(PathSegment::Symbol(
+                field.symbol_ref().clone(),
+            )))
             .collect();
         source.variable_ref == ap.base && full == ap.fields
     });
@@ -426,7 +428,9 @@ fn writes_dest(kind: &StatementKind, dst: &DslPath) -> bool {
                 .iter()
                 .cloned()
                 .map(PathSegment::from)
-                .chain(std::iter::once(PathSegment::Symbol(field.symbol_ref().clone())))
+                .chain(std::iter::once(PathSegment::Symbol(
+                    field.symbol_ref().clone(),
+                )))
                 .collect();
             !dst.fields.is_empty() && dest.variable_ref == dst.base && full == dst.fields
         }
@@ -677,6 +681,9 @@ mod ap_tests {
         // A `#`-prefixed source is a constant literal, not a variable.
         assert_eq!(exp_from_str("#7"), Exp::new_str("7"));
         // ...while a bare name is still an access-path variable.
-        assert_eq!(exp_from_str("b"), Exp::Variable(access_path_from_str("b").base));
+        assert_eq!(
+            exp_from_str("b"),
+            Exp::Variable(access_path_from_str("b").base)
+        );
     }
 }
