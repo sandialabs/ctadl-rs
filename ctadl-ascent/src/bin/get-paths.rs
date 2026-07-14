@@ -42,6 +42,14 @@ struct Args {
 
     #[arg(long, short, value_enum, default_value_t = TaintDirection::All)]
     pub taint_direction: TaintDirection,
+
+    /// Optional source endpoints to filter by (e.g. "call-arg(1234, -1)")
+    #[arg(long = "source")]
+    pub sources: Vec<String>,
+
+    /// Optional sink endpoints to filter by (e.g. "call-arg(5678, 0)")
+    #[arg(long = "sink")]
+    pub sinks: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -430,6 +438,16 @@ async fn run() -> Result<(), Error> {
         }
     }
 
+
+    let mut insn_to_func = BTreeMap::new();
+    for (site_packed, _, _) in &index_facts.actual_param {
+        let site = ctadl_ascent::facts::InsnSiteId::unpack(site_packed).unwrap();
+        insn_to_func.insert(site.insn_id.id, site.func_id);
+    }
+    for (site_packed, _) in &index_facts.call {
+        let site = ctadl_ascent::facts::InsnSiteId::unpack(site_packed).unwrap();
+        insn_to_func.insert(site.insn_id.id, site.func_id);
+    }
     let mut endpoints = Vec::new();
 
     // In addition to the target vertices defined via command line input, we must load
@@ -460,9 +478,67 @@ async fn run() -> Result<(), Error> {
         }
     }
 
+
+
+
+    if !args.sources.is_empty() {
+        model_endpoints.retain(|ep| ep.direction != FactsTaintDirection::Forward);
+        for s in &args.sources {
+            if let Some((var, path)) = parse_vertex_str(s) {
+                if let ctadl_ascent::facts::FlowVariableKind::CallArg(packed) = var.kind() {
+                    let call_arg_id = ctadl_ascent::facts::CallArgId::try_from(packed).unwrap();
+                    let insn_id = call_arg_id.insn_id.id;
+                    if let Some(&func_id) = insn_to_func.get(&insn_id) {
+                        model_endpoints.push(QueryEndpoint {
+                            infunc: func_id,
+                            vertex: ctadl_ascent::facts::FlowVertex(var, path),
+                            label: Label("user_source".into()),
+                            direction: FactsTaintDirection::Forward,
+                            call_site: None,
+                        });
+                    } else {
+                        eprintln!("Warning: could not find function for source {}", s);
+                    }
+                } else {
+                    eprintln!("Warning: only call-arg sources are supported, got {}", s);
+                }
+            } else {
+                eprintln!("Warning: failed to parse source {}", s);
+            }
+        }
+    }
+
+    if !args.sinks.is_empty() {
+        model_endpoints.retain(|ep| ep.direction != FactsTaintDirection::Backward);
+        for s in &args.sinks {
+            if let Some((var, path)) = parse_vertex_str(s) {
+                if let ctadl_ascent::facts::FlowVariableKind::CallArg(packed) = var.kind() {
+                    let call_arg_id = ctadl_ascent::facts::CallArgId::try_from(packed).unwrap();
+                    let insn_id = call_arg_id.insn_id.id;
+                    if let Some(&func_id) = insn_to_func.get(&insn_id) {
+                        model_endpoints.push(QueryEndpoint {
+                            infunc: func_id,
+                            vertex: ctadl_ascent::facts::FlowVertex(var, path),
+                            label: Label("user_sink".into()),
+                            direction: FactsTaintDirection::Backward,
+                            call_site: None,
+                        });
+                    } else {
+                        eprintln!("Warning: could not find function for sink {}", s);
+                    }
+                } else {
+                    eprintln!("Warning: only call-arg sinks are supported, got {}", s);
+                }
+            } else {
+                eprintln!("Warning: failed to parse sink {}", s);
+            }
+        }
+    }
+
     for ep in &model_endpoints {
         endpoints.push((ep.clone(),));
     }
+
 
     for (func_id, site_packed, vertex) in target_vertices {
         if matches!(direction, TaintDirection::Fwd | TaintDirection::All) {
@@ -688,4 +764,35 @@ fn main() {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
+}
+
+
+fn parse_vertex_str(s: &str) -> Option<(ctadl_ascent::facts::FlowVariable, ctadl_ascent::facts::Path)> {
+    if let Some(rest) = s.strip_prefix("call-arg(") {
+        if let Some(idx) = rest.find(')') {
+            let inner = &rest[..idx];
+            let mut parts = inner.split(',');
+            let insn_str = parts.next()?.trim();
+            let formal_str = parts.next()?.trim();
+            let insn_id = insn_str.parse::<u64>().ok()?;
+            let formal = formal_str.parse::<i16>().ok()?;
+
+            let call_arg_id = ctadl_ascent::facts::CallArgId::new(
+                ctadl_ascent::facts::InsnId { id: insn_id },
+                ctadl_ascent::facts::FormalIndex::from(formal),
+            );
+            let packed = ctadl_ascent::facts::PackedCallArg::try_from(call_arg_id).ok()?;
+            let var = ctadl_ascent::facts::FlowVariableKind::CallArg(packed).into();
+
+            let path_str = &rest[idx+1..];
+            let path = if path_str.is_empty() {
+                ctadl_ascent::facts::Path::empty()
+            } else {
+                path_str.parse::<ctadl_ascent::facts::Path>().ok()?
+            };
+
+            return Some((var, path));
+        }
+    }
+    None
 }
