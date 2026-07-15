@@ -210,6 +210,10 @@ impl PcodeFactsReader {
         let hvar_name_facts = self.read_hvar_name_facts()?;
         log::trace!("pcode: reading hvar representative facts");
         let hvar_representative_facts = self.read_hvar_representative_facts()?;
+        log::trace!("pcode: reading vnode hvar facts");
+        let vnode_hvar_facts = self.read_vnode_hvar_facts()?;
+        log::trace!("pcode: reading hvar class facts");
+        let hvar_class_facts = self.read_hvar_class_facts()?;
         log::trace!("pcode: reading register facts");
         let register_facts = self.read_register_facts()?;
 
@@ -222,6 +226,8 @@ impl PcodeFactsReader {
             symbol_hvar_facts,
             hvar_name_facts,
             hvar_representative_facts,
+            vnode_hvar_facts,
+            hvar_class_facts,
             register_facts,
         })
     }
@@ -1306,6 +1312,28 @@ impl PcodeFactsReader {
         Ok(facts.into_iter().collect())
     }
 
+    /// Read VNODE_HVAR facts, mapping each varnode to the high variable it belongs to.
+    ///
+    /// Optional: fact sets exported before this was read lack the file, in which case
+    /// callers see an empty map and simply detect no high-variable classes.
+    pub fn read_vnode_hvar_facts(&self) -> Result<BTreeMap<PcodeVarnode, HighVariable>> {
+        let facts = self
+            .read_csv_facts_optional::<(PcodeVarnode, HighVariable)>("VNODE_HVAR.facts")?
+            .unwrap_or_default();
+        Ok(facts.into_iter().collect())
+    }
+
+    /// Read HVAR_CLASS facts, giving Ghidra's storage classification for each high
+    /// variable (`global`, `constant`, `other`, ...).
+    ///
+    /// Optional, for the same reason as [`Self::read_vnode_hvar_facts`].
+    pub fn read_hvar_class_facts(&self) -> Result<BTreeMap<HighVariable, String>> {
+        let facts = self
+            .read_csv_facts_optional::<(HighVariable, String)>("HVAR_CLASS.facts")?
+            .unwrap_or_default();
+        Ok(facts.into_iter().collect())
+    }
+
     /// Helper function to read CSV facts
     fn read_csv_facts<T: serde::de::DeserializeOwned>(&self, filename: &str) -> Result<Vec<T>> {
         log::trace!("read_csv_facts: {filename}");
@@ -1351,6 +1379,8 @@ pub struct PcodeFacts {
     pub symbol_hvar_facts: BTreeMap<HighSymbol, HighVariable>,
     pub hvar_name_facts: BTreeMap<HighVariable, String>,
     pub hvar_representative_facts: BTreeMap<HighVariable, PcodeVarnode>,
+    pub vnode_hvar_facts: BTreeMap<PcodeVarnode, HighVariable>,
+    pub hvar_class_facts: BTreeMap<HighVariable, String>,
     pub register_facts: Vec<RegisterData>,
 }
 
@@ -1374,5 +1404,19 @@ impl PcodeFacts {
 
         // Step 2: Find PcodeVarnode for the HighVariable
         self.hvar_representative_facts.get(hvar)
+    }
+
+    /// Whether `vnode` is storage for a global variable, i.e. whether it belongs to a
+    /// high variable the decompiler typed as a `HighGlobal`.
+    ///
+    /// The varnode's address space is not a substitute for this test: call-target
+    /// varnodes also live in the `ram` space, and are distinguished by having no high
+    /// variable at all. Each function gets its own high variable for a given global, so
+    /// callers must key the global's identity on its address rather than on the hvar.
+    pub fn is_global_vnode(&self, vnode: &PcodeVarnode) -> bool {
+        self.vnode_hvar_facts
+            .get(vnode)
+            .and_then(|hvar| self.hvar_class_facts.get(hvar))
+            .is_some_and(|class| class == "global")
     }
 }
