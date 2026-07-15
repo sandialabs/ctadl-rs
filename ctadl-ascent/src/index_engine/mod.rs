@@ -813,12 +813,17 @@ pub fn taint_index_with_config(
         initial_formals
     );
 
-    let program_paths: Vec<_> = facts
+    let mut program_paths: Vec<_> = facts
         .assign
         .iter()
         .flat_map(|(_, dst, src)| std::iter::once(dst.1).chain(std::iter::once(src.1)))
         .map(|p| (p,))
         .collect();
+    // Codegen's paths are syntactic program paths too, including composed ones that no single
+    // `assign` edge carries (a field read through a pointer is lowered to a chain of loads through
+    // temporaries, so only the per-hop paths land on edges). Dropping them under-approximates the
+    // propagation gate and silently kills flows.
+    program_paths.extend(facts.paths.iter().cloned());
     log::info!(
         "[mem cp] + program_paths ({} rows): {:.1} MB",
         program_paths.len(),
