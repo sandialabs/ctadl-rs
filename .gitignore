@@ -4,3 +4,4 @@ ascent/**
 .scratch/**/result
 result
 /.local
+/.envrc.local

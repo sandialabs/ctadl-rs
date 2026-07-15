@@ -120,9 +120,12 @@
               javac -d "$out" "$src/HelloWorld.java" "$src/ArrayFlow.java" "$src/LoopFlow.java"
             '';
 
-        # Non-interactive environment that mirrors the tools the regression
-        # scripts expect on PATH (ctadl, dex-reader, jvm-reader, javac, dx,
-        # gcc/addr2line, ghidra, jq, python3).
+        # The external toolchain the regression scripts expect on PATH
+        # (dex-reader, jvm-reader, javac, dx, gcc/addr2line, ghidra, jq,
+        # python3). Deliberately excludes this repo's own package so that
+        # `devShells.regression` can be used to run parts of the suite against a
+        # locally built ctadl/xtask; the `regression` check adds the Nix-built
+        # package on top.
         testEnv = pkgs.buildEnv {
           name = "ctadl-nightly-test-env";
           # gcc-wrapper and binutils-wrapper both ship a few binutils shims
@@ -138,7 +141,6 @@
             pkgs.python3
             pkgs.gcc
             pkgs.binutils
-            self.packages.${system}.default
             dex-reader
             jvm-reader
             androidSdk.androidsdk
@@ -192,12 +194,13 @@
             # `xtask` binary that ships in packages.default. This is a full
             # (non-local) derivation because it runs ctadl + ghidra + the Android
             # toolchain. The Nix sandbox has no network, so every tool comes from
-            # testEnv. `xtask` discovers cases under the cwd's `tests/` dir and
-            # invokes ctadl/dex-reader/javac/dx/addr2line from PATH.
             regression =
               pkgs.runCommand "ctadl-checks-regression"
                 {
-                  nativeBuildInputs = [ testEnv ];
+                  nativeBuildInputs = [
+                    testEnv
+                    self.packages.${system}.default
+                  ];
                   GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
                   src = ./nightly;
                 }
@@ -274,9 +277,6 @@
               parquet-tools
               graphviz
               checksarif
-              ghidra-bin
-              pkgsCross.gnu64.stdenv.cc
-              pkgsCross.gnu64.binutils
               nil
               nixd
               pkg-config
@@ -287,6 +287,12 @@
 
           # nix develop .#regression
           devShells.regression = pkgs.mkShell {
+            buildInputs = with pkgs; [
+              pkgsCross.gnu64.stdenv.cc
+              pkgsCross.gnu64.binutils
+              nil
+              nixd
+            ];
             packages = [ testEnv ];
 
             GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
@@ -295,7 +301,6 @@
 
             shellHook = ''
               export PATH="${androidSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"
-              export HOME="$TMPDIR"
             '';
           };
       }

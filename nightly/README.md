@@ -24,8 +24,14 @@ shell with the full regression toolchain on `PATH`:
 
 ```sh
 nix develop .#regression
+cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
+
+`--frontend` takes `pcode`, `jvm`, or `dex` (comma-separated, or repeated) and
+defaults to all three. It selects *before* anything runs, so `--frontend pcode`
+never invokes the Java toolchain, and `--frontend jvm,dex` never starts Ghidra.
+Use it with `--filter` to narrow further: `--frontend pcode --filter funcptr`.
 
 Under the hood both paths invoke the `xtask` task runner (`xtask/src/`) over the
 cases. The flake check above remains the canonical path and the one used in CI.
