@@ -128,9 +128,8 @@
         # package on top.
         testEnv = pkgs.buildEnv {
           name = "ctadl-nightly-test-env";
-          # gcc-wrapper and binutils-wrapper both ship a few binutils shims
-          # (e.g. `strings`); we want both (gcc to compile, binutils for
-          # addr2line), and either copy of the overlapping tools is fine.
+          # The cc-wrapper and binutils-wrapper both ship a few overlapping
+          # binutils shims (e.g. `strings`); either copy is fine.
           ignoreCollisions = true;
           paths = [
             pkgs.bash
@@ -139,7 +138,16 @@
             pkgs.rustc
             pkgs.jq
             pkgs.python3
-            pkgs.gcc
+            # The C compiler `pick_toolchain` prefers. A native `pkgs.gcc` here
+            # would also claim `cc`, and on Darwin that is fatal: rustc links
+            # through `cc`, and gcc passes -no_compact_unwind, so the binary
+            # ends up with no __unwind_info -- which the arm64 unwinder needs to
+            # find a handler. Every panic then aborts instead of unwinding.
+            # Every binary this ships is `x86_64-unknown-linux-gnu-` prefixed,
+            # so it never claims `cc` and the stdenv's clang stays the linker.
+            # Where it is not cross (x86_64 Linux) it collapses to the native
+            # gcc, which is the right linker there anyway.
+            pkgs.pkgsCross.gnu64.stdenv.cc
             pkgs.binutils
             dex-reader
             jvm-reader
@@ -288,8 +296,6 @@
           # nix develop .#regression
           devShells.regression = pkgs.mkShell {
             buildInputs = with pkgs; [
-              pkgsCross.gnu64.stdenv.cc
-              pkgsCross.gnu64.binutils
               nil
               nixd
             ];
