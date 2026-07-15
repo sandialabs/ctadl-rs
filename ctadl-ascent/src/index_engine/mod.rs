@@ -877,11 +877,14 @@ pub fn taint_index_with_config(
         assign_like.len(),
         phys_footprint_mb()
     );
-    // Access paths may be introduced in summaries, so include those.
+    // Access paths may be introduced in summaries, so include those. Codegen's paths join them:
+    // both are finite sets fixed before the fixpoint, which is what makes the one-level concat
+    // rules below terminate.
     let summary_paths: HashSet<_> = facts
         .summary
         .iter()
         .flat_map(|(_, _, p1, _, p2)| [(*p1,), (*p2,)])
+        .chain(facts.paths.iter().cloned())
         .collect();
     log::info!(
         "[mem cp] + summary_paths ({} rows): {:.1} MB",
