@@ -32,4 +32,11 @@ result_large_err = "allow"
 just_underscores_and_digits = "allow"
 
 [profile.release]
+debug = false
+strip = "debuginfo"
+lto = "thin"
+
+[profile.profiling]
+inherits = "release"
 debug = true
+strip = "none"
