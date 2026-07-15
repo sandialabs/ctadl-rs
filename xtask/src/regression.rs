@@ -402,8 +402,9 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
     exec::run_checked(reader, "dex-reader")?;
 
     let expected = assertions::read_expected_lines(config)?;
+    let unexpected = assertions::read_unexpected_lines(config)?;
     let offsets = assertions::collect_byte_offsets(&sarif)?;
-    check_byte_offset_lines(expected, offsets, &linemap)
+    check_byte_offset_lines(expected, unexpected, offsets, &linemap)
 }
 
 // --- JVM / Java -----------------------------------------------------------
@@ -485,18 +486,22 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
     exec::run_checked(reader, "jvm-reader")?;
 
     let expected = assertions::read_expected_lines(config)?;
+    let unexpected = assertions::read_unexpected_lines(config)?;
     let offsets = assertions::collect_byte_offsets(&sarif)?;
-    check_byte_offset_lines(expected, offsets, &linemap)
+    check_byte_offset_lines(expected, unexpected, offsets, &linemap)
 }
 
 /// DEX/JVM pass criterion: at least one expected line among mapped offsets,
-/// or no flows when `expected_lines` is empty.
+/// or no flows when `expected_lines` is empty. In both cases no `unexpected_lines`
+/// entry may carry a flow.
 fn check_byte_offset_lines(
     expected: Vec<i64>,
+    unexpected: Vec<i64>,
     offsets: BTreeSet<i64>,
     linemap: &Path,
 ) -> Result<Outcome> {
     if expected.is_empty() {
+        // Asserting no flows at all already subsumes any `unexpected_lines`.
         return Ok(if offsets.is_empty() {
             Outcome::Pass
         } else {
@@ -516,13 +521,17 @@ fn check_byte_offset_lines(
         .filter_map(|&off| assertions::map_offset_to_line(&entries, off))
         .collect();
 
-    if expected.iter().any(|line| mapped.contains(line)) {
-        Ok(Outcome::Pass)
-    } else {
-        Ok(Outcome::Fail(format!(
+    if !expected.iter().any(|line| mapped.contains(line)) {
+        return Ok(Outcome::Fail(format!(
             "none of the expected lines {expected:?} appear in mapped lines {mapped:?}"
-        )))
+        )));
     }
+
+    if let Some(why) = assertions::check_unexpected_lines(&unexpected, &mapped) {
+        return Ok(Outcome::Fail(why));
+    }
+
+    Ok(Outcome::Pass)
 }
 
 fn class_files(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -667,14 +676,20 @@ fn run_pcode(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
         .filter(|l| !found.contains(l))
         .collect();
 
-    // PASS only if every expected line was found (the pcode criterion).
-    if missing.is_empty() {
-        Ok(Outcome::Pass)
-    } else {
-        Ok(Outcome::Fail(format!(
+    if !missing.is_empty() {
+        return Ok(Outcome::Fail(format!(
             "expected lines {missing:?} not found among {found:?}"
-        )))
+        )));
     }
+
+    let unexpected = assertions::read_unexpected_lines(query)?;
+    if let Some(why) = assertions::check_unexpected_lines(&unexpected, &found) {
+        return Ok(Outcome::Fail(why));
+    }
+
+    // PASS only if every expected line was found (the pcode criterion) and no
+    // unexpected line was.
+    Ok(Outcome::Pass)
 }
 
 /// Parse the line number from an `addr2line` `file:line` result, ignoring any

@@ -88,6 +88,33 @@ flow is reported (see `Reassignment.java` / `reassignment.json`).
 instructions the case is **skipped** (cross-platform decompiler differences);
 the strict check runs on Linux/CI.
 
+## Asserting that a line stays clean
+
+Any case, in any frontend, may add an optional `unexpected_lines` array naming
+source lines that must carry **no** flow:
+
+```json
+{
+  "expected_lines": [26, 31],
+  "unexpected_lines": [30],
+  "model_generators": [ ... ]
+}
+```
+
+The case fails if a flow reaches any line listed there, and the key may be
+omitted entirely by cases that make no such claim.
+
+Use it whenever the point of a case is precision rather than reachability --
+that taint stopped where it should have. `expected_lines` alone cannot express
+this: neither pass criterion above objects to *extra* lines being tainted, so a
+case that merely leaves the clean line unlisted keeps passing if that line later
+becomes tainted. `globalstruct.c` is the worked example: it writes `g_pair.a`
+and sinks both fields, so the sink on the untouched `g_pair.b` is the whole
+point of the test and is named in `unexpected_lines`.
+
+An **empty** `expected_lines` (the DEX/JVM negative test) already asserts that
+nothing flows at all, which subsumes any `unexpected_lines`.
+
 ## Notes
 
 - Each case runs in its own scratch directory under `$TMPDIR`; nothing is
