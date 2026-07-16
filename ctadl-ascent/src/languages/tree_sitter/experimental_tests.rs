@@ -195,10 +195,16 @@ fn brackets_commutative() {
 #[test_log::test]
 fn params_and_simple_assign_in_example_2() {
     init_test_logging();
-    let fp =
-        get_full_path("example2.c").expect("Test Sources are expected in .../tests/c/<filename>");
-    let program = program_from_file(fp).expect("example2.c Program parsed");
-    let dump = program.to_string();
+    let src = r#"
+        int d;
+        int foo(int c, int b) {
+          int a;
+          a = b;
+          a = d;
+          return a;
+        }
+        "#;
+    let (_, dump) = program_from_string(src);
     dump_ir(&dump);
 
     assert!(check_match(&dump, "return %a"), "has return a");
