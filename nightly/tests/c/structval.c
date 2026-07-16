@@ -12,14 +12,21 @@
  * address). Before the fix this produced no tainted instructions at all.
  *
  * KNOWN IMPRECISION: sink(w.b) is reported tainted here even though w.b is
- * written clean, which is why it is not in `unexpected_lines`. It is the same
- * wide-copy imprecision documented in structret.c -- at -O0 the caller copies
- * the aggregate into the argument area 8 bytes at a time, spanning a and b
- * together, and the taint lands on the whole slot. structout.c is the
- * field-precise control (same round trip through an explicit pointer, w.b stays
- * clean). If a fix ever restores field precision through a stack-passed
- * aggregate, this test still passes and the sink on w.b should move into
- * `unexpected_lines`.
+ * written clean, which is why it is not in `unexpected_lines`. The root cause is
+ * how the frontend models the pcode PIECE/SUBPIECE ops (both routed through
+ * handle_binop in languages/pcode/mod.rs, which unions its operands and discards
+ * the byte-offset operand). At -O0 the caller copies the aggregate into the
+ * argument area 8 bytes at a time, so Ghidra fuses w.a and w.b into a single
+ * varnode with PIECE (a and b share the first eightbyte); that word is tainted
+ * as a whole because w.a is. In the callee each field is sliced back out with
+ * SUBPIECE(w, offset), and because handle_binop ignores the offset, both
+ * SUBPIECE results inherit the whole varnode's taint. structout.c is the
+ * field-precise control: it reaches the fields through a pointer, so they stay
+ * distinct .[off].deref access paths (LOAD/STORE keep the offset, PIECE/SUBPIECE
+ * do not) and w.b stays clean. Adding padding so a and b sit in different
+ * eightbytes also clears it, since the first-word PIECE no longer mixes them. If
+ * SUBPIECE/PIECE ever become offset-aware, this test still passes and the sink
+ * on w.b should move into `unexpected_lines`.
  */
 
 int source(void);

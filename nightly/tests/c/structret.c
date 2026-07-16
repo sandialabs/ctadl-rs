@@ -9,13 +9,19 @@
  * KNOWN IMPRECISION: r.b is reported tainted here even though make() writes it
  * clean, which is why it is not in `unexpected_lines` -- structout.c is the
  * same round trip through an explicit out-parameter and does keep r.b clean.
- * The difference is not the return: at -O0 both copies move 8 bytes at a time
- * across a and b together, but structout.c's writes land in a stack slot the
- * frontend decomposes per field, whereas the sret copy goes through a pointer
- * and the taint lands on the whole object. Adding padding so that a and b sit
- * in different 8-byte words makes r.b come back clean. If a fix ever restores
- * field precision through a returned aggregate, this test still passes and the
- * sink on r.b should be moved into `unexpected_lines`.
+ * The difference is not the return itself but how the frontend models the pcode
+ * PIECE/SUBPIECE ops (both routed through handle_binop in
+ * languages/pcode/mod.rs, which unions its operands and discards the byte-offset
+ * operand). At -O0 both copies move 8 bytes at a time across a and b together;
+ * Ghidra fuses the two fields into one varnode with PIECE and slices them back
+ * out with SUBPIECE(w, offset). Because handle_binop ignores the offset, taint
+ * on either field spreads to the whole word and back to both fields.
+ * structout.c instead reaches the fields through a pointer, so they stay
+ * distinct .[off].deref access paths (LOAD/STORE keep the offset, PIECE/SUBPIECE
+ * do not) and r.b stays clean. Adding padding so that a and b sit in different
+ * 8-byte words also makes r.b come back clean, since the first-word PIECE no
+ * longer mixes them. If SUBPIECE/PIECE ever become offset-aware, this test still
+ * passes and the sink on r.b should be moved into `unexpected_lines`.
  */
 
 int source(void);
