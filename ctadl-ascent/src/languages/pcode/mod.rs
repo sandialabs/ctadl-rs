@@ -397,10 +397,7 @@ impl Context {
                         {
                             // Stack parameter - bind to __stack_top offset
                             StatementKind::assign_or_update(
-                                AccessPath {
-                                    variable_ref: VariableRef::new_local("__stack_top".to_string()),
-                                    path: FieldAccesses::with_offset(addr.0),
-                                },
+                                Self::stack_slot_path(addr.0),
                                 VariableRef::new_parameter(ParameterIdx::new(i)).into(),
                             )
                         } else {
