@@ -1294,9 +1294,13 @@ impl PcodeFactsReader {
     }
 
     /// Read SYMBOL_HVAR facts
-    pub fn read_symbol_hvar_facts(&self) -> Result<BTreeMap<HighSymbol, HighVariable>> {
+    pub fn read_symbol_hvar_facts(&self) -> Result<BTreeMap<HighSymbol, Vec<HighVariable>>> {
         let facts = self.read_csv_facts::<(HighSymbol, HighVariable)>("SYMBOL_HVAR.facts")?;
-        Ok(facts.into_iter().collect())
+        let mut m: BTreeMap<HighSymbol, Vec<HighVariable>> = BTreeMap::new();
+        for (s, h) in facts {
+            m.entry(s).or_default().push(h);
+        }
+        Ok(m)
     }
 
     /// Read HVAR_NAME facts
@@ -1376,7 +1380,7 @@ pub struct PcodeFacts {
     pub vnode_facts: BTreeMap<PcodeVarnode, VnodeData>,
     pub bb_facts: BTreeMap<PcodeBlockBasic, BBData>,
     pub proto_facts: BTreeMap<HighProto, ProtoData>,
-    pub symbol_hvar_facts: BTreeMap<HighSymbol, HighVariable>,
+    pub symbol_hvar_facts: BTreeMap<HighSymbol, Vec<HighVariable>>,
     pub hvar_name_facts: BTreeMap<HighVariable, String>,
     pub hvar_representative_facts: BTreeMap<HighVariable, PcodeVarnode>,
     pub vnode_hvar_facts: BTreeMap<PcodeVarnode, HighVariable>,
@@ -1399,11 +1403,16 @@ impl PcodeFacts {
     ///
     /// Returns None if either mapping is not found.
     pub fn get_symbol_representative(&self, symbol: &HighSymbol) -> Option<&PcodeVarnode> {
-        // Step 1: Find HighVariable for the given HighSymbol
-        let hvar = self.symbol_hvar_facts.get(symbol)?;
+        // Step 1: Find the HighVariables for the given HighSymbol. Ghidra maps one symbol
+        // to several high variables when it splits an aggregate into the pieces the body
+        // actually touches (the whole variable, plus one per accessed field). Only some of
+        // them carry a representative varnode, so try each rather than picking one blindly.
+        let hvars = self.symbol_hvar_facts.get(symbol)?;
 
         // Step 2: Find PcodeVarnode for the HighVariable
-        self.hvar_representative_facts.get(hvar)
+        hvars
+            .iter()
+            .find_map(|hvar| self.hvar_representative_facts.get(hvar))
     }
 
     /// Whether `vnode` is storage for a global variable, i.e. whether it belongs to a
