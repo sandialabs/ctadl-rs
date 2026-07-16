@@ -45,7 +45,7 @@ cargo test
 
 The regression tests, however, are only reliable when run through Nix, which
 pins the full toolchain (compilers, Ghidra, etc.) the fixtures are built and
-checked against:
+checked against. To run the whole suite as a sealed check:
 
 ```bash
 nix build .#checks.${system}.regression
@@ -54,6 +54,13 @@ nix build .#checks.${system}.regression
 where `${system}` is your platform (e.g. `aarch64-darwin`, `x86_64-linux`).
 Running the regression suite outside Nix is not reliable because results depend
 on the exact compiler/disassembler versions Nix provides.
+
+For iterating on tests, the `regression` dev shell provides that same pinned
+toolchain while letting you run the harness against your local working tree:
+
+```bash
+nix develop .#regression -c cargo xtask regression
+```
 
 # History
 

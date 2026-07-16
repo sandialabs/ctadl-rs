@@ -24,8 +24,14 @@ shell with the full regression toolchain on `PATH`:
 
 ```sh
 nix develop .#regression
+cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
+
+`--frontend` takes `pcode`, `jvm`, or `dex` (comma-separated, or repeated) and
+defaults to all three. It selects *before* anything runs, so `--frontend pcode`
+never invokes the Java toolchain, and `--frontend jvm,dex` never starts Ghidra.
+Use it with `--filter` to narrow further: `--frontend pcode --filter funcptr`.
 
 Under the hood both paths invoke the `xtask` task runner (`xtask/src/`) over the
 cases. The flake check above remains the canonical path and the one used in CI.
@@ -81,6 +87,33 @@ flow is reported (see `Reassignment.java` / `reassignment.json`).
 `expected_lines` entry is found. On macOS, if Ghidra reports no tainted
 instructions the case is **skipped** (cross-platform decompiler differences);
 the strict check runs on Linux/CI.
+
+## Asserting that a line stays clean
+
+Any case, in any frontend, may add an optional `unexpected_lines` array naming
+source lines that must carry **no** flow:
+
+```json
+{
+  "expected_lines": [26, 31],
+  "unexpected_lines": [30],
+  "model_generators": [ ... ]
+}
+```
+
+The case fails if a flow reaches any line listed there, and the key may be
+omitted entirely by cases that make no such claim.
+
+Use it whenever the point of a case is precision rather than reachability --
+that taint stopped where it should have. `expected_lines` alone cannot express
+this: neither pass criterion above objects to *extra* lines being tainted, so a
+case that merely leaves the clean line unlisted keeps passing if that line later
+becomes tainted. `globalstruct.c` is the worked example: it writes `g_pair.a`
+and sinks both fields, so the sink on the untouched `g_pair.b` is the whole
+point of the test and is named in `unexpected_lines`.
+
+An **empty** `expected_lines` (the DEX/JVM negative test) already asserts that
+nothing flows at all, which subsumes any `unexpected_lines`.
 
 ## Notes
 

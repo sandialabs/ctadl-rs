@@ -120,6 +120,12 @@ lazy_static::lazy_static! {
 /// Access paths are composed of field and offset accesses. Contiguous runs of offset accesses are
 /// summed, so there is never more than one offset access in a row. In effect, the offsets are
 /// "addresses of" the containing field.
+///
+/// A zero offset is dropped: it denotes the address of the field it is applied to, so `.x.[0]` and
+/// `.x` are the same address and must be the same path. Keeping them distinct would let the two
+/// spellings of one address miss each other -- a callee that derefs a pointer parameter yields
+/// `Argument(0).[0].deref`, while the caller's own storage for that object is `.[k].deref`, and the
+/// summary would never match.
 #[derive(
     Clone, Copy, Eq, PartialEq, Hash, Debug, Default, Serialize, Deserialize, PartialOrd, Ord,
 )]
@@ -137,6 +143,9 @@ impl Path {
                 _ => items.push(item),
             }
         }
+        // A zero offset is the identity on addresses. Runs are already summed, so each survivor is
+        // isolated between non-offsets and dropping it cannot make two offsets adjacent.
+        items.retain(|item| !matches!(item, mir::FieldAccess::Offset(Offset(0))));
         Path(items.into_iter().collect())
     }
 
@@ -1329,10 +1338,16 @@ fn prepend_onto(
     }
     // Junction merge: if `new_prefix`'s last component and `suffix`'s head are both offsets, sum
     // them (matching `from_accesses`) into `suffix`'s head and drop `new_prefix`'s last component.
+    // A sum of zero drops the component entirely, as `from_accesses` would.
     let (mut acc, upto) = match (comps.last(), suffix.head()) {
         (Some(FieldAccess::Offset(Offset(a))), Some(FieldAccess::Offset(Offset(b)))) => {
-            let merged = FieldAccess::Offset(Offset(a + b));
-            (suffix.map_head(|_| merged), comps.len() - 1)
+            let sum = a + b;
+            let rest = if sum == 0 {
+                suffix.tail().unwrap_or_default()
+            } else {
+                suffix.map_head(|_| FieldAccess::Offset(Offset(sum)))
+            };
+            (rest, comps.len() - 1)
         }
         _ => (suffix, comps.len()),
     };

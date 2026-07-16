@@ -81,6 +81,9 @@ enum VnodeRep {
     /// A named stack-storage varnode at frame offset `F`, expressed as the canonical
     /// stack memory `__stack_top.[F].deref` so it unifies with stack-address derefs.
     StackSlot(i64),
+    /// Storage for a global variable living at address `A`, expressed as the canonical
+    /// global memory `$globals.[A].deref`.
+    Global(i64),
 }
 
 #[derive(Debug)]
@@ -98,6 +101,8 @@ struct Context {
         BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::constant_propagation::SymbolicProp>,
     // Stack pointer register name
     sp_name: Option<String>,
+    // Varnodes that Ghidra classifies as storage for a global variable
+    global_vnodes: BTreeSet<pcode_reader::PcodeVarnode>,
     // Register facts needed for vnode conversion
     register_facts: Vec<pcode_reader::RegisterData>,
     // Current function being processed
@@ -114,6 +119,7 @@ impl Context {
             address_to_bb: Default::default(),
             cp_results: Default::default(),
             sp_name: None,
+            global_vnodes: Default::default(),
             register_facts: Default::default(),
             current_hfunc: None,
             counter: 0,
@@ -157,6 +163,12 @@ impl Context {
         // Run and store constant propagation results
         self.cp_results =
             pcode_reader::constant_propagation::compute_constant_propagation(&pcode_facts);
+        self.global_vnodes = pcode_facts
+            .vnode_facts
+            .keys()
+            .filter(|vn| pcode_facts.is_global_vnode(vn))
+            .cloned()
+            .collect();
         self.register_facts = pcode_facts.register_facts.clone();
 
         // Store bb_facts for later use
@@ -385,10 +397,7 @@ impl Context {
                         {
                             // Stack parameter - bind to __stack_top offset
                             StatementKind::assign_or_update(
-                                AccessPath {
-                                    variable_ref: VariableRef::new_local("__stack_top".to_string()),
-                                    path: FieldAccesses::with_offset(addr.0),
-                                },
+                                Self::stack_slot_path(addr.0),
                                 VariableRef::new_parameter(ParameterIdx::new(i)).into(),
                             )
                         } else {
@@ -1072,6 +1081,11 @@ impl Context {
     /// `__stack_top.[F].deref` (a [`VnodeRep::StackSlot`]). Both then share the `__stack_top`
     /// root used by LOAD/STORE address resolution (see [`Self::resolve_mem_exp`]), so taint
     /// written through a stack pointer meets taint read from the corresponding slot.
+    ///
+    /// Global storage is canonicalized the same way, as `$globals.[A].deref` (a
+    /// [`VnodeRep::Global`]). Globals are rooted at the shared global heap rather than at
+    /// the varnode, because Ghidra gives each referencing function its own varnode and its
+    /// own high variable for one global; only the address is common to all of them.
     fn convert_vnode(
         &self,
         vnode_id: &pcode_reader::PcodeVarnode,
@@ -1122,6 +1136,20 @@ impl Context {
             return VnodeRep::StackSlot(offset);
         }
 
+        // Storage for a global denotes the memory at its address. Key it on the address,
+        // which is what every function referencing the global agrees on; the varnode and
+        // its high variable are per-function, so rooting the path at either of those would
+        // give each function a private copy of the global.
+        if self.global_vnodes.contains(vnode_id)
+            && let Some(address) = vnode_data
+                .address
+                .as_ref()
+                .map(|a| a.0)
+                .or(vnode_data.constant_offset)
+        {
+            return VnodeRep::Global(address);
+        }
+
         if space != Some("register")
             && space != Some("unique")
             && let Some(offset) = vnode_data.constant_offset
@@ -1137,6 +1165,17 @@ impl Context {
         let stack_top = VariableRef::new_local("__stack_top".to_string());
         let mut ap = AccessPath::without_fields(stack_top);
         ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
+        ap.path.fields.push(FieldAccess::Symbol("deref".into()));
+        ap
+    }
+
+    /// Builds the access path for the canonical global `$globals.[address].deref`.
+    ///
+    /// [`Variable::GlobalHeap`] is threaded through every call, so rooting globals here
+    /// is what carries their taint between functions that never pass it directly.
+    fn global_path(address: i64) -> AccessPath {
+        let mut ap = AccessPath::without_fields(VariableRef::new_global());
+        ap.path.fields.push(FieldAccess::Offset(Offset(address)));
         ap.path.fields.push(FieldAccess::Symbol("deref".into()));
         ap
     }
@@ -1314,6 +1353,7 @@ impl Context {
                 Exp::AccessPath(ap)
             }
             VnodeRep::StackSlot(offset) => Exp::AccessPath(Self::stack_slot_path(offset)),
+            VnodeRep::Global(address) => Exp::AccessPath(Self::global_path(address)),
         };
         Ok(exp)
     }
@@ -1337,6 +1377,7 @@ impl Context {
                 ap
             }
             VnodeRep::StackSlot(offset) => Self::stack_slot_path(offset),
+            VnodeRep::Global(address) => Self::global_path(address),
         };
         Ok(ap)
     }
@@ -1348,7 +1389,10 @@ impl Context {
     ) -> Option<i64> {
         match self.convert_vnode(vnode_id, vnode_facts, &self.register_facts) {
             VnodeRep::Const(value) => Some(value),
-            VnodeRep::Var(_) | VnodeRep::Offset(..) | VnodeRep::StackSlot(_) => None,
+            VnodeRep::Var(_)
+            | VnodeRep::Offset(..)
+            | VnodeRep::StackSlot(_)
+            | VnodeRep::Global(_) => None,
         }
     }
 
