@@ -252,7 +252,7 @@ impl Task<'_> {
             Task::Case(case) => {
                 let outcome =
                     run_case(case, worker).unwrap_or_else(|err| Outcome::Fail(format!("{err:#}")));
-                vec![(case.name.clone(), apply_jvm_allowlist(&case.name, outcome))]
+                vec![(case.name.clone(), apply_xfail_policy(&case.name, outcome))]
             }
             Task::JvmChecks { samples } => {
                 // jvm-reader checks: compile the sample .java and exercise
@@ -449,13 +449,20 @@ fn preflight_java() -> Result<()> {
     );
 }
 
-/// Non-enforced JVM E2E failures are reported as XFAIL so the suite can stay
-/// green while the frontend matures.
-fn apply_jvm_allowlist(name: &str, outcome: Outcome) -> Outcome {
+/// Failures on a frontend that is still maturing are reported as XFAIL so the
+/// suite can stay green while its gaps are visible in the report.
+///
+/// Two frontends qualify. Non-enforced JVM E2E cases, per [`JVM_E2E_ENFORCED`].
+/// And every `Php:` case: the PHP frontend finds sources, sinks and tainted
+/// instructions but does not yet link them into an end-to-end path, so the
+/// tainted-path results these cases assert on come back empty. Drop this arm to
+/// make the PHP cases enforced once that lands.
+fn apply_xfail_policy(name: &str, outcome: Outcome) -> Outcome {
     match outcome {
         Outcome::Fail(why) if name.starts_with("Jvm:") && !JVM_E2E_ENFORCED.contains(&name) => {
             Outcome::Xfail(why)
         }
+        Outcome::Fail(why) if name.starts_with("Php:") => Outcome::Xfail(why),
         other => other,
     }
 }
@@ -465,7 +472,91 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
         Kind::Dex { java, config } => run_dex(&case.name, java, config),
         Kind::Jvm { java, config } => run_jvm(&case.name, java, config),
         Kind::Pcode { source, query } => run_pcode(&case.name, source, query, worker),
+        Kind::Php { source, query } => run_php(&case.name, source, query),
     }
+}
+
+// --- PHP -------------------------------------------------------------------
+
+/// Analyze a PHP source file and check the reported lines against the known
+/// answer.
+///
+/// The shortest runner here: PHP needs no toolchain and no compile step, and the
+/// lowering records source spans, so the SARIF regions carry source lines
+/// directly. There is nothing to map back.
+///
+/// Pass criterion matches DEX/JVM (at least one `expected_lines` entry among the
+/// reported lines) rather than pcode's stricter all-of, since a path result names
+/// the lines along one flow and need not cover every line a case lists.
+fn run_php(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
+    let work = scratch_dir(name)?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+
+    let stem = source
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .with_context(|| format!("bad php file name {}", source.display()))?;
+
+    let project = format!("{stem}_php_test");
+    let sarif = work.join(format!("{stem}_output.sarif"));
+    let source_str = source.to_string_lossy().into_owned();
+
+    // `-l php` rather than extension sniffing, so the case still exercises the
+    // PHP frontend if detection ever changes.
+    run_ctadl(
+        &work,
+        &state,
+        &["import", "-l", "php", &source_str, "-n", &project],
+    )?;
+    run_ctadl(
+        &work,
+        &state,
+        &["index", &project, "-m", &query.to_string_lossy()],
+    )?;
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "query",
+            &project,
+            "-m",
+            &query.to_string_lossy(),
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
+    )?;
+
+    let expected = assertions::read_expected_lines(query)?;
+    let found = assertions::collect_start_lines(&sarif)?;
+
+    if expected.is_empty() {
+        // Negative case: no flow may be reported at all.
+        return Ok(if found.is_empty() {
+            Outcome::Pass
+        } else {
+            Outcome::Fail(format!("expected no flows, but found lines {found:?}"))
+        });
+    }
+
+    if found.is_empty() {
+        return Ok(Outcome::Fail(
+            "no source lines in SARIF output (no tainted path reported)".to_string(),
+        ));
+    }
+
+    if !expected.iter().any(|line| found.contains(line)) {
+        return Ok(Outcome::Fail(format!(
+            "none of the expected lines {expected:?} appear in reported lines {found:?}"
+        )));
+    }
+
+    let unexpected = assertions::read_unexpected_lines(query)?;
+    if let Some(why) = assertions::check_unexpected_lines(&unexpected, &found) {
+        return Ok(Outcome::Fail(why));
+    }
+
+    Ok(Outcome::Pass)
 }
 
 // --- DEX / Java -----------------------------------------------------------

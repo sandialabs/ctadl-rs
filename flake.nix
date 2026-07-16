@@ -197,7 +197,9 @@
         checks =
           let
             # The expensive regression suite: source-sink taint tests over Java
-            # (DEX) and pcode (C) inputs. The orchestration lives in the `xtask`
+            # (DEX/JVM), pcode (C) and PHP inputs. PHP adds no tool to the
+            # environment below: it is analyzed from source, so `ctadl` alone
+            # runs those cases. The orchestration lives in the `xtask`
             # crate (`cargo xtask regression`); here we just run the prebuilt
             # `xtask` binary that ships in packages.default. This is a full
             # (non-local) derivation because it runs ctadl + ghidra + the Android

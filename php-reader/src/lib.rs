@@ -90,11 +90,20 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    /// Parse every PHP case in the nightly regression corpus, asserting only that
+    /// the grammar accepts it.
+    ///
+    /// The corpus lives in `nightly/tests/php` because the end-to-end taint checks
+    /// over those same files are xtask regression cases. This is the cheap
+    /// parser-level half: it runs in `cargo test` on every PR, where the nightly
+    /// suite does not, and it picks up new cases as they are added there.
     #[test]
     fn test_parse_taint_cases() {
-        let test_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/taint");
-        let entries = fs::read_dir(test_dir).expect("Failed to read tests/taint directory");
+        let test_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../nightly/tests/php");
+        let entries = fs::read_dir(&test_dir)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", test_dir.display()));
 
+        let mut parsed = 0;
         for entry in entries {
             let entry = entry.expect("Failed to read entry");
             let path = entry.path();
@@ -102,8 +111,12 @@ mod tests {
                 let content = fs::read_to_string(&path).expect("Failed to read file");
                 let tree = parse_php(&content);
                 assert!(!tree.root_node().has_error(), "Parse error in {:?}", path);
+                parsed += 1;
             }
         }
+        // A corpus that silently emptied out (moved again, say) would leave this
+        // test passing while parsing nothing.
+        assert!(parsed > 0, "no PHP cases found in {}", test_dir.display());
     }
 
     #[test]

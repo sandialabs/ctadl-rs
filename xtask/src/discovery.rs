@@ -24,6 +24,10 @@ pub enum Kind {
     Jvm { java: PathBuf, config: PathBuf },
     /// C compiled to an ELF object, mapped back to lines via `addr2line`.
     Pcode { source: PathBuf, query: PathBuf },
+    /// PHP analyzed from source. Unlike every other frontend there is no compile
+    /// step and no offset-to-line mapping: the lowering records source spans, so
+    /// the SARIF carries real line numbers already.
+    Php { source: PathBuf, query: PathBuf },
 }
 
 impl Kind {
@@ -32,6 +36,7 @@ impl Kind {
             Kind::Dex { .. } => Frontend::Dex,
             Kind::Jvm { .. } => Frontend::Jvm,
             Kind::Pcode { .. } => Frontend::Pcode,
+            Kind::Php { .. } => Frontend::Php,
         }
     }
 }
@@ -45,16 +50,19 @@ pub enum Frontend {
     Dex,
     Jvm,
     Pcode,
+    Php,
 }
 
 impl Frontend {
-    pub const ALL: &'static [Frontend] = &[Frontend::Dex, Frontend::Jvm, Frontend::Pcode];
+    pub const ALL: &'static [Frontend] =
+        &[Frontend::Dex, Frontend::Jvm, Frontend::Pcode, Frontend::Php];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Frontend::Dex => "dex",
             Frontend::Jvm => "jvm",
             Frontend::Pcode => "pcode",
+            Frontend::Php => "php",
         }
     }
 }
@@ -67,7 +75,8 @@ impl FromStr for Frontend {
             "dex" => Ok(Frontend::Dex),
             "jvm" => Ok(Frontend::Jvm),
             "pcode" => Ok(Frontend::Pcode),
-            other => bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode)"),
+            "php" => Ok(Frontend::Php),
+            other => bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, php)"),
         }
     }
 }
@@ -97,6 +106,7 @@ pub fn resolve_tests_dir(override_dir: Option<&Path>) -> Result<PathBuf> {
 pub fn discover(tests_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = discover_dex(&tests_dir.join("java"))?;
     cases.extend(discover_pcode(&tests_dir.join("c"))?);
+    cases.extend(discover_php(&tests_dir.join("php"))?);
     cases.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(cases)
 }
@@ -170,6 +180,41 @@ fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
     Ok(cases)
 }
 
+/// Pair each `foo.php` with a query JSON, the same way the pcode cases pair: we
+/// prefer `foo-query.json` and fall back to a shared `query.json`.
+///
+/// Case names are prefixed `Php:` (as the JVM cases are) so a `.php` and a `.c`
+/// sharing a stem stay distinct in the report and under `--filter`.
+fn discover_php(php_dir: &Path) -> Result<Vec<TestCase>> {
+    let mut cases = Vec::new();
+    if !php_dir.is_dir() {
+        return Ok(cases);
+    }
+    for entry in read_dir_sorted(php_dir)? {
+        if entry.extension().and_then(|e| e.to_str()) != Some("php") {
+            continue;
+        }
+        let stem = file_stem(&entry)?;
+        let specific = php_dir.join(format!("{stem}-query.json"));
+        let shared = php_dir.join("query.json");
+        let query = if specific.is_file() {
+            specific
+        } else if shared.is_file() {
+            shared
+        } else {
+            continue;
+        };
+        cases.push(TestCase {
+            name: format!("Php:{stem}"),
+            kind: Kind::Php {
+                source: absolute(&entry)?,
+                query: absolute(&query)?,
+            },
+        });
+    }
+    Ok(cases)
+}
+
 fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = std::fs::read_dir(dir)
         .with_context(|| format!("failed to read {}", dir.display()))?
@@ -219,6 +264,7 @@ mod tests {
         assert_eq!("pcode".parse::<Frontend>().unwrap(), Frontend::Pcode);
         assert_eq!("jvm".parse::<Frontend>().unwrap(), Frontend::Jvm);
         assert_eq!("dex".parse::<Frontend>().unwrap(), Frontend::Dex);
+        assert_eq!("php".parse::<Frontend>().unwrap(), Frontend::Php);
         // Tolerate stray whitespace/case from a comma-separated list.
         assert_eq!(" Pcode ".parse::<Frontend>().unwrap(), Frontend::Pcode);
         assert!("bogus".parse::<Frontend>().is_err());

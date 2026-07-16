@@ -28,9 +28,11 @@ cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-`--frontend` takes `pcode`, `jvm`, or `dex` (comma-separated, or repeated) and
-defaults to all three. It selects *before* anything runs, so `--frontend pcode`
-never invokes the Java toolchain, and `--frontend jvm,dex` never starts Ghidra.
+`--frontend` takes `pcode`, `jvm`, `dex`, or `php` (comma-separated, or repeated)
+and defaults to all of them. It selects *before* anything runs, so
+`--frontend pcode` never invokes the Java toolchain, and `--frontend jvm,dex`
+never starts Ghidra. `--frontend php` needs no toolchain at all beyond `ctadl`,
+so it is the one selection that runs outside the Nix shell.
 Use it with `--filter` to narrow further: `--frontend pcode --filter funcptr`.
 
 Under the hood both paths invoke the `xtask` task runner (`xtask/src/`) over the
@@ -45,6 +47,9 @@ they are picked up automatically; no list to edit.
   `array-list-iterator-flow.json`). A `.java` with no matching config is ignored.
 - **Pcode / C** — `tests/c/foo.c` pairs with `tests/c/foo-query.json`, or falls
   back to a shared `tests/c/query.json`.
+- **PHP** — `tests/php/foo.php` pairs with `tests/php/foo-query.json`, or falls
+  back to a shared `tests/php/query.json`. Cases are reported as `Php:foo`, so a
+  `.php` and a `.c` sharing a stem stay distinct.
 
 ## Adding a Java/DEX test
 
@@ -87,6 +92,38 @@ flow is reported (see `Reassignment.java` / `reassignment.json`).
 `expected_lines` entry is found. On macOS, if Ghidra reports no tainted
 instructions the case is **skipped** (cross-platform decompiler differences);
 the strict check runs on Linux/CI.
+
+## Adding a PHP test
+
+1. Write `tests/php/foo.php` with a source (`$_GET`/`$_POST`, or a function the
+   model names) and a sink (`echo`/`exec`/`passthru`, or likewise).
+2. Write `tests/php/foo-query.json` with `expected_lines` + `model_generators`,
+   as above.
+
+PHP is the one frontend with no compile step and no offset-to-line mapping: the
+lowering records source spans, so the SARIF regions already carry source lines
+and the runner compares them to `expected_lines` directly.
+
+**Pass criterion (PHP):** same as DEX/JVM — a positive test passes if **at least
+one** `expected_lines` entry is among the reported lines, and an **empty**
+`expected_lines` makes it a negative test.
+
+### PHP cases currently XFAIL
+
+Every `Php:` case is reported as XFAIL and does **not** count toward the suite
+exit code, the same treatment the non-enforced JVM E2E cases get. They run for
+visibility while the frontend matures.
+
+They fail for a single reason: the default (`human`) SARIF profile reports only
+`C0001.tainted-path` results, and the PHP frontend does not yet link a source to
+a sink into an end-to-end path — so the output is empty and the runner reports
+`no source lines in SARIF output`. The frontend *does* find sources, sinks and
+tainted instructions: run the same case with `--sarif-profile debug` and the
+`C0002`/`C0003`/`C0004` results come back with correct line numbers, and all
+three cases pass. So the gap is path construction, not lowering or line info.
+
+Once paths land, drop the `Php:` arm from `apply_xfail_policy` in
+`xtask/src/regression.rs` to make these cases enforced.
 
 ## Asserting that a line stays clean
 

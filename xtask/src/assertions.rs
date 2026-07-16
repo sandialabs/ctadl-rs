@@ -183,6 +183,19 @@ pub fn collect_codeflow_byte_offsets(sarif: &Path) -> Result<BTreeSet<i64>> {
     Ok(out)
 }
 
+/// Collect every `startLine` value anywhere in a SARIF document.
+///
+/// Source-language frontends (PHP) need no offset-to-line mapping at all: the
+/// lowering records source spans, so the SARIF regions already carry the line
+/// numbers the other frontends have to recover from a linemap or `addr2line`.
+/// Gathering the key wherever it appears picks up the lines named by a result's
+/// own location *and* by the steps of its code flows.
+pub fn collect_start_lines(sarif: &Path) -> Result<BTreeSet<i64>> {
+    let mut out = BTreeSet::new();
+    collect_int_values(&read_json(sarif)?, "startLine", &mut out);
+    Ok(out)
+}
+
 /// Collect every `absoluteAddress` value in a SARIF document (the pcode tests'
 /// tainted-instruction addresses).
 pub fn collect_absolute_addresses(sarif: &Path) -> Result<BTreeSet<i64>> {
