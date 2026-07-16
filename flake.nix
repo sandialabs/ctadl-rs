@@ -138,6 +138,11 @@
             pkgs.rustc
             pkgs.jq
             pkgs.python3
+            # The PHP frontend needs no toolchain to analyze a file -- ctadl
+            # parses PHP itself. This is here for the cases, not the runner:
+            # `php -l` is what keeps a test file that no longer parses from
+            # being mistaken for a frontend bug.
+            pkgs.php
             # The C compiler `pick_toolchain` prefers. A native `pkgs.gcc` here
             # would also claim `cc`, and on Darwin that is fatal: rustc links
             # through `cc`, and gcc passes -no_compact_unwind, so the binary
