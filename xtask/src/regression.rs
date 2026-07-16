@@ -5,10 +5,17 @@
 //! (kept under `XDG_STATE_HOME`) and build artifacts never collide between
 //! cases. Unlike the old `set -e` scripts, a single failing case does not abort
 //! the run: we execute every selected case and report them all.
+//!
+//! Cases are independent, so they run on a pool of `--jobs` workers rather than
+//! one after another. The two things that are *not* per-case -- the scratch
+//! directory and Ghidra's user directories -- are made per-worker or per-case
+//! explicitly; see [`Worker`] and [`scratch_dir`].
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -56,6 +63,8 @@ pub struct Options {
     pub tests_dir: Option<PathBuf>,
     pub jvm_samples: Option<PathBuf>,
     pub dex_apk: Option<PathBuf>,
+    /// How many cases to run concurrently. `None` picks [`default_jobs`].
+    pub jobs: Option<usize>,
 }
 
 impl Default for Options {
@@ -66,8 +75,29 @@ impl Default for Options {
             tests_dir: None,
             jvm_samples: None,
             dex_apk: None,
+            jobs: None,
         }
     }
+}
+
+/// Upper bound on the default worker count.
+///
+/// A case is mostly spent inside external processes that are already parallel on
+/// their own (Ghidra's JVM, ctadl's rayon pool), so workers stop buying wall clock
+/// well before they stop buying cores: on a 20-core machine the full suite ran in
+/// 3m24s at 1 job, 52s at 4, 34s at 8, and 30s at 16. Past this the extra Ghidra
+/// JVMs -- each asking for a large heap -- cost more memory than the seconds are
+/// worth. Raise it with `--jobs` on a machine with headroom to spare.
+const MAX_DEFAULT_JOBS: usize = 8;
+
+/// Worker count when `--jobs` is not given: one per available core, capped.
+///
+/// `available_parallelism` honours cgroup CPU limits, so this stays polite inside
+/// the Nix sandbox and CI containers rather than reading the whole host.
+fn default_jobs() -> usize {
+    std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .clamp(1, MAX_DEFAULT_JOBS)
 }
 
 pub(crate) enum Outcome {
@@ -103,18 +133,10 @@ pub fn run(opts: &Options) -> Result<bool> {
         preflight(&cases, ghidra_selected)?;
     }
 
-    let mut results: Vec<(String, Outcome)> = Vec::new();
-    for case in &cases {
-        // Infrastructure failures (analyzer crashed, tool missing, etc.) are
-        // reported as a failed case rather than aborting the whole run.
-        let outcome = run_case(case).unwrap_or_else(|err| Outcome::Fail(format!("{err:#}")));
-        results.push((case.name.clone(), apply_jvm_allowlist(&case.name, outcome)));
-    }
-
     // The jvm-reader and dex-reader checks share the same Java sample sources:
     // jvm-reader exercises the `.class`/`.jar`, dex-reader the `.dex` they
-    // compile down to. Resolving (and compiling) them is only worth it when a
-    // Java frontend is selected.
+    // compile down to. Resolving them is only worth it when a Java frontend is
+    // selected.
     let wants_jvm = opts.frontends.contains(&Frontend::Jvm);
     let wants_dex = opts.frontends.contains(&Frontend::Dex);
     let samples_dir = if wants_jvm || wants_dex {
@@ -122,52 +144,43 @@ pub fn run(opts: &Options) -> Result<bool> {
     } else {
         None
     };
+    let dex_apk = if samples_dir.is_some() && wants_dex {
+        resolve_dex_apk(opts.dex_apk.as_deref())?
+    } else {
+        None
+    };
 
-    // jvm-reader checks: compile the sample .java and exercise jvm-reader on the
-    // resulting .class files and a jar built from them.
-    if let Some(samples_dir) = samples_dir.as_ref().filter(|_| wants_jvm) {
-        let work = scratch_dir("jvm")?;
-        let mut jvm_results = jvm::run_checks(samples_dir, &work)
-            .unwrap_or_else(|err| vec![("jvm".to_string(), Outcome::Fail(format!("{err:#}")))]);
-        if let Some(filter) = &opts.filter {
-            jvm_results.retain(|(name, _)| name.contains(filter));
-        }
-        results.extend(jvm_results);
+    // Assemble every independent unit of work, in report order. The pool below
+    // preserves that order regardless of which worker finishes first.
+    let mut tasks: Vec<Task<'_>> = cases.iter().map(Task::Case).collect();
+    if let Some(samples) = samples_dir.as_deref().filter(|_| wants_jvm) {
+        tasks.push(Task::JvmChecks { samples });
     }
-
-    // dex-reader checks: compile the same samples down to .dex and parse them,
-    // plus a real-world APK that xtask owns.
-    if let Some(samples_dir) = samples_dir.as_ref().filter(|_| wants_dex) {
-        let work = scratch_dir("dex")?;
-        let apk = resolve_dex_apk(opts.dex_apk.as_deref())?;
-        let mut dex_results = dex::run_checks(samples_dir, apk.as_deref(), &work)
-            .unwrap_or_else(|err| vec![("dex".to_string(), Outcome::Fail(format!("{err:#}")))]);
-        if let Some(filter) = &opts.filter {
-            dex_results.retain(|(name, _)| name.contains(filter));
-        }
-        results.extend(dex_results);
+    if let Some(samples) = samples_dir.as_deref().filter(|_| wants_dex) {
+        tasks.push(Task::DexChecks {
+            samples,
+            apk: dex_apk.as_deref(),
+        });
     }
-
     // Ghidra existing-project smoke check: drive the pcode importer against an
     // *existing* Ghidra project (not a fresh binary). Only meaningful when Ghidra
     // and a target binary are available (guaranteed under the Nix regression env),
     // and self-skips otherwise, so it is cheap to always attempt.
     if ghidra_selected {
-        let (name, outcome) = run_ghidra_project_check().unwrap_or_else(|err| {
-            (
-                GHIDRA_PROJECT_CASE.to_string(),
-                Outcome::Fail(format!("{err:#}")),
-            )
-        });
-        results.push((name, outcome));
+        tasks.push(Task::GhidraProject);
     }
+
+    // More workers than tasks would just create idle scratch homes; no tasks at
+    // all means no workers, and the empty report below reports the selection.
+    let jobs = opts.jobs.unwrap_or_else(default_jobs).min(tasks.len());
+    let results = run_tasks(&tasks, opts, jobs)?;
 
     if results.is_empty() {
         bail!("no test cases selected ({})", describe_selection(opts));
     }
 
     println!(
-        "Ran {} regression case(s) (tests from {}, {})",
+        "Ran {} regression case(s) (tests from {}, {}, {jobs} job(s))",
         results.len(),
         tests_dir.display(),
         describe_selection(opts)
@@ -206,6 +219,109 @@ pub fn run(opts: &Options) -> Result<bool> {
         results.len()
     );
     Ok(failures == 0)
+}
+
+/// One independent unit of work. Each yields zero or more report entries.
+///
+/// The reader checks are single tasks rather than one per check: they share the
+/// compiled samples, so splitting them would recompile the same sources N times.
+enum Task<'a> {
+    Case(&'a TestCase),
+    JvmChecks {
+        samples: &'a Path,
+    },
+    DexChecks {
+        samples: &'a Path,
+        apk: Option<&'a Path>,
+    },
+    GhidraProject,
+}
+
+impl Task<'_> {
+    /// Run this task to completion. Infrastructure failures (analyzer crashed,
+    /// tool missing, etc.) are reported as failed entries rather than propagated,
+    /// so one broken case never aborts the run.
+    fn run(&self, worker: &Worker, opts: &Options) -> Vec<(String, Outcome)> {
+        match self {
+            Task::Case(case) => {
+                let outcome =
+                    run_case(case, worker).unwrap_or_else(|err| Outcome::Fail(format!("{err:#}")));
+                vec![(case.name.clone(), apply_jvm_allowlist(&case.name, outcome))]
+            }
+            Task::JvmChecks { samples } => {
+                // jvm-reader checks: compile the sample .java and exercise
+                // jvm-reader on the resulting .class files and a jar built from
+                // them.
+                let results = scratch_dir("jvm")
+                    .and_then(|work| jvm::run_checks(samples, &work))
+                    .unwrap_or_else(|err| {
+                        vec![("jvm".to_string(), Outcome::Fail(format!("{err:#}")))]
+                    });
+                retain_filtered(results, opts)
+            }
+            Task::DexChecks { samples, apk } => {
+                // dex-reader checks: compile the same samples down to .dex and
+                // parse them, plus a real-world APK that xtask owns.
+                let results = scratch_dir("dex")
+                    .and_then(|work| dex::run_checks(samples, *apk, &work))
+                    .unwrap_or_else(|err| {
+                        vec![("dex".to_string(), Outcome::Fail(format!("{err:#}")))]
+                    });
+                retain_filtered(results, opts)
+            }
+            Task::GhidraProject => {
+                let (name, outcome) = run_ghidra_project_check(worker).unwrap_or_else(|err| {
+                    (
+                        GHIDRA_PROJECT_CASE.to_string(),
+                        Outcome::Fail(format!("{err:#}")),
+                    )
+                });
+                vec![(name, outcome)]
+            }
+        }
+    }
+}
+
+/// Apply `--filter` to reader-check results. Unlike the taint cases, these names
+/// are only known once the checks have run, so they are filtered on the way out.
+fn retain_filtered(mut results: Vec<(String, Outcome)>, opts: &Options) -> Vec<(String, Outcome)> {
+    if let Some(filter) = &opts.filter {
+        results.retain(|(name, _)| name.contains(filter));
+    }
+    results
+}
+
+/// Run `tasks` across `jobs` workers, returning every result in task order.
+///
+/// Each worker pulls the next unclaimed task until the list is exhausted, so a
+/// slow case (a Ghidra import) never blocks the queue behind it. Results are
+/// tagged with their task index and sorted at the end rather than appended as
+/// they land, so the report reads identically no matter who finished first.
+fn run_tasks(tasks: &[Task<'_>], opts: &Options, jobs: usize) -> Result<Vec<(String, Outcome)>> {
+    let workers = (0..jobs).map(Worker::new).collect::<Result<Vec<_>>>()?;
+
+    let next = &AtomicUsize::new(0);
+    let results = &Mutex::new(Vec::new());
+
+    std::thread::scope(|scope| {
+        for worker in &workers {
+            scope.spawn(move || loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(task) = tasks.get(index) else { break };
+                let outcomes = task.run(worker, opts);
+                // Held only to push a finished result; no test work happens
+                // under the lock.
+                results.lock().unwrap().push((index, outcomes));
+            });
+        }
+    });
+
+    let mut collected = std::mem::take(&mut *results.lock().unwrap());
+    collected.sort_by_key(|(index, _)| *index);
+    Ok(collected
+        .into_iter()
+        .flat_map(|(_, outcomes)| outcomes)
+        .collect())
 }
 
 /// Human-readable summary of what `--frontend`/`--filter` selected, so a short
@@ -328,11 +444,11 @@ fn apply_jvm_allowlist(name: &str, outcome: Outcome) -> Outcome {
     }
 }
 
-fn run_case(case: &TestCase) -> Result<Outcome> {
+fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
     match &case.kind {
         Kind::Dex { java, config } => run_dex(&case.name, java, config),
         Kind::Jvm { java, config } => run_jvm(&case.name, java, config),
-        Kind::Pcode { source, query } => run_pcode(&case.name, source, query),
+        Kind::Pcode { source, query } => run_pcode(&case.name, source, query, worker),
     }
 }
 
@@ -583,7 +699,7 @@ fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {
 
 // --- Pcode / C ------------------------------------------------------------
 
-fn run_pcode(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
+fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result<Outcome> {
     let work = scratch_dir(name)?;
     let state = work.join("state");
     let outdir = work.join("test-output");
@@ -603,26 +719,22 @@ fn run_pcode(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
         .arg(&obj);
     exec::run_checked(compile, &cc)?;
 
-    // Ghidra (used by the pcode importer) needs a writable HOME.
-    let home = ensure_writable_home()?;
-    let java_tool_options = format!("-Duser.home={}", home.display());
-
     let project = format!("{name}_pcode");
     let sarif = outdir.join(format!("{name}_results.sarif"));
     let obj_str = obj.to_string_lossy().into_owned();
-    let pcode_env = pcode_env(&home, &java_tool_options);
+    let pcode_env = &worker.ghidra_env;
 
     run_ctadl_env(
         &work,
         &state,
-        &pcode_env,
+        pcode_env,
         &["import", "-l", "pcode", &obj_str, "-n", &project],
     )?;
-    run_ctadl_env(&work, &state, &pcode_env, &["index", &project])?;
+    run_ctadl_env(&work, &state, pcode_env, &["index", &project])?;
     run_ctadl_env(
         &work,
         &state,
-        &pcode_env,
+        pcode_env,
         &[
             "query",
             &project,
@@ -720,53 +832,11 @@ fn pick_toolchain() -> (String, String) {
     ("gcc".to_string(), "addr2line".to_string())
 }
 
-fn pcode_env(home: &Path, java_tool_options: &str) -> Vec<(String, String)> {
-    let mut env = vec![
-        ("HOME".to_string(), home.display().to_string()),
-        (
-            "JAVA_TOOL_OPTIONS".to_string(),
-            java_tool_options.to_string(),
-        ),
-    ];
-    // Guess JAVA_HOME from `java` if the environment did not set it.
-    if std::env::var_os("JAVA_HOME").is_none() {
-        if let Some(java_home) = guess_java_home() {
-            env.push(("JAVA_HOME".to_string(), java_home.display().to_string()));
-        }
-    }
-    env
-}
-
 fn guess_java_home() -> Option<PathBuf> {
     let java = exec::which("java")?;
     let real = std::fs::canonicalize(java).ok()?;
     // <java_home>/bin/java -> <java_home>
     Some(real.parent()?.parent()?.to_path_buf())
-}
-
-/// Return a writable HOME, creating a temp dir if the current one is unset,
-/// `/var/empty`, or not writable (Nix sandboxes often set HOME=/var/empty).
-fn ensure_writable_home() -> Result<PathBuf> {
-    if let Some(home) = std::env::var_os("HOME") {
-        let path = PathBuf::from(&home);
-        if path != Path::new("/var/empty") && is_writable(&path) {
-            return Ok(path);
-        }
-    }
-    let dir = run_root().join("home");
-    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
-    Ok(dir)
-}
-
-fn is_writable(dir: &Path) -> bool {
-    let probe = dir.join(".ctadl_xtask_write_probe");
-    match std::fs::File::create(&probe) {
-        Ok(_) => {
-            let _ = std::fs::remove_file(&probe);
-            true
-        }
-        Err(_) => false,
-    }
 }
 
 fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&str]) -> Result<()> {
@@ -814,7 +884,7 @@ int main(int argc, char **argv) {
 ///
 /// Self-skips (rather than failing) when Ghidra or a C compiler is unavailable, so
 /// it is harmless to attempt outside the Nix regression environment.
-fn run_ghidra_project_check() -> Result<(String, Outcome)> {
+fn run_ghidra_project_check(worker: &Worker) -> Result<(String, Outcome)> {
     let name = GHIDRA_PROJECT_CASE.to_string();
 
     let Some(analyze_headless) = find_analyze_headless() else {
@@ -834,10 +904,9 @@ fn run_ghidra_project_check() -> Result<(String, Outcome)> {
     std::fs::create_dir_all(&state)?;
     std::fs::create_dir_all(&proj_loc)?;
 
-    // Ghidra needs a writable HOME and its usual Java options; reuse the pcode env.
-    let home = ensure_writable_home()?;
-    let java_tool_options = format!("-Duser.home={}", home.display());
-    let env = pcode_env(&home, &java_tool_options);
+    // This check drives Ghidra twice -- once directly, once through ctadl -- so
+    // both get the worker's private Ghidra directories, same as the pcode cases.
+    let env = &worker.ghidra_env;
 
     // 1. Compile the tiny program to a small relocatable object.
     let src = work.join("smoke.c");
@@ -862,7 +931,7 @@ fn run_ghidra_project_check() -> Result<(String, Outcome)> {
         .arg(proj_name)
         .arg("-import")
         .arg(&obj);
-    for (k, v) in &env {
+    for (k, v) in env {
         build.env(k, v);
     }
     exec::run_checked(build, "analyzeHeadless -import")?;
@@ -883,7 +952,7 @@ fn run_ghidra_project_check() -> Result<(String, Outcome)> {
     run_ctadl_env(
         &work,
         &state,
-        &env,
+        env,
         &[
             "import",
             "-l",
@@ -931,6 +1000,65 @@ fn find_analyze_headless() -> Option<PathBuf> {
 
 // --- shared ----------------------------------------------------------------
 
+/// A single lane of execution, and the private state the cases it runs need.
+///
+/// State lives here, rather than per case, when it is safe to *reuse serially*
+/// but not to *share concurrently*: a worker runs one case at a time, so each of
+/// these directories has exactly one live user, while Ghidra's first-run setup is
+/// still amortized across every case that worker picks up.
+struct Worker {
+    /// Environment for the Ghidra-driving cases (pcode, and the existing-project
+    /// check). See [`Worker::new`] for why each entry is here.
+    ghidra_env: Vec<(String, String)>,
+}
+
+impl Worker {
+    fn new(index: usize) -> Result<Self> {
+        // Ghidra keeps three user directories -- settings, cache, and temp -- and
+        // writes to all of them on every headless run. Left to itself it derives
+        // them from `user.home`, `XDG_CACHE_HOME`, and `java.io.tmpdir`, none of
+        // which vary per process: two concurrent runs would land on the same
+        // files. It checks these `application.*dir` properties first, though, so
+        // pointing each worker at its own copies keeps concurrent Ghidras from
+        // ever meeting. (Their *projects* are already private -- the importer
+        // builds each in a fresh temp dir -- so only the user dirs need this.)
+        let root = run_root().join(format!("worker-{index}"));
+        let home = root.join("home");
+        let settings = root.join("ghidra-settings");
+        let cache = root.join("ghidra-cache");
+        let temp = root.join("ghidra-temp");
+        for dir in [&home, &settings, &cache, &temp] {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("failed to create {}", dir.display()))?;
+        }
+
+        // A purpose-built HOME also settles the question the old write-probe
+        // asked: Ghidra needs a writable HOME, and the ambient one may be unset,
+        // read-only, or `/var/empty` under a Nix sandbox. This one is writable by
+        // construction.
+        let mut ghidra_env = vec![
+            ("HOME".to_string(), home.display().to_string()),
+            (
+                "JAVA_TOOL_OPTIONS".to_string(),
+                format!(
+                    "-Duser.home={} -Dapplication.settingsdir={} -Dapplication.cachedir={} -Dapplication.tempdir={}",
+                    home.display(),
+                    settings.display(),
+                    cache.display(),
+                    temp.display(),
+                ),
+            ),
+        ];
+        // Guess JAVA_HOME from `java` if the environment did not set it.
+        if std::env::var_os("JAVA_HOME").is_none() {
+            if let Some(java_home) = guess_java_home() {
+                ghidra_env.push(("JAVA_HOME".to_string(), java_home.display().to_string()));
+            }
+        }
+        Ok(Self { ghidra_env })
+    }
+}
+
 /// Root scratch directory for *this* xtask process.
 ///
 /// The pid matters: `scratch_dir` clears the directory it hands out, so without
@@ -942,10 +1070,23 @@ fn run_root() -> PathBuf {
     std::env::temp_dir().join(format!("ctadl_xtask_{}", std::process::id()))
 }
 
+/// Scratch names already handed out in this process.
+///
+/// `scratch_dir` *clears* the directory it returns, so two claimants of one name
+/// means one deletes the other's working tree -- and now that cases run
+/// concurrently, it would do so while the other is still working in it. The names
+/// are distinct today; this keeps that a checked invariant rather than a
+/// coincidence of what the test directories happen to contain, since the failure
+/// it guards is silent and would look like a flaky case rather than a collision.
+static SCRATCH_NAMES: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
 fn scratch_dir(name: &str) -> Result<PathBuf> {
     // Colons are invalid in Windows directory names (e.g. `Jvm:Foo`).
     let safe_name = name.replace(':', "_");
-    let dir = run_root().join(safe_name);
+    if !SCRATCH_NAMES.lock().unwrap().insert(safe_name.clone()) {
+        bail!("two regression cases claim the same scratch directory `{safe_name}`");
+    }
+    let dir = run_root().join(&safe_name);
     exec::fresh_dir(&dir)?;
     Ok(dir)
 }

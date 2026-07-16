@@ -75,6 +75,16 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                     selected.insert(name.parse::<Frontend>()?);
                 }
             }
+            "--jobs" | "-j" => {
+                let value = args.next().context("--jobs requires a value")?;
+                let jobs: usize = value
+                    .parse()
+                    .with_context(|| format!("--jobs expects a number, got `{value}`"))?;
+                if jobs == 0 {
+                    bail!("--jobs must be at least 1");
+                }
+                opts.jobs = Some(jobs);
+            }
             "--tests-dir" => {
                 let dir = args.next().context("--tests-dir requires a value")?;
                 opts.tests_dir = Some(PathBuf::from(dir));
@@ -115,6 +125,10 @@ Tasks:
                              the Ghidra checks without any Java toolchain.
     --filter <name>          Only run cases whose name contains <name>.
                              Composes with --frontend.
+    -j, --jobs <n>           Run <n> cases concurrently (default: one per core,
+                             capped). Cases are independent and each runs in its
+                             own scratch dir, so this only trades memory for wall
+                             clock; `-j 1` reverts to running them one at a time.
     --tests-dir <dir>        Look for test cases under <dir> (default: auto-detect
                              `nightly/tests` or `tests` relative to the cwd).
     --jvm-samples <dir>      Directory of jvm-reader sample .java sources to
@@ -166,6 +180,29 @@ mod tests {
             frontends(&["--frontend", "pcode", "--frontend", "jvm"]),
             expected
         );
+    }
+
+    #[test]
+    fn jobs_flag_parses() {
+        let jobs = |args: &[&str]| {
+            parse_regression_args(args.iter().map(|s| s.to_string()))
+                .unwrap()
+                .jobs
+        };
+        // Absent means "let the harness pick", not "one".
+        assert_eq!(jobs(&[]), None);
+        assert_eq!(jobs(&["--jobs", "4"]), Some(4));
+        assert_eq!(jobs(&["-j", "4"]), Some(4));
+    }
+
+    #[test]
+    fn bad_jobs_is_an_error() {
+        let err =
+            |args: &[&str]| parse_regression_args(args.iter().map(|s| s.to_string())).is_err();
+        assert!(err(&["--jobs"]));
+        assert!(err(&["--jobs", "nope"]));
+        // Zero workers would silently run nothing; say so instead.
+        assert!(err(&["--jobs", "0"]));
     }
 
     #[test]
