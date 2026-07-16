@@ -1,8 +1,8 @@
 {
   "expected_lines": [
-    32,
     38,
-    40
+    44,
+    46
   ],
   "model_generators": [
     {
