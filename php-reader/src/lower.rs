@@ -16,12 +16,59 @@ use source_info::{
     FileSpanId, Span, SpanId, SpanLen,
 };
 
-/// The element slot an array access uses when the index is not known statically.
+/// The symbolic field every array element shares when its key is not a constant string.
 ///
-/// `$a[$i]`, `$a[]` (append) and `foreach ($a as &$e)` all name an element that this lowering
-/// cannot pin down. They share one slot, so a write through any of them is visible to a read
-/// through any other -- including a read at literal index 0, which lands here too.
-const UNKNOWN_INDEX: mir::Offset = mir::Offset(0);
+/// `$a[$i]`, `$a[0]`, `$a[]` (append) and `foreach ($a as &$e)` all name an element this lowering
+/// cannot pin down to a distinct string key. They fold to one field, so a write through any of
+/// them is visible to a read through any other -- including a read at a literal index, which lands
+/// here too. This mirrors the single array-element field the JVM frontend uses (`[]`).
+///
+/// The new IR ([`ctadl_ir::mir::StatementKind::Store`]) requires a *symbolic* field for every
+/// memory write, so array elements are modeled as this symbolic field rather than as a numeric
+/// offset (which is pointer arithmetic that carries no memory taint).
+const ARRAY_ELEMENT_FIELD: &str = "[]";
+
+/// A PHP place: a base variable plus a not-yet-materialized sequence of symbolic field/element
+/// accesses (property names, array keys, global slots).
+///
+/// Unlike the old model, where an [`AccessPath`] could carry symbolic fields directly, the new IR
+/// keeps symbolic access out of access paths: a *read* of `a.f.g` becomes a chain of
+/// [`ctadl_ir::mir::StatementKind::Load`]s and a *write* becomes loads for the interior fields plus
+/// a final [`ctadl_ir::mir::StatementKind::Store`]. A `Place` defers that lowering so the same
+/// expression can be materialized as a read ([`Lowerer::read_place`]) or a write target
+/// ([`Lowerer::write_place`]) depending on where it appears.
+#[derive(Clone)]
+struct Place {
+    base: VariableRef,
+    segments: Vec<mir::PathSegment>,
+}
+
+impl Place {
+    fn variable(base: VariableRef) -> Self {
+        Place {
+            base,
+            segments: Vec::new(),
+        }
+    }
+
+    fn global() -> Self {
+        Place::variable(VariableRef::new_global())
+    }
+}
+
+/// Whether `kind` is a tree-sitter node that denotes an assignable place (an lvalue): a bare
+/// variable, a property access, or a subscript. Only these are lowered with [`Lowerer::lower_place`]
+/// on the left of an assignment; anything else is evaluated for its value alone.
+fn is_place_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "variable_name"
+            | "member_access_expression"
+            | "nullsafe_member_access_expression"
+            | "scoped_property_access_expression"
+            | "subscript_expression"
+    )
+}
 
 /// Whether `name` (without its `$`) is a PHP superglobal: a variable that names global state
 /// directly in every scope, with no declaration and no capturing.
@@ -572,11 +619,11 @@ impl<'a, 'p> Lowerer<'a, 'p> {
 
                         if let Some(value_node) = decl.child_by_field_name("value") {
                             let value = self.lower_exp(value_node, func_ctx)?;
-                            let stmt = func_ctx.builder().create_assign_or_update(
-                                AccessPath::new_global(&slot, Default::default()),
-                                value,
-                            );
-                            self.set_stmt_source_info(func_ctx, stmt, decl);
+                            let place = Place {
+                                base: VariableRef::new_global(),
+                                segments: vec![mir::PathSegment::symbol(&slot)],
+                            };
+                            self.write_place(place, value, func_ctx, decl);
                         }
                     }
                 }
@@ -721,21 +768,21 @@ impl<'a, 'p> Lowerer<'a, 'p> {
         // Back in the enclosing function: fill each capture slot from the variable it captures.
         for (name, is_by_ref) in &captures {
             let slot = format!("{closure_name}::{name}");
-            let outer = self.lower_exp_variable(name, func_ctx);
-            let stmt = func_ctx
-                .builder()
-                .create_assign_or_update(AccessPath::new_global(&slot, Default::default()), outer);
-            self.set_stmt_source_info(func_ctx, stmt, node);
+            let slot_place = || Place {
+                base: VariableRef::new_global(),
+                segments: vec![mir::PathSegment::symbol(&slot)],
+            };
 
-            if *is_by_ref && let Exp::AccessPath(outer_ap) = self.lower_exp_variable(name, func_ctx)
-            {
+            let source = self.place_for_variable(name, func_ctx);
+            let outer = self.read_place(source, func_ctx, node);
+            self.write_place(slot_place(), outer, func_ctx, node);
+
+            if *is_by_ref {
                 // The closure has not run yet, so this edge is placed early on purpose: it stands
                 // for "whenever the closure runs, this write is visible here".
-                let stmt = func_ctx.builder().create_assign_or_update(
-                    outer_ap,
-                    Exp::AccessPath(AccessPath::new_global(&slot, Default::default())),
-                );
-                self.set_stmt_source_info(func_ctx, stmt, node);
+                let slot_value = self.read_place(slot_place(), func_ctx, node);
+                let outer_place = self.place_for_variable(name, func_ctx);
+                self.write_place(outer_place, slot_value, func_ctx, node);
             }
         }
 
@@ -806,14 +853,6 @@ impl<'a, 'p> Lowerer<'a, 'p> {
         free
     }
 
-    /// Evaluate a bare variable by name in `func_ctx`, honoring its global aliases.
-    fn lower_exp_variable(&self, name: &str, func_ctx: &FunctionLowerer) -> Exp {
-        match func_ctx.global_aliases.get(name) {
-            Some(slot) => Exp::AccessPath(AccessPath::new_global(slot, Default::default())),
-            None => Exp::AccessPath(AccessPath::from(VariableRef::new_local(name.to_string()))),
-        }
-    }
-
     /// Publish a file-scope assignment to the global heap, in addition to the local it wrote.
     ///
     /// A variable assigned at file scope *is* a global in PHP: another function can reach it with
@@ -840,11 +879,11 @@ impl<'a, 'p> Lowerer<'a, 'p> {
         if func_ctx.global_aliases.contains_key(name) {
             return;
         }
-        let stmt = func_ctx.builder().create_assign_or_update(
-            AccessPath::new_global(name, Default::default()),
-            rhs.clone(),
-        );
-        self.set_stmt_source_info(func_ctx, stmt, node);
+        let place = Place {
+            base: VariableRef::new_global(),
+            segments: vec![mir::PathSegment::symbol(name)],
+        };
+        self.write_place(place, rhs.clone(), func_ctx, node);
     }
 
     /// Bind each declared parameter to a local of the same name, and declare its passing mode.
@@ -982,7 +1021,7 @@ impl<'a, 'p> Lowerer<'a, 'p> {
 
         func_ctx.finish_block_with_goto(cond_block);
         func_ctx.current_block = cond_block;
-        let collection = self.lower_exp(collection_node, func_ctx)?;
+        let collection = self.lower_place(collection_node, func_ctx)?;
         func_ctx.builder().create_goto(vec![body_block, end_block]);
         self.set_terminator_source_info(func_ctx, node);
 
@@ -997,6 +1036,9 @@ impl<'a, 'p> Lowerer<'a, 'p> {
             (None, Some(target_node))
         };
 
+        // Which element is bound is unknown, so the whole collection is copied into the loop
+        // variable: every field of it stays reachable through the binding.
+        let collection_val = self.read_place(collection.clone(), func_ctx, collection_node);
         for bind in [key_node, value_node].into_iter().flatten() {
             // `as &$v` wraps the variable; the alias itself is what `by_ref` adds, and the
             // element copy below is the same either way.
@@ -1007,12 +1049,9 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                 bind
             };
 
-            let dest = self.lower_exp(bind_target, func_ctx)?;
-            if let Exp::AccessPath(ap) = dest {
-                let stmt = func_ctx
-                    .builder()
-                    .create_assign_or_update(ap, collection.clone());
-                self.set_stmt_source_info(func_ctx, stmt, bind_target);
+            if is_place_kind(bind_target.kind()) {
+                let dest = self.lower_place(bind_target, func_ctx)?;
+                self.write_place(dest, collection_val.clone(), func_ctx, bind_target);
             }
         }
 
@@ -1022,22 +1061,18 @@ impl<'a, 'p> Lowerer<'a, 'p> {
 
         // Write the element back through a by-reference alias, after the body has had its say.
         // The write lands on an element of the collection, not on the collection itself, so it
-        // goes to the same unknown-index slot that a subscript with no statically known index
+        // goes to the same shared element field that a subscript with no statically known index
         // lowers to -- which is what a later `$items[0]` reads back.
         if let Some(value_node) = value_node
             && value_node.kind() == "by_ref"
-            && let Exp::AccessPath(mut element_slot) = collection
         {
+            let mut element_slot = collection;
             element_slot
-                .path
-                .fields
-                .push(mir::FieldAccess::Offset(UNKNOWN_INDEX));
+                .segments
+                .push(mir::PathSegment::symbol(ARRAY_ELEMENT_FIELD));
             let element_node = value_node.named_child(0).unwrap_or(value_node);
             let element = self.lower_exp(element_node, func_ctx)?;
-            let stmt = func_ctx
-                .builder()
-                .create_assign_or_update(element_slot, element);
-            self.set_stmt_source_info(func_ctx, stmt, value_node);
+            self.write_place(element_slot, element, func_ctx, value_node);
         }
 
         func_ctx.finish_block_with_goto(cond_block);
@@ -1156,41 +1191,182 @@ impl<'a, 'p> Lowerer<'a, 'p> {
         Ok(true)
     }
 
+    /// The place a bare variable name denotes, honoring `global`/`static` aliases.
+    ///
+    /// An aliased name is a global heap slot rather than a local; a plain name is a local of the
+    /// same name. Superglobals and `$GLOBALS` are handled by [`Lowerer::lower_place`], which is the
+    /// entry point for a full place expression.
+    fn place_for_variable(&self, name: &str, func_ctx: &FunctionLowerer) -> Place {
+        match func_ctx.global_aliases.get(name) {
+            Some(slot) => Place {
+                base: VariableRef::new_global(),
+                segments: vec![mir::PathSegment::symbol(slot)],
+            },
+            None => Place::variable(VariableRef::new_local(name.to_string())),
+        }
+    }
+
+    /// Lower an lvalue expression into a [`Place`] without materializing its symbolic accesses.
+    ///
+    /// Variables, property accesses and subscripts compose here: `$a->b['c']` builds the base `$a`
+    /// then appends the fields `b` and `c`. Anything that is not itself a place (a call result, a
+    /// literal) is evaluated to a value and spilled into a fresh temporary, whose bare variable
+    /// becomes the base -- so `foo()->bar` works too.
+    fn lower_place(
+        &mut self,
+        node: Node<'_>,
+        func_ctx: &mut FunctionLowerer,
+    ) -> Result<Place, PhpReaderError> {
+        match node.kind() {
+            "variable_name" => {
+                let text = self.text(node);
+                let name = text.strip_prefix('$').unwrap_or(text);
+                Ok(match name {
+                    // `$GLOBALS` *is* the global symbol table: the global heap itself, no field of
+                    // its own, so `$GLOBALS['g']` and a `global $g` name the same slot.
+                    "GLOBALS" => Place::global(),
+                    _ if is_superglobal(name) => Place {
+                        base: VariableRef::new_global(),
+                        segments: vec![mir::PathSegment::symbol(name)],
+                    },
+                    _ => self.place_for_variable(name, func_ctx),
+                })
+            }
+            "member_access_expression"
+            | "nullsafe_member_access_expression"
+            | "scoped_property_access_expression" => {
+                let obj_node = node
+                    .child_by_field_name("object")
+                    .or_else(|| node.child_by_field_name("scope"))
+                    .unwrap();
+                let mut place = self.lower_place(obj_node, func_ctx)?;
+                let prop = node.child_by_field_name("name").unwrap();
+                let prop_name = self.text(prop);
+                place.segments.push(mir::PathSegment::symbol(prop_name));
+                Ok(place)
+            }
+            "subscript_expression" => {
+                let obj_node = node
+                    .child_by_field_name("object")
+                    .or_else(|| node.child(0))
+                    .unwrap();
+                let mut place = self.lower_place(obj_node, func_ctx)?;
+                let index_node = node
+                    .child_by_field_name("index")
+                    .or_else(|| node.named_child(1));
+                // A key the evaluator folds to a constant string names its own field, which is
+                // what keeps `$a['evil']` and `$a['safe']` apart. A numeric or dynamic index cannot
+                // be pinned down, so it folds to the shared element field.
+                let segment = if let Some(index_node) = index_node
+                    && self.text(index_node).trim().parse::<i64>().is_err()
+                    && let Some(value) = self.evaluator.eval_node(index_node, self.source)
+                {
+                    mir::PathSegment::symbol(value.as_str())
+                } else {
+                    mir::PathSegment::symbol(ARRAY_ELEMENT_FIELD)
+                };
+                place.segments.push(segment);
+                Ok(place)
+            }
+            // Not a place: evaluate it and spill the value into a temporary to root the place on.
+            _ => {
+                let value = self.lower_exp(node, func_ctx)?;
+                match value {
+                    Exp::AccessPath(ap) if ap.path.is_empty() => Ok(Place::variable(ap.variable_ref)),
+                    other => {
+                        let tmp = func_ctx.fresh_temp();
+                        let stmt = func_ctx.builder().create_assign(tmp.clone(), vec![other]);
+                        self.set_stmt_source_info(func_ctx, stmt, node);
+                        Ok(Place::variable(tmp))
+                    }
+                }
+            }
+        }
+    }
+
+    /// Materialize a place as a readable value, emitting one [`ctadl_ir::mir::StatementKind::Load`]
+    /// per symbolic field.
+    ///
+    /// `a.f.g` becomes `t1 = load a.f; t2 = load t1.g` and evaluates to `t2`; a place with no
+    /// fields is its base variable, read directly. This is the read-side counterpart of
+    /// [`Lowerer::write_place`].
+    fn read_place(&mut self, place: Place, func_ctx: &mut FunctionLowerer, node: Node<'_>) -> Exp {
+        let mut cur = place.base;
+        for segment in place.segments {
+            // PHP builds only symbolic segments; a bare offset would be pointer arithmetic we never
+            // synthesize, so treat anything else as a no-op.
+            let mir::PathSegment::Symbol(field) = segment else {
+                continue;
+            };
+            let dest = func_ctx.fresh_temp();
+            let stmt = func_ctx.builder().create_load(
+                dest.clone(),
+                AccessPath::from(cur),
+                mir::FieldPath::new(field),
+            );
+            self.set_stmt_source_info(func_ctx, stmt, node);
+            cur = dest;
+        }
+        Exp::AccessPath(AccessPath::from(cur))
+    }
+
+    /// Write `value` into a place: a [`ctadl_ir::mir::StatementKind::Load`] for each interior field
+    /// and a final [`ctadl_ir::mir::StatementKind::Store`] for the last (or a plain assign when the
+    /// place is a bare variable).
+    ///
+    /// `a.f.g = v` becomes `t1 = load a.f; store t1.g := v`; `x = v` is a plain assign. This is the
+    /// write-side counterpart of [`Lowerer::read_place`].
+    fn write_place(
+        &mut self,
+        place: Place,
+        value: Exp,
+        func_ctx: &mut FunctionLowerer,
+        node: Node<'_>,
+    ) {
+        let mut segments = place.segments;
+        // The last symbolic field is the store's field; everything before it is an address to
+        // materialize (loads for interior derefs).
+        let field = match segments.pop() {
+            Some(mir::PathSegment::Symbol(field)) => Some(mir::FieldPath::new(field)),
+            Some(other) => {
+                segments.push(other);
+                None
+            }
+            None => None,
+        };
+        let addr = self.read_place(
+            Place {
+                base: place.base,
+                segments,
+            },
+            func_ctx,
+            node,
+        );
+        let Exp::AccessPath(addr) = addr else {
+            unreachable!("read_place always returns an access path");
+        };
+        let stmt = func_ctx
+            .builder()
+            .create_assign_or_store(addr, field, value);
+        self.set_stmt_source_info(func_ctx, stmt, node);
+    }
+
     fn lower_exp(
         &mut self,
         node: Node<'_>,
         func_ctx: &mut FunctionLowerer,
     ) -> Result<Exp, PhpReaderError> {
         match node.kind() {
-            "variable_name" => {
-                let text = self.text(node);
-                let name = text.strip_prefix('$').unwrap_or(text);
-                match name {
-                    // `$GLOBALS` *is* the global symbol table, so it is the global heap itself
-                    // with no field of its own: `$GLOBALS['g']` and the global `$g` then name the
-                    // very same access path, which is what makes the two views agree.
-                    "GLOBALS" => Ok(Exp::AccessPath(AccessPath::from(VariableRef::new_global()))),
-                    "_SERVER" | "_GET" | "_POST" | "_FILES" | "_COOKIE" | "_SESSION"
-                    | "_REQUEST" | "_ENV" => {
-                        let mut ap = AccessPath::from(VariableRef::new_global());
-                        ap.path
-                            .fields
-                            .push(mir::FieldAccess::Symbol(ArcIntern::from(name)));
-                        Ok(Exp::AccessPath(ap))
-                    }
-                    // A name declared `global` (or `static`) in this function does not denote a
-                    // local at all: it denotes the global heap slot it was bound to, for reads and
-                    // writes alike.
-                    _ => match func_ctx.global_aliases.get(name) {
-                        Some(field) => Ok(Exp::AccessPath(AccessPath::new_global(
-                            field,
-                            Default::default(),
-                        ))),
-                        None => Ok(Exp::AccessPath(AccessPath::from(VariableRef::new_local(
-                            name.to_string(),
-                        )))),
-                    },
-                }
+            // A variable, property access or subscript read is a place materialized as a value:
+            // its symbolic fields become loads (`$obj->prop` ⟶ `t = load obj.prop`), while a bare
+            // variable is read directly.
+            "variable_name"
+            | "member_access_expression"
+            | "nullsafe_member_access_expression"
+            | "scoped_property_access_expression"
+            | "subscript_expression" => {
+                let place = self.lower_place(node, func_ctx)?;
+                Ok(self.read_place(place, func_ctx, node))
             }
             "string" => {
                 let val = self
@@ -1209,7 +1385,6 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                 let right = node.child_by_field_name("right").unwrap();
 
                 let rhs = self.lower_exp(right, func_ctx)?;
-                let lhs = self.lower_exp(left, func_ctx)?;
 
                 if left.kind() == "variable_name"
                     && let Some(value) = self.evaluator.eval_node(right, self.source)
@@ -1217,82 +1392,16 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                     self.evaluator.assign(self.text(left).to_string(), value);
                 }
 
-                if let Exp::AccessPath(ap) = lhs {
-                    let stmt = func_ctx.builder().create_assign_or_update(ap, rhs.clone());
-                    self.set_stmt_source_info(func_ctx, stmt, node);
+                // Only a real lvalue is a store target. Anything else on the left (e.g. a `list()`
+                // destructuring pattern, which this lowering does not model) carries no store.
+                if is_place_kind(left.kind()) {
+                    let place = self.lower_place(left, func_ctx)?;
+                    self.write_place(place, rhs.clone(), func_ctx, node);
                 }
                 self.mirror_main_scope_global(left, &rhs, func_ctx, node);
                 Ok(rhs)
             }
             "anonymous_function" | "arrow_function" => self.lower_closure(node, func_ctx),
-            "member_access_expression"
-            | "nullsafe_member_access_expression"
-            | "scoped_property_access_expression" => {
-                let obj_node = node
-                    .child_by_field_name("object")
-                    .or_else(|| node.child_by_field_name("scope"))
-                    .unwrap();
-                let obj = self.lower_exp(obj_node, func_ctx)?;
-                let prop = node.child_by_field_name("name").unwrap();
-                let prop_name = self.text(prop);
-
-                let mut ap = if let Exp::AccessPath(ap) = obj {
-                    ap
-                } else {
-                    let ret_var = VariableRef::new_local(format!("_t{}", func_ctx.next_temp_idx));
-                    func_ctx.next_temp_idx += 1;
-                    let stmt = func_ctx.builder().create_assign(ret_var.clone(), vec![obj]);
-                    self.set_stmt_source_info(func_ctx, stmt, obj_node);
-                    AccessPath::from(ret_var)
-                };
-
-                ap.path
-                    .fields
-                    .push(mir::FieldAccess::Symbol(ArcIntern::from(prop_name)));
-                Ok(Exp::AccessPath(ap))
-            }
-            "subscript_expression" => {
-                let obj_node = node
-                    .child_by_field_name("object")
-                    .or_else(|| node.child(0))
-                    .unwrap();
-                let array = self.lower_exp(obj_node, func_ctx)?;
-                let mut ap = if let Exp::AccessPath(ap) = array {
-                    ap
-                } else {
-                    let ret_var = VariableRef::new_local(format!("_t{}", func_ctx.next_temp_idx));
-                    func_ctx.next_temp_idx += 1;
-                    let stmt = func_ctx
-                        .builder()
-                        .create_assign(ret_var.clone(), vec![array]);
-                    self.set_stmt_source_info(func_ctx, stmt, obj_node);
-                    AccessPath::from(ret_var)
-                };
-
-                let index_node = node
-                    .child_by_field_name("index")
-                    .or_else(|| node.named_child(1));
-                match index_node {
-                    // A key the evaluator can fold to a constant names its own field, which is
-                    // what keeps `$a['evil']` and `$a['safe']` apart.
-                    Some(index_node) => {
-                        if let Some(value) = self.evaluator.eval_node(index_node, self.source) {
-                            ap.path
-                                .fields
-                                .push(mir::FieldAccess::Symbol(ArcIntern::from(value.as_str())));
-                        } else if let Ok(offset) = self.text(index_node).parse::<i64>() {
-                            ap.path
-                                .fields
-                                .push(mir::FieldAccess::Offset(mir::Offset(offset)));
-                        } else {
-                            ap.path.fields.push(mir::FieldAccess::Offset(UNKNOWN_INDEX));
-                        }
-                    }
-                    // `$a[] = ..` appends at an index no one wrote down.
-                    None => ap.path.fields.push(mir::FieldAccess::Offset(UNKNOWN_INDEX)),
-                }
-                Ok(Exp::AccessPath(ap))
-            }
             "function_call_expression"
             | "member_call_expression"
             | "method_call_expression"
@@ -1572,6 +1681,13 @@ impl FunctionLowerer {
     fn builder(&mut self) -> BasicBlockBuilder<'_> {
         let block_data = &mut self.func.blocks.blocks_mut()[self.current_block];
         BasicBlockBuilder::new(block_data)
+    }
+
+    /// Mint a fresh, uniquely-named temporary local (`_t0`, `_t1`, ...).
+    fn fresh_temp(&mut self) -> VariableRef {
+        let var = VariableRef::new_local(format!("_t{}", self.next_temp_idx));
+        self.next_temp_idx += 1;
+        var
     }
     fn new_block(&mut self) -> mir::BasicBlockIdx {
         self.func.blocks.new_block()

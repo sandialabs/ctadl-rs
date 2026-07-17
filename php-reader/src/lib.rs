@@ -121,99 +121,71 @@ mod tests {
 
     #[test]
     fn test_lower_nested_subscript() {
-        use ctadl_ir::mir::{Exp, FieldAccess, StatementKind, Variable};
+        use ctadl_ir::mir::Variable;
         let source = r#"
             <?php
             $a = $_GET['input']['more'];
         "#;
         let program_info = lower_php(source, "nested.php").expect("Lowering failed");
-        let main = program_info
-            .program
-            .functions
-            .functions
-            .iter()
-            .find(|f| f.name == "__php_main__::nested.php")
-            .expect("Expected to find main function");
+        let main = function(&program_info, "__php_main__::nested.php").expect("expected main");
 
-        let mut found = false;
-        for bb in main.blocks.iter() {
-            for stmt in &bb.statements {
-                if let StatementKind::Assign { dest, sources } = &stmt.kind {
-                    if dest.variable.local() == Some("a") {
-                        if let Some(Exp::AccessPath(ap)) = sources.first() {
-                            if matches!(*ap.variable_ref.variable, Variable::GlobalHeap) {
-                                if ap.path.fields.len() == 3 {
-                                    let f1 = match &ap.path.fields[0] {
-                                        FieldAccess::Symbol(s) => s.to_string(),
-                                        _ => String::new(),
-                                    };
-                                    let f2 = match &ap.path.fields[1] {
-                                        FieldAccess::Symbol(s) => s.to_string(),
-                                        _ => String::new(),
-                                    };
-                                    let f3 = match &ap.path.fields[2] {
-                                        FieldAccess::Symbol(s) => s.to_string(),
-                                        _ => String::new(),
-                                    };
-                                    if f1 == "_GET" && f2 == "input" && f3 == "more" {
-                                        found = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        // Each symbolic step of `$_GET['input']['more']` is its own `Load` in the new IR: the
+        // superglobal off the global heap, then `input`, then `more`.
+        let load_fields: Vec<String> =
+            loads(main).iter().map(|(_, _, f)| f.field.to_string()).collect();
+        for expected in ["_GET", "input", "more"] {
+            assert!(
+                load_fields.iter().any(|f| f == expected),
+                "expected a load of `{expected}`, got {load_fields:?}"
+            );
         }
+        let reads_get_from_heap = loads(main).iter().any(|(_, source, field)| {
+            &*field.field == "_GET"
+                && matches!(*source.variable_ref.variable, Variable::GlobalHeap)
+                && source.path.is_empty()
+        });
         assert!(
-            found,
-            "Expected to find assignment $a = $_GET['input']['more']"
+            reads_get_from_heap,
+            "expected `$_GET` to be loaded from the global heap"
         );
+        let assigns_a = assignments(main)
+            .iter()
+            .any(|(dest, _)| dest.variable.local() == Some("a"));
+        assert!(assigns_a, "expected `$a` to be assigned the loaded value");
     }
 
     #[test]
     fn test_lower_get_input() {
-        use ctadl_ir::mir::{Exp, FieldAccess, StatementKind, Variable};
+        use ctadl_ir::mir::Variable;
         let source = r#"
             <?php
             $a = $_GET['input'];
         "#;
         let program_info = lower_php(source, "get.php").expect("Lowering failed");
-        let main = program_info
-            .program
-            .functions
-            .functions
-            .iter()
-            .find(|f| f.name == "__php_main__::get.php")
-            .expect("Expected to find main function");
+        let main = function(&program_info, "__php_main__::get.php").expect("expected main");
 
-        let mut found = false;
-        for bb in main.blocks.iter() {
-            for stmt in &bb.statements {
-                if let StatementKind::Assign { dest, sources } = &stmt.kind {
-                    if dest.variable.local() == Some("a") {
-                        if let Some(Exp::AccessPath(ap)) = sources.first() {
-                            if matches!(*ap.variable_ref.variable, Variable::GlobalHeap) {
-                                if ap.path.fields.len() == 2 {
-                                    let f1 = match &ap.path.fields[0] {
-                                        FieldAccess::Symbol(s) => s.to_string(),
-                                        _ => String::new(),
-                                    };
-                                    let f2 = match &ap.path.fields[1] {
-                                        FieldAccess::Symbol(s) => s.to_string(),
-                                        _ => String::new(),
-                                    };
-                                    if f1 == "_GET" && f2 == "input" {
-                                        found = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        // `$_GET['input']` is a load of `_GET` off the global heap, then a load of `input`.
+        let load_fields: Vec<String> =
+            loads(main).iter().map(|(_, _, f)| f.field.to_string()).collect();
+        for expected in ["_GET", "input"] {
+            assert!(
+                load_fields.iter().any(|f| f == expected),
+                "expected a load of `{expected}`, got {load_fields:?}"
+            );
         }
-        assert!(found, "Expected to find assignment $a = $_GET['input']");
+        let reads_get_from_heap = loads(main).iter().any(|(_, source, field)| {
+            &*field.field == "_GET"
+                && matches!(*source.variable_ref.variable, Variable::GlobalHeap)
+                && source.path.is_empty()
+        });
+        assert!(
+            reads_get_from_heap,
+            "expected `$_GET` to be loaded from the global heap"
+        );
+        let assigns_a = assignments(main)
+            .iter()
+            .any(|(dest, _)| dest.variable.local() == Some("a"));
+        assert!(assigns_a, "expected `$a` to be assigned the loaded value");
     }
 
     #[test]
@@ -265,6 +237,50 @@ mod tests {
             .flat_map(|bb| bb.statements.iter())
             .filter_map(|stmt| match &stmt.kind {
                 StatementKind::Assign { dest, sources } => Some((dest, sources)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Every `Load` in a function, as `(dest, source, field)`. Reading a symbolic field (a
+    /// property, an array key, a global slot) is a `Load` in the new IR, not an access-path field.
+    fn loads(
+        func: &ctadl_ir::mir::FunctionData,
+    ) -> Vec<(
+        &ctadl_ir::mir::VariableRef,
+        &ctadl_ir::mir::AccessPath,
+        &ctadl_ir::mir::FieldPath,
+    )> {
+        use ctadl_ir::mir::StatementKind;
+        func.blocks
+            .iter()
+            .flat_map(|bb| bb.statements.iter())
+            .filter_map(|stmt| match &stmt.kind {
+                StatementKind::Load {
+                    dest,
+                    source,
+                    field,
+                } => Some((dest, source, field)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Every `Store` in a function, as `(dest, field, value)`. Writing a symbolic field is a
+    /// `Store` in the new IR, which replaced the old functional `Update`.
+    fn stores(
+        func: &ctadl_ir::mir::FunctionData,
+    ) -> Vec<(
+        &ctadl_ir::mir::AccessPath,
+        &ctadl_ir::mir::FieldPath,
+        &ctadl_ir::mir::Exp,
+    )> {
+        use ctadl_ir::mir::StatementKind;
+        func.blocks
+            .iter()
+            .flat_map(|bb| bb.statements.iter())
+            .filter_map(|stmt| match &stmt.kind {
+                StatementKind::Store { dest, field, value } => Some((dest, field, value)),
                 _ => None,
             })
             .collect()
@@ -329,7 +345,7 @@ mod tests {
     /// function body and file scope refer to the same location.
     #[test]
     fn test_lower_global_declaration_reads_global_heap() {
-        use ctadl_ir::mir::{Exp, FieldAccess, Variable};
+        use ctadl_ir::mir::Variable;
         let source = r#"
             <?php
             function readsGlobal() {
@@ -340,24 +356,27 @@ mod tests {
         let program_info = lower_php(source, "globals.php").expect("Lowering failed");
         let func = function(&program_info, "readsGlobal").expect("expected 'readsGlobal'");
 
-        let reads_global_slot = assignments(func).iter().any(|(dest, sources)| {
-            dest.variable.local() == Some("local")
-                && matches!(sources.first(), Some(Exp::AccessPath(ap))
-                    if matches!(*ap.variable_ref.variable, Variable::GlobalHeap)
-                        && matches!(ap.path.fields.as_slice(),
-                            [FieldAccess::Symbol(s)] if &**s == "g_tainted"))
+        // The aliased name reads the global heap slot `g_tainted` as a `Load`.
+        let reads_global_slot = loads(func).iter().any(|(_, source, field)| {
+            &*field.field == "g_tainted"
+                && matches!(*source.variable_ref.variable, Variable::GlobalHeap)
+                && source.path.is_empty()
         });
         assert!(
             reads_global_slot,
-            "expected `$local = $g_tainted` to read the global slot `g_tainted`"
+            "expected `$local = $g_tainted` to load the global slot `g_tainted`"
         );
+        let assigns_local = assignments(func)
+            .iter()
+            .any(|(dest, _)| dest.variable.local() == Some("local"));
+        assert!(assigns_local, "expected `$local` to be assigned");
     }
 
     /// A file-scope assignment is also published to the global heap, since another function can
     /// reach it with `global $x` or `$GLOBALS['x']`.
     #[test]
     fn test_lower_file_scope_assignment_mirrors_to_global_heap() {
-        use ctadl_ir::mir::{StatementKind, Variable};
+        use ctadl_ir::mir::Variable;
         let source = r#"
             <?php
             $g = $_GET['input'];
@@ -365,22 +384,15 @@ mod tests {
         let program_info = lower_php(source, "mirror.php").expect("Lowering failed");
         let main = function(&program_info, "__php_main__::mirror.php").expect("expected main");
 
-        // The mirror writes a field of the global heap, which is an `Update`, not an `Assign`.
-        let mirrors =
-            main.blocks
-                .iter()
-                .flat_map(|bb| bb.statements.iter())
-                .any(|stmt| match &stmt.kind {
-                    StatementKind::Update { dest, .. } => {
-                        let (dest_var, dest_path) = dest;
-                        matches!(*dest_var.variable, Variable::GlobalHeap)
-                            && dest_path.fields.len() == 1
-                    }
-                    _ => false,
-                });
+        // The mirror writes a field of the global heap, which is a `Store`, not an `Assign`.
+        let mirrors = stores(main).iter().any(|(dest, field, _)| {
+            matches!(*dest.variable_ref.variable, Variable::GlobalHeap)
+                && dest.path.is_empty()
+                && &*field.field == "g"
+        });
         assert!(
             mirrors,
-            "expected the file-scope `$g = ..` to also write the global slot `g`"
+            "expected the file-scope `$g = ..` to also store the global slot `g`"
         );
     }
 
@@ -388,7 +400,7 @@ mod tests {
     /// symbol table, so it is the heap itself with no field of its own.
     #[test]
     fn test_lower_globals_array_names_the_global_slot() {
-        use ctadl_ir::mir::{Exp, FieldAccess, Variable};
+        use ctadl_ir::mir::Variable;
         let source = r#"
             <?php
             function viaGlobalsArray() {
@@ -398,17 +410,21 @@ mod tests {
         let program_info = lower_php(source, "globals-array.php").expect("Lowering failed");
         let func = function(&program_info, "viaGlobalsArray").expect("expected function");
 
-        let reads_slot = assignments(func).iter().any(|(dest, sources)| {
-            dest.variable.local() == Some("v")
-                && matches!(sources.first(), Some(Exp::AccessPath(ap))
-                    if matches!(*ap.variable_ref.variable, Variable::GlobalHeap)
-                        && matches!(ap.path.fields.as_slice(),
-                            [FieldAccess::Symbol(s)] if &**s == "g_tainted"))
+        // `$GLOBALS['g_tainted']` is a single load of `g_tainted` off the global heap itself --
+        // no intervening `GLOBALS` field.
+        let reads_slot = loads(func).iter().any(|(_, source, field)| {
+            &*field.field == "g_tainted"
+                && matches!(*source.variable_ref.variable, Variable::GlobalHeap)
+                && source.path.is_empty()
         });
         assert!(
             reads_slot,
-            "expected `$GLOBALS['g_tainted']` to be the global slot `g_tainted`, with no `GLOBALS` field"
+            "expected `$GLOBALS['g_tainted']` to load the global slot `g_tainted`, with no `GLOBALS` field"
         );
+        let assigns_v = assignments(func)
+            .iter()
+            .any(|(dest, _)| dest.variable.local() == Some("v"));
+        assert!(assigns_v, "expected `$v` to be assigned");
     }
 
     /// A by-reference parameter is an out-parameter: it must be declared `ByRef`, and the local
@@ -479,7 +495,7 @@ mod tests {
     /// back inside its body.
     #[test]
     fn test_lower_closure_captures_through_a_private_slot() {
-        use ctadl_ir::mir::{Exp, FieldAccess, StatementKind, Variable};
+        use ctadl_ir::mir::{Exp, Variable};
         let source = r#"
             <?php
             $byValue = function () use ($tainted) {
@@ -496,36 +512,26 @@ mod tests {
             .expect("expected the closure to be lowered");
         let slot = format!("{}::tainted", closure.name);
 
-        // Inside the closure, the captured name reads the slot.
-        let reads_slot = assignments(closure).iter().any(|(dest, sources)| {
-            dest.variable.local() == Some("inner")
-                && matches!(sources.first(), Some(Exp::AccessPath(ap))
-                    if matches!(*ap.variable_ref.variable, Variable::GlobalHeap)
-                        && matches!(ap.path.fields.as_slice(),
-                            [FieldAccess::Symbol(s)] if s.as_ref() == slot))
+        // Inside the closure, the captured name reads the slot with a `Load` off the global heap.
+        let reads_slot = loads(closure).iter().any(|(_, source, field)| {
+            &*field.field == slot
+                && matches!(*source.variable_ref.variable, Variable::GlobalHeap)
+                && source.path.is_empty()
         });
         assert!(
             reads_slot,
-            "expected the closure body to read the capture slot"
+            "expected the closure body to load the capture slot"
         );
 
-        // At the creation site, the slot is filled from the enclosing variable.
+        // At the creation site, the slot is filled from the enclosing variable with a `Store`.
         let main = function(&program_info, "__php_main__::capture.php").expect("expected main");
-        let fills_slot = main
-            .blocks
-            .iter()
-            .flat_map(|bb| bb.statements.iter())
-            .any(|stmt| match &stmt.kind {
-                StatementKind::Update { dest, value, .. } => {
-                    let (dest_var, dest_path) = dest;
-                    matches!(*dest_var.variable, Variable::GlobalHeap)
-                        && matches!(dest_path.fields.as_slice(),
-                            [FieldAccess::Symbol(s)] if &**s == slot)
-                        && matches!(value, Exp::AccessPath(ap)
-                            if ap.variable_ref.variable.local() == Some("tainted"))
-                }
-                _ => false,
-            });
+        let fills_slot = stores(main).iter().any(|(dest, field, value)| {
+            matches!(*dest.variable_ref.variable, Variable::GlobalHeap)
+                && dest.path.is_empty()
+                && &*field.field == slot
+                && matches!(value, Exp::AccessPath(ap)
+                    if ap.variable_ref.variable.local() == Some("tainted"))
+        });
         assert!(
             fills_slot,
             "expected the capture slot to be filled from `$tainted` where the closure is created"
@@ -559,11 +565,11 @@ mod tests {
     }
 
     /// `foreach ($a as &$e)` writes back through the alias, so an assignment to the element inside
-    /// the body lands in the collection -- at the same unknown-index slot a subscript with no
+    /// the body lands in the collection -- at the same shared element field a subscript with no
     /// static index uses, which is what a later `$a[0]` reads.
     #[test]
     fn test_lower_foreach_by_ref_writes_back_to_element() {
-        use ctadl_ir::mir::{Exp, FieldAccess, Offset, StatementKind};
+        use ctadl_ir::mir::Exp;
         let source = r#"
             <?php
             foreach ($items as &$item) {
@@ -573,23 +579,14 @@ mod tests {
         let program_info = lower_php(source, "foreach-ref.php").expect("Lowering failed");
         let main = function(&program_info, "__php_main__::foreach-ref.php").expect("expected main");
 
-        let writes_back = main
-            .blocks
-            .iter()
-            .flat_map(|bb| bb.statements.iter())
-            .any(|stmt| match &stmt.kind {
-                StatementKind::Update { dest, value, .. } => {
-                    let (dest_var, dest_path) = dest;
-                    dest_var.variable.local() == Some("items")
-                        && matches!(
-                            dest_path.fields.as_slice(),
-                            [FieldAccess::Offset(Offset(0))]
-                        )
-                        && matches!(value, Exp::AccessPath(ap)
-                            if ap.variable_ref.variable.local() == Some("item"))
-                }
-                _ => false,
-            });
+        // The write-back is a `Store` into the shared element field `[]` of `$items`.
+        let writes_back = stores(main).iter().any(|(dest, field, value)| {
+            dest.variable_ref.variable.local() == Some("items")
+                && dest.path.is_empty()
+                && &*field.field == "[]"
+                && matches!(value, Exp::AccessPath(ap)
+                    if ap.variable_ref.variable.local() == Some("item"))
+        });
         assert!(
             writes_back,
             "expected `&$item` to write back into an element of `$items`"
