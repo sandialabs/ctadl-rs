@@ -308,6 +308,9 @@ pub struct IndexStats {
     pub final_summary: usize,
     pub num_functions: usize,
     pub num_variables: usize,
+    /// Distinct variables appearing as the subject of a `locals` row, i.e. reached by
+    /// some formal. Bounded above by `num_variables`.
+    pub reached_variables: usize,
     pub hybrid_critical_summary: usize,
     pub hybrid_resolvent: usize,
     pub hybrid_context_assign: usize,
@@ -327,10 +330,13 @@ impl IndexStats {
             self.initial_assign
         );
         log::info!(
-            "relation increase: locals: {}, {} formals, {:.2} reached per formal, {:.2}% of variables reached",
+            "relation increase: locals: {}, {} formals, {:.2} reached per formal, {:.1}% of variables reached ({}/{}), {:.2} rows per variable",
             self.final_locals,
             self.initial_formals,
             ratio(self.final_locals, self.initial_formals),
+            100.0 * ratio(self.reached_variables, self.num_variables),
+            self.reached_variables,
+            self.num_variables,
             ratio(self.final_locals, self.num_variables)
         );
         log::info!(
@@ -1377,6 +1383,11 @@ pub fn taint_index_with_config(
     // run's peak, so a draining rebuild keeps the transient to ~1×.
     let assign_like_out = std::mem::take(&mut prog.__assign_like_ind_common).into_vec();
 
+    // `locals` lives in the trie (`__locals_ind_common`); its physical relation holds no
+    // tuples, so the distinct subjects come from the store's `(F, V)` outer keys — the same
+    // (func, var) key `num_variables` counts, so the two are directly comparable.
+    let reached_variables = prog.__locals_ind_common.num_reached_variables();
+
     let stats = IndexStats {
         initial_assign,
         final_assign_like: assign_like_out.len(),
@@ -1390,6 +1401,7 @@ pub fn taint_index_with_config(
         final_summary: prog.summary.len(),
         num_functions,
         num_variables,
+        reached_variables,
         hybrid_critical_summary: prog.critical_summary.len(),
         hybrid_resolvent: prog.resolvent.len(),
         hybrid_context_assign: prog.context_assign.len(),

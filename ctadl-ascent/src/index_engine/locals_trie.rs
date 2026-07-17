@@ -375,6 +375,14 @@ where
         self.len == 0
     }
 
+    /// Number of distinct `(F, V)` groups — i.e. distinct variables reached by some formal,
+    /// since `fwd`'s outer key is exactly the subject of a `locals` row. O(1): the trie
+    /// already keys on the prefix a scan of the rows would have to rediscover.
+    #[inline]
+    pub fn num_reached_variables(&self) -> usize {
+        self.fwd.len()
+    }
+
     /// Phase-0 instrumentation: estimate the heap bytes held by the forward store vs. the
     /// `fidx` side-index, so we can see *which* structure dominates before optimizing (external
     /// `phys_footprint` can't attribute bytes to a sub-structure). Estimates are
