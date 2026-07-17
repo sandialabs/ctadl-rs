@@ -394,10 +394,39 @@ pub struct IndexResult {
 impl IndexResult {
     pub fn try_save<P: AsRef<path::Path>>(self, dir: P) -> Result<(), Error> {
         use crate::facts::schema::*;
+        // `[mem cp]` around each table's serialize: the fixpoint's own checkpoints stop at
+        // `ascent_run returned`, but on path-heavy targets (e.g. JVM `fb`) the true peak is
+        // here, in the parquet writer, not in the fixpoint. Report row counts too so peak
+        // bytes can be attributed to a specific table.
+        log::info!(
+            "[mem cp] result.try_save start (summary={} assign_like={} paths={} ext={}): {:.1} MB",
+            self.summary.len(),
+            self.assign_like.len(),
+            self.paths.len(),
+            self.external_function.len(),
+            phys_footprint_mb()
+        );
         summary::try_save(&dir, self.summary)?;
+        log::info!("[mem cp]   after summary::try_save: {:.1} MB", phys_footprint_mb());
+        let assign_like_rows = self.assign_like.len();
         assign::try_save(&dir, self.assign_like)?;
+        log::info!(
+            "[mem cp]   after assign::try_save ({} rows): {:.1} MB",
+            assign_like_rows,
+            phys_footprint_mb()
+        );
+        let paths_rows = self.paths.len();
         paths::try_save(&dir, self.paths)?;
+        log::info!(
+            "[mem cp]   after paths::try_save ({} rows): {:.1} MB",
+            paths_rows,
+            phys_footprint_mb()
+        );
         external_function::try_save(&dir, self.external_function)?;
+        log::info!(
+            "[mem cp] result.try_save done: {:.1} MB",
+            phys_footprint_mb()
+        );
         Ok(())
     }
 
