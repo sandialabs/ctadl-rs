@@ -16,6 +16,42 @@ use source_info::{
     FileSpanId, Span, SpanId, SpanLen,
 };
 
+/// The element slot an array access uses when the index is not known statically.
+///
+/// `$a[$i]`, `$a[]` (append) and `foreach ($a as &$e)` all name an element that this lowering
+/// cannot pin down. They share one slot, so a write through any of them is visible to a read
+/// through any other -- including a read at literal index 0, which lands here too.
+const UNKNOWN_INDEX: mir::Offset = mir::Offset(0);
+
+/// Whether `name` (without its `$`) is a PHP superglobal: a variable that names global state
+/// directly in every scope, with no declaration and no capturing.
+fn is_superglobal(name: &str) -> bool {
+    matches!(
+        name,
+        "GLOBALS"
+            | "_SERVER"
+            | "_GET"
+            | "_POST"
+            | "_FILES"
+            | "_COOKIE"
+            | "_SESSION"
+            | "_REQUEST"
+            | "_ENV"
+    )
+}
+
+/// Node kinds that declare a named type whose body can hold `method_declaration`s.
+///
+/// All four are one thing to the lowering: a name to qualify their methods with and a body to walk.
+/// Only classes can be instantiated, but PHP resolves a call by method name across every type that
+/// declares it, so an interface's or trait's methods have to be registered like any other.
+fn is_type_declaration(kind: &str) -> bool {
+    matches!(
+        kind,
+        "class_declaration" | "interface_declaration" | "trait_declaration" | "enum_declaration"
+    )
+}
+
 pub struct Lowerer<'a, 'p> {
     source: &'a str,
     file_name: &'a str,
@@ -27,6 +63,9 @@ pub struct Lowerer<'a, 'p> {
     current_file_id: Option<FileId>,
     span_cache: BTreeMap<(u32, u32), FileSpanId>,
     evaluator: Evaluator,
+    /// Free functions called by name, mapped to the largest argument count seen at any call site.
+    /// Any of these still undefined after lowering is stubbed by [`Lowerer::stub_called_functions`].
+    called_functions: BTreeMap<String, usize>,
 }
 
 impl<'a, 'p> Lowerer<'a, 'p> {
@@ -47,6 +86,7 @@ impl<'a, 'p> Lowerer<'a, 'p> {
             current_file_id: None,
             span_cache: BTreeMap::new(),
             evaluator: Evaluator::new(),
+            called_functions: BTreeMap::new(),
         }
     }
 
@@ -59,8 +99,101 @@ impl<'a, 'p> Lowerer<'a, 'p> {
         // Pass 2: Lower bodies
         self.lower_bodies(root)?;
 
+        // Pass 3: Stub whatever pass 2 called but no pass ever defined
+        self.stub_called_functions();
+
         self.extend_vmt()?;
         Ok(())
+    }
+
+    /// Give every called-but-undefined free function an empty definition.
+    ///
+    /// PHP programs are open: they call builtins (`echo`, `exec`, `sprintf`) and functions from
+    /// files we were not handed. The analysis needs each of those to exist as a function with
+    /// declared formals regardless, for two reasons. Taint only crosses a call boundary into a
+    /// formal the callee declares, so a sink model on `exec`'s `Argument(0)` matches nothing if
+    /// `exec` declares no parameters. And a body-less function is what marks a function
+    /// *external*, which is what lets a model describe its behavior instead of the (absent) code.
+    ///
+    /// Arity comes from the widest call site rather than any real signature, which is all the
+    /// analysis needs: a formal exists for every argument anyone actually passes. This mirrors how
+    /// the dex frontend stubs its unresolved callees.
+    fn stub_called_functions(&mut self) {
+        let defined: BTreeSet<&str> = self
+            .program_info
+            .program
+            .functions
+            .functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        let stubs: Vec<(String, usize)> = self
+            .called_functions
+            .iter()
+            .filter(|(name, _)| !defined.contains(name.as_str()))
+            .map(|(name, argc)| (name.clone(), *argc))
+            .collect();
+
+        for (name, argc) in stubs {
+            log::debug!("stubbing external php function {name}/{argc}");
+            let mut params = Params::default();
+            for _ in 0..argc {
+                params.parameters.push(mir::ParameterType::ByVal);
+            }
+            self.program_info
+                .program
+                .functions
+                .functions
+                .push(FunctionData {
+                    name: name.clone(),
+                    params,
+                    return_type: ReturnType { arity: 1 },
+                    // No blocks at all: this is what codegen reads as "external function".
+                    blocks: BasicBlocks::new(),
+                });
+            self.vmt_methods.insert((
+                PhpClass(ArcIntern::from("")),
+                PhpMethodName(ArcIntern::from(name.to_lowercase().as_str())),
+                PhpMethod(ArcIntern::from(name.as_str())),
+            ));
+        }
+    }
+
+    /// Record a call to a free function, widening its recorded arity to `argc`.
+    fn record_called_function(&mut self, name: &str, argc: usize) {
+        let entry = self.called_functions.entry(name.to_string()).or_default();
+        *entry = (*entry).max(argc);
+    }
+
+    /// Names of the traits a type declaration pulls in via `use`, fully qualified.
+    ///
+    /// The trait names sit in `use_declaration` nodes inside the body, which is where this looks;
+    /// the `use` *statement* that imports a namespace is a `namespace_use_declaration` and is a
+    /// different node, so there is no confusion between the two senses of the keyword.
+    fn used_traits(&self, decl: Node<'_>, current_namespace: &str) -> Vec<String> {
+        let Some(body) = decl.child_by_field_name("body") else {
+            return Vec::new();
+        };
+        let mut traits = Vec::new();
+        for member in body.children(&mut body.walk()) {
+            if member.kind() != "use_declaration" {
+                continue;
+            }
+            for name_node in member.children(&mut member.walk()) {
+                if !matches!(name_node.kind(), "name" | "qualified_name") {
+                    continue;
+                }
+                let trait_name = self.text(name_node);
+                traits.push(
+                    if current_namespace.is_empty() || trait_name.starts_with('\\') {
+                        trait_name.trim_start_matches('\\').to_string()
+                    } else {
+                        format!("{}\\{}", current_namespace, trait_name)
+                    },
+                );
+            }
+        }
+        traits
     }
 
     fn extend_vmt(&mut self) -> Result<(), PhpReaderError> {
@@ -121,7 +254,7 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                     }
                     self.collect_symbols(child, current_namespace.clone(), current_class.clone())?;
                 }
-                "class_declaration" => {
+                kind if is_type_declaration(kind) => {
                     let name = child
                         .child_by_field_name("name")
                         .map(|n| self.text(n).to_string())
@@ -132,6 +265,9 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                         format!("{}\\{}", current_namespace, name)
                     };
 
+                    // Every supertype is a parent, whichever clause names it: `extends` (a class
+                    // base, or the interfaces an interface extends), `implements`, and `use` (a
+                    // trait, whose methods PHP flattens into the using type as if declared there).
                     let mut bases = smallvec::smallvec![];
                     for base_or_iface in child.children(&mut child.walk()) {
                         if base_or_iface.kind() == "base_clause"
@@ -152,6 +288,11 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                             }
                         }
                     }
+                    bases.extend(
+                        self.used_traits(child, &current_namespace)
+                            .into_iter()
+                            .map(|t| PhpClass(ArcIntern::from(t.as_str()))),
+                    );
                     self.vmt_hierarchy
                         .insert(PhpClass(ArcIntern::from(fqn_class.as_str())), bases);
                     self.collect_symbols(child, current_namespace.clone(), Some(fqn_class))?;
@@ -234,6 +375,7 @@ impl<'a, 'p> Lowerer<'a, 'p> {
 
     fn lower_bodies(&mut self, root: Node<'_>) -> Result<(), PhpReaderError> {
         let mut main_func = FunctionLowerer::new(format!("__php_main__::{}", self.file_name));
+        main_func.is_main = true;
         self.lower_block(root, &mut main_func, String::new(), None)?;
 
         if main_func.func.blocks[main_func.current_block]
@@ -280,7 +422,7 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                         current_class.clone(),
                     )?;
                 }
-                "class_declaration" => {
+                kind if is_type_declaration(kind) => {
                     let name = child
                         .child_by_field_name("name")
                         .map(|n| self.text(n).to_string())
@@ -297,10 +439,10 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                         .child_by_field_name("name")
                         .map(|n| self.text(n).to_string())
                         .unwrap_or_default();
-                    let fqn = match child.kind() {
-                        "method_declaration" => {
-                            format!("{}::{}", current_class.as_ref().unwrap(), name)
-                        }
+                    let fqn = match (child.kind(), current_class.as_ref()) {
+                        // A method outside any type declaration is not something the grammar can
+                        // produce; name it like a free function rather than panicking if it does.
+                        ("method_declaration", Some(cls)) => format!("{}::{}", cls, name),
                         _ => {
                             if current_namespace.is_empty() {
                                 name.clone()
@@ -312,37 +454,7 @@ impl<'a, 'p> Lowerer<'a, 'p> {
 
                     let mut inner_func = FunctionLowerer::new(fqn);
 
-                    if let Some(params_node) = child.child_by_field_name("parameters") {
-                        let mut p_cursor = params_node.walk();
-                        for p in params_node.children(&mut p_cursor) {
-                            if p.kind() == "simple_parameter" {
-                                let param_name = p
-                                    .child_by_field_name("name")
-                                    .map(|n| self.text(n).to_string())
-                                    .unwrap_or_default();
-                                let param_name = param_name
-                                    .strip_prefix('$')
-                                    .unwrap_or(&param_name)
-                                    .to_string();
-
-                                let param_idx =
-                                    mir::ParameterIdx::new(inner_func.func.params.parameters.len());
-                                inner_func
-                                    .func
-                                    .params
-                                    .parameters
-                                    .push(mir::ParameterType::ByVal);
-
-                                let param_var = mir::VariableRef::new_parameter(param_idx);
-                                let local_var = mir::VariableRef::new_local(param_name);
-                                let stmt = inner_func.builder().create_assign(
-                                    local_var,
-                                    vec![mir::Exp::AccessPath(mir::AccessPath::from(param_var))],
-                                );
-                                self.set_stmt_source_info(&mut inner_func, stmt, p);
-                            }
-                        }
-                    }
+                    let by_ref = self.lower_params(child, &mut inner_func);
 
                     if let Some(body) = child.child_by_field_name("body") {
                         self.lower_block(
@@ -352,6 +464,8 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                             current_class.clone(),
                         )?;
                     }
+
+                    self.write_back_by_ref_params(&by_ref, &mut inner_func, child);
 
                     if inner_func.func.blocks[inner_func.current_block]
                         .terminator
@@ -387,6 +501,7 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                         callee: AccessPath::from(VariableRef::new_local("echo".to_string())),
                         kind: PhpCallKind::DirectFunction,
                     };
+                    self.record_called_function("echo", args.len());
 
                     let ret_var = VariableRef::new_local(format!("_t{}", func_ctx.next_temp_idx));
                     func_ctx.next_temp_idx += 1;
@@ -416,6 +531,54 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                         current_class.clone(),
                         None,
                     )?;
+                }
+                "foreach_statement" => {
+                    self.lower_foreach(
+                        child,
+                        func_ctx,
+                        current_namespace.clone(),
+                        current_class.clone(),
+                    )?;
+                }
+                // `global $x, $y;` rebinds those names to the global slots of the same name for
+                // the rest of the function -- reads and writes both.
+                "global_declaration" => {
+                    let mut g_cursor = child.walk();
+                    for v in child.named_children(&mut g_cursor) {
+                        if v.kind() != "variable_name" {
+                            continue;
+                        }
+                        let text = self.text(v);
+                        let name = text.strip_prefix('$').unwrap_or(text).to_string();
+                        func_ctx.global_aliases.insert(name.clone(), name);
+                    }
+                }
+                // A function-local `static` keeps its value across calls, so it is state that
+                // outlives the frame -- a global slot in all but name. The slot is qualified by
+                // the function so two functions' statics cannot collide.
+                "function_static_declaration" => {
+                    let mut s_cursor = child.walk();
+                    for decl in child.named_children(&mut s_cursor) {
+                        if decl.kind() != "static_variable_declaration" {
+                            continue;
+                        }
+                        let Some(name_node) = decl.child_by_field_name("name") else {
+                            continue;
+                        };
+                        let text = self.text(name_node);
+                        let name = text.strip_prefix('$').unwrap_or(text).to_string();
+                        let slot = format!("{}::{}", func_ctx.func.name, name);
+                        func_ctx.global_aliases.insert(name, slot.clone());
+
+                        if let Some(value_node) = decl.child_by_field_name("value") {
+                            let value = self.lower_exp(value_node, func_ctx)?;
+                            let stmt = func_ctx.builder().create_assign_or_update(
+                                AccessPath::new_global(&slot, Default::default()),
+                                value,
+                            );
+                            self.set_stmt_source_info(func_ctx, stmt, decl);
+                        }
+                    }
                 }
                 "while_statement" => {
                     let cond_block = func_ctx.new_block();
@@ -469,6 +632,416 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Lower a closure (`function () use (..) {..}` or `fn () => ..`) into its own function, and
+    /// evaluate to a pointer to it.
+    ///
+    /// The pointer is what lets the closure be called later: assigning it to a variable records
+    /// which function that variable holds, so a call through the variable resolves back to this
+    /// body -- see the dynamic-call arm of [`Lowerer::lower_exp`].
+    ///
+    /// Captured variables cross from the enclosing frame into a frame that does not exist yet, so
+    /// they travel through the one piece of state both frames can name: the global heap. Each
+    /// capture gets a slot private to this closure, written at the point of creation and read back
+    /// inside the body (via the same aliasing that serves `global` declarations). A by-reference
+    /// capture (`use (&$x)`) additionally reads the slot back out into the enclosing variable,
+    /// since a write inside the closure is meant to be visible outside it.
+    fn lower_closure(
+        &mut self,
+        node: Node<'_>,
+        func_ctx: &mut FunctionLowerer,
+    ) -> Result<Exp, PhpReaderError> {
+        // Byte offset keeps the name unique and stable: no two closures start at the same place.
+        let closure_name = format!("{{closure}}@{}:{}", self.file_name, node.start_byte());
+        let mut closure = FunctionLowerer::new(closure_name.clone());
+
+        let by_ref = self.lower_params(node, &mut closure);
+        let param_names: BTreeSet<String> = closure
+            .func
+            .params
+            .parameters
+            .iter()
+            .enumerate()
+            .filter_map(|(i, _)| self.param_local_name(node, i))
+            .collect();
+
+        // `use (..)` lists an anonymous function's captures explicitly; an arrow function has no
+        // list and captures by value whatever its body reads from the enclosing scope.
+        let captures: Vec<(String, bool)> = match node.kind() {
+            "arrow_function" => node
+                .child_by_field_name("body")
+                .map(|body| {
+                    self.free_variables(body, &param_names)
+                        .into_iter()
+                        .map(|name| (name, false))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => self.use_clause_captures(node),
+        };
+
+        for (name, _) in &captures {
+            closure
+                .global_aliases
+                .insert(name.clone(), format!("{closure_name}::{name}"));
+        }
+
+        match node.kind() {
+            "arrow_function" => {
+                // An arrow function's body is one expression, and its value is what it returns.
+                if let Some(body) = node.child_by_field_name("body") {
+                    let value = self.lower_exp(body, &mut closure)?;
+                    closure.builder().create_ret(vec![value]);
+                    self.set_terminator_source_info(&mut closure, body);
+                }
+            }
+            _ => {
+                if let Some(body) = node.child_by_field_name("body") {
+                    self.lower_block(body, &mut closure, String::new(), None)?;
+                }
+            }
+        }
+
+        self.write_back_by_ref_params(&by_ref, &mut closure, node);
+        if closure.func.blocks[closure.current_block]
+            .terminator
+            .is_none()
+        {
+            closure.builder().create_ret(std::iter::empty());
+            self.set_terminator_source_info(&mut closure, node);
+        }
+        self.program_info
+            .program
+            .functions
+            .functions
+            .push(closure.func);
+
+        // Back in the enclosing function: fill each capture slot from the variable it captures.
+        for (name, is_by_ref) in &captures {
+            let slot = format!("{closure_name}::{name}");
+            let outer = self.lower_exp_variable(name, func_ctx);
+            let stmt = func_ctx
+                .builder()
+                .create_assign_or_update(AccessPath::new_global(&slot, Default::default()), outer);
+            self.set_stmt_source_info(func_ctx, stmt, node);
+
+            if *is_by_ref && let Exp::AccessPath(outer_ap) = self.lower_exp_variable(name, func_ctx)
+            {
+                // The closure has not run yet, so this edge is placed early on purpose: it stands
+                // for "whenever the closure runs, this write is visible here".
+                let stmt = func_ctx.builder().create_assign_or_update(
+                    outer_ap,
+                    Exp::AccessPath(AccessPath::new_global(&slot, Default::default())),
+                );
+                self.set_stmt_source_info(func_ctx, stmt, node);
+            }
+        }
+
+        Ok(Exp::ObjectRef(mir::CallObject::FunctionPtr(
+            ArcIntern::from(closure_name.as_str()),
+        )))
+    }
+
+    /// The local name bound to parameter `index` of `decl`, if it declares one.
+    fn param_local_name(&self, decl: Node<'_>, index: usize) -> Option<String> {
+        let params_node = decl.child_by_field_name("parameters")?;
+        let p = params_node
+            .children(&mut params_node.walk())
+            .filter(|p| {
+                matches!(
+                    p.kind(),
+                    "simple_parameter" | "variadic_parameter" | "property_promotion_parameter"
+                )
+            })
+            .nth(index)?;
+        let name_node = p.child_by_field_name("name")?;
+        let text = self.text(name_node);
+        Some(text.strip_prefix('$').unwrap_or(text).to_string())
+    }
+
+    /// The `use (..)` captures of an anonymous function, as `(name, by_reference)`.
+    fn use_clause_captures(&self, node: Node<'_>) -> Vec<(String, bool)> {
+        let mut captures = Vec::new();
+        for c in node.children(&mut node.walk()) {
+            if c.kind() != "anonymous_function_use_clause" {
+                continue;
+            }
+            for v in c.named_children(&mut c.walk()) {
+                let (var_node, is_by_ref) = match v.kind() {
+                    "by_ref" => (v.named_child(0), true),
+                    "variable_name" => (Some(v), false),
+                    _ => continue,
+                };
+                let Some(var_node) = var_node else { continue };
+                let text = self.text(var_node);
+                captures.push((
+                    text.strip_prefix('$').unwrap_or(text).to_string(),
+                    is_by_ref,
+                ));
+            }
+        }
+        captures
+    }
+
+    /// Variable names read anywhere under `node` that `bound` does not account for.
+    ///
+    /// This is what an arrow function captures: everything its body mentions except its own
+    /// parameters, `$this`, and the superglobals (which name the global heap directly and need no
+    /// capturing).
+    fn free_variables(&self, node: Node<'_>, bound: &BTreeSet<String>) -> BTreeSet<String> {
+        let mut free = BTreeSet::new();
+        let mut stack = vec![node];
+        while let Some(n) = stack.pop() {
+            if n.kind() == "variable_name" {
+                let text = self.text(n);
+                let name = text.strip_prefix('$').unwrap_or(text);
+                if !bound.contains(name) && !is_superglobal(name) && name != "this" {
+                    free.insert(name.to_string());
+                }
+            }
+            stack.extend(n.named_children(&mut n.walk()));
+        }
+        free
+    }
+
+    /// Evaluate a bare variable by name in `func_ctx`, honoring its global aliases.
+    fn lower_exp_variable(&self, name: &str, func_ctx: &FunctionLowerer) -> Exp {
+        match func_ctx.global_aliases.get(name) {
+            Some(slot) => Exp::AccessPath(AccessPath::new_global(slot, Default::default())),
+            None => Exp::AccessPath(AccessPath::from(VariableRef::new_local(name.to_string()))),
+        }
+    }
+
+    /// Publish a file-scope assignment to the global heap, in addition to the local it wrote.
+    ///
+    /// A variable assigned at file scope *is* a global in PHP: another function can reach it with
+    /// `global $x` or `$GLOBALS['x']`, both of which lower to the global slot `x`. Mirroring the
+    /// assignment there is what makes those two views see what file scope wrote.
+    ///
+    /// The local write stays the primary one, and file scope keeps reading the local. That is the
+    /// deliberate half of this: a local is strongly updated, so a later `$x = 'constant'` kills the
+    /// taint an earlier `$x = $_GET[..]` put there, whereas heap slots accumulate. Keeping file
+    /// scope on locals keeps that kill; the mirror only adds the cross-function view.
+    fn mirror_main_scope_global(
+        &mut self,
+        left: Node<'_>,
+        rhs: &Exp,
+        func_ctx: &mut FunctionLowerer,
+        node: Node<'_>,
+    ) {
+        if !func_ctx.is_main || left.kind() != "variable_name" {
+            return;
+        }
+        let text = self.text(left);
+        let name = text.strip_prefix('$').unwrap_or(text);
+        // An aliased name already wrote the global slot directly.
+        if func_ctx.global_aliases.contains_key(name) {
+            return;
+        }
+        let stmt = func_ctx.builder().create_assign_or_update(
+            AccessPath::new_global(name, Default::default()),
+            rhs.clone(),
+        );
+        self.set_stmt_source_info(func_ctx, stmt, node);
+    }
+
+    /// Bind each declared parameter to a local of the same name, and declare its passing mode.
+    ///
+    /// Returns the by-reference parameters as `(index, local name)`, which the caller must feed to
+    /// [`Lowerer::write_back_by_ref_params`] once the body is lowered.
+    ///
+    /// A variadic parameter (`...$args`) collects the arguments from its position onward into an
+    /// array. It is declared as one parameter here, which is enough for the array's *elements* to
+    /// carry taint: an argument passed at a later position has no formal of its own to arrive at,
+    /// but the analysis widens a function's arity to the widest call site, so a model over
+    /// `Argument(*)` still ranges over what callers actually pass.
+    fn lower_params(
+        &mut self,
+        decl: Node<'_>,
+        func_ctx: &mut FunctionLowerer,
+    ) -> Vec<(usize, String)> {
+        let Some(params_node) = decl.child_by_field_name("parameters") else {
+            return Vec::new();
+        };
+        let mut by_ref = Vec::new();
+        let mut p_cursor = params_node.walk();
+        for p in params_node.children(&mut p_cursor) {
+            if !matches!(
+                p.kind(),
+                "simple_parameter" | "variadic_parameter" | "property_promotion_parameter"
+            ) {
+                continue;
+            }
+            let param_name = p
+                .child_by_field_name("name")
+                .map(|n| self.text(n).to_string())
+                .unwrap_or_default();
+            let param_name = param_name
+                .strip_prefix('$')
+                .unwrap_or(&param_name)
+                .to_string();
+
+            // `&$x` is what makes a parameter an out-parameter: the analysis flows taint on a
+            // by-ref formal back out to every caller's argument.
+            let is_by_ref = p
+                .children(&mut p.walk())
+                .any(|c| c.kind() == "reference_modifier");
+
+            let index = func_ctx.func.params.parameters.len();
+            let param_idx = mir::ParameterIdx::new(index);
+            func_ctx.func.params.parameters.push(if is_by_ref {
+                mir::ParameterType::ByRef
+            } else {
+                mir::ParameterType::ByVal
+            });
+
+            let param_var = mir::VariableRef::new_parameter(param_idx);
+            let local_var = mir::VariableRef::new_local(param_name.clone());
+            let stmt = func_ctx.builder().create_assign(
+                local_var,
+                vec![mir::Exp::AccessPath(mir::AccessPath::from(param_var))],
+            );
+            self.set_stmt_source_info(func_ctx, stmt, p);
+
+            if is_by_ref {
+                by_ref.push((index, param_name));
+            }
+        }
+        by_ref
+    }
+
+    /// Copy each by-reference parameter's local back onto the formal it came from.
+    ///
+    /// Assigning to `&$out` inside a function is visible to the caller, but the body assigns the
+    /// *local* the parameter was bound to, which by itself goes nowhere. Copying the local back
+    /// onto the formal is what connects the two: taint that reaches the formal flows out to the
+    /// argument at every call site.
+    fn write_back_by_ref_params(
+        &mut self,
+        by_ref: &[(usize, String)],
+        func_ctx: &mut FunctionLowerer,
+        node: Node<'_>,
+    ) {
+        for (index, name) in by_ref {
+            let param_var = mir::VariableRef::new_parameter(mir::ParameterIdx::new(*index));
+            let local_var = mir::VariableRef::new_local(name.clone());
+            let stmt = func_ctx.builder().create_assign(
+                param_var,
+                vec![mir::Exp::AccessPath(mir::AccessPath::from(local_var))],
+            );
+            self.set_stmt_source_info(func_ctx, stmt, node);
+        }
+    }
+
+    /// Lower `foreach (COLL as [K =>] V) BODY`.
+    ///
+    /// The loop variable takes one element per iteration, but which element -- which field of the
+    /// collection -- is not known statically, so `V` is modeled as a copy of the whole collection.
+    /// That is the sound direction: it keeps every field of `COLL` reachable through `V`, so taint
+    /// anywhere in the collection stays visible at the same field path on the loop variable.
+    ///
+    /// `foreach` by reference (`as &$v`) writes back through the alias, so an assignment to `$v`
+    /// inside the body lands in the collection. That is modeled with the mirrored copy after the
+    /// body, which is what carries taint assigned to the element out into `COLL`.
+    ///
+    /// The key of a `K => V` pair is modeled as a copy of the collection for the same reason the
+    /// value is: a tainted key is reachable from the collection, and nothing here can tell which
+    /// field it came from.
+    ///
+    /// The loop is lowered with the same shape as `while`: a condition block that branches to
+    /// either the body or the exit, and a back edge, so a value assigned late in the body is still
+    /// visible to a use earlier in it.
+    fn lower_foreach(
+        &mut self,
+        node: Node<'_>,
+        func_ctx: &mut FunctionLowerer,
+        current_namespace: String,
+        current_class: Option<String>,
+    ) -> Result<(), PhpReaderError> {
+        let body = node.child_by_field_name("body");
+        // The collection and the loop target are positional: the grammar gives them no field
+        // names, and `body` is the only named child that has one.
+        let mut header = Vec::new();
+        let mut cursor = node.walk();
+        for c in node.named_children(&mut cursor) {
+            if Some(c) == body {
+                continue;
+            }
+            header.push(c);
+        }
+        let (Some(&collection_node), Some(&target_node)) = (header.first(), header.get(1)) else {
+            log::warn!("foreach with no collection or no loop variable; skipping");
+            return Ok(());
+        };
+
+        let cond_block = func_ctx.new_block();
+        let body_block = func_ctx.new_block();
+        let end_block = func_ctx.new_block();
+
+        func_ctx.finish_block_with_goto(cond_block);
+        func_ctx.current_block = cond_block;
+        let collection = self.lower_exp(collection_node, func_ctx)?;
+        func_ctx.builder().create_goto(vec![body_block, end_block]);
+        self.set_terminator_source_info(func_ctx, node);
+
+        func_ctx.current_block = body_block;
+
+        // `K => V` splits the target; a bare target is the value alone.
+        let (key_node, value_node) = if target_node.kind() == "pair" {
+            let mut pair_cursor = target_node.walk();
+            let parts: Vec<_> = target_node.named_children(&mut pair_cursor).collect();
+            (parts.first().copied(), parts.get(1).copied())
+        } else {
+            (None, Some(target_node))
+        };
+
+        for bind in [key_node, value_node].into_iter().flatten() {
+            // `as &$v` wraps the variable; the alias itself is what `by_ref` adds, and the
+            // element copy below is the same either way.
+            let by_ref = bind.kind() == "by_ref";
+            let bind_target = if by_ref {
+                bind.named_child(0).unwrap_or(bind)
+            } else {
+                bind
+            };
+
+            let dest = self.lower_exp(bind_target, func_ctx)?;
+            if let Exp::AccessPath(ap) = dest {
+                let stmt = func_ctx
+                    .builder()
+                    .create_assign_or_update(ap, collection.clone());
+                self.set_stmt_source_info(func_ctx, stmt, bind_target);
+            }
+        }
+
+        if let Some(b) = body {
+            self.lower_block(b, func_ctx, current_namespace, current_class)?;
+        }
+
+        // Write the element back through a by-reference alias, after the body has had its say.
+        // The write lands on an element of the collection, not on the collection itself, so it
+        // goes to the same unknown-index slot that a subscript with no statically known index
+        // lowers to -- which is what a later `$items[0]` reads back.
+        if let Some(value_node) = value_node
+            && value_node.kind() == "by_ref"
+            && let Exp::AccessPath(mut element_slot) = collection
+        {
+            element_slot
+                .path
+                .fields
+                .push(mir::FieldAccess::Offset(UNKNOWN_INDEX));
+            let element_node = value_node.named_child(0).unwrap_or(value_node);
+            let element = self.lower_exp(element_node, func_ctx)?;
+            let stmt = func_ctx
+                .builder()
+                .create_assign_or_update(element_slot, element);
+            self.set_stmt_source_info(func_ctx, stmt, value_node);
+        }
+
+        func_ctx.finish_block_with_goto(cond_block);
+        func_ctx.current_block = end_block;
         Ok(())
     }
 
@@ -593,17 +1166,30 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                 let text = self.text(node);
                 let name = text.strip_prefix('$').unwrap_or(text);
                 match name {
-                    "GLOBALS" | "_SERVER" | "_GET" | "_POST" | "_FILES" | "_COOKIE"
-                    | "_SESSION" | "_REQUEST" | "_ENV" => {
+                    // `$GLOBALS` *is* the global symbol table, so it is the global heap itself
+                    // with no field of its own: `$GLOBALS['g']` and the global `$g` then name the
+                    // very same access path, which is what makes the two views agree.
+                    "GLOBALS" => Ok(Exp::AccessPath(AccessPath::from(VariableRef::new_global()))),
+                    "_SERVER" | "_GET" | "_POST" | "_FILES" | "_COOKIE" | "_SESSION"
+                    | "_REQUEST" | "_ENV" => {
                         let mut ap = AccessPath::from(VariableRef::new_global());
                         ap.path
                             .fields
                             .push(mir::FieldAccess::Symbol(ArcIntern::from(name)));
                         Ok(Exp::AccessPath(ap))
                     }
-                    _ => Ok(Exp::AccessPath(AccessPath::from(VariableRef::new_local(
-                        name.to_string(),
-                    )))),
+                    // A name declared `global` (or `static`) in this function does not denote a
+                    // local at all: it denotes the global heap slot it was bound to, for reads and
+                    // writes alike.
+                    _ => match func_ctx.global_aliases.get(name) {
+                        Some(field) => Ok(Exp::AccessPath(AccessPath::new_global(
+                            field,
+                            Default::default(),
+                        ))),
+                        None => Ok(Exp::AccessPath(AccessPath::from(VariableRef::new_local(
+                            name.to_string(),
+                        )))),
+                    },
                 }
             }
             "string" => {
@@ -614,7 +1200,11 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                 Ok(func_ctx.builder().new_str_exp(&val))
             }
             "integer" => Ok(func_ctx.builder().new_str_exp(self.text(node))),
-            "assignment_expression" => {
+            // `$a = $b` and `$a = &$b` lower the same way. A reference assignment binds the two
+            // names to one value rather than copying, but a copy carries taint from right to left
+            // exactly as the binding does; what the copy does not carry is a later write through
+            // `$a` showing up in `$b`.
+            "assignment_expression" | "reference_assignment_expression" => {
                 let left = node.child_by_field_name("left").unwrap();
                 let right = node.child_by_field_name("right").unwrap();
 
@@ -631,8 +1221,10 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                     let stmt = func_ctx.builder().create_assign_or_update(ap, rhs.clone());
                     self.set_stmt_source_info(func_ctx, stmt, node);
                 }
+                self.mirror_main_scope_global(left, &rhs, func_ctx, node);
                 Ok(rhs)
             }
+            "anonymous_function" | "arrow_function" => self.lower_closure(node, func_ctx),
             "member_access_expression"
             | "nullsafe_member_access_expression"
             | "scoped_property_access_expression" => {
@@ -680,24 +1272,24 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                 let index_node = node
                     .child_by_field_name("index")
                     .or_else(|| node.named_child(1));
-                if let Some(index_node) = index_node {
-                    if let Some(value) = self.evaluator.eval_node(index_node, self.source) {
-                        ap.path
-                            .fields
-                            .push(mir::FieldAccess::Symbol(ArcIntern::from(value.as_str())));
-                    } else if let Ok(offset) = self.text(index_node).parse::<i64>() {
-                        ap.path
-                            .fields
-                            .push(mir::FieldAccess::Offset(mir::Offset(offset)));
-                    } else {
-                        ap.path
-                            .fields
-                            .push(mir::FieldAccess::Offset(mir::Offset(0)));
+                match index_node {
+                    // A key the evaluator can fold to a constant names its own field, which is
+                    // what keeps `$a['evil']` and `$a['safe']` apart.
+                    Some(index_node) => {
+                        if let Some(value) = self.evaluator.eval_node(index_node, self.source) {
+                            ap.path
+                                .fields
+                                .push(mir::FieldAccess::Symbol(ArcIntern::from(value.as_str())));
+                        } else if let Ok(offset) = self.text(index_node).parse::<i64>() {
+                            ap.path
+                                .fields
+                                .push(mir::FieldAccess::Offset(mir::Offset(offset)));
+                        } else {
+                            ap.path.fields.push(mir::FieldAccess::Offset(UNKNOWN_INDEX));
+                        }
                     }
-                } else {
-                    ap.path
-                        .fields
-                        .push(mir::FieldAccess::Offset(mir::Offset(0)));
+                    // `$a[] = ..` appends at an index no one wrote down.
+                    None => ap.path.fields.push(mir::FieldAccess::Offset(UNKNOWN_INDEX)),
                 }
                 Ok(Exp::AccessPath(ap))
             }
@@ -730,17 +1322,40 @@ impl<'a, 'p> Lowerer<'a, 'p> {
                     } else {
                         function_node
                     };
-                    let fn_name = if let Some(n) = fn_name_node {
-                        self.text(n)
+                    // A call whose callee is spelled out (`foo(..)`, `new Foo`) names its target;
+                    // a call through anything else (`$fn(..)`, `$this->cb()(..)`) only knows the
+                    // target at runtime, as whatever function pointer the expression evaluates to.
+                    // The latter is a FuncPtrCall, which the analysis resolves by following the
+                    // pointers assigned into the callee -- naming a *function* after the callee
+                    // variable, as a direct call would, would invent one that does not exist.
+                    let names_its_callee =
+                        fn_name_node.is_some_and(|n| matches!(n.kind(), "name" | "qualified_name"));
+                    if names_its_callee {
+                        let fn_name = self.text(fn_name_node.expect("checked by names_its_callee"));
+                        self.record_called_function(fn_name, args.len());
+                        CallStyle::PhpCall {
+                            receiver: None,
+                            declared_class: None,
+                            method_name: None,
+                            callee: AccessPath::from(VariableRef::new_local(fn_name.to_string())),
+                            kind: PhpCallKind::DirectFunction,
+                        }
                     } else {
-                        "unknown_func"
-                    };
-                    CallStyle::PhpCall {
-                        receiver: None,
-                        declared_class: None,
-                        method_name: None,
-                        callee: AccessPath::from(VariableRef::new_local(fn_name.to_string())),
-                        kind: PhpCallKind::DirectFunction,
+                        let callee = match fn_name_node {
+                            Some(n) => self.lower_exp(n, func_ctx)?,
+                            None => Exp::AccessPath(AccessPath::from(VariableRef::new_local(
+                                "unknown_func".to_string(),
+                            ))),
+                        };
+                        CallStyle::FuncPtrCall {
+                            callee: match callee {
+                                Exp::AccessPath(ap) => ap,
+                                _ => AccessPath::from(VariableRef::new_local(
+                                    "unknown_func".to_string(),
+                                )),
+                            },
+                            signature: None,
+                        }
                     }
                 } else {
                     let obj_node = node
@@ -929,6 +1544,11 @@ struct FunctionLowerer {
     func: FunctionData,
     current_block: mir::BasicBlockIdx,
     next_temp_idx: u32,
+    /// Names that denote a global heap slot rather than a local, mapped to the field naming that
+    /// slot. Populated by `global` and `static` declarations. See [`Lowerer::lower_exp`].
+    global_aliases: BTreeMap<String, String>,
+    /// Whether this is the file-level `__php_main__`, whose variables PHP scopes as globals.
+    is_main: bool,
 }
 
 impl FunctionLowerer {
@@ -944,6 +1564,8 @@ impl FunctionLowerer {
             func,
             current_block,
             next_temp_idx: 0,
+            global_aliases: BTreeMap::new(),
+            is_main: false,
         }
     }
 

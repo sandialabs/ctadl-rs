@@ -55,9 +55,16 @@ fn build_query_endpoints(
     // in the index graph.
     let mut vertex_paths: HashMap<(facts::FunctionId, FlowVariable), BTreeSet<facts::Path>> =
         HashMap::new();
+    // Every field access path the graph materializes, whichever vertex it occurs on. This is the
+    // universe a source port expands its subtree over; see `expand_source_subtree` below. It is
+    // read off `assign_like` rather than `facts.paths` because only the tables the index persists
+    // are populated here, and `paths` is not one of them.
+    let mut all_paths: BTreeSet<facts::Path> = BTreeSet::new();
     for (func, v1, p1, v2, p2) in assign_like {
         vertex_paths.entry((*func, *v1)).or_default().insert(*p1);
         vertex_paths.entry((*func, *v2)).or_default().insert(*p2);
+        all_paths.insert(*p1);
+        all_paths.insert(*p2);
     }
 
     let mut out_eps = Vec::new();
@@ -109,6 +116,24 @@ fn build_query_endpoints(
         // into concrete paths.
         let expand_wildcard = wildcard && direction == facts::TaintDirection::Backward;
 
+        // A source port that names a field denotes the subtree beneath it, the same way a
+        // wildcard sink port does, and needs the same expansion for the same reason: taint at
+        // `v.p` is taint at that one location, so a source at `Global._GET` on its own never
+        // reaches a read of `$globals._GET['x']` -- the read names a location *under* the port,
+        // and propagation substitutes path prefixes rather than descending into subtrees. What
+        // the model means by naming an aggregate is that everything in it is a source, so every
+        // materialized path beneath the port is seeded.
+        //
+        // A port with an empty path is left alone: it names the value passed or returned itself,
+        // not the fields hanging off it, and expanding it would make a source on a reference
+        // taint every field ever read from it.
+        //
+        // Expansion draws from the materialized paths rather than the paths on the endpoint's own
+        // vertex (what the sink side uses) because a source's vertex frequently does not carry
+        // them: `Global` denotes the globals pseudo-formal, whose field paths all live on the
+        // SSA-versioned copies of the global heap that the formal is copied to, not on the formal.
+        let expand_source_subtree = direction == facts::TaintDirection::Forward && !ap.is_empty();
+
         // Build label and direction.
         let lbl = Label(label_str.into());
 
@@ -133,26 +158,31 @@ fn build_query_endpoints(
                 None => vec![base],
             };
             for ep in fanned {
-                if !expand_wildcard {
+                let expansion = if expand_wildcard {
+                    vertex_paths.get(&(ep.infunc, ep.vertex.0))
+                } else if expand_source_subtree {
+                    Some(&all_paths)
+                } else {
+                    None
+                };
+                let Some(paths) = expansion else {
                     out_eps.push((ep,));
                     continue;
-                }
-                // Seed every concrete field path that lives on THIS call's argument
-                // vertex and extends the port, always including the port path itself.
+                };
+                // Seed every concrete field path that extends the port, always including the
+                // port path itself.
                 let mut seeded_port = false;
-                if let Some(paths) = vertex_paths.get(&(ep.infunc, ep.vertex.0)) {
-                    for p in paths {
-                        if !p.is_extension_of(&ap) {
-                            continue;
-                        }
-                        if *p == ap {
-                            seeded_port = true;
-                        }
-                        out_eps.push((crate::query_engine::QueryEndpoint {
-                            vertex: FlowVertex(ep.vertex.0, *p),
-                            ..ep.clone()
-                        },));
+                for p in paths {
+                    if !p.is_extension_of(&ap) {
+                        continue;
                     }
+                    if *p == ap {
+                        seeded_port = true;
+                    }
+                    out_eps.push((crate::query_engine::QueryEndpoint {
+                        vertex: FlowVertex(ep.vertex.0, *p),
+                        ..ep.clone()
+                    },));
                 }
                 if !seeded_port {
                     out_eps.push((ep,));

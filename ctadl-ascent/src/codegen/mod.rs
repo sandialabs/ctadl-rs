@@ -494,45 +494,69 @@ impl Visitor for CodegenVisitor<'_> {
                     CallStyle::PhpCall {
                         callee,
                         method_name,
+                        kind,
                         ..
                     } => {
-                        // Very simple CHA for PHP based on callee variable ref for direct calls,
-                        // and method names for instance method calls.
-                        let mut resolved = false;
-                        if let Some(m_name) = method_name {
-                            // Instance method
-                            if let ctadl_ir::call::VirtualMethodTable::Php { methods, .. } =
-                                &self.cha.vmt
-                            {
-                                for (_, name, target_meth) in methods {
-                                    if *name == *m_name {
-                                        let target = fx::Function(target_meth.0.clone().into());
-                                        let target =
-                                            self.source_info.sites.get_or_add_function(target);
-                                        self.facts.call.push((site, target));
-                                        resolved = true;
+                        // Simple CHA for PHP. A direct call names its target in `callee`, whose
+                        // variable is a local holding the function name. A method call names the
+                        // method in `method_name` and resolves against every class in the VMT that
+                        // declares it -- PHP has no static types to narrow with, so every
+                        // same-named method is a candidate.
+                        //
+                        // `callee` means different things per kind: the function name for direct
+                        // calls, but the *receiver* for method calls. Resolving a method call by
+                        // callee name would invent a function named after the receiver variable,
+                        // so the two are kept strictly apart.
+                        use ctadl_ir::call::PhpCallKind;
+                        let mut targets: SmallVec<[Str; 4]> = SmallVec::new();
+                        match kind {
+                            PhpCallKind::InstanceMethod
+                            | PhpCallKind::StaticMethod
+                            | PhpCallKind::DynamicMethod => {
+                                if let Some(m_name) = method_name
+                                    && let ctadl_ir::call::VirtualMethodTable::Php {
+                                        methods, ..
+                                    } = &self.cha.vmt
+                                {
+                                    targets.extend(
+                                        methods.iter().filter(|(_, name, _)| *name == *m_name).map(
+                                            |(_, _, target_meth)| target_meth.0.clone().into(),
+                                        ),
+                                    );
+                                }
+                            }
+                            PhpCallKind::DirectFunction | PhpCallKind::DynamicFunction => {
+                                // The callee variable holds the function's name; `local()` reads it
+                                // back undecorated (`Display` would render it as `%name`).
+                                if let Some(callee_name) = callee.variable_ref.variable.local() {
+                                    if let ctadl_ir::call::VirtualMethodTable::Php {
+                                        methods, ..
+                                    } = &self.cha.vmt
+                                    {
+                                        targets.extend(
+                                            methods
+                                                .iter()
+                                                .filter(|(cls, _, target_meth)| {
+                                                    cls.0.is_empty()
+                                                        && *target_meth.0 == *callee_name
+                                                })
+                                                .map(|(_, _, target_meth)| {
+                                                    target_meth.0.clone().into()
+                                                }),
+                                        );
+                                    }
+                                    if targets.is_empty() {
+                                        // Not in the VMT: assume the name is the target itself.
+                                        targets.push(callee_name.into());
                                     }
                                 }
                             }
                         }
-                        // Direct call (from `callee` variable name if possible, otherwise we miss it for now)
-                        let callee_name = callee.variable_ref.variable.to_string();
-                        // Look for it in VMT or just treat as direct func name
-                        if let ctadl_ir::call::VirtualMethodTable::Php { methods, .. } =
-                            &self.cha.vmt
-                        {
-                            for (cls, _, target_meth) in methods {
-                                if cls.0.is_empty() && target_meth.0 == callee_name {
-                                    let target = fx::Function(target_meth.0.clone().into());
-                                    let target = self.source_info.sites.get_or_add_function(target);
-                                    self.facts.call.push((site, target));
-                                    resolved = true;
-                                }
-                            }
+                        if targets.is_empty() {
+                            log::trace!("php: unresolved call at {site:?}");
                         }
-                        if !resolved {
-                            // Fallback to direct function call assuming callee name is the target
-                            let target = fx::Function(callee_name.into());
+                        for name in targets {
+                            let target = fx::Function(name);
                             let target = self.source_info.sites.get_or_add_function(target);
                             self.facts.call.push((site, target));
                         }

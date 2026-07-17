@@ -452,17 +452,16 @@ fn preflight_java() -> Result<()> {
 /// Failures on a frontend that is still maturing are reported as XFAIL so the
 /// suite can stay green while its gaps are visible in the report.
 ///
-/// Two frontends qualify. Non-enforced JVM E2E cases, per [`JVM_E2E_ENFORCED`].
-/// And every `Php:` case: the PHP frontend finds sources, sinks and tainted
-/// instructions but does not yet link them into an end-to-end path, so the
-/// tainted-path results these cases assert on come back empty. Drop this arm to
-/// make the PHP cases enforced once that lands.
+/// One frontend qualifies: non-enforced JVM E2E cases, per [`JVM_E2E_ENFORCED`].
+///
+/// `Php:` cases used to qualify too, back when the frontend found sources, sinks
+/// and tainted instructions but did not link them into an end-to-end path. It
+/// links them now and every case passes, so they are enforced like any other.
 fn apply_xfail_policy(name: &str, outcome: Outcome) -> Outcome {
     match outcome {
         Outcome::Fail(why) if name.starts_with("Jvm:") && !JVM_E2E_ENFORCED.contains(&name) => {
             Outcome::Xfail(why)
         }
-        Outcome::Fail(why) if name.starts_with("Php:") => Outcome::Xfail(why),
         other => other,
     }
 }

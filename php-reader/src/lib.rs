@@ -239,6 +239,397 @@ mod tests {
         assert!(has_main, "Expected to find main function");
     }
 
+    /// Find a lowered function by name.
+    fn function<'a>(
+        program_info: &'a ProgramInfo,
+        name: &str,
+    ) -> Option<&'a ctadl_ir::mir::FunctionData> {
+        program_info
+            .program
+            .functions
+            .functions
+            .iter()
+            .find(|f| f.name == name)
+    }
+
+    /// Every `Assign` in a function, as `(dest, sources)`.
+    fn assignments(
+        func: &ctadl_ir::mir::FunctionData,
+    ) -> Vec<(
+        &ctadl_ir::mir::VariableRef,
+        &smallvec::SmallVec<[ctadl_ir::mir::Exp; 2]>,
+    )> {
+        use ctadl_ir::mir::StatementKind;
+        func.blocks
+            .iter()
+            .flat_map(|bb| bb.statements.iter())
+            .filter_map(|stmt| match &stmt.kind {
+                StatementKind::Assign { dest, sources } => Some((dest, sources)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A called function with no definition still has to exist as a function with formals: a sink
+    /// model on `exec`'s `Argument(0)` has nothing to attach to otherwise, and taint only crosses
+    /// a call boundary into a formal the callee declares.
+    #[test]
+    fn test_lower_stubs_called_but_undefined_functions() {
+        use ctadl_ir::mir::ParameterType;
+        let source = r#"
+            <?php
+            exec($_GET['cmd'], $second);
+        "#;
+        let program_info = lower_php(source, "stub.php").expect("Lowering failed");
+        let exec = function(&program_info, "exec").expect("expected `exec` to be stubbed");
+
+        assert!(
+            exec.blocks.is_empty(),
+            "a stub must have no blocks: that is what marks it external"
+        );
+        // Arity comes from the widest call site, not a real signature.
+        assert_eq!(exec.params.parameters.len(), 2);
+        assert!(
+            exec.params
+                .parameters
+                .iter()
+                .all(|p| matches!(p, ParameterType::ByVal))
+        );
+    }
+
+    /// A method declared in an interface or a trait is registered like any other: PHP resolves a
+    /// call by method name across every type that declares it. This also pins the crash that
+    /// qualifying a method name used to cause for any type declaration that was not a `class`.
+    #[test]
+    fn test_lower_interface_and_trait_methods() {
+        let source = r#"
+            <?php
+            interface Echoer {
+                public function emit($v);
+            }
+            trait Prefixes {
+                public function prefix($v) { return 'p:' . $v; }
+            }
+            class ShellEchoer implements Echoer {
+                use Prefixes;
+                public function emit($v) { exec($this->prefix($v)); }
+            }
+        "#;
+        let program_info = lower_php(source, "iface.php").expect("Lowering failed");
+
+        for name in ["Echoer::emit", "Prefixes::prefix", "ShellEchoer::emit"] {
+            assert!(
+                function(&program_info, name).is_some(),
+                "expected to find method '{name}'"
+            );
+        }
+    }
+
+    /// `global $g` makes the name denote the global heap slot, for reads and writes alike, so a
+    /// function body and file scope refer to the same location.
+    #[test]
+    fn test_lower_global_declaration_reads_global_heap() {
+        use ctadl_ir::mir::{Exp, FieldAccess, Variable};
+        let source = r#"
+            <?php
+            function readsGlobal() {
+                global $g_tainted;
+                $local = $g_tainted;
+            }
+        "#;
+        let program_info = lower_php(source, "globals.php").expect("Lowering failed");
+        let func = function(&program_info, "readsGlobal").expect("expected 'readsGlobal'");
+
+        let reads_global_slot = assignments(func).iter().any(|(dest, sources)| {
+            dest.variable.local() == Some("local")
+                && matches!(sources.first(), Some(Exp::AccessPath(ap))
+                    if matches!(*ap.variable_ref.variable, Variable::GlobalHeap)
+                        && matches!(ap.path.fields.as_slice(),
+                            [FieldAccess::Symbol(s)] if &**s == "g_tainted"))
+        });
+        assert!(
+            reads_global_slot,
+            "expected `$local = $g_tainted` to read the global slot `g_tainted`"
+        );
+    }
+
+    /// A file-scope assignment is also published to the global heap, since another function can
+    /// reach it with `global $x` or `$GLOBALS['x']`.
+    #[test]
+    fn test_lower_file_scope_assignment_mirrors_to_global_heap() {
+        use ctadl_ir::mir::{StatementKind, Variable};
+        let source = r#"
+            <?php
+            $g = $_GET['input'];
+        "#;
+        let program_info = lower_php(source, "mirror.php").expect("Lowering failed");
+        let main = function(&program_info, "__php_main__::mirror.php").expect("expected main");
+
+        // The mirror writes a field of the global heap, which is an `Update`, not an `Assign`.
+        let mirrors =
+            main.blocks
+                .iter()
+                .flat_map(|bb| bb.statements.iter())
+                .any(|stmt| match &stmt.kind {
+                    StatementKind::Update { dest, .. } => {
+                        let (dest_var, dest_path) = dest;
+                        matches!(*dest_var.variable, Variable::GlobalHeap)
+                            && dest_path.fields.len() == 1
+                    }
+                    _ => false,
+                });
+        assert!(
+            mirrors,
+            "expected the file-scope `$g = ..` to also write the global slot `g`"
+        );
+    }
+
+    /// `$GLOBALS['g']` and a `global $g` must name the same location: `$GLOBALS` *is* the global
+    /// symbol table, so it is the heap itself with no field of its own.
+    #[test]
+    fn test_lower_globals_array_names_the_global_slot() {
+        use ctadl_ir::mir::{Exp, FieldAccess, Variable};
+        let source = r#"
+            <?php
+            function viaGlobalsArray() {
+                $v = $GLOBALS['g_tainted'];
+            }
+        "#;
+        let program_info = lower_php(source, "globals-array.php").expect("Lowering failed");
+        let func = function(&program_info, "viaGlobalsArray").expect("expected function");
+
+        let reads_slot = assignments(func).iter().any(|(dest, sources)| {
+            dest.variable.local() == Some("v")
+                && matches!(sources.first(), Some(Exp::AccessPath(ap))
+                    if matches!(*ap.variable_ref.variable, Variable::GlobalHeap)
+                        && matches!(ap.path.fields.as_slice(),
+                            [FieldAccess::Symbol(s)] if &**s == "g_tainted"))
+        });
+        assert!(
+            reads_slot,
+            "expected `$GLOBALS['g_tainted']` to be the global slot `g_tainted`, with no `GLOBALS` field"
+        );
+    }
+
+    /// A by-reference parameter is an out-parameter: it must be declared `ByRef`, and the local
+    /// the body assigns has to be copied back onto the formal for the write to reach the caller.
+    #[test]
+    fn test_lower_by_ref_param_is_declared_and_written_back() {
+        use ctadl_ir::mir::{Exp, ParameterType, Variable};
+        let source = r#"
+            <?php
+            function fill(&$out, $v) {
+                $out = $v;
+            }
+        "#;
+        let program_info = lower_php(source, "byref.php").expect("Lowering failed");
+        let func = function(&program_info, "fill").expect("expected 'fill'");
+
+        let param_types: Vec<_> = func.params.parameters.iter().copied().collect();
+        assert!(matches!(
+            param_types.as_slice(),
+            [ParameterType::ByRef, ParameterType::ByVal]
+        ));
+
+        let writes_back = assignments(func).iter().any(|(dest, sources)| {
+            matches!(*dest.variable, Variable::Param(idx) if idx.index() == 0)
+                && matches!(sources.first(), Some(Exp::AccessPath(ap))
+                    if ap.variable_ref.variable.local() == Some("out"))
+        });
+        assert!(
+            writes_back,
+            "expected the by-ref local `$out` to be copied back onto formal 0"
+        );
+    }
+
+    /// A closure becomes its own function, and the expression it appears in evaluates to a pointer
+    /// to it, so a later call through the variable can be resolved back to the body.
+    #[test]
+    fn test_lower_closure_is_a_function_and_a_pointer() {
+        use ctadl_ir::mir::{CallObject, Exp};
+        let source = r#"
+            <?php
+            $param = function ($v) { return $v; };
+        "#;
+        let program_info = lower_php(source, "closure.php").expect("Lowering failed");
+
+        let closure = program_info
+            .program
+            .functions
+            .functions
+            .iter()
+            .find(|f| f.name.starts_with("{closure}@closure.php:"))
+            .expect("expected the closure to be lowered as its own function");
+        assert_eq!(closure.params.parameters.len(), 1);
+
+        let main = function(&program_info, "__php_main__::closure.php").expect("expected main");
+        let assigns_pointer = assignments(main).iter().any(|(dest, sources)| {
+            dest.variable.local() == Some("param")
+                && matches!(sources.first(), Some(Exp::ObjectRef(CallObject::FunctionPtr(name)))
+                    if &**name == closure.name)
+        });
+        assert!(
+            assigns_pointer,
+            "expected `$param` to be assigned a pointer to the closure"
+        );
+    }
+
+    /// A `use (..)` capture travels from the enclosing frame to a frame that does not exist yet,
+    /// through a global slot private to the closure: written where the closure is created, read
+    /// back inside its body.
+    #[test]
+    fn test_lower_closure_captures_through_a_private_slot() {
+        use ctadl_ir::mir::{Exp, FieldAccess, StatementKind, Variable};
+        let source = r#"
+            <?php
+            $byValue = function () use ($tainted) {
+                $inner = $tainted;
+            };
+        "#;
+        let program_info = lower_php(source, "capture.php").expect("Lowering failed");
+        let closure = program_info
+            .program
+            .functions
+            .functions
+            .iter()
+            .find(|f| f.name.starts_with("{closure}@capture.php:"))
+            .expect("expected the closure to be lowered");
+        let slot = format!("{}::tainted", closure.name);
+
+        // Inside the closure, the captured name reads the slot.
+        let reads_slot = assignments(closure).iter().any(|(dest, sources)| {
+            dest.variable.local() == Some("inner")
+                && matches!(sources.first(), Some(Exp::AccessPath(ap))
+                    if matches!(*ap.variable_ref.variable, Variable::GlobalHeap)
+                        && matches!(ap.path.fields.as_slice(),
+                            [FieldAccess::Symbol(s)] if s.as_ref() == slot))
+        });
+        assert!(
+            reads_slot,
+            "expected the closure body to read the capture slot"
+        );
+
+        // At the creation site, the slot is filled from the enclosing variable.
+        let main = function(&program_info, "__php_main__::capture.php").expect("expected main");
+        let fills_slot = main
+            .blocks
+            .iter()
+            .flat_map(|bb| bb.statements.iter())
+            .any(|stmt| match &stmt.kind {
+                StatementKind::Update { dest, value, .. } => {
+                    let (dest_var, dest_path) = dest;
+                    matches!(*dest_var.variable, Variable::GlobalHeap)
+                        && matches!(dest_path.fields.as_slice(),
+                            [FieldAccess::Symbol(s)] if &**s == slot)
+                        && matches!(value, Exp::AccessPath(ap)
+                            if ap.variable_ref.variable.local() == Some("tainted"))
+                }
+                _ => false,
+            });
+        assert!(
+            fills_slot,
+            "expected the capture slot to be filled from `$tainted` where the closure is created"
+        );
+    }
+
+    /// A `foreach` binds its loop variable to an element of the collection. Which element is not
+    /// known, so the whole collection is copied: every field of it stays reachable through the
+    /// loop variable.
+    #[test]
+    fn test_lower_foreach_binds_loop_variable_to_collection() {
+        use ctadl_ir::mir::Exp;
+        let source = r#"
+            <?php
+            foreach ($values as $v) {
+                echo $v;
+            }
+        "#;
+        let program_info = lower_php(source, "foreach.php").expect("Lowering failed");
+        let main = function(&program_info, "__php_main__::foreach.php").expect("expected main");
+
+        let binds = assignments(main).iter().any(|(dest, sources)| {
+            dest.variable.local() == Some("v")
+                && matches!(sources.first(), Some(Exp::AccessPath(ap))
+                    if ap.variable_ref.variable.local() == Some("values") && ap.path.is_empty())
+        });
+        assert!(
+            binds,
+            "expected `$v` to be bound to the collection `$values`"
+        );
+    }
+
+    /// `foreach ($a as &$e)` writes back through the alias, so an assignment to the element inside
+    /// the body lands in the collection -- at the same unknown-index slot a subscript with no
+    /// static index uses, which is what a later `$a[0]` reads.
+    #[test]
+    fn test_lower_foreach_by_ref_writes_back_to_element() {
+        use ctadl_ir::mir::{Exp, FieldAccess, Offset, StatementKind};
+        let source = r#"
+            <?php
+            foreach ($items as &$item) {
+                $item = $tainted;
+            }
+        "#;
+        let program_info = lower_php(source, "foreach-ref.php").expect("Lowering failed");
+        let main = function(&program_info, "__php_main__::foreach-ref.php").expect("expected main");
+
+        let writes_back = main
+            .blocks
+            .iter()
+            .flat_map(|bb| bb.statements.iter())
+            .any(|stmt| match &stmt.kind {
+                StatementKind::Update { dest, value, .. } => {
+                    let (dest_var, dest_path) = dest;
+                    dest_var.variable.local() == Some("items")
+                        && matches!(
+                            dest_path.fields.as_slice(),
+                            [FieldAccess::Offset(Offset(0))]
+                        )
+                        && matches!(value, Exp::AccessPath(ap)
+                            if ap.variable_ref.variable.local() == Some("item"))
+                }
+                _ => false,
+            });
+        assert!(
+            writes_back,
+            "expected `&$item` to write back into an element of `$items`"
+        );
+    }
+
+    /// A call through a variable is resolved from the pointers assigned into it, not by inventing
+    /// a function named after the variable.
+    #[test]
+    fn test_lower_dynamic_call_is_a_function_pointer_call() {
+        use ctadl_ir::mir::{StatementKind, call::CallStyle};
+        let source = r#"
+            <?php
+            $fn($arg);
+        "#;
+        let program_info = lower_php(source, "dyn.php").expect("Lowering failed");
+        let main = function(&program_info, "__php_main__::dyn.php").expect("expected main");
+
+        let indirect =
+            main.blocks
+                .iter()
+                .flat_map(|bb| bb.statements.iter())
+                .any(|stmt| match &stmt.kind {
+                    StatementKind::CallAssign { style, .. } => matches!(
+                        style,
+                        CallStyle::FuncPtrCall { callee, .. }
+                            if callee.variable_ref.variable.local() == Some("fn")
+                    ),
+                    _ => false,
+                });
+        assert!(
+            indirect,
+            "expected `$fn(..)` to lower to a function-pointer call"
+        );
+        assert!(
+            function(&program_info, "$fn").is_none(),
+            "a call through a variable must not invent a function named after it"
+        );
+    }
+
     #[test]
     fn test_lower_php_populates_source_info() {
         let source = r#"
