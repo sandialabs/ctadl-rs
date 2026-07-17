@@ -5087,6 +5087,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dex-reader",
+ "json5",
  "jvm-reader",
  "serde",
  "serde_json",

@@ -485,9 +485,12 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
     }
     exec::run_checked(dx, "dx")?;
 
-    // Analyze: import / index / query (query also formats the SARIF output).
+    // Analyze: import / index / query. The human profile carries the code flows
+    // (the traced source -> ... -> sink path); the machine profile carries the tainted
+    // instructions. The check reads both -- see `check_flow_case`.
     let project = format!("{name}_test");
     let sarif = work.join(format!("{name}_output.sarif"));
+    let machine_sarif = work.join(format!("{name}_machine.sarif"));
     run_ctadl(
         &work,
         &state,
@@ -506,6 +509,20 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             &sarif.to_string_lossy(),
         ],
     )?;
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "query",
+            &project,
+            "-m",
+            &config.to_string_lossy(),
+            "--sarif-profile",
+            "machine",
+            "-o",
+            &machine_sarif.to_string_lossy(),
+        ],
+    )?;
 
     // Build the offset -> line map.
     let linemap = work.join(format!("{name}_linemap.json"));
@@ -517,10 +534,7 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
         .arg(&linemap);
     exec::run_checked(reader, "dex-reader")?;
 
-    let expected = assertions::read_expected_lines(config)?;
-    let unexpected = assertions::read_unexpected_lines(config)?;
-    let offsets = assertions::collect_byte_offsets(&sarif)?;
-    check_byte_offset_lines(expected, unexpected, offsets, &linemap)
+    check_flow_case(config, &sarif, &machine_sarif, &linemap)
 }
 
 // --- JVM / Java -----------------------------------------------------------
@@ -568,9 +582,11 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
         .arg(".");
     exec::run_checked(jar_cmd, "jar")?;
 
-    // Analyze: import / index / query (query also formats the SARIF output).
+    // Analyze: import / index / query. Human profile -> code flows; machine profile ->
+    // tainted instructions. See `check_flow_case`.
     let project = format!("{stem}_jvm_test");
     let sarif = work.join(format!("{stem}_output.sarif"));
+    let machine_sarif = work.join(format!("{stem}_machine.sarif"));
     run_ctadl(
         &work,
         &state,
@@ -589,6 +605,20 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
             &sarif.to_string_lossy(),
         ],
     )?;
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "query",
+            &project,
+            "-m",
+            &config.to_string_lossy(),
+            "--sarif-profile",
+            "machine",
+            "-o",
+            &machine_sarif.to_string_lossy(),
+        ],
+    )?;
 
     // Build the offset -> line map.
     let linemap = work.join(format!("{stem}_linemap.json"));
@@ -601,49 +631,71 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
         .arg(&linemap);
     exec::run_checked(reader, "jvm-reader")?;
 
-    let expected = assertions::read_expected_lines(config)?;
-    let unexpected = assertions::read_unexpected_lines(config)?;
-    let offsets = assertions::collect_byte_offsets(&sarif)?;
-    check_byte_offset_lines(expected, unexpected, offsets, &linemap)
+    check_flow_case(config, &sarif, &machine_sarif, &linemap)
 }
 
-/// DEX/JVM pass criterion: at least one expected line among mapped offsets,
-/// or no flows when `expected_lines` is empty. In both cases no `unexpected_lines`
-/// entry may carry a flow.
-fn check_byte_offset_lines(
-    expected: Vec<i64>,
-    unexpected: Vec<i64>,
-    offsets: BTreeSet<i64>,
+/// DEX/JVM pass criterion, over the human profile (code flows) and machine profile
+/// (tainted instructions) of one case:
+///
+///  1. *Code-flow integrity*: a human-profile code flow connects a source to a sink.
+///     This is what regressed when the step dedup collapsed every flow to its lone
+///     source step; a lines-only check can't see it, because the source line alone
+///     satisfies line coverage. Negative cases (`expected_lines` empty) invert this:
+///     no such flow may exist.
+///  2. *Reached lines*: every `expected_lines` entry maps from some offset in the union
+///     of the code-flow offsets and the tainted-instruction offsets. The union is used
+///     because aliasing legitimately elides a pure copy hop (`local = tainted_field`)
+///     from the traced flow while it still shows up as a tainted instruction -- so a
+///     line the flow visits only "through" an alias is covered by the machine profile.
+///  3. *Unexpected lines*: no `unexpected_lines` entry is among the reached lines.
+fn check_flow_case(
+    config: &Path,
+    human_sarif: &Path,
+    machine_sarif: &Path,
     linemap: &Path,
 ) -> Result<Outcome> {
+    let expected = assertions::read_expected_lines(config)?;
+    let unexpected = assertions::read_unexpected_lines(config)?;
+    let connects = assertions::codeflow_connects_source_and_sink(human_sarif)?;
+
     if expected.is_empty() {
-        // Asserting no flows at all already subsumes any `unexpected_lines`.
-        return Ok(if offsets.is_empty() {
-            Outcome::Pass
+        // Negative case: there must be no traced source -> sink flow. (No reached-line
+        // claim to make, so this subsumes any `unexpected_lines`.)
+        return Ok(if connects {
+            Outcome::Fail(
+                "expected no flow, but a code flow connects a source to a sink".to_string(),
+            )
         } else {
-            Outcome::Fail(format!(
-                "expected no flows, but found byte offsets {offsets:?}"
-            ))
+            Outcome::Pass
         });
     }
 
-    if offsets.is_empty() {
-        return Ok(Outcome::Fail("no byte offsets in SARIF output".to_string()));
+    if !connects {
+        return Ok(Outcome::Fail(
+            "no code flow connects a source to a sink".to_string(),
+        ));
     }
 
     let entries = assertions::load_linemap(linemap)?;
-    let mapped: BTreeSet<i64> = offsets
+    let mut offsets = assertions::collect_codeflow_byte_offsets(human_sarif)?;
+    offsets.extend(assertions::collect_byte_offsets(machine_sarif)?);
+    let reached: BTreeSet<i64> = offsets
         .iter()
         .filter_map(|&off| assertions::map_offset_to_line(&entries, off))
         .collect();
 
-    if !expected.iter().any(|line| mapped.contains(line)) {
+    let missing: Vec<i64> = expected
+        .iter()
+        .copied()
+        .filter(|line| !reached.contains(line))
+        .collect();
+    if !missing.is_empty() {
         return Ok(Outcome::Fail(format!(
-            "none of the expected lines {expected:?} appear in mapped lines {mapped:?}"
+            "expected lines {missing:?} not reached (reached {reached:?}; all of {expected:?} required)"
         )));
     }
 
-    if let Some(why) = assertions::check_unexpected_lines(&unexpected, &mapped) {
+    if let Some(why) = assertions::check_unexpected_lines(&unexpected, &reached) {
         return Ok(Outcome::Fail(why));
     }
 

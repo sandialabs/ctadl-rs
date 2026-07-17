@@ -1,8 +1,11 @@
 {
+  // Flow: obj.data = source() (15) -> local = obj.data (16) -> sink(local) (17).
+  // Line 16 is dropped: `local = obj.data` is a pure copy that copy_alias
+  // collapses onto the field, so the read at line 16 surfaces in neither the
+  // human code flow nor the machine tainted-instructions.
   "expected_lines": [
-    13,
-    14,
-    15
+    15,
+    17
   ],
   "model_generators": [
     {
@@ -11,7 +14,7 @@
         {
           "constraint": "signature_match",
           "name": "source",
-          "parent": "LArrayFlow;"
+          "parent": "LFieldFlow;"
         }
       ],
       "model": {
@@ -29,7 +32,7 @@
         {
           "constraint": "signature_match",
           "name": "sink",
-          "parent": "LArrayFlow;"
+          "parent": "LFieldFlow;"
         }
       ],
       "model": {
