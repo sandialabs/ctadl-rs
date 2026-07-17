@@ -1,4 +1,4 @@
-# CTADL `index` memory/time benchmarking baseline
+# CTADL `index` memory/time benchmarking baseline - DO-NOT-MERGE
 
 *Reusable baseline for optimizing `ctadl index` (the Ascent Datalog phase) peak memory.
 Re-run the suite after each change, diff against §2, and update it. Platform: macOS
