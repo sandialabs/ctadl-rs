@@ -2730,7 +2730,9 @@ dependencies = [
 name = "immortal"
 version = "0.1.0"
 dependencies = [
+ "hashbrown 0.15.5",
  "parking_lot 0.12.5",
+ "rustc-hash",
  "serde",
 ]
 
