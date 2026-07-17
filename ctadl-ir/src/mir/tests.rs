@@ -37,23 +37,21 @@ fn test_unnamed_function_error() {
 }
 
 #[test]
-fn test_empty_field_update_error() {
+fn test_store_verifies() {
     let mut prog = make_program();
-    // Add an Update statement with no fields.
+    // Add a Store statement; verification should succeed.
     let f_idx = FunctionIdx::new(0);
     let f = &mut prog[f_idx];
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
     let var = VariableRef::new_local("x".to_string());
-    let upd = StatementKind::Update {
-        dest: (var.clone(), FieldAccesses::empty()),
-        source: var.clone(),
-        value: Exp::new_str("val"),
-    };
-    block.statements.push_back(Statement::new_kind(upd));
-    let result = prog.verify();
-    assert!(
-        matches!(result, Err(e) if e.iter().any(|err| matches!(err, VerifyError::EmptyFieldUpdate { .. })))
+    let store = StatementKind::store(
+        AccessPath::without_fields(var.clone()),
+        FieldPath::symbol("f"),
+        Exp::new_str("val"),
     );
+    block.statements.push_back(Statement::new_kind(store));
+    let result = prog.verify();
+    assert!(result.is_ok());
 }
 
 // Test for ParameterDoesNotExist (no assertions, just runs verification)
@@ -70,7 +68,7 @@ fn test_parameter_does_not_exist_error() {
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
     let stmt = Statement::new_kind(StatementKind::assign(
         VariableRef::new_local("tmp".to_string()),
-        [Exp::AccessPath(AccessPath::without_fields(var.clone()))],
+        [Exp::Variable(var.clone())],
     ));
     block.statements.push_back(stmt);
     // Run verification; we don't assert on the result because the behavior may be buggy.
@@ -125,19 +123,19 @@ fn test_field_accesses_with_offsets() {
     // Test display format for offsets
     assert_eq!(format!("{}", offset_path), ".[0x2a]");
 
-    // Test mixed field accesses
-    let mixed_path = FieldAccesses::mixed(vec![Ok("field1"), Err(10), Ok("field2")]);
-    assert_eq!(mixed_path.len(), 3);
-    assert_eq!(format!("{}", mixed_path), ".field1.[0xa].field2");
+    // Test multiple offsets (access paths are offset-only)
+    let mixed_path = FieldAccesses::with_offsets([10, 20]);
+    assert_eq!(mixed_path.len(), 2);
+    assert_eq!(format!("{}", mixed_path), ".[0xa].[0x14]");
 
     // Test creating access path with offsets
     let var = VariableRef::new_local("obj".to_string());
-    let field_accesses = FieldAccesses::mixed(vec![Ok("field"), Err(5)]);
+    let field_accesses = FieldAccesses::with_offset(5);
     let access_path = AccessPath {
         variable_ref: var,
         path: field_accesses,
     };
-    assert_eq!(format!("{}", access_path), "%obj.field.[0x5]");
+    assert_eq!(format!("{}", access_path), "%obj.[0x5]");
 }
 
 #[test]
@@ -147,8 +145,8 @@ fn test_offset_newtype() {
     assert_eq!(offset.0, 123);
     assert_eq!(format!("{}", offset), "0x7b");
 
-    // Test FieldAccess enum
-    let symbol_access = FieldAccess::Symbol(ArcIntern::from("test"));
+    // Test FieldAccess (offset-only) and PathSegment (mixed) display
+    let symbol_access = PathSegment::symbol("test");
     let offset_access = FieldAccess::Offset(Offset(456));
 
     assert_eq!(format!("{}", symbol_access), "test");

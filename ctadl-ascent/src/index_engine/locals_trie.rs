@@ -104,6 +104,46 @@ fn merge_sorted<T: Ord>(dst: &mut Vec<T>, src: Vec<T>) -> usize {
     added
 }
 
+/// Number of distinct elements in the union of two sorted, deduplicated ascending slices
+/// (i.e. the length `merge_sorted(dst, src)` would produce). O(m+n), allocation-free.
+/// Lets `absorb_group` decide, *before* merging, whether a Small+Small union would exceed
+/// `GROUP_HASHSET_THRESHOLD` — so it can build straight into a `HashSet` instead of merging
+/// into a `Vec` that `promote()` would immediately deallocate.
+fn merge_size<T: Ord>(dst: &[T], src: &[T]) -> usize {
+    let mut oi = dst.iter().peekable();
+    let mut si = src.iter().peekable();
+    let mut count = 0usize;
+    loop {
+        match (oi.peek(), si.peek()) {
+            (Some(a), Some(b)) => {
+                match a.cmp(b) {
+                    Ordering::Less => {
+                        oi.next();
+                    }
+                    Ordering::Greater => {
+                        si.next();
+                    }
+                    Ordering::Equal => {
+                        oi.next();
+                        si.next();
+                    }
+                }
+                count += 1;
+            }
+            (Some(_), None) => {
+                count += oi.count();
+                break;
+            }
+            (None, Some(_)) => {
+                count += si.count();
+                break;
+            }
+            (None, None) => break,
+        }
+    }
+    count
+}
+
 // ---------------------------------------------------------------------------
 // A single `(F,V)` group's leaves. `Small` (the overwhelmingly common case, ~5 leaves)
 // stays a sorted, deduplicated `Vec`; a group that grows past `GROUP_HASHSET_THRESHOLD`
@@ -215,12 +255,23 @@ where
     fn absorb_group(&mut self, other: Group<P, M, Fp>) -> usize {
         match (std::mem::replace(self, Group::Small(Vec::new())), other) {
             (Group::Small(mut dst), Group::Small(src)) => {
-                let added = merge_sorted(&mut dst, src);
-                *self = Group::Small(dst);
-                if self.len() > GROUP_HASHSET_THRESHOLD {
-                    self.promote();
+                if merge_size(&dst, &src) > GROUP_HASHSET_THRESHOLD {
+                    // Union would become a Large group: build it straight into a HashSet
+                    // rather than merge into a throwaway Vec that promote() would
+                    // immediately deallocate.
+                    let before = dst.len();
+                    let mut set: Set<(P, M, Fp)> = dst.into_iter().collect();
+                    for leaf in src {
+                        set.insert(leaf);
+                    }
+                    let added = set.len() - before;
+                    *self = Group::Large(set);
+                    added
+                } else {
+                    let added = merge_sorted(&mut dst, src);
+                    *self = Group::Small(dst);
+                    added
                 }
-                added
             }
             (this, other) => {
                 let (mut set, before) = match this {
@@ -373,6 +424,14 @@ where
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    /// Number of distinct `(F, V)` groups — i.e. distinct variables reached by some formal,
+    /// since `fwd`'s outer key is exactly the subject of a `locals` row. O(1): the trie
+    /// already keys on the prefix a scan of the rows would have to rediscover.
+    #[inline]
+    pub fn num_reached_variables(&self) -> usize {
+        self.fwd.len()
     }
 
     /// Phase-0 instrumentation: estimate the heap bytes held by the forward store vs. the
@@ -1185,3 +1244,55 @@ macro_rules! locals_trie_rel_ind {
     };
 }
 pub use locals_trie_rel_ind as rel_ind;
+
+#[cfg(test)]
+mod tests {
+    use super::{merge_size, merge_sorted};
+
+    // Build a sorted, deduplicated Vec from arbitrary ints (the invariant both fns require).
+    fn sorted_dedup(mut v: Vec<i32>) -> Vec<i32> {
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    fn check(a: Vec<i32>, b: Vec<i32>) {
+        let a = sorted_dedup(a);
+        let b = sorted_dedup(b);
+        let predicted = merge_size(&a, &b);
+        let mut merged = a.clone();
+        let added = merge_sorted(&mut merged, b.clone());
+        assert_eq!(
+            predicted,
+            merged.len(),
+            "merge_size must equal merged length"
+        );
+        assert_eq!(
+            added,
+            merged.len() - a.len(),
+            "added must equal newly-inserted count"
+        );
+    }
+
+    #[test]
+    fn merge_size_matches_merge_sorted() {
+        check(vec![], vec![]);
+        check(vec![1, 2, 3], vec![]);
+        check(vec![], vec![4, 5]);
+        check(vec![1, 2, 3], vec![1, 2, 3]); // full overlap
+        check(vec![1, 3, 5], vec![2, 4, 6]); // interleaved, disjoint
+        check(vec![1, 2, 3], vec![3, 4, 5]); // partial overlap
+        // A small deterministic sweep (no rand dep) covering many overlap shapes.
+        for i in 0..16u32 {
+            let a = (0..8)
+                .filter(|k| (i >> (k % 4)) & 1 == 0)
+                .map(|k| k as i32)
+                .collect();
+            let b = (0..8)
+                .filter(|k| (i >> (k % 3)) & 1 == 1)
+                .map(|k| (k as i32) + 2)
+                .collect();
+            check(a, b);
+        }
+    }
+}

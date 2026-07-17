@@ -1,8 +1,11 @@
 {
+  // Flow: GlobalData.data = source() (10) -> local = GlobalData.data (11) ->
+  // sink(local) (12). Line 11 is dropped: `local = GlobalData.data` is a pure
+  // copy that copy_alias collapses onto the static field, so the read at line 11
+  // surfaces in neither the human code flow nor the machine tainted-instructions.
   "expected_lines": [
-    15,
-    16,
-    17
+    10,
+    12
   ],
   "model_generators": [
     {
@@ -11,7 +14,7 @@
         {
           "constraint": "signature_match",
           "name": "source",
-          "parent": "LFieldFlow;"
+          "parent": "LCrossClassStaticFieldFlow;"
         }
       ],
       "model": {
@@ -29,7 +32,7 @@
         {
           "constraint": "signature_match",
           "name": "sink",
-          "parent": "LFieldFlow;"
+          "parent": "LCrossClassStaticFieldFlow;"
         }
       ],
       "model": {

@@ -517,10 +517,11 @@ fn from_flowy_endpoint(
 
 fn port_to_index(port: &Port) -> anyhow::Result<(fx::FormalIndex, fx::Path)> {
     let Port { base, fields } = port;
+    let path = fx::Path::from_accesses(fields.iter().cloned());
     match base {
-        PortBase::Return => Ok(((-1i16).into(), fields.into())),
+        PortBase::Return => Ok(((-1i16).into(), path)),
         PortBase::Var(v) => match v.variable.as_ref() {
-            Variable::Param(idx) => Ok((idx.index().try_into().unwrap(), fields.into())),
+            Variable::Param(idx) => Ok((idx.index().try_into().unwrap(), path)),
             Variable::Local(_) => {
                 panic!("summary requires refers to local")
             }

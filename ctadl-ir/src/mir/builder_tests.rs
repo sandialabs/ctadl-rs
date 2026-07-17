@@ -140,9 +140,9 @@ fn test_builder_convenience_methods() {
     let global_var = builder.new_global_var();
     assert_eq!(global_var.to_string(), "$globals");
 
-    // Test access path creation
-    let access_path = builder.new_access_path(local_var.clone(), vec!["field1", "field2"]);
-    assert_eq!(access_path.to_string(), "%test.field1.field2");
+    // Test access path creation (offset-only)
+    let access_path = builder.new_access_path(local_var.clone(), [1, 2]);
+    assert_eq!(access_path.to_string(), "%test.[0x1].[0x2]");
 
     // Test expression creation
     let str_exp = builder.new_str_exp("hello");

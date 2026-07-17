@@ -308,6 +308,9 @@ pub struct IndexStats {
     pub final_summary: usize,
     pub num_functions: usize,
     pub num_variables: usize,
+    /// Distinct variables appearing as the subject of a `locals` row, i.e. reached by
+    /// some formal. Bounded above by `num_variables`.
+    pub reached_variables: usize,
     pub hybrid_critical_summary: usize,
     pub hybrid_resolvent: usize,
     pub hybrid_context_assign: usize,
@@ -327,10 +330,13 @@ impl IndexStats {
             self.initial_assign
         );
         log::info!(
-            "relation increase: locals: {}, {} formals, {:.2} reached per formal, {:.2}% of variables reached",
+            "relation increase: locals: {}, {} formals, {:.2} reached per formal, {:.1}% of variables reached ({}/{}), {:.2} rows per variable",
             self.final_locals,
             self.initial_formals,
             ratio(self.final_locals, self.initial_formals),
+            100.0 * ratio(self.reached_variables, self.num_variables),
+            self.reached_variables,
+            self.num_variables,
             ratio(self.final_locals, self.num_variables)
         );
         log::info!(
@@ -388,10 +394,42 @@ pub struct IndexResult {
 impl IndexResult {
     pub fn try_save<P: AsRef<path::Path>>(self, dir: P) -> Result<(), Error> {
         use crate::facts::schema::*;
+        // `[mem cp]` around each table's serialize: the fixpoint's own checkpoints stop at
+        // `ascent_run returned`, but on path-heavy targets (e.g. JVM `fb`) the true peak is
+        // here, in the parquet writer, not in the fixpoint. Report row counts too so peak
+        // bytes can be attributed to a specific table.
+        log::info!(
+            "[mem cp] result.try_save start (summary={} assign_like={} paths={} ext={}): {:.1} MB",
+            self.summary.len(),
+            self.assign_like.len(),
+            self.paths.len(),
+            self.external_function.len(),
+            phys_footprint_mb()
+        );
         summary::try_save(&dir, self.summary)?;
+        log::info!(
+            "[mem cp]   after summary::try_save: {:.1} MB",
+            phys_footprint_mb()
+        );
+        let assign_like_rows = self.assign_like.len();
         assign::try_save(&dir, self.assign_like)?;
+        log::info!(
+            "[mem cp]   after assign::try_save ({} rows): {:.1} MB",
+            assign_like_rows,
+            phys_footprint_mb()
+        );
+        let paths_rows = self.paths.len();
         paths::try_save(&dir, self.paths)?;
+        log::info!(
+            "[mem cp]   after paths::try_save ({} rows): {:.1} MB",
+            paths_rows,
+            phys_footprint_mb()
+        );
         external_function::try_save(&dir, self.external_function)?;
+        log::info!(
+            "[mem cp] result.try_save done: {:.1} MB",
+            phys_footprint_mb()
+        );
         Ok(())
     }
 
@@ -813,7 +851,9 @@ pub fn taint_index_with_config(
         initial_formals
     );
 
-    let mut program_paths: Vec<_> = facts
+    // The assign-derived paths and `facts.paths` overlap heavily, so unify them
+    // in a set to drop duplicates before they seed the `program_paths` relation.
+    let mut program_paths: HashSet<_> = facts
         .assign
         .iter()
         .flat_map(|(_, dst, src)| std::iter::once(dst.1).chain(std::iter::once(src.1)))
@@ -877,14 +917,14 @@ pub fn taint_index_with_config(
         assign_like.len(),
         phys_footprint_mb()
     );
-    // Access paths may be introduced in summaries, so include those. Codegen's paths join them:
-    // both are finite sets fixed before the fixpoint, which is what makes the one-level concat
-    // rules below terminate.
+    // Model paths = access paths introduced by summaries ONLY. Do NOT fold `facts.paths` in here:
+    // those are program paths (already in `program_paths`), and the one-level concat rules below
+    // combine `model_paths` with `program_paths`. Adding `facts.paths` makes model_paths ≈
+    // program_paths, turning that concat into a program×program self-join (|facts.paths|² rows).
     let summary_paths: HashSet<_> = facts
         .summary
         .iter()
         .flat_map(|(_, _, p1, _, p2)| [(*p1,), (*p2,)])
-        .chain(facts.paths.iter().cloned())
         .collect();
     log::info!(
         "[mem cp] + summary_paths ({} rows): {:.1} MB",
@@ -1327,7 +1367,7 @@ pub fn taint_index_with_config(
     prog.prog_store = prog_store;
     prog.alias_of_formal = alias_of_formal;
     prog.model_paths = summary_paths.into_iter().collect();
-    prog.program_paths = program_paths;
+    prog.program_paths = program_paths.into_iter().collect();
 
     // Optional wall-clock cap on the fixpoint, gated by env var so normal runs are unaffected
     // (default `Duration::MAX` == run to fixpoint, identical to the old `ascent_run!`). Setting
@@ -1375,6 +1415,11 @@ pub fn taint_index_with_config(
     // run's peak, so a draining rebuild keeps the transient to ~1×.
     let assign_like_out = std::mem::take(&mut prog.__assign_like_ind_common).into_vec();
 
+    // `locals` lives in the trie (`__locals_ind_common`); its physical relation holds no
+    // tuples, so the distinct subjects come from the store's `(F, V)` outer keys — the same
+    // (func, var) key `num_variables` counts, so the two are directly comparable.
+    let reached_variables = prog.__locals_ind_common.num_reached_variables();
+
     let stats = IndexStats {
         initial_assign,
         final_assign_like: assign_like_out.len(),
@@ -1388,6 +1433,7 @@ pub fn taint_index_with_config(
         final_summary: prog.summary.len(),
         num_functions,
         num_variables,
+        reached_variables,
         hybrid_critical_summary: prog.critical_summary.len(),
         hybrid_resolvent: prog.resolvent.len(),
         hybrid_context_assign: prog.context_assign.len(),

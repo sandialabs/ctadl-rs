@@ -86,11 +86,8 @@ impl TerminatorKind {
         use TerminatorKind::*;
         match self {
             Return { args } => Box::new(args.iter().filter_map(|arg| {
-                if matches!(arg, Exp::AccessPath(_)) {
-                    let Exp::AccessPath(ap) = arg else {
-                        unreachable!()
-                    };
-                    Some(&ap.variable_ref)
+                if let Exp::Variable(v) = arg {
+                    Some(v)
                 } else {
                     None
                 }
@@ -106,11 +103,8 @@ impl TerminatorKind {
         use TerminatorKind::*;
         match self {
             Return { args } => Box::new(args.iter_mut().filter_map(|arg| {
-                if matches!(arg, Exp::AccessPath(_)) {
-                    let Exp::AccessPath(ap) = arg else {
-                        unreachable!()
-                    };
-                    Some(&mut ap.variable_ref)
+                if let Exp::Variable(v) = arg {
+                    Some(v)
                 } else {
                     None
                 }

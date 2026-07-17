@@ -4,21 +4,22 @@ var x;
 def TestSyntaxOnly() {
 start:
     // Test various numeric field access patterns
-    
+    // A numeric-offset memory access spells its dereference (e.g. `x.[0].deref`).
+
     // Basic numeric field access
-    y = x.[0];
-    z = x.[42];
-    
-    // Numeric field updates
-    x.[10] = y;
-    x.[100] = z;
-    
+    y = x.[0].deref;
+    z = x.[42].deref;
+
+    // Numeric field updates (memory writes must spell the dereference)
+    x.[10].deref = y;
+    x.[100].deref = z;
+
     // Mixed symbolic and numeric
-    w = x.field.[5];
+    w = x.field.[5].deref;
     x.[7].nested = w;
-    
+
     // Chained numeric accesses
-    a = x.[1].[2].[3];
-    
+    a = x.[1].[2].[3].deref;
+
     return;
 }

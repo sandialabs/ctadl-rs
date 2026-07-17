@@ -179,10 +179,12 @@ macro_rules! make_ast_visitor {
                         }
                         self.visit_variable_ref(global);
                     }
-                    Update { dest: (dest_var, dest_fields), source, value } => {
-                        self.visit_variable_ref(dest_var);
-                        self.visit_field_accesses(dest_fields);
-                        self.visit_variable_ref(source);
+                    Load { dest, source, field: _ } => {
+                        self.visit_variable_ref(dest);
+                        self.visit_access_path(source);
+                    }
+                    Store { dest, field: _, value } => {
+                        self.visit_access_path(dest);
                         self.visit_exp(value);
                     }
                     Nop => (),
@@ -223,6 +225,9 @@ macro_rules! make_ast_visitor {
 
             fn super_exp(&mut self, exp: &$($mutability)? Exp) {
                 match exp {
+                    Exp::Variable(variable_ref) => {
+                        self.visit_variable_ref(variable_ref);
+                    }
                     Exp::AccessPath(access_path) => {
                         self.visit_access_path(access_path);
                     }
@@ -243,12 +248,9 @@ macro_rules! make_ast_visitor {
             }
 
             fn super_field_accesses(&mut self, field_accesses: &$($mutability)? FieldAccesses) {
-                // Traverse each field access in the sequence
+                // Traverse each field access in the sequence (offset-only)
                 for field_access in &field_accesses.fields {
                     match field_access {
-                        FieldAccess::Symbol(_) => {
-                            // No additional traversal needed for Symbol
-                        }
                         FieldAccess::Offset(_) => {
                             // No additional traversal needed for Offset
                         }

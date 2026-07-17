@@ -175,7 +175,7 @@ fn test_throw_instruction_terminator() {
     // For now, verify our helper functions work correctly
     let empty_exp = Exp::new_bytes(Vec::new());
     let throw_var = VariableRef::new_local("v0".to_string());
-    let throw_exp = Exp::new_access_path(AccessPath::without_fields(throw_var));
+    let throw_exp = Exp::from(AccessPath::without_fields(throw_var));
 
     // This should be the structure of a throw terminator
     let expected_args: SmallVec<[Exp; 4]> = smallvec![empty_exp.clone(), throw_exp];
@@ -195,8 +195,8 @@ fn test_throw_instruction_terminator() {
 
     // Second arg should be the throw value
     assert!(
-        matches!(&expected_args[1], Exp::AccessPath(_)),
-        "Second arg should be AccessPath"
+        matches!(&expected_args[1], Exp::Variable(_)),
+        "Second arg should be a variable"
     );
 }
 

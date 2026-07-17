@@ -86,6 +86,39 @@ enum VnodeRep {
     Global(i64),
 }
 
+/// A (possibly mixed) memory-address expression under construction: a base variable plus a
+/// sequence of pointer-arithmetic offsets and symbolic dereferences. Access paths in the IR are
+/// offset-only and fields are single symbols, so a mixed address is threaded here and lowered to
+/// [`StatementKind::Load`]/[`StatementKind::Store`] via [`mir::load_access_path`] /
+/// [`mir::store_access_path`].
+#[derive(Clone, Debug)]
+struct Addr {
+    base: VariableRef,
+    segments: ThinVec<PathSegment>,
+}
+
+impl Addr {
+    fn new(base: VariableRef) -> Self {
+        Self {
+            base,
+            segments: ThinVec::new(),
+        }
+    }
+
+    /// True when this is a bare variable (no offset/deref).
+    fn is_pathless(&self) -> bool {
+        self.segments.is_empty()
+    }
+
+    fn push_offset(&mut self, offset: i64) {
+        self.segments.push(PathSegment::offset(offset));
+    }
+
+    fn push_deref(&mut self) {
+        self.segments.push(PathSegment::symbol("deref"));
+    }
+}
+
 #[derive(Debug)]
 struct Context {
     // Function mapping: pcode function ID -> CTADL function index
@@ -124,6 +157,22 @@ impl Context {
             current_hfunc: None,
             counter: 0,
         }
+    }
+
+    /// Appends a write of `src` to the location `dest`: a plain assign for a bare variable, or a
+    /// field store (with any needed loads emitted for intermediate dereferences) via
+    /// [`mir::store_access_path`].
+    ///
+    /// A store always writes a symbolic field, but a `dest` that resolves to an offset-only address
+    /// (e.g. a stack slot `__stack_top.[k]` or a memory-space varnode) has no field — writing there
+    /// means writing the memory *at* that address. That dereference is a pcode-level detail, so we
+    /// synthesize the canonical `.deref` field here, making the write a `store ....deref := src`
+    /// that aliases the `.deref` reads emitted for the same address (memory loads, stack slots).
+    fn push_assign_or_store(&mut self, stmts: &mut Vec<Statement>, mut dest: Addr, src: Exp) {
+        if !dest.segments.is_empty() && dest.segments.iter().all(PathSegment::is_offset) {
+            dest.push_deref();
+        }
+        mir::store_access_path(dest.base, dest.segments, src, stmts, || self.create_temp());
     }
 
     fn process(
@@ -391,23 +440,26 @@ impl Context {
                 for (i, param) in proto_data.parameters.iter().enumerate() {
                     if let Some(rep) = pcode_facts.get_symbol_representative(&param.symbol) {
                         let vnode_data = pcode_facts.vnode_facts.get(rep);
-                        let kind = if let Some(data) = vnode_data
+                        let dest = if let Some(data) = vnode_data
                             && data.space.as_deref() == Some("stack")
                             && let Some(addr) = &data.address
                         {
-                            // Stack parameter - bind to __stack_top offset
-                            StatementKind::assign_or_update(
-                                Self::stack_slot_path(addr.0),
-                                VariableRef::new_parameter(ParameterIdx::new(i)).into(),
-                            )
+                            // Stack parameter - bind to the canonical stack slot
+                            // `__stack_top.[offset].deref`.
+                            Self::stack_slot_path(addr.0)
                         } else {
                             // Other parameter (register, etc.) - bind to local variable
-                            StatementKind::assign_or_update(
-                                self.get_lvalue(rep, &pcode_facts.vnode_facts)?,
-                                VariableRef::new_parameter(ParameterIdx::new(i)).into(),
-                            )
+                            self.get_lvalue(rep, &pcode_facts.vnode_facts)?
                         };
-                        func.blocks.blocks_mut()[bb_idx].push_back(Statement::new_kind(kind));
+                        let mut stmts = Vec::new();
+                        self.push_assign_or_store(
+                            &mut stmts,
+                            dest,
+                            VariableRef::new_parameter(ParameterIdx::new(i)).into(),
+                        );
+                        for s in stmts {
+                            func.blocks.blocks_mut()[bb_idx].push_back(s);
+                        }
                     } else {
                         log::warn!(
                             "No representative varnode found for parameter {} of function {}",
@@ -424,9 +476,7 @@ impl Context {
                     let stack_top_var = VariableRef::new_local("__stack_top".to_string());
                     let stmt = Statement::new_kind(StatementKind::Assign {
                         dest: sp_var,
-                        sources: smallvec![Exp::AccessPath(AccessPath::without_fields(
-                            stack_top_var
-                        ))],
+                        sources: smallvec![Exp::Variable(stack_top_var)],
                     });
                     func.blocks.blocks_mut()[bb_idx].push_back(stmt);
                 }
@@ -583,7 +633,22 @@ impl Context {
                     "RETURN" => {
                         let mut args = smallvec![];
                         if pcode.inputs.len() >= 2 {
-                            args.push(self.get_exp(&pcode.inputs[1], &pcode_facts.vnode_facts)?);
+                            // The return value may be a field read, which lowers to loads. They
+                            // must execute before the (separately stored) terminator, so append
+                            // them to the end of this block's already-inserted statements.
+                            let mut ret_stmts = Vec::new();
+                            let arg = self.get_exp(
+                                &mut ret_stmts,
+                                &pcode.inputs[1],
+                                &pcode_facts.vnode_facts,
+                            )?;
+                            if !ret_stmts.is_empty()
+                                && let Some(block_stmts) =
+                                    bb_statements.get_mut(&(bb_data.hfunc.clone(), bb_id.clone()))
+                            {
+                                block_stmts.extend(ret_stmts);
+                            }
+                            args.push(arg);
                         }
                         // Ensure return arity matches
                         while args.len() < return_arity as usize {
@@ -776,17 +841,14 @@ impl Context {
             | "POPCOUNT" => {
                 // Handle copy-like and unary operations as assignments
                 self.handle_copy_operation(pcode, vnode_facts)
-                    .map(|s| [s].into_iter().collect())
             }
             "LOAD" => {
                 // Handle load operations
                 self.handle_load_operation(pcode, vnode_facts)
-                    .map(|s| [s].into_iter().collect())
             }
             "STORE" => {
                 // Handle store operations
                 self.handle_store_operation(pcode, vnode_facts)
-                    .map(|s| [s].into_iter().collect())
             }
             "CALL" | "CALLIND" => {
                 // Handle call operations
@@ -810,7 +872,7 @@ impl Context {
             _ => {
                 // For now, treat unknown operations as no-ops
                 log::warn!("Unsupported pcode mnemonic: {}", pcode.mnemonic);
-                Ok(Statement::new_kind(StatementKind::Nop)).map(|s| [s].into_iter().collect())
+                Ok(vec![Statement::new_kind(StatementKind::Nop)])
             }
         }
     }
@@ -822,18 +884,11 @@ impl Context {
         _program: &Program,
         _hfunc_facts: &BTreeMap<pcode_reader::HighFunc, pcode_reader::HFuncData>,
     ) -> Result<Vec<Statement>, Error> {
-        let inputs: Result<SmallVec<[Exp; 2]>, Error> = pcode
-            .inputs
-            .iter()
-            .map(|vn| self.get_exp(vn, vnode_facts))
-            .collect();
-        let outputs: Result<SmallVec<[AccessPath; 1]>, Error> = pcode
+        let outputs: Result<SmallVec<[Addr; 1]>, Error> = pcode
             .outputs
             .iter()
             .map(|vn| self.get_lvalue(vn, vnode_facts))
             .collect();
-
-        let inputs = inputs?;
         let outputs = outputs?;
 
         if outputs.is_empty() {
@@ -842,15 +897,20 @@ impl Context {
                 .collect());
         }
 
+        let mut stmts = Vec::new();
+        let inputs: SmallVec<[Exp; 2]> = pcode
+            .inputs
+            .iter()
+            .map(|vn| self.get_exp(&mut stmts, vn, vnode_facts))
+            .collect::<Result<_, _>>()?;
+
         let temp = self.create_temp();
-        let stmt1 = StatementKind::assign(temp.clone(), inputs);
-        let stmt2 = StatementKind::assign_or_update(
-            outputs[0].clone(),
-            Exp::AccessPath(AccessPath::without_fields(temp)),
-        );
-        Ok([Statement::new_kind(stmt1), Statement::new_kind(stmt2)]
-            .into_iter()
-            .collect())
+        stmts.push(Statement::new_kind(StatementKind::assign(
+            temp.clone(),
+            inputs,
+        )));
+        self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::Variable(temp));
+        Ok(stmts)
     }
 
     fn handle_ptrsub(
@@ -860,7 +920,7 @@ impl Context {
         program: &Program,
         hfunc_facts: &BTreeMap<pcode_reader::HighFunc, pcode_reader::HFuncData>,
     ) -> Result<Vec<Statement>, Error> {
-        let outputs: Result<SmallVec<[AccessPath; 1]>, Error> = pcode
+        let outputs: Result<SmallVec<[Addr; 1]>, Error> = pcode
             .outputs
             .iter()
             .map(|vn| self.get_lvalue(vn, vnode_facts))
@@ -877,18 +937,19 @@ impl Context {
             && let pcode_reader::constant_propagation::SymbolicProp::Value(None, addr) = prop
         {
             if let Some(func_name) = self.resolve_address_to_func_name(addr, hfunc_facts, program) {
-                let kind = StatementKind::assign_or_update(
+                let mut stmts = Vec::new();
+                self.push_assign_or_store(
+                    &mut stmts,
                     outputs[0].clone(),
                     Exp::ObjectRef(CallObject::FunctionPtr(func_name.into())),
                 );
                 log::warn!("Found a function pointer, yay");
-                return Ok([Statement::new_kind(kind)].into_iter().collect());
+                return Ok(stmts);
             } else {
-                let kind = StatementKind::assign_or_update(
-                    outputs[0].clone(),
-                    self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr),
-                );
-                return Ok([Statement::new_kind(kind)].into_iter().collect());
+                let src = self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr);
+                let mut stmts = Vec::new();
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), src);
+                return Ok(stmts);
             }
         }
 
@@ -910,26 +971,31 @@ impl Context {
             }
             (Some(c), None) => {
                 let mut ap = self.get_lvalue(offset_vn, vnode_facts)?;
-                ap.path.fields.push(FieldAccess::Offset(Offset(c)));
-                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
-                Ok(vec![Statement::new_kind(kind)])
+                ap.push_offset(c);
+                let mut stmts = Vec::new();
+                let src = Exp::access_path(self.load_ap(&mut stmts, ap));
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), src);
+                Ok(stmts)
             }
             (None, Some(c)) => {
                 let mut ap = self.get_lvalue(base_vn, vnode_facts)?;
-                ap.path.fields.push(FieldAccess::Offset(Offset(c)));
-                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
-                Ok(vec![Statement::new_kind(kind)])
+                ap.push_offset(c);
+                let mut stmts = Vec::new();
+                let src = Exp::access_path(self.load_ap(&mut stmts, ap));
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), src);
+                Ok(stmts)
             }
             (None, None) => {
-                let base_exp = self.get_exp(base_vn, vnode_facts)?;
-                let offset_exp = self.get_exp(offset_vn, vnode_facts)?;
+                let mut stmts = Vec::new();
+                let base_exp = self.get_exp(&mut stmts, base_vn, vnode_facts)?;
+                let offset_exp = self.get_exp(&mut stmts, offset_vn, vnode_facts)?;
                 let temp = self.create_temp();
-                let stmt1 = StatementKind::assign(temp.clone(), [base_exp, offset_exp]);
-                let stmt2 = StatementKind::assign_or_update(
-                    outputs[0].clone(),
-                    Exp::AccessPath(AccessPath::without_fields(temp)),
-                );
-                Ok(vec![Statement::new_kind(stmt1), Statement::new_kind(stmt2)])
+                stmts.push(Statement::new_kind(StatementKind::assign(
+                    temp.clone(),
+                    [base_exp, offset_exp],
+                )));
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::Variable(temp));
+                Ok(stmts)
             }
         }
     }
@@ -939,7 +1005,7 @@ impl Context {
         pcode: &pcode_reader::PcodeData,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
     ) -> Result<Vec<Statement>, Error> {
-        let outputs: Result<SmallVec<[AccessPath; 1]>, Error> = pcode
+        let outputs: Result<SmallVec<[Addr; 1]>, Error> = pcode
             .outputs
             .iter()
             .map(|vn| self.get_lvalue(vn, vnode_facts))
@@ -955,11 +1021,10 @@ impl Context {
         if let Some(prop) = self.cp_results.get(&pcode.outputs[0]).cloned()
             && let pcode_reader::constant_propagation::SymbolicProp::Value(None, addr) = prop
         {
-            let kind = StatementKind::assign_or_update(
-                outputs[0].clone(),
-                self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr),
-            );
-            return Ok([Statement::new_kind(kind)].into_iter().collect());
+            let src = self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr);
+            let mut stmts = Vec::new();
+            self.push_assign_or_store(&mut stmts, outputs[0].clone(), src);
+            return Ok(stmts);
         }
 
         let base_vn = &pcode.inputs[0];
@@ -977,34 +1042,37 @@ impl Context {
             (None, Some(idx_c)) => {
                 let mut ap = self.get_lvalue(base_vn, vnode_facts)?;
                 let s_val = size_const.unwrap_or(1);
-                ap.path
-                    .fields
-                    .push(FieldAccess::Offset(Offset(idx_c * s_val)));
-                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
-                Ok(vec![Statement::new_kind(kind)])
+                ap.push_offset(idx_c * s_val);
+                let mut stmts = Vec::new();
+                let src = Exp::access_path(self.load_ap(&mut stmts, ap));
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), src);
+                Ok(stmts)
             }
             (Some(base_c), None) if size_const == Some(1) => {
                 let mut ap = self.get_lvalue(index_vn, vnode_facts)?;
-                ap.path.fields.push(FieldAccess::Offset(Offset(base_c)));
-                let kind = StatementKind::assign_or_update(outputs[0].clone(), Exp::AccessPath(ap));
-                Ok(vec![Statement::new_kind(kind)])
+                ap.push_offset(base_c);
+                let mut stmts = Vec::new();
+                let src = Exp::access_path(self.load_ap(&mut stmts, ap));
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), src);
+                Ok(stmts)
             }
             _ => {
-                let base_exp = self.get_exp(base_vn, vnode_facts)?;
-                let index_exp = self.get_exp(index_vn, vnode_facts)?;
+                let mut stmts = Vec::new();
+                let base_exp = self.get_exp(&mut stmts, base_vn, vnode_facts)?;
+                let index_exp = self.get_exp(&mut stmts, index_vn, vnode_facts)?;
                 let size_exp = if let Some(s) = size_const {
                     self.exp_from_const_value(size_vn, vnode_facts, s)
                 } else {
-                    self.get_exp(size_vn, vnode_facts)?
+                    self.get_exp(&mut stmts, size_vn, vnode_facts)?
                 };
 
                 let temp = self.create_temp();
-                let stmt1 = StatementKind::assign(temp.clone(), [base_exp, index_exp, size_exp]);
-                let stmt2 = StatementKind::assign_or_update(
-                    outputs[0].clone(),
-                    Exp::AccessPath(AccessPath::without_fields(temp)),
-                );
-                Ok(vec![Statement::new_kind(stmt1), Statement::new_kind(stmt2)])
+                stmts.push(Statement::new_kind(StatementKind::assign(
+                    temp.clone(),
+                    [base_exp, index_exp, size_exp],
+                )));
+                self.push_assign_or_store(&mut stmts, outputs[0].clone(), Exp::Variable(temp));
+                Ok(stmts)
             }
         }
     }
@@ -1013,60 +1081,75 @@ impl Context {
         &mut self,
         pcode: &pcode_reader::PcodeData,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-    ) -> Result<Statement, Error> {
+    ) -> Result<Vec<Statement>, Error> {
         let (inputs, outputs) = (&pcode.inputs, &pcode.outputs);
         if !inputs.is_empty() && !outputs.is_empty() && inputs[0] != outputs[0] {
-            let input_exp = self.get_exp(&inputs[0], vnode_facts)?;
+            let mut stmts = Vec::new();
+            let input_exp = self.get_exp(&mut stmts, &inputs[0], vnode_facts)?;
             let output_var = self.get_lvalue(&outputs[0], vnode_facts)?;
-            let kind = StatementKind::assign_or_update(output_var, input_exp);
-            return Ok(Statement::new_kind(kind));
+            self.push_assign_or_store(&mut stmts, output_var, input_exp);
+            return Ok(stmts);
         }
-        Ok(Statement::new_kind(StatementKind::Nop))
+        Ok(vec![Statement::new_kind(StatementKind::Nop)])
     }
 
     fn handle_load_operation(
         &mut self,
         pcode: &pcode_reader::PcodeData,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-    ) -> Result<Statement, Error> {
+    ) -> Result<Vec<Statement>, Error> {
         let inputs = &pcode.inputs;
         let outputs = &pcode.outputs;
         if inputs.len() >= 2 && !outputs.is_empty() {
             // LOAD <space>, <offset> -> <dest>
-            let mut offset_exp = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts)?;
-            offset_exp
-                .path
-                .fields
-                .push(FieldAccess::Symbol("deref".into()));
+            let addr = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts)?;
             let output_var = self.get_lvalue(&outputs[0], vnode_facts)?;
 
-            let kind = StatementKind::assign_or_update(output_var, Exp::AccessPath(offset_exp));
-            return Ok(Statement::new_kind(kind));
+            let mut stmts = Vec::new();
+            // Materialize the address (loading through any intermediate derefs), then load the
+            // value at that address's `deref` field.
+            let addr = self.load_ap(&mut stmts, addr);
+            let dest = if output_var.is_pathless() {
+                output_var.base.clone()
+            } else {
+                self.create_temp()
+            };
+            stmts.push(Statement::new_kind(StatementKind::load(
+                dest.clone(),
+                addr,
+                FieldPath::symbol("deref"),
+            )));
+            if !output_var.is_pathless() {
+                self.push_assign_or_store(&mut stmts, output_var, Exp::Variable(dest));
+            }
+            return Ok(stmts);
         }
-        Ok(Statement::new_kind(StatementKind::Nop))
+        Ok(vec![Statement::new_kind(StatementKind::Nop)])
     }
 
     fn handle_store_operation(
         &mut self,
         pcode: &pcode_reader::PcodeData,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-    ) -> Result<Statement, Error> {
+    ) -> Result<Vec<Statement>, Error> {
         let (inputs, _) = (&pcode.inputs, &pcode.outputs);
         if inputs.len() >= 3 {
             // STORE <space>, <offset>, <value>
-            let mut offset_exp = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts)?;
-            offset_exp
-                .path
-                .fields
-                .push(FieldAccess::Symbol("deref".into()));
-            let value_exp = self.get_exp(&inputs[2], vnode_facts)?;
+            let mut dest = self.resolve_mem_exp(&inputs[0], &inputs[1], vnode_facts)?;
+            // Store through the address's `deref` field.
+            dest.push_deref();
+            let mut stmts = Vec::new();
+            let value_exp = self.get_exp(&mut stmts, &inputs[2], vnode_facts)?;
 
-            // If offset is an access path, we can try to use it as destination
-            let kind = StatementKind::assign_or_update(offset_exp, value_exp);
-            return Ok(Statement::new_kind(kind));
+            // Store through the address's (composed) field path. Unlike the old Update lowering,
+            // this does NOT redefine the address base variable. Any loads needed to materialize
+            // the stored value (above) or intermediate dereferences of the address are emitted
+            // first.
+            self.push_assign_or_store(&mut stmts, dest, value_exp);
+            return Ok(stmts);
         }
         log::warn!("STORE missing inputs");
-        Ok(Statement::new_kind(StatementKind::Nop))
+        Ok(vec![Statement::new_kind(StatementKind::Nop)])
     }
 
     /// Converts varnode into our internal representation. Constant space varnodes map to a Const
@@ -1160,24 +1243,24 @@ impl Context {
         VnodeRep::Var(var)
     }
 
-    /// Builds the access path for the canonical stack slot `__stack_top.[offset].deref`.
-    fn stack_slot_path(offset: i64) -> AccessPath {
+    /// Builds the address for the canonical stack slot `__stack_top.[offset].deref`.
+    fn stack_slot_path(offset: i64) -> Addr {
         let stack_top = VariableRef::new_local("__stack_top".to_string());
-        let mut ap = AccessPath::without_fields(stack_top);
-        ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-        ap.path.fields.push(FieldAccess::Symbol("deref".into()));
-        ap
+        let mut addr = Addr::new(stack_top);
+        addr.push_offset(offset);
+        addr.push_deref();
+        addr
     }
 
     /// Builds the access path for the canonical global `$globals.[address].deref`.
     ///
     /// [`Variable::GlobalHeap`] is threaded through every call, so rooting globals here
     /// is what carries their taint between functions that never pass it directly.
-    fn global_path(address: i64) -> AccessPath {
-        let mut ap = AccessPath::without_fields(VariableRef::new_global());
-        ap.path.fields.push(FieldAccess::Offset(Offset(address)));
-        ap.path.fields.push(FieldAccess::Symbol("deref".into()));
-        ap
+    fn global_path(address: i64) -> Addr {
+        let mut addr = Addr::new(VariableRef::new_global());
+        addr.push_offset(address);
+        addr.push_deref();
+        addr
     }
 
     /// Resolve an offset expression using constant propagation results if available.
@@ -1187,7 +1270,7 @@ impl Context {
         _space_id: &pcode_reader::PcodeVarnode,
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-    ) -> Result<AccessPath, Error> {
+    ) -> Result<Addr, Error> {
         if let Some(prop) = self.cp_results.get(vnode_id).cloned()
             && let pcode_reader::constant_propagation::SymbolicProp::Value(Some(base_vn), offset) =
                 prop
@@ -1195,13 +1278,13 @@ impl Context {
             let is_stack = base_vn.deref().deref() == "__stack_top";
             if is_stack {
                 let var_ref = VariableRef::new_local("__stack_top".to_string());
-                let mut ap = AccessPath::without_fields(var_ref);
-                ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-                return Ok(ap);
+                let mut addr = Addr::new(var_ref);
+                addr.push_offset(offset);
+                return Ok(addr);
             } else if base_vn != *vnode_id {
-                let mut ap = self.get_lvalue(&base_vn, vnode_facts)?;
-                ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-                return Ok(ap);
+                let mut addr = self.get_lvalue(&base_vn, vnode_facts)?;
+                addr.push_offset(offset);
+                return Ok(addr);
             }
         }
 
@@ -1217,11 +1300,14 @@ impl Context {
         program: &Program,
     ) -> Result<Vec<Statement>, Error> {
         // Check if we have inputs and the first input is a call target
-        let outputs: Result<SmallVec<[AccessPath; 4]>, _> = pcode
+        let outputs: Result<SmallVec<[Addr; 4]>, _> = pcode
             .outputs
             .iter()
             .map(|output_id| self.get_lvalue(output_id, vnode_facts))
             .collect();
+
+        // Loads needed to materialize the call arguments are emitted before the call.
+        let mut stmts = Vec::new();
 
         // Try to resolve call target if we have inputs
         let (call_edges, actual_args) = if !pcode.inputs.is_empty() {
@@ -1236,7 +1322,7 @@ impl Context {
             let args = pcode.inputs[1..]
                 .iter()
                 .map(|input_id| {
-                    self.get_exp(input_id, vnode_facts)
+                    self.get_exp(&mut stmts, input_id, vnode_facts)
                         .unwrap_or_else(|_| Exp::new_str("unknown"))
                 })
                 .collect();
@@ -1248,15 +1334,15 @@ impl Context {
         let style = if &**pcode.mnemonic == "CALLIND" && call_edges.is_empty() {
             let callee = if !pcode.inputs.is_empty() {
                 let target_vnode = &pcode.inputs[0];
-                let target_exp = self
-                    .get_exp(target_vnode, vnode_facts)
-                    .unwrap_or_else(|_| Exp::new_str("unknown"));
-                match target_exp {
-                    Exp::AccessPath(ap) => ap,
-                    _ => AccessPath::without_fields(VariableRef::new_local(
-                        "unknown_callee".to_string(),
-                    )),
-                }
+                // The callee is a call-target address. Offsets stay on the access path (pointer
+                // arithmetic), but any dereference (e.g. a function pointer read from a stack
+                // slot) is lowered to a load, leaving an offset-only callee address.
+                let ap = self
+                    .get_lvalue(target_vnode, vnode_facts)
+                    .unwrap_or_else(|_| {
+                        Addr::new(VariableRef::new_local("unknown_callee".to_string()))
+                    });
+                self.load_ap(&mut stmts, ap)
             } else {
                 AccessPath::without_fields(VariableRef::new_local("unknown_callee".to_string()))
             };
@@ -1270,7 +1356,6 @@ impl Context {
             }
         };
 
-        let mut stmts = Vec::new();
         let outputs = outputs.err_context(|| format!("handling call: {:?}", pcode))?;
         let temps: ctadl_ir::ThinVec<VariableRef> =
             (0..outputs.len()).map(|_| self.create_temp()).collect();
@@ -1281,12 +1366,9 @@ impl Context {
         };
         stmts.push(Statement::new_kind(kind));
         // store temps into outputs
-        outputs.iter().zip(temps).for_each(|(o, t)| {
-            stmts.push(Statement::new_kind(StatementKind::assign_or_update(
-                o.clone(),
-                Exp::AccessPath(AccessPath::without_fields(t)),
-            )))
-        });
+        for (o, t) in outputs.iter().zip(temps) {
+            self.push_assign_or_store(&mut stmts, o.clone(), Exp::Variable(t));
+        }
 
         Ok(stmts)
     }
@@ -1338,48 +1420,64 @@ impl Context {
         ctadl_ir::thin_vec![]
     }
 
+    /// Reads a varnode as an expression. A field read is not expressible as an [`Exp`], so any
+    /// access path with fields is lowered into a sequence of [`StatementKind::Load`]s (appended to
+    /// `stmts`) and the resulting temporary is returned as an [`Exp::Variable`].
     fn get_exp(
         &mut self,
+        stmts: &mut Vec<Statement>,
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
     ) -> Result<Exp, Error> {
         let rep = self.convert_vnode(vnode_id, vnode_facts, &self.register_facts);
         let exp = match rep {
             VnodeRep::Const(value) => self.exp_from_const_value(vnode_id, vnode_facts, value),
-            VnodeRep::Var(var) => Exp::AccessPath(AccessPath::without_fields(var)),
+            VnodeRep::Var(var) => Exp::Variable(var),
             VnodeRep::Offset(var, offset) => {
-                let mut ap = AccessPath::without_fields(var);
-                ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-                Exp::AccessPath(ap)
+                let mut addr = Addr::new(var);
+                addr.push_offset(offset);
+                Exp::access_path(self.load_ap(stmts, addr))
             }
-            VnodeRep::StackSlot(offset) => Exp::AccessPath(Self::stack_slot_path(offset)),
-            VnodeRep::Global(address) => Exp::AccessPath(Self::global_path(address)),
+            VnodeRep::StackSlot(offset) => {
+                Exp::access_path(self.load_ap(stmts, Self::stack_slot_path(offset)))
+            }
+            VnodeRep::Global(address) => {
+                Exp::access_path(self.load_ap(stmts, Self::global_path(address)))
+            }
         };
         Ok(exp)
+    }
+
+    /// Lowers the field reads (symbolic derefs) of `addr` into loads (see
+    /// [`mir::load_access_path`]), appending them to `stmts` and returning the residual *address*
+    /// — the base variable plus any trailing offset arithmetic — as an offset-only access path.
+    /// Offsets emit no load; a pathless or offset-only `addr` is returned unchanged.
+    fn load_ap(&mut self, stmts: &mut Vec<Statement>, addr: Addr) -> AccessPath {
+        mir::load_access_path(addr.base, addr.segments, stmts, || self.create_temp())
     }
 
     fn get_lvalue(
         &mut self,
         vnode_id: &pcode_reader::PcodeVarnode,
         vnode_facts: &BTreeMap<pcode_reader::PcodeVarnode, pcode_reader::VnodeData>,
-    ) -> Result<AccessPath, Error> {
+    ) -> Result<Addr, Error> {
         let rep = self.convert_vnode(vnode_id, vnode_facts, &self.register_facts);
-        let ap = match rep {
+        let addr = match rep {
             VnodeRep::Const(value) => {
                 return Err(Error::PcodeConversion(format!(
                     "constant varnode {vnode_id} cannot be used as an lvalue: {value}"
                 )));
             }
-            VnodeRep::Var(var) => AccessPath::without_fields(var),
+            VnodeRep::Var(var) => Addr::new(var),
             VnodeRep::Offset(var, offset) => {
-                let mut ap = AccessPath::without_fields(var);
-                ap.path.fields.push(FieldAccess::Offset(Offset(offset)));
-                ap
+                let mut addr = Addr::new(var);
+                addr.push_offset(offset);
+                addr
             }
             VnodeRep::StackSlot(offset) => Self::stack_slot_path(offset),
             VnodeRep::Global(address) => Self::global_path(address),
         };
-        Ok(ap)
+        Ok(addr)
     }
 
     fn get_const_value(

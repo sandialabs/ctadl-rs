@@ -114,7 +114,11 @@ fn discover_dex(java_dir: &Path) -> Result<Vec<TestCase>> {
             continue;
         }
         let stem = file_stem(&entry)?;
-        let config = java_dir.join(format!("{}.json", to_kebab_case(&stem)));
+        // Prefer a JSON5 config (it can carry inline comments) over a plain JSON one.
+        let kebab = to_kebab_case(&stem);
+        let json5 = java_dir.join(format!("{kebab}.json5"));
+        let json = java_dir.join(format!("{kebab}.json"));
+        let config = if json5.is_file() { json5 } else { json };
         if config.is_file() {
             let java = absolute(&entry)?;
             let config = absolute(&config)?;

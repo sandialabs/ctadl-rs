@@ -295,9 +295,9 @@ impl Context {
                                         .collect::<SmallVec<[BasicBlockIdx; 4]>>();
 
                                     if succs.is_empty() {
-                                        let throw_exp = Exp::new_access_path(
-                                            AccessPath::without_fields(reg_to_var(&code, f.a)),
-                                        );
+                                        let throw_exp = Exp::from(AccessPath::without_fields(
+                                            reg_to_var(&code, f.a),
+                                        ));
                                         let empty_exp = Exp::new_bytes(Vec::new());
                                         TerminatorKind::Return {
                                             args: smallvec![empty_exp, throw_exp],
@@ -310,7 +310,7 @@ impl Context {
                                 Instruction::Return(reg)
                                 | Instruction::ReturnWide(reg)
                                 | Instruction::ReturnObject(reg) => {
-                                    let ret_exp = Exp::new_access_path(AccessPath::without_fields(
+                                    let ret_exp = Exp::from(AccessPath::without_fields(
                                         reg_to_var(&code, reg.a),
                                     ));
                                     let empty_exp = Exp::new_bytes(Vec::new());
@@ -487,7 +487,7 @@ impl Context {
             }
         } else {
             CallStyle::JavaCall {
-                receiver: args[0].access_path().unwrap().variable_ref.clone(),
+                receiver: args[0].variable_ref().unwrap().clone(),
                 cls: cls.into(),
                 simple_name: simple_name.into(),
                 descriptor: descriptor.into(),
@@ -617,13 +617,13 @@ impl Context {
 
         match inst {
             Instruction::ArrayLength(f) => {
-                let src = Exp::AccessPath(AccessPath {
-                    variable_ref: reg_to_var(code_item, f.b),
-                    path: ["length"].into_iter().collect(),
-                });
+                let source = reg_to_var(code_item, f.b);
                 let dest = reg_to_var(code_item, f.a);
-                let sources = smallvec![src];
-                stmts.push(Statement::new_kind(StatementKind::Assign { dest, sources }));
+                stmts.push(Statement::new_kind(StatementKind::load(
+                    dest,
+                    source,
+                    ctadl_ir::mir::FieldPath::symbol("length"),
+                )));
                 return Ok(stmts);
             }
             Instruction::SPut(f)
@@ -642,11 +642,9 @@ impl Context {
                     source.cloned().map(|r| reg_to_var(code_item, r).into()),
                 )));
                 // flow temp into field update
-                stmts.push(Statement::new_kind(StatementKind::update(
-                    AccessPath::new(
-                        VariableRef::new_global(),
-                        [mir::FieldAccess::Symbol(name.into())],
-                    ),
+                stmts.push(Statement::new_kind(StatementKind::store(
+                    AccessPath::without_fields(VariableRef::new_global()),
+                    ctadl_ir::mir::FieldPath::symbol(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -661,12 +659,11 @@ impl Context {
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
                 for dest in dest.iter().cloned().map(|d| reg_to_var(code_item, d)) {
-                    let source = AccessPath::new(
+                    stmts.push(Statement::new_kind(StatementKind::load(
+                        dest,
                         VariableRef::new_global(),
-                        [mir::FieldAccess::Symbol(name.clone().into())],
-                    )
-                    .into();
-                    stmts.push(Statement::new_kind(StatementKind::assign(dest, [source])));
+                        ctadl_ir::mir::FieldPath::symbol(name.clone()),
+                    )));
                 }
                 return Ok(stmts);
             }
@@ -690,8 +687,9 @@ impl Context {
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
                 // flow temp into field update
-                stmts.push(Statement::new_kind(StatementKind::update(
-                    AccessPath::new(object, [mir::FieldAccess::Symbol(name.into())]),
+                stmts.push(Statement::new_kind(StatementKind::store(
+                    AccessPath::without_fields(object),
+                    ctadl_ir::mir::FieldPath::symbol(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -707,12 +705,11 @@ impl Context {
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
                 for dest in dest.iter().cloned().map(|d| reg_to_var(code_item, d)) {
-                    let source = AccessPath::new(
+                    stmts.push(Statement::new_kind(StatementKind::load(
+                        dest,
                         object.clone(),
-                        [mir::FieldAccess::Symbol(name.clone().into())],
-                    )
-                    .into();
-                    stmts.push(Statement::new_kind(StatementKind::assign(dest, [source])));
+                        ctadl_ir::mir::FieldPath::symbol(name.clone()),
+                    )));
                 }
                 return Ok(stmts);
             }
@@ -726,12 +723,10 @@ impl Context {
                 let array_var = reg_to_var(code_item, f.b);
                 for d in dest.iter().cloned() {
                     let dest_var = reg_to_var(code_item, d);
-                    let source =
-                        AccessPath::new(array_var.clone(), [mir::FieldAccess::Symbol("[]".into())])
-                            .into();
-                    stmts.push(Statement::new_kind(StatementKind::assign(
+                    stmts.push(Statement::new_kind(StatementKind::load(
                         dest_var,
-                        [source],
+                        array_var.clone(),
+                        ctadl_ir::mir::FieldPath::symbol("[]"),
                     )));
                 }
                 return Ok(stmts);
@@ -752,9 +747,9 @@ impl Context {
                         .map(|r| reg_to_var(code_item, r).into()),
                 )));
                 let array_var = reg_to_var(code_item, f.b);
-                let dest_path = AccessPath::new(array_var, [mir::FieldAccess::Symbol("[]".into())]);
-                stmts.push(Statement::new_kind(StatementKind::update(
-                    dest_path,
+                stmts.push(Statement::new_kind(StatementKind::store(
+                    AccessPath::without_fields(array_var),
+                    ctadl_ir::mir::FieldPath::symbol("[]"),
                     temp_var.into(),
                 )));
                 return Ok(stmts);

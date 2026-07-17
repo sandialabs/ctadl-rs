@@ -38,9 +38,12 @@ jobs:
                 ;;
             esac
 
-            if git diff "$BASE...$HEAD" -- "$f" \
+            # Use grep -c (reads to EOF) rather than grep -q (exits early):
+            # under pipefail, grep -q's early exit SIGPIPEs the upstream greps,
+            # and that 141 becomes the pipeline status, silently masking a match.
+            if [ "$(git diff "$BASE...$HEAD" -- "$f" \
               | grep -v '^+++' \
-              | grep -q "^+.*$marker"
+              | grep -c "^+.*$marker")" -gt 0 ]
             then
               echo "::error file=$f::added line contains $marker"
               fail=1

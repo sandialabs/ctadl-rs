@@ -289,6 +289,7 @@
               nixd
               pkg-config
               bzip2
+              ghidra-bin
             ];
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
           };
