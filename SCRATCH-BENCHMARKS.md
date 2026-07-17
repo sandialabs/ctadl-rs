@@ -4,7 +4,8 @@
 Re-run the suite after each change, diff against §2, and update it. Platform: macOS
 (Darwin), `phys_footprint` accounting, 20-core / 128 GB machine, one job at a time.*
 
-**Baseline:** `main` @ `87bdad1` vs `find-memory-blowup-2` @ `a35437e`.
+**Baseline:** `main` @ `87bdad1` vs `find-memory-blowup-2` @ `a35437e` (synthetic + firmware
+tables re-measured 2026-07-17 on branch `5c570cb`; `main` binary unchanged at `87bdad1`).
 **Measured:** 2026-07-16/17, Ghidra 12.0.4 (the flake's pinned `ghidra-bin`), idle machine.
 
 > ### ⚠ Read this before comparing against any older copy of this document
@@ -91,29 +92,52 @@ machine. Guard: 85 GB / 3 h wall unless noted. `br` = the branch.
 
 ### Synthetic (`gen_N`) — regenerated; see the §3 caveat
 
-| benchmark | side | bitcode | `locals` rows | reached/formal | **peak** | wall |
-|---|---|--:|--:|--:|--:|--:|
-| `gen_800`  | main | 2.17 MB | 146,667 | 30.49 | 69.7 MB | 2.40 s |
-| `gen_800`  | **br** | 1.97 MB | 158,170 | 32.88 | **68.1 MB** | **0.41 s** |
-| `gen_1600` | main | 4.38 MB | 293,067 | 30.49 | 116.6 MB | 4.82 s |
-| `gen_1600` | **br** | 3.98 MB | 315,770 | 32.86 | 118.0 MB | **0.84 s** |
-| `gen_3200` | main | 8.81 MB | 585,867 | 30.50 | 215.3 MB | 10.32 s |
-| `gen_3200` | **br** | 8.02 MB | 630,970 | 32.84 | **206.0 MB** | **2.43 s** |
+Re-measured 2026-07-17 with the current branch build (`br` = `5c570cb`, `main` = `87bdad1`);
+imports rebuilt from the same `.gpr`s. Row counts and reached/formal are identical to the
+previous run; peak/wall move within noise.
+
+| benchmark | side | bitcode | `locals` rows | reached/formal | %vars reached | **peak** | wall |
+|---|---|--:|--:|--:|--:|--:|--:|
+| `gen_800`  | main | 2.17 MB | 146,667 | 30.49 | 2.58% | 71.6 MB | 2.41 s |
+| `gen_800`  | **br** | 1.97 MB | 158,170 | 32.88 | **74.4%** (46,550/62,604) | **66.6 MB** | **0.36 s** |
+| `gen_1600` | main | 4.38 MB | 293,067 | 30.49 | 2.58% | 116.4 MB | 4.93 s |
+| `gen_1600` | **br** | 3.98 MB | 315,770 | 32.86 | **74.4%** (92,950/125,004) | 116.3 MB | **0.83 s** |
+| `gen_3200` | main | 8.81 MB | 585,867 | 30.50 | 2.58% | 220.4 MB | 10.16 s |
+| `gen_3200` | **br** | 8.02 MB | 630,970 | 32.84 | **74.4%** (185,750/249,804) | **197.9 MB** | **2.17 s** |
 
 Sparse best case (reached/formal ≈ 30). Branch: **~4-5× faster**, memory flat, rows +8%.
 Hybrid inlining is inert on both sides for all `gen_N` (`critical_summary: 0, resolvent: 0`)
 — the property §6 requires of this benchmark.
 
+> **⚠ The two sides' `%vars reached` are NOT on the same basis — do not compare them
+> directly.** The current branch build (`5c570cb`) changed the accounting: `br` now prints
+> `74.4% of variables reached (<reached>/<total>), <rows-per-var>`, i.e. reached variables ÷
+> total variables in the IR. `main` (`87bdad1`) still prints the old `2.58% of variables
+> reached` with no fraction — a different, much smaller denominator convention. The 2.58%
+> figure is stable across all three sizes; the branch figure is a flat **74.4%** across all
+> three (rows-per-variable a flat 2.53). The firmware %vars in §2's next table were taken
+> from the *old* `main`-style formula and are likewise not comparable to the new branch
+> figures. The firmware %vars **have now been re-measured** on `5c570cb` for the three
+> converging targets — see the firmware table and its follow-up note. The old `br` %vars
+> values there turned out to be rows-per-variable; the true reached fractions land in the
+> 49–62% band.
+
 ### Firmware
+
+Branch (`br`) re-measured 2026-07-17 on `5c570cb`; `%vars` for `br` is now the **true
+reached fraction** under the new formula, with rows-per-variable in parentheses. `main`
+rows are unchanged (`87bdad1`) — its `%vars` is the old-formula figure and is **not**
+comparable to the branch fraction (see note below). `ath_dev`/`cfg80211` `main` were not
+re-run: they explode past 85 GB (KILLED, no `%vars` to obtain).
 
 | benchmark | side | bitcode | `locals` rows | reached/formal | %vars | **peak** | wall | converges? |
 |---|---|--:|--:|--:|--:|--:|--:|---|
-| `ath_dfs`  | main | 2.29 MB | 2,313,189 | 5,330 | 27% | 0.20 GB | 95.0 s | ✅ |
-| `ath_dfs`  | **br** | 2.56 MB | **1,072,748** | 2,472 | 4.5% | 0.27 GB | **2.82 s** | ✅ |
+| `ath_dfs`  | main | 2.29 MB | 2,313,189 | 5,330 | 27% (old) | 0.20 GB | 85.2 s | ✅ |
+| `ath_dfs`  | **br** | 2.56 MB | **1,072,748** | 2,472 | **62.1%** (4.50 rows/var) | 0.23 GB | **2.34 s** | ✅ |
 | `ath_dev`  | main | 13.6 MB | — | — | — | **≥91.6 GB — KILLED** | — | ❌ |
-| `ath_dev`  | **br** | 15.3 MB | **41,412,939** | 12,340 | 40% | **3.08 GB** | **43.9 s** | ✅ |
+| `ath_dev`  | **br** | 15.3 MB | **41,412,939** | 12,340 | **57.2%** (39.63 rows/var) | **2.98 GB** | **48.1 s** | ✅ |
 | `cfg80211` | main | 8.26 MB | — | — | — | **≥92.9 GB — KILLED** | — | ❌ |
-| `cfg80211` | **br** | 9.67 MB | 730,109,557 | 257,443 | 954% | **28.4 GB** | 411 s | ✅ |
+| `cfg80211` | **br** | 9.67 MB | 730,109,557 | 257,443 | **48.7%** (954.42 rows/var) | **28.4 GB** | 429 s | ✅ |
 | `ath_hal`  | main | 13.0 MB | — | — | — | **≥94.4 GB — KILLED** | — | ❌ |
 | `ath_hal`  | **br** | 14.3 MB | — | — | — | **≥92.8 GB — KILLED** | — | ❌ |
 | `wpa_supplicant` | main | 28.1 MB | — | — | — | **≥92.1 GB — KILLED** | — | ❌ |
@@ -127,18 +151,30 @@ Hybrid inlining is inert on both sides for all `gen_N` (`critical_summary: 0, re
 **"KILLED" = tripped the 85 GB footprint guard.** The figure is where the 4 s poller caught
 it, i.e. a *lower bound* on peak, not a converged peak.
 
+> **The old `br` `%vars` values were mislabeled rows-per-variable, not reached-fractions.**
+> The 2026-07-17 re-run on `5c570cb` makes this unambiguous: every previous `br` `%vars`
+> entry equals the new build's *rows-per-variable* figure, not its reached fraction —
+> `ath_dfs` old 4.5% = new 4.50 rows/var (true reached 62.1%); `ath_dev` old 40% = 39.63
+> rows/var (true 57.2%); `cfg80211` old 954% = 954.42 rows/var (true 48.7%). The percentages
+> now in the table are the genuine reached fractions. Note the true fractions cluster in the
+> 49–62% band and do **not** track the blowup — `cfg80211`, by far the densest target
+> (257k reached/formal, 954 rows/var), has the *lowest* reached fraction of the three. So
+> `%vars` reached is not a blowup predictor; **`reached/formal` and rows-per-variable are.**
+> `main`'s `%vars` (e.g. `ath_dfs` 27%) is the old-formula number on the unchanged `main`
+> binary and is on yet another basis — do not compare it to the branch fractions.
+
 ### What this says
 
 - **The branch strictly dominates `main` on this corpus.** It is faster on every target
   that finishes, and there is **no target where `main` converges and the branch does not**.
 - **The branch converges on two targets where `main` explodes past 90 GB.** `ath_dev` is
-  the headline: `main` is killed at **≥91.6 GB**, the branch finishes in **44 s at 3.08 GB**.
+  the headline: `main` is killed at **≥91.6 GB**, the branch finishes in **48 s at 2.98 GB**.
   `cfg80211`: `main` killed at ≥92.9 GB, branch converges at 28.4 GB.
 - **But the branch does not fix the blowup class.** `ath_hal`, `wpa_supplicant`,
   `lk_latest` and `smbd` still blow past 85 GB or a 3 h wall on **both** sides. The branch
   moves the boundary; it does not remove it.
 - **Memory is a trade, not a free win.** On the small converging target (`ath_dfs`) the
-  branch costs **+36% peak** (0.20 → 0.27 GB) while cutting rows 54%. Rows are down and
+  branch costs **+16% peak** (0.20 → 0.23 GB) while cutting rows 54%. Rows are down and
   base facts are up (below). On the dense targets that trade pays enormously; on tame ones
   it is a mild loss.
 - **`reached/formal` still separates the regimes, and it is comparable to the old document**
@@ -150,6 +186,11 @@ it, i.e. a *lower bound* on peak, not a converged peak.
 
 ### Mechanism (`ath_dfs`, main → br)
 
+*The `locals`/`assign_like`/`copy_edge`/`program_paths` counts below are stable across the
+2026-07-17 re-run (they are semantic). The `mem after SSA` / `mem @ entry` deep-profiling
+figures are from the earlier `a35437e` run and were **not** re-measured on `5c570cb`; the
+`+16%` reflects the current peak delta (0.20 → 0.23 GB).*
+
 | quantity | main | br | |
 |---|--:|--:|---|
 | `locals` rows | 2,313,189 | 1,072,748 | **−54%** — the closure shrinks |
@@ -158,7 +199,7 @@ it, i.e. a *lower bound* on peak, not a converged peak.
 | `copy_edge` | 132,641 | 416,543 | |
 | depth-3 paths | 28 | 14 | shallower path set |
 | mem after SSA transform | 31.4 MB | 72.3 MB | |
-| mem @ entry (facts loaded) | 70.3 MB | 108.7 MB | the +36% peak, explained |
+| mem @ entry (facts loaded) | 70.3 MB | 108.7 MB | the +16% peak, explained |
 
 Two changes on the branch act independently, and **their contributions are not separated by
 these measurements** (see §5):
@@ -290,7 +331,7 @@ Notes:
   Recovering `243c0a1` and the CSR/spill commits from the dangling objects and testing them
   against `main` is probably worth more than any further A/B of this branch.
 - **The branch diverges from the lineage in *both directions*, on identical facts.** On
-  `ath_dev` the branch yields 41.4 M rows / 3.08 GB against the lineage's 329.7 M / 16.67 GB
+  `ath_dev` the branch yields 41.4 M rows / 2.98 GB against the lineage's 329.7 M / 16.67 GB
   (**8× fewer** rows); on `cfg80211` it yields 730 M vs 16.0 M (**45× more**). Same binaries,
   same Ghidra facts, same formal counts. No current hypothesis explains a swing that large in
   opposite directions on two modules from the same firmware image. Until it is explained,
@@ -315,7 +356,7 @@ describing that engine, not `main`.
   because every frame store was lowered to `%__stack_top = update(.[slot].deref := v)`, a
   whole-aggregate re-definition minting a new SSA version (up to 5,624 per function).
   Collapsing those versions to one representative shrank frame rows up to **1,963×**.
-  This diagnosis is what "Require Loads" acts on, and §2's `ath_dev` result (91.6 GB → 3.08 GB)
+  This diagnosis is what "Require Loads" acts on, and §2's `ath_dev` result (91.6 GB → 2.98 GB)
   is strong independent support for it.
 - **An independent def-use oracle confirmed soundness on a different axis.** Built from the
   raw pretty-printed IR with plain field-insensitive reachability (sharing no code with the
