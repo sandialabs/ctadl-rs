@@ -797,6 +797,31 @@ fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result
         ],
     )?;
 
+    // Read the known answer up front so a negative case (`expected_lines: []`)
+    // can be judged purely on code-flow connectivity, without needing any tainted
+    // instruction output at all.
+    let expected = assertions::read_expected_lines(query)?;
+
+    // Code-flow integrity, at parity with the DEX/JVM check (see `check_flow_case`):
+    // a human-profile code flow must connect a source to a sink. This is exactly
+    // what would regress if step dedup ever collapsed a pcode flow to its lone
+    // source step -- and the whole-document address check below cannot see such a
+    // collapse, because the tainted-instruction result locations carry the
+    // addresses regardless of whether any flow was actually traced. Pcode steps key
+    // on `address.absoluteAddress`, so the specific dedup bug we fixed never
+    // manifested here; this check guards against a future regression, not a current
+    // one. A negative case inverts it: no such flow may exist.
+    let connects = assertions::codeflow_connects_source_and_sink(&sarif)?;
+    if expected.is_empty() {
+        return Ok(if connects {
+            Outcome::Fail(
+                "expected no flow, but a code flow connects a source to a sink".to_string(),
+            )
+        } else {
+            Outcome::Pass
+        });
+    }
+
     // Prefer the section-relative offsets the analyzer now emits (image base
     // already subtracted via the `PROGRAM_IMAGE_BASE` fact). Fall back to
     // absolute addresses minus the historical base for older SARIF that
@@ -821,6 +846,15 @@ fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result
         ));
     }
 
+    // A positive case must also carry a connected source -> sink flow. Checked
+    // after the tainted-instruction guard above so the macOS self-skip (where there
+    // is no taint output at all) still wins rather than reporting a spurious failure.
+    if !connects {
+        return Ok(Outcome::Fail(
+            "no code flow connects a source to a sink".to_string(),
+        ));
+    }
+
     // Map each tainted offset back to a source line via addr2line.
     let mut found: BTreeSet<i64> = BTreeSet::new();
     for off in &offsets {
@@ -833,7 +867,6 @@ fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result
         }
     }
 
-    let expected = assertions::read_expected_lines(query)?;
     let missing: Vec<i64> = expected
         .iter()
         .copied()
