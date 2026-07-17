@@ -407,7 +407,10 @@ impl IndexResult {
             phys_footprint_mb()
         );
         summary::try_save(&dir, self.summary)?;
-        log::info!("[mem cp]   after summary::try_save: {:.1} MB", phys_footprint_mb());
+        log::info!(
+            "[mem cp]   after summary::try_save: {:.1} MB",
+            phys_footprint_mb()
+        );
         let assign_like_rows = self.assign_like.len();
         assign::try_save(&dir, self.assign_like)?;
         log::info!(

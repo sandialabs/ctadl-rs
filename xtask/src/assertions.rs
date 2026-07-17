@@ -89,9 +89,24 @@ pub fn collect_byte_offsets(sarif: &Path) -> Result<BTreeSet<i64>> {
 /// no sink step, no thread connects the two.
 pub fn codeflow_connects_source_and_sink(sarif: &Path) -> Result<bool> {
     let value = read_json(sarif)?;
-    for run in value.get("runs").and_then(Value::as_array).into_iter().flatten() {
-        for result in run.get("results").and_then(Value::as_array).into_iter().flatten() {
-            for flow in result.get("codeFlows").and_then(Value::as_array).into_iter().flatten() {
+    for run in value
+        .get("runs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for result in run
+            .get("results")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            for flow in result
+                .get("codeFlows")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 for thread in flow
                     .get("threadFlows")
                     .and_then(Value::as_array)
@@ -141,9 +156,24 @@ pub fn codeflow_connects_source_and_sink(sarif: &Path) -> Result<bool> {
 pub fn collect_codeflow_byte_offsets(sarif: &Path) -> Result<BTreeSet<i64>> {
     let value = read_json(sarif)?;
     let mut out = BTreeSet::new();
-    for run in value.get("runs").and_then(Value::as_array).into_iter().flatten() {
-        for result in run.get("results").and_then(Value::as_array).into_iter().flatten() {
-            for flow in result.get("codeFlows").and_then(Value::as_array).into_iter().flatten() {
+    for run in value
+        .get("runs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for result in run
+            .get("results")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            for flow in result
+                .get("codeFlows")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 // Under codeFlows the only `byteOffset` keys are a step's physical
                 // location, so a recursive gather here stays scoped to steps.
                 collect_int_values(flow, "byteOffset", &mut out);

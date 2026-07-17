@@ -86,8 +86,8 @@ where
     let type_id = TypeId::of::<T>();
 
     // L1: thread-local, lock-free, hash-free linear scan.
-    if let Some(interner) = LOCAL_INTERNERS
-        .with_borrow(|v| v.iter().find(|(tid, _)| *tid == type_id).map(|(_, i)| *i))
+    if let Some(interner) =
+        LOCAL_INTERNERS.with_borrow(|v| v.iter().find(|(tid, _)| *tid == type_id).map(|(_, i)| *i))
     {
         return interner
             .downcast_ref::<immortal::Interner<Node<T>>>()
