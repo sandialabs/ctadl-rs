@@ -120,14 +120,16 @@
               javac -d "$out" "$src/HelloWorld.java" "$src/ArrayFlow.java" "$src/LoopFlow.java"
             '';
 
-        # Non-interactive environment that mirrors the tools the regression
-        # scripts expect on PATH (ctadl, dex-reader, jvm-reader, javac, dx,
-        # gcc/addr2line, ghidra, jq, python3).
+        # The external toolchain the regression scripts expect on PATH
+        # (dex-reader, jvm-reader, javac, dx, gcc/addr2line, ghidra, jq,
+        # python3). Deliberately excludes this repo's own package so that
+        # `devShells.regression` can be used to run parts of the suite against a
+        # locally built ctadl/xtask; the `regression` check adds the Nix-built
+        # package on top.
         testEnv = pkgs.buildEnv {
           name = "ctadl-nightly-test-env";
-          # gcc-wrapper and binutils-wrapper both ship a few binutils shims
-          # (e.g. `strings`); we want both (gcc to compile, binutils for
-          # addr2line), and either copy of the overlapping tools is fine.
+          # The cc-wrapper and binutils-wrapper both ship a few overlapping
+          # binutils shims (e.g. `strings`); either copy is fine.
           ignoreCollisions = true;
           paths = [
             pkgs.bash
@@ -136,9 +138,17 @@
             pkgs.rustc
             pkgs.jq
             pkgs.python3
-            pkgs.gcc
+            # The C compiler `pick_toolchain` prefers. A native `pkgs.gcc` here
+            # would also claim `cc`, and on Darwin that is fatal: rustc links
+            # through `cc`, and gcc passes -no_compact_unwind, so the binary
+            # ends up with no __unwind_info -- which the arm64 unwinder needs to
+            # find a handler. Every panic then aborts instead of unwinding.
+            # Every binary this ships is `x86_64-unknown-linux-gnu-` prefixed,
+            # so it never claims `cc` and the stdenv's clang stays the linker.
+            # Where it is not cross (x86_64 Linux) it collapses to the native
+            # gcc, which is the right linker there anyway.
+            pkgs.pkgsCross.gnu64.stdenv.cc
             pkgs.binutils
-            self.packages.${system}.default
             dex-reader
             jvm-reader
             androidSdk.androidsdk
@@ -192,12 +202,13 @@
             # `xtask` binary that ships in packages.default. This is a full
             # (non-local) derivation because it runs ctadl + ghidra + the Android
             # toolchain. The Nix sandbox has no network, so every tool comes from
-            # testEnv. `xtask` discovers cases under the cwd's `tests/` dir and
-            # invokes ctadl/dex-reader/javac/dx/addr2line from PATH.
             regression =
               pkgs.runCommand "ctadl-checks-regression"
                 {
-                  nativeBuildInputs = [ testEnv ];
+                  nativeBuildInputs = [
+                    testEnv
+                    self.packages.${system}.default
+                  ];
                   GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
                   src = ./nightly;
                 }
@@ -274,13 +285,29 @@
               parquet-tools
               graphviz
               checksarif
-              ghidra-bin
-              pkgsCross.gnu64.stdenv.cc
-              pkgsCross.gnu64.binutils
+              nil
+              nixd
+              pkg-config
+              bzip2
+            ];
+            RUST_SRC_PATH = rustPlatform.rustLibSrc;
+          };
+
+          # nix develop .#regression
+          devShells.regression = pkgs.mkShell {
+            buildInputs = with pkgs; [
               nil
               nixd
             ];
-            RUST_SRC_PATH = rustPlatform.rustLibSrc;
+            packages = [ testEnv ];
+
+            GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
+            ANDROID_SDK_ROOT = "${androidSdk.androidsdk}/libexec/android-sdk";
+            RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
+
+            shellHook = ''
+              export PATH="${androidSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"
+            '';
           };
       }
     );

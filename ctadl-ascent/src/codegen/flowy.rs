@@ -140,6 +140,7 @@ fn query_check_endpoints(
     query_result: &QueryResult,
     endpoint_requires: EndpointRequires,
     sites: &fx::IdMap,
+    call: &[(fx::PackedInsnSiteId, fx::FunctionId)],
 ) -> Result<(usize, usize), Error> {
     let mut pass_count = 0;
     let mut fail_count = 0;
@@ -147,18 +148,27 @@ fn query_check_endpoints(
         for (endpoint, flow_spec) in flow_specs.iter() {
             let fx_endpoint: fx::TaintEndpoint = endpoint.into();
             let func_id = sites.get_function_id(func_name.clone().into());
-            let Some(func_id) = func_id else {
+            if func_id.is_none() {
                 log::warn!("Function {func_name} not found in query results");
                 fail_count += 1;
                 continue;
             };
 
+            // Resolve the declaration to the same call-site-anchored endpoints
+            // the query seeded (a declaration on a callee's formal fans out to
+            // one endpoint per call site) — the vertices taint is actually
+            // discovered at. The flow is present when taint of the *reversed*
+            // direction reached any of them: a source's vertex reached by
+            // sink-seeded (backward) taint, or a sink's vertex reached by
+            // source-seeded (forward) taint, is an endpoint participating in a
+            // completed flow.
+            let qes = from_flowy_endpoint(sites, call, endpoint);
             let present = query_result.taint.iter().any(|r| {
-                r.0 == func_id
-                    && r.4.label == fx_endpoint.label
+                r.4.label == fx_endpoint.label
                     && r.4.direction == fx_endpoint.direction.reversed()
-                    && r.2 == fx_endpoint.vertex.0
-                    && r.3 == fx_endpoint.vertex.1
+                    && qes
+                        .iter()
+                        .any(|qe| r.0 == qe.infunc && r.2 == qe.vertex.0 && r.3 == qe.vertex.1)
             });
 
             match flow_spec {
@@ -184,14 +194,17 @@ fn query_check_endpoints(
     Ok((pass_count, fail_count))
 }
 
-/// Checks endpoint requirements for a flowy import.
+/// Checks endpoint requirements for a flowy import. `call` is the static call
+/// graph, needed to resolve declared endpoints to the call-site-anchored
+/// endpoints the query seeded.
 pub fn query_check(
     import: &ArtifactImport,
     query_result: &QueryResult,
     sites: &fx::IdMap,
+    call: &[(fx::PackedInsnSiteId, fx::FunctionId)],
 ) -> Result<(usize, usize), Error> {
     let (_, endpoint_requires) = load_requirements(import)?;
-    query_check_endpoints(query_result, endpoint_requires, sites)
+    query_check_endpoints(query_result, endpoint_requires, sites, call)
 }
 
 /// Checks the human SARIF profile: every declared source/sink pair must agree
@@ -370,7 +383,9 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
     let query_facts = QueryFacts {
         formal_param: index_facts.formal_param,
         actual_param: index_facts.actual_param,
-        call: index_facts.call,
+        // Cloned: the call graph is also needed below to resolve declared
+        // endpoints to their call-site-anchored forms during the query check.
+        call: index_facts.call.clone(),
         assign: index_result.assign_like,
         paths: index_facts.paths,
         external_function: index_result.external_function,
@@ -385,6 +400,7 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
         &query_result,
         program.requirements.endpoint_requires,
         &source_info.sites,
+        &index_facts.call,
     )?;
     pass_count += ipass;
     fail_count += ifail;

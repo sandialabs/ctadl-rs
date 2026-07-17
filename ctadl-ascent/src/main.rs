@@ -13,6 +13,13 @@ use ctadl_ascent::query_engine::formatter::SarifProfile;
 #[derive(Debug, Parser)]
 #[command(name = "ctadl", version, about)]
 pub struct Cli {
+    /// Directory to use as the CTADL store. When set, this directory is used
+    /// directly as the store root; unlike `XDG_STATE_HOME`, no `ctadl`
+    /// subdirectory is appended. When omitted, the store defaults to
+    /// `$XDG_STATE_HOME/ctadl`.
+    #[arg(long, global = true, value_name = "DIR")]
+    pub store: Option<PathBuf>,
+
     #[command(subcommand)]
     pub cmd: Command,
 }
@@ -304,6 +311,14 @@ pub struct GoArgs {
 fn main() -> anyhow::Result<()> {
     ctadl_ascent::init();
     let cli = Cli::parse();
+
+    // Apply the global store override before any store interaction. This sets the
+    // store root directly to the given directory (no `ctadl` subdirectory), the
+    // same mechanism `legacy-pcode-cli --directory` uses.
+    if let Some(dir) = &cli.store {
+        project::init_store_path(Some(dir))
+            .map_err(|e| anyhow::anyhow!("failed to initialize store path: {}", e))?;
+    }
 
     match &cli.cmd {
         Command::Import(args) => {

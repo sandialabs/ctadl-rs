@@ -1,0 +1,39 @@
+{
+  "expected_lines": [15, 18],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": ["produce"]
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "UserInput",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": ["consume"]
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Output",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}

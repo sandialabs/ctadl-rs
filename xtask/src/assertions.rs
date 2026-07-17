@@ -16,14 +16,57 @@ pub fn read_expected_lines(config: &Path) -> Result<Vec<i64>> {
     let value = read_json(config)?;
     let array = value
         .get("expected_lines")
-        .with_context(|| format!("no `expected_lines` key in {}", config.display()))?
+        .with_context(|| format!("no `expected_lines` key in {}", config.display()))?;
+    line_array(array, "expected_lines", config)
+}
+
+/// Read the optional `unexpected_lines` array from a test config: source lines that
+/// must carry no flow. A missing key means the case makes no such claim, so existing
+/// configs need not mention it.
+///
+/// This is the counterpart to [`read_expected_lines`] for cases whose point is that
+/// some neighbouring line stays clean -- a sink on the struct field that was never
+/// written, say. Without it such a case can only assert the lines that *are* tainted,
+/// and would keep passing if the untainted line later became tainted.
+pub fn read_unexpected_lines(config: &Path) -> Result<Vec<i64>> {
+    let value = read_json(config)?;
+    match value.get("unexpected_lines") {
+        Some(array) => line_array(array, "unexpected_lines", config),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Known-answer check shared by every frontend: no line listed in `unexpected` may
+/// appear among the lines a flow reached.
+///
+/// Returns the failure message naming the violated lines, or `None` when the
+/// constraint holds. Callers supply whatever set of source lines they derived, so
+/// this is independent of how a frontend maps its output back to source.
+pub fn check_unexpected_lines(unexpected: &[i64], found: &BTreeSet<i64>) -> Option<String> {
+    let violated: Vec<i64> = unexpected
+        .iter()
+        .copied()
+        .filter(|line| found.contains(line))
+        .collect();
+    if violated.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "unexpected lines {violated:?} carry a flow (reached lines {found:?})"
+        ))
+    }
+}
+
+/// Parse an array of source line numbers from a test config.
+fn line_array(array: &Value, key: &str, config: &Path) -> Result<Vec<i64>> {
+    let array = array
         .as_array()
-        .with_context(|| format!("`expected_lines` is not an array in {}", config.display()))?;
+        .with_context(|| format!("`{key}` is not an array in {}", config.display()))?;
     array
         .iter()
         .map(|v| {
             v.as_i64()
-                .with_context(|| format!("non-integer in `expected_lines` of {}", config.display()))
+                .with_context(|| format!("non-integer in `{key}` of {}", config.display()))
         })
         .collect()
 }

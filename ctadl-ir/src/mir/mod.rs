@@ -105,6 +105,7 @@ use std::{fmt, fmt::Display};
 
 use internment::ArcIntern;
 use smallvec::{SmallVec, smallvec};
+use thin_vec::ThinVec;
 
 use crate::index::{idx::Idx, index_vec::IndexVec, index_vec_deque::IndexVecDeque};
 use crate::mir::call::VirtualMethodTable;
@@ -234,15 +235,15 @@ pub enum StatementKind {
     /// The `style` expresses how this call should be resolved.
     CallAssign {
         style: CallStyle,
-        rets: SmallVec<[VariableRef; 4]>,
-        args: SmallVec<[Exp; 4]>,
+        rets: ThinVec<VariableRef>,
+        args: ThinVec<Exp>,
     },
 
     /// Phi node, typically inserted by SSA conversion. It expresses an assignment conditioned on
     /// predecessor blocks.
     Phi {
         dest: VariableRef,
-        operands: SmallVec<[(BasicBlockIdx, VariableRef); 4]>,
+        operands: SmallVec<[(BasicBlockIdx, VariableRef); 2]>,
     },
 
     /// Function parameter SSA variables & global heap. This in an anchor for uses of a variable.
@@ -307,7 +308,7 @@ pub struct AccessPath {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FieldAccesses {
-    pub fields: SmallVec<[FieldAccess; 4]>,
+    pub fields: ThinVec<FieldAccess>,
 }
 /*
 impl From<Vec<&str>> for FieldAccesses {
@@ -586,7 +587,7 @@ impl FieldAccesses {
     #[inline]
     pub fn empty() -> Self {
         Self {
-            fields: smallvec![],
+            fields: ThinVec::new(),
         }
     }
 
@@ -594,7 +595,7 @@ impl FieldAccesses {
     #[inline]
     pub fn with_offset(offset: i64) -> Self {
         Self {
-            fields: smallvec![FieldAccess::Offset(Offset(offset))],
+            fields: thin_vec::thin_vec![FieldAccess::Offset(Offset(offset))],
         }
     }
 

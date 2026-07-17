@@ -1,7 +1,6 @@
 use super::*;
 
 use hashbrown::HashSet;
-use smallvec::smallvec;
 
 use super::GLOBALS_INDEX;
 use crate::facts as fx;
@@ -335,7 +334,7 @@ fn function_g() -> FunctionData {
     let param_b = b.new_param_var(ParameterIdx::new(0));
     let c = b.new_local_var("c");
 
-    let call_edges = CallEdges::Explicit(smallvec!["F".to_string()]);
+    let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
 
     b.create_call(style, vec![c.clone()], vec![a.into(), param_b.into()]);

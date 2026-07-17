@@ -571,7 +571,7 @@ impl Context {
             }
         };
 
-        let args: SmallVec<[Exp; 4]> = call
+        let args: ctadl_ir::ThinVec<Exp> = call
             .arguments
             .iter()
             .map(|x| self.convert_location_to_exp(x))
@@ -584,7 +584,7 @@ impl Context {
 
         Some(Statement::new_kind(StatementKind::CallAssign {
             style,
-            rets: smallvec![retval, throwval],
+            rets: ctadl_ir::thin_vec![retval, throwval],
             args,
         }))
     }
