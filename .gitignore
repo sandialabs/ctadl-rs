@@ -1,7 +1,7 @@
 /out
 /target
 ascent/**
-.scratch/**/result
+.scratch/
 result
 /.local
 /.envrc.local
