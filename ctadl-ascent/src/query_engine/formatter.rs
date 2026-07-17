@@ -1255,17 +1255,33 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             else {
                 return;
             };
+            // Identity of a physical location for step deduping. Different artifact kinds
+            // locate an instruction differently: native code by `address.absoluteAddress`,
+            // source by `region.startLine:startColumn`, bytecode (e.g. a `.dex`) by
+            // `region.byteOffset`. Build the key from *every* dimension that is present
+            // rather than picking one — a first-wins fallback would collapse two steps that
+            // agree on one dimension but differ on another (and an all-`None` key collapses
+            // every step in a file to `(uri, None)`, which once flattened whole `.dex` flows
+            // down to a lone source step).
             let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
                 let uri = p.artifact_location.as_ref()?.uri.as_ref()?.clone();
-                let pos = p
-                    .address
-                    .as_ref()
-                    .and_then(|a| a.absolute_address.as_ref().map(|v| v.to_string()))
-                    .or_else(|| {
-                        p.region
-                            .as_ref()
-                            .and_then(|r| Some(format!("{}:{}", r.start_line?, r.start_column?)))
-                    });
+                let mut parts: Vec<String> = Vec::new();
+                if let Some(a) = p.address.as_ref().and_then(|a| a.absolute_address.as_ref()) {
+                    parts.push(format!("addr:{a}"));
+                }
+                if let Some(r) = p.region.as_ref() {
+                    if let (Some(l), Some(c)) = (r.start_line, r.start_column) {
+                        parts.push(format!("line:{l}:{c}"));
+                    }
+                    if let Some(b) = r.byte_offset {
+                        parts.push(format!("byte:{b}"));
+                    }
+                }
+                let pos = if parts.is_empty() {
+                    None
+                } else {
+                    Some(parts.join("|"))
+                };
                 Some((uri, pos))
             });
             if current_loc_id.is_some() && current_loc_id == *last_loc_id {
