@@ -569,20 +569,27 @@ impl Visitor for CodegenVisitor<'_> {
                 field,
             } => {
                 let dest = self.trans_variable_ref(dest);
-                let source_var = self.trans_variable_ref(&source.variable_ref);
-                // The read path is the source's (offset) address arithmetic then the loaded field.
+                // Re-anchor a read through a load-chain temporary onto the root composed path it
+                // addresses, the read-side mirror of the `Store` arm.
+                let (root_var, base_path) = self
+                    .cap_path
+                    .get(&source.variable_ref)
+                    .cloned()
+                    .unwrap_or_else(|| (source.variable_ref.clone(), fx::Path::empty()));
+                let source_var = self.trans_variable_ref(&root_var);
+                // The read path is the captured chain path, then the source's own (offset) address
+                // arithmetic, then the loaded field.
                 let path = fx::Path::from_accesses(
-                    source
-                        .path
+                    base_path
                         .iter()
                         .cloned()
-                        .map(PathSegment::from)
+                        .chain(source.path.iter().cloned().map(PathSegment::from))
                         .chain(std::iter::once(PathSegment::Symbol(
                             field.symbol_ref().clone(),
                         ))),
                 );
                 self.paths_dedup.insert((path,));
-                // dest <- source.field
+                // dest <- root.<composed path>
                 self.facts.assign.push((
                     site,
                     FlowVertex(dest, fx::Path::empty()),
