@@ -11,8 +11,8 @@ time:
   bundles them with `jar` and re-checks the `.jar` (parsed classes compared
   against `jar tf`). See `xtask/src/jvm.rs`.
 
-- **jvm-reader's own `flow.rs` unit tests** load two of these compiled classes
-  (`HelloWorld.class`, `ArrayFlow.class`) at runtime from the directory named by
+- **jvm-reader's own `flow.rs` unit tests** load compiled classes
+  (`HelloWorld.class`, `ArrayFlow.class`, `LoopFlow.class`) at runtime from the directory named by
   `JVM_READER_TEST_FIXTURES`. The `jvm-reader-tests` check (flake.nix) compiles
   them from these sources and points the env var at them.
 
@@ -23,6 +23,7 @@ time:
 - **InvokeShapes.java** – interface/default/virtual/static calls and long/double
   slot behavior (compiles to `InvokeShapes` + `ShapeOps`).
 - **ArrayFlow.java** – array load/store for `ArrayElement` stack-slot tests.
+- **LoopFlow.java** – loop with string concat (`iinc`, `invokedynamic`); stack normalization in `main`.
 - **SourceSinkExample.java** – simple source→intermediate→sink chain.
 - **Factorial.java** – recursion and a counted loop (`invokestatic` self,
   `imul`/`lmul`, `i2l`, forward/back branches).
@@ -48,7 +49,7 @@ To run jvm-reader's `flow.rs` tests locally outside Nix, compile the samples and
 point the env var at them:
 
 ```bash
-javac -d /tmp/fixtures jvm-reader/tests/sample/HelloWorld.java jvm-reader/tests/sample/ArrayFlow.java
+javac -d /tmp/fixtures jvm-reader/tests/sample/HelloWorld.java jvm-reader/tests/sample/ArrayFlow.java jvm-reader/tests/sample/LoopFlow.java
 JVM_READER_TEST_FIXTURES=/tmp/fixtures \
   cargo test --manifest-path jvm-reader/Cargo.toml -- --include-ignored
 ```

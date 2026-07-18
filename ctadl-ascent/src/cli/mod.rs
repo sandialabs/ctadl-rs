@@ -26,7 +26,7 @@ use crate::index_engine::{
 use crate::languages::{dex, jvm, pcode};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
-use crate::query_engine::{QueryFactsBuilder, QueryResult, taint_analysis};
+use crate::query_engine::{QueryFactsBuilder, taint_analysis};
 use ctadl_ir::graph::is_connected;
 use ctadl_ir::ssa;
 use ctadl_ir::{ProgramInfo, encode};
@@ -36,6 +36,13 @@ fn build_query_endpoints(
     batch: &crate::models::EndpointBatch,
     facts: &IndexFacts,
     idmap: &facts::IdMap,
+    assign_like: &[(
+        facts::FunctionId,
+        FlowVariable,
+        facts::Path,
+        FlowVariable,
+        facts::Path,
+    )],
 ) -> (
     Vec<(crate::query_engine::QueryEndpoint,)>,
     Vec<(facts::FunctionId, facts::FlowVariable, facts::FormalType)>,
@@ -44,9 +51,20 @@ fn build_query_endpoints(
     let ap_map = batch.aps.build_ap_map();
     let func_num_params = facts.compute_arg_arity();
 
+    // Field access paths that actually occur on each `(function, variable)` vertex
+    // in the index graph.
+    let mut vertex_paths: HashMap<(facts::FunctionId, FlowVariable), BTreeSet<facts::Path>> =
+        HashMap::new();
+    for (func, v1, p1, v2, p2) in assign_like {
+        vertex_paths.entry((*func, *v1)).or_default().insert(*p1);
+        vertex_paths.entry((*func, *v2)).or_default().insert(*p2);
+    }
+
     let mut out_eps = Vec::new();
     let mut out_formals = Vec::new();
-    for (func_name, selector_ty, idx_opt, path_id, label_str, direction) in batch.iter_endpoints() {
+    for (func_name, selector_ty, idx_opt, path_id, label_str, direction, wildcard) in
+        batch.iter_endpoints()
+    {
         // Resolve function name → FunctionId; skip if not present.
         let infunc = match idmap.get_function_id(crate::facts::Function(func_name.into())) {
             Some(id) => id,
@@ -77,6 +95,14 @@ fn build_query_endpoints(
 
         let ap: facts::Path = ap_map[&path_id].iter().cloned().collect();
 
+        // A wildcard sink port denotes the whole subtree beneath `ap` on the sink
+        // call's argument: it matches every concrete access path, rooted at that
+        // argument, that extends the port. Sinks seed *backward* taint and the
+        // formatter resolves each endpoint vertex to a graph node by exact `Path`
+        // equality, so the wildcard cannot be left abstract -- it is expanded below
+        // into concrete paths.
+        let expand_wildcard = wildcard && direction == facts::TaintDirection::Backward;
+
         // Build label and direction.
         let lbl = Label(label_str.into());
 
@@ -87,7 +113,8 @@ fn build_query_endpoints(
                 out_formals.push((infunc, var, facts::FormalType::ByRef));
             }
             // Anchor at the call sites of `infunc` (the modeled function) so flows that
-            // share a formal but differ by call site stay distinct.
+            // share a formal but differ by call site stay distinct. Anchoring uses the
+            // port path; wildcard expansion (if any) then happens per anchored vertex.
             let base = crate::query_engine::QueryEndpoint {
                 infunc,
                 vertex: FlowVertex(var, ap),
@@ -100,7 +127,30 @@ fn build_query_endpoints(
                 None => vec![base],
             };
             for ep in fanned {
-                out_eps.push((ep,));
+                if !expand_wildcard {
+                    out_eps.push((ep,));
+                    continue;
+                }
+                // Seed every concrete field path that lives on THIS call's argument
+                // vertex and extends the port, always including the port path itself.
+                let mut seeded_port = false;
+                if let Some(paths) = vertex_paths.get(&(ep.infunc, ep.vertex.0)) {
+                    for p in paths {
+                        if !p.is_extension_of(&ap) {
+                            continue;
+                        }
+                        if *p == ap {
+                            seeded_port = true;
+                        }
+                        out_eps.push((crate::query_engine::QueryEndpoint {
+                            vertex: FlowVertex(ep.vertex.0, *p),
+                            ..ep.clone()
+                        },));
+                    }
+                }
+                if !seeded_port {
+                    out_eps.push((ep,));
+                }
             }
         }
     }
@@ -132,13 +182,20 @@ pub fn index(
     models: &[std::path::PathBuf],
     strategy: CallResolutionStrategy,
     prune_unreachable_cfg_nodes: bool,
+    alias_rule: bool,
     dump_index_graph: Option<&Path>,
 ) -> Result<(), Error> {
+    use crate::index_engine::phys_footprint_mb;
+    log::info!("[mem cp] index() start: {:.1} MB", phys_footprint_mb());
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
     for import in project.iter_imports() {
         let import = import?;
         let mut program_info = load_program_info_without_source_info(&import)?;
+        log::info!(
+            "[mem cp] loaded IR program (before SSA/codegen): {:.1} MB",
+            phys_footprint_mb()
+        );
         let mut models_batch = crate::models::try_load_default_models(&program_info)?;
         for model_path in models {
             let model = crate::models::try_load_models(&program_info, model_path)?;
@@ -146,8 +203,20 @@ pub fn index(
         }
 
         log::trace!("summary length: {}", models_batch.summary.num_rows());
+        // Fuse single-use copy temporaries before SSA. Cuts the statement /
+        // variable count that SSA and the datalog fact base pay for. A no-op
+        // on programs already in SSA form (e.g. flowy imports).
+        ssa::coalesce_copies(&mut program_info.program);
         ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
+        log::info!(
+            "[mem cp] after SSA transform: {:.1} MB",
+            phys_footprint_mb()
+        );
         codegen_program(program_info, &mut facts, &mut source_info, strategy);
+        log::info!(
+            "[mem cp] after codegen_program (IR dropped, facts built): {:.1} MB",
+            phys_footprint_mb()
+        );
         log::trace!("summary length: {}", facts.summary.len());
         codegen_summary(models_batch.summary, &mut facts, &mut source_info);
         log::trace!("summary length: {}", facts.summary.len());
@@ -159,23 +228,29 @@ pub fn index(
     }
 
     let path = project.index_path()?;
-    facts.clone().try_save(&path)?;
+    facts.try_save(&path)?;
     inspect_index_facts(&facts, Some(&source_info.sites)).unwrap();
-    source_info.clone().try_save(&path)?;
-    let config = crate::index_engine::IndexConfig::default();
-    let result = taint_index_with_config(facts, config, Some(&source_info.sites));
+    // Only the (small) site IdMap is needed after saving
+    let sites = source_info.sites.clone();
+    source_info.try_save(&path)?;
+    log::info!(
+        "[mem cp] after facts.try_save: {:.1} MB",
+        phys_footprint_mb()
+    );
+    let config = crate::index_engine::IndexConfig { alias_rule };
+    let result = taint_index_with_config(facts, config, Some(&sites));
 
     // Slightly ugly special case for flowy artifacts. Since they have specific assertions at index
     // time, check them here.
     for import in project.iter_imports() {
         let import = import?;
         if import.language == ArtifactLanguage::Flowy {
-            crate::codegen::flowy::index_check(&import, &result, &source_info.sites)?;
+            crate::codegen::flowy::index_check(&import, &result, &sites)?;
         }
     }
 
     if let Some(dot_path) = dump_index_graph {
-        dump_index_graph_dot(&result.assign_like, &source_info.sites, dot_path)?;
+        dump_index_graph_dot(&result.assign_like, &sites, dot_path)?;
     }
 
     let path = project.index_path()?;
@@ -185,10 +260,26 @@ pub fn index(
     Ok(())
 }
 
-/// Runs a taint query
-pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result<(), Error> {
+/// Runs a taint query and formats the results as SARIF.
+///
+/// Taint results are computed in memory and handed straight to the formatter; they are
+/// not persisted. The `profile` selects what the SARIF reports: path profiles enumerate
+/// source -> sink paths, closure profiles list every tainted instruction (see
+/// [`query_engine::formatter`]).
+pub fn query(
+    project: &AnalysisProject,
+    models: &[std::path::PathBuf],
+    compact: bool,
+    output: &Path,
+    profile: query_engine::formatter::SarifProfile,
+    dump_taint_graph: Option<&Path>,
+) -> Result<(), Error> {
     let index_path = project.index_path()?;
     let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
+    // Load the index tables once; they seed the query and are reused to format the results.
+    let index_facts = IndexFacts::try_load(&index_path).err_context(|| "loading index facts")?;
+    let index_result = IndexResult::try_load(&index_path).err_context(|| "loading index result")?;
+
     let facts = {
         let mut models_batch: Option<crate::models::ModelsBatch> = None;
         for model_path in models {
@@ -204,7 +295,6 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
             }
         }
         let mut builder = QueryFactsBuilder::default();
-        let index_facts = IndexFacts::try_load(&index_path)?;
         let mut endpoints = Vec::new();
         // Slightly ugly special case for flowy artifacts. Since the query is built in, take it
         // into account here
@@ -217,7 +307,12 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
         }
         let mut formal_params = index_facts.formal_param.clone();
         if let Some(ref batch) = models_batch {
-            let (eps, model_formals) = build_query_endpoints(&batch.endpoint, &index_facts, &ids);
+            let (eps, model_formals) = build_query_endpoints(
+                &batch.endpoint,
+                &index_facts,
+                &ids,
+                &index_result.assign_like,
+            );
             endpoints.extend(eps);
             formal_params.extend(model_formals);
         }
@@ -232,72 +327,54 @@ pub fn query(project: &AnalysisProject, models: &[std::path::PathBuf]) -> Result
             .count();
         eprintln!("Matched {} sources and {} sinks", sources, sinks);
 
+        // `actual_param` and `call` are also needed by `FormatFacts` below, so the
+        // query facts take clones and the originals feed the formatter. `assign`,
+        // `paths`, and `external_function` are consumed only by the query engine, so
+        // they are moved.
         builder
             .endpoints(endpoints)
             .formal_param(formal_params)
-            .actual_param(index_facts.actual_param)
-            .call(index_facts.call);
-        let index_result = IndexResult::try_load(&index_path)?;
-        builder
+            .actual_param(index_facts.actual_param.clone())
+            .call(index_facts.call.clone())
             .assign(index_result.assign_like)
-            .paths(index_result.paths);
-        // Insert model-derived endpoints if present
+            .paths(index_result.paths)
+            .external_function(index_result.external_function);
         builder.build().unwrap()
     };
 
+    // A single taint pass computes the closure, the taint graph, and the
+    // instruction-level facts the formatter needs.
     let result = taint_analysis(facts, Some(&ids));
     for import in project.iter_imports() {
         let import = import?;
         if import.language == ArtifactLanguage::Flowy {
-            let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
-            crate::codegen::flowy::query_check(&import, &result, &ids)?;
+            crate::codegen::flowy::query_check(&import, &result, &ids, &index_facts.call)?;
         }
     }
-    let path = project.query_path()?;
-    result
-        .try_save(&path)
-        .err_context(|| format!("saving query: {}", path.display()))?;
-    Ok(())
-}
 
-pub fn format(
-    project: &AnalysisProject,
-    compact: bool,
-    output: &Path,
-    profile: query_engine::formatter::SarifProfile,
-    dump_taint_graph: Option<&Path>,
-) -> Result<(), Error> {
-    let index_path = project.index_path()?;
-    let query_path = project.query_path()?;
-    {
-        let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading id map")?;
-        let index_facts =
-            IndexFacts::try_load(&index_path).err_context(|| "loading index facts")?;
-        let index_result =
-            IndexResult::try_load(&index_path).err_context(|| "loading index result")?;
-        let taint_result =
-            QueryResult::try_load(&query_path).err_context(|| "loading query result")?;
+    let taint_results = query_engine::formatter::TaintAnalysisResults::from_query_result(&result);
+    let mut b = query_engine::formatter::FormatFactsBuilder::default();
+    b.taint(result.taint)
+        .taint_edge(result.taint_edge)
+        .index_actual_param(index_facts.actual_param)
+        .call(index_facts.call)
+        .id_to_name(ids.get_id_to_name_map());
+    let facts = b.build().unwrap();
 
-        let formal_params = taint_result.formal_param.clone();
+    query_engine::formatter::format_sarif(
+        project,
+        &facts,
+        &taint_results,
+        compact,
+        output,
+        profile,
+    )
+    .err_context(|| "formatting sarif")?;
 
-        let mut b = query_engine::formatter::FormatFactsBuilder::default();
-        b.taint(taint_result.taint)
-            .formal_param(formal_params)
-            .index_actual_param(index_facts.actual_param)
-            .call(index_facts.call)
-            .assign(index_result.assign_like)
-            .paths(index_result.paths)
-            .external_function(index_result.external_function)
-            .id_to_name(ids.get_id_to_name_map());
-        let facts = b.build().unwrap();
+    if let Some(dot_path) = dump_taint_graph {
+        dump_taint_graph_dot(&facts, &index_path, dot_path)?;
+    }
 
-        query_engine::formatter::format_sarif(project, facts.clone(), compact, output, profile)
-            .err_context(|| "formatting sarif")?;
-
-        if let Some(dot_path) = dump_taint_graph {
-            dump_taint_graph_dot(&facts, &index_path, dot_path)?;
-        }
-    };
     if output.to_str() != Some("-") {
         eprintln!("Wrote '{}'", output.display());
     }
@@ -336,8 +413,6 @@ fn dump_taint_graph_dot(
     use crate::facts::TaintDirection;
     use crate::graphviz::Cone;
 
-    let taint_results = query_engine::formatter::compute_taint_results(facts);
-
     // Classify every tainted node by cone membership: a node carrying a
     // Forward endpoint is in the forward cone, a Backward endpoint puts
     // it in the backward cone, and both makes it a "meet" (Cone::Both)
@@ -354,19 +429,20 @@ fn dump_taint_graph_dot(
             .or_insert(cone);
     }
 
-    // Orient each edge in data-flow direction (so arrows match
-    // `find_path`: source → sink) and dedup, recording which cone(s)
-    // produced it. The edge tuple is (df, dv, dp, sf, sv, sp, dir),
-    // meaning (df,dv,dp) was tainted *from* (sf,sv,sp). Forward
-    // propagation means data flows sf → df; backward propagation
-    // (which walks assignments in reverse) means it flows df → sf.
+    // The persisted taint edges are already in data-flow (execution) order
+    // (source → derived, matching `find_path`) and no longer carry the
+    // exploration direction, so draw each edge as-is and dedup. Approximate an
+    // edge's cone from the cones its endpoints already carry (from the
+    // authoritative `facts.taint` classification above); a `Call`/`Return`/`Intra`
+    // label does not itself imply forward vs backward.
     let mut oriented: std::collections::BTreeMap<_, Cone> = std::collections::BTreeMap::new();
-    for (df, _dts, dv, dp, sf, _sts, sv, sp, dir, _site) in &taint_results.edges {
-        let derived = (*df, *dv, *dp);
-        let origin = (*sf, *sv, *sp);
-        let (src, dst, cone) = match dir {
-            TaintDirection::Forward => (origin, derived, Cone::Forward),
-            TaintDirection::Backward => (derived, origin, Cone::Backward),
+    for (_edge, sf, sv, sp, df, dv, dp) in &facts.taint_edge {
+        let src = (*sf, *sv, *sp);
+        let dst = (*df, *dv, *dp);
+        let cone = match (node_cone.get(&src), node_cone.get(&dst)) {
+            (Some(a), Some(b)) => a.join(*b),
+            (Some(c), None) | (None, Some(c)) => *c,
+            (None, None) => Cone::Both,
         };
         oriented
             .entry((src, dst))
@@ -471,11 +547,14 @@ pub fn save_program_info(
         if f.blocks.is_empty() {
             continue;
         }
-        assert!(
-            is_connected(&f.blocks),
-            "Function has unreachable blocks: {}",
-            f.name
-        );
+        // Real disassembled binaries routinely contain functions with blocks
+        // that are unreachable from entry (Ghidra CFG recovery artifacts). This
+        // is not an import error: indexing prunes unreachable blocks before the
+        // SSA/dominator pass (see `--prune-unreachable-cfg-nodes`, on by
+        // default), so record but don't reject them here.
+        if !is_connected(&f.blocks) {
+            log::debug!("function has blocks unreachable from entry: {}", f.name);
+        }
     }
     let data = encode::encode_program(&obj).map_err(Error::Bitcode)?;
     std::fs::write(path, data)

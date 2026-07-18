@@ -2,14 +2,37 @@
 
 CTADL (Compositional Taint Analysis in Datalog) is a static taint analyzer. CTADL is implemented with the Ascent (https://s-arash.github.io/ascent/) Datalog engine embedded in Rust.
 
-CTADL is currently under development.
+> **⚠️ Under active development.** CTADL is in flux: commands, flags, and file
+> formats may change without notice or backward compatibility.
 
 ## Usage
+
+The typical pipeline is **import → index → query**. Each stage stores its output
+under a project name so later stages can pick it up. Use `ctadl <command> --help`
+for the full, current set of flags.
+
+| Command | What it does |
+| --- | --- |
+| `import` | Import a single artifact (`.dex`, `.jar`, `.class`, APK, directory of `.c` files, Ghidra pcode, Flowy) into the store. For pcode (`-l pcode`), the artifact may be a binary, an existing Ghidra project (`<name>.gpr`), or a Ghidra Server URL (`ghidra://…`). |
+| `index` | Index one or more imported programs into an analysis project, resolving calls and building SSA. Can load prior summaries and propagation models. |
+| `query` | Run a taint-analysis query over an indexed project and write results as SARIF. |
+| `go` | One-shot convenience: import, index, and query in a single invocation. |
+| `init-model` | Emit a template JSON5 model file for defining sources, sinks, and external function propagation models. |
+| `inspect` | Inspect the contents of the CTADL store (artifacts, projects). |
+| `legacy-pcode-cli` | Legacy `index`/`query` commands kept for Ghidra pcode integration. |
 
 One-shot APK analysis:
 
 ```bash
 ctadl go my-app /path/to/my/app.apk query.json
+```
+
+Or run the stages separately:
+
+```bash
+ctadl import /path/to/app.apk --name my-app
+ctadl index my-app
+ctadl query my-app --models sources-and-sinks.json5 --output results.sarif
 ```
 
 # Testing
@@ -22,7 +45,7 @@ cargo test
 
 The regression tests, however, are only reliable when run through Nix, which
 pins the full toolchain (compilers, Ghidra, etc.) the fixtures are built and
-checked against:
+checked against. To run the whole suite as a sealed check:
 
 ```bash
 nix build .#checks.${system}.regression
@@ -31,6 +54,13 @@ nix build .#checks.${system}.regression
 where `${system}` is your platform (e.g. `aarch64-darwin`, `x86_64-linux`).
 Running the regression suite outside Nix is not reliable because results depend
 on the exact compiler/disassembler versions Nix provides.
+
+For iterating on tests, the `regression` dev shell provides that same pinned
+toolchain while letting you run the harness against your local working tree:
+
+```bash
+nix develop .#regression -c cargo xtask regression
+```
 
 # History
 

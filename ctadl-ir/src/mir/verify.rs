@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::index::idx::Idx;
 use crate::mir::{
     BasicBlockData, BasicBlockIdx, FunctionData, FunctionIdx, Location, ParameterIdx,
-    StatementKind, TerminatorKind, Variable, VariableRef, visit::Visitor,
+    TerminatorKind, Variable, VariableRef, visit::Visitor,
 };
 
 /// These are the errors that CTADL IR verification detects. Any of these errors mean that the IR
@@ -20,10 +20,6 @@ pub enum VerifyError {
 
     #[error("multiply-defined function: {}", index.index())]
     MultiplyDefinedFunction { index: FunctionIdx },
-
-    /// An Update instruction that doesn't update any field
-    #[error("update with no field: {location}")]
-    EmptyFieldUpdate { location: Location },
 
     /// Parameter reference found outside the bounds of declared parameters
     #[error("in function: {function}: reference to nonexistent parameter: '{}'", parameter.index())]
@@ -182,20 +178,6 @@ impl Visitor for MirVerify {
                 function: self.name.clone(),
                 parameter: *idx,
             });
-        }
-    }
-
-    #[inline]
-    fn visit_statement_kind(&mut self, statement: &StatementKind, location: Location) {
-        self.super_statement_kind(statement, location);
-        use StatementKind::*;
-        if let Update {
-            dest: (_var, fields),
-            ..
-        } = statement
-            && fields.is_empty()
-        {
-            self.add_error(VerifyError::EmptyFieldUpdate { location });
         }
     }
 

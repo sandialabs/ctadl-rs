@@ -1,8 +1,11 @@
 {
+  // Flow: data = source() (14) -> local = data (15) -> sink(local) (16).
+  // Line 15 is dropped: `local = data` is a pure copy that copy_alias collapses
+  // onto the static field, so the read at line 15 surfaces in neither the human
+  // code flow nor the machine tainted-instructions.
   "expected_lines": [
-    22,
-    24,
-    8
+    14,
+    16
   ],
   "model_generators": [
     {
@@ -11,7 +14,7 @@
         {
           "constraint": "signature_match",
           "name": "source",
-          "parent": "LMethodCallFlow;"
+          "parent": "LStaticFieldFlow;"
         }
       ],
       "model": {
@@ -29,7 +32,7 @@
         {
           "constraint": "signature_match",
           "name": "sink",
-          "parent": "LMethodCallFlow;"
+          "parent": "LStaticFieldFlow;"
         }
       ],
       "model": {

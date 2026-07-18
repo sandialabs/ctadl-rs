@@ -3,5 +3,8 @@
 ascent/**
 /.opencode
 /results.sarif
-.scratch/**
+.scratch/
 .claude/**
+result
+/.local
+/.envrc.local

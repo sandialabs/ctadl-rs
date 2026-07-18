@@ -13,6 +13,13 @@ use ctadl_ascent::query_engine::formatter::SarifProfile;
 #[derive(Debug, Parser)]
 #[command(name = "ctadl", version, about)]
 pub struct Cli {
+    /// Directory to use as the CTADL store. When set, this directory is used
+    /// directly as the store root; unlike `XDG_STATE_HOME`, no `ctadl`
+    /// subdirectory is appended. When omitted, the store defaults to
+    /// `$XDG_STATE_HOME/ctadl`.
+    #[arg(long, global = true, value_name = "DIR")]
+    pub store: Option<PathBuf>,
+
     #[command(subcommand)]
     pub cmd: Command,
 }
@@ -28,11 +35,8 @@ pub enum Command {
     /// The index is stored under the project name.
     Index(IndexArgs),
 
-    /// Run a taint analysis query. (See 'index' for prerequisites)
+    /// Run a taint analysis query and format the results as SARIF. (See 'index' for prerequisites)
     Query(QueryArgs),
-
-    /// Format the last query results for the named project
-    Format(FormatArgs),
 
     /// One-shot: import artifacts, index them under name, query, and format output
     Go(GoArgs),
@@ -142,6 +146,13 @@ pub struct ImportArgs {
     /// Language/IR family for the artifact: jvm, dex, or auto
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
     pub language: ImportLanguage,
+
+    /// Skip the import if an import of the same name already exists whose stored
+    /// artifact path and content hash match the artifact being imported. This
+    /// avoids re-doing the (potentially expensive) translation when nothing has
+    /// changed.
+    #[arg(long)]
+    pub skip_existing: bool,
 }
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
@@ -156,7 +167,9 @@ pub enum ImportLanguage {
     Apk,
     /// Treat as C files
     C,
-    /// Treat as Ghidra pcode facts directory
+    /// Export pcode via Ghidra. The artifact may be a binary to import, an existing
+    /// local Ghidra project (`<name>.gpr` or its directory), or a Ghidra Server
+    /// repository URL (`ghidra://…`).
     Pcode,
     /// Treat as Flowy file
     Flowy,
@@ -198,10 +211,20 @@ pub struct IndexArgs {
 
     /// Prune unreachable CFG nodes before SSA transformation.
     ///
-    /// Passing `--prune-unreachable-cfg-nodes` enables pruning. Passing
-    /// `--prune-unreachable-cfg-nodes=false` disables it explicitly.
+    /// On by default: SSA/dominator construction requires every block to be
+    /// reachable from entry, and real disassembled binaries routinely contain
+    /// unreachable blocks. Pass `--prune-unreachable-cfg-nodes=false` to disable
+    /// pruning explicitly (e.g. for inputs known to be fully connected).
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     pub prune_unreachable_cfg_nodes: Option<bool>,
+
+    /// Enable the aliasing summary rule during indexing.
+    ///
+    /// On by default. The rule turns aliased stores into summaries that re-enter as assignments,
+    /// which can cause combinatorial blowup of the `locals` relation on pointer-heavy binaries.
+    /// Pass `--alias-rule=false` to disable it.
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+    pub alias_rule: Option<bool>,
 
     /// Dump the index graph to a dot file
     #[arg(long)]
@@ -217,21 +240,19 @@ pub struct QueryArgs {
     /// Can be specified multiple times to load multiple model files.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
-}
 
-#[derive(Debug, Args)]
-pub struct FormatArgs {
-    /// Analysis project (index) name
-    pub name: String,
     /// Output as compact as possible (for the sarif extension)
     #[arg(long, short, action)]
     pub compact: bool,
+
     /// Output file path (defaults to results.sarif)
     #[arg(long, short, default_value = "results.sarif")]
     pub output: PathBuf,
+
     /// SARIF profile
     #[arg(long, value_enum, default_value_t = SarifProfile::Human)]
     pub sarif_profile: SarifProfile,
+
     /// Dump the taint graph to a dot file
     #[arg(long)]
     pub dump_taint_graph: Option<PathBuf>,
@@ -239,8 +260,9 @@ pub struct FormatArgs {
 
 #[derive(Debug, Args)]
 pub struct GoArgs {
-    /// Analysis project (index) name
-    pub name: String,
+    /// Analysis project (index) name. Inferred from the first artifact by default
+    #[arg(long, short)]
+    pub name: Option<String>,
 
     /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
     /// multiple times to load multiple model files.
@@ -278,11 +300,25 @@ pub struct GoArgs {
     /// Language/IR family for the artifact: jvm, dex, or auto
     #[arg(long, short, value_enum, default_value_t = ImportLanguage::Auto)]
     pub language: ImportLanguage,
+
+    /// Skip importing an artifact when an import of the same name already exists
+    /// whose stored artifact path and content hash match. Applies to the import
+    /// step of this one-shot flow.
+    #[arg(long)]
+    pub skip_existing: bool,
 }
 
 fn main() -> anyhow::Result<()> {
     ctadl_ascent::init();
     let cli = Cli::parse();
+
+    // Apply the global store override before any store interaction. This sets the
+    // store root directly to the given directory (no `ctadl` subdirectory), the
+    // same mechanism `legacy-pcode-cli --directory` uses.
+    if let Some(dir) = &cli.store {
+        project::init_store_path(Some(dir))
+            .map_err(|e| anyhow::anyhow!("failed to initialize store path: {}", e))?;
+    }
 
     match &cli.cmd {
         Command::Import(args) => {
@@ -308,21 +344,38 @@ fn main() -> anyhow::Result<()> {
             query_project(args)
                 .with_context(|| format!("running 'query' project: {:?}", args.name))?;
         }
-        Command::Format(args) => {
-            format_project(args)
-                .with_context(|| format!("running 'format' project: {:?}", args.name))?;
-        }
         Command::Inspect(args) => {
             inspect_artifact(args)
                 .with_context(|| format!("running 'inspect' artifact: {:?}", args.name))?;
         }
         Command::Go(args) => {
+            // Use the user-provided name or one derived from the first artifact.
+            let name = match &args.name {
+                Some(n) => n.clone(),
+                None => {
+                    let first = &args.artifacts[0];
+                    let inferred = project::artifact_name(first)?
+                        .as_os_str()
+                        .to_str()
+                        .ok_or_else(|| anyhow::anyhow!("error converting filename to string"))?
+                        .to_string();
+                    if args.artifacts.len() > 1 {
+                        eprintln!(
+                            "Warning: no project name given (-n); using '{}' inferred from the first artifact",
+                            inferred
+                        );
+                    }
+                    inferred
+                }
+            };
+
             let mut imported_names = Vec::new();
             for artifact in &args.artifacts {
                 let import_args = ImportArgs {
                     artifact: artifact.clone(),
                     name: None,
                     language: args.language,
+                    skip_existing: args.skip_existing,
                 };
                 eprintln!("Importing '{}'...", artifact.display());
                 let name = import_artifact_to_store(&import_args).with_context(|| {
@@ -333,32 +386,27 @@ fn main() -> anyhow::Result<()> {
 
             eprintln!("Indexing...");
             index_artifacts_to_store(&IndexArgs {
-                name: args.name.clone(),
+                name: name.clone(),
                 progs: imported_names.clone(),
                 summary: vec![],
                 models: args.models.clone(),
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
+                alias_rule: None,
                 dump_index_graph: args.dump_index_graph.clone(),
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
             eprintln!("Querying...");
             query_project(&QueryArgs {
-                name: args.name.clone(),
+                name: name.clone(),
                 models: args.models.clone(),
-            })
-            .with_context(|| format!("running 'query' project: {:?}", args.name))?;
-
-            eprintln!("Formatting...");
-            format_project(&FormatArgs {
-                name: args.name.clone(),
                 compact: args.compact,
                 output: args.output.clone(),
                 sarif_profile: args.sarif_profile,
                 dump_taint_graph: args.dump_taint_graph.clone(),
             })
-            .with_context(|| format!("running 'format' project: {:?}", args.name))?;
+            .with_context(|| format!("running 'query' project: {:?}", name))?;
         }
         Command::LegacyPcodeCli(args) => {
             handle_legacy_pcode_cli(args).context("running 'legacy-pcode-cli'")?;
@@ -376,7 +424,7 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
     // Link to the schema to enable IDE features like autocomplete and hover documentation.
     // Adjust the path to match your installation if necessary.
     "$schema": "https://raw.githubusercontent.com/sandialabs/ctadl-rs/refs/heads/main/ctadl-ascent/src/models/ctadl-model-generator.schema.json",
-    
+
     "model_generators": [
         {
             // Example 1: Define a data source using a signature pattern.
@@ -464,6 +512,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 artifact: index_args.facts_path.clone(),
                 name: Some(legacy_name.to_string()),
                 language: ImportLanguage::Pcode,
+                skip_existing: false,
             };
             import_artifact_to_store(&import_args)?;
 
@@ -475,6 +524,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 models: args.models.clone(),
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
+                alias_rule: None,
                 dump_index_graph: None,
             };
             index_artifacts_to_store(&index_args)?;
@@ -493,22 +543,16 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
 
             let mut models = args.models.clone();
             models.push(query_args.query_file.clone());
-            // 1. Run query
+            // Run the query and format the output (compact=true for Ghidra).
             let q_args = QueryArgs {
                 name: legacy_name.to_string(),
                 models,
-            };
-            query_project(&q_args)?;
-
-            // 2. Format output (compact=true for Ghidra)
-            let f_args = FormatArgs {
-                name: legacy_name.to_string(),
                 compact: true,
                 output: PathBuf::from("results.sarif"),
                 sarif_profile: SarifProfile::Human,
                 dump_taint_graph: None,
             };
-            format_project(&f_args)?;
+            query_project(&q_args)?;
         }
     }
 
@@ -545,9 +589,29 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
     .to_str()
     .ok_or(anyhow::anyhow!("error converting filename to string"))?;
 
+    // If requested, skip the import when an up-to-date one already exists: the
+    // destination is present and the stored artifact path and content hash match.
+    if args.skip_existing && project::ArtifactImport::is_up_to_date(name, path)? {
+        log::info!(
+            "skipping import '{}': destination exists and artifact hash matches",
+            name
+        );
+        return Ok(name.to_string());
+    }
+
     // Create the import
     let config = project::ArtifactImport::try_create(name, language, path)?;
     cli::import(&config)?;
+    // Import succeeded: reload the config so we pick up any updates the import wrote
+    // (e.g. the pcode importer records `image_base`), then record the artifact's
+    // content hash (and path) so a later `--skip-existing` import can tell the import
+    // is up to date.
+    let mut config = project::ArtifactImport::load_by_name(name)?;
+    // A Ghidra Server repository can't be content-hashed (it's remote), so skip the
+    // hash for it; `--skip-existing` simply re-imports such artifacts each time.
+    if !project::is_ghidra_server_url(&config.artifact_path) {
+        config.record_artifact_hash()?;
+    }
     Ok(name.to_string())
 }
 
@@ -569,7 +633,8 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         &args.summary,
         &args.models,
         args.strategy,
-        args.prune_unreachable_cfg_nodes.unwrap_or(false),
+        args.prune_unreachable_cfg_nodes.unwrap_or(true),
+        args.alias_rule.unwrap_or(true),
         args.dump_index_graph.as_deref(),
     )?;
     Ok(())
@@ -578,15 +643,9 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
 fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
     let project = project::AnalysisProject::try_load_name(&args.name)
         .with_context(|| format!("loading project: '{}'", args.name))?;
-    cli::query(&project, &args.models)?;
-    Ok(())
-}
-
-fn format_project(args: &FormatArgs) -> anyhow::Result<()> {
-    let project = project::AnalysisProject::try_load_name(&args.name)
-        .with_context(|| format!("loading project: '{}'", args.name))?;
-    cli::format(
+    cli::query(
         &project,
+        &args.models,
         args.compact,
         &args.output,
         args.sarif_profile,
@@ -637,6 +696,11 @@ fn autodetect_by_extension<P: AsRef<Path>>(
     let path = path.as_ref();
     Ok(match language {
         ImportLanguage::Auto => {
+            // A Ghidra Server repository URL has no filename extension; recognize it
+            // by scheme and route it through the pcode (Ghidra) frontend.
+            if project::is_ghidra_server_url(path) {
+                return Ok(ImportLanguage::Pcode);
+            }
             let ext = path
                 .extension()
                 .and_then(|e| OsStr::to_str(e))
@@ -648,6 +712,8 @@ fn autodetect_by_extension<P: AsRef<Path>>(
                 "class" => ImportLanguage::Jvm,
                 "jar" => ImportLanguage::Jar,
                 "tnt" => ImportLanguage::Flowy,
+                // A Ghidra project file: export pcode from the existing project.
+                "gpr" => ImportLanguage::Pcode,
                 _ => anyhow::bail!("unrecognized filename extension: '{}'", ext),
             }
         }

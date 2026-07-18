@@ -18,9 +18,9 @@ CTADL's overall flow is as follows:
    process of turning the programs into indexable-facts is called code generation (codegen) because
    it's quite like what a compiler does. It turns the programs into SSA form, applies relevant
    models, and generates raw [`crate::index_engine::IndexFacts`].
-3. [`crate::cli::query`] runs a taint analysis query. It loads parts of program info and the index.
-4. [`crate::cli::format`] loads query results and formats them in some human- or machine-consumable
-   format, SARIF for example. Formatting is done in the [`crate::query_engine::formatter`] module.
+3. [`crate::cli::query`] runs a taint analysis query. It loads parts of program info and the index,
+   computes the taint result in memory, and formats it in some human- or machine-consumable format,
+   SARIF for example. Formatting is done in the [`crate::query_engine::formatter`] module.
 
 The primary storage format is parquet. This is used for most facts. The IR is more structured so we
 store it in a binary format.

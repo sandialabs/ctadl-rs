@@ -58,7 +58,8 @@ fn simple_assign_global() {
             }
         ";
     let prog = program_from_string(src).0;
-    check_assign_or_update(&prog, "b", ["$globals.a"], None);
+    // Reading the global `a` lowers to a load of `$globals.a` (into a temp that flows to `b`).
+    check_loads(&prog, "$globals.a");
 }
 
 #[test_log::test]
@@ -167,11 +168,13 @@ fn unique_temps() {
     // temporary; this checks the allocator hands out distinct, gap-free names <t0>..<t4> across the
     // whole function (no reuse, no extras). That's a property of how temporaries are numbered, so we
     // read the names off the IR rather than substring-matching the dump.
+    // Operands are parameters (read as bare variables, no load temps) so the only temporaries
+    // are the ones each binary operation allocates.
     let src = r"
-        void fun(){
+        void fun(int n, int p, int r, int q, int a, int b, int m, int x){
             int z = n + p + r + q;   // <t0>, <t1>, <t2>
             int v = a + b;           // <t3>
-            int n = m + x;           // <t4>
+            int w = m + x;           // <t4>
         }
     ";
     let prog = program_from_string(src).0;
@@ -640,8 +643,8 @@ fn subscript_access_paths() {
             f[4] = x;
         }";
     let prog = program_from_string(src).0;
-    check_assign_or_update(&prog, "@p2", ["f.[3]"], None); // x = f[3]
-    check_assign_or_update(&prog, "f.[4]", ["@p2"], None); // f[4] = x  (update)
+    check_loads(&prog, "f.[3]"); // x = f[3]  (read lowers to a load of f.[3])
+    check_assign_or_update(&prog, "f.[4]", ["@p2"], None); // f[4] = x  (store)
 }
 
 #[test_log::test]
@@ -1186,8 +1189,11 @@ fn aggregate_initializer_list_lowers_to_element_stores() {
 
 #[test_log::test]
 fn nested_aggregate_initializer_lowers_recursively() {
-    // A nested aggregate (`int m[2][2] = {{s,0},{0,0}}`) recurses, extending the base path
-    // by the outer index: the tainted element lands at `m.[0].[0]`.
+    // A nested aggregate (`int m[2][2] = {{s,0},{0,0}}`) recurses, extending the base path by
+    // the outer index so the tainted element lands at `m[0][0]`. Access paths are offset-only,
+    // so a two-symbol write (`m.[0].[0]`) decomposes through an intermediate load: the outer
+    // `[0]` is loaded (`t = load m.[0]`) and the inner tainted element is stored into it
+    // (`store t.[0] := s`). Both halves are asserted below.
     let src = r"
         int f() {
             int s = source();
@@ -1195,7 +1201,12 @@ fn nested_aggregate_initializer_lowers_recursively() {
             return m[0][0];
         }";
     let prog = program_from_string(src).0;
-    check_assign_or_update(&prog, "m.[0].[0]", ["s"], None);
+    let dump = format!("{prog}");
+    check_loads(&prog, "m.[0]"); // the outer index is loaded to address the inner element
+    assert!(
+        dump.contains(".[0] := %s"),
+        "nested tainted element should store `%s` into a `.[0]` field:\n{dump}"
+    );
 }
 
 #[test_log::test]

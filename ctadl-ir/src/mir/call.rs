@@ -3,6 +3,7 @@ use std::{fmt, fmt::Display};
 
 use hashbrown::hash_map::HashMap;
 use smallvec::SmallVec;
+use thin_vec::ThinVec;
 
 use super::{Symbol, VariableRef};
 
@@ -50,7 +51,7 @@ impl CallStyle {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CallEdges {
     /// List of call edges for this call. Can be empty.
-    Explicit(SmallVec<[String; 4]>),
+    Explicit(ThinVec<String>),
 }
 
 impl CallEdges {

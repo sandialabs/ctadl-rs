@@ -19,19 +19,24 @@ nix build .#checks.x86_64-linux.regression       # Linux / CI
 
 This is the supported way to run the suite, and it is what the nightly GitHub
 workflow runs on a schedule. Add expensive tests here, not in YAML.
-
-Under the hood the derivation just invokes the `xtask` task runner
-(`xtask/src/`) over the cases. If you are iterating on one case and already have
-the full toolchain (`ctadl`, `dex-reader`, `javac`, `dx`, `gcc`, `addr2line`,
-Ghidra) on `PATH`, you can call it directly — but the flake check above is the
-zero-setup path and the one to trust:
+If you are iterating on individual cases, the flake also provides a local dev
+shell with the full regression toolchain on `PATH`:
 
 ```sh
+nix develop .#regression
+cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-## How discovery works
+`--frontend` takes `pcode`, `jvm`, or `dex` (comma-separated, or repeated) and
+defaults to all three. It selects *before* anything runs, so `--frontend pcode`
+never invokes the Java toolchain, and `--frontend jvm,dex` never starts Ghidra.
+Use it with `--filter` to narrow further: `--frontend pcode --filter funcptr`.
 
+Under the hood both paths invoke the `xtask` task runner (`xtask/src/`) over the
+cases. The flake check above remains the canonical path and the one used in CI.
+
+## How discovery works
 A test case = a source file paired with its config. Drop the two files in and
 they are picked up automatically; no list to edit.
 
@@ -83,6 +88,33 @@ flow is reported (see `Reassignment.java` / `reassignment.json`).
 instructions the case is **skipped** (cross-platform decompiler differences);
 the strict check runs on Linux/CI.
 
+## Asserting that a line stays clean
+
+Any case, in any frontend, may add an optional `unexpected_lines` array naming
+source lines that must carry **no** flow:
+
+```json
+{
+  "expected_lines": [26, 31],
+  "unexpected_lines": [30],
+  "model_generators": [ ... ]
+}
+```
+
+The case fails if a flow reaches any line listed there, and the key may be
+omitted entirely by cases that make no such claim.
+
+Use it whenever the point of a case is precision rather than reachability --
+that taint stopped where it should have. `expected_lines` alone cannot express
+this: neither pass criterion above objects to *extra* lines being tainted, so a
+case that merely leaves the clean line unlisted keeps passing if that line later
+becomes tainted. `globalstruct.c` is the worked example: it writes `g_pair.a`
+and sinks both fields, so the sink on the untouched `g_pair.b` is the whole
+point of the test and is named in `unexpected_lines`.
+
+An **empty** `expected_lines` (the DEX/JVM negative test) already asserts that
+nothing flows at all, which subsumes any `unexpected_lines`.
+
 ## Notes
 
 - Each case runs in its own scratch directory under `$TMPDIR`; nothing is
@@ -91,7 +123,6 @@ the strict check runs on Linux/CI.
   and the final line reports `N passed, M skipped, K failed`.
 - The runner expects its tools (`ctadl`, `dex-reader`, `javac`, `dx`, `gcc`,
   `addr2line`, Ghidra) on `PATH`. The flake check in [Running](#running) builds
-  and supplies all of them — that is why it is the canonical entry point. Only
-  invoke `cargo xtask regression` directly if you have already put every one of
-  those tools on `PATH` yourself.
+  and supplies all of them and `nix develop .#regression` provides an
+  interactive shell with the same toolchain for local iteration.
 - `scripts/*.py` are unused by the current suite and kept only for reference.

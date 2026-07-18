@@ -34,6 +34,11 @@ pub enum JsonModelError {
         index: usize,
         constraint_type: String,
     },
+    UnexpectedField {
+        index: usize,
+        field_name: String,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for JsonModelError {
@@ -86,6 +91,16 @@ impl std::fmt::Display for JsonModelError {
                 write!(
                     f,
                     "unexpected constraint type '{constraint_type}' in model generator at index {index}"
+                )
+            }
+            JsonModelError::UnexpectedField {
+                index,
+                field_name,
+                message,
+            } => {
+                write!(
+                    f,
+                    "unexpected field '{field_name}' in model generator at index {index}: {message}"
                 )
             }
         }

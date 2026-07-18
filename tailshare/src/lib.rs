@@ -1,5 +1,6 @@
 use parking_lot::RwLock;
 use std::any::{Any, TypeId};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
@@ -68,29 +69,55 @@ where
 static INTERNERS: OnceLock<RwLock<HashMap<TypeId, &'static (dyn Any + Send + Sync)>>> =
     OnceLock::new();
 
+thread_local! {
+    // Per-thread L1 cache of already-resolved interners, keyed by `TypeId`. A tiny
+    // linear-scanned `Vec` (there are only a handful of interned element types) is
+    // faster than the global path here: no `RwLock` atomic and, crucially, no SipHash
+    // of the `TypeId` that the global `HashMap<TypeId, _>` lookup would incur on every
+    // single `intern` call in the hot fixpoint loop.
+    static LOCAL_INTERNERS: RefCell<Vec<(TypeId, &'static (dyn Any + Send + Sync))>> =
+        const { RefCell::new(Vec::new()) };
+}
+
 fn get_interner<T>() -> &'static immortal::Interner<Node<T>>
 where
     T: Hash + Eq + Clone + Send + Sync + 'static,
 {
     let type_id = TypeId::of::<T>();
-    let map_lock = INTERNERS.get_or_init(|| RwLock::new(HashMap::new()));
 
-    if let Some(&interner) = map_lock.read().get(&type_id) {
+    // L1: thread-local, lock-free, hash-free linear scan.
+    if let Some(interner) =
+        LOCAL_INTERNERS.with_borrow(|v| v.iter().find(|(tid, _)| *tid == type_id).map(|(_, i)| *i))
+    {
         return interner
             .downcast_ref::<immortal::Interner<Node<T>>>()
             .expect("Type mismatch in interner registry");
     }
 
-    let mut map = map_lock.write();
-    let interner = map.entry(type_id).or_insert_with(|| {
-        let interner = immortal::Interner::<Node<T>>::new(64);
-        let leaked: &'static immortal::Interner<Node<T>> = Box::leak(Box::new(interner));
-        leaked as &'static (dyn Any + Send + Sync)
-    });
-
+    // L2: global registry (populates once per type), then cache into L1.
+    let interner = resolve_global_interner::<T>(type_id);
+    LOCAL_INTERNERS.with_borrow_mut(|v| v.push((type_id, interner)));
     interner
         .downcast_ref::<immortal::Interner<Node<T>>>()
         .expect("Type mismatch in interner registry")
+}
+
+fn resolve_global_interner<T>(type_id: TypeId) -> &'static (dyn Any + Send + Sync)
+where
+    T: Hash + Eq + Clone + Send + Sync + 'static,
+{
+    let map_lock = INTERNERS.get_or_init(|| RwLock::new(HashMap::new()));
+
+    if let Some(&interner) = map_lock.read().get(&type_id) {
+        return interner;
+    }
+
+    let mut map = map_lock.write();
+    *map.entry(type_id).or_insert_with(|| {
+        let interner = immortal::Interner::<Node<T>>::new(64);
+        let leaked: &'static immortal::Interner<Node<T>> = Box::leak(Box::new(interner));
+        leaked as &'static (dyn Any + Send + Sync)
+    })
 }
 
 /// A suffix-compressed sequence of elements of type `T`.

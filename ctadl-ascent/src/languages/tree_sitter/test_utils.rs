@@ -24,7 +24,7 @@ use ctadl_ir::mir::call::{CallEdges, CallStyle};
 use ctadl_ir::{
     AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, Statement, StatementKind, VariableRef, ssa,
 };
-use ctadl_ir::{FieldAccess, ParameterType, Program, ProgramInfo};
+use ctadl_ir::{FieldPath, ParameterType, PathSegment, Program, ProgramInfo};
 
 pub(crate) fn init_test_logging() {
     let _ = env_logger::builder()
@@ -274,42 +274,44 @@ pub(crate) fn debug_output_blocks(prog: &Program) {
 // `flatten_subscript` in mod.rs) rather than a real `FieldAccess::Offset`. So `"f.[3]"` round-trips
 // to `[Symbol("f"), Symbol("[3]")]`, exactly what the parser emits. (Real `Offset` lowering is an
 // aspirational frontend change; revisit this helper if/when that lands.)
-fn parse_fields(s: &str) -> impl Iterator<Item = FieldAccess> + '_ {
+fn parse_fields(s: &str) -> Vec<PathSegment> {
     s.split('.')
         .filter(|part| !part.is_empty())
-        .map(|f| FieldAccess::Symbol(f.into()))
+        .map(PathSegment::symbol)
+        .collect()
 }
 
-fn access_path_from_str(s: &str) -> AccessPath {
+/// A base variable plus a mixed (offset + symbolic-field) path, parsed from the test DSL. Access
+/// paths in the IR are offset-only and load/store fields are single symbols, so the DSL's mixed
+/// paths are held here and composed against the actual `Load`/`Store` statements.
+#[derive(Debug, PartialEq, Eq)]
+struct DslPath {
+    base: VariableRef,
+    fields: Vec<PathSegment>,
+}
+
+fn access_path_from_str(s: &str) -> DslPath {
     if let Some(rest) = s.strip_prefix("$globals") {
-        return AccessPath::new(
-            VariableRef::new_global(),
-            parse_fields(rest.strip_prefix('.').unwrap_or("")),
-        );
+        return DslPath {
+            base: VariableRef::new_global(),
+            fields: parse_fields(rest.strip_prefix('.').unwrap_or("")),
+        };
     }
 
     if let Some(rest) = s.strip_prefix("@p") {
-        let (n_str, suffix) = if let Some((n, tail)) = rest.split_once('.') {
-            (n, tail)
-        } else {
-            (rest, "")
-        };
-
+        let (n_str, suffix) = rest.split_once('.').unwrap_or((rest, ""));
         let n: u32 = n_str.parse().expect("invalid parameter index in @pN");
-
-        return AccessPath::new(VariableRef::new_parameter(n.into()), parse_fields(suffix));
+        return DslPath {
+            base: VariableRef::new_parameter(n.into()),
+            fields: parse_fields(suffix),
+        };
     }
 
-    let (base, suffix) = if let Some((base, tail)) = s.split_once('.') {
-        (base, tail)
-    } else {
-        (s, "")
-    };
-
-    AccessPath::new(
-        VariableRef::new_local(base.to_string()),
-        parse_fields(suffix),
-    )
+    let (base, suffix) = s.split_once('.').unwrap_or((s, ""));
+    DslPath {
+        base: VariableRef::new_local(base.to_string()),
+        fields: parse_fields(suffix),
+    }
 }
 
 /* Builds a source expression from the DSL. A `#`-prefixed string is a constant literal (`"#7"` =>
@@ -318,7 +320,14 @@ anything else is an access path (variable / param / global / field). */
 pub(crate) fn exp_from_str(s: &str) -> Exp {
     match s.strip_prefix('#') {
         Some(lit) => Exp::new_str(lit),
-        None => Exp::from(access_path_from_str(s)),
+        None => {
+            let dsl = access_path_from_str(s);
+            assert!(
+                dsl.fields.is_empty(),
+                "DSL source with a field path is not directly expressible; use check_loads: {s}"
+            );
+            Exp::Variable(dsl.base)
+        }
     }
 }
 
@@ -339,15 +348,27 @@ pub(crate) fn check_assign_or_update<I>(
 
     let dst_ap = access_path_from_str(dst);
 
-    let expected = if dst_ap.path.is_empty() {
-        StatementKind::assign(dst_ap.variable_ref, srcs)
+    let expected = if dst_ap.fields.is_empty() {
+        StatementKind::assign(dst_ap.base, srcs)
     } else {
         assert_eq!(
             srcs.len(),
             1,
             "update destination requires exactly one source expression"
         );
-        StatementKind::update(dst_ap, srcs.into_iter().next().unwrap())
+        assert_eq!(
+            dst_ap.fields.len(),
+            1,
+            "update destination must have exactly one (symbolic) field: {dst}"
+        );
+        let PathSegment::Symbol(sym) = dst_ap.fields.into_iter().next().unwrap() else {
+            panic!("update destination field must be symbolic: {dst}")
+        };
+        StatementKind::store(
+            AccessPath::without_fields(dst_ap.base),
+            FieldPath::new(sym),
+            srcs.into_iter().next().unwrap(),
+        )
     };
 
     let fun = get_only_function(prog).expect("expected exactly one function");
@@ -368,6 +389,31 @@ pub(crate) fn check_assign_or_update<I>(
     );
 }
 
+/* Asserts the (single) function contains a `Load` that reads `source_str` (an access-path DSL
+string like `f.[3]` or `$globals.a`). Field reads lower to loads through a temporary, so this is
+the load-based complement to `check_assign_or_update`'s field-path source. Panics if not found. */
+#[track_caller]
+pub(crate) fn check_loads(prog: &Program, source_str: &str) {
+    let ap = access_path_from_str(source_str);
+    let found = statements_of(prog).any(|s| {
+        let StatementKind::Load { source, field, .. } = &s.kind else {
+            return false;
+        };
+        // The full read path is the source's offsets then the loaded symbolic field.
+        let full: Vec<PathSegment> = source
+            .path
+            .iter()
+            .cloned()
+            .map(PathSegment::from)
+            .chain(std::iter::once(PathSegment::Symbol(
+                field.symbol_ref().clone(),
+            )))
+            .collect();
+        source.variable_ref == ap.base && full == ap.fields
+    });
+    assert!(found, "could not find a load of `{source_str}`\n{prog}");
+}
+
 /* Iterates every statement of the (single) function, in block-then-statement order. The shared walk
 behind the destination-focused helpers below, and a handy primitive for ad-hoc structural assertions
 that need to scan statements (cf. the dex frontend's "pull out the narrow thing, then assert on it").
@@ -381,11 +427,21 @@ pub(crate) fn statements_of(prog: &Program) -> impl Iterator<Item = &Statement> 
 bare `dst` (no field path) matches an `Assign` to that variable; a `dst` with a field path matches an
 `Update` of that field. This is the same assign-vs-update split as `check_assign_or_update`'s
 destination, minus the source constraint. */
-fn writes_dest(kind: &StatementKind, dst: &AccessPath) -> bool {
+fn writes_dest(kind: &StatementKind, dst: &DslPath) -> bool {
     match kind {
-        StatementKind::Assign { dest, .. } => dst.path.is_empty() && *dest == dst.variable_ref,
-        StatementKind::Update { dest, .. } => {
-            !dst.path.is_empty() && dest.0 == dst.variable_ref && dest.1 == dst.path
+        StatementKind::Assign { dest, .. } => dst.fields.is_empty() && *dest == dst.base,
+        StatementKind::Store { dest, field, .. } => {
+            // The full written path is the dest's offsets then the (optional) symbolic field.
+            let full: Vec<PathSegment> = dest
+                .path
+                .iter()
+                .cloned()
+                .map(PathSegment::from)
+                .chain(std::iter::once(PathSegment::Symbol(
+                    field.symbol_ref().clone(),
+                )))
+                .collect();
+            !dst.fields.is_empty() && dest.variable_ref == dst.base && full == dst.fields
         }
         _ => false,
     }
@@ -766,18 +822,18 @@ mod ap_tests {
     #[test]
     fn local_no_fields() {
         let ap = access_path_from_str("b");
-        assert_eq!(ap.variable_ref, VariableRef::new_local("b".to_string()));
-        assert!(ap.path.is_empty());
+        assert_eq!(ap.base, VariableRef::new_local("b".to_string()));
+        assert!(ap.fields.is_empty());
     }
 
     #[test]
     fn param_with_field() {
         assert_eq!(
             access_path_from_str("@p1.f2"),
-            AccessPath::new(
-                VariableRef::new_parameter(1u32.into()),
-                [FieldAccess::Symbol("f2".into())],
-            ),
+            DslPath {
+                base: VariableRef::new_parameter(1u32.into()),
+                fields: vec![PathSegment::symbol("f2")],
+            },
         );
     }
 
@@ -785,7 +841,10 @@ mod ap_tests {
     fn global_with_field() {
         assert_eq!(
             access_path_from_str("$globals.a"),
-            AccessPath::new(VariableRef::new_global(), [FieldAccess::Symbol("a".into())]),
+            DslPath {
+                base: VariableRef::new_global(),
+                fields: vec![PathSegment::symbol("a")],
+            },
         );
     }
 
@@ -793,39 +852,33 @@ mod ap_tests {
     fn nested_fields() {
         assert_eq!(
             access_path_from_str("v.f1.f2"),
-            AccessPath::new(
-                VariableRef::new_local("v".to_string()),
-                [
-                    FieldAccess::Symbol("f1".into()),
-                    FieldAccess::Symbol("f2".into()),
-                ],
-            ),
+            DslPath {
+                base: VariableRef::new_local("v".to_string()),
+                fields: vec![PathSegment::symbol("f1"), PathSegment::symbol("f2")],
+            },
         );
     }
 
     #[test]
     fn parse_fields_skips_empty_segments() {
         // Leading/trailing/double dots must not produce empty field segments.
-        let fields: Vec<FieldAccess> = parse_fields(".a..b.").collect();
+        let fields: Vec<PathSegment> = parse_fields(".a..b.");
         assert_eq!(
             fields,
-            vec![
-                FieldAccess::Symbol("a".into()),
-                FieldAccess::Symbol("b".into()),
-            ],
+            vec![PathSegment::symbol("a"), PathSegment::symbol("b")],
         );
     }
 
     #[test]
     fn subscript_is_symbol_segment() {
-        // The C frontend lowers `f[3]` to `FieldAccess::Symbol("[3]")` (not a real Offset), so the
-        // DSL must too — `"f.[3]"` becomes `[Symbol("f"), Symbol("[3]")]`.
+        // The C frontend lowers `f[3]` to `PathSegment::Symbol("[3]")` (not a real Offset), so the
+        // DSL must too — `"f.[3]"` becomes base `f` with field `[Symbol("[3]")]`.
         assert_eq!(
             access_path_from_str("f.[3]"),
-            AccessPath::new(
-                VariableRef::new_local("f".to_string()),
-                [FieldAccess::Symbol("[3]".into())],
-            ),
+            DslPath {
+                base: VariableRef::new_local("f".to_string()),
+                fields: vec![PathSegment::symbol("[3]")],
+            },
         );
     }
 
@@ -834,6 +887,9 @@ mod ap_tests {
         // A `#`-prefixed source is a constant literal, not a variable.
         assert_eq!(exp_from_str("#7"), Exp::new_str("7"));
         // ...while a bare name is still an access-path variable.
-        assert_eq!(exp_from_str("b"), Exp::from(access_path_from_str("b")));
+        assert_eq!(
+            exp_from_str("b"),
+            Exp::Variable(access_path_from_str("b").base)
+        );
     }
 }

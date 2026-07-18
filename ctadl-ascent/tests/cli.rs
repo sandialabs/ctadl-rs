@@ -41,12 +41,12 @@ fn test_file() -> PathBuf {
 }
 
 /// Wrap the body of your store tests in this. See the note at the top of the file.
-fn run_store_test<F>(test: F) -> ()
+fn run_store_test<F>(test: F)
 where
-    F: FnOnce() -> () + std::panic::UnwindSafe,
+    F: FnOnce() + std::panic::UnwindSafe,
 {
     initialize();
-    let result = std::panic::catch_unwind(|| test());
+    let result = std::panic::catch_unwind(test);
     assert!(result.is_ok())
 }
 
@@ -64,10 +64,64 @@ fn test_cli_import() {
         assert!(import.name == "test_import");
         assert!(import.program_path().is_file());
         assert!(import.config_path().is_file());
-        let data = std::fs::read(&import.program_path()).unwrap();
+        let data = std::fs::read(import.program_path()).unwrap();
         assert!(ctadl_ir::encode::decode_program(&data).is_ok());
         assert!(ArtifactImport::load_by_name("test_import").is_ok());
     });
+}
+
+#[test]
+fn test_cli_import_skip_existing() {
+    run_store_test(|| {
+        let name = "test_import_skip";
+        // Before any import exists, nothing is up to date.
+        assert!(!ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
+
+        let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
+        // Destination not yet written and no hash recorded: still not up to date.
+        assert!(!ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
+
+        cli::import(&import).unwrap();
+        // Destination exists, but the hash has not been recorded yet.
+        assert!(!ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
+
+        // Recording the hash (as the import command does on success) makes the
+        // import up to date so a `--skip-existing` re-import is skipped.
+        let mut import = ArtifactImport::load_by_name(name).unwrap();
+        import.record_artifact_hash().unwrap();
+        assert!(import.hash.is_some());
+        assert!(ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
+
+        // A reloaded config still reflects the recorded hash and path.
+        let reloaded = ArtifactImport::load_by_name(name).unwrap();
+        assert_eq!(reloaded.hash, import.hash);
+        assert!(ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
+    });
+}
+
+#[test]
+fn test_hash_artifact_file_and_dir() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    // A single file hashes deterministically and is sensitive to content.
+    let file = root.join("a.bin");
+    std::fs::write(&file, b"hello").unwrap();
+    let h1 = hash_artifact(&file).unwrap();
+    assert_eq!(h1, hash_artifact(&file).unwrap());
+    std::fs::write(&file, b"hello!").unwrap();
+    assert_ne!(h1, hash_artifact(&file).unwrap());
+
+    // A directory hashes over its files deterministically, independent of
+    // creation order, and changes when a file changes.
+    let sub = root.join("tree");
+    std::fs::create_dir_all(sub.join("nested")).unwrap();
+    std::fs::write(sub.join("nested").join("y.txt"), b"world").unwrap();
+    std::fs::write(sub.join("x.txt"), b"foo").unwrap();
+    let d1 = hash_artifact(&sub).unwrap();
+    assert_eq!(d1, hash_artifact(&sub).unwrap());
+    std::fs::write(sub.join("x.txt"), b"bar").unwrap();
+    assert_ne!(d1, hash_artifact(&sub).unwrap());
 }
 
 //#[test]

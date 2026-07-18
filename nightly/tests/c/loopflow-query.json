@@ -1,8 +1,7 @@
 {
   "expected_lines": [
-    14,
-    15,
-    16
+    12,
+    17
   ],
   "model_generators": [
     {
@@ -10,8 +9,9 @@
       "where": [
         {
           "constraint": "signature_match",
-          "name": "source",
-          "parent": "LStaticFieldFlow;"
+          "names": [
+            "source"
+          ]
         }
       ],
       "model": {
@@ -28,14 +28,15 @@
       "where": [
         {
           "constraint": "signature_match",
-          "name": "sink",
-          "parent": "LStaticFieldFlow;"
+          "names": [
+            "sink"
+          ]
         }
       ],
       "model": {
         "sinks": [
           {
-            "kind": "TaintedData",
+            "kind": "Output",
             "port": "Argument(0)"
           }
         ]

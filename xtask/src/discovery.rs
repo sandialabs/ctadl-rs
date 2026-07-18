@@ -6,6 +6,7 @@
 //! adding a `.java` + matching `.json` is enough to register a new test.
 
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
 
@@ -19,8 +20,56 @@ pub struct TestCase {
 pub enum Kind {
     /// Java compiled to DEX, mapped back to source lines via a dex linemap.
     Dex { java: PathBuf, config: PathBuf },
+    /// Java compiled to a JAR, mapped back to source lines via a jvm linemap.
+    Jvm { java: PathBuf, config: PathBuf },
     /// C compiled to an ELF object, mapped back to lines via `addr2line`.
     Pcode { source: PathBuf, query: PathBuf },
+}
+
+impl Kind {
+    pub fn frontend(&self) -> Frontend {
+        match self {
+            Kind::Dex { .. } => Frontend::Dex,
+            Kind::Jvm { .. } => Frontend::Jvm,
+            Kind::Pcode { .. } => Frontend::Pcode,
+        }
+    }
+}
+
+/// Which analyzer frontend a check exercises. `--frontend` selects on this so a
+/// subset can be run without paying for the other frontends' toolchains: the
+/// per-frontend reader checks are skipped entirely, not just filtered out of the
+/// report.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Frontend {
+    Dex,
+    Jvm,
+    Pcode,
+}
+
+impl Frontend {
+    pub const ALL: &'static [Frontend] = &[Frontend::Dex, Frontend::Jvm, Frontend::Pcode];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Frontend::Dex => "dex",
+            Frontend::Jvm => "jvm",
+            Frontend::Pcode => "pcode",
+        }
+    }
+}
+
+impl FromStr for Frontend {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "dex" => Ok(Frontend::Dex),
+            "jvm" => Ok(Frontend::Jvm),
+            "pcode" => Ok(Frontend::Pcode),
+            other => bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode)"),
+        }
+    }
 }
 
 /// Resolve the directory holding test cases.
@@ -65,14 +114,24 @@ fn discover_dex(java_dir: &Path) -> Result<Vec<TestCase>> {
             continue;
         }
         let stem = file_stem(&entry)?;
-        let config = java_dir.join(format!("{}.json", to_kebab_case(&stem)));
+        // Prefer a JSON5 config (it can carry inline comments) over a plain JSON one.
+        let kebab = to_kebab_case(&stem);
+        let json5 = java_dir.join(format!("{kebab}.json5"));
+        let json = java_dir.join(format!("{kebab}.json"));
+        let config = if json5.is_file() { json5 } else { json };
         if config.is_file() {
+            let java = absolute(&entry)?;
+            let config = absolute(&config)?;
             cases.push(TestCase {
-                name: stem,
+                name: stem.clone(),
                 kind: Kind::Dex {
-                    java: absolute(&entry)?,
-                    config: absolute(&config)?,
+                    java: java.clone(),
+                    config: config.clone(),
                 },
+            });
+            cases.push(TestCase {
+                name: format!("Jvm:{stem}"),
+                kind: Kind::Jvm { java, config },
             });
         }
     }
@@ -153,7 +212,17 @@ fn to_kebab_case(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::to_kebab_case;
+    use super::{to_kebab_case, Frontend};
+
+    #[test]
+    fn frontend_parses() {
+        assert_eq!("pcode".parse::<Frontend>().unwrap(), Frontend::Pcode);
+        assert_eq!("jvm".parse::<Frontend>().unwrap(), Frontend::Jvm);
+        assert_eq!("dex".parse::<Frontend>().unwrap(), Frontend::Dex);
+        // Tolerate stray whitespace/case from a comma-separated list.
+        assert_eq!(" Pcode ".parse::<Frontend>().unwrap(), Frontend::Pcode);
+        assert!("bogus".parse::<Frontend>().is_err());
+    }
 
     #[test]
     fn kebab() {

@@ -22,6 +22,9 @@ use crate::mir::*;
 #[cfg(test)]
 mod tests;
 
+mod coalesce;
+pub use coalesce::{coalesce_copies, coalesce_function};
+
 #[derive(Debug)]
 struct PhiPlace {
     variables: HashSet<ArcIntern<Variable>>,
@@ -71,7 +74,7 @@ pub fn transform(function: &mut FunctionData, prune: bool) {
         let variable = VariableRef::new_parameter(idx);
         blocks[BasicBlockIdx::START_BLOCK].push_front(Statement::new_kind(StatementKind::Assign {
             dest: variable.with_version(0),
-            sources: smallvec![Exp::AccessPath(AccessPath::without_fields(variable))],
+            sources: smallvec![Exp::Variable(variable)],
         }));
     }
     // Set version 0 of global heap to global
@@ -83,7 +86,7 @@ pub fn transform(function: &mut FunctionData, prune: bool) {
         };
         blocks[BasicBlockIdx::START_BLOCK].push_front(Statement::new_kind(StatementKind::Assign {
             dest: variable.with_version(0),
-            sources: smallvec![Exp::AccessPath(AccessPath::without_fields(variable))],
+            sources: smallvec![Exp::Variable(variable)],
         }));
     }
     log::trace!("assume that version 0 is initial version");
@@ -173,10 +176,7 @@ fn complete(function: &mut FunctionData) {
         .into_iter()
         .collect(),
         Some(Terminator::new_kind(TerminatorKind::Return {
-            args: retvars
-                .iter()
-                .map(|v| Exp::new_access_path(AccessPath::without_fields(v.clone())))
-                .collect(),
+            args: retvars.iter().map(|v| Exp::Variable(v.clone())).collect(),
         })),
     );
 

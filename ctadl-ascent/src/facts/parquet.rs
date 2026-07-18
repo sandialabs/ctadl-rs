@@ -810,6 +810,61 @@ impl DecodeColumn<Option<facts::PackedInsnSiteId>> for DefaultDecoder {
     }
 }
 
+// A `FlowEdge` spans two arrow columns: a `<name>_tag` byte (0 = Intra, 1 =
+// Call, 2 = Return) and a nullable `<name>_site` holding the anchoring call
+// instruction for Call/Return edges (null for Intra).
+impl EncodeColumn<facts::FlowEdge> for DefaultEncoder {
+    #[inline]
+    fn encode_column(name: &str, col: Vec<facts::FlowEdge>) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
+        use facts::FlowEdge::*;
+        let tag_column_name = name.to_owned() + "_tag";
+        let site_column_name = name.to_owned() + "_site";
+        let (mut fields, mut arrays) = <Self as EncodeColumn<u8>>::encode_column(
+            &tag_column_name,
+            col.iter()
+                .map(|e| match e {
+                    Intra => 0u8,
+                    Call(_) => 1,
+                    Return(_) => 2,
+                })
+                .collect_vec(),
+        );
+        let (site_fields, site_arrays) =
+            <Self as EncodeColumn<Option<facts::PackedInsnSiteId>>>::encode_column(
+                &site_column_name,
+                col.into_iter().map(|e| e.site()).collect_vec(),
+            );
+        fields.extend(site_fields);
+        arrays.extend(site_arrays);
+        (fields, arrays)
+    }
+}
+
+impl DecodeColumn<facts::FlowEdge> for DefaultDecoder {
+    #[inline]
+    fn into_decode_array(
+        name: &str,
+        batch: &RecordBatch,
+    ) -> impl IntoIterator<Item = facts::FlowEdge> {
+        use facts::FlowEdge::*;
+        let tag_column_name = name.to_owned() + "_tag";
+        let site_column_name = name.to_owned() + "_site";
+        let tags = <Self as DecodeColumn<u8>>::into_decode_array(&tag_column_name, batch);
+        let sites = <Self as DecodeColumn<Option<facts::PackedInsnSiteId>>>::into_decode_array(
+            &site_column_name,
+            batch,
+        );
+        izip![tags, sites]
+            .map(|(tag, site)| match tag {
+                0 => Intra,
+                1 => Call(site.expect("call FlowEdge missing anchoring site")),
+                2 => Return(site.expect("return FlowEdge missing anchoring site")),
+                _ => panic!("bad encoding of FlowEdge"),
+            })
+            .collect_vec()
+    }
+}
+
 impl EncodeColumn<facts::TaintState> for DefaultEncoder {
     #[inline]
     fn encode_column(

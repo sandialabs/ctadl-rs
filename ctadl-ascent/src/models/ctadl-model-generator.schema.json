@@ -283,6 +283,10 @@
         "all_fields": {
           "description": "If true, sensitizes the port to all detected fields by name. Any fields referred to in the port itself are ignored. This feature will likely be removed in favor of simple star matching in future.",
           "type": "boolean"
+        },
+        "wildcard": {
+          "description": "Sink-only (rejected on sources/propagations). If true (the DEFAULT for sinks), the sink port matches any access-path extension of the port -- i.e. any concrete path having the port path as a prefix. E.g. port Argument(1) matches Argument(1).deref and Argument(1).[12].deref. Set false to match only the exact port path.",
+          "type": "boolean"
         }
       }
     },

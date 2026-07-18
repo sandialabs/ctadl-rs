@@ -1,7 +1,6 @@
 use super::*;
 
 use hashbrown::HashSet;
-use smallvec::smallvec;
 
 use super::GLOBALS_INDEX;
 use crate::facts as fx;
@@ -109,6 +108,7 @@ fn test_basic2_source_sink() {
         call: facts.call,
         assign: index_result.assign_like,
         paths: facts.paths,
+        external_function: index_result.external_function,
         endpoints: [ss.source.clone(), ss.sink.clone()]
             .into_iter()
             .map(|e| (QueryEndpoint::from_taint_endpoint(&source_info.sites, e),))
@@ -134,6 +134,41 @@ fn test_basic2_source_sink() {
                 && r.2 == ss.source.vertex.0
                 && r.3 == ss.source.vertex.1)
             .is_some()
+    );
+
+    // The taint graph is oriented in execution / data-flow order, so a forward walk over
+    // `taint_edge` from the source vertex must reach the sink vertex. This only holds if
+    // backward (sink-seeded) edges were reversed into execution order.
+    assert!(!query_result.taint_edge.is_empty());
+    let mut adj: std::collections::BTreeMap<
+        (fx::FunctionId, fx::FlowVariable, fx::Path),
+        Vec<(fx::FunctionId, fx::FlowVariable, fx::Path)>,
+    > = std::collections::BTreeMap::new();
+    for (_edge, sf, sv, sp, df, dv, dp) in &query_result.taint_edge {
+        adj.entry((*sf, *sv, *sp))
+            .or_default()
+            .push((*df, *dv, *dp));
+    }
+    let start = (h_id, ss.source.vertex.0, ss.source.vertex.1);
+    let goal = (h_id, ss.sink.vertex.0, ss.sink.vertex.1);
+    let mut seen = std::collections::BTreeSet::new();
+    let mut queue = std::collections::VecDeque::from([start]);
+    seen.insert(start);
+    let mut reached_sink = false;
+    while let Some(node) = queue.pop_front() {
+        if node == goal {
+            reached_sink = true;
+            break;
+        }
+        for next in adj.get(&node).into_iter().flatten() {
+            if seen.insert(*next) {
+                queue.push_back(*next);
+            }
+        }
+    }
+    assert!(
+        reached_sink,
+        "forward walk over taint_edge should reach the sink vertex"
     );
 }
 
@@ -235,8 +270,8 @@ fn function_f() -> FunctionData {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_update(a.clone(), q);
-    b.create_assign_or_update(p.clone(), a);
+    b.create_assign_or_store(a.clone(), None, q);
+    b.create_assign_or_store(p.clone(), None, a);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -271,7 +306,7 @@ fn function_j() -> FunctionData {
     let q = b.new_param_var(ParameterIdx::new(1));
 
     b.create_assign(a.clone(), vec![q.into(), param_b.into()]);
-    b.create_assign_or_update(p.clone(), a);
+    b.create_assign_or_store(p.clone(), None, a);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -299,7 +334,7 @@ fn function_g() -> FunctionData {
     let param_b = b.new_param_var(ParameterIdx::new(0));
     let c = b.new_local_var("c");
 
-    let call_edges = CallEdges::Explicit(smallvec!["F".to_string()]);
+    let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
 
     b.create_call(style, vec![c.clone()], vec![a.into(), param_b.into()]);
@@ -338,8 +373,8 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_update(a.clone(), q);
-    b.create_assign_or_update(p.clone(), a);
+    b.create_assign_or_store(a.clone(), None, q);
+    b.create_assign_or_store(p.clone(), None, a);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -416,23 +451,15 @@ fn function_with_phi() -> FunctionData {
 
     // True branch: x = a (using builder API)
     let mut true_builder = BasicBlockBuilder::new(&mut f[true_branch]);
-    true_builder.create_assign_or_update(
-        true_builder.new_access_path(x.clone(), Vec::<&str>::new()),
-        Exp::AccessPath(true_builder.new_access_path(a, Vec::<&str>::new())),
-    );
+    true_builder.create_assign_or_store(x.clone(), None, Exp::Variable(a));
 
     // False branch: x = b (using builder API)
     let mut false_builder = BasicBlockBuilder::new(&mut f[false_branch]);
-    false_builder.create_assign_or_update(
-        false_builder.new_access_path(x.clone(), Vec::<&str>::new()),
-        Exp::AccessPath(false_builder.new_access_path(b, Vec::<&str>::new())),
-    );
+    false_builder.create_assign_or_store(x.clone(), None, Exp::Variable(b));
 
     // Merge block will get phi node during SSA conversion (using builder API)
     let mut merge_builder = BasicBlockBuilder::new(&mut f[merge]);
-    merge_builder.create_ret(vec![Exp::AccessPath(
-        merge_builder.new_access_path(x, Vec::<&str>::new()),
-    )]);
+    merge_builder.create_ret(vec![Exp::Variable(x)]);
 
     f.verify().expect("doesn't verify");
     f
@@ -469,18 +496,16 @@ fn function_with_update() -> FunctionData {
     // Create variables using builder helpers
     let s_var = builder.new_param_var(ParameterIdx::new(0));
     let new_value = builder.new_local_var("new_value");
-    let s_access = builder.new_access_path(s_var.clone(), vec!["field"]);
 
-    // Create update statement using builder API
-    builder.create_update(
-        s_access,
-        Exp::AccessPath(builder.new_access_path(new_value.clone(), Vec::<&str>::new())),
+    // Create update statement using builder API: s.field = new_value
+    builder.create_store(
+        s_var.clone(),
+        ctadl_ir::mir::FieldPath::symbol("field"),
+        Exp::Variable(new_value.clone()),
     );
 
     // Create return statement using builder API
-    builder.create_ret(vec![Exp::AccessPath(
-        builder.new_access_path(s_var, Vec::<&str>::new()),
-    )]);
+    builder.create_ret(vec![Exp::Variable(s_var)]);
 
     f.verify().expect("doesn't verify");
     f
@@ -512,12 +537,12 @@ fn function_with_param_to_global_field() -> FunctionData {
 
     // Create globals access and update its field with local_var
     let globals_var = builder.new_global_var();
-    let globals_field_access = builder.new_access_path(globals_var.clone(), vec!["field"]);
 
     // This is the key assignment: globals.field = local_var
-    builder.create_update(
-        globals_field_access,
-        Exp::AccessPath(builder.new_access_path(local_var.clone(), Vec::<&str>::new())),
+    builder.create_store(
+        globals_var.clone(),
+        ctadl_ir::mir::FieldPath::symbol("field"),
+        Exp::Variable(local_var.clone()),
     );
 
     // Return globals
@@ -545,24 +570,19 @@ fn test_cap_algorithm() {
     // x = p0
     let x = builder.new_param_var(ParameterIdx::new(0));
 
-    // t1 = x.foo
+    // t1 = load x.foo
     let t1 = builder.new_local_var("t1");
-    let x_foo = builder.new_access_path(x.clone(), vec!["foo"]);
-    builder.create_assign(t1.clone(), vec![Exp::AccessPath(x_foo)]);
+    builder.create_load(t1.clone(), x.clone(), "foo");
 
-    // t2 = t1.bar
+    // t2 = load t1.bar
     let t2 = builder.new_local_var("t2");
-    let t1_bar = builder.new_access_path(t1.clone(), vec!["bar"]);
-    builder.create_assign(t2.clone(), vec![Exp::AccessPath(t1_bar)]);
+    builder.create_load(t2.clone(), t1.clone(), "bar");
 
-    // t3 = t2.baz
+    // t3 = load t2.baz
     let t3 = builder.new_local_var("t3");
-    let t2_baz = builder.new_access_path(t2.clone(), vec!["baz"]);
-    builder.create_assign(t3.clone(), vec![Exp::AccessPath(t2_baz)]);
+    builder.create_load(t3.clone(), t2.clone(), "baz");
 
-    builder.create_ret(vec![Exp::AccessPath(
-        builder.new_access_path(t3, Vec::<&str>::new()),
-    )]);
+    builder.create_ret(vec![Exp::Variable(t3)]);
 
     f.verify().expect("doesn't verify");
 

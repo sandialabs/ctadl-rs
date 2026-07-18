@@ -45,20 +45,20 @@ fn function_f() -> FunctionData {
             path: Default::default(),
         };
         let stmts: IndexVec<StatementIdx, _> = indexvec![
-            Statement::new_kind(StatementKind::assign_or_update(
-                a.clone(),
-                Exp::AccessPath(q)
+            Statement::new_kind(StatementKind::assign(
+                a.variable_ref.clone(),
+                [Exp::from(q)]
             )),
-            Statement::new_kind(StatementKind::assign_or_update(
-                p.clone(),
-                Exp::AccessPath(a.clone())
+            Statement::new_kind(StatementKind::assign(
+                p.variable_ref.clone(),
+                [Exp::from(a.clone())]
             ))
         ];
         // stmts.extend(]));
         let body_block = &mut f[body];
         body_block.extend(stmts);
         body_block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-            args: smallvec![Exp::AccessPath(p)],
+            args: smallvec![Exp::from(p)],
         }));
     }
     f
@@ -70,8 +70,10 @@ fn function_f() -> FunctionData {
 //  return c;
 //}
 fn function_g() -> FunctionData {
-    let mut g = FunctionData::default();
-    g.name = "G".to_string();
+    let mut g = FunctionData {
+        name: "G".to_string(),
+        ..Default::default()
+    };
     g.set_return_type(ReturnType { arity: 1 });
     g.params.push(ParameterType::ByVal);
     let a = AccessPath {
@@ -86,23 +88,23 @@ fn function_g() -> FunctionData {
         variable_ref: VariableRef::new_local("c".to_string()),
         path: Default::default(),
     };
-    let call_edges = CallEdges::Explicit(smallvec!["F".to_string()]);
+    let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
-        Statement::new_kind(StatementKind::assign_or_update(
-            a.clone(),
-            Exp::Bytes(1u8.to_be_bytes().to_vec())
+        Statement::new_kind(StatementKind::assign(
+            a.variable_ref.clone(),
+            [Exp::Bytes(1u8.to_be_bytes().to_vec())]
         )),
         Statement::new_kind(StatementKind::CallAssign {
             style,
             rets: vec![VariableRef::new_local("c".to_string())].into(),
-            args: vec![Exp::AccessPath(a), Exp::AccessPath(b)].into()
+            args: vec![Exp::from(a), Exp::from(b)].into()
         }),
     ];
     let blocks = g.blocks.blocks_mut();
     let body = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Return {
-            args: vec![Exp::AccessPath(c)].into(),
+            args: vec![Exp::from(c)].into(),
         },
     ))));
     let body_block = &mut g[body];
@@ -117,8 +119,10 @@ fn function_g() -> FunctionData {
 //  return c1;
 //}
 fn function_g1() -> FunctionData {
-    let mut g = FunctionData::default();
-    g.name = "G1".to_string();
+    let mut g = FunctionData {
+        name: "G1".to_string(),
+        ..Default::default()
+    };
     g.set_return_type(ReturnType { arity: 1 });
     g.params.push(ParameterType::ByVal);
     let a = AccessPath {
@@ -133,23 +137,23 @@ fn function_g1() -> FunctionData {
         variable_ref: VariableRef::new_local("c1".to_string()),
         path: Default::default(),
     };
-    let call_edges = CallEdges::Explicit(smallvec!["F".to_string()]);
+    let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
     let stmts: IndexVec<StatementIdx, _> = indexvec![
-        Statement::new_kind(StatementKind::assign_or_update(
-            a.clone(),
-            Exp::Bytes(1u8.to_be_bytes().to_vec())
+        Statement::new_kind(StatementKind::assign(
+            a.variable_ref.clone(),
+            [Exp::Bytes(1u8.to_be_bytes().to_vec())]
         )),
         Statement::new_kind(StatementKind::CallAssign {
             style,
             rets: vec![VariableRef::new_local("c".to_string())].into(),
-            args: vec![Exp::AccessPath(a), Exp::AccessPath(b)].into()
+            args: vec![Exp::from(a), Exp::from(b)].into()
         }),
     ];
     let blocks = g.blocks.blocks_mut();
     let body = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Return {
-            args: vec![Exp::AccessPath(c1)].into(),
+            args: vec![Exp::from(c1)].into(),
         },
     ))));
     let body_block = &mut g[body];
@@ -181,11 +185,11 @@ fn program_h() -> Program {
         };
         let global_ref = VariableRef::new_var_ref(ArcIntern::new(Variable::GlobalHeap));
         let stmts: IndexVec<StatementIdx, _> =
-            indexvec![Statement::new_kind(StatementKind::Update {
-                dest: (global_ref.clone(), ["bar"].into_iter().collect()),
-                source: global_ref.clone(),
-                value: Exp::AccessPath(p.clone()),
-            })];
+            indexvec![Statement::new_kind(StatementKind::store(
+                AccessPath::without_fields(global_ref.clone()),
+                ctadl_ir::mir::FieldPath::symbol("bar"),
+                Exp::from(p.clone()),
+            ))];
         let body_block = &mut h[body];
         body_block.extend(stmts);
         body_block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
