@@ -203,9 +203,13 @@ pub fn index(
         }
 
         log::trace!("summary length: {}", models_batch.summary.num_rows());
-        // Fuse single-use copy temporaries before SSA. Cuts the statement /
-        // variable count that SSA and the datalog fact base pay for. A no-op
-        // on programs already in SSA form (e.g. flowy imports).
+        // Delete assigned-but-never-read temporaries, then fuse single-use
+        // copy temporaries, both before SSA. Together they cut the statement /
+        // variable count that SSA and the datalog fact base pay for. Dead-temp
+        // elimination runs first: it removes defs that coalescing can't (a dead
+        // temp has no use to fuse into) and shrinks the input coalescing scans.
+        // Both are no-ops on programs already in SSA form (e.g. flowy imports).
+        ssa::eliminate_dead_temps(&mut program_info.program);
         ssa::coalesce_copies(&mut program_info.program);
         ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
         log::info!(
