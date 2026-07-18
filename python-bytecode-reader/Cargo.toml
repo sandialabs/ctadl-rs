@@ -1,0 +1,26 @@
+[package]
+name = "python-bytecode-reader"
+edition = "2024"
+version.workspace = true
+
+[dependencies]
+pest = "2.8"
+pest_derive = "2.8"
+thiserror = "2"
+which = "6"
+serde = { version = "1.0", features = ["derive"] }
+# Used by `run_serializer` to stage the embedded Python package at run time.
+tempfile = "3"
+
+[features]
+default = ["serde"]
+# Derive serde on the model types so a `BytecodeFile` deserializes directly from
+# the Python JSON oracle (see tests/differential.rs).
+serde = []
+
+[dev-dependencies]
+serde_json = "1"
+proptest = "1"
+
+[lints]
+workspace = true

@@ -1,0 +1,96 @@
+//! Grammar for the stable Python-bytecode text format.
+//!
+//! The format is brace-delimited (not indentation-sensitive), so indentation is
+//! cosmetic whitespace and the grammar stays trivial. See `FORMAT.md`.
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT    = _{ "#" ~ (!"\n" ~ ANY)* }
+
+// A whole document: a version header followed by one or more top-level code
+// objects (the Python serializer emits exactly one: the module).
+file   = { SOI ~ header ~ code_object+ ~ EOI }
+header = { "bytecode_format" ~ integer }
+
+// A code object and its fields. Fields may appear in any order; nested code
+// objects are children too (assigned ids in document order, referenced by
+// `code #N` inside `consts`).
+code_object = {
+    "code_object" ~ "{" ~ (
+        name_field | qualname_field | filename_field | first_line_field
+        | flags_field | arg_count_field | kwonly_count_field
+        | names_field | varnames_field | consts_field
+        | instruction | code_object
+    )* ~ "}"
+}
+
+name_field        = { "name" ~ string }
+qualname_field    = { "qualname" ~ string }
+filename_field    = { "filename" ~ string }
+first_line_field  = { "first_line" ~ (integer | none_kw) }
+flags_field       = { "flags" ~ integer }
+arg_count_field   = { "arg_count" ~ integer }
+kwonly_count_field = { "kwonly_count" ~ integer }
+names_field       = { "names" ~ string_list }
+varnames_field    = { "varnames" ~ string_list }
+consts_field      = { "consts" ~ value_list }
+
+// A single instruction record.
+instruction = {
+    "instruction" ~ "{" ~ (
+        offset_field | opname_field | opcode_field | arg_field | argval_field
+        | argrepr_field | starts_line_field | is_jump_target_field
+        | jump_targets_field | position_field
+    )* ~ "}"
+}
+
+offset_field         = { "offset" ~ integer }
+opname_field         = { "opname" ~ opname }
+opcode_field         = { "opcode" ~ integer }
+arg_field            = { "arg" ~ (integer | none_kw) }
+argval_field         = { "argval" ~ value }
+argrepr_field        = { "argrepr" ~ (string | none_kw) }
+starts_line_field    = { "starts_line" ~ (integer | none_kw) }
+is_jump_target_field = { "is_jump_target" ~ boolean }
+jump_targets_field   = { "jump_targets" ~ int_list }
+position_field       = { "position" ~ (position | none_kw) }
+
+position = { integer ~ ":" ~ integer ~ "-" ~ integer ~ ":" ~ integer }
+
+// Lists.
+string_list = { "[" ~ (string ~ ("," ~ string)*)? ~ "]" }
+int_list    = { "[" ~ (integer ~ ("," ~ integer)*)? ~ "]" }
+value_list  = { "[" ~ (value ~ ("," ~ value)*)? ~ "]" }
+
+// A tagged constant / operand value.
+value = {
+    const_none | const_bool | const_int | const_float
+    | const_str | const_bytes | const_code | const_other
+}
+const_none  = { "none" }
+const_bool  = { "bool" ~ boolean }
+const_int   = { "int" ~ integer }
+const_float = { "float" ~ string }
+const_str   = { "str" ~ string }
+const_bytes = { "bytes" ~ string }
+// A reference to a nested code object by its document-order id. (No `#` sigil:
+// `#` starts a comment, and pest inserts implicit COMMENT between tokens, so
+// `code #1` would swallow the id as a comment. `code 1` is unambiguous.)
+const_code  = { "code" ~ integer }
+const_other = { "other" ~ string }
+
+none_kw = { "none" }
+boolean = { "true" | "false" }
+integer = @{ "-"? ~ ASCII_DIGIT+ }
+opname  = @{ (ASCII_ALPHANUMERIC | "_")+ }
+
+// JSON-compatible string literals. The Python serializer emits every string via
+// `json.dumps` (ensure_ascii), so the content is ASCII with `\uXXXX` escapes
+// (surrogate pairs for astral code points). The inner text is captured raw and
+// unescaped in Rust.
+string = ${ "\"" ~ inner ~ "\"" }
+inner  = @{ char* }
+char   = {
+    !("\"" | "\\") ~ ANY
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
+}

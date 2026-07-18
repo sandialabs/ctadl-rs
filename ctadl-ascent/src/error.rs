@@ -186,6 +186,12 @@ pub enum Error {
     PcodeFactRead(String),
     #[error("pcode conversion error: {0}")]
     PcodeConversion(String),
+    #[error("python serializer error: {0}")]
+    PythonSerialize(#[from] python_bytecode_reader::SerializeError),
+    #[error("python bytecode parse error: {0}")]
+    PythonParse(#[from] python_bytecode_reader::ParseError),
+    #[error("python conversion error: {0}")]
+    PythonConversion(String),
     #[error("error loading tree-sitter language")]
     TreeSitterLanguage(tree_sitter::LanguageError),
     #[error("error running tree-sitter query")]

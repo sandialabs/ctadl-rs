@@ -173,6 +173,8 @@ pub enum ImportLanguage {
     Pcode,
     /// Treat as Flowy file
     Flowy,
+    /// Treat as Python source (`.py`) or compiled bytecode (`.pyc`)
+    Python,
     /// Infer from extension/content
     Auto,
 }
@@ -585,6 +587,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             ImportLanguage::Jvm => Jvm,
             ImportLanguage::C => C,
             ImportLanguage::Pcode => Pcode,
+            ImportLanguage::Python => Python,
             ImportLanguage::Flowy => Flowy,
             ImportLanguage::Auto => unreachable!(),
         }
@@ -724,6 +727,7 @@ fn autodetect_import_language<P: AsRef<Path>>(
                 Some("class") => ImportLanguage::Jvm,
                 Some("jar") => ImportLanguage::Jar,
                 Some("tnt") => ImportLanguage::Flowy,
+                Some("py") | Some("pyc") => ImportLanguage::Python,
                 Some("gpr") => ImportLanguage::Pcode,
                 // No recognized extension: if the file's contents look binary,
                 // route it through the pcode (Ghidra) frontend.

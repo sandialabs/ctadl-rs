@@ -1,0 +1,422 @@
+bytecode_format 1
+
+code_object {
+  name       "<module>"
+  qualname   "<module>"
+  filename   "python-bytecode-reader/python/examples/taint.py"
+  first_line 1
+  flags      0
+  arg_count  0
+  kwonly_count 0
+  names    ["transfer", "main"]
+  varnames []
+  consts   [code 1, code 2, none]
+  instruction {
+    offset       0
+    opname       RESUME
+    opcode       149
+    arg          0
+    argval       int 0
+    argrepr      ""
+    starts_line  0
+    is_jump_target false
+    jump_targets []
+    position     0:0-1:0
+  }
+  instruction {
+    offset       2
+    opname       LOAD_CONST
+    opcode       83
+    arg          0
+    argval       code 1
+    argrepr      none
+    starts_line  1
+    is_jump_target false
+    jump_targets []
+    position     1:0-3:12
+  }
+  instruction {
+    offset       4
+    opname       MAKE_FUNCTION
+    opcode       26
+    arg          none
+    argval       none
+    argrepr      ""
+    starts_line  1
+    is_jump_target false
+    jump_targets []
+    position     1:0-3:12
+  }
+  instruction {
+    offset       6
+    opname       STORE_NAME
+    opcode       114
+    arg          0
+    argval       str "transfer"
+    argrepr      "transfer"
+    starts_line  1
+    is_jump_target false
+    jump_targets []
+    position     1:0-3:12
+  }
+  instruction {
+    offset       8
+    opname       LOAD_CONST
+    opcode       83
+    arg          1
+    argval       code 2
+    argrepr      none
+    starts_line  5
+    is_jump_target false
+    jump_targets []
+    position     5:0-10:11
+  }
+  instruction {
+    offset       10
+    opname       MAKE_FUNCTION
+    opcode       26
+    arg          none
+    argval       none
+    argrepr      ""
+    starts_line  5
+    is_jump_target false
+    jump_targets []
+    position     5:0-10:11
+  }
+  instruction {
+    offset       12
+    opname       STORE_NAME
+    opcode       114
+    arg          1
+    argval       str "main"
+    argrepr      "main"
+    starts_line  5
+    is_jump_target false
+    jump_targets []
+    position     5:0-10:11
+  }
+  instruction {
+    offset       14
+    opname       RETURN_CONST
+    opcode       103
+    arg          2
+    argval       none
+    argrepr      "None"
+    starts_line  5
+    is_jump_target false
+    jump_targets []
+    position     5:0-10:11
+  }
+  code_object {
+    name       "transfer"
+    qualname   "transfer"
+    filename   "python-bytecode-reader/python/examples/taint.py"
+    first_line 1
+    flags      3
+    arg_count  1
+    kwonly_count 0
+    names    []
+    varnames ["a", "b"]
+    consts   [none]
+    instruction {
+      offset       0
+      opname       RESUME
+      opcode       149
+      arg          0
+      argval       int 0
+      argrepr      ""
+      starts_line  1
+      is_jump_target false
+      jump_targets []
+      position     1:0-1:0
+    }
+    instruction {
+      offset       2
+      opname       LOAD_FAST
+      opcode       85
+      arg          0
+      argval       str "a"
+      argrepr      "a"
+      starts_line  2
+      is_jump_target false
+      jump_targets []
+      position     2:8-2:9
+    }
+    instruction {
+      offset       4
+      opname       STORE_FAST
+      opcode       110
+      arg          1
+      argval       str "b"
+      argrepr      "b"
+      starts_line  2
+      is_jump_target false
+      jump_targets []
+      position     2:4-2:5
+    }
+    instruction {
+      offset       6
+      opname       LOAD_FAST
+      opcode       85
+      arg          1
+      argval       str "b"
+      argrepr      "b"
+      starts_line  3
+      is_jump_target false
+      jump_targets []
+      position     3:11-3:12
+    }
+    instruction {
+      offset       8
+      opname       RETURN_VALUE
+      opcode       36
+      arg          none
+      argval       none
+      argrepr      ""
+      starts_line  3
+      is_jump_target false
+      jump_targets []
+      position     3:4-3:12
+    }
+  }
+  code_object {
+    name       "main"
+    qualname   "main"
+    filename   "python-bytecode-reader/python/examples/taint.py"
+    first_line 5
+    flags      3
+    arg_count  0
+    kwonly_count 0
+    names    ["source", "transfer", "obj", "attr", "sink"]
+    varnames ["x", "y"]
+    consts   [none]
+    instruction {
+      offset       0
+      opname       RESUME
+      opcode       149
+      arg          0
+      argval       int 0
+      argrepr      ""
+      starts_line  5
+      is_jump_target false
+      jump_targets []
+      position     5:0-5:0
+    }
+    instruction {
+      offset       2
+      opname       LOAD_GLOBAL
+      opcode       91
+      arg          1
+      argval       str "source"
+      argrepr      "source + NULL"
+      starts_line  6
+      is_jump_target false
+      jump_targets []
+      position     6:8-6:14
+    }
+    instruction {
+      offset       12
+      opname       CALL
+      opcode       53
+      arg          0
+      argval       int 0
+      argrepr      ""
+      starts_line  6
+      is_jump_target false
+      jump_targets []
+      position     6:8-6:16
+    }
+    instruction {
+      offset       20
+      opname       STORE_FAST
+      opcode       110
+      arg          0
+      argval       str "x"
+      argrepr      "x"
+      starts_line  6
+      is_jump_target false
+      jump_targets []
+      position     6:4-6:5
+    }
+    instruction {
+      offset       22
+      opname       LOAD_GLOBAL
+      opcode       91
+      arg          3
+      argval       str "transfer"
+      argrepr      "transfer + NULL"
+      starts_line  7
+      is_jump_target false
+      jump_targets []
+      position     7:8-7:16
+    }
+    instruction {
+      offset       32
+      opname       LOAD_FAST
+      opcode       85
+      arg          0
+      argval       str "x"
+      argrepr      "x"
+      starts_line  7
+      is_jump_target false
+      jump_targets []
+      position     7:17-7:18
+    }
+    instruction {
+      offset       34
+      opname       CALL
+      opcode       53
+      arg          1
+      argval       int 1
+      argrepr      ""
+      starts_line  7
+      is_jump_target false
+      jump_targets []
+      position     7:8-7:19
+    }
+    instruction {
+      offset       42
+      opname       STORE_FAST
+      opcode       110
+      arg          1
+      argval       str "y"
+      argrepr      "y"
+      starts_line  7
+      is_jump_target false
+      jump_targets []
+      position     7:4-7:5
+    }
+    instruction {
+      offset       44
+      opname       LOAD_FAST
+      opcode       85
+      arg          1
+      argval       str "y"
+      argrepr      "y"
+      starts_line  8
+      is_jump_target false
+      jump_targets []
+      position     8:7-8:8
+    }
+    instruction {
+      offset       46
+      opname       TO_BOOL
+      opcode       40
+      arg          none
+      argval       none
+      argrepr      ""
+      starts_line  8
+      is_jump_target false
+      jump_targets []
+      position     8:7-8:8
+    }
+    instruction {
+      offset       54
+      opname       POP_JUMP_IF_FALSE
+      opcode       97
+      arg          11
+      argval       int 80
+      argrepr      "to L1"
+      starts_line  8
+      is_jump_target false
+      jump_targets [80]
+      position     8:7-8:8
+    }
+    instruction {
+      offset       58
+      opname       LOAD_FAST
+      opcode       85
+      arg          1
+      argval       str "y"
+      argrepr      "y"
+      starts_line  9
+      is_jump_target false
+      jump_targets []
+      position     9:19-9:20
+    }
+    instruction {
+      offset       60
+      opname       LOAD_GLOBAL
+      opcode       91
+      arg          4
+      argval       str "obj"
+      argrepr      "obj"
+      starts_line  9
+      is_jump_target false
+      jump_targets []
+      position     9:8-9:11
+    }
+    instruction {
+      offset       70
+      opname       STORE_ATTR
+      opcode       108
+      arg          3
+      argval       str "attr"
+      argrepr      "attr"
+      starts_line  9
+      is_jump_target false
+      jump_targets []
+      position     9:8-9:16
+    }
+    instruction {
+      offset       80
+      opname       LOAD_GLOBAL
+      opcode       91
+      arg          9
+      argval       str "sink"
+      argrepr      "sink + NULL"
+      starts_line  10
+      is_jump_target true
+      jump_targets []
+      position     10:4-10:8
+    }
+    instruction {
+      offset       90
+      opname       LOAD_FAST
+      opcode       85
+      arg          1
+      argval       str "y"
+      argrepr      "y"
+      starts_line  10
+      is_jump_target false
+      jump_targets []
+      position     10:9-10:10
+    }
+    instruction {
+      offset       92
+      opname       CALL
+      opcode       53
+      arg          1
+      argval       int 1
+      argrepr      ""
+      starts_line  10
+      is_jump_target false
+      jump_targets []
+      position     10:4-10:11
+    }
+    instruction {
+      offset       100
+      opname       POP_TOP
+      opcode       32
+      arg          none
+      argval       none
+      argrepr      ""
+      starts_line  10
+      is_jump_target false
+      jump_targets []
+      position     10:4-10:11
+    }
+    instruction {
+      offset       102
+      opname       RETURN_CONST
+      opcode       103
+      arg          0
+      argval       none
+      argrepr      "None"
+      starts_line  10
+      is_jump_target false
+      jump_targets []
+      position     10:4-10:11
+    }
+  }
+}

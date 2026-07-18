@@ -81,6 +81,15 @@ pub fn collect_byte_offsets(sarif: &Path) -> Result<BTreeSet<i64>> {
     Ok(out)
 }
 
+/// Every `region.startLine` anywhere in the SARIF. Used by the Python frontend,
+/// whose source info maps instruction positions straight to source lines (so
+/// SARIF locations already carry line numbers -- no linemap or addr2line needed).
+pub fn collect_start_lines(sarif: &Path) -> Result<BTreeSet<i64>> {
+    let mut out = BTreeSet::new();
+    collect_int_values(&read_json(sarif)?, "startLine", &mut out);
+    Ok(out)
+}
+
 /// Whether some human-profile code flow connects a source to a sink: a single thread
 /// flow that carries both a `source ...` step and a `sink ...` step (the step messages
 /// the formatter emits for the two endpoints). This is the code-flow *integrity* check

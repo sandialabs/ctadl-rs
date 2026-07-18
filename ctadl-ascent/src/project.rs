@@ -530,6 +530,8 @@ pub enum ArtifactLanguage {
     Pcode,
     /// Treat as Flowy file
     Flowy,
+    /// Treat as Python source (`.py`) or compiled bytecode (`.pyc`)
+    Python,
 }
 
 // XDG_RUNTIME_DIR, if it doesn't exist, requires creating something temporary, and I'd like that

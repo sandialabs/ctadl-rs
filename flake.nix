@@ -4,12 +4,16 @@
     nixpkgs.url = "github:NixOS/nixpkgs";
     utils.url = "github:numtide/flake-utils";
     ctadl-souffle.url = "github:sandialabs/ctadl";
+    # python3.9 and 3.10 have been dropped from recent nixpkgs, so pin an
+    # older release just for those two legacy interpreters.
+    nixpkgs-pythons.url = "github:NixOS/nixpkgs/nixos-24.11";
   };
 
   outputs =
     {
       self,
       nixpkgs,
+      nixpkgs-pythons,
       utils,
       naersk,
       ctadl-souffle,
@@ -55,6 +59,32 @@
           ];
         };
         naersk-lib = pkgs.callPackage naersk { };
+
+        # --- Versioned python interpreters for the regression suite --------
+        # 3.9/3.10 come from an older pin (they were dropped from recent
+        # nixpkgs); 3.11 .. 3.14 from the current nixpkgs.
+        oldPythonPkgs = nixpkgs-pythons.legacyPackages.${system};
+        pythonSources = {
+          "9" = oldPythonPkgs;
+          "10" = oldPythonPkgs;
+          "11" = pkgs;
+          "12" = pkgs;
+          "13" = pkgs;
+          "14" = pkgs;
+        };
+        # For each version, expose a `python3<suffix>` command (e.g. python39,
+        # python314) that points at that version's python3.<suffix> interpreter.
+        mkPythonAlias =
+          suffix: src:
+          let
+            pkg = src."python3${suffix}";
+          in
+          pkgs.runCommand "python3${suffix}-alias" { } ''
+            mkdir -p $out/bin
+            ln -s ${pkg}/bin/python3.${suffix} $out/bin/python3${suffix}
+          '';
+        pythons = nixpkgs.lib.mapAttrsToList mkPythonAlias pythonSources;
+
         ctadl-souffle-wrapper = pkgs.writeShellScriptBin "ctadl-souffle" ''
           exec ${ctadl-souffle.packages.${system}.ctadlPackages.ctadl-full}/bin/ctadl "$@"
         '';
@@ -155,7 +185,7 @@
             jdk
             baksmali
             pkgs.ghidra-bin
-          ];
+          ] ++ pythons;
         };
       in
       {

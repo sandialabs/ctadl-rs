@@ -23,7 +23,7 @@ use crate::facts::{FlowVariable, FlowVertex, Label};
 use crate::index_engine::{
     IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index_with_config,
 };
-use crate::languages::{dex, jvm, pcode};
+use crate::languages::{dex, jvm, pcode, python};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
@@ -198,6 +198,7 @@ pub fn import(import: &ArtifactImport) -> Result<(), Error> {
         Jar => jvm::import_jar(&import.artifact_path)?,
         Jvm => jvm::import_class(&import.artifact_path)?,
         Pcode => pcode::import_pcode(import)?,
+        Python => python::import_python(import)?,
         Flowy => crate::codegen::flowy::import(import)?,
         _ => unimplemented!(),
     };

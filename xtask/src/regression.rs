@@ -465,6 +465,7 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
         Kind::Dex { java, config } => run_dex(&case.name, java, config),
         Kind::Jvm { java, config } => run_jvm(&case.name, java, config),
         Kind::Pcode { source, query } => run_pcode(&case.name, source, query, worker),
+        Kind::Python { source, query } => run_python(&case.name, source, query),
     }
 }
 
@@ -1053,6 +1054,26 @@ fn guess_java_home() -> Option<PathBuf> {
     Some(real.parent()?.parent()?.to_path_buf())
 }
 
+/// Whether a working Python interpreter is available for the Python frontend.
+///
+/// Resolves `$PYTHON` (else `python3` on PATH) and probes it with `--version`,
+/// so both an absent interpreter and a non-functional stub (macOS's
+/// `/usr/bin/python3` with no Xcode) are treated as "unavailable" and skipped.
+fn usable_python() -> bool {
+    let python = match std::env::var_os("PYTHON") {
+        Some(p) => PathBuf::from(p),
+        None => match exec::which("python3") {
+            Some(p) => p,
+            None => return false,
+        },
+    };
+    let mut cmd = Command::new(&python);
+    cmd.arg("--version");
+    exec::run_with_timeout(cmd, "python3 --version", Duration::from_secs(30))
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
 fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&str]) -> Result<()> {
     let mut cmd = Command::new(ctadl_bin()?);
     cmd.current_dir(work)
@@ -1066,6 +1087,111 @@ fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&s
         &format!("ctadl {}", args.first().copied().unwrap_or("")),
     )?;
     Ok(())
+}
+
+// --- Python ---------------------------------------------------------------
+
+/// Drive the Python frontend end-to-end: import (`-l python`), index, query, and
+/// check `expected_lines`/`unexpected_lines` against the SARIF's source lines.
+///
+/// Self-skips (rather than failing) when no Python interpreter is available,
+/// mirroring the Ghidra `find_analyze_headless` skip in the pcode checks.
+///
+/// Unlike the DEX/JVM/pcode checks, no linemap or `addr2line` is needed: the
+/// Python frontend maps each instruction's position straight to a source line, so
+/// the SARIF locations already carry `startLine`.
+fn run_python(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
+    // The frontend shells out to `python3` (or `$PYTHON`). Skip cleanly if no
+    // usable interpreter is present. Probing with `--version` (not just a `which`
+    // existence check) also skips a non-functional stub -- notably macOS's
+    // `/usr/bin/python3` shim with no Xcode behind it -- rather than failing.
+    if !usable_python() {
+        return Ok(Outcome::Skip(
+            "no usable python interpreter (set PYTHON or add a working python3 to PATH)"
+                .to_string(),
+        ));
+    }
+
+    let work = scratch_dir(name)?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+
+    // Copy the source into the scratch dir so the store path is stable.
+    let stem = source
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .with_context(|| format!("bad python file name {}", source.display()))?;
+    let src = work.join(format!("{stem}.py"));
+    std::fs::copy(source, &src)
+        .with_context(|| format!("failed to copy {} into scratch dir", source.display()))?;
+
+    let project = format!("{stem}_py");
+    let sarif = work.join(format!("{stem}_output.sarif"));
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "import",
+            "-l",
+            "python",
+            &src.to_string_lossy(),
+            "-n",
+            &project,
+        ],
+    )?;
+    run_ctadl(&work, &state, &["index", &project])?;
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "query",
+            &project,
+            "-m",
+            &query.to_string_lossy(),
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
+    )?;
+
+    let expected = assertions::read_expected_lines(query)?;
+    let connects = assertions::codeflow_connects_source_and_sink(&sarif)?;
+
+    if expected.is_empty() {
+        // Negative case: no traced source -> sink flow may exist.
+        return Ok(if connects {
+            Outcome::Fail(
+                "expected no flow, but a code flow connects a source to a sink".to_string(),
+            )
+        } else {
+            Outcome::Pass
+        });
+    }
+
+    if !connects {
+        return Ok(Outcome::Fail(
+            "no code flow connects a source to a sink".to_string(),
+        ));
+    }
+
+    // The SARIF locations carry source lines directly.
+    let reached = assertions::collect_start_lines(&sarif)?;
+    let missing: Vec<i64> = expected
+        .iter()
+        .copied()
+        .filter(|line| !reached.contains(line))
+        .collect();
+    if !missing.is_empty() {
+        return Ok(Outcome::Fail(format!(
+            "expected lines {missing:?} not reached (reached {reached:?}; all of {expected:?} required)"
+        )));
+    }
+
+    let unexpected = assertions::read_unexpected_lines(query)?;
+    if let Some(why) = assertions::check_unexpected_lines(&unexpected, &reached) {
+        return Ok(Outcome::Fail(why));
+    }
+
+    Ok(Outcome::Pass)
 }
 
 // --- Ghidra existing-project import ---------------------------------------

@@ -24,6 +24,8 @@ pub enum Kind {
     Jvm { java: PathBuf, config: PathBuf },
     /// C compiled to an ELF object, mapped back to lines via `addr2line`.
     Pcode { source: PathBuf, query: PathBuf },
+    /// Python source (`.py`), whose SARIF locations already carry source lines.
+    Python { source: PathBuf, query: PathBuf },
 }
 
 impl Kind {
@@ -32,6 +34,7 @@ impl Kind {
             Kind::Dex { .. } => Frontend::Dex,
             Kind::Jvm { .. } => Frontend::Jvm,
             Kind::Pcode { .. } => Frontend::Pcode,
+            Kind::Python { .. } => Frontend::Python,
         }
     }
 }
@@ -45,16 +48,23 @@ pub enum Frontend {
     Dex,
     Jvm,
     Pcode,
+    Python,
 }
 
 impl Frontend {
-    pub const ALL: &'static [Frontend] = &[Frontend::Dex, Frontend::Jvm, Frontend::Pcode];
+    pub const ALL: &'static [Frontend] = &[
+        Frontend::Dex,
+        Frontend::Jvm,
+        Frontend::Pcode,
+        Frontend::Python,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Frontend::Dex => "dex",
             Frontend::Jvm => "jvm",
             Frontend::Pcode => "pcode",
+            Frontend::Python => "python",
         }
     }
 }
@@ -67,7 +77,10 @@ impl FromStr for Frontend {
             "dex" => Ok(Frontend::Dex),
             "jvm" => Ok(Frontend::Jvm),
             "pcode" => Ok(Frontend::Pcode),
-            other => bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode)"),
+            "python" | "py" => Ok(Frontend::Python),
+            other => {
+                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, python)")
+            }
         }
     }
 }
@@ -97,6 +110,7 @@ pub fn resolve_tests_dir(override_dir: Option<&Path>) -> Result<PathBuf> {
 pub fn discover(tests_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = discover_dex(&tests_dir.join("java"))?;
     cases.extend(discover_pcode(&tests_dir.join("c"))?);
+    cases.extend(discover_python(&tests_dir.join("python"))?);
     cases.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(cases)
 }
@@ -162,6 +176,39 @@ fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
         cases.push(TestCase {
             name: stem,
             kind: Kind::Pcode {
+                source: absolute(&entry)?,
+                query: absolute(&query)?,
+            },
+        });
+    }
+    Ok(cases)
+}
+
+/// Pair each `foo.py` with a query JSON (`foo-query.json`, else a shared
+/// `query.json`). Names are prefixed `Python:` so they never collide with a
+/// like-named C/Java case.
+fn discover_python(py_dir: &Path) -> Result<Vec<TestCase>> {
+    let mut cases = Vec::new();
+    if !py_dir.is_dir() {
+        return Ok(cases);
+    }
+    for entry in read_dir_sorted(py_dir)? {
+        if entry.extension().and_then(|e| e.to_str()) != Some("py") {
+            continue;
+        }
+        let stem = file_stem(&entry)?;
+        let specific = py_dir.join(format!("{stem}-query.json"));
+        let shared = py_dir.join("query.json");
+        let query = if specific.is_file() {
+            specific
+        } else if shared.is_file() {
+            shared
+        } else {
+            continue;
+        };
+        cases.push(TestCase {
+            name: format!("Python:{stem}"),
+            kind: Kind::Python {
                 source: absolute(&entry)?,
                 query: absolute(&query)?,
             },
