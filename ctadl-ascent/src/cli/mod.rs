@@ -212,6 +212,7 @@ pub fn index(
         ssa::eliminate_dead_temps(&mut program_info.program);
         ssa::coalesce_copies(&mut program_info.program);
         ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
+        ssa::propagate_copies(&mut program_info.program);
         log::info!(
             "[mem cp] after SSA transform: {:.1} MB",
             phys_footprint_mb()
