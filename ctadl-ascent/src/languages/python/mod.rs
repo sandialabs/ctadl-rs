@@ -86,6 +86,20 @@ struct Lowering {
     external_calls: BTreeMap<String, usize>,
     /// Names of functions actually defined by the program.
     defined_names: BTreeSet<String>,
+    /// Class function name → its `__init__` function name. A call to the class
+    /// (whose body function shares the class's name) is lowered as instantiation:
+    /// a fresh instance passed to `__init__`.
+    class_init: BTreeMap<String, String>,
+    /// Within the function being lowered, local variables currently holding a
+    /// function pointer (from `MAKE_FUNCTION` / a `def`), so a later call through
+    /// the local resolves as a direct call rather than an unresolved funcptr call.
+    func_ptr_locals: BTreeMap<String, String>,
+    /// True while lowering a generator body, so `YIELD_VALUE` feeds the
+    /// generator-result object and every `RETURN` yields that object.
+    in_generator: bool,
+    /// Exception-handler blocks (those beginning with `PUSH_EXC_INFO`) of the
+    /// function currently being lowered, so a `raise` can route to them.
+    handler_blocks: Vec<BasicBlockIdx>,
     counter: u32,
 }
 
@@ -116,6 +130,10 @@ impl Lowering {
             func_names: BTreeMap::new(),
             external_calls: BTreeMap::new(),
             defined_names: BTreeSet::new(),
+            class_init: BTreeMap::new(),
+            func_ptr_locals: BTreeMap::new(),
+            in_generator: false,
+            handler_blocks: Vec::new(),
             counter: 0,
         }
     }
@@ -139,13 +157,27 @@ impl Lowering {
     }
 
     /// Recursively assign function indices in document (pre-order) order.
-    fn register_code<'a>(&mut self, co: &'a CodeObject, ordered: &mut Vec<(u32, &'a CodeObject)>) {
+    fn register_code<'a>(
+        &mut self,
+        co: &'a CodeObject,
+        ordered: &mut Vec<(u32, &'a CodeObject)>,
+    ) -> String {
         let id = ordered.len() as u32;
         let idx = self.program.new_function();
         let name = self.unique_function_name(&co.name);
         self.program[idx].set_name(name.clone());
         self.program[idx].set_return_type(ReturnType { arity: 1 });
-        let nparams = (co.arg_count + co.kwonly_count).max(0) as usize;
+        // Positional + keyword-only parameters, plus the `*args` / `**kwargs`
+        // collector slots (which CPython lays out immediately after them in
+        // `co_varnames`). Counting them as parameters lets a positional call bind
+        // taint into `*args`, and lets the body's `LOAD_FAST args` resolve to it.
+        let mut nparams = (co.arg_count + co.kwonly_count).max(0) as usize;
+        if co.flags & CO_VARARGS != 0 {
+            nparams += 1;
+        }
+        if co.flags & CO_VARKEYWORDS != 0 {
+            nparams += 1;
+        }
         let nparams = nparams.min(co.varnames.len());
         for _ in 0..nparams {
             self.program[idx]
@@ -154,12 +186,18 @@ impl Lowering {
                 .push(ParameterType::ByRef);
         }
         self.defined_names.insert(co.name.clone());
-        self.func_names.insert(id, name);
+        self.func_names.insert(id, name.clone());
         self.functions.insert(id, FuncInfo { idx, nparams });
         ordered.push((id, co));
+        // Register nested code objects, noting any `__init__` method so a call to
+        // this (class) function can be lowered as instantiation.
         for nested in &co.nested_code_objects {
-            self.register_code(nested, ordered);
+            let nested_name = self.register_code(nested, ordered);
+            if nested.name == "__init__" {
+                self.class_init.insert(name.clone(), nested_name);
+            }
         }
+        name
     }
 
     /// A program-unique function name derived from `base` (the code object's
@@ -186,6 +224,8 @@ impl Lowering {
     fn lower_code_object(&mut self, id: u32, co: &CodeObject) -> Result<(), Error> {
         let func_idx = self.functions[&id].idx;
         let nparams = self.functions[&id].nparams;
+        self.in_generator = co.flags & CO_GENERATOR != 0;
+        self.func_ptr_locals.clear();
 
         // --- Build the CFG: leaders → blocks ---
         // A leader is the start of a basic block. Restrict to leaders that are
@@ -218,11 +258,32 @@ impl Lowering {
             blocks[bi].push(i);
         }
 
+        // Exception handlers begin with `PUSH_EXC_INFO`; a `raise` routes to them
+        // (the exception-table edge is not carried in `jump_targets`).
+        self.handler_blocks = blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, ins)| {
+                ins.first()
+                    .map(|&ii| co.instructions[ii].opname == "PUSH_EXC_INFO")
+                    .unwrap_or(false)
+            })
+            .map(|(bi, _)| block_ids[bi])
+            .collect();
+
+        // Operand-stack values that live across a block boundary (loop
+        // accumulators, the `FOR_ITER` iterator, exception values) are threaded
+        // through: each block is simulated starting from an entry stack seeded by
+        // its first-processed predecessor. Blocks run in ascending-offset order, so
+        // a pre-loop predecessor seeds a loop header before the back-edge is seen
+        // (first-writer-wins keeps that loop-invariant seed).
+        let mut entry_stacks: BTreeMap<BasicBlockIdx, Vec<Slot>> = BTreeMap::new();
+
         // Offset immediately following the last instruction of each block (its
         // fallthrough successor start), if any.
         for (bi, insn_indices) in blocks.iter().enumerate() {
             let block_idx = block_ids[bi];
-            let mut sim = StackSim::new();
+            let mut sim = StackSim::with_entry(entry_stacks.get(&block_idx).cloned().unwrap_or_default());
             let mut stmts: Vec<Statement> = Vec::new();
             let mut terminator: Option<Terminator> = None;
 
@@ -266,6 +327,20 @@ impl Lowering {
                         args: smallvec![Exp::new_bytes(Vec::new())],
                     }),
                 });
+            }
+
+            // Thread this block's exit stack to each successor that has not yet
+            // been seeded (first-writer-wins, so a loop header keeps its pre-loop
+            // seed rather than the back-edge's).
+            if let Some(Terminator {
+                kind: TerminatorKind::Goto { targets },
+                ..
+            }) = &terminator
+            {
+                let exit = sim.snapshot();
+                for succ in targets {
+                    entry_stacks.entry(*succ).or_insert_with(|| exit.clone());
+                }
             }
 
             let block = &mut self.program[func_idx].blocks.blocks_mut()[block_idx];
@@ -323,19 +398,43 @@ impl Lowering {
         match op {
             // --- No stack effect ---
             "RESUME" | "NOP" | "PRECALL" | "CACHE" | "MAKE_CELL" | "COPY_FREE_VARS"
-            | "PUSH_EXC_INFO" | "KW_NAMES" | "EXTENDED_ARG" | "RETURN_GENERATOR"
-            | "SETUP_ANNOTATIONS" | "POP_BLOCK" | "POP_EXCEPT" | "NOT_TAKEN" => {}
+            | "KW_NAMES" | "EXTENDED_ARG" | "RETURN_GENERATOR" | "SETUP_ANNOTATIONS"
+            | "POP_BLOCK" | "POP_EXCEPT" | "NOT_TAKEN" => {}
+
+            // Entry of an exception handler: push the in-flight exception so the
+            // handler's `STORE_FAST` (`except E as e`) binds it. Connected to the
+            // `raise` via the `<exc>` local.
+            "PUSH_EXC_INFO" => {
+                let ex = VariableRef::new_local(EXC_LOCAL.to_string());
+                sim.push(Slot::val(Exp::Variable(ex)));
+            }
+
+            // --- Loads of closure cells (shared with nested scopes) ---
+            "LOAD_DEREF" | "LOAD_CLASSDEREF" => {
+                let name = self.deref_name(co, insn);
+                let v = self.load_cell(stmts, &name, si);
+                sim.push(Slot::val(Exp::Variable(v)));
+            }
 
             // --- Loads of locals ---
-            "LOAD_FAST"
-            | "LOAD_FAST_CHECK"
-            | "LOAD_FAST_AND_CLEAR"
-            | "LOAD_DEREF"
-            | "LOAD_CLASSDEREF"
-            | "LOAD_FAST_BORROW" => {
+            "LOAD_FAST" | "LOAD_FAST_CHECK" | "LOAD_FAST_AND_CLEAR" | "LOAD_FAST_BORROW" => {
                 let idx = insn.arg.unwrap_or(0) as usize;
-                let v = self.local_ref(co, nparams, idx);
-                sim.push(Slot::val(Exp::Variable(v)));
+                // A fast index beyond `varnames` addresses a cell variable in its
+                // defining scope: route it to the shared cell namespace.
+                if idx >= co.varnames.len() {
+                    let name = self.deref_name(co, insn);
+                    let v = self.load_cell(stmts, &name, si);
+                    sim.push(Slot::val(Exp::Variable(v)));
+                } else {
+                    let v = self.local_ref(co, nparams, idx);
+                    // Carry a function-pointer name so a call through this local
+                    // resolves to a direct call.
+                    let fname = co
+                        .varnames
+                        .get(idx)
+                        .and_then(|n| self.func_ptr_locals.get(n).cloned());
+                    sim.push(Slot::named(Exp::Variable(v), fname));
+                }
             }
             "LOAD_FAST_LOAD_FAST" | "LOAD_FAST_BORROW_LOAD_FAST_BORROW" => {
                 let arg = insn.arg.unwrap_or(0) as usize;
@@ -345,12 +444,25 @@ impl Lowering {
                 sim.push(Slot::val(Exp::Variable(b)));
             }
 
-            // --- Stores of locals ---
-            "STORE_FAST" | "STORE_DEREF" | "STORE_FAST_MAYBE_NULL" => {
-                let idx = insn.arg.unwrap_or(0) as usize;
-                let dest = self.local_ref(co, nparams, idx);
+            // --- Stores of closure cells (shared with nested scopes) ---
+            "STORE_DEREF" => {
+                let name = self.deref_name(co, insn);
                 let v = self.pop_exp(sim);
-                stmts.push(Statement::new(StatementKind::assign(dest, [v]), si));
+                self.store_cell(stmts, &name, v, si);
+            }
+
+            // --- Stores of locals ---
+            "STORE_FAST" | "STORE_FAST_MAYBE_NULL" => {
+                let idx = insn.arg.unwrap_or(0) as usize;
+                let slot = self.pop_slot(sim);
+                if idx >= co.varnames.len() {
+                    let name = self.deref_name(co, insn);
+                    self.store_cell(stmts, &name, slot.exp, si);
+                } else {
+                    let dest = self.local_ref(co, nparams, idx);
+                    self.track_func_ptr_local(co, idx, &slot);
+                    stmts.push(Statement::new(StatementKind::assign(dest, [slot.exp]), si));
+                }
             }
             "STORE_FAST_STORE_FAST" => {
                 let arg = insn.arg.unwrap_or(0) as usize;
@@ -465,6 +577,9 @@ impl Lowering {
             }
             "FOR_ITER" => {
                 // Iterator stays on the stack; the yielded element is item(iter).
+                // The element is left on the stack on both the continue and the
+                // loop-exit edge (the exhausted element / iterator is cleaned up by
+                // the `END_FOR` at the loop-exit target).
                 let iter = sim.peek_exp(&mut || self.fresh());
                 let ivar = self.as_variable(stmts, iter, si);
                 let elt = self.load_attr(stmts, ivar, ITEM_FIELD, si);
@@ -473,9 +588,31 @@ impl Lowering {
                     return Ok(Some(goto_from(&insn.jump_targets, true)));
                 }
             }
+            // Cleans up after a `FOR_ITER` loop: pops the exhausted element the
+            // loop-exit edge still carries (its iterator is popped by the following
+            // `POP_TOP`). Without this the post-loop stack is misaligned and later
+            // `STORE_FAST`s bind the wrong values.
+            "END_FOR" | "END_ASYNC_FOR" => {
+                self.pop_exp(sim);
+            }
 
             // --- Container building ---
-            "BUILD_TUPLE" | "BUILD_LIST" | "BUILD_SET" | "BUILD_STRING" | "BUILD_CONST_KEY_MAP" => {
+            // A collection literal models each element as living in the container's
+            // shared `.item` field, so a later subscript / unpack / iteration
+            // (which all read `.item`) sees the element's taint.
+            "BUILD_TUPLE" | "BUILD_LIST" | "BUILD_SET" => {
+                let n = insn.arg.unwrap_or(0) as usize;
+                let elts = self.pop_n(sim, n);
+                let tmp = self.new_container(stmts, si);
+                for e in elts {
+                    self.store_attr(stmts, tmp.clone(), ITEM_FIELD, e, si);
+                }
+                sim.push(Slot::val(Exp::Variable(tmp)));
+            }
+            // A string join (f-strings, `str.join`-style concatenation) taints the
+            // whole result, not an element field: keep it a direct assignment so the
+            // concatenated value itself carries the taint.
+            "BUILD_STRING" => {
                 let n = insn.arg.unwrap_or(0) as usize;
                 let elts = self.pop_n(sim, n);
                 let tmp = self.fresh();
@@ -483,10 +620,26 @@ impl Lowering {
                 sim.push(Slot::val(Exp::Variable(tmp)));
             }
             "BUILD_MAP" => {
+                // n key/value pairs; only the values carry data-flow of interest.
                 let n = insn.arg.unwrap_or(0) as usize;
                 let elts = self.pop_n(sim, n * 2);
-                let tmp = self.fresh();
-                stmts.push(Statement::new(StatementKind::assign(tmp.clone(), elts), si));
+                let tmp = self.new_container(stmts, si);
+                for pair in elts.chunks(2) {
+                    if let [_key, value] = pair {
+                        self.store_attr(stmts, tmp.clone(), ITEM_FIELD, value.clone(), si);
+                    }
+                }
+                sim.push(Slot::val(Exp::Variable(tmp)));
+            }
+            "BUILD_CONST_KEY_MAP" => {
+                // n values on the stack, then a constant tuple of keys on top.
+                let n = insn.arg.unwrap_or(0) as usize;
+                let _keys = self.pop_exp(sim);
+                let vals = self.pop_n(sim, n);
+                let tmp = self.new_container(stmts, si);
+                for v in vals {
+                    self.store_attr(stmts, tmp.clone(), ITEM_FIELD, v, si);
+                }
                 sim.push(Slot::val(Exp::Variable(tmp)));
             }
             "LIST_APPEND" | "SET_ADD" => {
@@ -540,8 +693,11 @@ impl Lowering {
                 sim.push(code_slot);
             }
             "SET_FUNCTION_ATTRIBUTE" => {
-                // Pops the attribute value, leaves the function on the stack.
+                // TOS is the function, TOS1 the attribute value (defaults, closure,
+                // …). Pop the value, keep the function on the stack.
+                let func = self.pop_slot(sim);
                 self.pop_exp(sim);
+                sim.push(func);
             }
 
             // --- Calls ---
@@ -550,25 +706,7 @@ impl Lowering {
                 self.lower_call(op, argc, sim, stmts, si);
             }
             "CALL_FUNCTION_EX" => {
-                // callable, (self?), args tuple, and (if arg&1) kwargs dict.
-                let extra = if insn.arg.map(|a| a & 1 == 1).unwrap_or(false) {
-                    1
-                } else {
-                    0
-                };
-                self.pop_n(sim, 2 + extra); // args (+kwargs) + callable-or-self
-                let callee = sim.pop(&mut || self.fresh());
-                let ret = self.fresh();
-                let style = self.call_style_for(callee);
-                stmts.push(Statement::new(
-                    StatementKind::CallAssign {
-                        style,
-                        rets: ctadl_ir::thin_vec![ret.clone()],
-                        args: ctadl_ir::thin_vec![],
-                    },
-                    si,
-                ));
-                sim.push(Slot::val(Exp::Variable(ret)));
+                self.lower_call_ex(insn, sim, stmts, si);
             }
 
             // --- Copies / stack shuffles ---
@@ -596,6 +734,17 @@ impl Lowering {
             }
             "PUSH_NULL" => sim.push(Slot::null()),
 
+            // --- Yields ---
+            // Each yielded value becomes an element of the generator-result object;
+            // the value the resumed `yield` evaluates to (a `.send()` argument) is
+            // modeled as an unknown fresh value.
+            "YIELD_VALUE" => {
+                let v = self.pop_exp(sim);
+                let gr = VariableRef::new_local(GEN_RESULT.to_string());
+                self.store_attr(stmts, gr, ITEM_FIELD, v, si);
+                sim.push(Slot::val(Exp::Variable(self.fresh())));
+            }
+
             // --- Returns / raises ---
             "RETURN_VALUE" => {
                 let v = self.pop_exp(sim);
@@ -607,9 +756,26 @@ impl Lowering {
                 } else {
                     0
                 };
-                self.pop_n(sim, n);
-                return Ok(Some(Terminator::new_kind(TerminatorKind::Return {
-                    args: smallvec![Exp::new_bytes(Vec::new())],
+                let popped = self.pop_n(sim, n);
+                // `raise exc` / `raise exc from cause`: the exception object is the
+                // first-pushed operand. Store it into `<exc>` so a handler recovers
+                // it, since the raise→handler edge is not in `jump_targets`.
+                if let Some(exc) = popped.first() {
+                    let ex = VariableRef::new_local(EXC_LOCAL.to_string());
+                    stmts.push(Statement::new(
+                        StatementKind::assign(ex, [exc.clone()]),
+                        si,
+                    ));
+                }
+                // Route to this function's handlers so their blocks are reachable
+                // and `<exc>` flows in; fall back to a return when there are none.
+                if self.handler_blocks.is_empty() {
+                    return Ok(Some(Terminator::new_kind(TerminatorKind::Return {
+                        args: smallvec![Exp::new_bytes(Vec::new())],
+                    })));
+                }
+                return Ok(Some(Terminator::new_kind(TerminatorKind::Goto {
+                    targets: self.handler_blocks.iter().copied().collect(),
                 })));
             }
 
@@ -695,9 +861,16 @@ impl Lowering {
         let mut popped = self.pop_n_slots(sim, total);
         popped.reverse();
 
-        // The callee is the first slot carrying a name; NULL slots are dropped;
-        // remaining non-null slots (in push order) are the actual arguments.
-        let callee_pos = popped.iter().position(|s| s.name.is_some());
+        // The callee is the first slot carrying a name (a global/method/function
+        // pointer). When none is named — a call through a local holding a function
+        // (`f = ...; f()`) — the callable is the deepest non-NULL slot (its fixed
+        // position in the `[callable, self_or_null, args...]` layout); an indirect
+        // call through that value then resolves via the function pointer it holds.
+        // NULL slots are dropped; the remaining non-null slots are the arguments.
+        let callee_pos = popped
+            .iter()
+            .position(|s| s.name.is_some())
+            .or_else(|| popped.iter().position(|s| !s.is_null));
         let callee = callee_pos.map(|p| popped[p].clone());
         let mut args: ctadl_ir::ThinVec<Exp> = ctadl_ir::ThinVec::new();
         for (i, slot) in popped.iter().enumerate() {
@@ -705,6 +878,54 @@ impl Lowering {
                 continue;
             }
             args.push(slot.exp.clone());
+        }
+
+        // A method call carries a non-NULL receiver in the slot just below the
+        // callee (a plain function call has a NULL there instead). For the common
+        // container-mutating methods we model the element flow into the receiver's
+        // `.item` field, which is how the value later comes back out via
+        // subscript/iteration. The call itself is still emitted below so any
+        // interprocedural summary (user-defined methods) also applies.
+        if let (Some(cpos), Some(name)) = (callee_pos, callee.as_ref().and_then(|c| c.name.clone()))
+            && cpos >= 1
+            && !popped[cpos - 1].is_null
+        {
+            let receiver = popped[cpos - 1].exp.clone();
+            // The actual arguments in push order (receiver and callee excluded).
+            let call_args: Vec<Exp> = popped[cpos + 1..]
+                .iter()
+                .filter(|s| !s.is_null)
+                .map(|s| s.exp.clone())
+                .collect();
+            self.model_container_method(&name, receiver, &call_args, stmts, si);
+        }
+
+        // Instantiating a class: a call whose callee names a class (its body
+        // function) is lowered as `instance = new; __init__(instance, args...)`,
+        // and the call's result is the instance (so `self.x = ...` in `__init__`
+        // is visible on the constructed object). The class body itself only
+        // installs methods, so running it is unnecessary for data flow.
+        if let Some(name) = callee.as_ref().and_then(|c| c.name.clone())
+            && let Some(init) = self.class_init.get(&name).cloned()
+        {
+            let instance = self.new_container(stmts, si);
+            let mut init_args: ctadl_ir::ThinVec<Exp> =
+                ctadl_ir::thin_vec![Exp::Variable(instance.clone())];
+            init_args.extend(args.iter().cloned());
+            let style = CallStyle::DirectCall {
+                call_edges: CallEdges::Explicit(ctadl_ir::thin_vec![init]),
+            };
+            let ret = self.fresh();
+            stmts.push(Statement::new(
+                StatementKind::CallAssign {
+                    style,
+                    rets: ctadl_ir::thin_vec![ret],
+                    args: init_args,
+                },
+                si,
+            ));
+            sim.push(Slot::val(Exp::Variable(instance)));
+            return;
         }
 
         let style = match callee {
@@ -715,14 +936,7 @@ impl Lowering {
             },
         };
         // Record the arg count against any direct-call name for external stubs.
-        if let CallStyle::DirectCall {
-            call_edges: CallEdges::Explicit(edges),
-        } = &style
-            && let Some(name) = edges.first()
-        {
-            let entry = self.external_calls.entry(name.to_string()).or_insert(0);
-            *entry = (*entry).max(args.len());
-        }
+        self.record_external_call(&style, args.len());
 
         let ret = self.fresh();
         stmts.push(Statement::new(
@@ -734,6 +948,118 @@ impl Lowering {
             si,
         ));
         sim.push(Slot::val(Exp::Variable(ret)));
+    }
+
+    /// Lower `CALL_FUNCTION_EX` (a call with splatted `*args` / `**kwargs`).
+    ///
+    /// The stack, top-down, is `[kwargs?, args_iterable, callable, self_or_NULL]`.
+    /// Since a splatted value's binding to a specific positional/keyword parameter
+    /// is not recoverable here, we collapse the args iterable, the kwargs mapping,
+    /// and each one's element (`.item`) into a single aggregate and route it into
+    /// the callee's first parameter — imprecise, but it preserves reachability.
+    fn lower_call_ex(
+        &mut self,
+        insn: &Instruction,
+        sim: &mut StackSim,
+        stmts: &mut Vec<Statement>,
+        si: SourceInfo,
+    ) {
+        let has_kwargs = insn.arg.map(|a| a & 1 == 1).unwrap_or(false);
+        let kwargs = if has_kwargs {
+            Some(self.pop_exp(sim))
+        } else {
+            None
+        };
+        let args_iter = self.pop_exp(sim);
+        let callee = self.pop_slot(sim);
+        let _self_or_null = self.pop_slot(sim);
+
+        let mut contributors: Vec<Exp> = vec![args_iter.clone()];
+        let ai = self.as_variable(stmts, args_iter, si);
+        let ai_item = self.load_attr(stmts, ai, ITEM_FIELD, si);
+        contributors.push(Exp::Variable(ai_item));
+        if let Some(kw) = kwargs {
+            contributors.push(kw.clone());
+            let kv = self.as_variable(stmts, kw, si);
+            let kv_item = self.load_attr(stmts, kv, ITEM_FIELD, si);
+            contributors.push(Exp::Variable(kv_item));
+        }
+        let merged = self.fresh();
+        stmts.push(Statement::new(
+            StatementKind::assign(merged.clone(), contributors.clone()),
+            si,
+        ));
+        // Also expose the aggregate's taint via `.item` so a callee that subscripts
+        // its collected `*args` recovers it.
+        for c in contributors {
+            self.store_attr(stmts, merged.clone(), ITEM_FIELD, c, si);
+        }
+
+        let style = self.call_style_for(callee);
+        self.record_external_call(&style, 1);
+        let ret = self.fresh();
+        stmts.push(Statement::new(
+            StatementKind::CallAssign {
+                style,
+                rets: ctadl_ir::thin_vec![ret.clone()],
+                args: ctadl_ir::thin_vec![Exp::Variable(merged)],
+            },
+            si,
+        ));
+        sim.push(Slot::val(Exp::Variable(ret)));
+    }
+
+    /// Record a direct call's argument count so a bodyless external stub with
+    /// enough parameters is synthesized for a called-but-undefined name.
+    fn record_external_call(&mut self, style: &CallStyle, argc: usize) {
+        if let CallStyle::DirectCall {
+            call_edges: CallEdges::Explicit(edges),
+        } = style
+            && let Some(name) = edges.first()
+        {
+            let entry = self.external_calls.entry(name.to_string()).or_insert(0);
+            *entry = (*entry).max(argc);
+        }
+    }
+
+    /// Model a call to a well-known container-mutating method by routing the added
+    /// element(s) into the receiver's shared `.item` field, so a later
+    /// subscript/iteration recovers the taint. Unknown method names are ignored
+    /// here (the ordinary call is still emitted by the caller).
+    fn model_container_method(
+        &mut self,
+        name: &str,
+        receiver: Exp,
+        args: &[Exp],
+        stmts: &mut Vec<Statement>,
+        si: SourceInfo,
+    ) {
+        let rvar = self.as_variable(stmts, receiver, si);
+        match name {
+            // Single value appended/added: `list.append`, `set.add`,
+            // `deque.appendleft`, `set.discard`.
+            "append" | "add" | "appendleft" | "discard" => {
+                if let Some(v) = args.first() {
+                    self.store_attr(stmts, rvar, ITEM_FIELD, v.clone(), si);
+                }
+            }
+            // `list.insert(i, value)`: the value is the last argument.
+            "insert" => {
+                if let Some(v) = args.last() {
+                    self.store_attr(stmts, rvar, ITEM_FIELD, v.clone(), si);
+                }
+            }
+            // Bulk merge from another container: pull the source's elements
+            // (`other.item`) into the receiver's `.item`.
+            "extend" | "extendleft" | "update" => {
+                if let Some(other) = args.first() {
+                    let ovar = self.as_variable(stmts, other.clone(), si);
+                    let elt = self.load_attr(stmts, ovar, ITEM_FIELD, si);
+                    self.store_attr(stmts, rvar, ITEM_FIELD, Exp::Variable(elt), si);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// The call style for a resolved callee slot: a direct call to a named target,
@@ -778,7 +1104,49 @@ impl Lowering {
                     .parameters
                     .push(ParameterType::ByRef);
             }
+            if argc >= 1 {
+                self.emit_external_stub_body(idx, argc);
+            }
         }
+    }
+
+    /// Give an external stub a conservative taint summary: its return value
+    /// carries every argument, so an unknown callee is assumed to derive its
+    /// result from its inputs. The result also exposes the arguments as its
+    /// elements (`.item`, for container-like builtins) and as its `.args` tuple
+    /// (for exception constructors, so `except E as e: e.args[0]` recovers them).
+    fn emit_external_stub_body(&mut self, idx: FunctionIdx, argc: usize) {
+        let si = self.zero_source_info();
+        let params: Vec<Exp> = (0..argc)
+            .map(|i| Exp::Variable(VariableRef::new_parameter(ParameterIdx::new(i))))
+            .collect();
+        let mut stmts: Vec<Statement> = Vec::new();
+
+        let ret = self.fresh();
+        // ret aliases the arguments (identity / transfer-style callees).
+        stmts.push(Statement::new(
+            StatementKind::assign(ret.clone(), params.clone()),
+            si,
+        ));
+        // ret.item := each argument (container-returning callees).
+        for p in &params {
+            self.store_attr(&mut stmts, ret.clone(), ITEM_FIELD, p.clone(), si);
+        }
+        // ret.args := (args...) with each argument an element (exceptions).
+        let argtuple = self.new_container(&mut stmts, si);
+        for p in &params {
+            self.store_attr(&mut stmts, argtuple.clone(), ITEM_FIELD, p.clone(), si);
+        }
+        self.store_attr(&mut stmts, ret.clone(), ARGS_FIELD, Exp::Variable(argtuple), si);
+
+        let block_idx = self.program[idx].blocks.new_block();
+        let block = &mut self.program[idx].blocks.blocks_mut()[block_idx];
+        for s in stmts {
+            block.push_back(s);
+        }
+        block.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
+            args: smallvec![Exp::Variable(ret)],
+        }));
     }
 
     // --- Value helpers ----------------------------------------------------
@@ -867,6 +1235,18 @@ impl Lowering {
         out
     }
 
+    /// Pop the top slot (name/null metadata preserved), fresh temp on underflow.
+    fn pop_slot(&mut self, sim: &mut StackSim) -> Slot {
+        let mut counter = self.counter;
+        let slot = sim.pop(&mut || {
+            let v = VariableRef::new_local(format!("temp_{counter}"));
+            counter += 1;
+            v
+        });
+        self.counter = counter;
+        slot
+    }
+
     fn pop_n_slots(&mut self, sim: &mut StackSim, n: usize) -> Vec<Slot> {
         let mut out = Vec::with_capacity(n);
         for _ in 0..n {
@@ -880,6 +1260,14 @@ impl Lowering {
             out.push(slot);
         }
         out
+    }
+
+    /// A fresh, empty container temporary usable as a load/store base for its
+    /// element (`.item`) field.
+    fn new_container(&mut self, stmts: &mut Vec<Statement>, si: SourceInfo) -> VariableRef {
+        let tmp = self.fresh();
+        stmts.push(Statement::new(StatementKind::assign(tmp.clone(), []), si));
+        tmp
     }
 
     /// Ensure `exp` is a bare variable, materializing a copy if it is a
@@ -896,6 +1284,52 @@ impl Lowering {
                 tmp
             }
         }
+    }
+
+    /// Record (or clear) whether local `idx` currently holds a function pointer,
+    /// so a later `LOAD_FAST` + call through it becomes a direct call.
+    fn track_func_ptr_local(&mut self, co: &CodeObject, idx: usize, slot: &Slot) {
+        let Some(varname) = co.varnames.get(idx).cloned() else {
+            return;
+        };
+        if let Exp::ObjectRef(ctadl_ir::CallObject::FunctionPtr(n)) = &slot.exp {
+            self.func_ptr_locals.insert(varname, n.to_string());
+        } else {
+            self.func_ptr_locals.remove(&varname);
+        }
+    }
+
+    /// The resolved name of a cell/free variable, taken from the instruction's
+    /// `argval` (which `dis` fills in for `*_DEREF` and cell `*_FAST` ops).
+    fn deref_name(&self, co: &CodeObject, insn: &Instruction) -> String {
+        if let ConstEntry::Str(s) = &insn.argval {
+            return s.clone();
+        }
+        insn.arg
+            .and_then(|a| co.varnames.get(a as usize))
+            .cloned()
+            .unwrap_or_else(|| format!("cell{}", insn.arg.unwrap_or(0)))
+    }
+
+    /// Load a closure cell from the shared cell namespace.
+    fn load_cell(&mut self, stmts: &mut Vec<Statement>, name: &str, si: SourceInfo) -> VariableRef {
+        self.load_attr(
+            stmts,
+            VariableRef::new_global(),
+            &format!("{CELL_PREFIX}{name}"),
+            si,
+        )
+    }
+
+    /// Store a closure cell into the shared cell namespace.
+    fn store_cell(&mut self, stmts: &mut Vec<Statement>, name: &str, src: Exp, si: SourceInfo) {
+        self.store_attr(
+            stmts,
+            VariableRef::new_global(),
+            &format!("{CELL_PREFIX}{name}"),
+            src,
+            si,
+        );
     }
 
     fn load_global(
@@ -951,8 +1385,16 @@ impl Lowering {
     }
 
     fn return_terminator(&self, exp: Exp) -> Terminator {
+        // A generator hands its caller the result object accumulating every
+        // `yield`, not the bytecode-level return value (which is `None` / the
+        // `StopIteration` payload).
+        let arg = if self.in_generator {
+            Exp::Variable(VariableRef::new_local(GEN_RESULT.to_string()))
+        } else {
+            exp
+        };
         Terminator::new_kind(TerminatorKind::Return {
-            args: smallvec![exp],
+            args: smallvec![arg],
         })
     }
 
@@ -982,6 +1424,16 @@ impl Lowering {
         ))
     }
 
+    /// A `SourceInfo` with no meaningful span, for synthesized statements that do
+    /// not correspond to a source location (external-stub bodies).
+    fn zero_source_info(&mut self) -> SourceInfo {
+        SourceInfo::new(self.source_info_builder.span_for(
+            self.artifact_key.clone(),
+            0,
+            source_info::SpanLen::ByteLen(1),
+        ))
+    }
+
     fn finish(self) -> Result<ProgramInfo, Error> {
         log::trace!("python IR program:\n{}", self.program);
         self.program
@@ -999,6 +1451,32 @@ impl Lowering {
 /// append). All elements of a collection alias this single field — a
 /// field-insensitive but sound model of collection contents.
 const ITEM_FIELD: &str = "item";
+
+/// `co_flags` bit for a `*args` collector parameter (`CO_VARARGS`).
+const CO_VARARGS: i64 = 0x04;
+/// `co_flags` bit for a `**kwargs` collector parameter (`CO_VARKEYWORDS`).
+const CO_VARKEYWORDS: i64 = 0x08;
+/// `co_flags` bit marking a generator function (`CO_GENERATOR`).
+const CO_GENERATOR: i64 = 0x20;
+
+/// The synthetic local modeling a generator's produced sequence: each `yield`
+/// stores into its `.item` field, and the generator's returns hand back this
+/// object, so a caller iterating the generator recovers the yielded taint.
+const GEN_RESULT: &str = "<gen_result>";
+
+/// The synthetic per-function local carrying the in-flight exception, connecting
+/// a `raise` (which stores into it) to a handler's `PUSH_EXC_INFO` (which loads
+/// it) — the raise→catch edge is not present in `jump_targets`.
+const EXC_LOCAL: &str = "<exc>";
+
+/// The symbolic field modeling `BaseException.args` (the tuple of constructor
+/// arguments), so `except E as e: e.args[0]` recovers a raised value.
+const ARGS_FIELD: &str = "args";
+
+/// Field-name prefix for a closure cell variable, kept in a shared namespace so a
+/// value stored into a cell by the enclosing function is read back by the nested
+/// function that closes over it.
+const CELL_PREFIX: &str = "cell:";
 
 /// A value on the simulated operand stack.
 #[derive(Clone)]
@@ -1041,8 +1519,15 @@ struct StackSim {
 }
 
 impl StackSim {
-    fn new() -> Self {
-        StackSim { stack: Vec::new() }
+    /// Start the simulation from a known entry stack (threaded from a predecessor
+    /// block), or empty (`vec![]`) for the entry block.
+    fn with_entry(stack: Vec<Slot>) -> Self {
+        StackSim { stack }
+    }
+
+    /// A snapshot of the current stack, for threading to successor blocks.
+    fn snapshot(&self) -> Vec<Slot> {
+        self.stack.clone()
     }
 
     fn push(&mut self, slot: Slot) {
