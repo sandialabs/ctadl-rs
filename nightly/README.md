@@ -107,9 +107,10 @@ code-flow regions — no compiler, no Ghidra, no `addr2line`, and no macOS skip
 `expected_lines` entry is among the reached lines, a code flow connects a source
 to a sink, and no `unexpected_lines` entry is reached. The `c` frontend is still
 maturing, so a short quarantine list in `xtask/src/regression.rs`
-(`C_KNOWN_FAILURES`) reports its current gaps as **XFAIL** instead of failing the
-suite; every other `C:` case is enforced. Remove an entry once its case passes so
-a later regression is caught.
+(`C_KNOWN_FAILURES`) reports its current gaps (pointer arithmetic and an elided
+interprocedural code-flow step) as **XFAIL** instead of failing the suite; every
+other `C:` case is enforced. Remove an entry once its case passes so a later
+regression is caught.
 
 ## Asserting that a line stays clean
 

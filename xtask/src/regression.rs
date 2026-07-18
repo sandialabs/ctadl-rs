@@ -67,9 +67,6 @@ const JVM_E2E_ENFORCED: &[&str] = &[
 /// reporting names, so they cannot collide with the Pcode case over the same
 /// source, and quarantining one never affects that Pcode case.
 const C_KNOWN_FAILURES: &[&str] = &[
-    // The frontend rejects a subscript inside a field access (`arr[i].field`):
-    // "Unsupported object in field access: subscript_expression".
-    "C:arrayofstruct",
     // Taint is not yet resolved through pointer arithmetic (`*(p + 2)`) back to
     // the aliased array slot, so no source -> sink flow is traced.
     "C:ptrarith",

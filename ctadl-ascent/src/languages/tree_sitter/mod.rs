@@ -2132,27 +2132,13 @@ impl<'a> Context<'a> {
                 self.flatten_expr(program, inner_node, source, scope_view)
             }
             "field_expression" => {
-                // A field read on the RHS: lower it to a sequence of loads and yield the loaded
-                // value. (As an lvalue it is handled by `flatten_lvalue` instead.)
-                let mut path_vec = Vec::<&str>::new();
-                let final_ident = extract_field_expression(node, source, &mut path_vec)?;
-                // If the base is a union variable, collapse the accessed member (the first
-                // path segment) to a single synthetic field so all members share one access
-                // path -- `u.a` and `u.b` both become `u.$union`, so a write to one member is
-                // observed at a read of another (union members alias; F4). Structs are not in
-                // `union_vars`, so their fields stay genuinely disjoint.
-                if !path_vec.is_empty()
-                    && self
-                        .union_vars
-                        .contains(&self.build_access_path(final_ident, Default::default(), scope_view).base)
-                {
-                    path_vec[0] = UNION_FIELD;
-                }
-                let ap = self.build_access_path(
-                    final_ident,
-                    path_vec.into_iter().map(PathSegment::symbol).collect(),
-                    scope_view,
-                );
+                // A field read on the RHS. Resolve the location as an lvalue -- which composes
+                // this field onto any base (variable, array element, deref) and applies the
+                // union-member collapse -- then lower it to loads and yield the loaded value,
+                // exactly as `flatten_subscript` does for `a[i]`. Keeping the read and lvalue
+                // paths on the same resolver is what lets `a[i].f` (a field of an array element)
+                // work on both sides of an assignment.
+                let ap = self.flatten_lvalue(program, node, source, scope_view)?;
                 Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
             }
             "assignment_expression" => self.collect_assignment(
@@ -2646,25 +2632,33 @@ impl<'a> Context<'a> {
                 Ok(self.build_access_path(to_str(&node, source), Default::default(), scope_view))
             }
             "field_expression" => {
-                let mut path_vec = Vec::<&str>::new();
-                let final_ident = extract_field_expression(node, source, &mut path_vec)?;
-                // Collapse a union member store to the shared `$union` field so a write to one
-                // member is observed at a read of another (union members alias; F4). Mirrors the
-                // read path in `flatten_expr`.
-                if !path_vec.is_empty()
-                    && self.union_vars.contains(
-                        &self
-                            .build_access_path(final_ident, Default::default(), scope_view)
-                            .base,
-                    )
-                {
-                    path_vec[0] = UNION_FIELD;
-                }
-                Ok(self.build_access_path(
-                    final_ident,
-                    path_vec.into_iter().map(PathSegment::symbol).collect(),
-                    scope_view,
-                ))
+                // Resolve the object being accessed as an lvalue *first*, then append this
+                // field. Recursing through `flatten_lvalue` (rather than walking an
+                // identifier-rooted chain of `field_expression`s) lets a field be composed on
+                // top of ANY location -- a plain variable (`s.f`), an array element
+                // (`a[i].f`), a pointer deref (`p->f` / `(*p).f`) -- so the base's own path
+                // (e.g. the `[i]` index segment a subscript contributes) is preserved and the
+                // field is layered onto it.
+                let argument = node
+                    .child_by_field_name("argument")
+                    .expect("field_expression always has an argument");
+                let field = node
+                    .child_by_field_name("field")
+                    .expect("field_expression always has a field");
+                let mut base = self.flatten_lvalue(program, argument, source, scope_view)?;
+                // Collapse a union member access to the shared `$union` field so a write to one
+                // member is observed at a read of another (union members alias; F4). Only the
+                // access *on the union variable itself* collapses -- detected by the resolved
+                // base being the bare union variable -- so a struct field nested inside a union
+                // member (`u.a.b`) keeps its own name. This matches the prior behavior of
+                // rewriting only the first path segment.
+                let seg = if base.is_pathless() && self.union_vars.contains(&base.base) {
+                    PathSegment::symbol(UNION_FIELD)
+                } else {
+                    PathSegment::symbol(to_str(&field, source))
+                };
+                base.fields.push(seg);
+                Ok(base)
             }
             "subscript_expression" => {
                 let base = self.flatten_lvalue(
@@ -2848,51 +2842,3 @@ pub fn debug_print_tree(
     }
 }
 
-// this returns the field expresion chained from the 1st field_expression,
-// The final argument of kind "identifier" is returned, as it needs to be stuffed
-// in the variable field, while the rest (the out_vec) is the path
-
-fn extract_field_expression<'a>(
-    mut chain: Node<'a>,
-    source: &'a str,
-    out_vec: &mut Vec<&'a str>,
-) -> anyhow::Result<&'a str, Error> {
-    // Peel parentheses and pointer derefs so `(*p).x` / `(p)->x` resolve the same as
-    // `p->x` (CTADL does not distinguish `*p` from `p`). Without this the object of a
-    // `field_expression` could be a `parenthesized_expression` / `pointer_expression`,
-    // which used to trip the assert below (a panic on `(*p).x`).
-    loop {
-        match chain.kind() {
-            "parenthesized_expression" => {
-                chain = chain.child(1).expect("parenthesized_expression inner");
-            }
-            "pointer_expression" => {
-                chain = chain
-                    .child_by_field_name("argument")
-                    .expect("pointer_expression always has an argument");
-            }
-            _ => break,
-        }
-    }
-    if chain.kind() == "identifier" {
-        return Ok(to_str(&chain, source));
-    }
-    //otherwise, we have a field expression, and expect 2 children.
-    if chain.kind() != "field_expression" {
-        debug_print_tree(chain, 0, None, None);
-        return Err(Error::TreeSitterParse(format!(
-            "ERR 78: Unsupported object in field access: {}",
-            chain.kind()
-        )));
-    }
-    let argument = chain
-        .child_by_field_name("argument")
-        .expect("expected all field_expressions have argument,field children");
-    let field = chain
-        .child_by_field_name("field")
-        .expect("expected all field_expressions have argument,field children");
-
-    let final_res = extract_field_expression(argument, source, out_vec);
-    out_vec.push(to_str(&field, source));
-    final_res
-}

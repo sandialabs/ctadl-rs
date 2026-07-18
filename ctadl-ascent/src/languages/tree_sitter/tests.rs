@@ -665,6 +665,48 @@ fn array_declaration_element_flows_to_return() {
 }
 
 #[test_log::test]
+fn array_of_struct_field_is_index_and_field_sensitive() {
+    // A field access whose object is itself an array element (`a[i].f`) used to fail ingestion
+    // ("ERR 78: Unsupported object in field access: subscript_expression"). It now composes the
+    // subscript's `.[i]` segment with the field, so `a[1].y` is the access path `a.[1].y` on both
+    // sides of an assignment -- a single slot named by an index *and* a field offset.
+    //
+    // The three fixtures pin that the composed path is precise in both dimensions: taint written
+    // to `a[1].y` is observed at a read of `a[1].y`, but not at a read that shares only the field
+    // (`a[0].y`) or only the element (`a[1].x`). This is the frontend-unit complement to the
+    // `arrayofstruct` regression case, whose `unexpected_lines` make the same precision claim.
+    let same = r"
+        struct pt { int x; int y; };
+        int f(int b) {
+            struct pt a[3];
+            a[1].y = b;
+            return a[1].y;
+        }";
+    let (s, _si) = get_summary(program_from_string(same).0).unwrap();
+    check_returns_param(&s, 0, ""); // same element, same field -> flows
+
+    let other_field = r"
+        struct pt { int x; int y; };
+        int f(int b) {
+            struct pt a[3];
+            a[1].y = b;
+            return a[1].x;
+        }";
+    let (s, _si) = get_summary(program_from_string(other_field).0).unwrap();
+    check_does_not_return_param(&s, 0, ""); // same element, other field -> no flow
+
+    let other_index = r"
+        struct pt { int x; int y; };
+        int f(int b) {
+            struct pt a[3];
+            a[1].y = b;
+            return a[0].y;
+        }";
+    let (s, _si) = get_summary(program_from_string(other_index).0).unwrap();
+    check_does_not_return_param(&s, 0, ""); // other element, same field -> no flow
+}
+
+#[test_log::test]
 fn field_blend_into_field_update() {
     // A field store whose right-hand side is a sum mixing a direct field load with a value routed
     // through a local: `v->f4 = v->f5 + b`, where `b = v->f1 + v->f3`. All three source fields flow
@@ -1401,7 +1443,8 @@ fn arrow_field_returns_param() {
 fn deref_paren_field_equivalent() {
     // `(*p).x` is the same field access as `p->x` (see `arrow_field_returns_param`), yielding
     // @p0.x -> return. The frontend used to panic on the parenthesized-deref-then-field shape;
-    // `extract_field_expression` now peels parens/derefs so it resolves like `p->x`.
+    // `flatten_lvalue` now resolves the field's object (`(*p)`) recursively -- peeling the paren
+    // and deref -- so it resolves like `p->x`.
     let src = r"
         int f(Field *p) {
             return (*p).x;
