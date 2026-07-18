@@ -389,7 +389,7 @@ fn resolve_dex_apk(override_path: Option<&Path>) -> Result<Option<PathBuf>> {
 /// (`dex-reader`/`jvm-reader`) are workspace-excluded and come from `PATH`, so those are still just
 /// presence-checked here.
 fn preflight(cases: &[TestCase], ghidra_selected: bool, release: bool) -> Result<()> {
-    let bin = build_ctadl(release)?;
+    let bin = prebuilt_ctadl()?.map_or_else(|| build_ctadl(release), Ok)?;
     // First (and only) writer; a later worker reading it back via `ctadl_bin`
     // sees this value.
     CTADL_BIN
@@ -765,6 +765,32 @@ fn ctadl_bin() -> Result<PathBuf> {
 /// stream and take the `executable` path from the `ctadl` compiler-artifact
 /// message, so there is no guessing about the profile directory or a `.exe`
 /// suffix: cargo tells us exactly where it wrote the binary.
+/// A prebuilt `ctadl` binary to run against, taken from `$CTADL_BIN`.
+///
+/// The default flow rebuilds `ctadl` from the tree under test so a stale binary
+/// can never mask a regression (see [`build_ctadl`]). But some environments have
+/// no source tree and no `cargo` to build with -- notably the Nix `regression`
+/// check, which runs the prebuilt `xtask` against the `ctadl` that ships in
+/// `packages.default`. There, `$CTADL_BIN` points at that binary and we trust it
+/// rather than trying (and failing) to compile.
+///
+/// Returns `Ok(None)` when the variable is unset (the normal build-from-source
+/// path) and an error only when it is set but does not name a real file.
+fn prebuilt_ctadl() -> Result<Option<PathBuf>> {
+    let Some(raw) = std::env::var_os("CTADL_BIN") else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(raw);
+    if !path.is_file() {
+        bail!(
+            "$CTADL_BIN is set to `{}`, but that is not a file",
+            path.display()
+        );
+    }
+    println!("Using prebuilt ctadl from $CTADL_BIN: {}", path.display());
+    Ok(Some(path))
+}
+
 fn build_ctadl(release: bool) -> Result<PathBuf> {
     // `cargo` sets `$CARGO` for the subcommands it spawns (`cargo xtask` is one),
     // so prefer it; fall back to the bare name for a direct `xtask` invocation.
