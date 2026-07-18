@@ -183,6 +183,48 @@ pub fn collect_codeflow_byte_offsets(sarif: &Path) -> Result<BTreeSet<i64>> {
     Ok(out)
 }
 
+/// Collect every source line (`region.startLine`) reached by a code-flow step,
+/// i.e. the start lines under
+/// `runs[].results[].codeFlows[].threadFlows[].locations[]`.
+///
+/// This is the tree-sitter C frontend's analogue of
+/// [`collect_codeflow_byte_offsets`]: because that frontend parses the source
+/// directly, its SARIF carries real source spans, so a case's `expected_lines`
+/// are matched against these start lines with no compiler or `addr2line` in the
+/// loop. Scoping to code-flow steps (rather than any `startLine` in the
+/// document) keeps the check sensitive to the flow actually being traced,
+/// exactly as the byte-offset variant does.
+pub fn collect_codeflow_source_lines(sarif: &Path) -> Result<BTreeSet<i64>> {
+    let value = read_json(sarif)?;
+    let mut out = BTreeSet::new();
+    for run in value
+        .get("runs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for result in run
+            .get("results")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            for flow in result
+                .get("codeFlows")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                // Under a code-flow step the only `startLine` is the step's
+                // physical-location region, so a recursive gather here stays
+                // scoped to steps.
+                collect_int_values(flow, "startLine", &mut out);
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Collect every `absoluteAddress` value in a SARIF document (the pcode tests'
 /// tainted-instruction addresses).
 pub fn collect_absolute_addresses(sarif: &Path) -> Result<BTreeSet<i64>> {

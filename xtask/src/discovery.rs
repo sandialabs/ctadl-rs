@@ -24,6 +24,9 @@ pub enum Kind {
     Jvm { java: PathBuf, config: PathBuf },
     /// C compiled to an ELF object, mapped back to lines via `addr2line`.
     Pcode { source: PathBuf, query: PathBuf },
+    /// C parsed directly by the tree-sitter frontend, with source lines read
+    /// straight off the SARIF regions (no compiler, no Ghidra).
+    C { source: PathBuf, query: PathBuf },
 }
 
 impl Kind {
@@ -32,6 +35,7 @@ impl Kind {
             Kind::Dex { .. } => Frontend::Dex,
             Kind::Jvm { .. } => Frontend::Jvm,
             Kind::Pcode { .. } => Frontend::Pcode,
+            Kind::C { .. } => Frontend::C,
         }
     }
 }
@@ -45,16 +49,22 @@ pub enum Frontend {
     Dex,
     Jvm,
     Pcode,
+    /// The tree-sitter C frontend (`ctadl import -l c`). Exercises the same
+    /// `tests/c/*.c` sources as `Pcode`, but parses them directly and reads
+    /// source lines off the SARIF regions instead of going through Ghidra.
+    C,
 }
 
 impl Frontend {
-    pub const ALL: &'static [Frontend] = &[Frontend::Dex, Frontend::Jvm, Frontend::Pcode];
+    pub const ALL: &'static [Frontend] =
+        &[Frontend::Dex, Frontend::Jvm, Frontend::Pcode, Frontend::C];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Frontend::Dex => "dex",
             Frontend::Jvm => "jvm",
             Frontend::Pcode => "pcode",
+            Frontend::C => "c",
         }
     }
 }
@@ -67,7 +77,8 @@ impl FromStr for Frontend {
             "dex" => Ok(Frontend::Dex),
             "jvm" => Ok(Frontend::Jvm),
             "pcode" => Ok(Frontend::Pcode),
-            other => bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode)"),
+            "c" => Ok(Frontend::C),
+            other => bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c)"),
         }
     }
 }
@@ -138,8 +149,15 @@ fn discover_dex(java_dir: &Path) -> Result<Vec<TestCase>> {
     Ok(cases)
 }
 
-/// Pair each `foo.c` with a query JSON. We prefer `foo-query.json`, falling back
-/// to a shared `query.json` (the single C case here uses the latter).
+/// Pair each `foo.c` with a query JSON, then register it against *both* C
+/// frontends. We prefer `foo-query.json`, falling back to a shared `query.json`.
+///
+/// The same source drives the `Pcode` frontend (compiled through Ghidra) and the
+/// tree-sitter `C` frontend, mirroring how a single `.java` yields both a `Dex`
+/// and a `Jvm` case. The two are distinct `TestCase`s with distinct names, so
+/// each is selected, run, and reported on its own -- a C failure cannot mask or
+/// fail a Pcode case and vice versa. The Pcode case keeps the bare stem so
+/// existing `--filter`/names are unchanged; the C case is prefixed `C:`.
 fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = Vec::new();
     if !c_dir.is_dir() {
@@ -159,12 +177,18 @@ fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
         } else {
             continue;
         };
+        let source = absolute(&entry)?;
+        let query = absolute(&query)?;
         cases.push(TestCase {
-            name: stem,
+            name: stem.clone(),
             kind: Kind::Pcode {
-                source: absolute(&entry)?,
-                query: absolute(&query)?,
+                source: source.clone(),
+                query: query.clone(),
             },
+        });
+        cases.push(TestCase {
+            name: format!("C:{stem}"),
+            kind: Kind::C { source, query },
         });
     }
     Ok(cases)
@@ -219,8 +243,10 @@ mod tests {
         assert_eq!("pcode".parse::<Frontend>().unwrap(), Frontend::Pcode);
         assert_eq!("jvm".parse::<Frontend>().unwrap(), Frontend::Jvm);
         assert_eq!("dex".parse::<Frontend>().unwrap(), Frontend::Dex);
+        assert_eq!("c".parse::<Frontend>().unwrap(), Frontend::C);
         // Tolerate stray whitespace/case from a comma-separated list.
         assert_eq!(" Pcode ".parse::<Frontend>().unwrap(), Frontend::Pcode);
+        assert_eq!(" C ".parse::<Frontend>().unwrap(), Frontend::C);
         assert!("bogus".parse::<Frontend>().is_err());
     }
 

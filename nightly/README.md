@@ -28,10 +28,18 @@ cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-`--frontend` takes `pcode`, `jvm`, or `dex` (comma-separated, or repeated) and
-defaults to all three. It selects *before* anything runs, so `--frontend pcode`
-never invokes the Java toolchain, and `--frontend jvm,dex` never starts Ghidra.
-Use it with `--filter` to narrow further: `--frontend pcode --filter funcptr`.
+`--frontend` takes `pcode`, `jvm`, `dex`, or `c` (comma-separated, or repeated)
+and defaults to all four. It selects *before* anything runs, so `--frontend
+pcode` never invokes the Java toolchain, `--frontend jvm,dex` never starts
+Ghidra, and `--frontend c` needs neither Ghidra nor a C compiler. Use it with
+`--filter` to narrow further: `--frontend pcode --filter funcptr`.
+
+The `pcode` and `c` frontends run over the *same* `tests/c/*.c` sources but are
+independent cases: `pcode` compiles each source and drives it through Ghidra,
+while `c` hands the source straight to the tree-sitter frontend (`ctadl import
+-l c`). Each `.c` therefore yields two cases — `foo` (pcode) and `C:foo` — that
+are selected, run, and reported separately, so a `C:` failure never fails or
+masks its `pcode` twin.
 
 Under the hood both paths invoke the `xtask` task runner (`xtask/src/`) over the
 cases. The flake check above remains the canonical path and the one used in CI.
@@ -44,7 +52,8 @@ they are picked up automatically; no list to edit.
   the config name is the kebab-case of the class (`ArrayListIteratorFlow` →
   `array-list-iterator-flow.json`). A `.java` with no matching config is ignored.
 - **Pcode / C** — `tests/c/foo.c` pairs with `tests/c/foo-query.json`, or falls
-  back to a shared `tests/c/query.json`.
+  back to a shared `tests/c/query.json`. The pair registers under *both* C
+  frontends: a `pcode` case named `foo` and a tree-sitter `c` case named `C:foo`.
 
 ## Adding a Java/DEX test
 
@@ -82,11 +91,25 @@ flow is reported (see `Reassignment.java` / `reassignment.json`).
 2. Add `expected_lines` + `model_generators` to `tests/c/query.json` (or a
    dedicated `tests/c/foo-query.json`).
 
+The same two files also drive the tree-sitter `c` case; nothing extra is needed
+to add one.
+
 **Pass criterion (pcode):** addresses are mapped to lines with `addr2line`
 (after subtracting Ghidra's `0x100000` base). The test **passes only if every**
 `expected_lines` entry is found. On macOS, if Ghidra reports no tainted
 instructions the case is **skipped** (cross-platform decompiler differences);
 the strict check runs on Linux/CI.
+
+**Pass criterion (c):** the tree-sitter frontend parses the source directly and
+emits real source spans, so the reached lines are read straight off the SARIF
+code-flow regions — no compiler, no Ghidra, no `addr2line`, and no macOS skip
+(it runs identically everywhere). Like pcode, the case **passes only if every**
+`expected_lines` entry is among the reached lines, a code flow connects a source
+to a sink, and no `unexpected_lines` entry is reached. The `c` frontend is still
+maturing, so a short quarantine list in `xtask/src/regression.rs`
+(`C_KNOWN_FAILURES`) reports its current gaps as **XFAIL** instead of failing the
+suite; every other `C:` case is enforced. Remove an entry once its case passes so
+a later regression is caught.
 
 ## Asserting that a line stays clean
 
