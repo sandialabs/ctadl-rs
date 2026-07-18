@@ -58,6 +58,8 @@ use ctadl_ir::ThinVec;
 use ctadl_ir::index::index_vec::IndexVec;
 use ctadl_ir::mir::*;
 
+use source_info::{ArtifactEncoding, ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
+
 use internment::ArcIntern;
 use streaming_iterator::{IntoStreamingIterator, StreamingIterator};
 use tree_sitter::{Parser, Query, QueryCapture, QueryCursor, QueryMatch, Tree};
@@ -469,6 +471,60 @@ struct Context<'a> {
     /// access path (the F4 soundness gap). Populated from `union_specifier`-typed local
     /// declarations; reset per function.
     union_vars: HashSet<VariableRef>,
+    /// Builder that interns source spans, or `None` when spans are not being recorded
+    /// (the `parse_c_program` path used by tests and the marked-up dump). `import_c`
+    /// installs a builder so imported IR carries locations back to the C source.
+    source_info: Option<SourceInfoBuilder>,
+    /// Maps offsets in the parsed buffer back to the original file(s). Empty (and thus
+    /// span-less) unless `import_c` populated it. See [`read_c_source`].
+    file_map: FileMap,
+    /// Span attached to every IR statement emitted while lowering the C statement currently
+    /// being walked. Set once per source statement in [`Context::walk_statement`] so that all
+    /// the IR it expands into (calls, loads, stores) points back at that statement.
+    cur_span: SourceInfo,
+}
+
+/// One source file's placement inside the combined parse buffer produced by
+/// [`read_c_source`].
+#[derive(Debug)]
+struct FileSlice {
+    /// Offset in the combined buffer where this file's content begins.
+    combined_start: usize,
+    /// Length in bytes of this file's content within the combined buffer.
+    len: usize,
+    /// Path of the original file (as displayed).
+    path: String,
+    /// SHA-256 of the file's content, matching the store's artifact-hash scheme.
+    hash: Vec<u8>,
+}
+
+/// Maps offsets in the combined parse buffer back to the original source file and the
+/// offset within it, so IR spans reference real files even when a directory is parsed
+/// as one concatenated translation unit. Slices are non-overlapping; the marker lines
+/// inserted between files are gaps that map to no file.
+#[derive(Debug, Default)]
+struct FileMap {
+    slices: Vec<FileSlice>,
+}
+
+impl FileMap {
+    /// Locate the file containing combined-buffer offset `off`, returning that file's
+    /// artifact key, the offset within the file, and the number of bytes remaining in
+    /// the file from that offset (so a span can be clamped to the file boundary).
+    fn locate(&self, off: usize) -> Option<(ArtifactKey, u32, usize)> {
+        let slice = self
+            .slices
+            .iter()
+            .find(|s| off >= s.combined_start && off < s.combined_start + s.len)?;
+        let local = off - slice.combined_start;
+        let key = ArtifactKey {
+            path: slice.path.clone(),
+            sub_artifact_id: 0,
+            hash: slice.hash.clone(),
+            encoding: ArtifactEncoding::Utf8,
+        };
+        Some((key, local as u32, slice.len - local))
+    }
 }
 
 pub struct MatchExtractor<'q, 'cursor, 'tree> {
@@ -640,6 +696,148 @@ pub fn parse_c_program(source: &str) -> anyhow::Result<(Program, bool, String), 
     Ok((program, tree.root_node().has_error(), marked_up))
 }
 
+/// Import C source at `path` into a [`ProgramInfo`], ready for [`crate::cli::import`].
+///
+/// `path` may be a single C source file (`.c`) or header (`.h`), or a directory
+/// tree containing such files. A directory is imported as one translation unit:
+/// every `.h` and `.c` file it contains (recursively) is concatenated -- headers
+/// first, then `.c` files, each group in sorted path order -- and parsed together,
+/// so declarations in the headers are in scope for the definitions that use them
+/// and references resolve across files.
+///
+/// The frontend expects post-preprocessor C source: `#include` directives are not
+/// expanded here, so a directory should already contain preprocessed translation
+/// units (or self-contained sources).
+pub fn import_c(path: &std::path::Path) -> Result<ProgramInfo, Error> {
+    let (source, file_map) = read_c_source(path)?;
+    let (program, source_info, has_error, _marked_up) =
+        parse_c_with_source_info(&source, file_map)?;
+    if has_error {
+        log::warn!(
+            "tree-sitter reported syntax errors while parsing C source at '{}'; \
+             the imported IR may be incomplete (is the input already preprocessed?)",
+            path.display()
+        );
+    }
+    Ok(ProgramInfo {
+        program,
+        source_info,
+        ..Default::default()
+    })
+}
+
+/// Parse `source` into a [`Program`] together with the [`source_info::SourceInfo`] that maps
+/// its IR statements back to the original files described by `file_map`. This is the
+/// span-recording variant of [`parse_c_program`], used by [`import_c`].
+fn parse_c_with_source_info(
+    source: &str,
+    file_map: FileMap,
+) -> Result<(Program, source_info::SourceInfo, bool, String), Error> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_c::LANGUAGE.into())
+        .expect("error loading C grammar");
+
+    let mut ctx = Context {
+        source_info: Some(SourceInfoBuilder::new(ArtifactMetadata::new())),
+        file_map,
+        ..Default::default()
+    };
+    let mut program = Program::default();
+    let tree = parser
+        .parse(source, None)
+        .expect("tree‐sitter failed to parse");
+    ctx.parse(source, &tree, &mut program)?;
+    // Give called-but-undefined functions (external declarations like `int source();`) a
+    // function id so taint models can match them by name. Only the import path needs this;
+    // the in-memory `parse_c_program` used by unit tests deliberately omits these stubs.
+    define_extern_functions(&mut program);
+    let marked_up = markup(&program, &ctx);
+    let has_error = tree.root_node().has_error();
+    let source_info = ctx
+        .source_info
+        .take()
+        .expect("builder is Some in this path")
+        .finish();
+    Ok((program, source_info, has_error, marked_up))
+}
+
+/// Read the C source for [`import_c`], returning the buffer to parse and a [`FileMap`]
+/// mapping offsets in that buffer back to the original files. A single file maps to
+/// itself; a directory is concatenated into one translation unit -- every header and
+/// `.c` file underneath it (headers first, then `.c` files, each group in sorted path
+/// order) -- and the map records where each file landed so IR spans still name it.
+fn read_c_source(path: &std::path::Path) -> Result<(String, FileMap), Error> {
+    if !path.is_dir() {
+        let contents = std::fs::read_to_string(path)?;
+        let mut map = FileMap::default();
+        map.slices.push(FileSlice {
+            combined_start: 0,
+            len: contents.len(),
+            path: path.display().to_string(),
+            hash: source_info::sha256(contents.as_bytes()),
+        });
+        return Ok((contents, map));
+    }
+
+    let mut headers = Vec::new();
+    let mut sources = Vec::new();
+    collect_c_files(path, &mut headers, &mut sources)?;
+    if headers.is_empty() && sources.is_empty() {
+        return Err(Error::Path {
+            message: format!("no .c or .h files found under '{}'", path.display()),
+        });
+    }
+    headers.sort();
+    sources.sort();
+
+    let mut combined = String::new();
+    let mut map = FileMap::default();
+    for file in headers.iter().chain(sources.iter()) {
+        let contents = std::fs::read_to_string(file)?;
+        // Mark where each file's contents begin (aids debugging the merged unit)
+        // and separate files with newlines so tokens across a boundary never merge.
+        combined.push_str(&format!("// ==== {} ====\n", file.display()));
+        // The file's content begins *after* the marker line; record that so spans
+        // land at the right offset within the original file.
+        let combined_start = combined.len();
+        let hash = source_info::sha256(contents.as_bytes());
+        combined.push_str(&contents);
+        map.slices.push(FileSlice {
+            combined_start,
+            len: contents.len(),
+            path: file.display().to_string(),
+            hash,
+        });
+        combined.push('\n');
+    }
+    Ok((combined, map))
+}
+
+/// Recursively collect `.h` files into `headers` and `.c` files into `sources`
+/// under `dir`. Any other file is ignored.
+fn collect_c_files(
+    dir: &std::path::Path,
+    headers: &mut Vec<std::path::PathBuf>,
+    sources: &mut Vec<std::path::PathBuf>,
+) -> Result<(), Error> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.is_dir() {
+            collect_c_files(&path, headers, sources)?;
+        } else if metadata.is_file() {
+            match path.extension().and_then(|e| e.to_str()) {
+                Some("h") => headers.push(path),
+                Some("c") => sources.push(path),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn compile_query(query_src: &str) -> Query {
     Query::new(&tree_sitter_c::LANGUAGE.into(), query_src).unwrap_or_else(|e| {
         let header = "--- Query Syntax Error ---";
@@ -673,6 +871,64 @@ fn collect_labels(node: Node<'_>, source: &str, out: &mut Vec<String>) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         collect_labels(child, source, out);
+    }
+}
+
+/// Register every directly-called function that has no definition in this translation unit
+/// as an empty-body (external) function.
+///
+/// Taint models identify sources, sinks, and propagators by name (`source`, `sink`,
+/// `malloc`, ...), and both the model engine and query-time endpoint resolution look the
+/// name up among the program's functions. A function that is only *declared* in C (e.g.
+/// `int source();`) never reaches `collect_functions` -- which matches `function_definition`
+/// nodes -- so without this pass its calls have edges pointing at a name that no IR function
+/// carries, and every model targeting it silently matches nothing. Creating an empty-body
+/// function gives the name a function id the model/query can resolve; the empty body also
+/// marks it external during indexing (see codegen's `external_function`). Mirrors the extern
+/// pass in the dex/jvm frontends. Runs on the import path only (see `parse_c_with_source_info`).
+fn define_extern_functions(program: &mut Program) {
+    use std::collections::BTreeMap;
+
+    // Direct-call target name -> the largest argument count seen at any call site, so an
+    // `AnyArgument`/by-index model has enough formal parameters to anchor to. A BTreeMap
+    // keeps creation order deterministic.
+    let mut called: BTreeMap<String, usize> = BTreeMap::new();
+    // Names that already have a body; these must not be recreated.
+    let mut defined: HashSet<String> = HashSet::new();
+    for func in program.functions.iter() {
+        if !func.blocks.is_empty() {
+            defined.insert(func.name.clone());
+        }
+        for block in func.blocks.iter() {
+            for stmt in &block.statements {
+                if let StatementKind::CallAssign {
+                    style:
+                        CallStyle::DirectCall {
+                            call_edges: CallEdges::Explicit(names),
+                        },
+                    args,
+                    ..
+                } = &stmt.kind
+                {
+                    for name in names {
+                        let slot = called.entry(name.clone()).or_insert(0);
+                        *slot = (*slot).max(args.len());
+                    }
+                }
+            }
+        }
+    }
+
+    for (name, arity) in called {
+        if defined.contains(&name) {
+            continue;
+        }
+        let fidx = program.new_function();
+        let fdat = &mut program.functions[fidx];
+        fdat.name = name;
+        for _ in 0..arity {
+            fdat.params.push(ParameterType::ByVal);
+        }
     }
 }
 
@@ -948,6 +1204,25 @@ impl<'a> Context<'a> {
     /// statement *diverged* — i.e. it terminated the current block with no fall-through
     /// (`return`/`break`/`continue`, or a `labeled_statement` whose body diverges) — so
     /// the enclosing compound should stop and skip its end-of-compound link.
+    /// Intern a span for `node`'s byte range (mapped back to the original file via
+    /// [`FileMap`]) and return the [`SourceInfo`] pointing at it. Returns the default
+    /// (no-span) `SourceInfo` when span recording is off or the offset falls outside any
+    /// known file (e.g. the marker lines between concatenated files).
+    fn span_for_node(&mut self, node: Node<'_>) -> SourceInfo {
+        let start = node.start_byte();
+        let end = node.end_byte();
+        let Some((key, local_start, max_len)) = self.file_map.locate(start) else {
+            return SourceInfo::default();
+        };
+        let len = end.saturating_sub(start).min(max_len) as u32;
+        match self.source_info.as_mut() {
+            Some(builder) => {
+                SourceInfo::new(builder.span_for(key, local_start, SpanLen::ByteLen(len)))
+            }
+            None => SourceInfo::default(),
+        }
+    }
+
     fn walk_statement(
         &mut self,
         source: &'a str,
@@ -956,6 +1231,8 @@ impl<'a> Context<'a> {
         child: Node<'_>,
     ) -> Result<bool, Error> {
         let kind = child.kind();
+        // Every IR statement lowered from this C statement inherits its source span.
+        self.cur_span = self.span_for_node(child);
         match kind {
             "comment" => {}
             "compound_statement" => {
@@ -2176,12 +2453,13 @@ impl<'a> Context<'a> {
             Variable::GlobalHeap => CallStyle::DirectCall { call_edges },
         };
 
-        program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+        program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
             StatementKind::CallAssign {
                 style,
                 rets: vec![VariableRef::new_local(temp_name.clone())].into(),
                 args,
             },
+            self.cur_span,
         ));
         //we return the temp_name, so that the assignment expression for the actual int x = foo() gets the result of foo()
         Ok(Exp::Variable(
@@ -2329,8 +2607,9 @@ impl<'a> Context<'a> {
             if let Some(righty) = right_op {
                 fa.push(righty.clone());
             }
-            program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+            program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
                 StatementKind::assign(target.base.clone(), fa),
+                self.cur_span,
             ));
         } else {
             // A store writes a single value into the field path; the field read is not
@@ -2345,7 +2624,8 @@ impl<'a> Context<'a> {
                 &mut stmts,
                 || VariableRef::new_local(self.allocator.next_temp()),
             );
-            for s in stmts {
+            for mut s in stmts {
+                s.source_info = self.cur_span;
                 program[scope_view.fidx].blocks[scope_view.blidx].push_back(s);
             }
         }
@@ -2457,7 +2737,8 @@ impl<'a> Context<'a> {
         let v = ctadl_ir::mir::load_access_path(ap.base, ap.fields, &mut stmts, || {
             VariableRef::new_local(self.allocator.next_temp())
         });
-        for s in stmts {
+        for mut s in stmts {
+            s.source_info = self.cur_span;
             program[scope_view.fidx].blocks[scope_view.blidx].push_back(s);
         }
         v

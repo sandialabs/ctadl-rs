@@ -701,20 +701,29 @@ fn autodetect_by_extension<P: AsRef<Path>>(
             if project::is_ghidra_server_url(path) {
                 return Ok(ImportLanguage::Pcode);
             }
-            let ext = path
-                .extension()
-                .and_then(|e| OsStr::to_str(e))
-                .ok_or_else(|| anyhow::anyhow!("no filename extension"))?;
+            let ext = path.extension().and_then(|e| OsStr::to_str(e));
 
             match ext {
-                "dex" => ImportLanguage::Dex,
-                "apk" => ImportLanguage::Apk,
-                "class" => ImportLanguage::Jvm,
-                "jar" => ImportLanguage::Jar,
-                "tnt" => ImportLanguage::Flowy,
+                Some("dex") => ImportLanguage::Dex,
+                Some("apk") => ImportLanguage::Apk,
+                Some("class") => ImportLanguage::Jvm,
+                Some("jar") => ImportLanguage::Jar,
+                Some("tnt") => ImportLanguage::Flowy,
                 // A Ghidra project file: export pcode from the existing project.
-                "gpr" => ImportLanguage::Pcode,
-                _ => anyhow::bail!("unrecognized filename extension: '{}'", ext),
+                Some("gpr") => ImportLanguage::Pcode,
+                // A C source file or header.
+                Some("c") | Some("h") => ImportLanguage::C,
+                _ => {
+                    // A directory with no recognized extension is treated as a tree
+                    // of C sources (headers and `.c` files).
+                    if path.is_dir() {
+                        ImportLanguage::C
+                    } else if let Some(ext) = ext {
+                        anyhow::bail!("unrecognized filename extension: '{}'", ext);
+                    } else {
+                        anyhow::bail!("no filename extension");
+                    }
+                }
             }
         }
         _ => language,

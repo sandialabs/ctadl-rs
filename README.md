@@ -13,7 +13,7 @@ for the full, current set of flags.
 
 | Command | What it does |
 | --- | --- |
-| `import` | Import a single artifact (`.dex`, `.jar`, `.class`, APK, directory of `.c` files, Ghidra pcode, Flowy) into the store. For pcode (`-l pcode`), the artifact may be a binary, an existing Ghidra project (`<name>.gpr`), or a Ghidra Server URL (`ghidra://…`). |
+| `import` | Import a single artifact (`.dex`, `.jar`, `.class`, APK, a `.c`/`.h` file or a directory of C sources and headers, Ghidra pcode, Flowy) into the store. A C directory is parsed as one translation unit (its `.h` and `.c` files, headers first). For pcode (`-l pcode`), the artifact may be a binary, an existing Ghidra project (`<name>.gpr`), or a Ghidra Server URL (`ghidra://…`). |
 | `index` | Index one or more imported programs into an analysis project, resolving calls and building SSA. Can load prior summaries and propagation models. |
 | `query` | Run a taint-analysis query over an indexed project and write results as SARIF. |
 | `go` | One-shot convenience: import, index, and query in a single invocation. |

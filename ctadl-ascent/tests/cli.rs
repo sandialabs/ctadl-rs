@@ -99,6 +99,144 @@ fn test_cli_import_skip_existing() {
     });
 }
 
+/// Importing a single `.c` file parses it into an IR program and stores it.
+#[test]
+fn test_cli_import_c_file() {
+    run_store_test(|| {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("xfer.c");
+        std::fs::write(
+            &file,
+            "int source();\nvoid sink(int);\nint transfer(int a) { return a; }\n",
+        )
+        .unwrap();
+
+        let import =
+            ArtifactImport::try_create("test_import_c_file", ArtifactLanguage::C, &file).unwrap();
+        cli::import(&import).unwrap();
+
+        assert!(import.program_path().is_file());
+        let data = std::fs::read(import.program_path()).unwrap();
+        assert!(ctadl_ir::encode::decode_program(&data).is_ok());
+    });
+}
+
+/// Importing a directory of C sources and headers parses every `.c`/`.h` file
+/// underneath it as one translation unit.
+#[test]
+fn test_cli_import_c_directory() {
+    run_store_test(|| {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("c_sources");
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        // A header (declarations) and two .c files, one nested, that reference it.
+        std::fs::write(root.join("util.h"), "int helper(int z);\n").unwrap();
+        std::fs::write(
+            root.join("main.c"),
+            "int helper(int z) { return z; }\nint main() { return helper(1); }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("nested").join("more.c"),
+            "int other(int a) { return a; }\n",
+        )
+        .unwrap();
+        // A non-C file that must be ignored by the importer.
+        std::fs::write(root.join("README.md"), "not C\n").unwrap();
+
+        let import =
+            ArtifactImport::try_create("test_import_c_dir", ArtifactLanguage::C, &root).unwrap();
+        cli::import(&import).unwrap();
+
+        assert!(import.program_path().is_file());
+        let data = std::fs::read(import.program_path()).unwrap();
+        assert!(ctadl_ir::encode::decode_program(&data).is_ok());
+    });
+}
+
+/// Absolute path to a checked-in C test fixture under `tests/c/`.
+fn c_fixture(name: &str) -> PathBuf {
+    [env!("CARGO_MANIFEST_DIR"), "tests", "c", name]
+        .iter()
+        .collect()
+}
+
+/// End-to-end: import `xfer.c`, index it, and run the `xfer.json` taint query. This
+/// exercises the C-specific model wiring: `source`/`sink` are only *declared* in the C
+/// source (no body), so the importer must register them as external functions for the
+/// model's `signature` patterns to match them; the query must then find the
+/// source -> sink flow through `transfer`. Also confirms imported C carries source
+/// locations: the reported result resolves to a line in `xfer.c`.
+#[test]
+fn test_cli_query_c_sources_and_sinks() {
+    use ctadl_ascent::cli;
+    use ctadl_ascent::codegen::CallResolutionStrategy;
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+
+    run_store_test(|| {
+        let import = ArtifactImport::try_create(
+            "test_xfer_c",
+            ArtifactLanguage::C,
+            &c_fixture("xfer.c"),
+        )
+        .unwrap();
+        cli::import(&import).unwrap();
+
+        let project = AnalysisProject::try_create("test_xfer_c_proj", &["test_xfer_c"]).unwrap();
+        let models = vec![c_fixture("xfer.json")];
+        cli::index(
+            &project,
+            &[],
+            &models,
+            CallResolutionStrategy::default(),
+            true,
+            true,
+            None,
+        )
+        .unwrap();
+
+        let out_dir = tempdir().unwrap();
+        let sarif = out_dir.path().join("out.sarif");
+        cli::query(
+            &project,
+            &models,
+            false,
+            &sarif,
+            SarifProfile::default(),
+            None,
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(&sarif).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let results = doc["runs"][0]["results"].as_array().unwrap();
+
+        // The source (`s = source()`) flows through `transfer` to the sink (`sink(x[2])`),
+        // so there is exactly one tainted-path result.
+        assert_eq!(
+            results.len(),
+            1,
+            "expected exactly one source->sink flow, got: {text}"
+        );
+        let result = &results[0];
+        assert!(
+            result["ruleId"]
+                .as_str()
+                .is_some_and(|r| r.contains("tainted-path")),
+            "unexpected ruleId: {}",
+            result["ruleId"]
+        );
+
+        // The reported location resolves back to a line in the C source, proving the
+        // importer attached source-info spans that survive to SARIF.
+        let region = &result["locations"][0]["physicalLocation"]["region"];
+        assert!(
+            region["startLine"].as_u64().is_some_and(|n| n > 0),
+            "result has no source line: {result}"
+        );
+    });
+}
+
 #[test]
 fn test_hash_artifact_file_and_dir() {
     let dir = tempdir().unwrap();

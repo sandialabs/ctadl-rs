@@ -1975,3 +1975,46 @@ fn char_literal_in_expression_flows() {
     let (sm, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&sm, 0, ""); // param 0 (s) reaches the return
 }
+
+/// `import_c` registers called-but-undefined functions as empty-body externs (so taint
+/// models can match `source`/`sink` by name) and attaches source-info spans to the IR it
+/// lowers. This tests both behaviors on the import path, which -- unlike
+/// `parse_c_program` used elsewhere in this file -- performs them.
+#[test_log::test]
+fn import_c_registers_externs_and_spans() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("t.c");
+    std::fs::write(
+        &file,
+        "int source();\nvoid sink(int);\nint f() { int s = source(); sink(s); return s; }\n",
+    )
+    .unwrap();
+
+    let info = super::import_c(&file).unwrap();
+
+    // `source` and `sink` are only declared, so they must appear as empty-body externs.
+    let find = |name: &str| {
+        info.program
+            .functions
+            .iter()
+            .find(|func| func.name == name)
+    };
+    for name in ["source", "sink"] {
+        let func = find(name).unwrap_or_else(|| panic!("extern function `{name}` not registered"));
+        assert!(
+            func.blocks.is_empty(),
+            "extern `{name}` should have no body"
+        );
+    }
+    // The defined function keeps its body.
+    assert!(!find("f").unwrap().blocks.is_empty());
+
+    // At least one lowered statement carries a real source span (not the NO_SPAN default).
+    let has_span = info.program.functions.iter().any(|func| {
+        func.blocks
+            .iter()
+            .flat_map(|b| b.statements.iter())
+            .any(|s| s.source_info.span_id != source_info::NO_SPAN)
+    });
+    assert!(has_span, "no statement carried a source-info span");
+}
