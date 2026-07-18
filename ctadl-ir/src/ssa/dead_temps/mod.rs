@@ -41,6 +41,9 @@ use smallvec::SmallVec;
 use crate::index::idx::Idx;
 use crate::mir::*;
 
+#[cfg(test)]
+mod tests;
+
 /// Runs dead-temporary elimination on every function of `program`. Intended to
 /// run before SSA conversion; see the module docs.
 pub fn eliminate_dead_temps(program: &mut Program) {
