@@ -465,7 +465,11 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
         Kind::Dex { java, config } => run_dex(&case.name, java, config),
         Kind::Jvm { java, config } => run_jvm(&case.name, java, config),
         Kind::Pcode { source, query } => run_pcode(&case.name, source, query, worker),
-        Kind::Python { source, query } => run_python(&case.name, source, query),
+        Kind::Python {
+            source,
+            query,
+            interpreter,
+        } => run_python(&case.name, source, query, interpreter.as_deref()),
     }
 }
 
@@ -1054,22 +1058,26 @@ fn guess_java_home() -> Option<PathBuf> {
     Some(real.parent()?.parent()?.to_path_buf())
 }
 
-/// Whether a working Python interpreter is available for the Python frontend.
+/// Whether the given Python interpreter is usable for the Python frontend.
 ///
-/// Resolves `$PYTHON` (else `python3` on PATH) and probes it with `--version`,
-/// so both an absent interpreter and a non-functional stub (macOS's
+/// Uses the pinned `interpreter` when set (one per installed version), else
+/// resolves `$PYTHON` / `python3` on PATH, and probes it with `--version` -- so
+/// both an absent interpreter and a non-functional stub (macOS's
 /// `/usr/bin/python3` with no Xcode) are treated as "unavailable" and skipped.
-fn usable_python() -> bool {
-    let python = match std::env::var_os("PYTHON") {
-        Some(p) => PathBuf::from(p),
-        None => match exec::which("python3") {
-            Some(p) => p,
-            None => return false,
+fn usable_python(interpreter: Option<&Path>) -> bool {
+    let python = match interpreter {
+        Some(p) => p.to_path_buf(),
+        None => match std::env::var_os("PYTHON") {
+            Some(p) => PathBuf::from(p),
+            None => match exec::which("python3") {
+                Some(p) => p,
+                None => return false,
+            },
         },
     };
     let mut cmd = Command::new(&python);
     cmd.arg("--version");
-    exec::run_with_timeout(cmd, "python3 --version", Duration::from_secs(30))
+    exec::run_with_timeout(cmd, "python --version", Duration::from_secs(30))
         .map(|out| out.status.success())
         .unwrap_or(false)
 }
@@ -1100,12 +1108,17 @@ fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&s
 /// Unlike the DEX/JVM/pcode checks, no linemap or `addr2line` is needed: the
 /// Python frontend maps each instruction's position straight to a source line, so
 /// the SARIF locations already carry `startLine`.
-fn run_python(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
-    // The frontend shells out to `python3` (or `$PYTHON`). Skip cleanly if no
-    // usable interpreter is present. Probing with `--version` (not just a `which`
+fn run_python(
+    name: &str,
+    source: &Path,
+    query: &Path,
+    interpreter: Option<&Path>,
+) -> Result<Outcome> {
+    // The frontend shells out to the pinned interpreter (or `$PYTHON`/`python3`).
+    // Skip cleanly if it is not usable. Probing with `--version` (not just a `which`
     // existence check) also skips a non-functional stub -- notably macOS's
     // `/usr/bin/python3` shim with no Xcode behind it -- rather than failing.
-    if !usable_python() {
+    if !usable_python(interpreter) {
         return Ok(Outcome::Skip(
             "no usable python interpreter (set PYTHON or add a working python3 to PATH)"
                 .to_string(),
@@ -1125,11 +1138,19 @@ fn run_python(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
     std::fs::copy(source, &src)
         .with_context(|| format!("failed to copy {} into scratch dir", source.display()))?;
 
+    // Point the frontend at the pinned interpreter via `$PYTHON` for the import
+    // (the only step that runs Python); the interpreter discovery reads the same
+    // variable, so this is exactly how a user targets one version.
+    let env: Vec<(String, String)> = interpreter
+        .map(|p| vec![("PYTHON".to_string(), p.to_string_lossy().into_owned())])
+        .unwrap_or_default();
+
     let project = format!("{stem}_py");
     let sarif = work.join(format!("{stem}_output.sarif"));
-    run_ctadl(
+    run_ctadl_env(
         &work,
         &state,
+        &env,
         &[
             "import",
             "-l",
@@ -1421,8 +1442,15 @@ fn run_root() -> PathBuf {
 static SCRATCH_NAMES: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
 fn scratch_dir(name: &str) -> Result<PathBuf> {
-    // Colons are invalid in Windows directory names (e.g. `Jvm:Foo`).
-    let safe_name = name.replace(':', "_");
+    // Colons are invalid in Windows directory names (e.g. `Jvm:Foo`); spaces and
+    // brackets come from the versioned Python names (`Python:closure [3.13]`).
+    let safe_name: String = name
+        .chars()
+        .map(|c| match c {
+            ':' | ' ' | '[' | ']' => '_',
+            other => other,
+        })
+        .collect();
     if !SCRATCH_NAMES.lock().unwrap().insert(safe_name.clone()) {
         bail!("two regression cases claim the same scratch directory `{safe_name}`");
     }

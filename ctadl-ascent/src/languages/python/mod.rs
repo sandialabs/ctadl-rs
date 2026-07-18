@@ -97,9 +97,28 @@ struct Lowering {
     /// True while lowering a generator body, so `YIELD_VALUE` feeds the
     /// generator-result object and every `RETURN` yields that object.
     in_generator: bool,
+    /// True while lowering a code object whose `FOR_ITER` pops the iterator on the
+    /// loop-exhaust edge (<=3.11, `dis.stack_effect(FOR_ITER, jump=True) == -1`),
+    /// detected by the absence of the 3.12+ `END_FOR` cleanup opcode. On 3.12+ the
+    /// iterator (and the value) stay on the exit edge and `END_FOR` cleans them up.
+    for_exhaust_pops_iter: bool,
+    /// True while lowering a code object compiled by a <=3.10 interpreter (no
+    /// `RESUME`, added in 3.11). Those versions push the function's qualname above
+    /// its code object before `MAKE_FUNCTION`; 3.11+ dropped that stack slot.
+    pre_3_11: bool,
     /// Exception-handler blocks (those beginning with `PUSH_EXC_INFO`) of the
     /// function currently being lowered, so a `raise` can route to them.
     handler_blocks: Vec<BasicBlockIdx>,
+    /// Entry-stack overrides for successor blocks whose stack, on that edge,
+    /// differs from the predecessor's snapshot. Used by `FOR_ITER` on <=3.11,
+    /// where the loop-exhaust edge pops the iterator (unlike the loop-body edge).
+    block_entry_overrides: BTreeMap<BasicBlockIdx, Vec<Slot>>,
+    /// Per source line, the number of column-less instructions already placed on
+    /// it. <=3.10 has no per-instruction columns, so every instruction on a line
+    /// would share one byte offset and the SARIF step dedup would merge distinct
+    /// code-flow steps (e.g. a call and the sink on the same line). Handing each a
+    /// distinct synthetic column keeps the steps separate. Reset per code object.
+    line_column_cursor: BTreeMap<i64, usize>,
     counter: u32,
 }
 
@@ -133,7 +152,11 @@ impl Lowering {
             class_init: BTreeMap::new(),
             func_ptr_locals: BTreeMap::new(),
             in_generator: false,
+            for_exhaust_pops_iter: false,
+            pre_3_11: false,
             handler_blocks: Vec::new(),
+            block_entry_overrides: BTreeMap::new(),
+            line_column_cursor: BTreeMap::new(),
             counter: 0,
         }
     }
@@ -225,7 +248,19 @@ impl Lowering {
         let func_idx = self.functions[&id].idx;
         let nparams = self.functions[&id].nparams;
         self.in_generator = co.flags & CO_GENERATOR != 0;
+        // <=3.11 `FOR_ITER` pops the iterator on exhaust; 3.12+ keeps it and cleans
+        // up with `END_FOR`. The presence of `END_FOR` in the code object is the
+        // version-robust discriminator (a for-loop on 3.12+ always emits one).
+        self.for_exhaust_pops_iter = !co
+            .instructions
+            .iter()
+            .any(|i| matches!(i.opname.as_str(), "END_FOR"));
+        // `RESUME` starts every 3.11+ code object; its absence marks a <=3.10 one,
+        // where `MAKE_FUNCTION` also consumes a qualname pushed above the code.
+        self.pre_3_11 = !co.instructions.iter().any(|i| i.opname == "RESUME");
         self.func_ptr_locals.clear();
+        self.block_entry_overrides.clear();
+        self.line_column_cursor.clear();
 
         // --- Build the CFG: leaders → blocks ---
         // A leader is the start of a basic block. Restrict to leaders that are
@@ -258,8 +293,8 @@ impl Lowering {
             blocks[bi].push(i);
         }
 
-        // Exception handlers begin with `PUSH_EXC_INFO`; a `raise` routes to them
-        // (the exception-table edge is not carried in `jump_targets`).
+        // Exception handlers begin with `PUSH_EXC_INFO` (3.11+); a `raise` routes to
+        // them (the exception-table edge is not carried in `jump_targets`).
         self.handler_blocks = blocks
             .iter()
             .enumerate()
@@ -271,6 +306,18 @@ impl Lowering {
             .map(|(bi, _)| block_ids[bi])
             .collect();
 
+        // <=3.11 has no `PUSH_EXC_INFO`: a handler is the jump target of a `SETUP_*`
+        // and the interpreter pushes the exception triple (traceback, value, type)
+        // before entering it. Route `raise` to those blocks too, seeding each with
+        // the in-flight exception (`<exc>`) so `except E as e`'s `STORE_FAST` binds
+        // the tainted value. `entry_stacks` is seeded below, once it exists.
+        let setup_handler_offsets: BTreeSet<i64> = co
+            .instructions
+            .iter()
+            .filter(|i| is_setup_exception(i.opname.as_str()))
+            .flat_map(|i| i.jump_targets.iter().copied())
+            .collect();
+
         // Operand-stack values that live across a block boundary (loop
         // accumulators, the `FOR_ITER` iterator, exception values) are threaded
         // through: each block is simulated starting from an entry stack seeded by
@@ -279,11 +326,26 @@ impl Lowering {
         // (first-writer-wins keeps that loop-invariant seed).
         let mut entry_stacks: BTreeMap<BasicBlockIdx, Vec<Slot>> = BTreeMap::new();
 
+        // Seed each <=3.11 `SETUP_*` handler with the exception triple, all modeled
+        // as the in-flight exception `<exc>` so however the handler shuffles the
+        // triple, the value it binds carries the raised exception's taint.
+        for off in &setup_handler_offsets {
+            if let Some(&block) = block_of_offset.get(off) {
+                let exc =
+                    || Slot::val(Exp::Variable(VariableRef::new_local(EXC_LOCAL.to_string())));
+                entry_stacks.insert(block, vec![exc(), exc(), exc()]);
+                if !self.handler_blocks.contains(&block) {
+                    self.handler_blocks.push(block);
+                }
+            }
+        }
+
         // Offset immediately following the last instruction of each block (its
         // fallthrough successor start), if any.
         for (bi, insn_indices) in blocks.iter().enumerate() {
             let block_idx = block_ids[bi];
-            let mut sim = StackSim::with_entry(entry_stacks.get(&block_idx).cloned().unwrap_or_default());
+            let mut sim =
+                StackSim::with_entry(entry_stacks.get(&block_idx).cloned().unwrap_or_default());
             let mut stmts: Vec<Statement> = Vec::new();
             let mut terminator: Option<Terminator> = None;
 
@@ -339,7 +401,14 @@ impl Lowering {
             {
                 let exit = sim.snapshot();
                 for succ in targets {
-                    entry_stacks.entry(*succ).or_insert_with(|| exit.clone());
+                    // A per-edge override (e.g. a `FOR_ITER` exhaust edge that popped
+                    // the iterator) wins over the predecessor's plain exit snapshot.
+                    let seed = self
+                        .block_entry_overrides
+                        .get(succ)
+                        .cloned()
+                        .unwrap_or_else(|| exit.clone());
+                    entry_stacks.entry(*succ).or_insert(seed);
                 }
             }
 
@@ -410,7 +479,12 @@ impl Lowering {
             }
 
             // --- Loads of closure cells (shared with nested scopes) ---
-            "LOAD_DEREF" | "LOAD_CLASSDEREF" => {
+            // `LOAD_CLOSURE` (<=3.12) pushes a cell to build the closure tuple for a
+            // nested `MAKE_FUNCTION`; 3.13+ uses a plain `LOAD_FAST` of the cell
+            // instead. Model both as loading the cell's value: leaving `LOAD_CLOSURE`
+            // unhandled underflows the stack (the following `BUILD_TUPLE` pops an
+            // absent operand) and drops the captured value.
+            "LOAD_DEREF" | "LOAD_CLASSDEREF" | "LOAD_CLOSURE" => {
                 let name = self.deref_name(co, insn);
                 let v = self.load_cell(stmts, &name, si);
                 sim.push(Slot::val(Exp::Variable(v)));
@@ -497,10 +571,13 @@ impl Lowering {
             // --- Loads of globals / names ---
             "LOAD_GLOBAL" | "LOAD_NAME" => {
                 let name = self.name_operand(co, insn);
-                // 3.11+: `LOAD_GLOBAL` with bit 0 of `arg` set pushes a NULL below
-                // the callable (for the following CALL). Model it so the call's
-                // self/NULL slot isn't synthesized from an underflow.
-                if op == "LOAD_GLOBAL" && insn.arg.map(|a| a & 1 == 1).unwrap_or(false) {
+                // 3.11+: `LOAD_GLOBAL` pushes a NULL alongside the callable (for the
+                // following CALL). `dis` marks it in `argrepr` ("NULL + name" on
+                // 3.11/3.12, "name + NULL" on 3.13+); <=3.10 pushes no NULL and the
+                // `arg` is a plain name index, so the low bit is meaningless there.
+                // Keying on the `argrepr` marker keeps this version-robust — a low-bit
+                // test spuriously fires for any odd name index on 3.9/3.10.
+                if op == "LOAD_GLOBAL" && pushes_null_marker(insn) {
                     sim.push(Slot::null());
                 }
                 let v = self.load_global(stmts, &name, si);
@@ -527,9 +604,12 @@ impl Lowering {
                 let obj = self.pop_exp(sim);
                 let obj_var = self.as_variable(stmts, obj, si);
                 let loaded = self.load_attr(stmts, obj_var.clone(), &name, si);
-                // The low bit of `arg` (3.12+) marks a method load: it pushes
-                // self then the method for the following CALL.
-                if insn.arg.map(|a| a & 1 == 1).unwrap_or(false) {
+                // 3.12+ merged `LOAD_METHOD` into `LOAD_ATTR`: a method load pushes
+                // self alongside the method for the following CALL, marked in
+                // `argrepr` ("NULL|self"). <=3.11 keeps a separate `LOAD_METHOD` and
+                // `LOAD_ATTR`'s `arg` is a plain name index, so the low bit is
+                // meaningless there — key on the marker instead.
+                if pushes_null_marker(insn) {
                     sim.push(Slot::val(Exp::Variable(obj_var)));
                 }
                 sim.push(Slot::named(Exp::Variable(loaded), Some(name)));
@@ -554,7 +634,12 @@ impl Lowering {
             }
 
             // --- Subscript (container[key]) ---
-            "BINARY_SUBSCR" | "BINARY_SLICE" => {
+            // 3.14 merged `BINARY_SUBSCR` into `BINARY_OP` with a subscript operator
+            // (`argrepr == "[]"`); route it here rather than to the generic binary op
+            // so the element is read from the container's `.item` field.
+            "BINARY_SUBSCR" | "BINARY_SLICE" | "BINARY_OP"
+                if op != "BINARY_OP" || insn.argrepr.as_deref() == Some("[]") =>
+            {
                 let _key = self.pop_exp(sim);
                 let container = self.pop_exp(sim);
                 let cvar = self.as_variable(stmts, container, si);
@@ -576,10 +661,21 @@ impl Lowering {
                 sim.push(Slot::val(Exp::Variable(v)));
             }
             "FOR_ITER" => {
-                // Iterator stays on the stack; the yielded element is item(iter).
-                // The element is left on the stack on both the continue and the
-                // loop-exit edge (the exhausted element / iterator is cleaned up by
-                // the `END_FOR` at the loop-exit target).
+                // The yielded element is item(iter). On the loop-body (continue)
+                // edge the iterator stays and the element is pushed on top. On the
+                // loop-exhaust edge the stack is version-dependent: 3.12+ keeps both
+                // iterator and element (cleaned up by `END_FOR` [+ `POP_TOP`/
+                // `POP_ITER`] at the exit target); <=3.11 pops the iterator and
+                // pushes nothing. Give the exit block that popped stack directly.
+                if self.for_exhaust_pops_iter {
+                    let mut exit_stack = sim.snapshot();
+                    exit_stack.pop(); // the iterator, gone on the exhaust edge
+                    for t in &insn.jump_targets {
+                        if let Some(&b) = block_of_offset.get(t) {
+                            self.block_entry_overrides.insert(b, exit_stack.clone());
+                        }
+                    }
+                }
                 let iter = sim.peek_exp(&mut || self.fresh());
                 let ivar = self.as_variable(stmts, iter, si);
                 let elt = self.load_attr(stmts, ivar, ITEM_FIELD, si);
@@ -588,11 +684,28 @@ impl Lowering {
                     return Ok(Some(goto_from(&insn.jump_targets, true)));
                 }
             }
-            // Cleans up after a `FOR_ITER` loop: pops the exhausted element the
-            // loop-exit edge still carries (its iterator is popped by the following
-            // `POP_TOP`). Without this the post-loop stack is misaligned and later
-            // `STORE_FAST`s bind the wrong values.
-            "END_FOR" | "END_ASYNC_FOR" => {
+            // Cleans up after a 3.12+ `FOR_ITER` loop. The element the exhaust edge
+            // carries is always popped; the iterator is popped here too on 3.12
+            // (`END_FOR` stack_effect -2), but on 3.13+ (-1) a following
+            // `POP_TOP`/`POP_ITER` pops it instead. Detect that by the next opcode so
+            // the post-loop stack stays aligned and later stores bind correctly.
+            "END_FOR" => {
+                self.pop_exp(sim);
+                let next_pops_iter = co
+                    .instructions
+                    .iter()
+                    .find(|i| i.offset > insn.offset)
+                    .map(|i| matches!(i.opname.as_str(), "POP_TOP" | "POP_ITER"))
+                    .unwrap_or(false);
+                if !next_pops_iter {
+                    self.pop_exp(sim);
+                }
+            }
+            "END_ASYNC_FOR" => {
+                self.pop_exp(sim);
+            }
+            // 3.14 iterator cleanup after a loop; pops the iterator `FOR_ITER` left.
+            "POP_ITER" => {
                 self.pop_exp(sim);
             }
 
@@ -682,14 +795,24 @@ impl Lowering {
 
             // --- Function creation ---
             "MAKE_FUNCTION" => {
-                // 3.13: pop the code object, push the function. <=3.12: `arg`
-                // flags add extra pops (defaults/kwdefaults/annotations/closure).
+                // The code object is the slot that must survive as the function
+                // pointer, but its stack position is version-dependent:
+                //   <=3.10: [defaults?, kwdefaults?, annotations?, closure?, code,
+                //           qualname]  — qualname on top, extras below the code.
+                //   3.11/3.12: [ ...extras, code]  — code on top, extras below.
+                //   3.13+: [code]  — `arg` is absent; closure etc. arrive later via
+                //           SET_FUNCTION_ATTRIBUTE.
+                // In every case the flag extras sit *below* the code, so pop the
+                // qualname (<=3.10 only) and the code off the top, then the extras.
                 let extra = insn
                     .arg
                     .map(|a| (a as u32).count_ones() as usize)
                     .unwrap_or(0);
-                self.pop_n(sim, extra);
+                if self.pre_3_11 {
+                    self.pop_exp(sim); // qualname
+                }
                 let code_slot = sim.pop(&mut || self.fresh());
+                self.pop_n(sim, extra); // defaults/kwdefaults/annotations/closure
                 sim.push(code_slot);
             }
             "SET_FUNCTION_ATTRIBUTE" => {
@@ -762,10 +885,7 @@ impl Lowering {
                 // it, since the raise→handler edge is not in `jump_targets`.
                 if let Some(exc) = popped.first() {
                     let ex = VariableRef::new_local(EXC_LOCAL.to_string());
-                    stmts.push(Statement::new(
-                        StatementKind::assign(ex, [exc.clone()]),
-                        si,
-                    ));
+                    stmts.push(Statement::new(StatementKind::assign(ex, [exc.clone()]), si));
                 }
                 // Route to this function's handlers so their blocks are reachable
                 // and `<exc>` flows in; fall back to a return when there are none.
@@ -783,6 +903,16 @@ impl Lowering {
             "JUMP_FORWARD" | "JUMP_BACKWARD" | "JUMP_ABSOLUTE" | "JUMP_BACKWARD_NO_INTERRUPT" => {
                 if is_last {
                     return Ok(Some(goto_from(&insn.jump_targets, false)));
+                }
+            }
+            // <=3.10 exception-type test: compares the raised exception against the
+            // handler's type, popping both, and branches to the next handler on a
+            // mismatch (falling through into this handler's body on a match).
+            "JUMP_IF_NOT_EXC_MATCH" => {
+                self.pop_exp(sim);
+                self.pop_exp(sim);
+                if is_last {
+                    return Ok(Some(goto_from(&insn.jump_targets, true)));
                 }
             }
 
@@ -964,9 +1094,19 @@ impl Lowering {
         stmts: &mut Vec<Statement>,
         si: SourceInfo,
     ) {
-        let has_kwargs = insn.arg.map(|a| a & 1 == 1).unwrap_or(false);
+        // Whether a kwargs slot sits on top of the args iterable.
+        //   <=3.13: `CALL_FUNCTION_EX` carries a flags oparg; bit 0 marks the slot.
+        //   3.14: the oparg is gone and the slot is *always* present — a dict, or a
+        //   NULL (pushed via `PUSH_NULL`) when the call has no keyword splat.
+        let has_kwargs = match insn.arg {
+            None => true,
+            Some(a) => a & 1 == 1,
+        };
+        // The mapping may be a NULL placeholder (3.14 no-kwargs); pop it either way,
+        // but only treat a real value as a taint contributor.
         let kwargs = if has_kwargs {
-            Some(self.pop_exp(sim))
+            let slot = self.pop_slot(sim);
+            (!slot.is_null).then_some(slot.exp)
         } else {
             None
         };
@@ -1137,7 +1277,13 @@ impl Lowering {
         for p in &params {
             self.store_attr(&mut stmts, argtuple.clone(), ITEM_FIELD, p.clone(), si);
         }
-        self.store_attr(&mut stmts, ret.clone(), ARGS_FIELD, Exp::Variable(argtuple), si);
+        self.store_attr(
+            &mut stmts,
+            ret.clone(),
+            ARGS_FIELD,
+            Exp::Variable(argtuple),
+            si,
+        );
 
         let block_idx = self.program[idx].blocks.new_block();
         let block = &mut self.program[idx].blocks.blocks_mut()[block_idx];
@@ -1407,15 +1553,48 @@ impl Lowering {
     /// Source info for an instruction, mapping its position to a byte span in the
     /// source (so SARIF reports the right line). Falls back to a zero span.
     fn source_info_for(&mut self, insn: &Instruction) -> SourceInfo {
-        let (start, len) = match &insn.position {
+        // Prefer the full source span (3.11+, via PEP 657 `co_positions`). <=3.10
+        // has no per-instruction column info, so fall back to `starts_line` at
+        // column 0: without it every instruction collapses onto line 1, which both
+        // misreports lines and merges otherwise-distinct code-flow steps (source and
+        // sink landing on the same location), breaking the source->sink connection.
+        // (line, column, has_real_column). <=3.10 supplies no column, so it is
+        // synthesized below to keep same-line steps distinct.
+        let line_col = match &insn.position {
             Some(p) if p.start_line >= 1 => {
-                let line = (p.start_line - 1) as usize;
+                Some((p.start_line, p.start_column.max(0) as usize, true))
+            }
+            _ => insn
+                .starts_line
+                .filter(|&l| l >= 1)
+                .map(|l| (l, 0usize, false)),
+        };
+        let (start, len) = match line_col {
+            Some((line1, col, has_column)) => {
+                let line = (line1 - 1) as usize;
                 let base = self.line_starts.get(line).copied().unwrap_or(0);
-                let col = p.start_column.max(0) as usize;
+                // Bytes remaining on this line, so a synthetic column never spills
+                // onto the next line and misreports `startLine`.
+                let line_len = self
+                    .line_starts
+                    .get(line + 1)
+                    .copied()
+                    .unwrap_or(self.source_len)
+                    .saturating_sub(base);
+                let col = if has_column {
+                    col
+                } else {
+                    // Distinct per-instruction column within the line (see
+                    // `line_column_cursor`), clamped to stay on the line.
+                    let cursor = self.line_column_cursor.entry(line1).or_insert(0);
+                    let c = (*cursor).min(line_len.saturating_sub(1));
+                    *cursor += 1;
+                    c
+                };
                 let start = (base + col).min(self.source_len.max(1).saturating_sub(1)) as u32;
                 (start, 1u32)
             }
-            _ => (0, 1),
+            None => (0, 1),
         };
         SourceInfo::new(self.source_info_builder.span_for(
             self.artifact_key.clone(),
@@ -1595,8 +1774,9 @@ fn compute_leaders(instructions: &[Instruction]) -> BTreeSet<i64> {
     let offsets: Vec<i64> = instructions.iter().map(|i| i.offset).collect();
     for (i, insn) in instructions.iter().enumerate() {
         let op = insn.opname.as_str();
-        if is_branch(op) {
-            // Jump targets are leaders.
+        if is_branch(op) || is_setup_exception(op) {
+            // Jump targets are leaders. For `SETUP_*` (<=3.11 exception setup) the
+            // target is the handler block, reached on the implicit exception edge.
             for t in &insn.jump_targets {
                 leaders.insert(*t);
             }
@@ -1615,6 +1795,17 @@ fn compute_leaders(instructions: &[Instruction]) -> BTreeSet<i64> {
         }
     }
     leaders
+}
+
+/// Whether an instruction pushes an extra NULL/self slot alongside its named
+/// operand for a following `CALL` — the 3.11+ `LOAD_GLOBAL` NULL and the 3.12+
+/// `LOAD_ATTR` method-load self. `dis` records it in `argrepr` ("NULL + name",
+/// "name + NULL", "NULL|self + name", …) uniformly across those versions, while
+/// <=3.10/<=3.11 (respectively) push no such slot and encode a plain name index
+/// in `arg` — so a low-bit test on `arg` misfires there. Keying on the marker is
+/// version-robust.
+fn pushes_null_marker(insn: &Instruction) -> bool {
+    insn.argrepr.as_deref().is_some_and(|s| s.contains("NULL"))
 }
 
 fn is_return(op: &str) -> bool {
@@ -1640,6 +1831,16 @@ fn is_conditional_jump(op: &str) -> bool {
 
 fn is_branch(op: &str) -> bool {
     is_unconditional_jump(op) || is_conditional_jump(op) || op == "FOR_ITER"
+}
+
+/// `SETUP_*` block-setup ops (<=3.11) whose jump target is an exception handler
+/// entered on the implicit exception edge (3.12+ uses a zero-cost exception table
+/// instead). The frontend treats those targets as handler blocks.
+fn is_setup_exception(op: &str) -> bool {
+    matches!(
+        op,
+        "SETUP_FINALLY" | "SETUP_EXCEPT" | "SETUP_WITH" | "SETUP_CLEANUP" | "SETUP_ASYNC_WITH"
+    )
 }
 
 fn is_binary_op(op: &str) -> bool {

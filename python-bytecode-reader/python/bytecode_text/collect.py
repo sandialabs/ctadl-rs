@@ -37,9 +37,20 @@ def _collect_code(code, counter, code_ids):
             nested.append(_collect_code(const, counter, code_ids))
 
     consts = [normalize_value(c, code_ids) for c in code.co_consts]
-    instructions = [
-        normalize_instruction(instr, code_ids) for instr in dis.get_instructions(code)
-    ]
+    # Forward-fill the source line across instructions. On <=3.10 `dis` reports
+    # `starts_line` only on the *first* instruction of each source line (``None``
+    # otherwise); 3.11+ gives every instruction its own line. Carrying the last
+    # seen line forward makes every instruction line-attributed on all versions,
+    # so the reader/frontend need not know which interpreter produced the text.
+    instructions = []
+    current_line = None
+    for instr in dis.get_instructions(code):
+        record = normalize_instruction(instr, code_ids)
+        if record.starts_line is not None:
+            current_line = record.starts_line
+        else:
+            record.starts_line = current_line
+        instructions.append(record)
 
     return CodeObject(
         id=my_id,

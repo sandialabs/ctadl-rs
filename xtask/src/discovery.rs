@@ -5,10 +5,13 @@
 //! by pairing each source with its config rather than hard-coding a list, so
 //! adding a `.java` + matching `.json` is enough to register a new test.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
+
+use crate::exec;
 
 /// A single regression test case.
 pub struct TestCase {
@@ -25,7 +28,13 @@ pub enum Kind {
     /// C compiled to an ELF object, mapped back to lines via `addr2line`.
     Pcode { source: PathBuf, query: PathBuf },
     /// Python source (`.py`), whose SARIF locations already carry source lines.
-    Python { source: PathBuf, query: PathBuf },
+    /// `interpreter` pins the Python used (one case per installed version, so a
+    /// single run covers them all); `None` falls back to `$PYTHON`/`python3`.
+    Python {
+        source: PathBuf,
+        query: PathBuf,
+        interpreter: Option<PathBuf>,
+    },
 }
 
 impl Kind {
@@ -187,11 +196,18 @@ fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
 /// Pair each `foo.py` with a query JSON (`foo-query.json`, else a shared
 /// `query.json`). Names are prefixed `Python:` so they never collide with a
 /// like-named C/Java case.
+///
+/// Each pairing is expanded across every installed versioned interpreter (see
+/// [`discover_python_interpreters`]), so one regression run exercises the Python
+/// frontend on every Python version present. The case name carries the version
+/// (e.g. `Python:closure [3.13]`) so a per-version failure is unambiguous. When no
+/// versioned interpreter is found, a single case falls back to `$PYTHON`/`python3`.
 fn discover_python(py_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = Vec::new();
     if !py_dir.is_dir() {
         return Ok(cases);
     }
+    let interpreters = discover_python_interpreters();
     for entry in read_dir_sorted(py_dir)? {
         if entry.extension().and_then(|e| e.to_str()) != Some("py") {
             continue;
@@ -206,15 +222,81 @@ fn discover_python(py_dir: &Path) -> Result<Vec<TestCase>> {
         } else {
             continue;
         };
-        cases.push(TestCase {
-            name: format!("Python:{stem}"),
-            kind: Kind::Python {
-                source: absolute(&entry)?,
-                query: absolute(&query)?,
-            },
-        });
+        let source = absolute(&entry)?;
+        let query = absolute(&query)?;
+        if interpreters.is_empty() {
+            cases.push(TestCase {
+                name: format!("Python:{stem}"),
+                kind: Kind::Python {
+                    source: source.clone(),
+                    query: query.clone(),
+                    interpreter: None,
+                },
+            });
+        } else {
+            for (label, path) in &interpreters {
+                cases.push(TestCase {
+                    name: format!("Python:{stem} [{label}]"),
+                    kind: Kind::Python {
+                        source: source.clone(),
+                        query: query.clone(),
+                        interpreter: Some(path.clone()),
+                    },
+                });
+            }
+        }
     }
     Ok(cases)
+}
+
+/// Discover the versioned Python interpreters to exercise the frontend against.
+///
+/// If `$PYTHON` is set it pins the run to that single interpreter (letting a
+/// caller target one version). Otherwise every `python3.<minor>` / `python3<minor>`
+/// on `PATH` (minors 8..=20, covering current + upcoming releases) is collected,
+/// so one run covers all installed versions. The two naming forms are deduped by
+/// the interpreter's real path (the Nix regression shell exposes `python313`; a
+/// system install exposes `python3.13`, sometimes both). Empty when none are
+/// found, so the caller falls back to the ambient `python3` (and self-skips if
+/// even that is absent).
+pub fn discover_python_interpreters() -> Vec<(String, PathBuf)> {
+    if let Some(pinned) = std::env::var_os("PYTHON") {
+        let path = PathBuf::from(pinned);
+        let label = interpreter_label(&path).unwrap_or_else(|| "PYTHON".to_string());
+        return vec![(label, path)];
+    }
+    let mut found = Vec::new();
+    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+    for minor in 8..=20u32 {
+        // One interpreter per minor version: the dotted and undotted names often
+        // both resolve (the Nix shell exposes `python313`, `pkgs.python3` also
+        // ships `python3.13`). Take the first that resolves so a single `3.13`
+        // label -- and thus one scratch dir per case -- is used.
+        let resolved = [format!("python3.{minor}"), format!("python3{minor}")]
+            .into_iter()
+            .find_map(|name| exec::which(&name));
+        let Some(path) = resolved else { continue };
+        // Belt-and-braces: never list the same interpreter twice (e.g. two minors
+        // symlinked to one build), which would collide on the scratch directory.
+        let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if seen.insert(canonical) {
+            found.push((format!("3.{minor}"), path));
+        }
+    }
+    found
+}
+
+/// Best-effort version label (`"3.13"`) for a pinned `$PYTHON`, parsed from its
+/// file name (`python3.13` / `python313`); `None` if it is not version-suffixed.
+fn interpreter_label(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let rest = name.strip_prefix("python3")?;
+    let rest = rest.strip_prefix('.').unwrap_or(rest);
+    if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+        Some(format!("3.{rest}"))
+    } else {
+        None
+    }
 }
 
 fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>> {
