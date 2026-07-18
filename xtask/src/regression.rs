@@ -12,10 +12,11 @@
 //! explicitly; see [`Worker`] and [`scratch_dir`].
 
 use std::collections::BTreeSet;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -65,6 +66,10 @@ pub struct Options {
     pub dex_apk: Option<PathBuf>,
     /// How many cases to run concurrently. `None` picks [`default_jobs`].
     pub jobs: Option<usize>,
+    /// Build (and run) the release `ctadl` binary instead of the debug one.
+    /// Either way the binary is rebuilt from current source before any case
+    /// runs; see [`build_ctadl`].
+    pub release: bool,
 }
 
 impl Default for Options {
@@ -76,6 +81,7 @@ impl Default for Options {
             jvm_samples: None,
             dex_apk: None,
             jobs: None,
+            release: false,
         }
     }
 }
@@ -130,7 +136,7 @@ pub fn run(opts: &Options) -> Result<bool> {
 
     // ctadl/dex-reader/jvm-reader are only needed for the matching case kinds.
     if !cases.is_empty() || ghidra_selected {
-        preflight(&cases, ghidra_selected)?;
+        preflight(&cases, ghidra_selected, opts.release)?;
     }
 
     // The jvm-reader and dex-reader checks share the same Java sample sources:
@@ -376,9 +382,19 @@ fn resolve_dex_apk(override_path: Option<&Path>) -> Result<Option<PathBuf>> {
     .with_context(|| "failed to canonicalize dex apk path")
 }
 
-/// Ensure the executables needed for the selected cases are on `PATH`.
-fn preflight(cases: &[TestCase], ghidra_selected: bool) -> Result<()> {
-    ctadl_bin()?;
+/// Ensure the executables needed for the selected cases are available.
+///
+/// Runs once, single-threaded, before any worker starts. It (re)builds the `ctadl` binary from
+/// current source and records its path, so it's not stale. The reader binaries
+/// (`dex-reader`/`jvm-reader`) are workspace-excluded and come from `PATH`, so those are still just
+/// presence-checked here.
+fn preflight(cases: &[TestCase], ghidra_selected: bool, release: bool) -> Result<()> {
+    let bin = build_ctadl(release)?;
+    // First (and only) writer; a later worker reading it back via `ctadl_bin`
+    // sees this value.
+    CTADL_BIN
+        .set(bin)
+        .map_err(|_| anyhow::anyhow!("internal error: ctadl binary built more than once"))?;
     let needs_dex = cases.iter().any(|c| matches!(c.kind, Kind::Dex { .. }));
     let needs_jvm = cases.iter().any(|c| matches!(c.kind, Kind::Jvm { .. }));
     let needs_pcode = ghidra_selected || cases.iter().any(|c| matches!(c.kind, Kind::Pcode { .. }));
@@ -720,21 +736,108 @@ fn jar_arg(jar: &Path) -> String {
     jar.to_string_lossy().into_owned()
 }
 
+/// Path to the `ctadl` binary that [`build_ctadl`] produced. Set exactly once by
+/// [`preflight`] before any worker starts, then read (never written) by the
+/// per-case helpers below.
+static CTADL_BIN: OnceLock<PathBuf> = OnceLock::new();
+
+/// The freshly built `ctadl` binary the cases run against.
+///
+/// This deliberately does *not* discover a binary on disk. Scanning
+/// `target/{release,debug}` and running whatever exists is a correctness hazard:
+/// a stale `target/release/ctadl` from an older commit is silently exercised
+/// against current source, so the suite can report all-green while the code under
+/// test is actually broken. That really happened -- a stale release binary masked
+/// a total taint-flow regression in the PHP frontend. The only path that can be
+/// returned is the one [`build_ctadl`] just built from the current tree.
 fn ctadl_bin() -> Result<PathBuf> {
-    // Prefer the workspace build so regression tracks the tree under test.
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        for subdir in ["release", "debug"] {
-            let candidate = PathBuf::from(&manifest)
-                .join("..")
-                .join("target")
-                .join(subdir)
-                .join(if cfg!(windows) { "ctadl.exe" } else { "ctadl" });
-            if candidate.is_file() {
-                return Ok(candidate);
+    CTADL_BIN.get().cloned().context(
+        "internal error: ctadl binary requested before it was built; preflight must run first",
+    )
+}
+
+/// Build the `ctadl` binary from the current source tree and return the path to
+/// the executable cargo produced.
+///
+/// The binary is rebuilt in this same invocation, so it is guaranteed to
+/// correspond to the tree under test -- the whole point of replacing the old
+/// on-disk discovery (see [`ctadl_bin`]). We parse cargo's `--message-format=json`
+/// stream and take the `executable` path from the `ctadl` compiler-artifact
+/// message, so there is no guessing about the profile directory or a `.exe`
+/// suffix: cargo tells us exactly where it wrote the binary.
+fn build_ctadl(release: bool) -> Result<PathBuf> {
+    // `cargo` sets `$CARGO` for the subcommands it spawns (`cargo xtask` is one),
+    // so prefer it; fall back to the bare name for a direct `xtask` invocation.
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+
+    let profile = if release { "release" } else { "debug" };
+    println!("Building ctadl ({profile}) before running the suite...");
+
+    let mut cmd = Command::new(cargo);
+    // Run from the workspace root regardless of the caller's cwd. The xtask crate
+    // lives at `<root>/xtask`, so its manifest dir's parent is the root.
+    cmd.current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().context(
+        "internal error: CARGO_MANIFEST_DIR has no parent; expected `<workspace>/xtask`",
+    )?)
+    .args([
+        "build",
+        "--message-format=json",
+        "-p",
+        "ctadl-ascent",
+        "--bin",
+        "ctadl",
+    ]);
+    if release {
+        cmd.arg("--release");
+    }
+
+    // Stream the machine-readable artifact records on stdout for us to parse,
+    // while cargo's human-readable progress and any errors flow straight through
+    // stderr to the user.
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .context("failed to spawn `cargo build` for the ctadl binary")?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .context("cargo build produced no stdout to read artifacts from")?;
+
+    let mut exe: Option<PathBuf> = None;
+    for line in BufReader::new(stdout).lines() {
+        let line = line.context("failed to read `cargo build` output")?;
+        // cargo emits one JSON object per line; ignore anything unparseable
+        // rather than assume the whole stream is JSON.
+        let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        // The `ctadl` binary's compiler-artifact carries the path we want in its
+        // (non-null) `executable` field.
+        if msg["reason"] == "compiler-artifact" && msg["target"]["name"] == "ctadl" {
+            if let Some(path) = msg["executable"].as_str() {
+                exe = Some(PathBuf::from(path));
             }
         }
     }
-    exec::which("ctadl").context("`ctadl` not found on PATH or in target/{release,debug}")
+
+    let status = child
+        .wait()
+        .context("failed to wait on `cargo build` for the ctadl binary")?;
+    if !status.success() {
+        bail!(
+            "`cargo build --bin ctadl` failed ({})",
+            status
+                .code()
+                .map_or_else(|| "signal".to_string(), |c| c.to_string()),
+        );
+    }
+
+    exe.context(
+        "`cargo build --bin ctadl` reported no executable for the `ctadl` binary\n\
+         (expected a compiler-artifact message with a non-null `executable` path)",
+    )
 }
 
 fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {

@@ -85,6 +85,9 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 }
                 opts.jobs = Some(jobs);
             }
+            "--release" => {
+                opts.release = true;
+            }
             "--tests-dir" => {
                 let dir = args.next().context("--tests-dir requires a value")?;
                 opts.tests_dir = Some(PathBuf::from(dir));
@@ -129,6 +132,10 @@ Tasks:
                              capped). Cases are independent and each runs in its
                              own scratch dir, so this only trades memory for wall
                              clock; `-j 1` reverts to running them one at a time.
+    --release                Build and exercise the release `ctadl` binary
+                             (default: debug). Either way the binary is rebuilt
+                             from current source before any case runs, so the
+                             suite never runs against a stale on-disk binary.
     --tests-dir <dir>        Look for test cases under <dir> (default: auto-detect
                              `nightly/tests` or `tests` relative to the cwd).
     --jvm-samples <dir>      Directory of jvm-reader sample .java sources to
