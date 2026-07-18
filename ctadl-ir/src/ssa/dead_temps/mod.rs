@@ -47,9 +47,11 @@ mod tests;
 /// Runs dead-temporary elimination on every function of `program`. Intended to
 /// run before SSA conversion; see the module docs.
 pub fn eliminate_dead_temps(program: &mut Program) {
+    let mut deleted = 0usize;
     for (_, f) in program.functions.iter_enumerated_mut() {
-        eliminate_dead_temps_function(f);
+        deleted += eliminate_dead_temps_function(f);
     }
+    log::info!("dead_temps: deleted {deleted} dead temporary def(s)");
 }
 
 /// If `kind` is a side-effect-free def of an unversioned local — the only kind
@@ -64,9 +66,11 @@ fn removable_dest(kind: &StatementKind) -> Option<&ArcIntern<Variable>> {
         .then(|| &dest.variable)
 }
 
-pub fn eliminate_dead_temps_function(function: &mut FunctionData) {
+/// Runs dead-temporary elimination on one function, returning the number of
+/// dead-temp defining statements deleted.
+pub fn eliminate_dead_temps_function(function: &mut FunctionData) -> usize {
     if function.blocks.is_empty() {
-        return;
+        return 0;
     }
 
     // Use counts over the whole function, plus the location of every removable
@@ -127,8 +131,9 @@ pub fn eliminate_dead_temps_function(function: &mut FunctionData) {
     }
 
     if dead.is_empty() {
-        return;
+        return 0;
     }
+    let deleted = dead.len();
 
     // Rebuild each block that lost a statement, dropping the dead positions.
     // Deletion doesn't change the CFG, so the cache is preserved.
@@ -150,4 +155,5 @@ pub fn eliminate_dead_temps_function(function: &mut FunctionData) {
             block.statements.push_back(s);
         }
     }
+    deleted
 }
