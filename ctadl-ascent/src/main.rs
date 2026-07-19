@@ -181,6 +181,15 @@ pub enum ImportLanguage {
 pub struct InspectArgs {
     /// Artifact name, project name, or store path
     pub name: Option<String>,
+
+    /// Instead of summary statistics, pretty-print the imported IR. Prints every function
+    /// unless `--function` narrows the set. Requires an artifact/project name.
+    #[arg(long)]
+    pub dump_ir: bool,
+
+    /// With `--dump-ir`, only print functions whose name contains this substring.
+    #[arg(long, value_name = "SUBSTR")]
+    pub function: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -676,8 +685,15 @@ fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
 
         let import = project::ArtifactImport::load_by_name(name)
             .with_context(|| format!("loading artifact import: '{}'", name))?;
-        cli::inspect(&import)?;
+        if args.dump_ir {
+            cli::dump_ir(&import, args.function.as_deref())?;
+        } else {
+            cli::inspect(&import)?;
+        }
     } else {
+        if args.dump_ir {
+            anyhow::bail!("--dump-ir requires an artifact or project name");
+        }
         cli::list_store_contents()?;
     }
     Ok(())

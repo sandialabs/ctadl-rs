@@ -679,6 +679,26 @@ fn load_and_map_summaries(
     Ok(())
 }
 
+/// Pretty-print the imported IR. With `filter`, only functions whose name contains that
+/// substring are printed; otherwise every function is printed. Uses the `Display` impls in
+/// `ctadl_ir::mir`, so the output matches the in-memory AST the analysis consumes.
+pub fn dump_ir(import: &ArtifactImport, filter: Option<&str>) -> Result<(), Error> {
+    let program_info = load_program_info_without_source_info(import)?;
+    let mut matched = 0usize;
+    for func in program_info.program.functions.iter() {
+        if filter.is_none_or(|pat| func.name.contains(pat)) {
+            matched += 1;
+            println!("{func}");
+        }
+    }
+    if let Some(pat) = filter
+        && matched == 0
+    {
+        log::warn!("no function name contains '{pat}'");
+    }
+    Ok(())
+}
+
 pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
     let program_info = load_program_info_without_source_info(import)?;
     let program = &program_info.program;
