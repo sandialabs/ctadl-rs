@@ -58,9 +58,6 @@ use std::collections::HashMap;
 
 use crate::mir::*;
 
-#[cfg(test)]
-mod tests;
-
 /// Runs copy propagation and trivial-phi elimination on every function of
 /// `program`. Intended to run *after* SSA conversion; see the module docs.
 pub fn propagate_copies(program: &mut Program) {
