@@ -85,13 +85,7 @@ impl TerminatorKind {
     pub fn iter_src_var<'s>(&'s self) -> Box<dyn DoubleEndedIterator<Item = &'s VariableRef> + 's> {
         use TerminatorKind::*;
         match self {
-            Return { args } => Box::new(args.iter().filter_map(|arg| {
-                if let Exp::Variable(v) = arg {
-                    Some(v)
-                } else {
-                    None
-                }
-            })),
+            Return { args } => Box::new(args.iter().filter_map(Exp::base_variable)),
             Goto { .. } => Box::new(std::iter::empty()),
         }
     }
@@ -102,13 +96,7 @@ impl TerminatorKind {
     ) -> Box<dyn DoubleEndedIterator<Item = &'s mut VariableRef> + 's> {
         use TerminatorKind::*;
         match self {
-            Return { args } => Box::new(args.iter_mut().filter_map(|arg| {
-                if let Exp::Variable(v) = arg {
-                    Some(v)
-                } else {
-                    None
-                }
-            })),
+            Return { args } => Box::new(args.iter_mut().filter_map(Exp::base_variable_mut)),
             Goto { .. } => Box::new(std::iter::empty()),
         }
     }
