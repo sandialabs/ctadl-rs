@@ -25,6 +25,12 @@ mod tests;
 mod coalesce;
 pub use coalesce::{coalesce_copies, coalesce_function};
 
+mod dead_temps;
+pub use dead_temps::{eliminate_dead_temps, eliminate_dead_temps_function};
+
+mod copy_prop;
+pub use copy_prop::{propagate_copies, propagate_copies_function};
+
 #[derive(Debug)]
 struct PhiPlace {
     variables: HashSet<ArcIntern<Variable>>,

@@ -203,11 +203,16 @@ pub fn index(
         }
 
         log::trace!("summary length: {}", models_batch.summary.num_rows());
-        // Fuse single-use copy temporaries before SSA. Cuts the statement /
-        // variable count that SSA and the datalog fact base pay for. A no-op
-        // on programs already in SSA form (e.g. flowy imports).
+        // Delete assigned-but-never-read temporaries, then fuse single-use
+        // copy temporaries, both before SSA. Together they cut the statement /
+        // variable count that SSA and the datalog fact base pay for. Dead-temp
+        // elimination runs first: it removes defs that coalescing can't (a dead
+        // temp has no use to fuse into) and shrinks the input coalescing scans.
+        // Both are no-ops on programs already in SSA form (e.g. flowy imports).
+        ssa::eliminate_dead_temps(&mut program_info.program);
         ssa::coalesce_copies(&mut program_info.program);
         ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
+        ssa::propagate_copies(&mut program_info.program);
         log::info!(
             "[mem cp] after SSA transform: {:.1} MB",
             phys_footprint_mb()
@@ -671,6 +676,26 @@ fn load_and_map_summaries(
         discarded_summaries
     );
 
+    Ok(())
+}
+
+/// Pretty-print the imported IR. With `filter`, only functions whose name contains that
+/// substring are printed; otherwise every function is printed. Uses the `Display` impls in
+/// `ctadl_ir::mir`, so the output matches the in-memory AST the analysis consumes.
+pub fn dump_ir(import: &ArtifactImport, filter: Option<&str>) -> Result<(), Error> {
+    let program_info = load_program_info_without_source_info(import)?;
+    let mut matched = 0usize;
+    for func in program_info.program.functions.iter() {
+        if filter.is_none_or(|pat| func.name.contains(pat)) {
+            matched += 1;
+            println!("{func}");
+        }
+    }
+    if let Some(pat) = filter
+        && matched == 0
+    {
+        log::warn!("no function name contains '{pat}'");
+    }
     Ok(())
 }
 
