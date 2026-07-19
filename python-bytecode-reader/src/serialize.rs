@@ -68,7 +68,7 @@ const PACKAGE_FILES: &[(&str, &str)] = &[
 /// - [`SerializeError::Python`] if the serializer exits non-zero (stderr attached).
 /// - [`SerializeError::Io`] / [`SerializeError::NonUtf8`] on I/O or decoding failure.
 pub fn run_serializer(source: &Path, fmt: Format) -> Result<String, SerializeError> {
-    let python = find_interpreter()?;
+    let python = select_interpreter(source)?;
     let staging = stage_package()?;
 
     let mut command = Command::new(&python);
@@ -90,12 +90,109 @@ pub fn run_serializer(source: &Path, fmt: Format) -> Result<String, SerializeErr
     String::from_utf8(output.stdout).map_err(|_| SerializeError::NonUtf8)
 }
 
+/// Choose the interpreter to run against `source`.
+///
+/// `.py` source (and stdin) compiles under whatever interpreter we pick, so any
+/// one will do — [`find_interpreter`]. A `.pyc`, by contrast, carries a fixed
+/// bytecode version in its 4-byte magic; `marshal` can crash or silently corrupt
+/// on a mismatch, so we read that magic and dispatch to an interpreter whose own
+/// bytecode magic matches exactly — [`find_matching_interpreter`].
+fn select_interpreter(source: &Path) -> Result<std::path::PathBuf, SerializeError> {
+    let is_pyc = source
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("pyc"));
+    if is_pyc {
+        find_matching_interpreter(source)
+    } else {
+        find_interpreter()
+    }
+}
+
 /// Locate a Python interpreter: `PYTHON` env var first, else `python3` on PATH.
 fn find_interpreter() -> Result<std::path::PathBuf, SerializeError> {
     if let Some(python) = std::env::var_os("PYTHON") {
         return Ok(python.into());
     }
     which::which("python3").map_err(|_| SerializeError::NoInterpreter)
+}
+
+/// Read the 4-byte bytecode magic from the head of a `.pyc`.
+fn read_pyc_magic(source: &Path) -> Result<[u8; 4], SerializeError> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(source).map_err(|e| SerializeError::Pyc {
+        path: source.display().to_string(),
+        message: e.to_string(),
+    })?;
+    let mut magic = [0u8; 4];
+    file.read_exact(&mut magic).map_err(|e| SerializeError::Pyc {
+        path: source.display().to_string(),
+        message: format!("reading magic: {e}"),
+    })?;
+    Ok(magic)
+}
+
+/// Candidate interpreters to probe for a `.pyc`, in priority order: `$PYTHON`
+/// first (an explicit user choice), then `python3`, then versioned `python3.N`
+/// across the range we might encounter. Names that don't resolve are skipped.
+fn candidate_interpreters() -> Vec<std::path::PathBuf> {
+    let mut names: Vec<String> = Vec::new();
+    if let Some(python) = std::env::var_os("PYTHON") {
+        return vec![python.into()]; // explicit override: probe only this one
+    }
+    names.push("python3".to_string());
+    // Newest first — a .pyc is most likely from a current interpreter.
+    for minor in (8..=15).rev() {
+        names.push(format!("python3.{minor}"));
+    }
+    names
+        .iter()
+        .filter_map(|n| which::which(n).ok())
+        .collect()
+}
+
+/// Ask an interpreter for its own bytecode magic (`importlib.util.MAGIC_NUMBER`).
+/// Returns `None` if the interpreter can't be run or gives short output.
+fn interpreter_magic(python: &Path) -> Option<[u8; 4]> {
+    let output = Command::new(python)
+        .args([
+            "-c",
+            "import importlib.util,sys;sys.stdout.buffer.write(importlib.util.MAGIC_NUMBER)",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() || output.stdout.len() < 4 {
+        return None;
+    }
+    Some([output.stdout[0], output.stdout[1], output.stdout[2], output.stdout[3]])
+}
+
+/// Find an interpreter whose bytecode magic matches this `.pyc` exactly. An
+/// exact 4-byte match (not just major.minor) is the correct safety criterion:
+/// it is precisely what guarantees `marshal.loads` will accept the payload.
+fn find_matching_interpreter(source: &Path) -> Result<std::path::PathBuf, SerializeError> {
+    let want = read_pyc_magic(source)?;
+    let candidates = candidate_interpreters();
+    if candidates.is_empty() {
+        return Err(SerializeError::NoInterpreter);
+    }
+    let mut tried = Vec::new();
+    for python in candidates {
+        match interpreter_magic(&python) {
+            Some(got) if got == want => return Ok(python),
+            Some(got) => tried.push(format!("{} (magic {})", python.display(), hex4(got))),
+            None => tried.push(format!("{} (unavailable)", python.display())),
+        }
+    }
+    Err(SerializeError::NoMatchingInterpreter {
+        path: source.display().to_string(),
+        magic: hex4(want),
+        tried: tried.join(", "),
+    })
+}
+
+/// Format a 4-byte magic as lowercase hex, matching Python's `bytes.hex()`.
+fn hex4(magic: [u8; 4]) -> String {
+    magic.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Stage the embedded package into a fresh tempdir as `bytecode_text/*.py`, so

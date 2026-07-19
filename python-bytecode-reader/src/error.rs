@@ -46,6 +46,18 @@ pub enum SerializeError {
         "no python interpreter found: set the PYTHON environment variable or add `python3` to PATH"
     )]
     NoInterpreter,
+    #[error("cannot read .pyc magic from {path}: {message}")]
+    Pyc { path: String, message: String },
+    #[error(
+        "no available python interpreter produces bytecode matching {path} \
+         (magic {magic}). Tried: {tried}. Install a matching interpreter \
+         (e.g. `python3.11`) or set PYTHON to point at it."
+    )]
+    NoMatchingInterpreter {
+        path: String,
+        magic: String,
+        tried: String,
+    },
     #[error("python serializer failed (exit {code}):\n{stderr}")]
     Python { code: i32, stderr: String },
     #[error("python serializer produced non-utf8 output")]

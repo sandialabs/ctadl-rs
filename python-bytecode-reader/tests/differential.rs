@@ -103,35 +103,132 @@ fn differential_round_trip() {
     }
 }
 
+/// Locate the interpreter the serializer would use for source (`PYTHON`, else
+/// `python3`), or `None` to self-skip when no interpreter is present.
+fn default_interpreter() -> Option<std::path::PathBuf> {
+    match std::env::var_os("PYTHON") {
+        Some(p) => Some(std::path::PathBuf::from(p)),
+        None => which::which("python3").ok(),
+    }
+}
+
+/// Compile `source` under `python` into `cfile`, a real `.pyc` carrying that
+/// interpreter's bytecode magic.
+fn compile_pyc(python: &Path, source: &Path, cfile: &Path) {
+    let status = std::process::Command::new(python)
+        .arg("-c")
+        .arg(format!(
+            "import py_compile; py_compile.compile(r'{}', cfile=r'{}', doraise=True)",
+            source.display(),
+            cfile.display()
+        ))
+        .status()
+        .expect("run py_compile");
+    assert!(status.success(), "py_compile failed");
+}
+
 /// The `.pyc` path: compile a source to a real `.pyc` and check it round-trips
-/// the same way source does.
+/// the same way source does — this exercises the version-matching dispatch
+/// ([`find_matching_interpreter`]) on its happy path.
 #[test]
 fn differential_pyc() {
     let dir = tempfile::tempdir().unwrap();
     let src = dir.path().join("mod.py");
     std::fs::write(&src, b"def f(a):\n    b = a\n    return b\n").unwrap();
 
-    // Compile via the same interpreter the serializer will use, if present.
-    let python = match std::env::var_os("PYTHON") {
-        Some(p) => std::path::PathBuf::from(p),
-        None => match which::which("python3") {
-            Ok(p) => p,
-            Err(_) => {
-                eprintln!("SKIP differential_pyc: no Python interpreter");
-                return;
-            }
-        },
+    let Some(python) = default_interpreter() else {
+        eprintln!("SKIP differential_pyc: no Python interpreter");
+        return;
     };
-    let status = std::process::Command::new(&python)
-        .arg("-c")
-        .arg(format!(
-            "import py_compile; py_compile.compile(r'{}', cfile=r'{}', doraise=True)",
-            src.display(),
-            dir.path().join("mod.pyc").display()
-        ))
-        .status()
-        .expect("run py_compile");
-    assert!(status.success(), "py_compile failed");
+    let pyc = dir.path().join("mod.pyc");
+    compile_pyc(&python, &src, &pyc);
+    check_source(&pyc);
+}
 
-    check_source(&dir.path().join("mod.pyc"));
+/// A `.pyc` whose bytecode magic matches no available interpreter must be
+/// *refused* — never handed to `marshal`, which could crash or return garbage.
+/// We corrupt the magic of a real `.pyc` and assert a clean, actionable error.
+#[test]
+fn pyc_magic_mismatch_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("mod.py");
+    std::fs::write(&src, b"def f(a):\n    return a\n").unwrap();
+
+    let Some(python) = default_interpreter() else {
+        eprintln!("SKIP pyc_magic_mismatch_is_refused: no Python interpreter");
+        return;
+    };
+    let pyc = dir.path().join("mod.pyc");
+    compile_pyc(&python, &src, &pyc);
+
+    // Flip a magic byte so it matches no real interpreter's bytecode version.
+    let mut data = std::fs::read(&pyc).unwrap();
+    data[0] ^= 0xFF;
+    std::fs::write(&pyc, &data).unwrap();
+
+    let err = run_serializer(&pyc, Format::Stable)
+        .expect_err("mismatched-magic .pyc must be rejected, not marshalled");
+    match err {
+        SerializeError::NoMatchingInterpreter { magic, tried, .. } => {
+            // The reported magic is the corrupted file's, and we recorded the
+            // interpreters we probed (at least the default one).
+            assert_eq!(magic.len(), 8, "magic is 4 bytes as hex: {magic}");
+            assert!(!tried.is_empty(), "should list the interpreters tried");
+        }
+        other => panic!("expected NoMatchingInterpreter, got: {other}"),
+    }
+}
+
+/// A too-short `.pyc` (fewer than the 4 magic bytes) yields a located `Pyc`
+/// error rather than a panic or an out-of-bounds read. Needs no interpreter.
+#[test]
+fn truncated_pyc_is_a_clean_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let pyc = dir.path().join("short.pyc");
+    std::fs::write(&pyc, b"\xf3\x0d").unwrap(); // 2 bytes: shorter than the magic
+
+    let err = run_serializer(&pyc, Format::Stable).expect_err("truncated .pyc must error");
+    match err {
+        SerializeError::Pyc { path, .. } => assert!(path.ends_with("short.pyc")),
+        other => panic!("expected Pyc error, got: {other}"),
+    }
+}
+
+/// Backstop: even if dispatch is bypassed and a mismatched interpreter is forced
+/// onto a `.pyc` directly, the Python `_load_code` guard refuses to `marshal` it
+/// (exiting non-zero with a magic-mismatch message) instead of risking a crash.
+#[test]
+fn python_guard_refuses_mismatched_magic() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("mod.py");
+    std::fs::write(&src, b"def f(a):\n    return a\n").unwrap();
+
+    let Some(python) = default_interpreter() else {
+        eprintln!("SKIP python_guard_refuses_mismatched_magic: no Python interpreter");
+        return;
+    };
+    let pyc = dir.path().join("mod.pyc");
+    compile_pyc(&python, &src, &pyc);
+    let mut data = std::fs::read(&pyc).unwrap();
+    data[0] ^= 0xFF; // corrupt magic -> won't match this interpreter
+    std::fs::write(&pyc, &data).unwrap();
+
+    // Invoke the module directly (bypassing Rust dispatch) against the very
+    // interpreter that just compiled it — the guard must still refuse.
+    let pkg_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("python");
+    let output = std::process::Command::new(&python)
+        .env("PYTHONPATH", &pkg_root)
+        .args(["-m", "bytecode_text"])
+        .arg(&pyc)
+        .output()
+        .expect("run bytecode_text module");
+    assert!(
+        !output.status.success(),
+        "guard should reject mismatched .pyc"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("does not match this interpreter"),
+        "guard message missing; stderr was: {stderr}"
+    );
 }
