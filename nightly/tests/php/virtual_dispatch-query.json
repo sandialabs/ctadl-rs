@@ -1,11 +1,10 @@
 {
   "expected_lines": [
-    20
+    17
   ],
   "unexpected_lines": [
-    26
+    23
   ],
-  "xfail": "PHP method calls resolve by name, not receiver type -- Danger::run (line 26) is a false-positive target. Remove this marker once PHP is wired into the receiver-sensitive dispatch (java_call/resolvent) machinery.",
   "model_generators": [
     {
       "find": "methods",
