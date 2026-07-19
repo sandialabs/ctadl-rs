@@ -63,7 +63,7 @@ fn removable_dest(kind: &StatementKind) -> Option<&ArcIntern<Variable>> {
         _ => return None,
     };
     (dest.version.is_none() && matches!(dest.variable.as_ref(), Variable::Local(_)))
-        .then(|| &dest.variable)
+        .then_some(&dest.variable)
 }
 
 /// Runs dead-temporary elimination on one function, returning the number of
