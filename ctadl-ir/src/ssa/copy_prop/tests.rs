@@ -211,10 +211,7 @@ fn nontrivial_phi_is_kept_but_operands_rewritten() {
 fn unversioned_anchor_copy_is_not_propagated() {
     // p_0 = p   (versioned dest, UNVERSIONED source): the parameter anchor that
     // transform() seeds. It must survive untouched.
-    let mut f = one_block(
-        vec![copy(v("p", 0), bare("p"))],
-        vec![read(v("p", 0))],
-    );
+    let mut f = one_block(vec![copy(v("p", 0), bare("p"))], vec![read(v("p", 0))]);
     let removed = propagate_copies_function(&mut f);
     assert_eq!(removed, 0);
     assert_eq!(dests(&f, 0), vec![v("p", 0)]);
@@ -277,10 +274,7 @@ fn load_is_not_a_copy() {
 fn phi_of_only_self_references_is_left_undefined() {
     // x_2 = phi(x_2, x_2): every operand resolves to the phi itself, so there is
     // no value to alias to. A dead/undefined phi — left in place.
-    let mut f = one_block(
-        vec![phi(v("x", 2), &[v("x", 2), v("x", 2)])],
-        vec![],
-    );
+    let mut f = one_block(vec![phi(v("x", 2), &[v("x", 2), v("x", 2)])], vec![]);
     let removed = propagate_copies_function(&mut f);
     assert_eq!(removed, 0);
     assert_eq!(dests(&f, 0), vec![v("x", 2)]);
@@ -388,12 +382,14 @@ fn empty_function_is_a_noop() {
 #[test]
 fn program_entry_point_runs_on_every_function() {
     let mut program = Program::default();
-    program
-        .functions
-        .push(one_block(vec![copy(v("x", 2), v("x", 1))], vec![read(v("x", 2))]));
-    program
-        .functions
-        .push(one_block(vec![phi(v("y", 2), &[v("y", 1)])], vec![read(v("y", 2))]));
+    program.functions.push(one_block(
+        vec![copy(v("x", 2), v("x", 1))],
+        vec![read(v("x", 2))],
+    ));
+    program.functions.push(one_block(
+        vec![phi(v("y", 2), &[v("y", 1)])],
+        vec![read(v("y", 2))],
+    ));
     propagate_copies(&mut program);
     assert!(kinds(&program.functions[FunctionIdx::new(0)], 0).is_empty());
     assert_eq!(

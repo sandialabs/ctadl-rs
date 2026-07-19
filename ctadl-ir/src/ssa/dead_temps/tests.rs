@@ -298,13 +298,21 @@ fn empty_function_is_a_noop() {
 #[test]
 fn program_entry_point_eliminates_in_every_function() {
     let mut program = Program::default();
-    program
-        .functions
-        .push(one_block_function(vec![assign(local("t"), vec![read("a")])]));
-    program
-        .functions
-        .push(one_block_function(vec![assign(local("u"), vec![read("b")])]));
+    program.functions.push(one_block_function(vec![assign(
+        local("t"),
+        vec![read("a")],
+    )]));
+    program.functions.push(one_block_function(vec![assign(
+        local("u"),
+        vec![read("b")],
+    )]));
     eliminate_dead_temps(&mut program);
-    assert_eq!(block_kinds(&program.functions[FunctionIdx::new(0)], 0).len(), 0);
-    assert_eq!(block_kinds(&program.functions[FunctionIdx::new(1)], 0).len(), 0);
+    assert_eq!(
+        block_kinds(&program.functions[FunctionIdx::new(0)], 0).len(),
+        0
+    );
+    assert_eq!(
+        block_kinds(&program.functions[FunctionIdx::new(1)], 0).len(),
+        0
+    );
 }
