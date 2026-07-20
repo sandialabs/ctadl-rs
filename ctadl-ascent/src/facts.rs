@@ -211,7 +211,7 @@ impl Path {
         Self::from_accesses(self.iter().chain(other.iter()).cloned())
     }
 
-    /// If the path begins with an [`Offset`](mir::FieldAccess::Offset) component,
+    /// If the path begins with an [`Offset`](mir::PathSegment::Offset) component,
     /// returns the path with that leading offset removed; otherwise `None`.
     ///
     /// Used to model offset-insensitive loads: a read `v.[k]..rest` (element `k`
@@ -221,7 +221,7 @@ impl Path {
     #[inline]
     pub fn strip_leading_offset(&self) -> Option<Path> {
         match self.0.head() {
-            Some(mir::FieldAccess::Offset(_)) => Some(Path(self.0.tail().unwrap_or_default())),
+            Some(mir::PathSegment::Offset(_)) => Some(Path(self.0.tail().unwrap_or_default())),
             _ => None,
         }
     }
