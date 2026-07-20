@@ -29,6 +29,11 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     builder: &'b mut ModelBuilders,
     find_method: Vec<FindMethod>,
     methods: Vec<UniverseSet<&'p str>>,
+    /// For `find: callsites`, the set of caller functions matched by `in_function`
+    /// (parallel to `methods`, which holds the matched callee functions).
+    in_functions: Vec<UniverseSet<&'p str>>,
+    /// Which set the currently-executing constraint narrows (see [`CurrentSet`]).
+    current_set: CurrentSet,
 
     vmt: &'p VirtualMethodTable,
     // maps simple names to fully qualified names
@@ -57,6 +62,17 @@ fn return_regex() -> &'static Regex {
 #[derive(Copy, Clone, Debug)]
 pub enum FindMethod {
     Methods,
+    Callsites,
+}
+
+/// Which universe set a set-narrowing constraint (e.g. `signature_match`) currently
+/// intersects. Defaults to [`CurrentSet::Methods`] (the callee/method set). While
+/// evaluating an `in_function` constraint's inner constraint it is flipped to
+/// [`CurrentSet::InFunction`] so the same matching code narrows the caller set instead.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum CurrentSet {
+    Methods,
+    InFunction,
 }
 
 impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
@@ -112,6 +128,8 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             builder,
             find_method: Vec::new(),
             methods: Vec::new(),
+            in_functions: Vec::new(),
+            current_set: CurrentSet::Methods,
             vmt,
             program_method_names,
             program_method_parents,
@@ -123,6 +141,65 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
     /// Add a JSON parsing error to the collection
     fn add_json_error(&mut self, error: crate::error::JsonModelError) {
         self.errors.push(error);
+    }
+
+    /// The universe set that set-narrowing constraints currently intersect. Redirected to
+    /// the caller set while evaluating `in_function`'s inner constraint (see [`CurrentSet`]).
+    #[inline]
+    fn target_set_mut(&mut self, n: usize) -> &mut UniverseSet<&'p str> {
+        match self.current_set {
+            CurrentSet::Methods => &mut self.methods[n],
+            CurrentSet::InFunction => &mut self.in_functions[n],
+        }
+    }
+
+    /// Emits source/sink endpoints for the matched elements of generator `n`.
+    ///
+    /// For `find: methods` this appends one function-anchored endpoint per matched function.
+    /// For `find: callsites` it appends callsite-scoped endpoints for the cross product of
+    /// matched callees (`self.methods[n]`) and matched callers (`self.in_functions[n]`); when
+    /// no `in_function` constraint was given (caller set is `All`) it emits an unfiltered
+    /// endpoint per callee that fans out to every callsite downstream.
+    fn emit_endpoints(
+        &mut self,
+        n: usize,
+        idx: (FormalIndexTypeTag, Option<i16>),
+        ap: &[&str],
+        label: &str,
+        direction: TaintDirection,
+        wildcard: bool,
+    ) {
+        let callees = matched_functions(&self.methods[n], self.vmt);
+        if !matches!(self.find_method.get(n), Some(FindMethod::Callsites)) {
+            for func in callees {
+                self.builder
+                    .endpoint
+                    .append(&func, idx, ap, label, direction, wildcard, None, false);
+            }
+            return;
+        }
+        // Callsite-scoped: resolve the caller filter. `All` means "any caller".
+        let callers: Vec<Option<String>> = match &self.in_functions[n] {
+            UniverseSet::All => vec![None],
+            _ => matched_functions(&self.in_functions[n], self.vmt)
+                .into_iter()
+                .map(Some)
+                .collect(),
+        };
+        for func in &callees {
+            for caller in &callers {
+                self.builder.endpoint.append(
+                    func,
+                    idx,
+                    ap,
+                    label,
+                    direction,
+                    wildcard,
+                    caller.as_deref(),
+                    true,
+                );
+            }
+        }
     }
 
     /// Encodes models. It is assumed that each json element of the iterator represents an element of `model_generators`.
@@ -149,6 +226,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Entry point. Clear the model_generator set then visit it.
     fn visit_model_generator(&mut self, n: usize, value: &serde_json::Value) {
         self.methods.insert(n, UniverseSet::all());
+        self.in_functions.insert(n, UniverseSet::all());
+        self.current_set = CurrentSet::Methods;
         self.super_model_generator(n, value);
         self.methods[n] = UniverseSet::empty();
     }
@@ -157,6 +236,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.super_find(n, value);
         match value.as_str() {
             Some("methods") => self.find_method.insert(n, FindMethod::Methods),
+            Some("callsites") => self.find_method.insert(n, FindMethod::Callsites),
             Some(other) => {
                 self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
                     index: n,
@@ -173,7 +253,10 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Intersects existing `self.methods[n]` with the matches for the constraint
     fn visit_signature_match_constraint(&mut self, n: usize, value: &serde_json::Value) {
         self.super_signature_match_constraint(n, value);
-        if let Some(FindMethod::Methods) = self.find_method.get(n) {
+        if matches!(
+            self.find_method.get(n),
+            Some(FindMethod::Methods | FindMethod::Callsites)
+        ) {
             let has_names = value.get("names").or(value.get("name")).is_some();
             if has_names {
                 // This horrific expression computes the set of names mentioned in the constraint
@@ -211,7 +294,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                 })();
 
                 if let Ok(names) = names_result {
-                    self.methods[n].intersect_with(names);
+                    self.target_set_mut(n).intersect_with(names);
                 }
             }
             let has_parents = value.get("parents").or(value.get("parent")).is_some();
@@ -249,7 +332,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                 })();
 
                 if let Ok(parents) = parents_result {
-                    self.methods[n].intersect_with(parents);
+                    self.target_set_mut(n).intersect_with(parents);
                 }
             }
         }
@@ -258,8 +341,10 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Intersects existing `self.methods[n]` with the matches for the constraint
     fn visit_signature_constraint(&mut self, n: usize, value: &serde_json::Value) {
         self.super_signature_constraint(n, value);
-        if let Some(FindMethod::Methods) = self.find_method.get(n)
-            && let Some(pattern) = value.get("pattern")
+        if matches!(
+            self.find_method.get(n),
+            Some(FindMethod::Methods | FindMethod::Callsites)
+        ) && let Some(pattern) = value.get("pattern")
         {
             let pattern_str = match pattern.as_str() {
                 Some(s) => s,
@@ -291,13 +376,34 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                 .flatten()
                 .copied()
                 .collect();
-            self.methods[n].intersect_with(matches);
+            self.target_set_mut(n).intersect_with(matches);
+        }
+    }
+
+    /// Matches the containing (caller) function of a callsite by evaluating the wrapped
+    /// `inner` constraint against the caller set. Only meaningful for `find: callsites`.
+    fn visit_in_function_constraint(&mut self, n: usize, value: &serde_json::Value) {
+        if let Some(FindMethod::Callsites) = self.find_method.get(n) {
+            let prev = self.current_set;
+            self.current_set = CurrentSet::InFunction;
+            self.super_in_function_constraint(n, value);
+            self.current_set = prev;
         }
     }
 
     /// Sends the methods in `self.methods[n]` to the SummaryBuilder
     fn visit_propagation(&mut self, n: usize, value: &serde_json::Value) {
         self.super_propagation(n, value);
+        // Propagation (summaries) at a callsite is a function-level fact and is not
+        // supported for `find: callsites`.
+        if let Some(FindMethod::Callsites) = self.find_method.get(n) {
+            self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                index: n,
+                field_name: "propagation".to_string(),
+                message: "'propagation' is not supported with find: callsites".to_string(),
+            });
+            return;
+        }
         // `wildcard` is sink-only; reject it on a propagation.
         if value.get("wildcard").is_some() {
             self.add_json_error(crate::error::JsonModelError::UnexpectedField {
@@ -419,16 +525,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
 
         match parse_port(port_str, n) {
             Ok((tag, index, ap)) => {
-                for func in matched_functions(&self.methods[n], self.vmt) {
-                    self.builder.endpoint.append(
-                        &func,
-                        (tag, index),
-                        &ap,
-                        label,
-                        TaintDirection::Forward,
-                        false,
-                    );
-                }
+                self.emit_endpoints(n, (tag, index), &ap, label, TaintDirection::Forward, false);
             }
             Err(err) => self.add_json_error(err),
         }
@@ -493,16 +590,14 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
 
         match parse_port(port_str, n) {
             Ok((tag, index, ap)) => {
-                for func in matched_functions(&self.methods[n], self.vmt) {
-                    self.builder.endpoint.append(
-                        &func,
-                        (tag, index),
-                        &ap,
-                        label,
-                        TaintDirection::Backward,
-                        wildcard,
-                    );
-                }
+                self.emit_endpoints(
+                    n,
+                    (tag, index),
+                    &ap,
+                    label,
+                    TaintDirection::Backward,
+                    wildcard,
+                );
             }
             Err(err) => self.add_json_error(err),
         }
@@ -657,6 +752,7 @@ pub trait ModelGeneratorVisitor {
             Some("all_of") => self.visit_all_of_constraint(n, value),
             Some("not") => self.visit_not_constraint(n, value),
             Some("uses_field") => self.visit_uses_field_constraint(n, value),
+            Some("in_function") => self.visit_in_function_constraint(n, value),
             Some(c) => log::warn!("unhandled model_generator constraint: {c}"),
             None => (),
         }
@@ -809,6 +905,19 @@ pub trait ModelGeneratorVisitor {
     #[inline]
     fn super_signature_match_constraint(&mut self, _n: usize, _value: &serde_json::Value) {
         // Nothing
+    }
+
+    #[inline]
+    fn visit_in_function_constraint(&mut self, n: usize, value: &serde_json::Value) {
+        self.super_in_function_constraint(n, value)
+    }
+
+    #[inline]
+    fn super_in_function_constraint(&mut self, n: usize, value: &serde_json::Value) {
+        value
+            .get("inner")
+            .into_iter()
+            .for_each(|c| self.visit_where_constraint(n, c));
     }
 
     #[inline]

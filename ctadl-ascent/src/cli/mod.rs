@@ -62,13 +62,38 @@ fn build_query_endpoints(
 
     let mut out_eps = Vec::new();
     let mut out_formals = Vec::new();
-    for (func_name, selector_ty, idx_opt, path_id, label_str, direction, wildcard) in
-        batch.iter_endpoints()
+    for crate::models::EndpointRow {
+        function: func_name,
+        selector_ty,
+        index: idx_opt,
+        path_id,
+        label: label_str,
+        direction,
+        wildcard,
+        in_function,
+        callsite_scoped,
+    } in batch.iter_endpoints()
     {
-        // Resolve function name → FunctionId; skip if not present.
+        // Resolve function name → FunctionId; skip if not present. For a callsite endpoint
+        // this is the *callee*.
         let infunc = match idmap.get_function_id(crate::facts::Function(func_name.into())) {
             Some(id) => id,
             None => continue,
+        };
+
+        // For a callsite-scoped endpoint, resolve the caller filter (the containing
+        // function). `None` in_function means "any caller"; an unresolvable name means no
+        // callsite can match, so skip the endpoint entirely.
+        let caller_filter = if callsite_scoped {
+            match in_function {
+                Some(name) => match idmap.get_function_id(crate::facts::Function(name.into())) {
+                    Some(id) => Some(id),
+                    None => continue,
+                },
+                None => None,
+            }
+        } else {
+            None
         };
 
         // Map selector tag to variables.
@@ -123,6 +148,11 @@ fn build_query_endpoints(
                 call_site: None,
             };
             let fanned = match var.as_formal() {
+                Some(formal) if callsite_scoped => {
+                    // Anchor only at the matching call sites (callee is `infunc`, caller is
+                    // constrained by `caller_filter`); no function-anchored fallback.
+                    base.anchored_at_callsites_filtered(formal, &facts.call, caller_filter)
+                }
                 Some(formal) => base.anchored_at_callsites(formal, &facts.call),
                 None => vec![base],
             };
