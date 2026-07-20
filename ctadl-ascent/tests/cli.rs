@@ -234,6 +234,33 @@ fn test_cli_query_c_sources_and_sinks() {
             region["startLine"].as_u64().is_some_and(|n| n > 0),
             "result has no source line: {result}"
         );
+
+        // The code flow must visit the summarized interprocedural call itself, not
+        // just its source and sink endpoints. `transfer` is analyzed by summary (the
+        // flow links its actual-arg vertices by an intra edge rather than descending
+        // into it), so its call on line 12 -- between `s = source()` on 11 and
+        // `sink(x[2])` on 13 -- is on no Call/Return path edge and would be elided
+        // unless the formatter surfaces the interior call-arg vertex. Assert all
+        // three lines appear as code-flow steps.
+        let mut step_lines = std::collections::BTreeSet::new();
+        for flow in result["codeFlows"].as_array().into_iter().flatten() {
+            for thread in flow["threadFlows"].as_array().into_iter().flatten() {
+                for loc in thread["locations"].as_array().into_iter().flatten() {
+                    if let Some(line) =
+                        loc["location"]["physicalLocation"]["region"]["startLine"].as_u64()
+                    {
+                        step_lines.insert(line);
+                    }
+                }
+            }
+        }
+        for line in [11, 12, 13] {
+            assert!(
+                step_lines.contains(&line),
+                "code flow is missing line {line} (steps at lines {step_lines:?}); \
+                 line 12 is the summarized `transfer(&x[1], s)` call: {text}"
+            );
+        }
     });
 }
 

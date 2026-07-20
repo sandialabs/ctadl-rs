@@ -70,9 +70,6 @@ const C_KNOWN_FAILURES: &[&str] = &[
     // Taint is not yet resolved through pointer arithmetic (`*(p + 2)`) back to
     // the aliased array slot, so no source -> sink flow is traced.
     "C:ptrarith",
-    // Reaches the source and sink lines (10, 12) but not the intermediate
-    // `transfer(&x.b, y)` call on line 11 that the shared query expects.
-    "C:example",
 ];
 
 pub struct Options {
