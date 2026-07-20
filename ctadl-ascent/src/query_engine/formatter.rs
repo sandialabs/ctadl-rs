@@ -1362,7 +1362,11 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         let endpoint_node_ids: BTreeSet<u32> = details
             .iter()
             .flat_map(|(src, sink, _)| std::iter::once(src).chain(sink.as_ref()))
-            .filter_map(|ep| node_to_id.get(&(ep.infunc, ep.vertex.0, ep.vertex.1)).copied())
+            .filter_map(|ep| {
+                node_to_id
+                    .get(&(ep.infunc, ep.vertex.0, ep.vertex.1))
+                    .copied()
+            })
             .collect();
         let endpoint_sites: BTreeSet<(FunctionId, InsnId)> = details
             .iter()
