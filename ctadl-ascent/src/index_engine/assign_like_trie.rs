@@ -43,7 +43,7 @@ use ascent::internal::{
 // target for view indices.
 use crate::index_engine::locals_trie::{DynIter, NoopWrite};
 
-type Map<K, V> = hashbrown::HashMap<K, V>;
+type Map<K, V> = hashbrown::HashMap<K, V, rustc_hash::FxBuildHasher>;
 
 // ---------------------------------------------------------------------------
 // Physical `rel!` storage.
