@@ -26,7 +26,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Import a single artifact (dex, jar, .class, directory of .c files, etc.)
+    /// Import a single artifact (dex, jar, .class, .py/.pyc, or a directory
+    /// crawled recursively for .py/.pyc files).
     Import(ImportArgs),
 
     /// Index artifacts. (See 'import' to import artifacts)
@@ -136,7 +137,10 @@ impl Command {
 pub struct ImportArgs {
     /// Artifact to import (file or directory)
     ///
-    /// Examples: foo.dex, lib.jar, Bar.class, ./c_sources/
+    /// A directory is crawled recursively for .py/.pyc files, which are imported
+    /// together as one Python program.
+    ///
+    /// Examples: foo.dex, lib.jar, Bar.class, script.py, ./py_sources/
     pub artifact: PathBuf,
 
     /// Name for the artifact. Uses filename by default
@@ -718,6 +722,12 @@ fn autodetect_import_language<P: AsRef<Path>>(
             // by scheme and route it through the pcode (Ghidra) frontend.
             if project::is_ghidra_server_url(path) {
                 return Ok(ImportLanguage::Pcode);
+            }
+            // A directory is crawled recursively for `.py`/`.pyc` files and imported
+            // as one Python program. (Pass `--language` to import a directory as any
+            // other language.)
+            if path.is_dir() {
+                return Ok(ImportLanguage::Python);
             }
             let ext = path.extension().and_then(|e| OsStr::to_str(e));
 

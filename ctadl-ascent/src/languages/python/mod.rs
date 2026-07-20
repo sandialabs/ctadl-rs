@@ -37,16 +37,77 @@ use ctadl_ir::*;
 use python_bytecode_reader::model::{BytecodeFile, CodeObject, ConstEntry, Instruction};
 use python_bytecode_reader::{Format, run_serializer};
 
-/// Import a Python artifact (`.py` or `.pyc`): serialize its bytecode, parse it,
-/// and lower it to a [`ProgramInfo`].
+/// Import a Python artifact: either a single `.py`/`.pyc` file, or a directory
+/// that is crawled recursively for every `.py`/`.pyc` file. Each file's bytecode
+/// is serialized, parsed, and lowered into a single [`ProgramInfo`]; a directory
+/// yields one whole-program IR whose modules resolve calls to one another by name.
 pub fn import_python(import: &crate::project::ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.artifact_path;
-    let text = run_serializer(path, Format::Stable)?;
-    // Read the source (for `.py`) so instruction positions map to source lines in
-    // SARIF. Absent for `.pyc` (or on read failure): source info degrades to a
-    // zero offset, which is harmless.
-    let source = std::fs::read_to_string(path).ok();
-    lower_stable_text(path, &text, source)
+    if path.is_dir() {
+        import_python_dir(path)
+    } else {
+        let text = run_serializer(path, Format::Stable)?;
+        // Read the source (for `.py`) so instruction positions map to source lines
+        // in SARIF. Absent for `.pyc` (or on read failure): source info degrades to
+        // a zero offset, which is harmless.
+        let source = std::fs::read_to_string(path).ok();
+        lower_stable_text(path, &text, source)
+    }
+}
+
+/// Import every `.py`/`.pyc` file found recursively under `dir`, lowering them
+/// all into one [`ProgramInfo`]. Files are processed in sorted path order so the
+/// result is deterministic, and external stubs are synthesized only once, after
+/// every module is registered, so a call in one file resolves to a definition in
+/// a sibling file rather than being stubbed out.
+fn import_python_dir(dir: &Path) -> Result<ProgramInfo, Error> {
+    let files = collect_python_files(dir)?;
+    if files.is_empty() {
+        return Err(Error::PythonConversion(format!(
+            "no .py or .pyc files found under directory: {}",
+            dir.display()
+        )));
+    }
+    let mut lowering = Lowering::new();
+    for (sub_artifact_id, path) in files.iter().enumerate() {
+        let text = run_serializer(path, Format::Stable)?;
+        let source = std::fs::read_to_string(path).ok();
+        let file = python_bytecode_reader::parse(&text)?;
+        lowering.set_file(path, source, sub_artifact_id as u32);
+        lowering.lower_module(&file)?;
+    }
+    // All modules registered: now stub the names still undefined program-wide.
+    lowering.create_external_stubs();
+    lowering.finish()
+}
+
+/// Recursively collect every `.py`/`.pyc` file under `dir`, in sorted path order.
+fn collect_python_files(dir: &Path) -> Result<Vec<std::path::PathBuf>, Error> {
+    let mut out = Vec::new();
+    collect_python_files_into(dir, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+fn collect_python_files_into(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> Result<(), Error> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        // `symlink_metadata` so a symlinked directory is not followed into (and a
+        // symlink cycle cannot make the crawl loop forever).
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.is_dir() {
+            collect_python_files_into(&path, out)?;
+        } else if metadata.is_file()
+            && path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| ext == "py" || ext == "pyc")
+        {
+            out.push(path);
+        }
+    }
+    Ok(())
 }
 
 /// Parse stable bytecode text and lower it to a [`ProgramInfo`]. Factored out of
@@ -57,7 +118,8 @@ fn lower_stable_text(
     source: Option<String>,
 ) -> Result<ProgramInfo, Error> {
     let file = python_bytecode_reader::parse(text)?;
-    let mut lowering = Lowering::new(path, source);
+    let mut lowering = Lowering::new();
+    lowering.set_file(path, source, 0);
     lowering.lower_file(&file)?;
     lowering.finish()
 }
@@ -123,28 +185,21 @@ struct Lowering {
 }
 
 impl Lowering {
-    fn new(path: &Path, source: Option<String>) -> Self {
-        let (line_starts, source_len) = match &source {
-            Some(s) => (compute_line_starts(s), s.len()),
-            None => (vec![0], 0),
-        };
-        let encoding = if source.is_some() {
-            ArtifactEncoding::Utf8
-        } else {
-            ArtifactEncoding::Binary
-        };
-        let artifact_key = ArtifactKey {
-            path: path.to_string_lossy().to_string(),
-            sub_artifact_id: 0,
-            hash: Vec::new(),
-            encoding,
-        };
+    /// An empty lowering with no file loaded. Call [`Lowering::set_file`] before
+    /// lowering each module; a single [`Lowering`] accumulates every module of a
+    /// directory import into one program.
+    fn new() -> Self {
         Self {
             program: Program::default(),
             source_info_builder: SourceInfoBuilder::new(source_info::ArtifactMetadata::new()),
-            artifact_key,
-            line_starts,
-            source_len,
+            artifact_key: ArtifactKey {
+                path: String::new(),
+                sub_artifact_id: 0,
+                hash: Vec::new(),
+                encoding: ArtifactEncoding::Binary,
+            },
+            line_starts: vec![0],
+            source_len: 0,
             functions: BTreeMap::new(),
             func_names: BTreeMap::new(),
             external_calls: BTreeMap::new(),
@@ -161,7 +216,53 @@ impl Lowering {
         }
     }
 
+    /// Point the lowering at the module about to be lowered: its source (for line
+    /// mapping) and the [`ArtifactKey`] that tags every span it emits. `source` is
+    /// `None` for `.pyc` (or on read failure), degrading spans to a zero offset.
+    /// `sub_artifact_id` distinguishes files within a directory import.
+    fn set_file(&mut self, path: &Path, source: Option<String>, sub_artifact_id: u32) {
+        let (line_starts, source_len) = match &source {
+            Some(s) => (compute_line_starts(s), s.len()),
+            None => (vec![0], 0),
+        };
+        let encoding = if source.is_some() {
+            ArtifactEncoding::Utf8
+        } else {
+            ArtifactEncoding::Binary
+        };
+        self.artifact_key = ArtifactKey {
+            path: path.to_string_lossy().to_string(),
+            sub_artifact_id,
+            hash: Vec::new(),
+            encoding,
+        };
+        self.line_starts = line_starts;
+        self.source_len = source_len;
+        // Per-file cursor: synthesized columns restart within each file's lines.
+        self.line_column_cursor.clear();
+    }
+
+    /// Lower one module and synthesize external stubs for its unresolved calls.
+    /// Used for a single-file import; a directory import instead calls
+    /// [`Lowering::lower_module`] per file and stubs once at the end.
     fn lower_file(&mut self, file: &BytecodeFile) -> Result<(), Error> {
+        self.lower_module(file)?;
+        // Synthesize external stub functions for called-but-undefined names (so
+        // models can match them by name).
+        self.create_external_stubs();
+        Ok(())
+    }
+
+    /// Register and lower every code object of one module into the shared program,
+    /// without synthesizing external stubs (deferred so a directory import resolves
+    /// names defined in sibling modules before stubbing whatever remains).
+    fn lower_module(&mut self, file: &BytecodeFile) -> Result<(), Error> {
+        // The `code N` const references and the id→function maps are scoped to a
+        // single module (each module numbers its code objects from 0), so reset
+        // them before registering this module. Function *indices* in `program`
+        // keep growing, so already-lowered modules are untouched.
+        self.functions.clear();
+        self.func_names.clear();
         // Pass 1: create a function for every code object, numbering them in the
         // same pre-order the serializer used (module first, then nested in
         // co_consts order), so `code N` references resolve.
@@ -173,9 +274,6 @@ impl Lowering {
         for (id, co) in &ordered {
             self.lower_code_object(*id, co)?;
         }
-        // Pass 3: synthesize external stub functions for called-but-undefined
-        // names (so models can match them by name).
-        self.create_external_stubs();
         Ok(())
     }
 
