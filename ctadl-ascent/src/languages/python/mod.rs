@@ -997,6 +997,174 @@ impl Lowering {
                 })));
             }
 
+            // --- Imports ---
+            // `IMPORT_NAME` pops the fromlist (TOS) and level (TOS1) and pushes the
+            // imported module; model the module as a global of that name.
+            "IMPORT_NAME" => {
+                let name = self.name_operand(co, insn);
+                self.pop_exp(sim); // fromlist
+                self.pop_exp(sim); // level
+                let module = self.load_global(stmts, &name, si);
+                sim.push(Slot::named(Exp::Variable(module), Some(name)));
+            }
+            // `IMPORT_FROM` reads an attribute of the module on top of the stack
+            // *without* popping it (the module stays for a following `IMPORT_FROM`
+            // or its cleanup `POP_TOP`). Like `LOAD_ATTR`, but non-consuming.
+            "IMPORT_FROM" => {
+                let name = self.name_operand(co, insn);
+                let module = sim.peek_exp(&mut || self.fresh());
+                let mvar = self.as_variable(stmts, module, si);
+                let loaded = self.load_attr(stmts, mvar, &name, si);
+                sim.push(Slot::named(Exp::Variable(loaded), Some(name)));
+            }
+            // `from m import *`: pop the module; the names it binds are unmodeled.
+            "IMPORT_STAR" => {
+                self.pop_exp(sim);
+            }
+            // Pushes the `AssertionError` builtin for a failing `assert`.
+            "LOAD_ASSERTION_ERROR" => {
+                sim.push(Slot::named(
+                    Exp::new_str("AssertionError"),
+                    Some("AssertionError".to_string()),
+                ));
+            }
+
+            // --- With statements (3.11+) ---
+            // `BEFORE_WITH` / `BEFORE_ASYNC_WITH` replace the context manager with
+            // its `__exit__` (kept below for the exception path) and push the
+            // `__enter__` result (which a following `STORE_FAST` binds to the `as`
+            // target). Model the entered value as derived from the manager so taint
+            // flows through `with mgr as x`.
+            "BEFORE_WITH" | "BEFORE_ASYNC_WITH" => {
+                let mgr = self.pop_exp(sim);
+                let mvar = self.as_variable(stmts, mgr, si);
+                let exit = self.load_attr(stmts, mvar.clone(), "__exit__", si);
+                let entered = self.load_attr(stmts, mvar, "__enter__", si);
+                sim.push(Slot::val(Exp::Variable(exit)));
+                sim.push(Slot::val(Exp::Variable(entered)));
+            }
+            // On the exception path of a `with`, call `__exit__(type, val, tb)` and
+            // push its result. Consumes nothing (the exit fn and exc info are left
+            // for the surrounding cleanup); model the result as unknown.
+            "WITH_EXCEPT_START" => {
+                sim.push(Slot::val(Exp::Variable(self.fresh())));
+            }
+
+            // --- Exception handling (3.11+) ---
+            // `CHECK_EXC_MATCH` tests the raised exception (TOS1) against a type
+            // (TOS): pop the type, push the bool result, leave the exception below.
+            "CHECK_EXC_MATCH" => {
+                self.pop_exp(sim);
+                sim.push(Slot::val(Exp::Variable(self.fresh())));
+            }
+            // `CLEANUP_THROW` (3.12+) cleans up a generator/coroutine `throw`:
+            // pops (sub_iter, last_sent, exc) and pushes (None, value). Keep the
+            // stack aligned and derive the resumed value from the exception.
+            "CLEANUP_THROW" => {
+                let exc = self.pop_exp(sim);
+                self.pop_exp(sim); // last_sent
+                self.pop_exp(sim); // sub_iter
+                let val = self.as_variable(stmts, exc, si);
+                sim.push(Slot::val(Exp::new_bytes(Vec::new()))); // None
+                sim.push(Slot::val(Exp::Variable(val))); // value
+            }
+
+            // --- Subscript delete ---
+            // `del container[key]`: pop the key (TOS) and container (TOS1).
+            "DELETE_SUBSCR" => {
+                self.pop_exp(sim); // key
+                self.pop_exp(sim); // container
+            }
+
+            // --- super() attribute (3.12+) ---
+            // Pops (super, class, self) and pushes the attribute loaded from self.
+            // The low oparg bit selects the method form, which additionally pushes
+            // self (for the following `CALL`), mirroring `LOAD_METHOD`.
+            "LOAD_SUPER_ATTR" => {
+                self.pop_exp(sim); // global super
+                self.pop_exp(sim); // class
+                let obj = self.pop_exp(sim); // self
+                let name = self.name_operand(co, insn);
+                let obj_var = self.as_variable(stmts, obj, si);
+                let loaded = self.load_attr(stmts, obj_var.clone(), &name, si);
+                if insn.arg.unwrap_or(0) & 1 != 0 {
+                    sim.push(Slot::val(Exp::Variable(obj_var)));
+                }
+                sim.push(Slot::named(Exp::Variable(loaded), Some(name)));
+            }
+
+            // --- Intrinsics (3.12+) ---
+            // `CALL_INTRINSIC_1` is a unary intrinsic (import-star, typevar,
+            // list-to-tuple, unary +/-, …); `CALL_INTRINSIC_2` a binary one. Model
+            // each as data-flow through a temp so taint passes through.
+            "CALL_INTRINSIC_1" => {
+                let a = self.pop_exp(sim);
+                let tmp = self.fresh();
+                stmts.push(Statement::new(StatementKind::assign(tmp.clone(), [a]), si));
+                sim.push(Slot::val(Exp::Variable(tmp)));
+            }
+            "CALL_INTRINSIC_2" => {
+                let b = self.pop_exp(sim);
+                let a = self.pop_exp(sim);
+                let tmp = self.fresh();
+                stmts.push(Statement::new(
+                    StatementKind::assign(tmp.clone(), [a, b]),
+                    si,
+                ));
+                sim.push(Slot::val(Exp::Variable(tmp)));
+            }
+
+            // --- Async / generators ---
+            // `GET_AWAITABLE` replaces TOS with its awaitable; the awaited result
+            // flows through, so preserve the value.
+            "GET_AWAITABLE" => {
+                let a = self.pop_exp(sim);
+                let v = self.as_variable(stmts, a, si);
+                sim.push(Slot::val(Exp::Variable(v)));
+            }
+            // `END_SEND` (3.12+): `receiver, value -> value`; drop the receiver.
+            "END_SEND" => {
+                let value = self.pop_slot(sim);
+                self.pop_exp(sim); // receiver
+                sim.push(value);
+            }
+
+            // --- Slice construction ---
+            // `BUILD_SLICE` pops `arg` bounds (2 or 3) and pushes the slice object.
+            // A slice holds index bounds, not element data, so a fresh value suffices.
+            "BUILD_SLICE" => {
+                let n = insn.arg.unwrap_or(2) as usize;
+                self.pop_n(sim, n);
+                sim.push(Slot::val(Exp::Variable(self.fresh())));
+            }
+            // `UNPACK_EX` (`a, *b, c = seq`): pop the sequence and push
+            // (before + 1 + after) targets, each modeled as an element (`.item`).
+            "UNPACK_EX" => {
+                let arg = insn.arg.unwrap_or(0) as usize;
+                let count = (arg & 0xFF) + 1 + (arg >> 8);
+                let seq = self.pop_exp(sim);
+                let svar = self.as_variable(stmts, seq, si);
+                for _ in 0..count {
+                    let elt = self.load_attr(stmts, svar.clone(), ITEM_FIELD, si);
+                    sim.push(Slot::val(Exp::Variable(elt)));
+                }
+            }
+
+            // --- Class-body / comprehension locals (3.12+) ---
+            // `LOAD_LOCALS` pushes the mapping of local names (used before
+            // `LOAD_FROM_DICT_OR_DEREF` in class bodies and comprehensions).
+            "LOAD_LOCALS" => {
+                sim.push(Slot::val(Exp::Variable(self.fresh())));
+            }
+            // `LOAD_FROM_DICT_OR_DEREF` pops that mapping and pushes the cell/free
+            // variable's value (the name resolves like a `*_DEREF` operand).
+            "LOAD_FROM_DICT_OR_DEREF" => {
+                self.pop_exp(sim); // the locals mapping
+                let name = self.deref_name(co, insn);
+                let v = self.load_cell(stmts, &name, si);
+                sim.push(Slot::val(Exp::Variable(v)));
+            }
+
             // --- Jumps ---
             "JUMP_FORWARD" | "JUMP_BACKWARD" | "JUMP_ABSOLUTE" | "JUMP_BACKWARD_NO_INTERRUPT" => {
                 if is_last {
