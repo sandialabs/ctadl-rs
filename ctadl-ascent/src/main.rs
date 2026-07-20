@@ -716,21 +716,47 @@ fn autodetect_import_language<P: AsRef<Path>>(
             if project::is_ghidra_server_url(path) {
                 return Ok(ImportLanguage::Pcode);
             }
-            let ext = path
-                .extension()
-                .and_then(|e| OsStr::to_str(e))
-                .ok_or_else(|| anyhow::anyhow!("no filename extension"))?;
+            let ext = path.extension().and_then(|e| OsStr::to_str(e));
 
             match ext {
-                "dex" => ImportLanguage::Dex,
-                "apk" => ImportLanguage::Apk,
-                "class" => ImportLanguage::Jvm,
-                "jar" => ImportLanguage::Jar,
-                "tnt" => ImportLanguage::Flowy,
-                "gpr" => ImportLanguage::Pcode,
-                _ => anyhow::bail!("unrecognized filename extension: '{}'", ext),
+                Some("dex") => ImportLanguage::Dex,
+                Some("apk") => ImportLanguage::Apk,
+                Some("class") => ImportLanguage::Jvm,
+                Some("jar") => ImportLanguage::Jar,
+                Some("tnt") => ImportLanguage::Flowy,
+                Some("gpr") => ImportLanguage::Pcode,
+                // No recognized extension: if the file's contents look binary,
+                // route it through the pcode (Ghidra) frontend.
+                _ if file_looks_binary(path) => ImportLanguage::Pcode,
+                Some(ext) => {
+                    anyhow::bail!("unrecognized filename extension: '{}'", ext)
+                }
+                None => anyhow::bail!("no filename extension"),
             }
         }
         _ => language,
     })
+}
+
+/// Heuristically decides whether `path` refers to a binary file.
+///
+/// Reads a prefix of the file and treats it as binary if it contains a NUL
+/// byte -- the same heuristic git uses to tell binary from text. Returns
+/// `false` if `path` is not a readable regular file (e.g. a directory or a
+/// missing path), so callers fall through to their other detection logic.
+fn file_looks_binary(path: &Path) -> bool {
+    use std::io::Read;
+
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    // A directory opens successfully but is not a binary we can import.
+    if file.metadata().map(|m| !m.is_file()).unwrap_or(true) {
+        return false;
+    }
+    let mut buf = [0u8; 8192];
+    match file.read(&mut buf) {
+        Ok(n) => buf[..n].contains(&0),
+        Err(_) => false,
+    }
 }
