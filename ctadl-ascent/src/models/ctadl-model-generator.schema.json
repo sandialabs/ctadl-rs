@@ -214,7 +214,7 @@
             "inners": {
               "description": "Regular expression pattern matches name",
               "type": "array",
-              "items": { 
+              "items": {
                 "$ref": "#/$defs/where-constraint"
               }
             }
@@ -342,12 +342,6 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "datalog": {
-      "type": "array",
-      "items": {
-	"type": "string"
-      }
-    },
     "model_generators": {
       "description": "List of model generators",
       "type": "array",

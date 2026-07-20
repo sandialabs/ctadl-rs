@@ -60,11 +60,10 @@ ctadl init-model model.json5
 
 ## 3. File format
 
-The top-level object has two optional keys:
+The top-level object has one key:
 
 ```jsonc
 {
-  "datalog": [ /* raw Datalog rule strings, advanced escape hatch */ ],
   "model_generators": [ /* the list of rules — this is the main event */ ]
 }
 ```
