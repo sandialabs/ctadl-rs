@@ -578,7 +578,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
     // Detect the language
     let language = {
         use project::ArtifactLanguage::*;
-        match autodetect_by_extension(path, args.language)? {
+        match autodetect_import_language(path, args.language)? {
             ImportLanguage::Apk => Apk,
             ImportLanguage::Dex => Dex,
             ImportLanguage::Jar => Jar,
@@ -699,13 +699,12 @@ fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// If language is 'auto', returns the language using the extension. Otherwise just returns the
-/// language.
+/// If language is 'auto', detects a language using extension, url scheme, or file type.
 ///
 /// # Errors
 ///
-/// If autodetection finds no filename extension or doesn't recognize it
-fn autodetect_by_extension<P: AsRef<Path>>(
+/// If autodetection fails
+fn autodetect_import_language<P: AsRef<Path>>(
     path: P,
     language: ImportLanguage,
 ) -> anyhow::Result<ImportLanguage> {
@@ -728,7 +727,6 @@ fn autodetect_by_extension<P: AsRef<Path>>(
                 "class" => ImportLanguage::Jvm,
                 "jar" => ImportLanguage::Jar,
                 "tnt" => ImportLanguage::Flowy,
-                // A Ghidra project file: export pcode from the existing project.
                 "gpr" => ImportLanguage::Pcode,
                 _ => anyhow::bail!("unrecognized filename extension: '{}'", ext),
             }
