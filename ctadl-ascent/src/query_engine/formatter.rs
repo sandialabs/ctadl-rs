@@ -455,8 +455,10 @@ pub fn find_endpoint_paths(
 /// Project paths on Windows are often canonicalized to verbatim `\\?\` form. Naive
 /// backslash-to-slash rewriting breaks absolute-path detection, so DataFusion treats
 /// the path as relative to the process cwd (e.g. a scratch dir containing
-/// `ArrayFlow.class`) and object_store fails URL conversion.
+/// `ArrayFlow.class`) and object_store fails URL conversion. Returns an absolute path.
 fn object_store_path(path: &path::Path) -> String {
+    let absolutized = path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = absolutized.as_path();
     let parsed = url::Url::from_file_path(path);
     #[cfg(windows)]
     let parsed = parsed.or_else(|_| {
@@ -472,6 +474,36 @@ fn object_store_path(path: &path::Path) -> String {
         let normalized = normalized.strip_prefix("//?/").unwrap_or(&normalized);
         format!("file:///{normalized}")
     })
+}
+
+/// Register a local parquet file and fail loudly if it is unreadable.
+///
+/// DataFusion's `register_parquet` happily accepts a non-existent path and infers
+/// an empty (zero-column) schema instead of erroring. A downstream query against
+/// that table then fails with a misleading "No field named ..." schema error far
+/// from the real cause. Catch it here by checking the inferred schema and surface
+/// a clear message naming the offending path.
+async fn register_parquet_checked(
+    ctx: &SessionContext,
+    table_name: &str,
+    path: String,
+) -> Result<(), Error> {
+    ctx.register_parquet(table_name, &path, ParquetReadOptions::default())
+        .await
+        .err_context(|| format!("reading {table_name} from {path}"))?;
+    let table = ctx
+        .table(table_name)
+        .await
+        .err_context(|| format!("reading {table_name} from {path}"))?;
+    if table.schema().fields().is_empty() {
+        return Err(Error::Path {
+            message: format!(
+                "cannot read parquet for table `{table_name}`: no columns found at {path} \
+                 (the file is missing or unreadable)"
+            ),
+        });
+    }
+    Ok(())
 }
 
 pub fn format_sarif(
@@ -779,46 +811,36 @@ async fn populate_source_info<P: AsRef<path::Path>>(
     let index_dir = ctx.index_dir.as_ref();
     let ctx_session = SessionContext::new();
 
-    ctx_session
-        .register_parquet(
-            "file_spans",
-            object_store_path(&dir.join("file_spans.parquet")),
-            ParquetReadOptions::default(),
-        )
-        .await
-        .err_context(|| "reading file_spans")?;
-    ctx_session
-        .register_parquet(
-            "spans",
-            object_store_path(&dir.join("spans.parquet")),
-            ParquetReadOptions::default(),
-        )
-        .await
-        .err_context(|| "reading spans")?;
-    ctx_session
-        .register_parquet(
-            "files",
-            object_store_path(&dir.join("files.parquet")),
-            ParquetReadOptions::default(),
-        )
-        .await
-        .err_context(|| "reading files")?;
-    ctx_session
-        .register_parquet(
-            "artifacts",
-            object_store_path(&dir.join("artifacts.parquet")),
-            ParquetReadOptions::default(),
-        )
-        .await
-        .err_context(|| "reading artifacts")?;
-    ctx_session
-        .register_parquet(
-            "function_id",
-            object_store_path(&index_dir.join("function_id.parquet")),
-            ParquetReadOptions::default(),
-        )
-        .await
-        .err_context(|| "reading function_id")?;
+    register_parquet_checked(
+        &ctx_session,
+        "file_spans",
+        object_store_path(&dir.join("file_spans.parquet")),
+    )
+    .await?;
+    register_parquet_checked(
+        &ctx_session,
+        "spans",
+        object_store_path(&dir.join("spans.parquet")),
+    )
+    .await?;
+    register_parquet_checked(
+        &ctx_session,
+        "files",
+        object_store_path(&dir.join("files.parquet")),
+    )
+    .await?;
+    register_parquet_checked(
+        &ctx_session,
+        "artifacts",
+        object_store_path(&dir.join("artifacts.parquet")),
+    )
+    .await?;
+    register_parquet_checked(
+        &ctx_session,
+        "function_id",
+        object_store_path(&index_dir.join("function_id.parquet")),
+    )
+    .await?;
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("file_span_id", DataType::UInt32, false),
@@ -1890,13 +1912,7 @@ pub async fn find_source_ids(
     tainted: &TaintedInstructions,
 ) -> Result<Vec<(FileSpanId, FunctionId, InsnId)>, Error> {
     let mut ctx = SessionContext::new();
-    ctx.register_parquet(
-        "index_source_map",
-        object_store_path(source_map),
-        ParquetReadOptions::default(),
-    )
-    .await
-    .err_context(|| "register index_source_map")?;
+    register_parquet_checked(&ctx, "index_source_map", object_store_path(source_map)).await?;
 
     build_selector_table(&mut ctx, tainted)
         .await
@@ -1980,6 +1996,49 @@ async fn build_selector_table(
 mod tests {
     use super::*;
     use crate::facts::FormalIndex;
+
+    #[test]
+    fn object_store_path_absolutizes_relative_input() {
+        // A relative path must be resolved to an absolute `file://` URL, not left
+        // as a bogus `file:///<relative>` rooted at the filesystem root. Compute
+        // the expectation from the cwd the same way the function does.
+        let rel = path::Path::new("mystore/imports/bt/file_spans.parquet");
+        let expected = url::Url::from_file_path(path::absolute(rel).unwrap())
+            .unwrap()
+            .to_string();
+        assert_eq!(object_store_path(rel), expected);
+        assert!(object_store_path(rel).starts_with("file:///"));
+        // The relative components survive absolutization.
+        assert!(object_store_path(rel).ends_with("mystore/imports/bt/file_spans.parquet"));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn object_store_path_preserves_absolute_input() {
+        let abs = path::Path::new("/var/data/store/file_spans.parquet");
+        assert_eq!(
+            object_store_path(abs),
+            "file:///var/data/store/file_spans.parquet"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn object_store_path_handles_windows_verbatim() {
+        // Verbatim `\\?\` paths are absolute; the `\\?\` prefix is stripped so
+        // object_store gets a clean drive-letter URL.
+        let verbatim = path::Path::new(r"\\?\C:\proj\store\file_spans.parquet");
+        assert_eq!(
+            object_store_path(verbatim),
+            "file:///C:/proj/store/file_spans.parquet"
+        );
+        // A plain absolute Windows path round-trips too.
+        let plain = path::Path::new(r"C:\proj\store\file_spans.parquet");
+        assert_eq!(
+            object_store_path(plain),
+            "file:///C:/proj/store/file_spans.parquet"
+        );
+    }
 
     fn formal(i: i16) -> FlowVariable {
         FlowVariable::formal_index(FormalIndex::new(i))
