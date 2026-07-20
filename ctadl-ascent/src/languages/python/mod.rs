@@ -345,7 +345,7 @@ impl Lowering {
     fn lower_code_object(&mut self, id: u32, co: &CodeObject) -> Result<(), Error> {
         let func_idx = self.functions[&id].idx;
         let nparams = self.functions[&id].nparams;
-        self.in_generator = co.flags & CO_GENERATOR != 0;
+        self.in_generator = co.flags & (CO_GENERATOR | CO_ASYNC_GENERATOR) != 0;
         // <=3.11 `FOR_ITER` pops the iterator on exhaust; 3.12+ keeps it and cleans
         // up with `END_FOR`. The presence of `END_FOR` in the code object is the
         // version-robust discriminator (a for-loop on 3.12+ always emits one).
@@ -1057,6 +1057,28 @@ impl Lowering {
                 self.pop_exp(sim);
                 sim.push(Slot::val(Exp::Variable(self.fresh())));
             }
+            // `CHECK_EG_MATCH` (`except*`, 3.11+) splits the in-flight exception
+            // group (TOS1) against a type (TOS): pop both and push `rest` (the
+            // non-matching subgroup) then `matched` (the matching subgroup, bound
+            // by `except* E as e`). Both subgroups are carved from the original
+            // group, so both carry its taint -- derive each from the group operand
+            // so a tainted exception reaches the handler's bound variable.
+            "CHECK_EG_MATCH" => {
+                self.pop_exp(sim); // match type
+                let group = self.pop_exp(sim);
+                let rest = self.fresh();
+                stmts.push(Statement::new(
+                    StatementKind::assign(rest.clone(), [group.clone()]),
+                    si,
+                ));
+                sim.push(Slot::val(Exp::Variable(rest)));
+                let matched = self.fresh();
+                stmts.push(Statement::new(
+                    StatementKind::assign(matched.clone(), [group]),
+                    si,
+                ));
+                sim.push(Slot::val(Exp::Variable(matched)));
+            }
             // `CLEANUP_THROW` (3.12+) cleans up a generator/coroutine `throw`:
             // pops (sub_iter, last_sent, exc) and pushes (None, value). Keep the
             // stack aligned and derive the resumed value from the exception.
@@ -1122,11 +1144,31 @@ impl Lowering {
                 let v = self.as_variable(stmts, a, si);
                 sim.push(Slot::val(Exp::Variable(v)));
             }
-            // `END_SEND` (3.12+): `receiver, value -> value`; drop the receiver.
+            // `GET_ANEXT` (`async for`): peek the async iterator (it stays on the
+            // stack for the next iteration) and push the awaitable of its next
+            // item. Model that awaitable as the iterator's `.item` element -- the
+            // same element modeling `FOR_ITER` uses -- so taint flows from the
+            // async iterable into the loop variable once the item is awaited.
+            "GET_ANEXT" => {
+                let aiter = sim.peek_exp(&mut || self.fresh());
+                let ivar = self.as_variable(stmts, aiter, si);
+                let elt = self.load_attr(stmts, ivar, ITEM_FIELD, si);
+                sim.push(Slot::val(Exp::Variable(elt)));
+            }
+            // `END_SEND` (3.12+): `receiver, value -> value`. The kept value is what
+            // driving the awaitable/generator produced (`await coro()`, `async for`
+            // items, `yield from`), so it carries the receiver's taint. Derive it
+            // from both operands rather than dropping the receiver outright, which
+            // would sever taint flowing out of the awaited object.
             "END_SEND" => {
-                let value = self.pop_slot(sim);
-                self.pop_exp(sim); // receiver
-                sim.push(value);
+                let value = self.pop_exp(sim);
+                let receiver = self.pop_exp(sim);
+                let tmp = self.fresh();
+                stmts.push(Statement::new(
+                    StatementKind::assign(tmp.clone(), [value, receiver]),
+                    si,
+                ));
+                sim.push(Slot::val(Exp::Variable(tmp)));
             }
 
             // --- Slice construction ---
@@ -1163,6 +1205,16 @@ impl Lowering {
                 let name = self.deref_name(co, insn);
                 let v = self.load_cell(stmts, &name, si);
                 sim.push(Slot::val(Exp::Variable(v)));
+            }
+            // `LOAD_FROM_DICT_OR_GLOBALS` (3.12+) is the globals-scope sibling used
+            // in class-body / type-parameter / lazy-annotation scopes: pop the
+            // locals mapping and push the named value, resolved like a
+            // `LOAD_GLOBAL`/`LOAD_NAME` operand (a fresh value carrying the name).
+            "LOAD_FROM_DICT_OR_GLOBALS" => {
+                self.pop_exp(sim); // the locals mapping
+                let name = self.name_operand(co, insn);
+                let v = self.load_global(stmts, &name, si);
+                sim.push(Slot::named(Exp::Variable(v), Some(name)));
             }
 
             // --- Structural pattern matching (`match` statements, 3.10+) ---
@@ -1947,6 +1999,12 @@ const CO_VARARGS: i64 = 0x04;
 const CO_VARKEYWORDS: i64 = 0x08;
 /// `co_flags` bit marking a generator function (`CO_GENERATOR`).
 const CO_GENERATOR: i64 = 0x20;
+/// `co_flags` bit marking an async generator (`async def` with `yield`,
+/// `CO_ASYNC_GENERATOR`). It yields like a generator but does not set
+/// `CO_GENERATOR`, so `<gen_result>` wiring must key on this bit too. (A plain
+/// coroutine, `CO_COROUTINE` = 0x80, has no `yield` and is deliberately excluded:
+/// its return is the real returned value, not a yielded sequence.)
+const CO_ASYNC_GENERATOR: i64 = 0x200;
 
 /// The synthetic local modeling a generator's produced sequence: each `yield`
 /// stores into its `.item` field, and the generator's returns hand back this
