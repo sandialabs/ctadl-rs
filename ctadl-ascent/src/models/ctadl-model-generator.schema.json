@@ -109,6 +109,21 @@
           "additionalProperties": false,
           "properties": {
             "constraint": {
+              "description": "Matches a callsite by the function it occurs inside of (the caller)",
+              "type": "string",
+              "enum": ["in_function"]
+            },
+            "inner": {
+              "description": "Constraint on the containing (caller) function",
+              "$ref": "#/$defs/where-constraint"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "constraint": {
               "description": "Thing to match on",
               "type": "string",
               "enum": ["parameter"]
@@ -343,7 +358,7 @@
           "find": {
             "description": "The SUT element to match on",
             "type": "string",
-            "enum": ["methods", "variables", "fields", "instructions"]
+            "enum": ["methods", "variables", "fields", "callsites"]
           },
           "where": {
             "description": "Matching constraints",

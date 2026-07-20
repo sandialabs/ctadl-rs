@@ -692,6 +692,13 @@ pub struct EndpointBuilder {
     /// Sink-only: `true` matches any access-path extension of the port (see
     /// [`crate::facts::Path::is_extension_of`]). Always `false` for sources.
     wildcard: BooleanBuilder,
+    /// Callsite-scoped only: the name of the containing (caller) function the endpoint's
+    /// callsites must sit inside. `null` means "any caller". Ignored unless
+    /// `callsite_scoped` is `true`.
+    in_function: StringBuilder,
+    /// `true` when this endpoint is anchored at individual call sites of `function` (from
+    /// `find: callsites`) rather than at the function itself.
+    callsite_scoped: BooleanBuilder,
     /// Access path length table: `id` and `len`
     ap_len: AccessPathBuilder,
     /// Access path field table: `id`
@@ -716,6 +723,8 @@ impl EndpointBuilder {
             label: Default::default(),
             direction: BooleanBuilder::new(),
             wildcard: BooleanBuilder::new(),
+            in_function: Default::default(),
+            callsite_scoped: BooleanBuilder::new(),
             ap_len: AccessPathBuilder::new("", ap_fld.clone()),
             ap_fld,
         }
@@ -729,6 +738,11 @@ impl EndpointBuilder {
     /// `direction` – true for forward (source), false for backward (sink).
     /// `wildcard` – sink-only: match any access-path extension of the port. Pass
     ///   `false` for sources (enforced by the parser).
+    /// `in_function` – callsite-scoped only: name of the containing (caller) function the
+    ///   endpoint's callsites must sit inside, or `None` for "any caller".
+    /// `callsite_scoped` – `true` when this endpoint anchors at individual callsites of
+    ///   `function` (`find: callsites`) rather than at the function itself.
+    #[allow(clippy::too_many_arguments)]
     pub fn append(
         &mut self,
         function: &str,
@@ -737,6 +751,8 @@ impl EndpointBuilder {
         label: &str,
         direction: TaintDirection,
         wildcard: bool,
+        in_function: Option<&str>,
+        callsite_scoped: bool,
     ) {
         let (tag, opt_idx) = idx;
         self.func.append_value(function);
@@ -747,6 +763,8 @@ impl EndpointBuilder {
         self.direction
             .append_value(direction == TaintDirection::Forward);
         self.wildcard.append_value(wildcard);
+        self.in_function.append_option(in_function);
+        self.callsite_scoped.append_value(callsite_scoped);
     }
 
     #[inline]
@@ -815,8 +833,27 @@ impl EndpointBuilder {
             )]))),
             vec![Arc::new(self.wildcard.finish())],
         )?;
+        // in_function column (nullable string)
+        let in_function = RecordBatch::try_new(
+            Arc::new(Schema::new(Fields::from(vec![Field::new(
+                "in_function",
+                DataType::Utf8,
+                true,
+            )]))),
+            vec![Arc::new(self.in_function.finish())],
+        )?;
+        // callsite_scoped column (boolean)
+        let callsite_scoped = RecordBatch::try_new(
+            Arc::new(Schema::new(Fields::from(vec![Field::new(
+                "callsite_scoped",
+                DataType::Boolean,
+                false,
+            )]))),
+            vec![Arc::new(self.callsite_scoped.finish())],
+        )?;
 
-        // Build final schema: function, index fields, path_id, label, direction, wildcard
+        // Build final schema: function, index fields, path_id, label, direction, wildcard,
+        // in_function, callsite_scoped
         let endpoint_schema: SchemaRef = {
             let mut b = SchemaBuilder::new();
             b.push(Field::new("function", DataType::Utf8, false));
@@ -825,6 +862,8 @@ impl EndpointBuilder {
             b.push(Field::new("label", DataType::Utf8, false));
             b.push(Field::new("direction", DataType::Boolean, false));
             b.push(Field::new("wildcard", DataType::Boolean, false));
+            b.push(Field::new("in_function", DataType::Utf8, true));
+            b.push(Field::new("callsite_scoped", DataType::Boolean, false));
             b.finish().into()
         };
         // Assemble columns in the same order as the schema
@@ -835,6 +874,8 @@ impl EndpointBuilder {
         data.extend(lbl.columns().iter().cloned());
         data.extend(dir.columns().iter().cloned());
         data.extend(wild.columns().iter().cloned());
+        data.extend(in_function.columns().iter().cloned());
+        data.extend(callsite_scoped.columns().iter().cloned());
 
         let records = RecordBatch::try_new(endpoint_schema.clone(), data)?;
         // Access‑path auxiliary tables
@@ -865,21 +906,8 @@ impl EndpointBatch {
         Ok(())
     }
 
-    /// Iterate over endpoint records.
-    /// Yields `(function, selector_ty, index, path_id, label, direction, wildcard)`.
-    pub fn iter_endpoints(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            &str,
-            FormalIndexTypeTag,
-            Option<i16>,
-            u64,
-            &str,
-            TaintDirection,
-            bool,
-        ),
-    > {
+    /// Iterate over endpoint records, yielding an [`EndpointRow`] per row.
+    pub fn iter_endpoints(&self) -> impl Iterator<Item = EndpointRow<'_>> {
         izip![
             self.endpoints
                 .column_by_name("function")
@@ -950,8 +978,71 @@ impl EndpointBatch {
                 .unwrap()
                 .iter()
                 .map(|b| b.unwrap()),
+            self.endpoints
+                .column_by_name("in_function")
+                .unwrap()
+                .as_ref()
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .iter(),
+            self.endpoints
+                .column_by_name("callsite_scoped")
+                .unwrap()
+                .as_ref()
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap()
+                .iter()
+                .map(|b| b.unwrap()),
         ]
+        .map(
+            |(
+                function,
+                selector_ty,
+                index,
+                path_id,
+                label,
+                direction,
+                wildcard,
+                in_function,
+                callsite_scoped,
+            )| EndpointRow {
+                function,
+                selector_ty,
+                index,
+                path_id,
+                label,
+                direction,
+                wildcard,
+                in_function,
+                callsite_scoped,
+            },
+        )
     }
+}
+
+/// One row of an [`EndpointBatch`], as yielded by [`EndpointBatch::iter_endpoints`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EndpointRow<'a> {
+    /// Name of the endpoint function. For a callsite-scoped endpoint this is the callee.
+    pub function: &'a str,
+    /// Selector type tag for the endpoint variable.
+    pub selector_ty: FormalIndexTypeTag,
+    /// Formal index, when the selector carries one.
+    pub index: Option<i16>,
+    /// ID of the endpoint's access path.
+    pub path_id: u64,
+    /// Taint label.
+    pub label: &'a str,
+    /// Forward (source) or backward (sink).
+    pub direction: TaintDirection,
+    /// Sink-only: match any access-path extension of the port.
+    pub wildcard: bool,
+    /// Callsite-scoped only: containing (caller) function name, or `None` for "any caller".
+    pub in_function: Option<&'a str>,
+    /// `true` when the endpoint is anchored at individual call sites rather than the function.
+    pub callsite_scoped: bool,
 }
 
 #[derive(Debug)]

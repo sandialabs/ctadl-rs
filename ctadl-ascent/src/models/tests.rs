@@ -13,6 +13,8 @@ fn endpoint_builder_basic() {
         "lbl1",
         TaintDirection::Forward,
         false,
+        None,
+        false,
     );
     // Second endpoint with an empty access path and no index
     builder.append(
@@ -22,6 +24,8 @@ fn endpoint_builder_basic() {
         "lbl2",
         TaintDirection::Backward,
         true,
+        None,
+        false,
     );
     assert_eq!(builder.len(), 2);
     let batch = builder.finish().expect("finish failed");
@@ -34,6 +38,8 @@ fn endpoint_builder_basic() {
         "label",
         "direction",
         "wildcard",
+        "in_function",
+        "callsite_scoped",
     ];
     let actual: Vec<_> = batch
         .endpoints
@@ -60,6 +66,8 @@ fn endpoint_batch_iter_endpoints() {
         "lbl1",
         TaintDirection::Forward,
         false,
+        None,
+        false,
     );
     // Second endpoint with an empty access path and no index
     builder.append(
@@ -69,32 +77,38 @@ fn endpoint_batch_iter_endpoints() {
         "lbl2",
         TaintDirection::Backward,
         true,
+        Some("caller_fn"),
+        true,
     );
     let batch = builder.finish().expect("finish failed");
     let endpoints: Vec<_> = batch.iter_endpoints().collect();
     assert_eq!(endpoints.len(), 2);
     assert_eq!(
         endpoints[0],
-        (
-            "func1",
-            FormalIndexTypeTag::Return,
-            Some(RETURN_INDEX),
-            0u64,
-            "lbl1",
-            TaintDirection::Forward,
-            false,
-        ),
+        EndpointRow {
+            function: "func1",
+            selector_ty: FormalIndexTypeTag::Return,
+            index: Some(RETURN_INDEX),
+            path_id: 0u64,
+            label: "lbl1",
+            direction: TaintDirection::Forward,
+            wildcard: false,
+            in_function: None,
+            callsite_scoped: false,
+        },
     );
     assert_eq!(
         endpoints[1],
-        (
-            "func2",
-            FormalIndexTypeTag::Global,
-            None,
-            1u64,
-            "lbl2",
-            TaintDirection::Backward,
-            true,
-        ),
+        EndpointRow {
+            function: "func2",
+            selector_ty: FormalIndexTypeTag::Global,
+            index: None,
+            path_id: 1u64,
+            label: "lbl2",
+            direction: TaintDirection::Backward,
+            wildcard: true,
+            in_function: Some("caller_fn"),
+            callsite_scoped: true,
+        },
     );
 }

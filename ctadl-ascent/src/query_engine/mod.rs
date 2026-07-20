@@ -122,6 +122,51 @@ impl QueryEndpoint {
         }
         if out.is_empty() { vec![self] } else { out }
     }
+
+    /// Like [`anchored_at_callsites`], but for endpoints that denote a *specific set of call
+    /// sites* rather than a whole function. `self.infunc` is the **callee**; a call site
+    /// matches when it targets that callee and — when `caller_filter` is `Some` — sits inside
+    /// that caller function. Unlike [`anchored_at_callsites`], there is no function-anchored
+    /// fallback: if no call site matches, the result is empty (a callsite endpoint that names
+    /// no real call site seeds nothing). The globals pseudo-formal cannot be anchored at a
+    /// call site and yields an empty result.
+    ///
+    /// [`anchored_at_callsites`]: Self::anchored_at_callsites
+    pub fn anchored_at_callsites_filtered(
+        self,
+        formal: FormalIndex,
+        call: &[(PackedInsnSiteId, FunctionId)],
+        caller_filter: Option<FunctionId>,
+    ) -> Vec<Self> {
+        if *formal == crate::codegen::GLOBALS_INDEX {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (site, callee) in call {
+            if *callee != self.infunc {
+                continue;
+            }
+            let Ok(insn_site) = InsnSiteId::try_from(site) else {
+                continue;
+            };
+            if let Some(caller) = caller_filter
+                && insn_site.func_id != caller
+            {
+                continue;
+            }
+            let Ok(call_arg) = PackedCallArg::try_from_parts(insn_site.insn_id, formal) else {
+                continue;
+            };
+            out.push(QueryEndpoint {
+                infunc: insn_site.func_id,
+                vertex: FlowVertex(FlowVariable::call_arg_packed(call_arg), self.vertex.1),
+                label: self.label.clone(),
+                direction: self.direction,
+                call_site: Some(*site),
+            });
+        }
+        out
+    }
 }
 
 #[derive(Default, Debug, Clone, Builder)]
