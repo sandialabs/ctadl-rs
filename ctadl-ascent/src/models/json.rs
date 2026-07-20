@@ -525,14 +525,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
 
         match parse_port(port_str, n) {
             Ok((tag, index, ap)) => {
-                self.emit_endpoints(
-                    n,
-                    (tag, index),
-                    &ap,
-                    label,
-                    TaintDirection::Forward,
-                    false,
-                );
+                self.emit_endpoints(n, (tag, index), &ap, label, TaintDirection::Forward, false);
             }
             Err(err) => self.add_json_error(err),
         }
