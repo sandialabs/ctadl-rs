@@ -1039,7 +1039,17 @@ impl Lowering {
                 let mgr = self.pop_exp(sim);
                 let mvar = self.as_variable(stmts, mgr, si);
                 let exit = self.load_attr(stmts, mvar.clone(), "__exit__", si);
-                let entered = self.load_attr(stmts, mvar, "__enter__", si);
+                // The entered value (`as` target) is `mgr.__enter__()`. The common
+                // `__enter__` returns `self`, so model the entered value as derived
+                // directly from the manager value — a plain assignment, so a tainted
+                // manager taints the `as` target. (A field load `mgr.__enter__` would
+                // instead yield the bound method and, under field-sensitive
+                // propagation, would not carry the manager's own taint.)
+                let entered = self.fresh();
+                stmts.push(Statement::new(
+                    StatementKind::assign(entered.clone(), [Exp::Variable(mvar)]),
+                    si,
+                ));
                 sim.push(Slot::val(Exp::Variable(exit)));
                 sim.push(Slot::val(Exp::Variable(entered)));
             }
@@ -1099,13 +1109,16 @@ impl Lowering {
             }
 
             // --- super() attribute (3.12+) ---
-            // Pops (super, class, self) and pushes the attribute loaded from self.
-            // The low oparg bit selects the method form, which additionally pushes
-            // self (for the following `CALL`), mirroring `LOAD_METHOD`.
+            // Stack (top-down) is `self` (TOS), the class (TOS1), the global `super`
+            // (TOS2); the op pops all three and pushes the attribute loaded from
+            // `self`. The low oparg bit selects the method form, which additionally
+            // pushes self (for the following `CALL`), mirroring `LOAD_METHOD`.
+            // (Popping `self` first is essential: reading the attribute off the
+            // `super` global instead severs taint through every `super().attr`.)
             "LOAD_SUPER_ATTR" => {
-                self.pop_exp(sim); // global super
-                self.pop_exp(sim); // class
-                let obj = self.pop_exp(sim); // self
+                let obj = self.pop_exp(sim); // self (TOS)
+                self.pop_exp(sim); // class (TOS1)
+                self.pop_exp(sim); // global super (TOS2)
                 let name = self.name_operand(co, insn);
                 let obj_var = self.as_variable(stmts, obj, si);
                 let loaded = self.load_attr(stmts, obj_var.clone(), &name, si);
@@ -1219,16 +1232,23 @@ impl Lowering {
 
             // --- Structural pattern matching (`match` statements, 3.10+) ---
             // `MATCH_MAPPING`/`MATCH_SEQUENCE` push a bool testing the subject's
-            // shape; the subject itself stays on the stack. No data-flow.
-            "MATCH_MAPPING" | "MATCH_SEQUENCE" => {
+            // shape; `GET_LEN` pushes `len(subject)` for a sequence-length guard.
+            // All three leave the subject in place (stack_effect +1, no pop), so a
+            // following `MATCH_KEYS`/`UNPACK_SEQUENCE` still finds it beneath. Modeled
+            // as a fresh pushed value — the boolean/length carries no taint of
+            // interest, and (crucially) the subject is *not* consumed. `GET_LEN` was
+            // previously mis-modeled as a unary op, which popped the subject and
+            // severed taint through every length-guarded sequence/mapping pattern.
+            "MATCH_MAPPING" | "MATCH_SEQUENCE" | "GET_LEN" => {
                 sim.push(Slot::val(Exp::Variable(self.fresh())));
             }
             // `MATCH_KEYS`: TOS = keys tuple, TOS1 = subject (both remain). Pushes a
             // tuple of the values pulled from the subject by those keys (or None on
-            // failure), so taint flows from the subject's elements.
+            // failure), so taint flows from the subject's elements. The subject is
+            // TOS1 (`peek_at(2)`); TOS (`peek_at(1)`) is the keys tuple.
             "MATCH_KEYS" => {
                 let tmp = self.new_container(stmts, si);
-                if let Some(subject) = sim.peek_at(1) {
+                if let Some(subject) = sim.peek_at(2) {
                     let svar = self.as_variable(stmts, subject.exp.clone(), si);
                     let elt = self.load_attr(stmts, svar, ITEM_FIELD, si);
                     self.store_attr(stmts, tmp.clone(), ITEM_FIELD, Exp::Variable(elt), si);
@@ -1237,15 +1257,34 @@ impl Lowering {
             }
             // `MATCH_CLASS`: TOS = names tuple, TOS1 = class, TOS2 = subject. Pops all
             // three and pushes a tuple of the matched attribute values (taint flows
-            // from the subject) or None.
+            // from the subject) or None. A following `UNPACK_SEQUENCE` binds those
+            // values positionally into the capture targets, all reading the pushed
+            // tuple's `.item`, so store every matched value there.
+            //
+            // Keyword sub-patterns (`case C(x=t)`) name the attributes to read: the
+            // names tuple carries them, so pull `subject.<name>` for each — that is
+            // where a real object's attribute taint lives (`self.x = ...` stores to
+            // field `x`, not the generic element field). Positional sub-patterns
+            // (`case C(t)`) resolve through `__match_args__`, which is not available
+            // here, so they fall back to the generic element field `.item` (as does
+            // the whole opcode when no names parse).
             "MATCH_CLASS" => {
-                self.pop_exp(sim); // names
+                let names_exp = self.pop_exp(sim); // names tuple (a const repr)
                 self.pop_exp(sim); // class
                 let subject = self.pop_exp(sim);
                 let svar = self.as_variable(stmts, subject, si);
-                let elt = self.load_attr(stmts, svar, ITEM_FIELD, si);
                 let tmp = self.new_container(stmts, si);
-                self.store_attr(stmts, tmp.clone(), ITEM_FIELD, Exp::Variable(elt), si);
+                let names = parse_str_tuple(&names_exp);
+                for name in &names {
+                    let attr = self.load_attr(stmts, svar.clone(), name, si);
+                    self.store_attr(stmts, tmp.clone(), ITEM_FIELD, Exp::Variable(attr), si);
+                }
+                // Positional captures (`arg` of them) and the no-names case read the
+                // generic element field.
+                if names.is_empty() || insn.arg.unwrap_or(0) > 0 {
+                    let elt = self.load_attr(stmts, svar, ITEM_FIELD, si);
+                    self.store_attr(stmts, tmp.clone(), ITEM_FIELD, Exp::Variable(elt), si);
+                }
                 sim.push(Slot::val(Exp::Variable(tmp)));
             }
 
@@ -2176,6 +2215,28 @@ fn pushes_null_marker(insn: &Instruction) -> bool {
     insn.argrepr.as_deref().is_some_and(|s| s.contains("NULL"))
 }
 
+/// Extract the string elements of a Python tuple constant from its `repr`.
+///
+/// A tuple const survives lowering as its `repr` string (`ConstEntry::Other`,
+/// materialized to `Exp::Str`), e.g. `('x', 'y')` or `('x',)`. `MATCH_CLASS`'s
+/// keyword-attribute names arrive this way; recover them by pulling every
+/// single-quoted segment. Returns empty for any non-`Str` expression or a tuple
+/// with no quoted elements.
+fn parse_str_tuple(exp: &Exp) -> Vec<String> {
+    let Some(s) = exp.str() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut rest: &str = s;
+    while let Some(open) = rest.find('\'') {
+        rest = &rest[open + 1..];
+        let Some(close) = rest.find('\'') else { break };
+        out.push(rest[..close].to_string());
+        rest = &rest[close + 1..];
+    }
+    out
+}
+
 fn is_return(op: &str) -> bool {
     matches!(
         op,
@@ -2242,7 +2303,6 @@ fn is_unary_op(op: &str) -> bool {
             | "UNARY_NOT"
             | "UNARY_INVERT"
             | "TO_BOOL"
-            | "GET_LEN"
             | "FORMAT_SIMPLE"
             | "FORMAT_VALUE"
             | "CONVERT_VALUE"
