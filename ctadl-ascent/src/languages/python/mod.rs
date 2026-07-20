@@ -1165,6 +1165,50 @@ impl Lowering {
                 sim.push(Slot::val(Exp::Variable(v)));
             }
 
+            // --- Structural pattern matching (`match` statements, 3.10+) ---
+            // `MATCH_MAPPING`/`MATCH_SEQUENCE` push a bool testing the subject's
+            // shape; the subject itself stays on the stack. No data-flow.
+            "MATCH_MAPPING" | "MATCH_SEQUENCE" => {
+                sim.push(Slot::val(Exp::Variable(self.fresh())));
+            }
+            // `MATCH_KEYS`: TOS = keys tuple, TOS1 = subject (both remain). Pushes a
+            // tuple of the values pulled from the subject by those keys (or None on
+            // failure), so taint flows from the subject's elements.
+            "MATCH_KEYS" => {
+                let tmp = self.new_container(stmts, si);
+                if let Some(subject) = sim.peek_at(1) {
+                    let svar = self.as_variable(stmts, subject.exp.clone(), si);
+                    let elt = self.load_attr(stmts, svar, ITEM_FIELD, si);
+                    self.store_attr(stmts, tmp.clone(), ITEM_FIELD, Exp::Variable(elt), si);
+                }
+                sim.push(Slot::val(Exp::Variable(tmp)));
+            }
+            // `MATCH_CLASS`: TOS = names tuple, TOS1 = class, TOS2 = subject. Pops all
+            // three and pushes a tuple of the matched attribute values (taint flows
+            // from the subject) or None.
+            "MATCH_CLASS" => {
+                self.pop_exp(sim); // names
+                self.pop_exp(sim); // class
+                let subject = self.pop_exp(sim);
+                let svar = self.as_variable(stmts, subject, si);
+                let elt = self.load_attr(stmts, svar, ITEM_FIELD, si);
+                let tmp = self.new_container(stmts, si);
+                self.store_attr(stmts, tmp.clone(), ITEM_FIELD, Exp::Variable(elt), si);
+                sim.push(Slot::val(Exp::Variable(tmp)));
+            }
+
+            // --- Formatting (3.12+ f-string lowering) ---
+            // `FORMAT_WITH_SPEC` pops the format spec and the value, pushing the
+            // formatted result; the value's taint passes through. (`FORMAT_SIMPLE`
+            // and the older `FORMAT_VALUE` are handled as unary ops.)
+            "FORMAT_WITH_SPEC" => {
+                self.pop_exp(sim); // format spec
+                let value = self.pop_exp(sim);
+                let tmp = self.fresh();
+                stmts.push(Statement::new(StatementKind::assign(tmp.clone(), [value]), si));
+                sim.push(Slot::val(Exp::Variable(tmp)));
+            }
+
             // --- Jumps ---
             "JUMP_FORWARD" | "JUMP_BACKWARD" | "JUMP_ABSOLUTE" | "JUMP_BACKWARD_NO_INTERRUPT" => {
                 if is_last {
