@@ -50,8 +50,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::{Error, ErrorContext};
 use crate::facts::schema;
 use crate::facts::{
-    FlowEdge, FlowVariable, FlowVertex, FormalIndex, FunctionId, InsnId, InsnSiteId, Label,
-    PackedInsnSiteId, Path, TaintDirection, TaintState,
+    CallArgId, FlowEdge, FlowVariable, FlowVertex, FormalIndex, FunctionId, InsnId, InsnSiteId,
+    Label, PackedInsnSiteId, Path, TaintDirection, TaintState,
 };
 use crate::project::{AnalysisProject, ArtifactLanguage};
 use crate::query_engine::QueryEndpoint;
@@ -1160,10 +1160,36 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         .map(|(_, f, i)| (f.id, i.id))
         .collect();
 
+    // The call instruction a *call-arg* vertex belongs to. A call-arg vertex is an
+    // actual argument at a call and encodes that call's instruction directly (its
+    // `insn_id`), which lives in the vertex's own function (the caller). This is how
+    // a summarized callee -- linked by an intra summary edge between its actual-arg
+    // vertices rather than a Call/Return edge -- is anchored back to its call line.
+    let call_arg_site = |node: &FlowNode| -> Option<InsnSiteId> {
+        let packed = node.1.as_call_arg()?;
+        let CallArgId { insn_id, .. } = CallArgId::try_from(packed).ok()?;
+        Some(InsnSiteId::new(node.0, insn_id))
+    };
+
     let mut path_sites = BTreeSet::new();
     for (path, (_fs, details)) in &results_by_path {
         for window in path.windows(2) {
             if let Some(site) = site_by_edge.get(&(window[0], window[1]))
+                && seen_sites.insert((site.func_id.id, site.insn_id.id))
+            {
+                path_sites.insert((site.func_id, site.insn_id));
+            }
+        }
+        // An interprocedural transfer whose callee was summarized (not descended
+        // into) shows up as an *intra* summary edge between the call's actual-arg
+        // vertices -- e.g. `transfer(&x.b, y)` links `call-arg(3, 1)` (the tainted
+        // input) to `call-arg(3, 0).d` (the tainted output) with no Call/Return edge
+        // to anchor. The call instruction is therefore on no path *edge*, but each
+        // such call-arg *node* encodes it (see `call_arg_site`). Load those sites so
+        // the summarized call line is reported rather than silently elided.
+        for &n in path {
+            let node = &id_to_node[n as usize];
+            if let Some(site) = call_arg_site(node)
                 && seen_sites.insert((site.func_id.id, site.insn_id.id))
             {
                 path_sites.insert((site.func_id, site.insn_id));
@@ -1322,6 +1348,33 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 );
             }
         }
+        // The source and sink endpoints are reported by the leading/trailing steps
+        // above and below; interior call-arg steps must not collide with them.
+        // `push_site_step` dedups by *location*, so an interior step must be skipped
+        // whenever it lands on a source/sink endpoint's node OR its call *instruction*
+        // -- otherwise, emitted first, its `call ...` message pre-empts the endpoint's
+        // `source ...`/`sink ...` step (the code-flow integrity check keys on those).
+        // The instruction guard matters because a call passes several actual-arg
+        // vertices at one site: the flow can visit a *non-endpoint* formal of the very
+        // call the sink is anchored on (e.g. `call-arg(43, -2)` when the sink is
+        // `call-arg(43, 0)`), which shares the sink's location and would otherwise
+        // swallow its step.
+        let endpoint_node_ids: BTreeSet<u32> = details
+            .iter()
+            .flat_map(|(src, sink, _)| std::iter::once(src).chain(sink.as_ref()))
+            .filter_map(|ep| {
+                node_to_id
+                    .get(&(ep.infunc, ep.vertex.0, ep.vertex.1))
+                    .copied()
+            })
+            .collect();
+        let endpoint_sites: BTreeSet<(FunctionId, InsnId)> = details
+            .iter()
+            .flat_map(|(src, sink, _)| std::iter::once(src).chain(sink.as_ref()))
+            .filter_map(|ep| ep.call_site.and_then(|p| InsnSiteId::try_from(&p).ok()))
+            .map(|s| (s.func_id, s.insn_id))
+            .collect();
+
         // Walk the path edge-by-edge: each consecutive `(src_id, dst_id)` pair is
         // a graph edge, and `site_by_edge` gives the call instruction that edge
         // flowed through. Attributing per edge keeps each call site distinct even
@@ -1347,6 +1400,43 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                         dst_node.1,
                         dst_node.2.to_dot_string(),
                         fname(dst_node.0)
+                    ),
+                );
+            }
+            // A summarized callee contributes no Call/Return edge, so its call line
+            // would be skipped by the `site_by_edge` walk above. Surface it from the
+            // destination *node* instead: an interior *call-arg* vertex is an actual
+            // argument at a call and encodes that call's instruction, so emitting a
+            // step there reports the summarized call (e.g. `transfer(&x.b, y)`) that
+            // the taint flowed through. Deduping by location collapses the call's
+            // several actual-arg vertices to one step.
+            //
+            // Restricting to call-arg vertices is what keeps this precise: the locals
+            // and formals a summary threads through include ones that merely feed the
+            // final sink, and surfacing those would both pre-empt that sink's
+            // `sink ...` step and, in a case whose point is a *clean* sibling sink,
+            // wrongly report its line.
+            let dst_node = &id_to_node[dst_id as usize];
+            if !endpoint_node_ids.contains(&dst_id)
+                && let Some(site) = call_arg_site(dst_node)
+                && !endpoint_sites.contains(&(site.func_id, site.insn_id))
+            {
+                let callee = InsnSiteId::new(site.func_id, site.insn_id)
+                    .try_into()
+                    .ok()
+                    .and_then(|packed| call_callee.get(&packed).copied())
+                    .unwrap_or(dst_node.0);
+                push_site_step(
+                    &mut thread_flow_locations,
+                    &mut last_loc_id,
+                    &mut exec_order,
+                    &site,
+                    vec!["call".to_string()],
+                    format!(
+                        "call {}{} in {}",
+                        dst_node.1,
+                        dst_node.2.to_dot_string(),
+                        fname(callee)
                     ),
                 );
             }

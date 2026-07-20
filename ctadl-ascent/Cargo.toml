@@ -57,6 +57,7 @@ regex = "1.12"
 serde = { version = "1.0", features = ["derive"] }
 serde-sarif = "0.8"
 rustc_graphviz = { path = "../rustc_graphviz" }
+rustc-hash = "2"
 serde_json = { version = "1", features = ["preserve_order"] }
 smallvec = "1"
 tailshare = { path = "../tailshare", features = ["serde"] }
