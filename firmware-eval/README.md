@@ -1,4 +1,4 @@
-# firmware-eval
+# firmware-eval - DO-NOT-MERGE
 
 Tooling to benchmark CTADL's command-injection taint analysis against
 **Operation Mango** on Linux firmware, so we can systematically find bugs,
@@ -252,7 +252,61 @@ property); a synthetic Mango result ingested with correct source classification
 (`http_passwd`→NVRAM, `recv`→NETWORK); `compare` produced a correct 2×2 (1
 matched, 1 mango-only FN candidate); `stats` summarized.
 
-### Corpus status (Operation Mango tests, cta@b06b137)
+### ⚠️ Regression on cta@beb327a — argv/offset taint no longer propagates
+
+Re-running all 15 binaries on the newer engine build **cta@beb327a**
+(`--addr-tolerance 32`) collapses recall:
+
+```
+1 TP / 23 FN / 9 extra    (recall 4.2%)    15/15 binaries run OK   <- cta@beb327a
+20 TP / 4 FN / 12 extra   (recall 83.3%)   15/15 binaries run OK   <- cta@b06b137 (last good)
+```
+
+**This is an engine regression, not a model-config gap — no change to
+`cmdi-firmware.json5` recovers it.** Every surviving finding is ENV/FILE/NETWORK
+(single-level `char*` sources: `getenv`/`read`/`recv` → `Return.deref` /
+`Argument(1).deref`); **all 24 known bugs sourced from `argv` are missed**, and
+the offset-driven multi-input flows also thinned (`53a6…` 9→4, `e2f7…` 6→4).
+
+Root cause — **offset-qualified (indexed) taint stopped crossing a base-pointer
+copy.** On `nested` (`system(argv[1])`), the frontend spills `argv` (`formal(1)`)
+to a stack local and reads the element as `local(@p1_0).[8].deref`; the index
+graph shows the copy edge `formal(1) ↔ @p1_0` on the *bare base*. At b06b137 an
+offset-0 source view (`Argument(1).deref`) covered every `argv[i]` read via
+offset-insensitive loads; on beb327a the source and the `argv[i]` load sit in
+**disconnected components** of the taint graph — forward+backward taint no longer
+meet with the source label (the debug `C0002` node carries only the sink's
+`command_injection` label, never `argv_input`), so no `C0001` path forms.
+
+Model fixes attempted and **ruled out** (all still 0 `C0001` paths on `nested`,
+and 1 TP / 23 FN / 9 extra across the corpus — byte-identical to the shipped
+model):
+
+* Bare-base source `Argument(1)` (hoping base taint flows field-insensitively
+  through the spill copy) — no.
+* Explicit element offsets `Argument(1).[8·i].deref` / `.deref.deref` for
+  `i = 0…7`, in both pointer and byte forms (17 source ports total) — no.
+* Sink-side `wildcard` (already default `true`) is irrelevant: the sink is seeded
+  correctly; the break is on the **source→sink forward propagation** across the
+  spill, and `wildcard` is source-rejected (see `docs/model-generators.md` §7),
+  so there is no source-side offset/wildcard primitive to reach for.
+
+This is the same base↔offset deref class the `Taint from base into offset derefs`
+(`e629a64`) and the `Move IR to Load & Store Instructions` (#53) /
+`Compose paths from loads and stores` (#62) engine changes touch — the bridging
+is complete enough for the over-approx meet on some paths but not for precise
+`C0001` reconstruction through an argv element load. **The fix is engine-side**
+(offset-insensitive base↔element deref on the C0001 path); the model is already
+maximal. Reproduce with:
+
+```sh
+ctadl go -n probe -l pcode --models firmware-eval/models/cmdi-firmware.json5 \
+    --dump-taint-graph /tmp/t.txt \
+    .../operation-mango-public/package/tests/binaries/nested/program
+# -> 4 isolated nodes, no edges: argv source never reaches the system call-arg
+```
+
+### Corpus status (Operation Mango tests, cta@b06b137 — last good baseline)
 
 Run over all 15 Operation Mango test binaries (`operation-mango-public`), scored
 against 24 Mango known bugs with `--addr-tolerance 0`:
