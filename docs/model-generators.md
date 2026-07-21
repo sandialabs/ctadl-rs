@@ -224,6 +224,39 @@ Marks a port as an *origin* of taint. Each source has a `kind` (a taint label
 }
 ```
 
+Source ports carry one extra knob:
+
+- **`saturating`** (source-only, default **false**): mark the source as
+  *saturating* — the seeded vertex is tainted **and any subfield/offset read off
+  it is tainted too, recursively**. A precise (non-saturating) source taints
+  only the exact path you name; a saturating source taints the whole access-path
+  subtree beneath it. Set it on a value where "all of it is attacker-controlled"
+  regardless of how callers index in. (Rejected on sinks/propagations — it's the
+  source-side mirror of the sink-only `wildcard` flag.)
+
+  The motivating case is C's `argv`: `argv[1]` compiles to `*(argv + 1)`, read
+  at an *offset* path (`.[8].deref`) that is a sibling of the `.deref` path the
+  source is modeled at. Precise, path-matched propagation never connects the two,
+  so the flow is lost. Marking the `argv` ports `saturating` taints every offset
+  read off the base, reconnecting `argv[i]` to the source:
+
+  ```jsonc
+  // main(argc, argv): every element/offset of argv is attacker-controlled
+  {
+    "find": "methods",
+    "where": [{ "constraint": "signature_match", "name": "main" }],
+    "model": { "sources": [
+      { "port": "Argument(1).deref",       "kind": "argv_input", "saturating": true },
+      { "port": "Argument(1).deref.deref", "kind": "argv_input", "saturating": true }
+    ]}
+  }
+  ```
+
+  Saturation is purely internal to the search: reported flows (SARIF) are
+  unchanged in shape — a saturating source just reconstructs flows a precise
+  source would drop. It applies in the default demand-driven search engine; the
+  `CTADL_QUERY_DATALOG=1` closure engine ignores the flag.
+
 ### `sinks`
 
 Marks a port as a *dangerous consumer*. A flow from a source of the matching
@@ -369,6 +402,7 @@ source/sink at a precise location without over-tainting every call.
 | Goal | `find` | `model` keys |
 | --- | --- | --- |
 | Mark a function's output as untrusted input | `methods` | `sources` |
+| Mark a whole value (all offsets/fields) as untrusted, e.g. `argv` | `methods` | `sources` + `saturating: true` |
 | Flag a dangerous API | `methods` | `sinks` |
 | Summarize a library function CTADL can't see | `methods` | `propagation` (often + `sinks`) |
 | Both taint-through and dangerous (e.g. `strcpy`) | `methods` | `propagation` + `sinks` |
@@ -418,6 +452,11 @@ CTADL reports every flow where data returned by `source()` reaches
   out-parameters.
 - **Kinds are your own vocabulary.** A flow is reported when a source's `kind`
   reaches a sink of a matching `kind`. Keep them consistent across your models.
+- **Reach for `saturating` when callers index into the source.** If taint should
+  cover *every* element/offset/field of a value — `argv`, an array of untrusted
+  strings, a struct that's wholly attacker-controlled — mark the source
+  `saturating: true` instead of trying to enumerate each path. Leave it off
+  (the default) for precise sources like `getenv` so you don't over-taint.
 - **Prefer propagation models at `index` time** (they become reusable
   summaries) and **source/sink models at `query` time** (they define the search).
 - **Reach for `callsites` + `in_function`** only when call context matters;

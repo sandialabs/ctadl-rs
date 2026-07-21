@@ -302,6 +302,10 @@
         "wildcard": {
           "description": "Sink-only (rejected on sources/propagations). If true (the DEFAULT for sinks), the sink port matches any access-path extension of the port -- i.e. any concrete path having the port path as a prefix. E.g. port Argument(1) matches Argument(1).deref and Argument(1).[12].deref. Set false to match only the exact port path.",
           "type": "boolean"
+        },
+        "saturating": {
+          "description": "Source-only (rejected on sinks/propagations). If true (default false), marks a saturating source: the seeded vertex is tainted AND any subfield/offset read off it is tainted too, recursively, so the whole access-path subtree beneath the port is tainted. Use for values that are wholly attacker-controlled regardless of how callers index in, e.g. C's argv.",
+          "type": "boolean"
         }
       }
     },
