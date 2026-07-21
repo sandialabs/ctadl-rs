@@ -61,16 +61,28 @@
 
     // ---------------------------------------------------------------------
     // SOURCES -- ARGV: main(argc, argv); argv is Argument(1), a `char**`. Mango
-    // taints all of argv. The element pointers live at `.deref` and the string
-    // bytes at `.deref.deref`; offset-insensitive loads in the engine let these
-    // offset-0 views cover argv[i] reads (`argv.[8*i].deref...`).
+    // taints all of argv.
+    //
+    // `argv[i]` compiles to `*(argv + 8*i)` -- an *offset* read (`.[8*i].deref`)
+    // that is a sibling of the offset-0 `.deref` path we model the source at.
+    // Precise, path-matched propagation never connects the two (the frontend also
+    // spills `argv` to a stack local across a bare-base copy), so the argv[i>0]
+    // flow to a sink is dropped -- the argv/offset-taint regression documented in
+    // ../repro/README.md (recall 83.3% -> 4.2% on cta@beb327a).
+    //
+    // The fix is the source-side `saturating` flag (added in ctadl #70, a836dbe;
+    // see docs/model-generators.md §7): a saturating source taints the whole
+    // access-path subtree beneath the seeded vertex -- every offset/element read
+    // off the argv base -- so `argv[i]` reconnects to the source regardless of how
+    // the caller indexes in. This is exactly the "all of it is attacker-controlled"
+    // case the flag exists for. Reported SARIF is unchanged in shape.
     // ---------------------------------------------------------------------
     {
       find: "methods",
       where: [{ constraint: "signature_pattern", pattern: "^main$" }],
       model: { sources: [
-        { port: "Argument(1).deref",       kind: "argv_input" },
-        { port: "Argument(1).deref.deref", kind: "argv_input" }
+        { port: "Argument(1).deref",       kind: "argv_input", saturating: true },
+        { port: "Argument(1).deref.deref", kind: "argv_input", saturating: true }
       ] }
     },
 
@@ -211,6 +223,22 @@
     // PROPAGATION -- string builders, so tainted config/network data reaches a
     // sink through the usual `sprintf(cmd, "fmt %s", tainted); system(cmd)`
     // patterns. (Overlaps CTADL's pcode default model; harmless if both load.)
+    //
+    // Base-level input edge (added alongside the `.deref` edge)
+    // --------------------------------------------------------
+    // When the tainted source is `argv[i]`, the saturating argv source (above)
+    // taints the argv base and every offset/element read off it -- but that taint
+    // lives at the *pointer* level of the copied-in argument (`Argument(n)`), not
+    // only at its `.deref` bytes. A `.deref`-only propagation input therefore does
+    // not see it, and the flow dies at the string builder (this is why `heap`,
+    // `wrapper`, `sprintf_resolved_and_unresolved`, and the argv leg of
+    // `multi_input` produced zero flows with the saturating source alone -- their
+    // argv reaches `system` *through* a string builder, unlike the direct
+    // `system(argv[1])` cases `nested`/`simple`/`after_values`). Adding a
+    // base-level `input: Argument(n) -> output: Argument(0).deref` edge lets the
+    // pointer-level saturating taint cross the summary into the destination
+    // string, where the sink reads it. Mirrors Mango, which models these builders
+    // as unconditional taint-through.
     // ---------------------------------------------------------------------
 
     // sprintf family: any format/source arg -> destination buffer (Argument 0) + return
@@ -222,7 +250,8 @@
       }],
       model: { propagation: [
         { input: "Argument(*).deref", output: "Argument(0).deref" },
-        { input: "Argument(*).deref", output: "Return.deref" }
+        { input: "Argument(*).deref", output: "Return.deref" },
+        { input: "Argument(*)",       output: "Argument(0).deref" }
       ] }
     },
 
@@ -235,7 +264,8 @@
       }],
       model: { propagation: [
         { input: "Argument(1).deref", output: "Argument(0).deref" },
-        { input: "Argument(1).deref", output: "Return.deref" }
+        { input: "Argument(1).deref", output: "Return.deref" },
+        { input: "Argument(1)",       output: "Argument(0).deref" }
       ] }
     },
 
@@ -245,7 +275,8 @@
       where: [{ constraint: "signature_pattern", pattern: "^(memcpy|memmove|mempcpy|bcopy)$" }],
       model: { propagation: [
         { input: "Argument(1).deref", output: "Argument(0).deref" },
-        { input: "Argument(1).deref", output: "Return.deref" }
+        { input: "Argument(1).deref", output: "Return.deref" },
+        { input: "Argument(1)",       output: "Argument(0).deref" }
       ] }
     },
 

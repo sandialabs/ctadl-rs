@@ -39,7 +39,7 @@ real capability gap, not a config difference:
 * **`.deref`**: cmdi sinks/sources take `char *`; the string bytes live at the
   dereferenced location, so we taint `Argument(0).deref` — matching CTADL's
   shipped pcode default. (See caveat below.)
-* **Source `kind` carries the source class.** CTADL reports a flow whenever any
+* **Source `kind` carries the source class.** CTADL reports a flow whenever any/clear
   source taint reaches any sink — kinds need not match (the shipped default
   cmdi detector itself pairs `user_input` → `command_injection`). We exploit
   that so the normalized finding's source class falls straight out of the report:

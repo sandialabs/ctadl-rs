@@ -141,24 +141,49 @@ def _callsite_addrs(result: dict) -> list[int]:
     CTADL anchors the result's top-level `location` at the sink callee's entry
     (its PLT thunk on these ELFs), NOT at the call instruction -- so that address
     is ~hundreds of bytes off from Mango, which reports the `call` site. The real
-    call site is in the codeFlow: the step whose message is `call-arg(...)` is the
-    call that passes tainted data into the sink. Per threadFlow we take the LAST
-    such step (closest to the sink, past any wrapper-call hops); one result can
-    carry several codeFlows -> several distinct call sites, which Mango counts as
-    separate bugs. Returns the distinct rebased addresses, preserving order."""
+    call site is in the codeFlow: a step whose message contains `call-arg(...)` is
+    a call that passes tainted data forward. Per threadFlow we take the LAST such
+    step (the sink call itself, past any wrapper-call hops); one result can carry
+    several codeFlows -> several distinct call sites, which Mango counts as
+    separate bugs. Returns the distinct rebased addresses, preserving order.
+
+    Message format note: newer CTADL SARIF prefixes the step verb and names the
+    callee -- `call call-arg(160, 3) in snprintf`, `sink call-arg(197, 0).deref
+    in system` -- so `call-arg(` appears mid-string, not at the start (older SARIF
+    emitted a bare `call-arg(...)`). We match the substring to handle both.
+
+    PLT-thunk-seed de-duplication. The new frontend emits, for one bug, both the
+    real flow (terminal `sink call-arg(...) in <sink>` @ the true call site) and a
+    degenerate twin whose terminal `sink` step re-anchors at the sink's PLT thunk
+    (the callee entry) -- e.g. heap's real `system(command2)` @ 0x1225 plus a twin
+    ending at 0x10a4, 4 bytes into `system@plt`. Taking the last call-arg step
+    blindly picks the thunk on the twin, emitting a spurious low-address duplicate
+    of a real finding. The twin, however, still contains the true call site as a
+    `call call-arg(...) in <sink>` step (verb `call`, i.e. a real forwarding call
+    into the sink), whereas its thunk endpoint is a `sink call-arg(...)` step at a
+    different address. So per threadFlow we prefer the last `call ... in <sink>`
+    forwarding-call site when one is present, and fall back to the last call-arg
+    step otherwise (covers the clean flow, whose only in-<sink> step is the `sink`
+    line at the real call, and the old bare-`call-arg` format). This collapses
+    each thunk twin onto its real TP instead of reporting it as an extra."""
+    sink = (result.get("properties") or {}).get("sinkCallee")
     seen: dict[int, None] = {}
     for cf in result.get("codeFlows") or []:
         for tf in cf.get("threadFlows") or []:
-            last: Optional[int] = None
+            last: Optional[int] = None        # last call-arg step (any)
+            call_into_sink: Optional[int] = None  # last `call ... in <sink>` site
             for step in tf.get("locations") or []:
                 loc = step.get("location") or {}
                 msg = (loc.get("message") or {}).get("text", "") or ""
-                if msg.startswith("call-arg"):
+                if "call-arg(" in msg:
                     a = _rebased_addr((loc.get("physicalLocation") or {}).get("address"))
                     if a is not None:
                         last = a
-            if last is not None:
-                seen.setdefault(last, None)
+                        if sink and msg.startswith("call ") and msg.rstrip().endswith("in " + sink):
+                            call_into_sink = a
+            addr = call_into_sink if call_into_sink is not None else last
+            if addr is not None:
+                seen.setdefault(addr, None)
     return list(seen)
 
 
