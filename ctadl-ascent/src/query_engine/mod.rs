@@ -54,6 +54,12 @@ pub struct QueryEndpoint {
     /// with no callers). It is human-facing metadata; the taint machinery seeds and searches
     /// from `infunc`/`vertex` alone.
     pub call_site: Option<PackedInsnSiteId>,
+    /// Source-only: when `true`, this source is *saturating* — the seeded vertex is tainted
+    /// and reading any subfield/offset off it is also tainted (recursively). Declared per
+    /// source in the model (`"saturating": true`), defaulting to `false`. Purely internal to
+    /// the search graph: it selects the seed's [`TaintLevel`](crate::facts::TaintLevel) and is
+    /// never emitted downstream.
+    pub saturating: bool,
 }
 
 impl QueryEndpoint {
@@ -80,6 +86,9 @@ impl QueryEndpoint {
             label: endpoint.label,
             direction: endpoint.direction,
             call_site: None,
+            // `TaintEndpoint` does not carry the saturating flag; it is a search-graph
+            // concern re-derived from the model, so default it here.
+            saturating: false,
         }
     }
 
@@ -118,6 +127,7 @@ impl QueryEndpoint {
                 label: self.label.clone(),
                 direction: self.direction,
                 call_site: Some(*site),
+                saturating: self.saturating,
             });
         }
         if out.is_empty() { vec![self] } else { out }
@@ -163,6 +173,7 @@ impl QueryEndpoint {
                 label: self.label.clone(),
                 direction: self.direction,
                 call_site: Some(*site),
+                saturating: self.saturating,
             });
         }
         out
@@ -400,7 +411,7 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
         // Initialize taint with source
         taint(infunc, TaintState::Free, v.clone(), p.clone(), s) <--
             sources(s),
-            let QueryEndpoint { infunc, vertex, label, direction, call_site: _ } = s,
+            let QueryEndpoint { infunc, vertex, label, direction, call_site: _, saturating: _ } = s,
             let FlowVertex(v, p) = vertex;
 
         // Propagate taint locally onto fields
@@ -663,6 +674,7 @@ impl<'a> std::fmt::Display for QueryEndpointDisplay<'a> {
             infunc,
             vertex,
             call_site,
+            saturating: _,
         } = self.endpoint;
 
         let func_name = self

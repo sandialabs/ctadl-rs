@@ -70,6 +70,7 @@ fn build_query_endpoints(
         label: label_str,
         direction,
         wildcard,
+        saturating,
         in_function,
         callsite_scoped,
     } in batch.iter_endpoints()
@@ -146,6 +147,7 @@ fn build_query_endpoints(
                 label: lbl.clone(),
                 direction,
                 call_site: None,
+                saturating,
             };
             let fanned = match var.as_formal() {
                 Some(formal) if callsite_scoped => {

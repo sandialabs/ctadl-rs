@@ -1148,6 +1148,25 @@ pub enum TaintState {
     Restricted,
 }
 
+/// Taint-magnitude lattice: `Bottom < Saturating < Plain`.
+///
+/// `Bottom` is the absence of taint (never held in-band by a reached search
+/// state — the search only ever carries `Saturating` or `Plain`). `Saturating`
+/// means the vertex is tainted AND any subfield/offset read off it is also
+/// tainted (recursively). `Plain` ("Taint", the top) just means tainted.
+///
+/// This is orthogonal to [`TaintState`], which is the call/return-matching
+/// discipline threaded as the search annotation, not the taint magnitude.
+/// Declaration order gives the derived `Ord` we want (`Bottom < Saturating <
+/// Plain`); the join (lub) is `max`.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
+pub enum TaintLevel {
+    #[default]
+    Bottom,
+    Saturating,
+    Plain,
+}
+
 /// The kind of a taint-graph edge, in execution / data-flow order.
 ///
 /// An `Intra` edge is a flow-insensitive intraprocedural step (assign/alias) and

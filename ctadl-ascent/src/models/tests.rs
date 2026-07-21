@@ -13,6 +13,7 @@ fn endpoint_builder_basic() {
         "lbl1",
         TaintDirection::Forward,
         false,
+        false,
         None,
         false,
     );
@@ -24,6 +25,7 @@ fn endpoint_builder_basic() {
         "lbl2",
         TaintDirection::Backward,
         true,
+        false,
         None,
         false,
     );
@@ -38,6 +40,7 @@ fn endpoint_builder_basic() {
         "label",
         "direction",
         "wildcard",
+        "saturating",
         "in_function",
         "callsite_scoped",
     ];
@@ -66,6 +69,7 @@ fn endpoint_batch_iter_endpoints() {
         "lbl1",
         TaintDirection::Forward,
         false,
+        false,
         None,
         false,
     );
@@ -77,6 +81,7 @@ fn endpoint_batch_iter_endpoints() {
         "lbl2",
         TaintDirection::Backward,
         true,
+        false,
         Some("caller_fn"),
         true,
     );
@@ -93,6 +98,7 @@ fn endpoint_batch_iter_endpoints() {
             label: "lbl1",
             direction: TaintDirection::Forward,
             wildcard: false,
+            saturating: false,
             in_function: None,
             callsite_scoped: false,
         },
@@ -107,6 +113,7 @@ fn endpoint_batch_iter_endpoints() {
             label: "lbl2",
             direction: TaintDirection::Backward,
             wildcard: true,
+            saturating: false,
             in_function: Some("caller_fn"),
             callsite_scoped: true,
         },

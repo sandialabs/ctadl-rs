@@ -493,6 +493,8 @@ fn flowy_endpoint_base(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> QueryEn
             EndpointDirection::Sink => TaintDirection::Backward,
         },
         call_site: None,
+        // Flowy sources do not (yet) declare saturation.
+        saturating: false,
     }
 }
 

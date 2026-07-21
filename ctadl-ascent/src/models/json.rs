@@ -168,13 +168,14 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         label: &str,
         direction: TaintDirection,
         wildcard: bool,
+        saturating: bool,
     ) {
         let callees = matched_functions(&self.methods[n], self.vmt);
         if !matches!(self.find_method.get(n), Some(FindMethod::Callsites)) {
             for func in callees {
-                self.builder
-                    .endpoint
-                    .append(&func, idx, ap, label, direction, wildcard, None, false);
+                self.builder.endpoint.append(
+                    &func, idx, ap, label, direction, wildcard, saturating, None, false,
+                );
             }
             return;
         }
@@ -195,6 +196,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                     label,
                     direction,
                     wildcard,
+                    saturating,
                     caller.as_deref(),
                     true,
                 );
@@ -523,9 +525,34 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             return;
         }
 
+        // `saturating` (source-only, default false): mark a saturating source (any
+        // subfield/offset read off the seeded vertex is also tainted). Must be a boolean if
+        // present.
+        let saturating = match value.get("saturating") {
+            None => false,
+            Some(v) => match v.as_bool() {
+                Some(b) => b,
+                None => {
+                    self.add_json_error(crate::error::JsonModelError::FieldNotString {
+                        index: n,
+                        field_name: "saturating".to_string(),
+                    });
+                    return;
+                }
+            },
+        };
+
         match parse_port(port_str, n) {
             Ok((tag, index, ap)) => {
-                self.emit_endpoints(n, (tag, index), &ap, label, TaintDirection::Forward, false);
+                self.emit_endpoints(
+                    n,
+                    (tag, index),
+                    &ap,
+                    label,
+                    TaintDirection::Forward,
+                    false,
+                    saturating,
+                );
             }
             Err(err) => self.add_json_error(err),
         }
@@ -572,6 +599,16 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             }
         };
 
+        // `saturating` is source-only; reject it here.
+        if value.get("saturating").is_some() {
+            self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                index: n,
+                field_name: "saturating".to_string(),
+                message: "'saturating' is only valid on source ports".to_string(),
+            });
+            return;
+        }
+
         // `wildcard` (sink-only, default true): match any access-path extension of
         // the port. Must be a boolean if present.
         let wildcard = match value.get("wildcard") {
@@ -597,6 +634,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                     label,
                     TaintDirection::Backward,
                     wildcard,
+                    false,
                 );
             }
             Err(err) => self.add_json_error(err),
