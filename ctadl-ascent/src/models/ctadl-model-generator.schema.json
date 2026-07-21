@@ -124,44 +124,6 @@
           "additionalProperties": false,
           "properties": {
             "constraint": {
-              "description": "Thing to match on",
-              "type": "string",
-              "enum": ["parameter"]
-            },
-            "idx": {
-              "description": "Index of parameter",
-              "type": "integer"
-            },
-            "inner": {
-              "description": "Constraint on parameter",
-              "$ref": "#/$defs/where-constraint"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "constraint": {
-              "description": "Thing to match on",
-              "type": "string",
-              "enum": ["any_parameter"]
-            },
-            "start_idx": {
-              "description": "Start index",
-              "type": "integer"
-            },
-            "inner": {
-              "description": "Inner constraint on parameter",
-              "$ref": "#/$defs/where-constraint"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "constraint": {
               "description": "Matches on whether function has code",
               "type": "string",
               "enum": ["has_code"]

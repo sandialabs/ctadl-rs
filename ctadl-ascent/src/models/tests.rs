@@ -119,3 +119,36 @@ fn endpoint_batch_iter_endpoints() {
         },
     );
 }
+
+// Tests for UniverseSet set difference (backs the `not` combinator).
+mod universe_set_diff {
+    use crate::models::universe_set::UniverseSet;
+    use std::collections::BTreeSet;
+
+    fn explicit<'a>(items: &[&'a str]) -> UniverseSet<&'a str> {
+        items.iter().copied().collect()
+    }
+
+    fn as_set<'a>(u: &UniverseSet<&'a str>) -> BTreeSet<&'a str> {
+        match u {
+            UniverseSet::Explicit(s) => s.clone(),
+            UniverseSet::All => panic!("expected Explicit, got All"),
+        }
+    }
+
+    #[test]
+    fn difference_removes_members() {
+        // {a,b,c} \ {b} == {a,c}
+        let mut a = explicit(&["a", "b", "c"]);
+        a.difference_with(explicit(&["b"]));
+        assert_eq!(as_set(&a), BTreeSet::from(["a", "c"]));
+    }
+
+    #[test]
+    fn difference_with_all_is_empty() {
+        // {a} \ All == {}
+        let mut a = explicit(&["a"]);
+        a.difference_with(UniverseSet::all());
+        assert!(as_set(&a).is_empty());
+    }
+}
