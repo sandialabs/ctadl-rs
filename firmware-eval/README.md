@@ -252,21 +252,46 @@ property); a synthetic Mango result ingested with correct source classification
 (`http_passwd`→NVRAM, `recv`→NETWORK); `compare` produced a correct 2×2 (1
 matched, 1 mango-only FN candidate); `stats` summarized.
 
-### ⚠️ Regression on cta@beb327a — argv/offset taint no longer propagates
+### ✅ Resolved: argv/offset taint propagates again (saturating sources)
 
-Re-running all 15 binaries on the newer engine build **cta@beb327a**
-(`--addr-tolerance 32`) collapses recall:
+The argv/offset-taint regression first seen on **cta@beb327a** (recall collapsed
+to 4.2%) is **fixed**. Recall now *beats* the old last-good baseline on both
+precision and recall:
 
+| Build | TP | FN | extra | recall | note |
+|---|---|---|---|---|---|
+| `beb327a` | 1 | 23 | 9 | 4.2% | regressed (argv taint broken) |
+| `b06b137` | 20 | 4 | 12 | 83.3% | old last-good baseline |
+| `593ce9a` | 21 | 3 | 4 | 87.5% | first build with the fix |
+| **`4b7e767`** | **21** | **3** | **4** | **87.5%** | current — **no regression** (findings byte-identical to `593ce9a`) |
+
+The fix is three parts (full write-up in `../EVALSESSION.md`):
+
+1. **`saturating: true` on the argv sources** (`cmdi-firmware.json5`, the `main`
+   source generator). `argv[i]` is `*(argv+8i)`, a sibling offset of the modeled
+   `.deref` path; saturation taints the whole subtree so `argv[i]` reconnects to
+   the source. Recovers the direct `system(argv[1])` cases.
+2. **Base-level string-builder propagation** (`sprintf`/`strcpy`/`memcpy`
+   families) — added `{ input: "Argument(n)", output: "Argument(0).deref" }`
+   alongside the `.deref → .deref` edges, so pointer-level argv taint crosses
+   into the destination string (recovers argv-through-a-builder and the
+   `off_shoot` `read → alter_command → system` flow).
+3. **Harness — SARIF call-site extraction** (`normalize_ctadl._callsite_addrs`):
+   substring-match `call-arg(` and prefer the real `call … in <sink>` forwarding
+   site over the degenerate PLT-thunk twin. Corrects scoring (dropped `extra`
+   20→4 with zero TP loss).
+
+Verify the argv recovery on a single binary:
+
+```sh
+ctadl go -n nested -l pcode --models firmware-eval/models/cmdi-firmware.json5 \
+    /Users/.../operation-mango-public/package/tests/binaries/nested/program
+jq '[.runs[0].results[]|select(.ruleId=="C0001.tainted-path")
+     |select(.properties.taintLabels|index("argv_input"))]|length' results.sarif  # -> 2
 ```
-1 TP / 23 FN / 9 extra    (recall 4.2%)    15/15 binaries run OK   <- cta@beb327a
-20 TP / 4 FN / 12 extra   (recall 83.3%)   15/15 binaries run OK   <- cta@b06b137 (last good)
-```
 
-**This is an engine regression, not a model-config gap — no change to
-`cmdi-firmware.json5` recovers it.** Every surviving finding is ENV/FILE/NETWORK
-(single-level `char*` sources: `getenv`/`read`/`recv` → `Return.deref` /
-`Argument(1).deref`); **all 24 known bugs sourced from `argv` are missed**, and
-the offset-driven multi-input flows also thinned (`53a6…` 9→4, `e2f7…` 6→4).
+<details>
+<summary>Original engine-side diagnosis (pre-fix, cta@beb327a) — kept for history</summary>
 
 Root cause — **offset-qualified (indexed) taint stopped crossing a base-pointer
 copy.** On `nested` (`system(argv[1])`), the frontend spills `argv` (`formal(1)`)
@@ -276,75 +301,35 @@ offset-0 source view (`Argument(1).deref`) covered every `argv[i]` read via
 offset-insensitive loads; on beb327a the source and the `argv[i]` load sit in
 **disconnected components** of the taint graph — forward+backward taint no longer
 meet with the source label (the debug `C0002` node carries only the sink's
-`command_injection` label, never `argv_input`), so no `C0001` path forms.
+`command_injection` label, never `argv_input`), so no `C0001` path forms. The
+`saturating` source primitive (added in ctadl `a836dbe`, "Add saturating sources
+(#70)") is what closed this gap model-side.
+</details>
 
-Model fixes attempted and **ruled out** (all still 0 `C0001` paths on `nested`,
-and 1 TP / 23 FN / 9 extra across the corpus — byte-identical to the shipped
-model):
-
-* Bare-base source `Argument(1)` (hoping base taint flows field-insensitively
-  through the spill copy) — no.
-* Explicit element offsets `Argument(1).[8·i].deref` / `.deref.deref` for
-  `i = 0…7`, in both pointer and byte forms (17 source ports total) — no.
-* Sink-side `wildcard` (already default `true`) is irrelevant: the sink is seeded
-  correctly; the break is on the **source→sink forward propagation** across the
-  spill, and `wildcard` is source-rejected (see `docs/model-generators.md` §7),
-  so there is no source-side offset/wildcard primitive to reach for.
-
-This is the same base↔offset deref class the `Taint from base into offset derefs`
-(`e629a64`) and the `Move IR to Load & Store Instructions` (#53) /
-`Compose paths from loads and stores` (#62) engine changes touch — the bridging
-is complete enough for the over-approx meet on some paths but not for precise
-`C0001` reconstruction through an argv element load. **The fix is engine-side**
-(offset-insensitive base↔element deref on the C0001 path); the model is already
-maximal. Reproduce with:
-
-```sh
-ctadl go -n probe -l pcode --models firmware-eval/models/cmdi-firmware.json5 \
-    --dump-taint-graph /tmp/t.txt \
-    .../operation-mango-public/package/tests/binaries/nested/program
-# -> 4 isolated nodes, no edges: argv source never reaches the system call-arg
-```
-
-### Corpus status (Operation Mango tests, cta@b06b137 — last good baseline)
+### Corpus status (Operation Mango tests, cta@4b7e767 — current build)
 
 Run over all 15 Operation Mango test binaries (`operation-mango-public`), scored
 against 24 Mango known bugs with `--addr-tolerance 0`:
 
 ```
-20 TP / 4 FN / 12 extra   (recall 83.3%)   15/15 binaries run OK
+21 TP / 3 FN / 4 extra   (recall 87.5%)   15/15 binaries run OK
 ```
 
-The remaining 4 FN are genuine CTADL analysis gaps, not harness artifacts.
+The remaining 3 FN are genuine CTADL analysis gaps, not harness artifacts.
 Diagnosed by dumping the index/taint graphs (`--dump-index-graph` /
 `--dump-taint-graph`) and the debug SARIF profile (`--sarif-profile debug`,
 which exposes `C0002.tainted-instruction` = where forward+backward taint *meet*,
 `C0003.taint-source`, `C0004.taint-sink`):
 
-| Binary | Symptom | Root cause |
-|--------|---------|-----------|
-| `off_shoot`| sink+source labels **meet**, no `C0001` path | base↔offset deref gap (below) |
-| `nvram`    | **0 sinks matched** | unlinked ET_REL object (below) |
-| `layered`  | 1 of 2 system call sites found | second call site missed |
+| Binary | FN | Symptom | Root cause |
+|--------|----|---------|-----------|
+| `nvram`    | 2 | **0 sinks matched** | unlinked ET_REL object (below) |
+| `layered`  | 1 | 1 of 2 system call sites found | second call site missed |
 
-(`execve` was in this list until wildcard sink ports landed — see **Resolved:
-wildcard sink ports** below.)
-
-**`off_shoot` — incomplete base↔offset deref reconciliation on the precise
-path.** The model's source/propagation/sink ports are at offset-0
-(`Argument(n).deref`), but the real taint lands at a *nonzero* stack offset:
-source `file_input` (from `read(0, extras, …)`) is at `call-arg(…,1).[-88].deref`
-(the `extras` stack buffer), while the flow is blocked upstream at the
-auto-derived `alter_command` summary. Forward and backward taint
-over-approximately **meet** (the debug profile emits a `C0002` node carrying both
-labels), but the precise `C0001.tainted-path` query can't cross the base↔offset
-boundary, so no flow is reported. This is the same base↔offset class the
-`Normalize offset 0 away` / `Taint from base into offset derefs` commits address:
-the bridging is complete enough for the over-approx meet but not yet for precise
-path reconstruction. Unlike `execve` (which was a *sink*-matching gap, now fixed
-by wildcard ports), this block is at an intra-procedural summary, so the sink
-wildcard does not reach it — the fix is engine-side (offset-insensitive
-base↔element deref on the C0001 path).
+(`off_shoot` and `execve` were in this list until, respectively, base-level
+string-builder propagation — item 2 of the ✅ Resolved section above — and
+wildcard sink ports — the **Resolved: wildcard sink ports** section below —
+landed; both now report.)
 
 **`nvram` — unlinked ELF relocatable object.** `nvram/program` is `ET_REL`
 (`file` reports "relocatable", `main` at 0x0, `system`/`acosNvramConfig_get` are
@@ -359,10 +344,11 @@ Irrelevant to real firmware (linked images); to exercise this test either link
 it (`gcc program.c nvram_lib.c`) or teach the Ghidra import to apply ET_REL
 relocations.
 
-The 12 extras are all in `early_resolve` (4) and `multi_input` (8) — extra
-NETWORK/FILE/ENV source→system flows Mango's GT doesn't list (`multi_input` is
-built with several input channels), likely `cta_advantage` rather than FP;
-needs triage to confirm.
+The 4 extras are in `early_resolve` (`53a6…`, 2: a NETWORK and a FILE
+source→`system`) and `multi_input` (`e2f7…`, 2: two FILE source→`system`) —
+extra source-classes into genuine multi-channel sinks that Mango's GT lists once
+(both binaries are built with several input channels), likely `cta_advantage`
+rather than FP; needs triage to confirm.
 
 ### Resolved: wildcard sink ports (recovers `execve`)
 
