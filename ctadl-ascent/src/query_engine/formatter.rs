@@ -2062,6 +2062,7 @@ mod tests {
             label: Label(label.into()),
             direction: dir,
             call_site: None,
+            saturating: false,
         }
     }
 

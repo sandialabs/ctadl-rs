@@ -989,6 +989,9 @@ impl DecodeColumn<query_engine::QueryEndpoint> for DefaultDecoder {
                 label,
                 direction,
                 call_site,
+                // Not persisted on disk (the parquet schema is unchanged): `saturating`
+                // is a search-graph concern re-derived from the model each query.
+                saturating: false,
             },
         )
     }
