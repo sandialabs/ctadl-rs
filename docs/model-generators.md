@@ -113,6 +113,14 @@ AND); combine alternatives with the `any_of` / `all_of` / `not` combinators
 described below. If `where` is omitted, the rule matches everything of that
 `find` kind.
 
+> **Unrecognized constraints are a hard error.** A `where` constraint whose
+> `constraint` discriminator the loader does not recognize (including the removed
+> `parameter` / `any_parameter`, or a bare integer comparison used outside of
+> `number_parameters`) fails model loading rather than being silently skipped.
+> Model files are versioned alongside the analyzer, and silently skipping unknown
+> constraints previously masked real bugs (e.g. `any_of` behaving as AND). Keep
+> your model files in sync with the analyzer you run them against.
+
 ### `model` — how to model them
 
 A `model` object carries one or more of: `sources`, `sinks`, `taint`,
@@ -146,11 +154,9 @@ fields. The main ones:
 
 | `constraint`   | Fields | Matches |
 | -------------- | ------ | ------- |
-| `parent`       | `inner` | The element's namespace/class parent satisfies the `inner` constraint. |
-| `extends`      | `inner` | The class the element extends satisfies `inner`. |
-| `parameter`    | `idx`, `inner` | Parameter at index `idx` satisfies `inner`. |
-| `any_parameter`| `start_idx`, `inner` | *Some* parameter (from `start_idx` onward) satisfies `inner`. |
-| `uses_field`   | `name` / `names`, `unqualified-id` | The function reads/writes the named field(s). |
+| `parent`       | `inner` | **Java-only.** The method's owning class satisfies the `inner` constraint (a `name` regex or `signature_match` equality). On non-Java frontends this warns and matches nothing. |
+| `extends`      | `inner` | **Java-only.** A superclass/interface of the method's owning class satisfies `inner`. On non-Java frontends this warns and matches nothing. |
+| `uses_field`   | `name` / `names`, `unqualified-id` | The function reads or writes the named field(s) (via an IR `Load`/`Store`). |
 
 ### Predicates on the element
 
@@ -158,7 +164,7 @@ fields. The main ones:
 | ------------------- | ------ | ------- |
 | `has_code`          | `value` (bool) | Whether the function has a body (`true`) or is external/stub (`false`). Handy to model only the functions CTADL *can't* see. |
 | `number_parameters` | `inner` | Applies an integer comparison (`inner`) to the parameter count. |
-| integer compare     | `constraint` is one of `<` `<=` `>` `>=` `!=` `==`, plus `value` | Used as the `inner` of `number_parameters` / `parameter` idx checks. |
+| integer compare     | `constraint` is one of `<` `<=` `>` `>=` `!=` `==`, plus `value` | Only valid as the `inner` of `number_parameters`. Used on its own it is an error. |
 
 ### Combinators
 
