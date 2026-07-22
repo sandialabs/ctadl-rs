@@ -49,7 +49,7 @@
 //! ([`FullWrite`], [`NoopWrite`]) has a no-op `RelIndexMerge`.
 
 use std::cmp::Ordering;
-use std::hash::Hash;
+use std::hash::{BuildHasherDefault, Hash};
 use std::marker::PhantomData;
 use std::ops::Index;
 use std::rc::Rc;
@@ -58,9 +58,13 @@ use ascent::internal::{
     RelFullIndexRead, RelFullIndexWrite, RelIndexMerge, RelIndexRead, RelIndexReadAll,
     RelIndexWrite, ToRelIndex,
 };
+use rustc_hash::FxHasher;
 
-type Map<K, V> = hashbrown::HashMap<K, V>;
-type Set<T> = hashbrown::HashSet<T>;
+// The store keys are trusted, program-derived ids, so key on the fast,
+// deterministic `FxHasher` rather than the std collections' DoS-resistant
+// SipHash.
+type Map<K, V> = hashbrown::HashMap<K, V, BuildHasherDefault<FxHasher>>;
+type Set<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 
 /// Merge a sorted, deduplicated `src` into a sorted, deduplicated `dst` (both ascending),
 /// keeping `dst` sorted and deduplicated. Returns the number of elements that were *newly*
