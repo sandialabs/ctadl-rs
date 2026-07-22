@@ -41,13 +41,24 @@
 //  (If a CTADL build is ever changed to require kind-matching and you get zero
 //   flows, collapse every source `kind` below to `command_injection`.)
 //
-// Matching / anchoring
+ate// Matching / anchoring
 // --------------------
-//  CTADL matches pcode functions by regex over the function name. We anchor with
-//  ^(...)$ to mirror Mango's exact-name semantics and avoid substring hits like
-//  "filesystem" matching ".*system.*". If recall drops on stripped/thunked
-//  firmware (symbol decorated as `system@plt`, `__imp_system`, ...), relax the
-//  anchors or add an alternate generator with `.*(...).*`.
+//  We match with `constraint: "name"` -- a regex against the function's *short
+//  name* -- anchored with ^(...)$ to mirror Mango's exact-name semantics and
+//  avoid substring hits like "filesystem" matching ".*system.*".
+//
+//  IMPORTANT: use `name`, NOT `signature_pattern`, on real firmware. On stripped
+//  ELFs the Ghidra pcode frontend names an imported sink by its *whole mangled
+//  signature* -- e.g. `<EXTERNAL>::system@0000a4c0` -- so an anchored
+//  `signature_pattern` of `^(system|...)$` matches ZERO functions (confirmed on
+//  netctrl: "Matched 0 sources and 0 sinks"), silently zeroing out the entire
+//  analysis. `name` matches the short name (`system`) in both cases: compiled/
+//  unstripped binaries (bare `system`) and stripped firmware thunks
+//  (`<EXTERNAL>::system@<addr>`). This also fixes the propagation builders, whose
+//  imports are decorated the same way (`<EXTERNAL>::sprintf@<addr>`). Verified no
+//  regression on the synthetic corpus (`nested` argv->system still reported).
+//  If a future frontend decorates names too (e.g. `system@plt`, `__imp_system`),
+//  relax the anchors or add an alternate generator with `.*(...).*`.
 //
 // HTTP KEY_BEACONS (ranking, not modeled here)
 // --------------------------------------------
@@ -79,7 +90,7 @@
     // ---------------------------------------------------------------------
     {
       find: "methods",
-      where: [{ constraint: "signature_pattern", pattern: "^main$" }],
+      where: [{ constraint: "name", pattern: "^main$" }],
       model: { sources: [
         { port: "Argument(1).deref",       kind: "argv_input", saturating: true },
         { port: "Argument(1).deref.deref", kind: "argv_input", saturating: true }
@@ -99,7 +110,7 @@
     {
       find: "methods",
       where: [{
-        constraint: "signature_pattern",
+        constraint: "name",
         pattern: "^(system|twsystem|execFormatCmd|exec_cmd|___system|bstar_system|doSystemCmd|doShell|CsteSystem|cgi_deal_popen|ExeCmd|ExecShell|exec_shell_popen|exec_shell_popen_str|popen|execl|execlp|execle|execv|execvp|execvpe|execve|tp_systemEx|exec_shell_async|exec_shell_sync|exec_shell_sync2|SLIBCSystem|SLIBCExec|SLIBCExecv|SLIBCPopen|pegaSystem)$"
       }],
       model: { sinks: [{ port: "Argument(0).deref", kind: "command_injection" }] }
@@ -108,7 +119,7 @@
     // SLIBCExecl: Mango marks vulnerable param 2 => Argument(1).deref
     {
       find: "methods",
-      where: [{ constraint: "signature_pattern", pattern: "^(SLIBCExecl)$" }],
+      where: [{ constraint: "name", pattern: "^(SLIBCExecl)$" }],
       model: { sinks: [{ port: "Argument(1).deref", kind: "command_injection" }] }
     },
 
@@ -136,7 +147,7 @@
     // ---------------------------------------------------------------------
     {
       find: "methods",
-      where: [{ constraint: "signature_pattern", pattern: "^(execl|execlp|execle)$" }],
+      where: [{ constraint: "name", pattern: "^(execl|execlp|execle)$" }],
       model: { sinks: [
         { port: "Argument(1).deref", kind: "command_injection" },
         { port: "Argument(2).deref", kind: "command_injection" },
@@ -150,7 +161,7 @@
     },
     {
       find: "methods",
-      where: [{ constraint: "signature_pattern", pattern: "^(execv|execvp|execvpe|execve)$" }],
+      where: [{ constraint: "name", pattern: "^(execv|execvp|execvpe|execve)$" }],
       model: { sinks: [{ port: "Argument(1)", kind: "command_injection" }] }
     },
 
@@ -160,7 +171,7 @@
     {
       find: "methods",
       where: [{
-        constraint: "signature_pattern",
+        constraint: "name",
         pattern: "^(nvram_get|nvram_safe_get|bcm_nvram_get|envram_get|wlcsm_nvram_get|dni_nvram_get|PTI_nvram_get|acosNvramConfig_get|acosNvramConfig_read|GetValue)$"
       }],
       model: { sources: [{ port: "Return.deref", kind: "nvram_input" }] }
@@ -169,7 +180,7 @@
     // SOURCES -- environment getter
     {
       find: "methods",
-      where: [{ constraint: "signature_pattern", pattern: "^(getenv)$" }],
+      where: [{ constraint: "name", pattern: "^(getenv)$" }],
       model: { sources: [{ port: "Return.deref", kind: "env_input" }] }
     },
 
@@ -180,14 +191,14 @@
     // ---------------------------------------------------------------------
     {
       find: "methods",
-      where: [{ constraint: "signature_pattern", pattern: "^(recv|recvfrom)$" }],
+      where: [{ constraint: "name", pattern: "^(recv|recvfrom)$" }],
       model: { sources: [{ port: "Argument(1).deref", kind: "network_input" }] }
     },
 
     // Mango synthetic CGI parameter parser: result + out-buffer are network input
     {
       find: "methods",
-      where: [{ constraint: "signature_pattern", pattern: "^(custom_param_parser)$" }],
+      where: [{ constraint: "name", pattern: "^(custom_param_parser)$" }],
       model: { sources: [
         { port: "Return.deref",      kind: "network_input" },
         { port: "Argument(0).deref", kind: "network_input" }
@@ -202,17 +213,17 @@
     // ---------------------------------------------------------------------
     {
       find: "methods",
-      where: [{ constraint: "signature_pattern", pattern: "^(read)$" }],
+      where: [{ constraint: "name", pattern: "^(read)$" }],
       model: { sources: [{ port: "Argument(1).deref", kind: "file_input" }] }
     },
     {
       find: "methods",
-      where: [{ constraint: "signature_pattern", pattern: "^(fread)$" }],
+      where: [{ constraint: "name", pattern: "^(fread)$" }],
       model: { sources: [{ port: "Argument(0).deref", kind: "file_input" }] }
     },
     {
       find: "methods",
-      where: [{ constraint: "signature_pattern", pattern: "^(fgets)$" }],
+      where: [{ constraint: "name", pattern: "^(fgets)$" }],
       model: { sources: [
         { port: "Argument(0).deref", kind: "file_input" },
         { port: "Return.deref",      kind: "file_input" }
@@ -245,7 +256,7 @@
     {
       find: "methods",
       where: [{
-        constraint: "signature_pattern",
+        constraint: "name",
         pattern: "^(sprintf|snprintf|vsprintf|vsnprintf|asprintf|vasprintf|swprintf|vswprintf)$"
       }],
       model: { propagation: [
@@ -259,7 +270,7 @@
     {
       find: "methods",
       where: [{
-        constraint: "signature_pattern",
+        constraint: "name",
         pattern: "^(strcpy|strncpy|stpcpy|stpncpy|strcat|strncat|strlcpy|strlcat)$"
       }],
       model: { propagation: [
@@ -272,7 +283,7 @@
     // memcpy / memmove: src (Argument 1) -> dest (Argument 0) + return
     {
       find: "methods",
-      where: [{ constraint: "signature_pattern", pattern: "^(memcpy|memmove|mempcpy|bcopy)$" }],
+      where: [{ constraint: "name", pattern: "^(memcpy|memmove|mempcpy|bcopy)$" }],
       model: { propagation: [
         { input: "Argument(1).deref", output: "Argument(0).deref" },
         { input: "Argument(1).deref", output: "Return.deref" },
@@ -284,7 +295,7 @@
     {
       find: "methods",
       where: [{
-        constraint: "signature_pattern",
+        constraint: "name",
         pattern: "^(strdup|strndup|strstr|strchr|strrchr|strpbrk|strtok|strtok_r|strsep|basename|dirname)$"
       }],
       model: { propagation: [{ input: "Argument(0).deref", output: "Return.deref" }] }
@@ -294,7 +305,7 @@
     {
       find: "methods",
       where: [{
-        constraint: "signature_pattern",
+        constraint: "name",
         pattern: "^(atoi|atol|atoll|strtol|strtoll|strtoul|strtoull)$"
       }],
       model: { propagation: [{ input: "Argument(0).deref", output: "Return" }] }
