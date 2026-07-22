@@ -6,11 +6,11 @@
 
 use datafusion::arrow::array::{Int64Array, StringArray};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::datasource::file_format::file_compression_type::FileCompressionType;
 use datafusion::prelude::*;
 use std::fmt::Display;
 use std::ops::Deref;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
 use internment::ArcIntern;
 use smallvec::SmallVec;
@@ -190,6 +190,58 @@ impl PcodeFactsReader {
         Self {
             facts_dir: facts_dir.as_ref().to_path_buf(),
         }
+    }
+
+    /// Resolve a logical fact filename (e.g. `PCODE_INPUT.facts`) to the file that
+    /// actually exists on disk.
+    ///
+    /// A gzipped `<filename>.gz` is preferred when present (returning `true` for
+    /// "compressed"); otherwise the plain `<filename>` is used. Preferring `.gz`
+    /// but falling back to the plain file is what lets someone manually `gunzip`
+    /// files in the store and still have everything read correctly. Returns `None`
+    /// if neither variant exists.
+    fn resolve_fact_path(&self, filename: &str) -> Option<(PathBuf, bool)> {
+        let gz = self.facts_dir.join(format!("{filename}.gz"));
+        if gz.exists() {
+            return Some((gz, true));
+        }
+        let plain = self.facts_dir.join(filename);
+        if plain.exists() {
+            return Some((plain, false));
+        }
+        None
+    }
+
+    /// Register a fact table with DataFusion, resolving to the compressed or plain
+    /// variant and configuring the CSV options accordingly. Does nothing if the
+    /// table's file is absent.
+    async fn register_fact_csv(
+        &self,
+        ctx: &SessionContext,
+        table: &str,
+        filename: &str,
+        fields: Vec<Field>,
+    ) -> Result<()> {
+        let Some((path, compressed)) = self.resolve_fact_path(filename) else {
+            return Ok(());
+        };
+        let schema = Schema::new(fields);
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| PcodeError::fact_consistency_error("Invalid path"))?;
+        let mut options = CsvReadOptions::new()
+            .has_header(false)
+            .delimiter(b'\t')
+            .schema(&schema);
+        if compressed {
+            options = options
+                .file_extension(".facts.gz")
+                .file_compression_type(FileCompressionType::GZIP);
+        } else {
+            options = options.file_extension(".facts");
+        }
+        ctx.register_csv(table, path_str, options).await?;
+        Ok(())
     }
 
     /// Read all essential pcode facts
@@ -506,21 +558,7 @@ impl PcodeFactsReader {
         ];
 
         for (file, table, fields) in tables {
-            let path = self.facts_dir.join(file);
-            if path.exists() {
-                let schema = Arc::new(Schema::new(fields));
-                ctx.register_csv(
-                    table,
-                    path.to_str()
-                        .ok_or_else(|| PcodeError::fact_consistency_error("Invalid path"))?,
-                    CsvReadOptions::new()
-                        .has_header(false)
-                        .delimiter(b'\t')
-                        .file_extension(".facts")
-                        .schema(&schema),
-                )
-                .await?;
-            }
+            self.register_fact_csv(&ctx, table, file, fields).await?;
         }
 
         // Build mnemonic map
@@ -805,21 +843,8 @@ impl PcodeFactsReader {
         ];
 
         for (file_name, table_name, fields) in tables {
-            let path = self.facts_dir.join(file_name);
-            if path.exists() {
-                let schema = Schema::new(fields);
-                ctx.register_csv(
-                    table_name,
-                    path.to_str()
-                        .ok_or_else(|| PcodeError::fact_consistency_error("Invalid path"))?,
-                    CsvReadOptions::new()
-                        .has_header(false)
-                        .delimiter(b'\t')
-                        .file_extension(".facts")
-                        .schema(&schema),
-                )
+            self.register_fact_csv(&ctx, table_name, file_name, fields)
                 .await?;
-            }
         }
 
         let mut name_map: BTreeMap<PcodeVarnode, String> = BTreeMap::new();
@@ -1046,21 +1071,8 @@ impl PcodeFactsReader {
         ];
 
         for (file_name, table_name, fields) in tables {
-            let path = self.facts_dir.join(file_name);
-            if path.exists() {
-                let schema = Schema::new(fields);
-                ctx.register_csv(
-                    table_name,
-                    path.to_str()
-                        .ok_or_else(|| PcodeError::fact_consistency_error("Invalid path"))?,
-                    CsvReadOptions::new()
-                        .has_header(false)
-                        .delimiter(b'\t')
-                        .file_extension(".facts")
-                        .schema(&schema),
-                )
+            self.register_fact_csv(&ctx, table_name, file_name, fields)
                 .await?;
-            }
         }
 
         let mut hfunc_map: BTreeMap<PcodeBlockBasic, HighFunc> = BTreeMap::new();
@@ -1350,14 +1362,19 @@ impl PcodeFactsReader {
         &self,
         filename: &str,
     ) -> Result<Option<Vec<T>>> {
-        let path = self.facts_dir.join(filename);
-        if !path.exists() {
+        let Some((path, compressed)) = self.resolve_fact_path(filename) else {
             return Ok(None);
-        }
+        };
 
         let file = std::fs::File::open(&path).map_err(PcodeError::from)?;
 
-        let reader = std::io::BufReader::new(file);
+        // The reader must work whether the fact file is compressed or not, so that
+        // someone can manually gunzip files in the store and everything still works.
+        let reader: std::io::BufReader<Box<dyn std::io::Read>> = if compressed {
+            std::io::BufReader::new(Box::new(flate2::read::GzDecoder::new(file)))
+        } else {
+            std::io::BufReader::new(Box::new(file))
+        };
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(false)
             .delimiter(b'\t') // Use tab delimiter

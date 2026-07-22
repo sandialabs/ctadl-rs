@@ -30,6 +30,12 @@ pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramIn
 
     let facts_dir = import_path.join("facts");
 
+    // Gzip the (large) fact tables Ghidra just produced so they take less room in
+    // the store. This also runs on the `CTADL_REUSE_FACTS` reuse path; it only
+    // touches `*.facts` and skips `*.facts.gz`, so it is idempotent. The reader
+    // below transparently handles either variant.
+    ghidra::compress_facts_dir(&facts_dir)?;
+
     // Persist Ghidra's image base on the import config so downstream consumers
     // (SARIF address mapping, regression line checks) can recover
     // section-relative offsets regardless of the base Ghidra chose.

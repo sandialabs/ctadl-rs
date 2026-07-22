@@ -36,6 +36,7 @@ datafusion = "53"
 derive_builder = "0.20"
 dex-reader = { path = "../dex-reader" }
 env_logger = "0.11"
+flate2 = "1"
 hashbrown = "0.16"
 internment = { version = "0.8", features = ["arc", "serde"] }
 itertools = "0.14"

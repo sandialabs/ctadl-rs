@@ -30,9 +30,18 @@ The regime:
    rows, which the SARIF formatter walks exactly as before.
 */
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
+use std::hash::BuildHasherDefault;
+
+use rustc_hash::FxHasher;
 
 use ctadl_ir::graph::{LazyAnnotation, LazySuccessors, find_annotated_paths_from_set};
+
+/// `hashbrown` maps/sets keyed by the deterministic, fast `FxHasher` rather than
+/// the DoS-resistant SipHash the std collections default to — the taint tables
+/// hold trusted, program-derived keys, so the faster hash is a free win.
+type HashMap<K, V> = hashbrown::HashMap<K, V, BuildHasherDefault<FxHasher>>;
+type HashSet<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 
 use crate::facts::{
     CallArgId, FlowEdge, FlowVariable, FormalType, FunctionId, IdMap, InsnSiteId, Label,
@@ -106,11 +115,11 @@ impl TaintSearchGraph {
         let mut assign_by_src: HashMap<
             (FunctionId, FlowVariable),
             Vec<(FlowVariable, Path, Path)>,
-        > = HashMap::new();
+        > = HashMap::default();
         let mut loads_by_dst: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>> =
-            HashMap::new();
+            HashMap::default();
         let mut loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>> =
-            HashMap::new();
+            HashMap::default();
         for (f, dst, dp, src, sp) in &facts.assign {
             assign_by_src
                 .entry((*f, *src))
@@ -134,8 +143,8 @@ impl TaintSearchGraph {
             .map(|(f, v, ty)| ((*f, *v), *ty))
             .collect();
 
-        let mut callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>> = HashMap::new();
-        let mut callee_by_site = HashMap::new();
+        let mut callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>> = HashMap::default();
+        let mut callee_by_site = HashMap::default();
         for (site, callee) in &facts.call {
             callers_by_callee.entry(*callee).or_default().push(*site);
             callee_by_site.insert(*site, *callee);
@@ -143,9 +152,9 @@ impl TaintSearchGraph {
 
         let paths = facts.paths.iter().map(|(p,)| *p).collect();
 
-        let mut copy_rep = HashMap::new();
+        let mut copy_rep = HashMap::default();
         let mut copy_members: HashMap<(FunctionId, FlowVariable), Vec<FlowVariable>> =
-            HashMap::new();
+            HashMap::default();
         for (f, member, rep) in compute_copy_alias(&facts.assign) {
             copy_rep.insert((f, member), rep);
             copy_members.entry((f, rep)).or_default().push(member);
@@ -156,7 +165,8 @@ impl TaintSearchGraph {
 
         // Sink access paths per variable, for the saturating rule's sink-side
         // read. Only backward endpoints contribute.
-        let mut sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>> = HashMap::new();
+        let mut sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>> =
+            HashMap::default();
         for (ep,) in &facts.endpoints {
             if ep.direction == TaintDirection::Backward {
                 sink_ext_by_var
@@ -374,7 +384,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     let mut source_sets: BTreeMap<Label, Vec<QueryEndpoint>> = BTreeMap::new();
     // Sinks key on the level-agnostic vertex: the taint magnitude is invisible to
     // sink matching (a saturating flow arriving at a sink is just a flow arriving).
-    let mut sink_nodes: HashMap<TaintVertex, Vec<QueryEndpoint>> = HashMap::new();
+    let mut sink_nodes: HashMap<TaintVertex, Vec<QueryEndpoint>> = HashMap::default();
     for (ep,) in &facts.endpoints {
         match ep.direction {
             TaintDirection::Forward => {
@@ -426,7 +436,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         // The start set: each distinct vertex once, attributed to the first
         // endpoint that names it. A saturating source seeds its start node at
         // level `Saturating`; a plain source at `Plain`.
-        let mut start_origin: HashMap<TaintNode, u32> = HashMap::new();
+        let mut start_origin: HashMap<TaintNode, u32> = HashMap::default();
         let mut starts: Vec<TaintNode> = Vec::new();
         for (i, ep) in endpoints.iter().enumerate() {
             let level = if ep.saturating {
@@ -435,7 +445,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
                 TaintLevel::Plain
             };
             let node = (ep.infunc, ep.vertex.0, ep.vertex.1, level);
-            if let std::collections::hash_map::Entry::Vacant(e) = start_origin.entry(node) {
+            if let hashbrown::hash_map::Entry::Vacant(e) = start_origin.entry(node) {
                 e.insert(i as u32);
                 starts.push(node);
             }
@@ -484,7 +494,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         // end as completing a source -> sink flow.
         // Dedup by the level-agnostic vertex: one path per sink vertex, even if
         // the vertex is reached as both `Saturating` and `Plain`.
-        let mut reported: HashSet<TaintVertex> = HashSet::new();
+        let mut reported: HashSet<TaintVertex> = HashSet::default();
         let mut paths_found = 0usize;
         for &t in &search.targets {
             let node = search.states[t as usize].node;
