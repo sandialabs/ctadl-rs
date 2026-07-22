@@ -31,7 +31,9 @@ use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactEncoding, ArtifactKey, SourceInfoBuilder};
 
 use crate::error::Error;
-use ctadl_ir::mir::call::{CallEdges, CallStyle, VirtualMethodTable};
+use ctadl_ir::mir::call::{
+    CallEdges, CallStyle, PyClass, PyFunction, PySignature, PySimpleName, VirtualMethodTable,
+};
 use ctadl_ir::*;
 
 use python_bytecode_reader::model::{BytecodeFile, CodeObject, ConstEntry, Instruction};
@@ -69,6 +71,7 @@ fn import_python_dir(dir: &Path) -> Result<ProgramInfo, Error> {
         )));
     }
     let mut lowering = Lowering::new();
+    lowering.crawl_root = dir.to_path_buf();
     for (sub_artifact_id, path) in files.iter().enumerate() {
         let text = run_serializer(path, Format::Stable)?;
         let source = std::fs::read_to_string(path).ok();
@@ -119,6 +122,9 @@ fn lower_stable_text(
 ) -> Result<ProgramInfo, Error> {
     let file = python_bytecode_reader::parse(text)?;
     let mut lowering = Lowering::new();
+    // No crawl root for a single-file import: anchor module derivation at the
+    // file's parent so the prefix is just the file's own module name.
+    lowering.crawl_root = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     lowering.set_file(path, source, 0);
     lowering.lower_file(&file)?;
     lowering.finish()
@@ -181,6 +187,25 @@ struct Lowering {
     /// code-flow steps (e.g. a call and the sink on the same line). Handing each a
     /// distinct synthetic column keeps the steps separate. Reset per code object.
     line_column_cursor: BTreeMap<i64, usize>,
+    /// Crawl root of the import: a `co.filename` / file path is made relative to
+    /// it to derive a dotted module prefix. For a single-file import it is the
+    /// file's parent directory.
+    crawl_root: std::path::PathBuf,
+    /// Dotted module prefix of the file currently being lowered (e.g.
+    /// `plugins.banktransfer.views`), set by [`Lowering::set_file`].
+    module_prefix: String,
+    /// Rows for the emitted [`VirtualMethodTable::Python`], one per registered
+    /// function (plus one per external stub): `(class, simple, qualified, fq)`.
+    vmt_rows: Vec<(Option<String>, String, String, String)>,
+    /// Simple (bare) name → the fully-qualified IR ids that share it, populated as
+    /// functions register. Used by [`Lowering::resolve_call_edges`] to rewrite the
+    /// bare callee names stamped onto call edges into their qualified id(s), now
+    /// that the IR function names are qualified. A bare name absent here is
+    /// genuinely external (kept bare, then stubbed).
+    simple_index: BTreeMap<String, Vec<String>>,
+    /// Count of call edges whose bare name resolved to more than one qualified id
+    /// (a real cross-module / cross-class collision), for measurement.
+    ambiguous_edges: usize,
     counter: u32,
 }
 
@@ -212,6 +237,11 @@ impl Lowering {
             handler_blocks: Vec::new(),
             block_entry_overrides: BTreeMap::new(),
             line_column_cursor: BTreeMap::new(),
+            crawl_root: std::path::PathBuf::new(),
+            module_prefix: String::new(),
+            vmt_rows: Vec::new(),
+            simple_index: BTreeMap::new(),
+            ambiguous_edges: 0,
             counter: 0,
         }
     }
@@ -238,6 +268,7 @@ impl Lowering {
         };
         self.line_starts = line_starts;
         self.source_len = source_len;
+        self.module_prefix = module_prefix_from(path, &self.crawl_root);
         // Per-file cursor: synthesized columns restart within each file's lines.
         self.line_column_cursor.clear();
     }
@@ -285,7 +316,12 @@ impl Lowering {
     ) -> String {
         let id = ordered.len() as u32;
         let idx = self.program.new_function();
-        let name = self.unique_function_name(&co.name);
+        // Qualify the IR id by module + `co.qualname` (which already carries any
+        // containing class), so two same-named methods in different classes/modules
+        // get distinct, meaningful ids. The `#N` suffix stays a safety net for
+        // genuine duplicate qualnames (decorated / conditionally-defined).
+        let qualified = qualify(&self.module_prefix, &co.qualname);
+        let name = self.unique_function_name(&qualified);
         self.program[idx].set_name(name.clone());
         self.program[idx].set_return_type(ReturnType { arity: 1 });
         // Positional + keyword-only parameters, plus the `*args` / `**kwargs`
@@ -309,13 +345,26 @@ impl Lowering {
         self.defined_names.insert(co.name.clone());
         self.func_names.insert(id, name.clone());
         self.functions.insert(id, FuncInfo { idx, nparams });
+        // Record the VMT row and the bare→qualified resolution index (both
+        // program-wide, never cleared per module).
+        let class = containing_class(&co.qualname, &co.name);
+        self.vmt_rows
+            .push((class, co.name.clone(), qualified, name.clone()));
+        self.simple_index
+            .entry(co.name.clone())
+            .or_default()
+            .push(name.clone());
         ordered.push((id, co));
         // Register nested code objects, noting any `__init__` method so a call to
-        // this (class) function can be lowered as instantiation.
+        // this (class) function can be lowered as instantiation. Keyed by the
+        // class's *simple* name (the bare callee name a `Cls()` call presents),
+        // first-writer-wins on a same-named-class collision.
         for nested in &co.nested_code_objects {
             let nested_name = self.register_code(nested, ordered);
             if nested.name == "__init__" {
-                self.class_init.insert(name.clone(), nested_name);
+                self.class_init
+                    .entry(co.name.clone())
+                    .or_insert(nested_name);
             }
         }
         name
@@ -1296,7 +1345,10 @@ impl Lowering {
                 self.pop_exp(sim); // format spec
                 let value = self.pop_exp(sim);
                 let tmp = self.fresh();
-                stmts.push(Statement::new(StatementKind::assign(tmp.clone(), [value]), si));
+                stmts.push(Statement::new(
+                    StatementKind::assign(tmp.clone(), [value]),
+                    si,
+                ));
                 sim.push(Slot::val(Exp::Variable(tmp)));
             }
 
@@ -1637,7 +1689,7 @@ impl Lowering {
                 continue;
             }
             let idx = self.program.new_function();
-            self.program[idx].set_name(name);
+            self.program[idx].set_name(name.clone());
             self.program[idx].set_return_type(ReturnType { arity: 1 });
             for _ in 0..argc {
                 self.program[idx]
@@ -1645,6 +1697,12 @@ impl Lowering {
                     .parameters
                     .push(ParameterType::ByRef);
             }
+            // External stubs stay bare (their edges are never in `simple_index`, so
+            // they resolve to themselves): record a class-less VMT row whose simple
+            // name, signature, and fq are all the bare name, so `name:"source"`
+            // still matches.
+            self.vmt_rows
+                .push((None, name.clone(), name.clone(), name.clone()));
             if argc >= 1 {
                 self.emit_external_stub_body(idx, argc);
             }
@@ -2014,16 +2072,87 @@ impl Lowering {
         ))
     }
 
-    fn finish(self) -> Result<ProgramInfo, Error> {
+    fn finish(mut self) -> Result<ProgramInfo, Error> {
+        // Now every module is registered: rewrite the bare callee names stamped
+        // onto call edges into the qualified ids the IR functions now carry.
+        self.resolve_call_edges();
+        let methods: Vec<(Option<PyClass>, PySimpleName, PySignature, PyFunction)> = self
+            .vmt_rows
+            .iter()
+            .map(|(cls, simple, sig, fq)| {
+                (
+                    cls.as_ref().map(|c| PyClass(c.as_str().into())),
+                    PySimpleName(simple.as_str().into()),
+                    PySignature(sig.as_str().into()),
+                    PyFunction(fq.as_str().into()),
+                )
+            })
+            .collect();
         log::trace!("python IR program:\n{}", self.program);
         self.program
             .verify()
             .map_err(|e| Error::PythonConversion(format!("IR verification failed: {e}")))?;
         Ok(ProgramInfo {
             program: self.program,
-            vmt: VirtualMethodTable::default(),
+            vmt: VirtualMethodTable::Python { methods },
             source_info: self.source_info_builder.finish(),
         })
+    }
+
+    /// Rewrite every direct call edge's bare callee name into the qualified IR
+    /// id(s) that share that simple name (built in [`Lowering::register_code`]).
+    /// A name absent from the index — a genuinely external callee (`source`,
+    /// `sink`), or an already-qualified id (a funcptr / `__init__` edge) — is kept
+    /// verbatim, so it still resolves to its external stub or exact function.
+    /// Ambiguous bare names emit *all* candidates (sound over-approximation).
+    fn resolve_call_edges(&mut self) {
+        use ctadl_ir::mir::call::{CallEdges, CallStyle};
+        let mut ambiguous = 0usize;
+        for func in self.program.functions.functions.raw.iter_mut() {
+            for block in func.blocks.blocks_mut().raw.iter_mut() {
+                for stmt in block.statements.iter_mut() {
+                    let StatementKind::CallAssign {
+                        style:
+                            CallStyle::DirectCall {
+                                call_edges: CallEdges::Explicit(edges),
+                            },
+                        ..
+                    } = &mut stmt.kind
+                    else {
+                        continue;
+                    };
+                    let mut resolved: ctadl_ir::ThinVec<String> = ctadl_ir::ThinVec::new();
+                    for edge in edges.iter() {
+                        match self.simple_index.get(edge) {
+                            Some(fqs) => {
+                                if fqs.len() > 1 {
+                                    ambiguous += 1;
+                                }
+                                for fq in fqs {
+                                    if !resolved.contains(fq) {
+                                        resolved.push(fq.clone());
+                                    }
+                                }
+                            }
+                            // External / already-qualified: keep verbatim.
+                            None => {
+                                if !resolved.contains(edge) {
+                                    resolved.push(edge.clone());
+                                }
+                            }
+                        }
+                    }
+                    *edges = resolved;
+                }
+            }
+        }
+        self.ambiguous_edges += ambiguous;
+        if self.ambiguous_edges > 0 {
+            log::debug!(
+                "python: {} call edge(s) resolved to multiple same-named targets",
+                self.ambiguous_edges
+            );
+        }
     }
 }
 
@@ -2159,6 +2288,61 @@ impl StackSim {
 }
 
 // --- Free functions -------------------------------------------------------
+
+/// Derive a dotted module prefix from a file `path`, relative to the crawl
+/// `root`. `.../plugins/banktransfer/views.py` under `.../` becomes
+/// `plugins.banktransfer.views`; a bare `t.py` becomes `t`; an `__init__.py`
+/// collapses to its package (the trailing `__init__` segment is dropped). This is
+/// a best-effort filename derivation — no real module `__name__` is consulted.
+fn module_prefix_from(path: &Path, root: &Path) -> String {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    let comps: Vec<std::path::Component<'_>> = rel.components().collect();
+    let mut segments: Vec<String> = Vec::new();
+    for (i, comp) in comps.iter().enumerate() {
+        let std::path::Component::Normal(os) = comp else {
+            continue;
+        };
+        let s = os.to_string_lossy().to_string();
+        if i + 1 == comps.len() {
+            // Last component: strip the file extension.
+            let stem = match s.rsplit_once('.') {
+                Some((stem, _ext)) => stem.to_string(),
+                None => s,
+            };
+            if !stem.is_empty() && stem != "__init__" {
+                segments.push(stem);
+            }
+        } else {
+            segments.push(s);
+        }
+    }
+    segments.join(".")
+}
+
+/// The qualified dotted id for a function: `{module_prefix}.{co.qualname}`, or just
+/// `co.qualname` when the module prefix is empty (so no stray leading dot).
+fn qualify(module_prefix: &str, qualname: &str) -> String {
+    if module_prefix.is_empty() {
+        qualname.to_string()
+    } else {
+        format!("{module_prefix}.{qualname}")
+    }
+}
+
+/// The class a function belongs to, derived from `co.qualname` by stripping the
+/// trailing `.{simple_name}`. `ImportView.get` (name `get`) → `Some("ImportView")`.
+/// Returns `None` for a module-level function (`qualname == name`) or when the
+/// enclosing segment is a `<locals>` / `<module>` scope rather than a class.
+fn containing_class(qualname: &str, simple_name: &str) -> Option<String> {
+    let prefix = qualname.strip_suffix(simple_name)?;
+    let prefix = prefix.strip_suffix('.')?;
+    let last = prefix.rsplit('.').next().unwrap_or(prefix);
+    if last.is_empty() || last == "<locals>" || last == "<module>" {
+        None
+    } else {
+        Some(last.to_string())
+    }
+}
 
 /// Byte offset of the start of each source line.
 fn compute_line_starts(source: &str) -> Vec<usize> {
@@ -2342,10 +2526,11 @@ code_object {
     fn lowers_and_verifies() {
         let info =
             lower_stable_text(Path::new("t.py"), STABLE, Some("x\ny\nz\n".to_string())).unwrap();
-        // One function, `transfer`, with one by-ref parameter.
+        // One function, qualified by its (bare-filename) module prefix `t`, with
+        // one by-ref parameter.
         assert_eq!(info.program.functions.len(), 1);
         let f = &info.program.functions[FunctionIdx::new(0)];
-        assert_eq!(f.name, "transfer");
+        assert_eq!(f.name, "t.transfer");
         assert_eq!(f.num_parameters(), 1);
         // The IR verifies (Load/Store invariants hold) — `finish` already called
         // `verify`, but assert the structure is non-empty too.
@@ -2381,5 +2566,131 @@ code_object {
             info.program.functions.iter().any(|f| f.name == "sink"),
             "expected a `sink` external stub function"
         );
+    }
+
+    #[test]
+    fn qualified_ids_distinguish_same_named_methods_and_edges_resolve() {
+        // A module that defines a module-level `target`, two same-named `handler`
+        // methods in classes `A` and `B`, and calls `target()`. The two `handler`
+        // methods must get distinct qualified ids, and the module's bare `target`
+        // call edge must be rewritten to the qualified id.
+        let text = r#"
+bytecode_format 1
+code_object {
+  name "<module>"
+  qualname "<module>"
+  filename "t.py"
+  first_line 1
+  flags 0
+  arg_count 0
+  kwonly_count 0
+  names ["target"]
+  varnames []
+  consts [none]
+  instruction { offset 0 opname RESUME opcode 149 arg 0 argval int 0 argrepr "" starts_line 0 is_jump_target false jump_targets [] position 0:0-1:0 }
+  instruction { offset 2 opname LOAD_GLOBAL opcode 91 arg 1 argval str "target" argrepr "target + NULL" starts_line 1 is_jump_target false jump_targets [] position 1:0-1:6 }
+  instruction { offset 12 opname CALL opcode 53 arg 0 argval int 0 argrepr "" starts_line 1 is_jump_target false jump_targets [] position 1:0-1:8 }
+  instruction { offset 20 opname POP_TOP opcode 32 arg none argval none argrepr "" starts_line 1 is_jump_target false jump_targets [] position 1:0-1:8 }
+  instruction { offset 22 opname RETURN_CONST opcode 103 arg 0 argval none argrepr "None" starts_line 1 is_jump_target false jump_targets [] position 1:0-1:8 }
+  code_object {
+    name "target"
+    qualname "target"
+    filename "t.py"
+    first_line 2
+    flags 0
+    arg_count 0
+    kwonly_count 0
+    names []
+    varnames []
+    consts [none]
+    instruction { offset 0 opname RESUME opcode 149 arg 0 argval int 0 argrepr "" starts_line 2 is_jump_target false jump_targets [] position 2:0-2:0 }
+    instruction { offset 2 opname RETURN_CONST opcode 103 arg 0 argval none argrepr "None" starts_line 2 is_jump_target false jump_targets [] position 2:0-2:4 }
+  }
+  code_object {
+    name "handler"
+    qualname "A.handler"
+    filename "t.py"
+    first_line 4
+    flags 0
+    arg_count 0
+    kwonly_count 0
+    names []
+    varnames []
+    consts [none]
+    instruction { offset 0 opname RESUME opcode 149 arg 0 argval int 0 argrepr "" starts_line 4 is_jump_target false jump_targets [] position 4:0-4:0 }
+    instruction { offset 2 opname RETURN_CONST opcode 103 arg 0 argval none argrepr "None" starts_line 4 is_jump_target false jump_targets [] position 4:0-4:4 }
+  }
+  code_object {
+    name "handler"
+    qualname "B.handler"
+    filename "t.py"
+    first_line 6
+    flags 0
+    arg_count 0
+    kwonly_count 0
+    names []
+    varnames []
+    consts [none]
+    instruction { offset 0 opname RESUME opcode 149 arg 0 argval int 0 argrepr "" starts_line 6 is_jump_target false jump_targets [] position 6:0-6:0 }
+    instruction { offset 2 opname RETURN_CONST opcode 103 arg 0 argval none argrepr "None" starts_line 6 is_jump_target false jump_targets [] position 6:0-6:4 }
+  }
+}
+"#;
+        let info = lower_stable_text(Path::new("t.py"), text, None).unwrap();
+        let names: BTreeSet<&str> = info
+            .program
+            .functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        // The two same-named `handler` methods are distinguished by class, not by
+        // an unstable `#N` suffix.
+        assert!(names.contains("t.A.handler"), "names were {names:?}");
+        assert!(names.contains("t.B.handler"), "names were {names:?}");
+        assert!(names.contains("t.target"), "names were {names:?}");
+
+        // The module's `target()` call edge was rewritten from the bare name to the
+        // qualified id.
+        let module = info
+            .program
+            .functions
+            .iter()
+            .find(|f| f.name == "t.<module>")
+            .expect("module function");
+        let mut edges: Vec<String> = Vec::new();
+        for block in module.blocks.iter() {
+            for stmt in block.statements.iter() {
+                if let StatementKind::CallAssign {
+                    style:
+                        CallStyle::DirectCall {
+                            call_edges: CallEdges::Explicit(e),
+                        },
+                    ..
+                } = &stmt.kind
+                {
+                    edges.extend(e.iter().cloned());
+                }
+            }
+        }
+        assert_eq!(
+            edges,
+            vec!["t.target".to_string()],
+            "call edge should resolve to the qualified id"
+        );
+
+        // The emitted VMT carries the class column for the classed methods.
+        let VirtualMethodTable::Python { methods } = &info.vmt else {
+            panic!("expected a Python VMT, got {:?}", info.vmt);
+        };
+        let a_handler = methods
+            .iter()
+            .find(|(_, _, _, fq)| fq.to_string() == "t.A.handler")
+            .expect("A.handler row");
+        assert_eq!(
+            a_handler.0.as_ref().map(|c| c.to_string()),
+            Some("A".to_string())
+        );
+        assert_eq!(a_handler.1.to_string(), "handler");
+        assert_eq!(a_handler.2.to_string(), "t.A.handler");
     }
 }

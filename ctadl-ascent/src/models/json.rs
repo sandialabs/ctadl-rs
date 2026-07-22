@@ -137,6 +137,29 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 program_method_names.entry(fq).or_default().push(fq);
                 program_method_signatures.entry(fq).or_default().push(fq);
             }
+        } else if let VirtualMethodTable::Python { methods } = vmt {
+            // The Python frontend qualifies every IR id (`module.Class.method`) and
+            // carries, per function, its simple (bare) name, optional class, and the
+            // qualified id repurposed as the "signature". Key the SIMPLE name so bare
+            // models (`name:"get"`) keep matching, the qualified id so
+            // `signature_pattern` can scope by module/class, and the class so
+            // `parent`/`parents` scope by class exactly. The fully-qualified id is
+            // also kept matchable for models that spell it out verbatim.
+            for (cls, simple, sig, fq) in methods {
+                let simple = simple.as_ref();
+                let sig = sig.as_ref();
+                let fq = fq.as_ref();
+                program_method_names.entry(simple).or_default().push(fq);
+                program_method_names.entry(fq).or_default().push(fq);
+                program_method_signatures.entry(sig).or_default().push(fq);
+                program_method_signatures.entry(fq).or_default().push(fq);
+                if let Some(cls) = cls {
+                    program_method_parents
+                        .entry(cls.as_ref())
+                        .or_default()
+                        .push(fq);
+                }
+            }
         } else {
             // Fallback (Unknown / CplusPlus): use the IR function names directly.
             for func in &program_info.program.functions.functions {
@@ -161,6 +184,9 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             }
             VirtualMethodTable::Native { methods } => {
                 methods.iter().map(|(_, _, fq)| fq.as_ref()).collect()
+            }
+            VirtualMethodTable::Python { methods } => {
+                methods.iter().map(|(_, _, _, fq)| fq.as_ref()).collect()
             }
             VirtualMethodTable::Unknown | VirtualMethodTable::CplusPlus => UniverseSet::empty(),
         };
@@ -857,8 +883,16 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                 .iter()
                 .map(|(cls, _, _, fid)| (cls.as_ref(), fid.as_ref()))
                 .collect(),
+            // Python carries an optional class per method; feed the classed methods
+            // (skipping module-level functions) so `parent{inner}` scopes by class.
+            VirtualMethodTable::Python { methods } => methods
+                .iter()
+                .filter_map(|(cls, _, _, fid)| cls.as_ref().map(|c| (c.as_ref(), fid.as_ref())))
+                .collect(),
             _ => {
-                log::warn!("'parent' constraint is Java-only; matching nothing on this frontend");
+                log::warn!(
+                    "'parent' constraint has no class table on this frontend; matching nothing"
+                );
                 self.target_set_mut(n).intersect_with(UniverseSet::empty());
                 return;
             }
@@ -1522,6 +1556,9 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
             }
             VirtualMethodTable::Native { methods } => {
                 methods.iter().map(|t| t.2.to_string()).collect()
+            }
+            VirtualMethodTable::Python { methods } => {
+                methods.iter().map(|t| t.3.to_string()).collect()
             }
             VirtualMethodTable::Unknown | VirtualMethodTable::CplusPlus => {
                 // For PCODE (which uses Unknown or CplusPlus), we don't have a list of all methods in the VMT

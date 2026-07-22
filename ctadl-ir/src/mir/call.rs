@@ -146,6 +146,23 @@ pub enum VirtualMethodTable {
         /// - Fully-qualified function name (the id used everywhere else)
         methods: Vec<(NativeSimpleName, NativeSignature, NativeFunction)>,
     },
+    /// Table for the Python-bytecode frontend. Like [`Self::Native`] there is no
+    /// class *hierarchy*, but each function may belong to a class, so a fourth
+    /// (optional) class column is carried. The "signature" column repurposes the
+    /// qualified dotted id (Python has no type signatures) so JSON models can
+    /// `signature_pattern`-scope by module/class (e.g. `banktransfer\.views\.
+    /// ImportView\.post$`), while the simple name keeps bare-name models matching
+    /// and the class column powers `parent`/`parents`.
+    Python {
+        /// The columns are as follows:
+        /// - Containing class, e.g. `ImportView` — `None` for module-level functions.
+        /// - Simple name of the function, e.g. `get` (co.name).
+        /// - Qualified dotted id used as the matchable "signature", e.g.
+        ///   `plugins.banktransfer.views.ImportView.get`.
+        /// - Fully-qualified IR function name (the id used everywhere else, incl.
+        ///   any `#N` disambiguation suffix).
+        methods: Vec<(Option<PyClass>, PySimpleName, PySignature, PyFunction)>,
+    },
     CplusPlus,
 }
 
@@ -159,6 +176,12 @@ impl VirtualMethodTable {
 
     pub fn new_native() -> Self {
         VirtualMethodTable::Native {
+            methods: Vec::new(),
+        }
+    }
+
+    pub fn new_python() -> Self {
+        VirtualMethodTable::Python {
             methods: Vec::new(),
         }
     }
@@ -186,6 +209,17 @@ impl Display for VirtualMethodTable {
                     writeln!(f, "{name}{sig}: {func}")?;
                 }
                 writeln!(f, "end native virtual method table")?;
+                Ok(())
+            }
+            VirtualMethodTable::Python { methods } => {
+                writeln!(f, "python virtual method table")?;
+                for (cls, name, sig, func) in methods {
+                    match cls {
+                        Some(cls) => writeln!(f, "{cls}.{name} ({sig}): {func}")?,
+                        None => writeln!(f, "{name} ({sig}): {func}")?,
+                    }
+                }
+                writeln!(f, "end python virtual method table")?;
                 Ok(())
             }
             VirtualMethodTable::Unknown => write!(f, "unknown virtual method table"),
@@ -355,6 +389,104 @@ impl From<NativeFunction> for Symbol {
 }
 
 impl Display for NativeFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Simple (un-decorated) name of a Python function, e.g. `get` (co.name).
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PySimpleName(pub Symbol);
+
+impl Deref for PySimpleName {
+    type Target = Symbol;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<PySimpleName> for Symbol {
+    fn from(c: PySimpleName) -> Self {
+        c.0.clone()
+    }
+}
+
+impl Display for PySimpleName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// The class a Python method belongs to, e.g. `ImportView`.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PyClass(pub Symbol);
+
+impl Deref for PyClass {
+    type Target = Symbol;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<PyClass> for Symbol {
+    fn from(c: PyClass) -> Self {
+        c.0.clone()
+    }
+}
+
+impl Display for PyClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// The qualified dotted id of a Python function (repurposed as its "signature"),
+/// e.g. `plugins.banktransfer.views.ImportView.get`.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PySignature(pub Symbol);
+
+impl Deref for PySignature {
+    type Target = Symbol;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<PySignature> for Symbol {
+    fn from(c: PySignature) -> Self {
+        c.0.clone()
+    }
+}
+
+impl Display for PySignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Fully-qualified IR name of a Python function (the id used everywhere else,
+/// incl. any `#N` disambiguation suffix).
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PyFunction(pub Symbol);
+
+impl Deref for PyFunction {
+    type Target = Symbol;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<PyFunction> for Symbol {
+    fn from(c: PyFunction) -> Self {
+        c.0.clone()
+    }
+}
+
+impl Display for PyFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }

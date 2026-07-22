@@ -311,6 +311,122 @@ fn java_program() -> ProgramInfo {
     }
 }
 
+/// A Python program (VMT only) with two view classes that share method names
+/// (`ImportView.get`/`post`, `RefundExportListView.post`) plus a module-level
+/// `helper`, so scoping by simple name / class / qualified signature can be
+/// exercised. Every id is module-qualified, as the Python frontend now emits.
+fn python_program() -> ProgramInfo {
+    use ctadl_ir::mir::call::{PyClass, PyFunction, PySignature, PySimpleName};
+    let row = |cls: Option<&str>, simple: &str, sig: &str, fq: &str| {
+        (
+            cls.map(|c| PyClass(c.into())),
+            PySimpleName(simple.into()),
+            PySignature(sig.into()),
+            PyFunction(fq.into()),
+        )
+    };
+    ProgramInfo {
+        vmt: VirtualMethodTable::Python {
+            methods: vec![
+                row(
+                    Some("ImportView"),
+                    "get",
+                    "app.views.ImportView.get",
+                    "app.views.ImportView.get",
+                ),
+                row(
+                    Some("ImportView"),
+                    "post",
+                    "app.views.ImportView.post",
+                    "app.views.ImportView.post",
+                ),
+                row(
+                    Some("RefundExportListView"),
+                    "post",
+                    "app.views.RefundExportListView.post",
+                    "app.views.RefundExportListView.post",
+                ),
+                row(None, "helper", "app.views.helper", "app.views.helper"),
+            ],
+        },
+        ..Default::default()
+    }
+}
+
+/// `name:"get"` (exact) resolves the bare simple name to its single qualified id.
+#[test]
+fn python_signature_match_name_resolves_to_qualified_id() {
+    let got = matched_functions(
+        &python_program(),
+        json!([{"constraint": "signature_match", "name": "get"}]),
+    );
+    assert_eq!(got, set(&["app.views.ImportView.get"]));
+}
+
+/// A standalone `name` regex also matches the bare simple name (mapped to fq).
+#[test]
+fn python_name_regex_matches_bare_simple_name() {
+    let got = matched_functions(
+        &python_program(),
+        json!([{"constraint": "name", "pattern": "^get$"}]),
+    );
+    assert_eq!(got, set(&["app.views.ImportView.get"]));
+}
+
+/// A bare simple name shared by two classes matches *both* qualified ids.
+#[test]
+fn python_bare_name_matches_all_colliding_methods() {
+    let got = matched_functions(
+        &python_program(),
+        json!([{"constraint": "signature_match", "name": "post"}]),
+    );
+    assert_eq!(
+        got,
+        set(&[
+            "app.views.ImportView.post",
+            "app.views.RefundExportListView.post",
+        ])
+    );
+}
+
+/// `signature_pattern` regexes the qualified id, so it can scope by class: the
+/// colliding `RefundExportListView.post` is excluded.
+#[test]
+fn python_signature_pattern_scopes_by_class() {
+    let got = matched_functions(
+        &python_program(),
+        json!([{"constraint": "signature_pattern", "pattern": "ImportView\\.post$"}]),
+    );
+    assert_eq!(got, set(&["app.views.ImportView.post"]));
+}
+
+/// `signature_match {parents:["ImportView"]}` matches only that class's methods.
+#[test]
+fn python_parents_scopes_by_class() {
+    let got = matched_functions(
+        &python_program(),
+        json!([{"constraint": "signature_match", "parents": ["ImportView"]}]),
+    );
+    assert_eq!(
+        got,
+        set(&["app.views.ImportView.get", "app.views.ImportView.post"])
+    );
+}
+
+/// The richer `parent{inner}` predicate also scopes Python methods by class.
+#[test]
+fn python_parent_predicate_scopes_by_class() {
+    let got = matched_functions(
+        &python_program(),
+        json!([{"constraint": "parent",
+                "inner": {"constraint": "name", "pattern": "^ImportView$"}}]),
+    );
+    assert_eq!(
+        got,
+        set(&["app.views.ImportView.get", "app.views.ImportView.post"])
+    );
+}
+
 /// Runs a `find: methods` generator whose `where` is `where_c` and a source model, returning the
 /// set of functions endpoints were emitted for (== the functions the `where` matched).
 fn matched_functions(program_info: &ProgramInfo, where_c: serde_json::Value) -> BTreeSet<String> {
