@@ -49,7 +49,7 @@ use crate::error::Error;
 use crate::facts::{
     CallArgId, CallString, CallTargetObject, FlowVariable, FlowVariableKind, FlowVertex,
     FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId,
-    Path, Resolvent, SmallestCallString, isout,
+    Path, SmallestCallString, isout,
 };
 use ctadl_ir::Symbol;
 
@@ -516,7 +516,7 @@ impl IndexResult {
 
 struct HybridInliningRelations<'a> {
     critical_summary: &'a [(FunctionId, FormalIndex, Path)],
-    resolvent: &'a [(FunctionId, FormalIndex, Path, Resolvent, SmallestCallString)],
+    resolvent: &'a [(FunctionId, FormalIndex, Path, CallTargetObject, SmallestCallString)],
     call_target_assign_like: &'a [(FunctionId, FlowVariable, Path, CallTargetObject)],
     context_assign: &'a [(
         FunctionId,
@@ -1024,7 +1024,7 @@ pub fn taint_index_with_config(
         // remaining columns functionally determine at most one call string: (func_id, formal_index,
         // path, object) -> call-string. This way we don't get the same object resolved through
         // multiple stack configuration paths.
-        lattice resolvent(FunctionId, FormalIndex, Path, Resolvent, SmallestCallString);
+        lattice resolvent(FunctionId, FormalIndex, Path, CallTargetObject, SmallestCallString);
         // Like `resolvent`, the call string is a `SmallestCallString` lattice value in
         // the last column, so the remaining (key) columns determine one call string per
         // tuple — the *smallest* one (shortest, then lexicographically least).
@@ -1149,29 +1149,19 @@ pub fn taint_index_with_config(
             let arg = call_arg!(*caller_insn_id, *n_tgt),
             locals(caller_func_id, arg, p_tgt, n, p_n);
 
-        // 2.1: Base Resolvent. Resolvent object locally reaches a critical summary, so instantiate
-        // resolvent in parameters of summary
-        resolvent(f, n, p.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
+        // 2.1: Base Resolvent. A stored call target locally reaches a critical summary, so
+        // instantiate the resolvent in the parameters of the summary. The target is carried
+        // opaquely as a `CallTargetObject`; its variant is only tested later at call resolution.
+        resolvent(f, n, p.clone(), cto.clone(), SmallestCallString::Value(new_cs)) <--
             critical_summary(f, n, p),
             call(caller, call_insn, f),
             let arg = call_arg!(*call_insn, *n),
             call_target_assign_like(caller, arg, p, cto),
-            if let CallTargetObject::Symbol(cls) = cto,
-            let resolvent_obj = Resolvent::Object(cls.clone()),
-            let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
-            if let Some(new_cs) = CallString::new().push(call_site_id);
-        resolvent(f, n, p.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
-            critical_summary(f, n, p),
-            call(caller, call_insn, f),
-            let arg = call_arg!(*call_insn, *n),
-            call_target_assign_like(caller, arg, p, cto),
-            if let CallTargetObject::FunctionId(tgt) = cto,
-            let resolvent_obj = Resolvent::Function(*tgt),
             let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
             if let Some(new_cs) = CallString::new().push(call_site_id);
 
         // Tracks resolvent to the call arg
-        relation call_arg_resolvent(PackedCallArg, Path, Resolvent, SmallestCallString);
+        relation call_arg_resolvent(PackedCallArg, Path, CallTargetObject, SmallestCallString);
         call_arg_resolvent(arg_p, p, obj, cs_lat) <--
             resolvent(f, n2, p2, obj, cs_lat),
             locals(f, v, p, n2, p2),
@@ -1196,7 +1186,7 @@ pub fn taint_index_with_config(
             java_call(caller, call_insn, v_rec, p_rec, meth_name, meth_desc),
             locals(caller, v_rec, p_rec, n, p),
             resolvent(caller, n, p, resolvent_obj, cs_lat),
-            if let Resolvent::Object(cls) = resolvent_obj,
+            if let CallTargetObject::Symbol(cls) = resolvent_obj,
             if let SmallestCallString::Value(cs) = cs_lat,
             if !cs.is_empty(),
             java_resolvents(cls, meth_name, meth_desc, resolvent_func),
@@ -1207,7 +1197,7 @@ pub fn taint_index_with_config(
             indirect_call(caller, call_insn, v_rec, p_rec),
             locals(caller, v_rec, p_rec, n, p),
             resolvent(caller, n, p, resolvent_obj, cs_lat),
-            if let Resolvent::Function(resolvent_func) = resolvent_obj,
+            if let CallTargetObject::FunctionId(resolvent_func) = resolvent_obj,
             if let SmallestCallString::Value(cs) = cs_lat,
             if !cs.is_empty(),
             summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),

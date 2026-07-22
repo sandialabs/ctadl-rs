@@ -1117,32 +1117,14 @@ impl Display for FlowVertex {
     }
 }
 
-/// Resolvents represent target information for a virtual function call or indirect call. They con
-/// be either a function ID or an object. The function ID can be used directly. Typically the object
-/// is used in conjunction with virtual method table information to resolve the call.
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Serialize, Deserialize)]
-pub enum Resolvent {
-    #[default]
-    Unresolved,
-    Function(FunctionId),
-    Object(Symbol),
-}
-
-impl Display for Resolvent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Resolvent::Unresolved => write!(f, "unresolved"),
-            Resolvent::Function(func_id) => write!(f, "function({})", func_id.id),
-            Resolvent::Object(cls) => write!(f, "object({cls})"),
-        }
-    }
-}
-
-/// A call target stored at a vertex by an assignment. It is either a concrete function
-/// (a C-style function pointer, `v = ptr<f>`) or a class name (a Java object,
-/// `v = new Foo()`), the latter resolved against the virtual method table at the call
-/// site. This unifies what were the separate `func_ptr_assign` (function-pointer) and
-/// `java_obj_assign` (Java-object) relations into a single `call_target_assign`.
+/// A call target: either a concrete function (a C-style function pointer, `v = ptr<f>`,
+/// a [`FunctionId`]) or a class name (a Java object, `v = new Foo()`, a [`Symbol`]), the
+/// latter resolved against the virtual method table at the call site.
+///
+/// It appears both as a *stored* target — what an assignment writes at a vertex, in
+/// `call_target_assign` (unifying the former `func_ptr_assign` and `java_obj_assign`
+/// relations into one) — and as the *resolved* target carried through the `resolvent`
+/// relation during call resolution.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
 pub enum CallTargetObject {
     FunctionId(FunctionId),
