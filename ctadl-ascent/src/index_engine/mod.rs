@@ -1308,7 +1308,7 @@ pub fn taint_index_with_config(
             critical_call(func_id);
 
         java_obj_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
-            // This resulted in a big reduction on Downloader test case
+            // This results in large reduction on some test cases
             critical_call(func_id),
             java_obj_assign_like(func_id, v2, p_context, tgt),
             assign_like(func_id, v1, p1, v2, p2),
