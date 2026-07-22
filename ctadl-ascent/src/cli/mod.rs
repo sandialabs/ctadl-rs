@@ -894,7 +894,7 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
         actual_param,
         call,
         assign,
-        java_obj_assign,
+        call_target_assign,
         java_call,
         java_resolvents,
         summary,
@@ -957,7 +957,7 @@ pub fn inspect_index_facts(
     log::info!("  paths:          {}", facts.paths.len());
     log::info!("  indirect_call:  {}", facts.indirect_call.len());
     log::info!("  java_call:      {}", facts.java_call.len());
-    log::info!("  java_obj_assign:{}", facts.java_obj_assign.len());
+    log::info!("  call_target_assign:{}", facts.call_target_assign.len());
     log::info!("  external_function: {}", facts.external_function.len());
 
     use crate::facts::InsnSiteId;

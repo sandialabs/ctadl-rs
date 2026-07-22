@@ -1138,6 +1138,26 @@ impl Display for Resolvent {
     }
 }
 
+/// A call target stored at a vertex by an assignment. It is either a concrete function
+/// (a C-style function pointer, `v = ptr<f>`) or a class name (a Java object,
+/// `v = new Foo()`), the latter resolved against the virtual method table at the call
+/// site. This unifies what were the separate `func_ptr_assign` (function-pointer) and
+/// `java_obj_assign` (Java-object) relations into a single `call_target_assign`.
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
+pub enum CallTargetObject {
+    FunctionId(FunctionId),
+    Symbol(Symbol),
+}
+
+impl Display for CallTargetObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CallTargetObject::FunctionId(func_id) => write!(f, "ptr<{}>", func_id.id),
+            CallTargetObject::Symbol(cls) => write!(f, "java<{cls}>"),
+        }
+    }
+}
+
 /// This data type is used for enforcing call/return matching during taint analysis.
 #[derive(
     Clone, Copy, Eq, PartialOrd, Ord, PartialEq, Hash, Debug, Default, Serialize, Deserialize,

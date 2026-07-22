@@ -355,18 +355,18 @@ impl Visitor for CodegenVisitor<'_> {
                         let dest = self.trans_variable_ref(dest);
                         let target = fx::Function(name.clone().into());
                         let target = self.source_info.sites.get_or_add_function(target);
-                        self.facts.func_ptr_assign.push((
+                        self.facts.call_target_assign.push((
                             site,
                             FlowVertex(dest, fx::Path::empty()),
-                            target,
+                            fx::CallTargetObject::FunctionId(target),
                         ));
                     }
                     if let Exp::ObjectRef(CallObject::JavaObject(cls)) = src {
                         let dest = self.trans_variable_ref(dest);
-                        self.facts.java_obj_assign.push((
+                        self.facts.call_target_assign.push((
                             site,
                             FlowVertex(dest, fx::Path::empty()),
-                            cls.0.clone(),
+                            fx::CallTargetObject::Symbol(cls.0.clone()),
                         ));
                     }
                     let Some(src) = self.trans_exp(src) else {
@@ -515,10 +515,10 @@ impl Visitor for CodegenVisitor<'_> {
                         )
                         .unwrap();
                         let call_arg_var = FlowVariable::call_arg_packed(call_arg_packed);
-                        self.facts.func_ptr_assign.push((
+                        self.facts.call_target_assign.push((
                             site,
                             FlowVertex(call_arg_var, fx::Path::empty()),
-                            target,
+                            fx::CallTargetObject::FunctionId(target),
                         ));
                     }
 
@@ -529,10 +529,10 @@ impl Visitor for CodegenVisitor<'_> {
                         )
                         .unwrap();
                         let call_arg_var = FlowVariable::call_arg_packed(call_arg_packed);
-                        self.facts.java_obj_assign.push((
+                        self.facts.call_target_assign.push((
                             site,
                             FlowVertex(call_arg_var, fx::Path::empty()),
-                            cls.0.clone(),
+                            fx::CallTargetObject::Symbol(cls.0.clone()),
                         ));
                     }
 
@@ -632,14 +632,18 @@ impl Visitor for CodegenVisitor<'_> {
                 if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = value {
                     let target = fx::Function(name.clone().into());
                     let target = self.source_info.sites.get_or_add_function(target);
-                    self.facts
-                        .func_ptr_assign
-                        .push((site, dest.clone(), target));
+                    self.facts.call_target_assign.push((
+                        site,
+                        dest.clone(),
+                        fx::CallTargetObject::FunctionId(target),
+                    ));
                 }
                 if let Exp::ObjectRef(CallObject::JavaObject(cls)) = value {
-                    self.facts
-                        .java_obj_assign
-                        .push((site, dest.clone(), cls.0.clone()));
+                    self.facts.call_target_assign.push((
+                        site,
+                        dest.clone(),
+                        fx::CallTargetObject::Symbol(cls.0.clone()),
+                    ));
                 }
                 if let Some(value) = self.trans_exp(value) {
                     self.facts.assign.push((site, dest, value));

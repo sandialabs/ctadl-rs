@@ -974,7 +974,7 @@ fn field_increment_is_update() {
 // The F2 gap is that a *second* store into the same aggregate (struct or array) creates
 // a new SSA version of the receiver, and the stored target must propagate across that
 // version to reach the indirect call. The taint-index transitive rule that performs the
-// hop (`func_ptr_assign_like` over `assign_like`) gates on `paths(p_new)`, but program
+// hop (`call_target_assign_like` over `assign_like`) gates on `paths(p_new)`, but program
 // paths were seeded only from call *arguments* (`actual_param`) -- never from an indirect
 // call's *receiver* path. So the binding never reached the call and taint was dropped.
 //

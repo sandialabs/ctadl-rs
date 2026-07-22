@@ -47,9 +47,9 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallArgId, CallString, FlowVariable, FlowVariableKind, FlowVertex, FormalIndex, FormalType,
-    FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId, Path, Resolvent,
-    SmallestCallString, isout,
+    CallArgId, CallString, CallTargetObject, FlowVariable, FlowVariableKind, FlowVertex,
+    FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg, PackedInsnSiteId,
+    Path, Resolvent, SmallestCallString, isout,
 };
 use ctadl_ir::Symbol;
 
@@ -76,10 +76,12 @@ pub struct IndexFacts {
     /// Assignments from source to destination vertices
     #[builder(default)]
     pub assign: Vec<AssignFlow>,
+    /// A call target (function pointer or Java object) stored at a vertex by an
+    /// assignment. The union of what were the separate `func_ptr_assign` and
+    /// `java_obj_assign` relations; the variant of [`CallTargetObject`] distinguishes
+    /// the C-style function-pointer case from the Java-object case.
     #[builder(default)]
-    pub func_ptr_assign: Vec<(PackedInsnSiteId, FlowVertex, FunctionId)>,
-    #[builder(default)]
-    pub java_obj_assign: Vec<(PackedInsnSiteId, FlowVertex, Symbol)>,
+    pub call_target_assign: Vec<(PackedInsnSiteId, FlowVertex, CallTargetObject)>,
     #[builder(default)]
     pub java_call: Vec<(PackedInsnSiteId, FlowVertex, Symbol, Symbol)>,
     #[builder(default)]
@@ -132,15 +134,15 @@ impl IndexFacts {
                 (func_id, insn_id, *target)
             }),
         )?;
-        java_obj_assign::try_save(
+        call_target_assign::try_save(
             &dir,
-            self.java_obj_assign
+            self.call_target_assign
                 .iter()
-                .map(|(site_id, vertex, class_name)| {
+                .map(|(site_id, vertex, target)| {
                     let InsnSiteId { func_id, insn_id } =
                         InsnSiteId::unpack_from_slice(&**site_id).unwrap();
                     let FlowVertex(variable, path) = vertex;
-                    (func_id, insn_id, *variable, *path, class_name.clone())
+                    (func_id, insn_id, *variable, *path, target.clone())
                 }),
         )?;
         java_call::try_save(
@@ -201,15 +203,15 @@ impl IndexFacts {
                     })
                     .collect(),
             )
-            .java_obj_assign(
-                java_obj_assign::try_load(&dir)?
+            .call_target_assign(
+                call_target_assign::try_load(&dir)?
                     .into_iter()
-                    .map(|(func_id, insn_id, variable, path, class_name)| {
+                    .map(|(func_id, insn_id, variable, path, target)| {
                         let site_id = InsnSiteId { func_id, insn_id };
                         (
                             site_id.try_into().expect("error packing site_id"),
                             FlowVertex(variable, path),
-                            class_name,
+                            target,
                         )
                     })
                     .collect(),
@@ -300,10 +302,8 @@ pub struct IndexStats {
     pub final_assign_like: usize,
     pub initial_formals: usize,
     pub final_locals: usize,
-    pub initial_java_obj_assign: usize,
-    pub final_java_obj_assign_like: usize,
-    pub initial_func_ptr_assign: usize,
-    pub final_func_ptr_assign_like: usize,
+    pub initial_call_target_assign: usize,
+    pub final_call_target_assign_like: usize,
     pub initial_summary: usize,
     pub final_summary: usize,
     pub num_functions: usize,
@@ -340,22 +340,13 @@ impl IndexStats {
             ratio(self.final_locals, self.num_variables)
         );
         log::info!(
-            "relation increase: java_obj_assign_like: {:.2} ({}/{})",
+            "relation increase: call_target_assign_like: {:.2} ({}/{})",
             ratio(
-                self.final_java_obj_assign_like,
-                self.initial_java_obj_assign
+                self.final_call_target_assign_like,
+                self.initial_call_target_assign
             ),
-            self.final_java_obj_assign_like,
-            self.initial_java_obj_assign
-        );
-        log::info!(
-            "relation increase: func_ptr_assign_like: {:.2} ({}/{})",
-            ratio(
-                self.final_func_ptr_assign_like,
-                self.initial_func_ptr_assign
-            ),
-            self.final_func_ptr_assign_like,
-            self.initial_func_ptr_assign
+            self.final_call_target_assign_like,
+            self.initial_call_target_assign
         );
         log::info!(
             "relation increase: summary: {:.2} ({}/{}) (ratio over num_functions)",
@@ -385,7 +376,7 @@ pub struct IndexResult {
     /// Summary goes from formal parameter index to formal ret index.
     pub summary: Vec<FunctionSummary>,
     pub assign_like: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
-    pub java_obj_assign_like: Vec<(FunctionId, FlowVariable, Path, Symbol)>,
+    pub call_target_assign_like: Vec<(FunctionId, FlowVariable, Path, CallTargetObject)>,
     pub paths: Vec<(Path,)>,
     pub external_function: Vec<(FunctionId,)>,
     pub stats: IndexStats,
@@ -442,7 +433,7 @@ impl IndexResult {
         Ok(IndexResult {
             summary,
             assign_like,
-            java_obj_assign_like: Vec::new(),
+            call_target_assign_like: Vec::new(),
             paths,
             external_function,
             stats: IndexStats::default(),
@@ -526,7 +517,7 @@ impl IndexResult {
 struct HybridInliningRelations<'a> {
     critical_summary: &'a [(FunctionId, FormalIndex, Path)],
     resolvent: &'a [(FunctionId, FormalIndex, Path, Resolvent, SmallestCallString)],
-    func_ptr_assign_like: &'a [(FunctionId, FlowVariable, Path, FunctionId)],
+    call_target_assign_like: &'a [(FunctionId, FlowVariable, Path, CallTargetObject)],
     context_assign: &'a [(
         FunctionId,
         FlowVariable,
@@ -600,10 +591,10 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
 
         writeln!(
             f,
-            "\nFunc Ptr Assign-Like ({}):",
-            self.func_ptr_assign_like.len()
+            "\nCall Target Assign-Like ({}):",
+            self.call_target_assign_like.len()
         )?;
-        for (func_id, var, path, tgt) in self.func_ptr_assign_like {
+        for (func_id, var, path, tgt) in self.call_target_assign_like {
             let var_str = if let Some(name) = var.as_local() {
                 name.to_string()
             } else {
@@ -615,21 +606,26 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
                 .and_then(|m| m.get_function(*func_id))
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
-            let tgt_name = self
-                .id_map
-                .and_then(|m| m.get_function(*tgt))
-                .map(|f| f.0.as_ref())
-                .unwrap_or("unknown");
+            let tgt_str = match tgt {
+                CallTargetObject::FunctionId(tgt) => {
+                    let tgt_name = self
+                        .id_map
+                        .and_then(|m| m.get_function(*tgt))
+                        .map(|f| f.0.as_ref())
+                        .unwrap_or("unknown");
+                    format!("ptr {}({})", tgt_name, tgt.id)
+                }
+                CallTargetObject::Symbol(cls) => format!("java<{cls}>"),
+            };
 
             writeln!(
                 f,
-                "  {}({}): {}{} = ptr {}({})",
+                "  {}({}): {}{} = {}",
                 func_name,
                 func_id.id,
                 var_str,
                 path.to_dot_string(),
-                tgt_name,
-                tgt.id
+                tgt_str
             )?;
         }
 
@@ -838,8 +834,7 @@ pub fn taint_index_with_config(
         .len();
 
     let initial_assign = facts.assign.len();
-    let initial_java_obj_assign = facts.java_obj_assign.len();
-    let initial_func_ptr_assign = facts.func_ptr_assign.len();
+    let initial_call_target_assign = facts.call_target_assign.len();
     let initial_summary = facts.summary.len();
     let initial_formals = facts.formal_param.len();
 
@@ -959,10 +954,10 @@ pub fn taint_index_with_config(
         relation formal_param(FunctionId, FlowVariable, FormalType);
         relation actual_param(PackedInsnSiteId, FormalIndex, FlowVertex);
         relation call(FunctionId, InsnId, FunctionId);
-        // func:insn: v = ptr<function_id>
-        relation func_ptr_assign(FunctionId, FlowVertex, FunctionId);
-        // x = new Foo();
-        relation java_obj_assign(FunctionId, FlowVertex, Symbol);
+        // A call target stored at a vertex: a function pointer (`v = ptr<function_id>`,
+        // `CallTargetObject::FunctionId`) or a Java object (`x = new Foo()`,
+        // `CallTargetObject::Symbol`).
+        relation call_target_assign(FunctionId, FlowVertex, CallTargetObject);
         // x.virtual_call(args)
         relation java_call(FunctionId, InsnId, FlowVariable, Path, Symbol, Symbol);
         relation indirect_call(FunctionId, InsnId, FlowVariable, Path);
@@ -1011,7 +1006,10 @@ pub fn taint_index_with_config(
         // ALL aliases established by original program assignments. Feeds the aliasing summary rule.
         // Precomputed above in its own fixpoint (see the `alias_of_formal` let-binding).
         relation alias_of_formal(FunctionId, FlowVariable, FormalIndex);
-        relation java_obj_assign_like(FunctionId, FlowVariable, Path, Symbol);
+        // Call targets (function pointers and Java objects) propagated across `assign_like`
+        // to the receiver vertices of critical calls; the union of what were the separate
+        // `func_ptr_assign_like` and `java_obj_assign_like` relations.
+        relation call_target_assign_like(FunctionId, FlowVariable, Path, CallTargetObject);
         relation model_paths(Path);
         relation program_paths(Path);
 
@@ -1027,7 +1025,6 @@ pub fn taint_index_with_config(
         // path, object) -> call-string. This way we don't get the same object resolved through
         // multiple stack configuration paths.
         lattice resolvent(FunctionId, FormalIndex, Path, Resolvent, SmallestCallString);
-        relation func_ptr_assign_like(FunctionId, FlowVariable, Path, FunctionId);
         // Like `resolvent`, the call string is a `SmallestCallString` lattice value in
         // the last column, so the remaining (key) columns determine one call string per
         // tuple — the *smallest* one (shortest, then lexicographically least).
@@ -1043,7 +1040,7 @@ pub fn taint_index_with_config(
         // shouldn't add paths from constructed summaries directly.
         program_paths(p) <-- actual_param(_, _, vx), let FlowVertex(_, p) = vx;
         // The receiver access path of an indirect / virtual call is also a syntactic
-        // program path. Register it so that `func_ptr_assign_like` / `java_obj_assign_like`
+        // program path. Register it so that `call_target_assign_like`
         // can propagate a stored target across an SSA version of the receiver (the
         // transitive rules gate on `paths(p_new)`). Without this, a second store into the
         // same aggregate (`o.a = id; o.b = id; o.a(s)` or `fps[0]=id; fps[1]=id; fps[0](s)`)
@@ -1158,7 +1155,8 @@ pub fn taint_index_with_config(
             critical_summary(f, n, p),
             call(caller, call_insn, f),
             let arg = call_arg!(*call_insn, *n),
-            java_obj_assign_like(caller, arg, p, cls),
+            call_target_assign_like(caller, arg, p, cto),
+            if let CallTargetObject::Symbol(cls) = cto,
             let resolvent_obj = Resolvent::Object(cls.clone()),
             let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
             if let Some(new_cs) = CallString::new().push(call_site_id);
@@ -1166,7 +1164,8 @@ pub fn taint_index_with_config(
             critical_summary(f, n, p),
             call(caller, call_insn, f),
             let arg = call_arg!(*call_insn, *n),
-            func_ptr_assign_like(caller, arg, p, tgt),
+            call_target_assign_like(caller, arg, p, cto),
+            if let CallTargetObject::FunctionId(tgt) = cto,
             let resolvent_obj = Resolvent::Function(*tgt),
             let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
             if let Some(new_cs) = CallString::new().push(call_site_id);
@@ -1271,7 +1270,8 @@ pub fn taint_index_with_config(
         // Local virtual call and resolvent, bypassing the summary machinery.
         assign_like(func_id, v1.into(), p1, v2.into(), p2) <--
             java_call(func_id, insn_id, arg, arg_p, mname, mdesc),
-            java_obj_assign_like(func_id, arg, arg_p, cls),
+            call_target_assign_like(func_id, arg, arg_p, cto),
+            if let CallTargetObject::Symbol(cls) = cto,
             java_resolvents(cls, mname, mdesc, resolve_tgt),
             let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
             summary(resolve_tgt, n1, p1, n2, p2),
@@ -1282,7 +1282,8 @@ pub fn taint_index_with_config(
 
         assign_like(func_id, v1.into(), p1, v2.into(), p2) <--
             indirect_call(func_id, insn_id, arg, arg_p),
-            func_ptr_assign_like(func_id, arg, arg_p, resolve_tgt),
+            call_target_assign_like(func_id, arg, arg_p, cto),
+            if let CallTargetObject::FunctionId(resolve_tgt) = cto,
             let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
             summary(resolve_tgt, n1, p1, n2, p2),
             let n2_id = PackedCallArg::try_from_parts(*insn_id, *n2).unwrap(),
@@ -1290,27 +1291,17 @@ pub fn taint_index_with_config(
             let v2 = FlowVariableKind::CallArg(n2_id),
             let v1 = FlowVariableKind::CallArg(n1_id);
 
-        // Function Pointer Propagation
-        func_ptr_assign_like(func_id, v.clone(), p.clone(), tgt) <--
-            func_ptr_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
+        // Call Target Propagation (function pointers and Java objects alike). The stored
+        // target is carried opaquely as a `CallTargetObject`; the variant is only tested
+        // downstream, where the call is actually resolved.
+        call_target_assign_like(func_id, v.clone(), p.clone(), tgt) <--
+            call_target_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
             critical_call(func_id);
 
-        func_ptr_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
-            critical_call(func_id),
-            func_ptr_assign_like(func_id, v2, p_context, tgt),
-            assign_like(func_id, v1, p1, v2, p2),
-            if let Some(p_new) = p_context.substitute_prefix(p2, p1),
-            paths(&p_new);
-
-        // Local Java Object Propagation
-        java_obj_assign_like(func_id, v.clone(), p.clone(), tgt) <--
-            java_obj_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
-            critical_call(func_id);
-
-        java_obj_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
+        call_target_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
             // This results in large reduction on some test cases
             critical_call(func_id),
-            java_obj_assign_like(func_id, v2, p_context, tgt),
+            call_target_assign_like(func_id, v2, p_context, tgt),
             assign_like(func_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
             paths(&p_new);
@@ -1328,16 +1319,8 @@ pub fn taint_index_with_config(
     prog.formal_param = facts.formal_param;
     prog.actual_param = facts.actual_param;
     prog.call = call;
-    prog.func_ptr_assign = facts
-        .func_ptr_assign
-        .into_iter()
-        .map(|(site_id, vx, obj)| {
-            let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-            (func_id, vx, obj)
-        })
-        .collect();
-    prog.java_obj_assign = facts
-        .java_obj_assign
+    prog.call_target_assign = facts
+        .call_target_assign
         .into_iter()
         .map(|(site_id, vx, obj)| {
             let InsnSiteId { func_id, .. } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
@@ -1400,7 +1383,7 @@ pub fn taint_index_with_config(
         HybridInliningRelations {
             critical_summary: &prog.critical_summary,
             resolvent: &prog.resolvent,
-            func_ptr_assign_like: &prog.func_ptr_assign_like,
+            call_target_assign_like: &prog.call_target_assign_like,
             context_assign: &prog.context_assign,
             context_locals: &prog.context_locals,
             context_summary: &prog.context_summary,
@@ -1425,10 +1408,8 @@ pub fn taint_index_with_config(
         final_assign_like: assign_like_out.len(),
         initial_formals,
         final_locals: prog.locals.len(),
-        initial_java_obj_assign,
-        final_java_obj_assign_like: prog.java_obj_assign_like.len(),
-        initial_func_ptr_assign,
-        final_func_ptr_assign_like: prog.func_ptr_assign_like.len(),
+        initial_call_target_assign,
+        final_call_target_assign_like: prog.call_target_assign_like.len(),
         initial_summary,
         final_summary: prog.summary.len(),
         num_functions,
@@ -1445,7 +1426,7 @@ pub fn taint_index_with_config(
     let result = IndexResult {
         summary: prog.summary,
         assign_like: assign_like_out,
-        java_obj_assign_like: prog.java_obj_assign_like,
+        call_target_assign_like: prog.call_target_assign_like,
         paths: prog.paths,
         external_function: facts.external_function,
         stats,
