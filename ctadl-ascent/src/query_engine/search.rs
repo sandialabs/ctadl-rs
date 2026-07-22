@@ -165,7 +165,8 @@ impl TaintSearchGraph {
 
         // Sink access paths per variable, for the saturating rule's sink-side
         // read. Only backward endpoints contribute.
-        let mut sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>> = HashMap::default();
+        let mut sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>> =
+            HashMap::default();
         for (ep,) in &facts.endpoints {
             if ep.direction == TaintDirection::Backward {
                 sink_ext_by_var
