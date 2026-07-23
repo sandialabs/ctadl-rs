@@ -580,6 +580,8 @@ pub enum ArtifactLanguage {
     Apk,
     /// Treat as C files
     C,
+    /// Treat as Lua source files
+    Lua,
     /// Export pcode via Ghidra, from a binary, an existing Ghidra project, or a
     /// Ghidra Server repository URL (`ghidra://…`).
     Pcode,

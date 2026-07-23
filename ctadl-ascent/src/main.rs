@@ -167,6 +167,8 @@ pub enum ImportLanguage {
     Apk,
     /// Treat as C files
     C,
+    /// Treat as Lua source files (parsed with the tree-sitter Lua grammar)
+    Lua,
     /// Export pcode via Ghidra. The artifact may be a binary to import, an existing
     /// local Ghidra project (`<name>.gpr` or its directory), or a Ghidra Server
     /// repository URL (`ghidra://…`).
@@ -590,6 +592,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             ImportLanguage::Jar => Jar,
             ImportLanguage::Jvm => Jvm,
             ImportLanguage::C => C,
+            ImportLanguage::Lua => Lua,
             ImportLanguage::Pcode => Pcode,
             ImportLanguage::Flowy => Flowy,
             ImportLanguage::Auto => unreachable!(),
@@ -739,6 +742,7 @@ fn autodetect_import_language<P: AsRef<Path>>(
                 Some("apk") => ImportLanguage::Apk,
                 Some("class") => ImportLanguage::Jvm,
                 Some("jar") => ImportLanguage::Jar,
+                Some("lua") => ImportLanguage::Lua,
                 Some("tnt") => ImportLanguage::Flowy,
                 Some("gpr") => ImportLanguage::Pcode,
                 // No recognized extension: if the file's contents look binary,

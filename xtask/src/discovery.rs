@@ -24,6 +24,9 @@ pub enum Kind {
     Jvm { java: PathBuf, config: PathBuf },
     /// C compiled to an ELF object, mapped back to lines via `addr2line`.
     Pcode { source: PathBuf, query: PathBuf },
+    /// Lua source imported directly; SARIF regions carry source lines, so no
+    /// linemap or compilation step is needed.
+    Lua { source: PathBuf, query: PathBuf },
 }
 
 impl Kind {
@@ -32,6 +35,7 @@ impl Kind {
             Kind::Dex { .. } => Frontend::Dex,
             Kind::Jvm { .. } => Frontend::Jvm,
             Kind::Pcode { .. } => Frontend::Pcode,
+            Kind::Lua { .. } => Frontend::Lua,
         }
     }
 }
@@ -45,16 +49,19 @@ pub enum Frontend {
     Dex,
     Jvm,
     Pcode,
+    Lua,
 }
 
 impl Frontend {
-    pub const ALL: &'static [Frontend] = &[Frontend::Dex, Frontend::Jvm, Frontend::Pcode];
+    pub const ALL: &'static [Frontend] =
+        &[Frontend::Dex, Frontend::Jvm, Frontend::Pcode, Frontend::Lua];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Frontend::Dex => "dex",
             Frontend::Jvm => "jvm",
             Frontend::Pcode => "pcode",
+            Frontend::Lua => "lua",
         }
     }
 }
@@ -67,7 +74,8 @@ impl FromStr for Frontend {
             "dex" => Ok(Frontend::Dex),
             "jvm" => Ok(Frontend::Jvm),
             "pcode" => Ok(Frontend::Pcode),
-            other => bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode)"),
+            "lua" => Ok(Frontend::Lua),
+            other => bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, lua)"),
         }
     }
 }
@@ -97,6 +105,7 @@ pub fn resolve_tests_dir(override_dir: Option<&Path>) -> Result<PathBuf> {
 pub fn discover(tests_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = discover_dex(&tests_dir.join("java"))?;
     cases.extend(discover_pcode(&tests_dir.join("c"))?);
+    cases.extend(discover_lua(&tests_dir.join("lua"))?);
     cases.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(cases)
 }
@@ -162,6 +171,35 @@ fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
         cases.push(TestCase {
             name: stem,
             kind: Kind::Pcode {
+                source: absolute(&entry)?,
+                query: absolute(&query)?,
+            },
+        });
+    }
+    Ok(cases)
+}
+
+/// Pair each `foo.lua` with its `foo-query.json` config. A `.lua` without a
+/// matching query is skipped, mirroring the pcode discovery. The name is prefixed
+/// with `Lua:` so the reports (and `--filter`) distinguish it from other
+/// frontends' cases.
+fn discover_lua(lua_dir: &Path) -> Result<Vec<TestCase>> {
+    let mut cases = Vec::new();
+    if !lua_dir.is_dir() {
+        return Ok(cases);
+    }
+    for entry in read_dir_sorted(lua_dir)? {
+        if entry.extension().and_then(|e| e.to_str()) != Some("lua") {
+            continue;
+        }
+        let stem = file_stem(&entry)?;
+        let query = lua_dir.join(format!("{stem}-query.json"));
+        if !query.is_file() {
+            continue;
+        }
+        cases.push(TestCase {
+            name: format!("Lua:{stem}"),
+            kind: Kind::Lua {
                 source: absolute(&entry)?,
                 query: absolute(&query)?,
             },

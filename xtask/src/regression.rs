@@ -499,6 +499,7 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
         Kind::Dex { java, config } => run_dex(&case.name, java, config),
         Kind::Jvm { java, config } => run_jvm(&case.name, java, config),
         Kind::Pcode { source, query } => run_pcode(&case.name, source, query, worker),
+        Kind::Lua { source, query } => run_lua(&case.name, source, query),
     }
 }
 
@@ -912,6 +913,91 @@ fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {
         &format!("ctadl {}", args.first().copied().unwrap_or("")),
     )?;
     Ok(())
+}
+
+// --- Lua -------------------------------------------------------------------
+
+/// Run one Lua case: import the source through the `lua` frontend, index, query,
+/// and check the resulting SARIF.
+///
+/// Lua is a source-level frontend, so unlike DEX/JVM (bytecode offsets via a
+/// linemap) or pcode (instruction addresses via `addr2line`) the SARIF regions
+/// carry `startLine` directly. The check therefore reads lines straight from the
+/// code-flow steps -- no compilation, linemap, or disassembler in the loop.
+///
+/// The pass criteria mirror the other frontends (see `check_flow_case`):
+///   1. *Code-flow integrity*: a human-profile code flow connects a source to a
+///      sink. A negative case (`expected_lines` empty) inverts this: no such flow
+///      may exist.
+///   2. *Reached lines*: every `expected_lines` entry appears among the
+///      code-flow `startLine`s.
+///   3. *Unexpected lines*: no `unexpected_lines` entry is among them.
+fn run_lua(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
+    let work = scratch_dir(name)?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+
+    let project = format!("{}_lua", name.replace(':', "_"));
+    let sarif = work.join("output.sarif");
+    let source_str = source.to_string_lossy();
+
+    run_ctadl(
+        &work,
+        &state,
+        &["import", "-l", "lua", "--name", &project, &source_str],
+    )?;
+    run_ctadl(&work, &state, &["index", &project])?;
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "query",
+            &project,
+            "-m",
+            &query.to_string_lossy(),
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
+    )?;
+
+    let expected = assertions::read_expected_lines(query)?;
+    let connects = assertions::codeflow_connects_source_and_sink(&sarif)?;
+
+    if expected.is_empty() {
+        // Negative case: there must be no traced source -> sink flow.
+        return Ok(if connects {
+            Outcome::Fail(
+                "expected no flow, but a code flow connects a source to a sink".to_string(),
+            )
+        } else {
+            Outcome::Pass
+        });
+    }
+
+    if !connects {
+        return Ok(Outcome::Fail(
+            "no code flow connects a source to a sink".to_string(),
+        ));
+    }
+
+    let reached = assertions::collect_codeflow_start_lines(&sarif)?;
+    let missing: Vec<i64> = expected
+        .iter()
+        .copied()
+        .filter(|line| !reached.contains(line))
+        .collect();
+    if !missing.is_empty() {
+        return Ok(Outcome::Fail(format!(
+            "expected lines {missing:?} not reached (reached {reached:?}; all of {expected:?} required)"
+        )));
+    }
+
+    let unexpected = assertions::read_unexpected_lines(query)?;
+    if let Some(why) = assertions::check_unexpected_lines(&unexpected, &reached) {
+        return Ok(Outcome::Fail(why));
+    }
+
+    Ok(Outcome::Pass)
 }
 
 // --- Pcode / C ------------------------------------------------------------
