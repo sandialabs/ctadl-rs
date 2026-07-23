@@ -773,9 +773,6 @@ impl ClassHierarchyAnalysis {
                     .cloned()
                     .map(|(a, b, c, d)| (a.into(), b.into(), c.into(), d.into()))
                     .collect();
-                // `hierarchy` is a `HashMap` keyed on `Symbol` (pointer-based `Hash`), so
-                // iterating it yields a per-run nondeterministic order. Sort the collected
-                // edges by content so the CHA datalog sees a deterministic input relation.
                 let mut direct_superclass: Vec<(Symbol, Symbol)> = hierarchy
                     .iter()
                     .flat_map(|(sub, sups)| {
@@ -783,6 +780,7 @@ impl ClassHierarchyAnalysis {
                             .map(|sup| (sup.clone().into(), sub.clone().into()))
                     })
                     .collect();
+                // Sort for determinism
                 direct_superclass.sort_unstable();
                 let interface_type = Default::default();
                 let super_interface = Default::default();
@@ -873,13 +871,8 @@ fn run_cha(
             // RTA rule: Only resolve if there is an instantiated subtype
             //instantiated_class(sub);
     };
-    // `prog.cha_resolve` is an Ascent relation keyed on `Symbol`, whose `Hash`/`Eq` are
-    // pointer-based (only `Ord` is content-based), so `.into_iter()` yields rows in a
-    // per-run nondeterministic order. Sort by content first so that both the `BTreeMap`
-    // keys and each entry's target `SmallVec` are built in a deterministic order; the
-    // target order determines the order in which `FunctionId`s are interned during
-    // codegen, so leaving it unsorted permutes function IDs across runs.
     let mut rows: Vec<_> = prog.cha_resolve.into_iter().collect();
+    // Sort for determinism
     rows.sort_unstable();
     let mut result: BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>> = BTreeMap::new();
     for (c, n, d, id) in rows {
