@@ -79,11 +79,11 @@ pub mod call_target_assign {
 
 pub mod callee_info {
     use super::*;
-    use crate::facts::CallTargetContext;
+    use crate::facts::CallDispatchKey;
     /// An indirect / virtual call site awaiting resolution: the receiver vertex
-    /// (`recv_var`, `recv_path`) plus the frontend-specific [`CallTargetContext`].
+    /// (`recv_var`, `recv_path`) plus the frontend-specific [`CallDispatchKey`].
     /// Unifies the former `java_call` and `indirect_call` relations.
-    pub type Record = (FunctionId, InsnId, FlowVariable, Path, CallTargetContext);
+    pub type Record = (FunctionId, InsnId, FlowVariable, Path, CallDispatchKey);
     pub const COLUMNS: [&str; 5] = ["func_id", "insn_id", "recv_var", "recv_path", "context"];
     pub const FILENAME: &str = "callee_info.parquet";
     save_load!();
@@ -91,12 +91,12 @@ pub mod callee_info {
 
 pub mod callee_resolvents {
     use super::*;
-    use crate::facts::{CallTargetContext, CallTargetObject};
+    use crate::facts::{CallDispatchKey, CallTargetObject};
     /// How a stored call-target [`CallTargetObject`] resolves, under a given
-    /// [`CallTargetContext`], to a concrete callee `target`. Unifies the former
+    /// [`CallDispatchKey`], to a concrete callee `target`. Unifies the former
     /// `java_resolvents` (CHA) relation and the identity resolution of C function
     /// pointers.
-    pub type Record = (CallTargetObject, CallTargetContext, FunctionId);
+    pub type Record = (CallTargetObject, CallDispatchKey, FunctionId);
     pub const COLUMNS: [&str; 3] = ["object", "context", "target_id"];
     pub const FILENAME: &str = "callee_resolvents.parquet";
     save_load!();
@@ -208,11 +208,11 @@ mod tests {
         assert_eq!(loaded, records);
     }
 
-    /// The `callee_info` schema encodes a [`CallTargetContext`] (tag + nullable name/desc
+    /// The `callee_info` schema encodes a [`CallDispatchKey`] (tag + nullable name/desc
     /// symbol columns). Both the `Java` and `C` arms must survive a parquet round-trip.
     #[test]
-    fn callee_info_context_round_trips() {
-        use crate::facts::CallTargetContext;
+    fn callee_info_dispatch_key_round_trips() {
+        use crate::facts::CallDispatchKey;
         let var = FlowVariable::default();
         let records: Vec<super::callee_info::Record> = vec![
             (
@@ -220,7 +220,7 @@ mod tests {
                 InsnId::new(10),
                 var,
                 Path::empty(),
-                CallTargetContext::Java(
+                CallDispatchKey::Java(
                     ctadl_ir::Symbol::from("doThing"),
                     ctadl_ir::Symbol::from("(I)V"),
                 ),
@@ -230,7 +230,7 @@ mod tests {
                 InsnId::new(20),
                 var,
                 Path::empty(),
-                CallTargetContext::C,
+                CallDispatchKey::C,
             ),
         ];
 
@@ -241,15 +241,15 @@ mod tests {
     }
 
     /// The `callee_resolvents` schema encodes both a [`CallTargetObject`] and a
-    /// [`CallTargetContext`] (each a tag + nullable columns). The CHA (`Symbol`/`Java`) and
+    /// [`CallDispatchKey`] (each a tag + nullable columns). The CHA (`Symbol`/`Java`) and
     /// identity function-pointer (`FunctionId`/`C`) resolutions must both round-trip.
     #[test]
     fn callee_resolvents_round_trips() {
-        use crate::facts::CallTargetContext;
+        use crate::facts::CallDispatchKey;
         let records: Vec<super::callee_resolvents::Record> = vec![
             (
                 CallTargetObject::Symbol(ctadl_ir::Symbol::from("com/example/Foo")),
-                CallTargetContext::Java(
+                CallDispatchKey::Java(
                     ctadl_ir::Symbol::from("doThing"),
                     ctadl_ir::Symbol::from("(I)V"),
                 ),
@@ -257,7 +257,7 @@ mod tests {
             ),
             (
                 CallTargetObject::FunctionId(FunctionId::new(7)),
-                CallTargetContext::C,
+                CallDispatchKey::C,
                 FunctionId::new(7),
             ),
         ];

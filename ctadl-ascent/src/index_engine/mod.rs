@@ -47,7 +47,7 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallArgId, CallString, CallTargetContext, CallTargetObject, FlowVariable, FlowVariableKind,
+    CallArgId, CallString, CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind,
     FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg,
     PackedInsnSiteId, Path, SmallestCallString, isout,
 };
@@ -83,11 +83,11 @@ pub struct IndexFacts {
     pub call_target_assign: Vec<(PackedInsnSiteId, FlowVertex, CallTargetObject)>,
     /// An indirect / virtual call site awaiting resolution
     #[builder(default)]
-    pub callee_info: Vec<(PackedInsnSiteId, FlowVertex, CallTargetContext)>,
+    pub callee_info: Vec<(PackedInsnSiteId, FlowVertex, CallDispatchKey)>,
     /// How a stored call target ([`CallTargetObject`]) resolves, under a given
-    /// [`CallTargetContext`], to a concrete callee.
+    /// [`CallDispatchKey`], to a concrete callee.
     #[builder(default)]
-    pub callee_resolvents: Vec<(CallTargetObject, CallTargetContext, FunctionId)>,
+    pub callee_resolvents: Vec<(CallTargetObject, CallDispatchKey, FunctionId)>,
     #[builder(default)]
     pub summary: Vec<FunctionSummary>,
     #[builder(default)]
@@ -147,11 +147,11 @@ impl IndexFacts {
         )?;
         callee_info::try_save(
             &dir,
-            self.callee_info.iter().map(|(site_id, vertex, context)| {
+            self.callee_info.iter().map(|(site_id, vertex, dispatch_key)| {
                 let InsnSiteId { func_id, insn_id } =
                     InsnSiteId::unpack_from_slice(&**site_id).unwrap();
                 let FlowVertex(variable, path) = vertex;
-                (func_id, insn_id, *variable, *path, context.clone())
+                (func_id, insn_id, *variable, *path, dispatch_key.clone())
             }),
         )?;
         callee_resolvents::try_save(&dir, self.callee_resolvents.iter().cloned())?;
@@ -956,8 +956,8 @@ pub fn taint_index_with_config(
         // `CallTargetObject::FunctionId`) or a Java object (`x = new Foo()`,
         // `CallTargetObject::Symbol`).
         relation call_target_assign(FunctionId, FlowVertex, CallTargetObject);
-        relation callee_info(FunctionId, InsnId, FlowVariable, Path, CallTargetContext);
-        relation callee_resolvents(CallTargetObject, CallTargetContext, FunctionId);
+        relation callee_info(FunctionId, InsnId, FlowVariable, Path, CallDispatchKey);
+        relation callee_resolvents(CallTargetObject, CallDispatchKey, FunctionId);
 
         // Analysis drivers:
 
@@ -1176,18 +1176,18 @@ pub fn taint_index_with_config(
         // 3.1: Contextual Assignment (instantiate)
         // The critical call site is recovered here by joining the resolvent's reached formal
         // (n.p) back to a `callee_info` receiver in func_id, rather than carrying the site
-        // through critical_summary/resolvent. The `callee_resolvents(resolvent_obj, ctx, ...)`
+        // through critical_summary/resolvent. The `callee_resolvents(resolvent_obj, dispatch_key, ...)`
         // join is the frontend-agnostic replacement for what were two rules (a `Symbol` +
         // `java_resolvents` java case and a `FunctionId`-matches-itself C case): the call
-        // site's `ctx` and the reached object together select the concrete callee, and the
+        // site's `dispatch_key` and the reached object together select the concrete callee, and the
         // cross-terms produce no tuple exactly as the old per-variant guards produced nothing.
         context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(cs.clone())) <--
-            callee_info(caller, call_insn, v_rec, p_rec, ctx),
+            callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
             locals(caller, v_rec, p_rec, n, p),
             resolvent(caller, n, p, resolvent_obj, cs_lat),
             if let SmallestCallString::Value(cs) = cs_lat,
             if !cs.is_empty(),
-            callee_resolvents(resolvent_obj, ctx, resolvent_func),
+            callee_resolvents(resolvent_obj, dispatch_key, resolvent_func),
             summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
             let v2 = call_arg!(*call_insn, *n2_sum),
             let v1 = call_arg!(*call_insn, *n1_sum);
@@ -1246,13 +1246,13 @@ pub fn taint_index_with_config(
             let v2 = call_arg!(insn_id, *n2);
 
         // Local virtual / indirect call and resolvent, bypassing the summary machinery. The
-        // reached call target (`cto`) resolved under the call site's context (`ctx`) via
-        // `callee_resolvents` gives the concrete callee, unifying the former java (Symbol +
+        // reached call target (`cto`) resolved under the call site's dispatch key (`dispatch_key`)
+        // via `callee_resolvents` gives the concrete callee, unifying the former java (Symbol +
         // `java_resolvents` lookup) and C (FunctionId-matches-itself) bypass rules.
         assign_like(func_id, v1.into(), p1, v2.into(), p2) <--
-            callee_info(func_id, insn_id, arg, arg_p, ctx),
+            callee_info(func_id, insn_id, arg, arg_p, dispatch_key),
             call_target_assign_like(func_id, arg, arg_p, cto),
-            callee_resolvents(cto, ctx, resolve_tgt),
+            callee_resolvents(cto, dispatch_key, resolve_tgt),
             let call_site_id = PackedInsnSiteId::try_from_parts(*func_id, *insn_id).unwrap(),
             summary(resolve_tgt, n1, p1, n2, p2),
             let n2_id = PackedCallArg::try_from_parts(*insn_id, *n2).unwrap(),
@@ -1299,9 +1299,9 @@ pub fn taint_index_with_config(
     prog.callee_info = facts
         .callee_info
         .into_iter()
-        .map(|(site_id, vx, ctx)| {
+        .map(|(site_id, vx, dispatch_key)| {
             let InsnSiteId { func_id, insn_id } = InsnSiteId::unpack_from_slice(&*site_id).unwrap();
-            (func_id, insn_id, vx.0, vx.1, ctx)
+            (func_id, insn_id, vx.0, vx.1, dispatch_key)
         })
         .collect();
     prog.callee_resolvents = facts.callee_resolvents;

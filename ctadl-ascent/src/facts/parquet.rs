@@ -945,16 +945,16 @@ impl DecodeColumn<facts::CallTargetObject> for DefaultDecoder {
     }
 }
 
-// A `CallTargetContext` spans three arrow columns: a `<name>_tag` byte (0 = Java, 1 = C),
+// A `CallDispatchKey` spans three arrow columns: a `<name>_tag` byte (0 = Java, 1 = C),
 // and nullable `<name>_name` / `<name>_desc` symbol columns (both present iff the variant is
 // `Java`, both null for `C`). Same tag + nullable pattern as `CallTargetObject`.
-impl EncodeColumn<facts::CallTargetContext> for DefaultEncoder {
+impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
     #[inline]
     fn encode_column(
         name: &str,
-        col: Vec<facts::CallTargetContext>,
+        col: Vec<facts::CallDispatchKey>,
     ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
-        use facts::CallTargetContext::*;
+        use facts::CallDispatchKey::*;
         let tag_column_name = name.to_owned() + "_tag";
         let name_column_name = name.to_owned() + "_name";
         let desc_column_name = name.to_owned() + "_desc";
@@ -995,13 +995,13 @@ impl EncodeColumn<facts::CallTargetContext> for DefaultEncoder {
     }
 }
 
-impl DecodeColumn<facts::CallTargetContext> for DefaultDecoder {
+impl DecodeColumn<facts::CallDispatchKey> for DefaultDecoder {
     #[inline]
     fn into_decode_array(
         name: &str,
         batch: &RecordBatch,
-    ) -> impl IntoIterator<Item = facts::CallTargetContext> {
-        use facts::CallTargetContext::*;
+    ) -> impl IntoIterator<Item = facts::CallDispatchKey> {
+        use facts::CallDispatchKey::*;
         let tag_column_name = name.to_owned() + "_tag";
         let name_column_name = name.to_owned() + "_name";
         let desc_column_name = name.to_owned() + "_desc";
@@ -1017,11 +1017,11 @@ impl DecodeColumn<facts::CallTargetContext> for DefaultDecoder {
         izip![tags, names, descs]
             .map(|(tag, name, desc)| match tag {
                 0 => Java(
-                    name.expect("Java CallTargetContext missing simple name"),
-                    desc.expect("Java CallTargetContext missing descriptor"),
+                    name.expect("Java CallDispatchKey missing simple name"),
+                    desc.expect("Java CallDispatchKey missing descriptor"),
                 ),
                 1 => C,
-                _ => panic!("bad encoding of CallTargetContext"),
+                _ => panic!("bad encoding of CallDispatchKey"),
             })
             .collect_vec()
     }

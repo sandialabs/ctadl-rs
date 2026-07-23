@@ -67,7 +67,7 @@ pub fn codegen_program(
                 .get_or_add_function(fx::Function(target.clone().into()));
             facts.callee_resolvents.push((
                 fx::CallTargetObject::Symbol(cls.clone()),
-                fx::CallTargetContext::Java(name.clone(), desc.clone()),
+                fx::CallDispatchKey::Java(name.clone(), desc.clone()),
                 func_id,
             ));
         }
@@ -105,7 +105,7 @@ pub fn codegen_function(
                 .get_or_add_function(fx::Function(target.clone().into()));
             facts.callee_resolvents.push((
                 fx::CallTargetObject::Symbol(cls.clone()),
-                fx::CallTargetContext::Java(name.clone(), desc.clone()),
+                fx::CallDispatchKey::Java(name.clone(), desc.clone()),
                 func_id,
             ));
         }
@@ -204,18 +204,13 @@ impl<'a> CodegenVisitor<'a> {
         }
         let paths = std::mem::take(&mut self.paths_dedup);
         self.facts.paths.extend(paths);
-        // Emit the identity resolvent for every C-style function-pointer target: under the `C`
-        // context a stored `FunctionId(f)` resolves to `f` itself. This is the function-pointer
-        // counterpart of the CHA `callee_resolvents`, and replaces the former engine rule that
-        // matched a `CallTargetObject::FunctionId` directly. Distinct per this unit's targets;
-        // any cross-unit duplicates are folded away by the Ascent set relation.
         let funcptr_targets = std::mem::take(&mut self.funcptr_targets);
         self.facts
             .callee_resolvents
             .extend(funcptr_targets.into_iter().map(|f| {
                 (
                     fx::CallTargetObject::FunctionId(f),
-                    fx::CallTargetContext::C,
+                    fx::CallDispatchKey::C,
                     f,
                 )
             }));
@@ -482,7 +477,7 @@ impl Visitor for CodegenVisitor<'_> {
                                 self.facts.callee_info.push((
                                     site,
                                     FlowVertex(recv_var, fx::Path::empty()),
-                                    fx::CallTargetContext::Java(
+                                    fx::CallDispatchKey::Java(
                                         simple_name.clone(),
                                         descriptor.clone(),
                                     ),
@@ -509,7 +504,7 @@ impl Visitor for CodegenVisitor<'_> {
                                     self.facts.callee_info.push((
                                         site,
                                         FlowVertex(recv_var, fx::Path::empty()),
-                                        fx::CallTargetContext::Java(
+                                        fx::CallDispatchKey::Java(
                                             simple_name.clone(),
                                             descriptor.clone(),
                                         ),
@@ -526,7 +521,7 @@ impl Visitor for CodegenVisitor<'_> {
                         let vertex = self.trans_access_path(callee);
                         self.facts
                             .callee_info
-                            .push((site, vertex, fx::CallTargetContext::C));
+                            .push((site, vertex, fx::CallDispatchKey::C));
                     }
                     _ => log::warn!("unhandled call style: {style:?}"),
                 }

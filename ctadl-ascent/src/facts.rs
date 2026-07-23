@@ -1140,36 +1140,29 @@ impl Display for CallTargetObject {
     }
 }
 
-/// The frontend-specific context that, together with a [`CallTargetObject`], resolves an
+/// The frontend-specific dispatch key that, together with a [`CallTargetObject`], resolves an
 /// indirect / virtual call to concrete callee function(s). It is the *single extension point*
 /// for a new language frontend's call-resolution scheme: adding an arm here plus emitting the
-/// matching `callee_resolvents` facts in codegen is sufficient — the index engine's resolution
-/// rules never inspect the arm. They join `callee_info` (the call site) with `callee_resolvents`
-/// (how objects resolve) on the *context*, so the context acts as the discriminator that used
-/// to be a per-variant `if let` guard.
+/// matching `callee_resolvents` facts in codegen is sufficient.
 ///
 /// - `Java(simple_name, descriptor)` — a JVM / Dex virtual call, resolved by class-hierarchy
 ///   analysis: `callee_resolvents(CallTargetObject::Symbol(class), Java(name, desc), target)`.
 /// - `C` — a C-style function-pointer call. The stored `CallTargetObject::FunctionId(f)`
 ///   resolves to itself via the identity `callee_resolvents(FunctionId(f), C, f)` emitted in
 ///   codegen for every function that appears as a call target.
-///
-/// A future Python frontend, for example, would add a `Python(class, simple_name, num_args)`
-/// arm here and emit the corresponding `callee_resolvents` in codegen — with no change to the
-/// index engine.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
-pub enum CallTargetContext {
+pub enum CallDispatchKey {
     /// JVM / Dex virtual call: (method simple name, method descriptor).
     Java(Symbol, Symbol),
-    /// C-style function-pointer call: no additional context beyond the stored target.
+    /// C-style function-pointer call: no additional key beyond the stored target.
     C,
 }
 
-impl Display for CallTargetContext {
+impl Display for CallDispatchKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CallTargetContext::Java(name, desc) => write!(f, "java_call<{name}{desc}>"),
-            CallTargetContext::C => write!(f, "c_call"),
+            CallDispatchKey::Java(name, desc) => write!(f, "java_call<{name}{desc}>"),
+            CallDispatchKey::C => write!(f, "c_call"),
         }
     }
 }
