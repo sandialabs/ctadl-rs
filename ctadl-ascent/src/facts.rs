@@ -1117,23 +1117,52 @@ impl Display for FlowVertex {
     }
 }
 
-/// Resolvents represent target information for a virtual function call or indirect call. They con
-/// be either a function ID or an object. The function ID can be used directly. Typically the object
-/// is used in conjunction with virtual method table information to resolve the call.
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Serialize, Deserialize)]
-pub enum Resolvent {
-    #[default]
-    Unresolved,
-    Function(FunctionId),
-    Object(Symbol),
+/// A call target: either a concrete function (a C-style function pointer, `v = ptr<f>`,
+/// a [`FunctionId`]) or a class name (a Java object, `v = new Foo()`, a [`Symbol`]), the
+/// latter resolved against the virtual method table at the call site.
+///
+/// It appears both as a *stored* target — what an assignment writes at a vertex, in
+/// `call_target_assign` (unifying the former `func_ptr_assign` and `java_obj_assign`
+/// relations into one) — and as the *resolved* target carried through the `resolvent`
+/// relation during call resolution.
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
+pub enum CallTargetObject {
+    FunctionId(FunctionId),
+    Symbol(Symbol),
 }
 
-impl Display for Resolvent {
+impl Display for CallTargetObject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Resolvent::Unresolved => write!(f, "unresolved"),
-            Resolvent::Function(func_id) => write!(f, "function({})", func_id.id),
-            Resolvent::Object(cls) => write!(f, "object({cls})"),
+            CallTargetObject::FunctionId(func_id) => write!(f, "ptr<{}>", func_id.id),
+            CallTargetObject::Symbol(cls) => write!(f, "java<{cls}>"),
+        }
+    }
+}
+
+/// The frontend-specific dispatch key that, together with a [`CallTargetObject`], resolves an
+/// indirect / virtual call to concrete callee function(s). It is the *single extension point*
+/// for a new language frontend's call-resolution scheme: adding an arm here plus emitting the
+/// matching `callee_resolvents` facts in codegen is sufficient.
+///
+/// - `Java(simple_name, descriptor)` — a JVM / Dex virtual call, resolved by class-hierarchy
+///   analysis: `callee_resolvents(CallTargetObject::Symbol(class), Java(name, desc), target)`.
+/// - `C` — a C-style function-pointer call. The stored `CallTargetObject::FunctionId(f)`
+///   resolves to itself via the identity `callee_resolvents(FunctionId(f), C, f)` emitted in
+///   codegen for every function that appears as a call target.
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
+pub enum CallDispatchKey {
+    /// JVM / Dex virtual call: (method simple name, method descriptor).
+    Java(Symbol, Symbol),
+    /// C-style function-pointer call: no additional key beyond the stored target.
+    C,
+}
+
+impl Display for CallDispatchKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CallDispatchKey::Java(name, desc) => write!(f, "java_call<{name}{desc}>"),
+            CallDispatchKey::C => write!(f, "c_call"),
         }
     }
 }

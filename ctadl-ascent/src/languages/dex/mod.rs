@@ -422,7 +422,10 @@ impl Context {
         log::trace!("program: {program}");
         // Verify the generated program.
         program.verify()?;
-        for (_sig, entry) in self.ext.drain() {
+        let mut ext: Vec<_> = self.ext.drain().collect();
+        // Sort for determinism
+        ext.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+        for (_sig, entry) in ext {
             if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
                 methods.push(entry);
             }

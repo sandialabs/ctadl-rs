@@ -974,19 +974,19 @@ fn field_increment_is_update() {
 // The F2 gap is that a *second* store into the same aggregate (struct or array) creates
 // a new SSA version of the receiver, and the stored target must propagate across that
 // version to reach the indirect call. The taint-index transitive rule that performs the
-// hop (`func_ptr_assign_like` over `assign_like`) gates on `paths(p_new)`, but program
+// hop (`call_target_assign_like` over `assign_like`) gates on `paths(p_new)`, but program
 // paths were seeded only from call *arguments* (`actual_param`) -- never from an indirect
 // call's *receiver* path. So the binding never reached the call and taint was dropped.
 //
 // Fix (ctadl-ascent/src/index_engine/mod.rs): register indirect/virtual-call receiver
-// paths as program paths --
-//     program_paths(p) <-- indirect_call(_, _, _, p);
-//     program_paths(p) <-- java_call(_, _, _, p, _, _);
+// paths as program paths -- a single context-agnostic rule over the unified call-site
+// relation (formerly two rules over `indirect_call` and `java_call`) --
+//     program_paths(p) <-- callee_info(_, _, _, p, _);
 //
 // Each test routes param 1 (`b`) through `id` and back to the return; a `return <- @p1`
 // summary can only come from `wrap` (the callee `id`'s own summary is `return <- @p0`),
-// so these assert that `wrap` carries @p1 through the indirect call. Remove the two fix
-// lines above and the two `*_multistore_flows` tests fail (taint dropped) while
+// so these assert that `wrap` carries @p1 through the indirect call. Remove the fix
+// line above and the two `*_multistore_flows` tests fail (taint dropped) while
 // `funcptr_single_store_flows` still passes -- that contrast IS the bug.
 
 #[test_log::test]

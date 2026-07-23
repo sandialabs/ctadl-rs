@@ -1340,7 +1340,7 @@ impl<'a> Context<'a> {
                 // RHS of `fp = id`, an initializer `int (*fp)(int) = id`, a call argument
                 // `apply(id, x)`, or a field/array store `o.op = id` / `fps[0] = id`. Lower
                 // it as a function-pointer object (as the pcode backend does) so codegen
-                // emits the `func_ptr_assign` fact that indirect-call taint resolution
+                // emits the `call_target_assign` fact that indirect-call taint resolution
                 // needs; otherwise `id` is treated as a plain global and the taint is
                 // dropped (F1/F2). Direct calls are unaffected: `collect_call` resolves an
                 // identifier callee via `build_access_path`, not through here.
