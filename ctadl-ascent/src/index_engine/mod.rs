@@ -47,7 +47,7 @@ use packed_struct::prelude::*;
 
 use crate::error::Error;
 use crate::facts::{
-    CallArgId, CallString, CallDispatchKey, CallTargetObject, FlowVariable, FlowVariableKind,
+    CallArgId, CallDispatchKey, CallString, CallTargetObject, FlowVariable, FlowVariableKind,
     FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg,
     PackedInsnSiteId, Path, SmallestCallString, isout,
 };
@@ -147,12 +147,14 @@ impl IndexFacts {
         )?;
         callee_info::try_save(
             &dir,
-            self.callee_info.iter().map(|(site_id, vertex, dispatch_key)| {
-                let InsnSiteId { func_id, insn_id } =
-                    InsnSiteId::unpack_from_slice(&**site_id).unwrap();
-                let FlowVertex(variable, path) = vertex;
-                (func_id, insn_id, *variable, *path, dispatch_key.clone())
-            }),
+            self.callee_info
+                .iter()
+                .map(|(site_id, vertex, dispatch_key)| {
+                    let InsnSiteId { func_id, insn_id } =
+                        InsnSiteId::unpack_from_slice(&**site_id).unwrap();
+                    let FlowVertex(variable, path) = vertex;
+                    (func_id, insn_id, *variable, *path, dispatch_key.clone())
+                }),
         )?;
         callee_resolvents::try_save(&dir, self.callee_resolvents.iter().cloned())?;
         external_function::try_save(&dir, self.external_function.iter().copied())?;
