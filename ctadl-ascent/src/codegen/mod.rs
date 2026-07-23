@@ -524,11 +524,9 @@ impl Visitor for CodegenVisitor<'_> {
                     }
                     CallStyle::FuncPtrCall { callee, .. } => {
                         let vertex = self.trans_access_path(callee);
-                        self.facts.callee_info.push((
-                            site,
-                            vertex,
-                            fx::CallTargetContext::C,
-                        ));
+                        self.facts
+                            .callee_info
+                            .push((site, vertex, fx::CallTargetContext::C));
                     }
                     _ => log::warn!("unhandled call style: {style:?}"),
                 }
