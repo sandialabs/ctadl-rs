@@ -422,7 +422,13 @@ impl Context {
         log::trace!("program: {program}");
         // Verify the generated program.
         program.verify()?;
-        for (_sig, entry) in self.ext.drain() {
+        // `self.ext` is a `HashMap`, so `.drain()` yields entries in a per-run
+        // nondeterministic order. Sort by the signature key so the extern methods are
+        // appended to the VMT deterministically (keeps the serialized VMT and any
+        // VMT-derived facts reproducible across runs).
+        let mut ext: Vec<_> = self.ext.drain().collect();
+        ext.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+        for (_sig, entry) in ext {
             if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
                 methods.push(entry);
             }
