@@ -65,9 +65,11 @@ pub fn codegen_program(
             let func_id = source_info
                 .sites
                 .get_or_add_function(fx::Function(target.clone().into()));
-            facts
-                .java_resolvents
-                .push((cls.clone(), name.clone(), desc.clone(), func_id));
+            facts.callee_resolvents.push((
+                fx::CallTargetObject::Symbol(cls.clone()),
+                fx::CallTargetContext::Java(name.clone(), desc.clone()),
+                func_id,
+            ));
         }
     }
     let mut v = CodegenVisitor::new(cha, facts, source_info, strategy);
@@ -101,9 +103,11 @@ pub fn codegen_function(
             let func_id = source_info
                 .sites
                 .get_or_add_function(fx::Function(target.clone().into()));
-            facts
-                .java_resolvents
-                .push((cls.clone(), name.clone(), desc.clone(), func_id));
+            facts.callee_resolvents.push((
+                fx::CallTargetObject::Symbol(cls.clone()),
+                fx::CallTargetContext::Java(name.clone(), desc.clone()),
+                func_id,
+            ));
         }
     }
     log::trace!("codegen for {}", function_data.name);
@@ -158,6 +162,12 @@ struct CodegenVisitor<'a> {
     /// (`x.a.b.c := v`), so a write through a loaded pointer is recorded at the object it names
     /// rather than at the temporary. Cleared per block.
     cap_path: BTreeMap<VariableRef, (VariableRef, fx::Path)>,
+    /// Distinct functions stored as C-style call targets (`CallTargetObject::FunctionId`)
+    /// anywhere in this codegen unit. Each gets an identity `callee_resolvents(FunctionId(f),
+    /// C, f)` fact emitted in [`Self::finish`] — the function-pointer analogue of the CHA
+    /// `callee_resolvents`, which is what lets the unified resolution rules resolve a reached
+    /// function pointer to itself without a `C`-specific rule in the index engine.
+    funcptr_targets: BTreeSet<fx::FunctionId>,
 }
 
 impl<'a> CodegenVisitor<'a> {
@@ -178,6 +188,7 @@ impl<'a> CodegenVisitor<'a> {
             strategy,
             paths_dedup: Default::default(),
             cap_path: Default::default(),
+            funcptr_targets: Default::default(),
         }
     }
 
@@ -193,6 +204,21 @@ impl<'a> CodegenVisitor<'a> {
         }
         let paths = std::mem::take(&mut self.paths_dedup);
         self.facts.paths.extend(paths);
+        // Emit the identity resolvent for every C-style function-pointer target: under the `C`
+        // context a stored `FunctionId(f)` resolves to `f` itself. This is the function-pointer
+        // counterpart of the CHA `callee_resolvents`, and replaces the former engine rule that
+        // matched a `CallTargetObject::FunctionId` directly. Distinct per this unit's targets;
+        // any cross-unit duplicates are folded away by the Ascent set relation.
+        let funcptr_targets = std::mem::take(&mut self.funcptr_targets);
+        self.facts
+            .callee_resolvents
+            .extend(funcptr_targets.into_iter().map(|f| {
+                (
+                    fx::CallTargetObject::FunctionId(f),
+                    fx::CallTargetContext::C,
+                    f,
+                )
+            }));
     }
 
     /// Does finish and also runs a datalog modeling pass
@@ -360,6 +386,7 @@ impl Visitor for CodegenVisitor<'_> {
                             FlowVertex(dest, fx::Path::empty()),
                             fx::CallTargetObject::FunctionId(target),
                         ));
+                        self.funcptr_targets.insert(target);
                     }
                     if let Exp::ObjectRef(CallObject::JavaObject(cls)) = src {
                         let dest = self.trans_variable_ref(dest);
@@ -452,11 +479,13 @@ impl Visitor for CodegenVisitor<'_> {
                                 }
                             }
                             CallResolutionStrategy::Hi => {
-                                self.facts.java_call.push((
+                                self.facts.callee_info.push((
                                     site,
                                     FlowVertex(recv_var, fx::Path::empty()),
-                                    simple_name.clone(),
-                                    descriptor.clone(),
+                                    fx::CallTargetContext::Java(
+                                        simple_name.clone(),
+                                        descriptor.clone(),
+                                    ),
                                 ));
                                 log::trace!(
                                     "java: HI resolve {cls}.{simple_name}{descriptor} (deferred)"
@@ -477,11 +506,13 @@ impl Visitor for CodegenVisitor<'_> {
                                         "java: no resolvents {cls}.{simple_name}{descriptor}",
                                     );
                                 } else {
-                                    self.facts.java_call.push((
+                                    self.facts.callee_info.push((
                                         site,
                                         FlowVertex(recv_var, fx::Path::empty()),
-                                        simple_name.clone(),
-                                        descriptor.clone(),
+                                        fx::CallTargetContext::Java(
+                                            simple_name.clone(),
+                                            descriptor.clone(),
+                                        ),
                                     ));
                                     log::trace!(
                                         "java: hybrid resolve {cls}.{simple_name}{descriptor} with {} targets",
@@ -493,7 +524,11 @@ impl Visitor for CodegenVisitor<'_> {
                     }
                     CallStyle::FuncPtrCall { callee, .. } => {
                         let vertex = self.trans_access_path(callee);
-                        self.facts.indirect_call.push((site, vertex));
+                        self.facts.callee_info.push((
+                            site,
+                            vertex,
+                            fx::CallTargetContext::C,
+                        ));
                     }
                     _ => log::warn!("unhandled call style: {style:?}"),
                 }
@@ -520,6 +555,7 @@ impl Visitor for CodegenVisitor<'_> {
                             FlowVertex(call_arg_var, fx::Path::empty()),
                             fx::CallTargetObject::FunctionId(target),
                         ));
+                        self.funcptr_targets.insert(target);
                     }
 
                     if let Exp::ObjectRef(CallObject::JavaObject(cls)) = arg_exp {
@@ -637,6 +673,7 @@ impl Visitor for CodegenVisitor<'_> {
                         dest.clone(),
                         fx::CallTargetObject::FunctionId(target),
                     ));
+                    self.funcptr_targets.insert(target);
                 }
                 if let Exp::ObjectRef(CallObject::JavaObject(cls)) = value {
                     self.facts.call_target_assign.push((

@@ -945,6 +945,88 @@ impl DecodeColumn<facts::CallTargetObject> for DefaultDecoder {
     }
 }
 
+// A `CallTargetContext` spans three arrow columns: a `<name>_tag` byte (0 = Java, 1 = C),
+// and nullable `<name>_name` / `<name>_desc` symbol columns (both present iff the variant is
+// `Java`, both null for `C`). Same tag + nullable pattern as `CallTargetObject`.
+impl EncodeColumn<facts::CallTargetContext> for DefaultEncoder {
+    #[inline]
+    fn encode_column(
+        name: &str,
+        col: Vec<facts::CallTargetContext>,
+    ) -> (Vec<arrowd::Field>, Vec<ArrayRef>) {
+        use facts::CallTargetContext::*;
+        let tag_column_name = name.to_owned() + "_tag";
+        let name_column_name = name.to_owned() + "_name";
+        let desc_column_name = name.to_owned() + "_desc";
+        let (mut fields, mut arrays) = <Self as EncodeColumn<u8>>::encode_column(
+            &tag_column_name,
+            col.iter()
+                .map(|c| match c {
+                    Java(_, _) => 0u8,
+                    C => 1,
+                })
+                .collect_vec(),
+        );
+        let (name_fields, name_arrays) =
+            <Self as EncodeColumn<Option<ArcIntern<str>>>>::encode_column(
+                &name_column_name,
+                col.iter()
+                    .map(|c| match c {
+                        Java(n, _) => Some(n.clone()),
+                        C => None,
+                    })
+                    .collect_vec(),
+            );
+        let (desc_fields, desc_arrays) =
+            <Self as EncodeColumn<Option<ArcIntern<str>>>>::encode_column(
+                &desc_column_name,
+                col.into_iter()
+                    .map(|c| match c {
+                        Java(_, d) => Some(d),
+                        C => None,
+                    })
+                    .collect_vec(),
+            );
+        fields.extend(name_fields);
+        arrays.extend(name_arrays);
+        fields.extend(desc_fields);
+        arrays.extend(desc_arrays);
+        (fields, arrays)
+    }
+}
+
+impl DecodeColumn<facts::CallTargetContext> for DefaultDecoder {
+    #[inline]
+    fn into_decode_array(
+        name: &str,
+        batch: &RecordBatch,
+    ) -> impl IntoIterator<Item = facts::CallTargetContext> {
+        use facts::CallTargetContext::*;
+        let tag_column_name = name.to_owned() + "_tag";
+        let name_column_name = name.to_owned() + "_name";
+        let desc_column_name = name.to_owned() + "_desc";
+        let tags = <Self as DecodeColumn<u8>>::into_decode_array(&tag_column_name, batch);
+        let names = <Self as DecodeColumn<Option<ArcIntern<str>>>>::into_decode_array(
+            &name_column_name,
+            batch,
+        );
+        let descs = <Self as DecodeColumn<Option<ArcIntern<str>>>>::into_decode_array(
+            &desc_column_name,
+            batch,
+        );
+        izip![tags, names, descs]
+            .map(|(tag, name, desc)| match tag {
+                0 => Java(
+                    name.expect("Java CallTargetContext missing simple name"),
+                    desc.expect("Java CallTargetContext missing descriptor"),
+                ),
+                1 => C,
+                _ => panic!("bad encoding of CallTargetContext"),
+            })
+            .collect_vec()
+    }
+}
+
 impl EncodeColumn<facts::TaintState> for DefaultEncoder {
     #[inline]
     fn encode_column(

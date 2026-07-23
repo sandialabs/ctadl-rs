@@ -5,7 +5,6 @@ schemas and functions to save and load them.
 */
 use std::path;
 
-use ctadl_ir::Symbol;
 use source_info::FileSpanId;
 
 use crate::error::{Error, ErrorContext};
@@ -78,26 +77,28 @@ pub mod call_target_assign {
     save_load!();
 }
 
-pub mod java_call {
+pub mod callee_info {
     use super::*;
-    pub type Record = (FunctionId, InsnId, FlowVariable, Path, Symbol, Symbol);
-    pub const COLUMNS: [&str; 6] = [
-        "func_id",
-        "insn_id",
-        "recv_var",
-        "recv_path",
-        "name",
-        "desc",
-    ];
-    pub const FILENAME: &str = "java_call.parquet";
+    use crate::facts::CallTargetContext;
+    /// An indirect / virtual call site awaiting resolution: the receiver vertex
+    /// (`recv_var`, `recv_path`) plus the frontend-specific [`CallTargetContext`].
+    /// Unifies the former `java_call` and `indirect_call` relations.
+    pub type Record = (FunctionId, InsnId, FlowVariable, Path, CallTargetContext);
+    pub const COLUMNS: [&str; 5] = ["func_id", "insn_id", "recv_var", "recv_path", "context"];
+    pub const FILENAME: &str = "callee_info.parquet";
     save_load!();
 }
 
-pub mod java_resolvents {
+pub mod callee_resolvents {
     use super::*;
-    pub type Record = (Symbol, Symbol, Symbol, FunctionId);
-    pub const COLUMNS: [&str; 4] = ["class", "name", "desc", "target_id"];
-    pub const FILENAME: &str = "java_resolvents.parquet";
+    use crate::facts::{CallTargetContext, CallTargetObject};
+    /// How a stored call-target [`CallTargetObject`] resolves, under a given
+    /// [`CallTargetContext`], to a concrete callee `target`. Unifies the former
+    /// `java_resolvents` (CHA) relation and the identity resolution of C function
+    /// pointers.
+    pub type Record = (CallTargetObject, CallTargetContext, FunctionId);
+    pub const COLUMNS: [&str; 3] = ["object", "context", "target_id"];
+    pub const FILENAME: &str = "callee_resolvents.parquet";
     save_load!();
 }
 
@@ -204,6 +205,66 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         super::call_target_assign::try_save(dir.path(), records.clone()).unwrap();
         let loaded = super::call_target_assign::try_load(dir.path()).unwrap();
+        assert_eq!(loaded, records);
+    }
+
+    /// The `callee_info` schema encodes a [`CallTargetContext`] (tag + nullable name/desc
+    /// symbol columns). Both the `Java` and `C` arms must survive a parquet round-trip.
+    #[test]
+    fn callee_info_context_round_trips() {
+        use crate::facts::CallTargetContext;
+        let var = FlowVariable::default();
+        let records: Vec<super::callee_info::Record> = vec![
+            (
+                FunctionId::new(1),
+                InsnId::new(10),
+                var,
+                Path::empty(),
+                CallTargetContext::Java(
+                    ctadl_ir::Symbol::from("doThing"),
+                    ctadl_ir::Symbol::from("(I)V"),
+                ),
+            ),
+            (
+                FunctionId::new(2),
+                InsnId::new(20),
+                var,
+                Path::empty(),
+                CallTargetContext::C,
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::callee_info::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::callee_info::try_load(dir.path()).unwrap();
+        assert_eq!(loaded, records);
+    }
+
+    /// The `callee_resolvents` schema encodes both a [`CallTargetObject`] and a
+    /// [`CallTargetContext`] (each a tag + nullable columns). The CHA (`Symbol`/`Java`) and
+    /// identity function-pointer (`FunctionId`/`C`) resolutions must both round-trip.
+    #[test]
+    fn callee_resolvents_round_trips() {
+        use crate::facts::CallTargetContext;
+        let records: Vec<super::callee_resolvents::Record> = vec![
+            (
+                CallTargetObject::Symbol(ctadl_ir::Symbol::from("com/example/Foo")),
+                CallTargetContext::Java(
+                    ctadl_ir::Symbol::from("doThing"),
+                    ctadl_ir::Symbol::from("(I)V"),
+                ),
+                FunctionId::new(99),
+            ),
+            (
+                CallTargetObject::FunctionId(FunctionId::new(7)),
+                CallTargetContext::C,
+                FunctionId::new(7),
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::callee_resolvents::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::callee_resolvents::try_load(dir.path()).unwrap();
         assert_eq!(loaded, records);
     }
 
