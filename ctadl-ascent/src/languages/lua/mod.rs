@@ -28,10 +28,15 @@
 //! Assignments lower to [`StatementKind::Assign`]; field and index writes/reads lower to
 //! [`StatementKind::Store`]/[`StatementKind::Load`] via
 //! [`load_access_path`]/[`store_access_path`], so Lua tables are field-sensitive. Function
-//! calls lower to [`StatementKind::CallAssign`]. Following the C frontend, a call is staged
-//! as a [`CallStyle::DirectCall`] whose [`CallEdges::Explicit`] list holds the *syntactic*
-//! callee name; call resolution (building a real call graph) is not done here -- the analysis
-//! joins the call to a definition or model by name.
+//! calls lower to [`StatementKind::CallAssign`]. Following the C frontend, most calls are staged
+//! as a [`CallStyle::DirectCall`] whose [`CallEdges::Explicit`] list holds the *syntactic* callee
+//! name (the bare final component of a dotted/method name, so `o:m(...)` and `T.m(...)` both
+//! dispatch on `m`); call resolution is not done here -- the analysis joins the call to a
+//! definition or model by name. A call whose callee is a bare local/parameter that is *not* a
+//! defined function (a first-class function value, e.g. a closure) is instead a
+//! [`CallStyle::FuncPtrCall`], resolved by data flow. A handful of standard-library calls
+//! (`table.insert`, `ipairs`/`pairs`, `select`) are recognized syntactically and lowered directly
+//! to data flow rather than a call, since they carry taint but have no definition or model.
 //!
 //! ## Globals
 //!
@@ -144,9 +149,19 @@ struct Lowerer<'a> {
     /// Set of names already used for a function definition (for uniqueness).
     used_names: HashMap<String, FunctionIdx>,
     anon_counter: usize,
+    /// Maps a function-definition node (by id) to the function it was collected as, so a closure
+    /// value expression can recover the [`FunctionIdx`] of its anonymous function.
+    func_by_node: HashMap<usize, FunctionIdx>,
+    /// For each closure (anonymous function that captures upvalues), the names it captures. The
+    /// enclosing function stores each captured value into a field of the closure object, and the
+    /// closure body reads it back from its synthetic self-parameter (`build_var`).
+    closure_upvalues: HashMap<FunctionIdx, Vec<String>>,
 
     // ---- per-function state ----
     fidx: FunctionIdx,
+    /// Upvalue names captured by the function currently being lowered; each resolves to a field of
+    /// the closure's self-parameter rather than to a local or global.
+    cur_upvalues: HashMap<String, ()>,
     /// Lexical scope stack; innermost last.
     scopes: Vec<HashMap<String, Binding>>,
     /// Label name -> pre-allocated block for that label.
@@ -176,7 +191,10 @@ impl<'a> Lowerer<'a> {
             funcs: Vec::new(),
             used_names: HashMap::new(),
             anon_counter: 0,
+            func_by_node: HashMap::new(),
+            closure_upvalues: HashMap::new(),
             fidx: FunctionIdx::new(0),
+            cur_upvalues: HashMap::new(),
             scopes: Vec::new(),
             labels: HashMap::new(),
             loop_breaks: Vec::new(),
@@ -211,7 +229,11 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Walk the whole tree and register every function definition. Each becomes its own
-    /// [`FunctionData`]; nested functions are lowered independently (closures are not wired up).
+    /// [`FunctionData`]; nested functions are lowered independently. An anonymous function used as
+    /// a value becomes a closure object (see [`Lowerer::eval_closure`]): its captured upvalues are
+    /// stored in object fields and it is tagged with a function pointer so an indirect call can
+    /// resolve it. (Resolving a closure returned *out* of a function is an engine-level limitation;
+    /// see the `closure-flow` regression XFAIL.)
     fn collect_nested(&mut self, node: Node<'a>) {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
@@ -220,10 +242,14 @@ impl<'a> Lowerer<'a> {
                     let name_node = child.child_by_field_name("name");
                     let is_method =
                         name_node.map(|n| n.kind() == "method_index_expression").unwrap_or(false);
+                    // Name the function by the bare final component of its definition name
+                    // (`function A.b.c` -> `c`, `function A:m` -> `m`), because calls resolve by
+                    // that syntactic tail (`o:m(...)` / `A.b.c(...)` both dispatch on `c`/`m`).
                     let base = name_node
-                        .map(|n| self.node_text(n).to_string())
+                        .map(|n| self.def_name(n))
                         .unwrap_or_else(|| self.fresh_anon_name());
                     let fidx = self.new_named_function(base);
+                    self.func_by_node.insert(child.id(), fidx);
                     self.funcs.push(FuncEntry {
                         fidx,
                         body: child.child_by_field_name("body").unwrap_or(child),
@@ -234,6 +260,7 @@ impl<'a> Lowerer<'a> {
                 "function_definition" => {
                     let name = self.fresh_anon_name();
                     let fidx = self.new_named_function(name);
+                    self.func_by_node.insert(child.id(), fidx);
                     self.funcs.push(FuncEntry {
                         fidx,
                         body: child.child_by_field_name("body").unwrap_or(child),
@@ -284,6 +311,7 @@ impl<'a> Lowerer<'a> {
         self.loop_breaks = Vec::new();
         self.temp_counter = 0;
         self.cur_span = SourceInfo::default();
+        self.cur_upvalues = HashMap::new();
 
         // Parameters.
         let mut param_idx = 0usize;
@@ -291,15 +319,33 @@ impl<'a> Lowerer<'a> {
             self.add_param("self", param_idx);
             param_idx += 1;
         }
+        // A closure receives its own closure object as an implicit leading parameter; its captured
+        // upvalues are read from fields of that self-parameter (see `build_var`). The caller passes
+        // the closure value as argument 0 at the indirect call site (see `eval_call`).
+        if let Some(upvalues) = self.closure_upvalues.get(&entry.fidx).cloned() {
+            self.add_param("%self", param_idx);
+            param_idx += 1;
+            for u in upvalues {
+                self.cur_upvalues.insert(u, ());
+            }
+        }
         if let Some(params) = entry.params {
             let mut cursor = params.walk();
             for p in params.named_children(&mut cursor) {
-                if p.kind() == "identifier" {
-                    let name = self.node_text(p).to_string();
-                    self.add_param(&name, param_idx);
-                    param_idx += 1;
+                match p.kind() {
+                    "identifier" => {
+                        let name = self.node_text(p).to_string();
+                        self.add_param(&name, param_idx);
+                        param_idx += 1;
+                    }
+                    "vararg_expression" => {
+                        // Model the whole `...` pack as a single parameter, bound under the
+                        // reserved name "..." so a `vararg_expression` value-use resolves to it.
+                        self.add_param("...", param_idx);
+                        param_idx += 1;
+                    }
+                    _ => {}
                 }
-                // vararg_expression ("...") and attributes are ignored.
             }
         }
 
@@ -838,8 +884,13 @@ impl<'a> Lowerer<'a> {
                 let ap = self.emit_loads(blk, rp);
                 Exp::from(ap)
             }
-            "number" | "string" | "true" | "false" | "nil" | "vararg_expression" => {
-                Exp::new_str(self.node_text(node))
+            "number" | "string" | "true" | "false" | "nil" => Exp::new_str(self.node_text(node)),
+            "vararg_expression" => {
+                // `...` resolves to the vararg parameter when the enclosing function declares one
+                // (otherwise it degrades to a global-heap read, which is harmless).
+                let rp = self.build_var("...");
+                let ap = self.emit_loads(blk, rp);
+                Exp::from(ap)
             }
             "parenthesized_expression" => {
                 // Parenthesizing truncates a multi-value expression to one value; the inner
@@ -869,11 +920,7 @@ impl<'a> Lowerer<'a> {
                 .unwrap_or_else(nil_exp),
             "function_call" => self.eval_call(node, blk),
             "table_constructor" => self.eval_table(node, blk),
-            "function_definition" => {
-                // An anonymous function value; closures are not modeled, so it is an opaque
-                // constant here.
-                Exp::new_str("<function>")
-            }
+            "function_definition" => self.eval_closure(node, blk),
             _ => Exp::new_str(self.node_text(node)),
         }
     }
@@ -984,8 +1031,97 @@ impl<'a> Lowerer<'a> {
         Exp::Variable(table)
     }
 
+    /// Lowers an anonymous `function ... end` value into a first-class closure object. The object
+    /// is tagged with the closure's function (an [`Exp::ObjectRef`] function pointer, so an
+    /// indirect call can resolve it) and carries each captured upvalue in a like-named field. The
+    /// closure body reads those fields back through its synthetic self-parameter.
+    fn eval_closure(&mut self, node: Node<'a>, blk: BasicBlockIdx) -> Exp {
+        let Some(&fidx) = self.func_by_node.get(&node.id()) else {
+            return Exp::new_str("<function>");
+        };
+        let fn_name = self.program[fidx].name.clone();
+
+        // Determine captured upvalues: names referenced free in the body that resolve to a local or
+        // parameter of the *enclosing* function (globals and the closure's own parameters are not
+        // captured).
+        let params: HashMap<String, ()> = node
+            .child_by_field_name("parameters")
+            .map(|p| {
+                named_of(p)
+                    .into_iter()
+                    .filter(|n| n.kind() == "identifier")
+                    .map(|n| (self.node_text(n).to_string(), ()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut names = Vec::new();
+        collect_identifiers(self.src, node.child_by_field_name("body").unwrap_or(node), &mut names);
+        let mut upvalues: Vec<String> = Vec::new();
+        let mut seen: HashMap<String, ()> = HashMap::new();
+        for name in names {
+            if params.contains_key(&name) || seen.contains_key(&name) {
+                continue;
+            }
+            if matches!(self.lookup(&name), Some(Binding::Local | Binding::Param(_))) {
+                seen.insert(name.clone(), ());
+                upvalues.push(name);
+            }
+        }
+
+        // Build the closure object: bind its function pointer, then store each captured value.
+        let closure = self.fresh_temp();
+        self.push_stmt(
+            blk,
+            StatementKind::assign(
+                closure.clone(),
+                [Exp::ObjectRef(CallObject::FunctionPtr(fn_name.into()))],
+            ),
+        );
+        for u in &upvalues {
+            let value = {
+                let rp = self.build_var(u);
+                Exp::from(self.emit_loads(blk, rp))
+            };
+            let target = RawPath {
+                base: closure.clone(),
+                fields: ThinVec::from(vec![PathSegment::symbol(u)]),
+            };
+            self.assign_to(blk, target, value);
+        }
+        self.closure_upvalues.insert(fidx, upvalues);
+        Exp::Variable(closure)
+    }
+
+    /// If `name_node` names a first-class function value (a local/parameter that is not a defined
+    /// function), returns the callee's access path for an indirect call; otherwise `None` (the call
+    /// resolves by name). A `local function f`/global function is a defined name, so it stays a
+    /// direct call.
+    fn indirect_call_target(&mut self, name_node: Node<'a>, blk: BasicBlockIdx) -> Option<AccessPath> {
+        if !matches!(name_node.kind(), "identifier" | "global") {
+            return None;
+        }
+        let name = self.node_text(name_node);
+        if self.used_names.contains_key(name) {
+            return None;
+        }
+        match self.lookup(name) {
+            Some(Binding::Local | Binding::Param(_)) => {
+                let rp = self.eval_lvalue(name_node, blk);
+                Some(self.emit_loads(blk, rp))
+            }
+            _ => None,
+        }
+    }
+
     fn eval_call(&mut self, node: Node<'a>, blk: BasicBlockIdx) -> Exp {
         let name_node = node.child_by_field_name("name");
+
+        // Builtin library calls that carry taint but have no user-visible definition or model.
+        // We recognize them syntactically and lower them to plain data flow rather than a call.
+        if let Some(result) = self.eval_builtin_call(name_node, node, blk) {
+            return result;
+        }
+
         let mut args: ThinVec<Exp> = ThinVec::new();
 
         let callee = if let Some(name_node) = name_node {
@@ -1006,6 +1142,12 @@ impl<'a> Lowerer<'a> {
             String::new()
         };
 
+        // An indirect (value) call: the callee is a bare name bound to a first-class function value
+        // (a closure or a function passed as an argument) rather than a defined function. Resolve
+        // it by data flow through a `FuncPtrCall`, passing the closure value as the leading `%self`
+        // argument so the callee can read its captured upvalues.
+        let indirect_callee = name_node.and_then(|n| self.indirect_call_target(n, blk));
+
         if let Some(arg_node) = node.child_by_field_name("arguments") {
             for a in named_of(arg_node) {
                 args.push(self.eval_expr(a, blk));
@@ -1016,11 +1158,97 @@ impl<'a> Lowerer<'a> {
         let result = self.fresh_temp();
         let err = self.fresh_temp();
         let rets: ThinVec<VariableRef> = ThinVec::from(vec![result.clone(), err]);
-        let style = CallStyle::DirectCall {
-            call_edges: CallEdges::Explicit(ThinVec::from(vec![callee])),
+        let style = if let Some(callee_ap) = indirect_callee {
+            args.insert(0, Exp::from(callee_ap.clone()));
+            CallStyle::FuncPtrCall {
+                callee: callee_ap,
+                signature: Some("indirect-call".to_string()),
+            }
+        } else {
+            CallStyle::DirectCall {
+                call_edges: CallEdges::Explicit(ThinVec::from(vec![callee])),
+            }
         };
+        // Stamp this call with its own syntactic span rather than the enclosing statement's, so
+        // that nested calls on one source line (`sink(f(x))`) get distinct source regions. The
+        // SARIF formatter deduplicates code-flow steps by region; sharing the statement span would
+        // collapse the outer call's step into the inner one and drop the sink from the trace.
+        let saved = self.cur_span;
+        self.cur_span = self.span(node);
         self.push_stmt(blk, StatementKind::CallAssign { style, rets, args });
+        self.cur_span = saved;
         Exp::Variable(result)
+    }
+
+    /// Recognizes standard-library calls that only move taint around (no callee definition and no
+    /// query model exists for them) and lowers them directly to data flow. Returns `Some(value)`
+    /// when `node` was handled as a builtin, `None` to fall through to the generic call path.
+    fn eval_builtin_call(
+        &mut self,
+        name_node: Option<Node<'a>>,
+        node: Node<'a>,
+        blk: BasicBlockIdx,
+    ) -> Option<Exp> {
+        let name_node = name_node?;
+        let arg_nodes = node
+            .child_by_field_name("arguments")
+            .map(named_of)
+            .unwrap_or_default();
+
+        // `table.insert(t, v)` / `table.insert(t, pos, v)`: v flows into an element of `t`.
+        if name_node.kind() == "dot_index_expression" {
+            let base = name_node.child_by_field_name("table").map(|t| self.node_text(t));
+            let field = name_node.child_by_field_name("field").map(|f| self.node_text(f));
+            if base == Some("table") && field == Some("insert") && arg_nodes.len() >= 2 {
+                let mut target = self.eval_lvalue(arg_nodes[0], blk);
+                let value = self.eval_expr(*arg_nodes.last().unwrap(), blk);
+                target.fields.push(PathSegment::symbol("[_elem_]"));
+                self.assign_to(blk, target, value);
+                return Some(nil_exp());
+            }
+            return None;
+        }
+
+        let callee = match name_node.kind() {
+            "identifier" | "global" => self.node_text(name_node),
+            _ => return None,
+        };
+        match callee {
+            // `ipairs(t)` / `pairs(t)`: the iterator surfaces the elements of `t`. Model it as a
+            // read of `t`'s generic element, so a generic `for` flows table elements into the loop
+            // variables (see `lower_for`).
+            "ipairs" | "pairs" if !arg_nodes.is_empty() => {
+                let mut rp = self.eval_lvalue(arg_nodes[0], blk);
+                rp.fields.push(PathSegment::symbol("[_elem_]"));
+                Some(Exp::from(self.emit_loads(blk, rp)))
+            }
+            // `select(k, ...)`: returns the selected varargs; over-approximate by flowing every
+            // vararg operand into the result.
+            "select" if arg_nodes.len() >= 2 => {
+                let srcs: Vec<Exp> =
+                    arg_nodes[1..].iter().map(|&a| self.eval_expr(a, blk)).collect();
+                let t = self.fresh_temp();
+                self.push_stmt(blk, StatementKind::assign(t.clone(), srcs));
+                Some(Exp::Variable(t))
+            }
+            _ => None,
+        }
+    }
+
+    /// The name given to a function *definition*: the bare final component of its dotted/method
+    /// name, matching how [`call_name`] and method-call desugaring name the call target.
+    fn def_name(&self, node: Node<'a>) -> String {
+        match node.kind() {
+            "dot_index_expression" => node
+                .child_by_field_name("field")
+                .map(|f| self.node_text(f).to_string())
+                .unwrap_or_default(),
+            "method_index_expression" => node
+                .child_by_field_name("method")
+                .map(|m| self.node_text(m).to_string())
+                .unwrap_or_default(),
+            _ => self.node_text(node).to_string(),
+        }
     }
 
     /// The syntactic name of a call target (used as the direct-call edge string).
@@ -1046,6 +1274,15 @@ impl<'a> Lowerer<'a> {
     /// Builds a [`RawPath`] for a bare name: a parameter or local becomes a bare variable; a free
     /// name is a field of the global heap (`$globals.name`), modeling `_ENV`.
     fn build_var(&self, name: &str) -> RawPath {
+        // A captured upvalue is stored in a field of the closure's self-parameter.
+        if self.cur_upvalues.contains_key(name)
+            && let Some(Binding::Param(idx)) = self.lookup("%self")
+        {
+            return RawPath {
+                base: VariableRef::new_parameter(idx),
+                fields: ThinVec::from(vec![PathSegment::symbol(name)]),
+            };
+        }
         match self.lookup(name) {
             Some(Binding::Param(idx)) => RawPath {
                 base: VariableRef::new_parameter(idx),
@@ -1159,6 +1396,32 @@ fn child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
 fn children_by_field<'a>(node: Node<'a>, field: &str) -> Vec<Node<'a>> {
     let mut cursor = node.walk();
     node.children_by_field_name(field, &mut cursor).collect()
+}
+
+/// Collects the value-position identifier names referenced in `node`, not descending into nested
+/// function bodies. The `field`/`method` component of an index expression is a member name, not a
+/// variable reference, so only the `table` side is followed. Used to find a closure's free names.
+fn collect_identifiers(src: &str, node: Node<'_>, out: &mut Vec<String>) {
+    match node.kind() {
+        "function_definition" | "function_declaration" => return,
+        "identifier" => {
+            if let Ok(t) = node.utf8_text(src.as_bytes()) {
+                out.push(t.trim().to_string());
+            }
+            return;
+        }
+        "dot_index_expression" | "method_index_expression" => {
+            if let Some(table) = node.child_by_field_name("table") {
+                collect_identifiers(src, table, out);
+            }
+            return;
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_identifiers(src, child, out);
+    }
 }
 
 /// Collects all label names in a function body, not descending into nested functions.
