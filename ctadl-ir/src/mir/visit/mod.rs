@@ -200,6 +200,9 @@ macro_rules! make_ast_visitor {
                     CallStyle::JavaCall { receiver, cls: _, simple_name: _, descriptor: _ } => {
                         self.visit_variable_ref(receiver)
                     },
+                    CallStyle::LuaCall { receiver, method: _ } => {
+                        self.visit_variable_ref(receiver)
+                    },
                     CallStyle::Unknown => (),
                 }
             }

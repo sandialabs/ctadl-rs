@@ -57,12 +57,14 @@
 //! Coroutines are intentionally not modeled; `coroutine.*` calls lower as ordinary calls and
 //! are otherwise ignored (no error is raised).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use ctadl_ir::ThinVec;
 use ctadl_ir::index::idx::Idx;
 use ctadl_ir::mir::*;
+use ctadl_ir::mir::call::{JavaClass, VirtualMethodTable};
+use smallvec::SmallVec;
 use source_info::{ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 use tree_sitter::{Node, Parser};
 
@@ -71,13 +73,18 @@ use crate::error::Error;
 /// Parse a Lua source file and translate it into CTADL IR.
 pub fn import_lua(path: &Path) -> Result<ProgramInfo, Error> {
     let source = std::fs::read_to_string(path)?;
+    lower_lua_source(&source, path)
+}
 
+/// Translate an in-memory Lua `source` (labeled by `path` for diagnostics/spans) into CTADL IR.
+/// Shared by [`import_lua`] and the unit tests.
+fn lower_lua_source(source: &str, path: &Path) -> Result<ProgramInfo, Error> {
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_lua::LANGUAGE.into())
         .map_err(Error::TreeSitterLanguage)?;
 
-    let tree = parser.parse(&source, None).ok_or_else(|| {
+    let tree = parser.parse(source, None).ok_or_else(|| {
         Error::TreeSitterParse(format!("tree-sitter failed to parse {}", path.display()))
     })?;
 
@@ -91,14 +98,16 @@ pub fn import_lua(path: &Path) -> Result<ProgramInfo, Error> {
         )));
     }
 
-    let mut lowerer = Lowerer::new(&source, path);
+    let mut lowerer = Lowerer::new(source, path);
     lowerer.run(root)?;
 
+    let vmt = std::mem::take(&mut lowerer.vmt);
     let program = lowerer.program;
     let source_info = lowerer.sib.finish();
     Ok(ProgramInfo {
         program,
         source_info,
+        vmt,
         ..Default::default()
     })
 }
@@ -157,6 +166,26 @@ struct Lowerer<'a> {
     /// closure body reads it back from its synthetic self-parameter (`build_var`).
     closure_upvalues: HashMap<FunctionIdx, Vec<String>>,
 
+    // ---- class / metatable recognition (Phase 1) ----
+    /// Class table name -> its methods (`(method name, lowered function)`), gathered from
+    /// `function T.m` / `function T:m` definitions. Keyed by the class table's lexical name.
+    class_methods: HashMap<String, Vec<(String, FunctionIdx)>>,
+    /// Subclass name -> `__index` parent name (the metatable chain edge).
+    class_parent: HashMap<String, String>,
+    /// Every table recognized as a class (has an `__index`, or methods, or a class metatable).
+    class_names: HashSet<String>,
+    /// Every method name known to belong to some class (gates `LuaCall` emission: a `o:m()` whose
+    /// `m` is not a known class method stays a name-based `DirectCall`, keeping it sound).
+    method_names: HashSet<String>,
+    /// Classes whose `__index` is a function value: dispatch is opaque, so their instances take the
+    /// name-based fallback rather than `LuaCall` (Phase 1c/1d).
+    opaque_classes: HashSet<String>,
+    /// Count of construction sites whose metatable could not be resolved to a class (surfaced at
+    /// import so precision regressions are visible; Phase 1d).
+    opaque_alloc_count: usize,
+    /// Virtual method table recovered for this module (set in [`Lowerer::build_vmt`]).
+    vmt: VirtualMethodTable,
+
     // ---- per-function state ----
     fidx: FunctionIdx,
     /// Upvalue names captured by the function currently being lowered; each resolves to a field of
@@ -193,6 +222,13 @@ impl<'a> Lowerer<'a> {
             anon_counter: 0,
             func_by_node: HashMap::new(),
             closure_upvalues: HashMap::new(),
+            class_methods: HashMap::new(),
+            class_parent: HashMap::new(),
+            class_names: HashSet::new(),
+            method_names: HashSet::new(),
+            opaque_classes: HashSet::new(),
+            opaque_alloc_count: 0,
+            vmt: VirtualMethodTable::new_lua(),
             fidx: FunctionIdx::new(0),
             cur_upvalues: HashMap::new(),
             scopes: Vec::new(),
@@ -206,10 +242,188 @@ impl<'a> Lowerer<'a> {
 
     fn run(&mut self, root: Node<'a>) -> Result<(), Error> {
         self.collect_functions(root);
+        // Recover class/metatable structure before lowering, so construction sites can be tagged
+        // and method calls routed to `LuaCall` (Phase 1a/1c).
+        self.recognize_classes(root);
+        self.build_vmt();
         for entry in self.funcs.clone() {
             self.lower_function(&entry)?;
         }
+        if self.opaque_alloc_count > 0 {
+            log::warn!(
+                "lua: {} construction site(s) had an unresolved metatable; instances fall back to name-based dispatch",
+                self.opaque_alloc_count
+            );
+        }
         Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Class / metatable recognition (Phase 1a/1b/1c)
+    // ------------------------------------------------------------------
+
+    /// The stable class symbol for a class table's lexical name (`Account` ->
+    /// `lua$class$Account`). Kept in the same symbol space as the allocation tags emitted at
+    /// construction sites, so the CHA resolvents join.
+    fn class_symbol(&self, name: &str) -> Symbol {
+        Symbol::from(format!("lua$class${name}").as_str())
+    }
+
+    /// Walks the whole tree recovering class tables, their methods, and the `__index` hierarchy.
+    /// Runs after [`Lowerer::collect_functions`] so method function definitions already have a
+    /// [`FunctionIdx`] recorded in `func_by_node`.
+    fn recognize_classes(&mut self, node: Node<'a>) {
+        match node.kind() {
+            "function_declaration" => {
+                if let Some(name) = node.child_by_field_name("name")
+                    && matches!(name.kind(), "dot_index_expression" | "method_index_expression")
+                    && let Some(tbl) = name.child_by_field_name("table")
+                    && tbl.kind() == "identifier"
+                    && let Some(&fidx) = self.func_by_node.get(&node.id())
+                {
+                    let cls = self.node_text(tbl).to_string();
+                    let m = self.def_name(name);
+                    self.class_names.insert(cls.clone());
+                    self.method_names.insert(m.clone());
+                    self.class_methods.entry(cls).or_default().push((m, fidx));
+                }
+            }
+            "assignment_statement" => self.recognize_assign(node),
+            "variable_declaration" => {
+                if let Some(inner) = node.named_child(0)
+                    && inner.kind() == "assignment_statement"
+                {
+                    self.recognize_assign(inner);
+                }
+            }
+            _ => {}
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.recognize_classes(child);
+        }
+    }
+
+    /// Recognizes the two class-shaping assignment idioms:
+    /// - `T.__index = X` — marks `T` a class; `X != T` records `T`'s `__index` parent, and an
+    ///   `X` that is a function value marks `T` opaque for dispatch.
+    /// - `T = setmetatable({}, { __index = P })` — records `T --__index--> P`.
+    fn recognize_assign(&mut self, node: Node<'a>) {
+        let vlist = child_of_kind(node, "variable_list");
+        let elist = child_of_kind(node, "expression_list");
+        let targets: Vec<Node<'a>> = vlist
+            .map(|v| named_of(v).into_iter().filter(|n| n.kind() != "attribute").collect())
+            .unwrap_or_default();
+        let rhs: Vec<Node<'a>> = elist.map(named_of).unwrap_or_default();
+        for (i, t) in targets.iter().enumerate() {
+            let val = rhs.get(i).copied();
+            match t.kind() {
+                "dot_index_expression" => {
+                    let field = t.child_by_field_name("field").map(|f| self.node_text(f));
+                    if field != Some("__index") {
+                        continue;
+                    }
+                    let Some(tbl) = t.child_by_field_name("table").filter(|n| n.kind() == "identifier")
+                    else {
+                        continue;
+                    };
+                    let cls = self.node_text(tbl).to_string();
+                    self.class_names.insert(cls.clone());
+                    match val.map(|v| v.kind()) {
+                        Some("identifier") => {
+                            let x = self.node_text(val.unwrap()).to_string();
+                            // `T.__index = T` is a self-lookup root; a different name is a parent.
+                            if x != cls {
+                                self.class_parent.insert(cls, x);
+                            }
+                        }
+                        // `__index` bound to a function value: dispatch is opaque (Phase 1c).
+                        Some("function_definition") => {
+                            self.opaque_classes.insert(cls);
+                        }
+                        // Computed / non-literal `__index`: leave as a plain class root.
+                        _ => {}
+                    }
+                }
+                "identifier" => {
+                    // `T = setmetatable({}, MT)`: a table-constructor MT with an `__index = P`
+                    // identifier is an inheritance edge; an identifier MT is an *instance* of a
+                    // class (handled at lowering, not here).
+                    if let Some(v) = val
+                        && let Some((_tbl, mt)) = self.as_setmetatable_call(v)
+                        && mt.kind() == "table_constructor"
+                        && let Some(parent) = self.index_parent_of_constructor(mt)
+                    {
+                        let cls = self.node_text(*t).to_string();
+                        self.class_names.insert(cls.clone());
+                        self.class_parent.insert(cls, parent);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// If `node` is a `setmetatable(a, b)` call, returns its two argument nodes.
+    fn as_setmetatable_call(&self, node: Node<'a>) -> Option<(Node<'a>, Node<'a>)> {
+        if node.kind() != "function_call" {
+            return None;
+        }
+        let name = node.child_by_field_name("name")?;
+        if !matches!(name.kind(), "identifier" | "global") || self.node_text(name) != "setmetatable"
+        {
+            return None;
+        }
+        let args = node.child_by_field_name("arguments").map(named_of).unwrap_or_default();
+        match (args.first(), args.get(1)) {
+            (Some(a), Some(b)) => Some((*a, *b)),
+            _ => None,
+        }
+    }
+
+    /// The `__index` parent named in a table-constructor metatable (`{ __index = Base }` -> `Base`),
+    /// when it is a bare identifier.
+    fn index_parent_of_constructor(&self, tc: Node<'a>) -> Option<String> {
+        for field in named_of(tc) {
+            if field.kind() != "field" {
+                continue;
+            }
+            let name = field.child_by_field_name("name").map(|n| self.node_text(n));
+            if name == Some("__index")
+                && let Some(value) = field.child_by_field_name("value")
+                && value.kind() == "identifier"
+            {
+                return Some(self.node_text(value).to_string());
+            }
+        }
+        None
+    }
+
+    /// Lowers the recovered class maps into [`VirtualMethodTable::Lua`] on `self.vmt`.
+    fn build_vmt(&mut self) {
+        let mut methods: Vec<(Symbol, Symbol, Symbol)> = Vec::new();
+        for (cls, ms) in &self.class_methods {
+            let cls_sym = self.class_symbol(cls);
+            for (m, fidx) in ms {
+                let fname = self.program[*fidx].name.clone();
+                methods.push((cls_sym.clone(), Symbol::from(m.as_str()), Symbol::from(fname.as_str())));
+            }
+        }
+        // Deterministic ordering (the recognition walk is deterministic, but the method map is a
+        // HashMap; sort so the emitted VMT — and thus resolvent order — is stable).
+        methods.sort_unstable();
+
+        // The VMT's `hierarchy` is a `hashbrown::HashMap` (matching `call.rs`), distinct from the
+        // std map used elsewhere in this module.
+        let mut hierarchy: hashbrown::HashMap<Symbol, SmallVec<[Symbol; 2]>> =
+            hashbrown::HashMap::new();
+        for (sub, sup) in &self.class_parent {
+            hierarchy
+                .entry(self.class_symbol(sub))
+                .or_default()
+                .push(self.class_symbol(sup));
+        }
+        self.vmt = VirtualMethodTable::Lua { methods, hierarchy };
     }
 
     // ------------------------------------------------------------------
@@ -1122,19 +1336,47 @@ impl<'a> Lowerer<'a> {
             return result;
         }
 
+        // `setmetatable(t, mt)` returns `t` with its metatable set. Model it as a copy of the table
+        // that also carries an allocation-site object tag when `mt` names a known class, so the
+        // index engine propagates the class through returns/summaries (Phase 1b).
+        if let Some(result) = self.eval_setmetatable(name_node, node, blk) {
+            return result;
+        }
+
         let mut args: ThinVec<Exp> = ThinVec::new();
+
+        // When the call is a hierarchy-resolvable method call (`o:m()` whose `m` is a known,
+        // non-opaque class method), capture the receiver variable and method name so it lowers to a
+        // `LuaCall` resolved via metatable/CHA rather than a name-based `DirectCall` (Phase 4 Tier 2).
+        let mut lua_method: Option<(VariableRef, String)> = None;
 
         let callee = if let Some(name_node) = name_node {
             if name_node.kind() == "method_index_expression" {
                 // `o:m(...)` desugars to `m(o, ...)`.
-                if let Some(table) = name_node.child_by_field_name("table") {
-                    let recv = self.eval_expr(table, blk);
-                    args.push(recv);
-                }
-                name_node
+                let method = name_node
                     .child_by_field_name("method")
                     .map(|m| self.node_text(m).to_string())
-                    .unwrap_or_default()
+                    .unwrap_or_default();
+                if let Some(table) = name_node.child_by_field_name("table") {
+                    let recv = self.eval_expr(table, blk);
+                    // Materialize the receiver into a variable so it can be both actual arg 0 and
+                    // the `LuaCall` receiver.
+                    let recv_var = match recv {
+                        Exp::Variable(v) => v,
+                        other => {
+                            let t = self.fresh_temp();
+                            self.push_stmt(blk, StatementKind::assign(t.clone(), [other]));
+                            t
+                        }
+                    };
+                    args.push(Exp::Variable(recv_var.clone()));
+                    if self.method_names.contains(&method)
+                        && !self.method_is_opaque(&method)
+                    {
+                        lua_method = Some((recv_var, method.clone()));
+                    }
+                }
+                method
             } else {
                 self.call_name(name_node)
             }
@@ -1163,6 +1405,13 @@ impl<'a> Lowerer<'a> {
             CallStyle::FuncPtrCall {
                 callee: callee_ap,
                 signature: Some("indirect-call".to_string()),
+            }
+        } else if let Some((receiver, method)) = lua_method {
+            // Tier 2: resolved later via the receiver's object facts + the Lua CHA. The receiver is
+            // already actual arg 0 (pushed above), so codegen does not re-insert it.
+            CallStyle::LuaCall {
+                receiver,
+                method: Symbol::from(method.as_str()),
             }
         } else {
             CallStyle::DirectCall {
@@ -1233,6 +1482,72 @@ impl<'a> Lowerer<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Lowers `setmetatable(t, mt)` (Phase 1b). Returns `Some(value)` where `value` is a single
+    /// variable that (i) carries the table `t`'s data (setmetatable returns its first argument) and
+    /// (ii) is tagged with an allocation-site object ref when `mt` resolves to a known class table.
+    /// The tag rides the existing `call_target_assign` closure interprocedurally, so a
+    /// `local acct = Account.new()` receives `acct`'s class for free. Returns `None` to fall
+    /// through to the generic call path when `node` is not a `setmetatable` call.
+    fn eval_setmetatable(
+        &mut self,
+        name_node: Option<Node<'a>>,
+        node: Node<'a>,
+        blk: BasicBlockIdx,
+    ) -> Option<Exp> {
+        let name_node = name_node?;
+        if !matches!(name_node.kind(), "identifier" | "global")
+            || self.node_text(name_node) != "setmetatable"
+        {
+            return None;
+        }
+        let args = node
+            .child_by_field_name("arguments")
+            .map(named_of)
+            .unwrap_or_default();
+        let table_exp = args
+            .first()
+            .map(|&a| self.eval_expr(a, blk))
+            .unwrap_or_else(nil_exp);
+        let cls = args.get(1).and_then(|&mt| self.metatable_class(mt));
+
+        let obj = self.fresh_temp();
+        let mut sources: Vec<Exp> = vec![table_exp];
+        if let Some(cls) = cls {
+            // A single assign carrying both the data (Variable) and the object tag (ObjectRef), so
+            // one SSA version of `obj` gets both the field contents and the class tag.
+            sources.push(Exp::ObjectRef(CallObject::JavaObject(JavaClass(self.class_symbol(&cls)))));
+        } else {
+            // Computed / non-class metatable: still model the return of `t`, but record the
+            // imprecision (Phase 1d).
+            self.opaque_alloc_count += 1;
+        }
+        self.push_stmt(blk, StatementKind::assign(obj.clone(), sources));
+        Some(Exp::Variable(obj))
+    }
+
+    /// Whether a method name must take the name-based fallback because every class defining it has
+    /// an opaque (function) `__index` (Phase 1c). Cheap and conservative: a method defined by any
+    /// non-opaque class is treated as resolvable.
+    fn method_is_opaque(&self, method: &str) -> bool {
+        if self.opaque_classes.is_empty() {
+            return false;
+        }
+        !self.class_methods.iter().any(|(cls, ms)| {
+            !self.opaque_classes.contains(cls) && ms.iter().any(|(m, _)| m == method)
+        })
+    }
+
+    /// The class named by a metatable argument, when it is a bare identifier naming a known class
+    /// table (`setmetatable({}, Account)` -> `Account`). A table-constructor or computed metatable
+    /// yields `None`.
+    fn metatable_class(&self, mt: Node<'a>) -> Option<String> {
+        if !matches!(mt.kind(), "identifier" | "global") {
+            return None;
+        }
+        let name = self.node_text(mt).to_string();
+        self.class_names.contains(&name).then_some(name)
     }
 
     /// The name given to a function *definition*: the bare final component of its dotted/method
@@ -1440,5 +1755,139 @@ fn collect_label_names(src: &str, node: Node<'_>, out: &mut Vec<String>) {
             }
             _ => collect_label_names(src, child, out),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ctadl_ir::mir::visit::Visitor;
+
+    fn import_str(src: &str) -> ProgramInfo {
+        lower_lua_source(src, Path::new("<test>.lua")).expect("lua lowering failed")
+    }
+
+    /// The recovered `(class, method)` pairs, sorted, ignoring the function-id column.
+    fn method_pairs(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
+        match vmt {
+            VirtualMethodTable::Lua { methods, .. } => {
+                let mut v: Vec<(String, String)> = methods
+                    .iter()
+                    .map(|(cls, m, _fid)| (cls.to_string(), m.to_string()))
+                    .collect();
+                v.sort();
+                v
+            }
+            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
+        }
+    }
+
+    /// The recovered `subclass -> parent` edges, sorted.
+    fn hierarchy_edges(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
+        match vmt {
+            VirtualMethodTable::Lua { hierarchy, .. } => {
+                let mut v: Vec<(String, String)> = hierarchy
+                    .iter()
+                    .flat_map(|(sub, sups)| {
+                        sups.iter().map(move |sup| (sub.to_string(), sup.to_string()))
+                    })
+                    .collect();
+                v.sort();
+                v
+            }
+            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
+        }
+    }
+
+    /// Collects every allocation-site object class symbol tagged in the program IR.
+    #[derive(Default)]
+    struct ObjectTagFinder(Vec<String>);
+    impl Visitor for ObjectTagFinder {
+        fn visit_exp(&mut self, exp: &Exp) {
+            if let Exp::ObjectRef(CallObject::JavaObject(cls)) = exp {
+                self.0.push(cls.0.to_string());
+            }
+            self.super_exp(exp);
+        }
+    }
+    fn object_tags(program_info: &ProgramInfo) -> Vec<String> {
+        let mut f = ObjectTagFinder::default();
+        for func in &program_info.program.functions.functions {
+            f.visit_function_data(FunctionIdx::new(0), func);
+        }
+        f.0.sort();
+        f.0.dedup();
+        f.0
+    }
+
+    #[test]
+    fn recovers_flat_class_methods() {
+        // `Account` is a class table (`Account.__index = Account`) with three methods; there is no
+        // inheritance edge (the `__index` is a self-root).
+        let src = r#"
+            local Account = {}
+            Account.__index = Account
+            function Account.new()
+              return setmetatable({}, Account)
+            end
+            function Account:deposit(amount) self.value = amount end
+            function Account:balance() return self.value end
+        "#;
+        let info = import_str(src);
+        assert_eq!(
+            method_pairs(&info.vmt),
+            vec![
+                ("lua$class$Account".to_string(), "balance".to_string()),
+                ("lua$class$Account".to_string(), "deposit".to_string()),
+                ("lua$class$Account".to_string(), "new".to_string()),
+            ]
+        );
+        assert!(hierarchy_edges(&info.vmt).is_empty());
+        // The `setmetatable({}, Account)` construction site is tagged with the class.
+        assert_eq!(object_tags(&info), vec!["lua$class$Account".to_string()]);
+    }
+
+    #[test]
+    fn recovers_index_inheritance() {
+        // `Derived` sets `Base` as its `__index` parent via `setmetatable({}, { __index = Base })`.
+        let src = r#"
+            local Base = {}
+            Base.__index = Base
+            function Base:set_data(d) self.data = d end
+            function Base:get_data() return self.data end
+
+            local Derived = setmetatable({}, { __index = Base })
+            Derived.__index = Derived
+            function Derived.new() return setmetatable({}, Derived) end
+        "#;
+        let info = import_str(src);
+        assert_eq!(
+            method_pairs(&info.vmt),
+            vec![
+                ("lua$class$Base".to_string(), "get_data".to_string()),
+                ("lua$class$Base".to_string(), "set_data".to_string()),
+                ("lua$class$Derived".to_string(), "new".to_string()),
+            ]
+        );
+        assert_eq!(
+            hierarchy_edges(&info.vmt),
+            vec![("lua$class$Derived".to_string(), "lua$class$Base".to_string())]
+        );
+        // Only the `setmetatable({}, Derived)` instance site is tagged; the class-table definition
+        // `setmetatable({}, { __index = Base })` (a table-constructor metatable) is not.
+        assert_eq!(object_tags(&info), vec!["lua$class$Derived".to_string()]);
+    }
+
+    #[test]
+    fn computed_metatable_is_not_tagged() {
+        // A non-literal metatable cannot be resolved to a class, so the construction site takes the
+        // fallback and produces no allocation tag.
+        let src = r#"
+            local function make(mt)
+              return setmetatable({}, mt)
+            end
+        "#;
+        let info = import_str(src);
+        assert!(object_tags(&info).is_empty());
     }
 }

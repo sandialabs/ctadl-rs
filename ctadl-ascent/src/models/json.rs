@@ -304,7 +304,10 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             VirtualMethodTable::Native { methods } => {
                 methods.iter().map(|(_, _, fq, _)| fq.as_ref()).collect()
             }
-            VirtualMethodTable::Unknown => UniverseSet::empty(),
+            // Lua free functions (source/sink/main) are not class methods, so name-based
+            // matching happens through the fallback indexing above; the universe stays empty
+            // like the Unknown case (proven behavior; parent/extends constraints are Java-only).
+            VirtualMethodTable::Lua { .. } | VirtualMethodTable::Unknown => UniverseSet::empty(),
         };
 
         // constructs index for the program
@@ -2065,6 +2068,9 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
                 methods.iter().map(|t| t.3.to_string()).collect()
             }
             VirtualMethodTable::Native { methods } => {
+                methods.iter().map(|t| t.2.to_string()).collect()
+            }
+            VirtualMethodTable::Lua { methods, .. } => {
                 methods.iter().map(|t| t.2.to_string()).collect()
             }
             VirtualMethodTable::Unknown => {

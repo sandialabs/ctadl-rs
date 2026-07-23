@@ -698,6 +698,7 @@ pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
                         ctadl_ir::call::CallStyle::DirectCall { .. } => "DirectCall",
                         ctadl_ir::call::CallStyle::FuncPtrCall { .. } => "FuncPtrCall",
                         ctadl_ir::call::CallStyle::JavaCall { .. } => "JavaCall",
+                        ctadl_ir::call::CallStyle::LuaCall { .. } => "LuaCall",
                     };
                     *call_style_counts.entry(style_name).or_insert(0) += 1;
                 }

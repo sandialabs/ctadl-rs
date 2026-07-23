@@ -517,6 +517,43 @@ impl Visitor for CodegenVisitor<'_> {
                             }
                         }
                     }
+                    CallStyle::LuaCall { receiver, method } => {
+                        // A Lua receiver has no static type, so there is no single receiver class to
+                        // key CHA on. We resolve two complementary ways; the receiver is already
+                        // actual arg 0 (inserted by the frontend), so it is not re-inserted here.
+                        let recv_var = self.trans_variable_ref(receiver);
+                        let empty_desc = Symbol::from("");
+
+                        // (1) CHA over the method name across the recovered `__index` hierarchy:
+                        // the sound set of targets is every class method named `method` (a subclass
+                        // that inherits resolves to the defining ancestor's function via
+                        // `cha_super_method`). For a uniquely-named method this is a single exact
+                        // edge. This is what carries factory-returned receivers (`acct =
+                        // Account.new()`), whose allocation tag the engine does not propagate back
+                        // to the caller.
+                        let targets = self.cha.lua_resolvents_by_method(method);
+                        for target in &targets {
+                            let target = fx::Function(target.clone().into());
+                            let target = self.source_info.sites.get_or_add_function(target);
+                            self.facts.call.push((site, target));
+                        }
+
+                        // (2) Deferred, context-sensitive resolution for receivers whose class the
+                        // engine CAN reach locally (a same-function allocation or an argument-passed
+                        // instance): the receiver's object facts (`call_target_assign`) join the Lua
+                        // CHA `callee_resolvents` under this dispatch key. Redundant with (1) for a
+                        // uniquely-named method (same target), and strictly more precise when a
+                        // method name is shared across unrelated classes.
+                        self.facts.callee_info.push((
+                            site,
+                            FlowVertex(recv_var, fx::Path::empty()),
+                            fx::CallDispatchKey::Java(method.clone(), empty_desc),
+                        ));
+                        log::trace!(
+                            "lua: resolve {receiver}:{method} to {} CHA target(s) + deferred",
+                            targets.len()
+                        );
+                    }
                     CallStyle::FuncPtrCall { callee, .. } => {
                         let vertex = self.trans_access_path(callee);
                         self.facts
@@ -790,6 +827,35 @@ impl ClassHierarchyAnalysis {
                 );
                 Self { java_resolvents }
             }
+            // Lua mirrors the Java arm: a Lua method is a `method_implemented` with a fixed
+            // empty descriptor sentinel, and each `__index` parent is a `direct_superclass`.
+            // The shared `run_cha` then computes the `__index`-chain resolvents unchanged.
+            VirtualMethodTable::Lua { methods, hierarchy } => {
+                let empty_desc = Symbol::from("");
+                let method_implemented = methods
+                    .iter()
+                    .cloned()
+                    .map(|(cls, name, id)| (cls, name, empty_desc.clone(), id))
+                    .collect();
+                let mut direct_superclass: Vec<(Symbol, Symbol)> = hierarchy
+                    .iter()
+                    .flat_map(|(sub, sups)| {
+                        sups.iter().map(|sup| (sup.clone(), sub.clone()))
+                    })
+                    .collect();
+                // Sort for determinism
+                direct_superclass.sort_unstable();
+                let instantiated_classes_vec =
+                    instantiated_classes.into_iter().map(|s| (s,)).collect();
+                let java_resolvents = run_cha(
+                    method_implemented,
+                    direct_superclass,
+                    Default::default(),
+                    Default::default(),
+                    instantiated_classes_vec,
+                );
+                Self { java_resolvents }
+            }
             _ => {
                 log::warn!("CHA: unsupported virtual method table");
                 Self::default()
@@ -809,6 +875,17 @@ impl ClassHierarchyAnalysis {
             .unwrap_or(&[])
             .iter()
             .cloned()
+    }
+
+    /// The deduplicated set of CHA targets for a Lua method name, unioned across every class in the
+    /// recovered hierarchy (Lua method calls carry no static receiver class, so resolution is keyed
+    /// on the method name alone; the `""` descriptor sentinel matches the Lua CHA arm).
+    fn lua_resolvents_by_method(&self, method: &Symbol) -> BTreeSet<Symbol> {
+        self.java_resolvents
+            .iter()
+            .filter(|((_cls, name, _desc), _)| name == method)
+            .flat_map(|(_, targets)| targets.iter().cloned())
+            .collect()
     }
 }
 
