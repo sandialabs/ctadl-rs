@@ -179,7 +179,8 @@ fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
     Ok(cases)
 }
 
-/// Pair each `foo.lua` with its `foo-query.json` config. A `.lua` without a
+/// Pair each `foo.lua` -- or each `foo/` directory of Lua sources, imported whole
+/// as one `require` root -- with its `foo-query.json` config. A source without a
 /// matching query is skipped, mirroring the pcode discovery. The name is prefixed
 /// with `Lua:` so the reports (and `--filter`) distinguish it from other
 /// frontends' cases.
@@ -189,7 +190,7 @@ fn discover_lua(lua_dir: &Path) -> Result<Vec<TestCase>> {
         return Ok(cases);
     }
     for entry in read_dir_sorted(lua_dir)? {
-        if entry.extension().and_then(|e| e.to_str()) != Some("lua") {
+        if !entry.is_dir() && entry.extension().and_then(|e| e.to_str()) != Some("lua") {
             continue;
         }
         let stem = file_stem(&entry)?;

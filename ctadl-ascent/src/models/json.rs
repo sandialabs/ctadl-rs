@@ -275,6 +275,21 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                     .push(fq);
                 program_method_qualified_ids.entry(fq).or_default().push(fq);
             }
+        } else if let VirtualMethodTable::Lua { .. } = vmt {
+            // Lua IR names are fully qualified by module (`kong.pdk.request.get_headers`,
+            // `direct-flow.source`). Key matching off the trailing simple name as well, so a model
+            // can say `^source$` without spelling the module it happens to live in -- the same
+            // treatment the Native arm gives decorated names. Both spellings resolve to the
+            // fully-qualified IR name.
+            for func in &program_info.program.functions.functions {
+                let fq = func.name.as_str();
+                let simple = fq.rsplit('.').next().unwrap_or(fq);
+                let keys: &[&str] = if simple == fq { &[fq] } else { &[simple, fq] };
+                for key in keys {
+                    program_method_names.entry(key).or_default().push(fq);
+                    program_method_signatures.entry(key).or_default().push(fq);
+                }
+            }
         } else {
             // Fallback (Unknown / CplusPlus): use the IR function names directly.
             for func in &program_info.program.functions.functions {
@@ -305,7 +320,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 methods.iter().map(|(_, _, fq, _)| fq.as_ref()).collect()
             }
             // Lua free functions (source/sink/main) are not class methods, so name-based
-            // matching happens through the fallback indexing above; the universe stays empty
+            // matching happens through the Lua indexing above; the universe stays empty
             // like the Unknown case (proven behavior; parent/extends constraints are Java-only).
             VirtualMethodTable::Lua { .. } | VirtualMethodTable::Unknown => UniverseSet::empty(),
         };

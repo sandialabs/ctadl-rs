@@ -23,20 +23,41 @@
 //! pre-allocated label blocks, so a run of straight-line code between two labels (or a
 //! label and a `goto`) becomes its own block with the appropriate edges.
 //!
+//! ## Modules and names
+//!
+//! An import covers a whole *directory* of Lua sources (a single file is just the one-unit case),
+//! and that directory is the `require` root. Each file's module name is its path relative to the
+//! root with separators replaced by `.` and `.lua` dropped, folding a trailing `init` away -- i.e.
+//! exactly what `package.path`'s `?.lua;?/init.lua` resolves. Importing the tree at once is what
+//! makes `require` resolvable, and that in turn is what lets a call site be given the *same*
+//! fully-qualified name its definition got.
+//!
+//! Definitions are therefore named by what their root denotes ([`Lowerer::qualified_def_name`]):
+//! the module table's fields are the module's exports (`function M.f` in `a/b.lua` with `return M`
+//! is `a.b.f`), another file-local table is namespaced under the module (`a.b.T.m`), a `local
+//! function` is `a.b.f`, and a *global* root names itself (`function kong.request.get_header` is
+//! `kong.request.get_header`) so a shim in another file can define the very same string.
+//!
+//! Call sites are written with plain Lua names, so the frontend resolves them back to that
+//! qualified name ([`Lowerer::qname_of`]) through an alias environment seeded by `require`, by
+//! field reads of known module tables, and by `local` aliasing -- which is how OpenResty-style
+//! hoisting (`local get_headers = ngx.req.get_headers`) resolves to the API it aliases rather
+//! than colliding with every other `get_headers` in the program.
+//!
 //! ## Data flow
 //!
 //! Assignments lower to [`StatementKind::Assign`]; field and index writes/reads lower to
 //! [`StatementKind::Store`]/[`StatementKind::Load`] via
 //! [`load_access_path`]/[`store_access_path`], so Lua tables are field-sensitive. Function
-//! calls lower to [`StatementKind::CallAssign`]. Following the C frontend, most calls are staged
-//! as a [`CallStyle::DirectCall`] whose [`CallEdges::Explicit`] list holds the *syntactic* callee
-//! name (the bare final component of a dotted/method name, so `o:m(...)` and `T.m(...)` both
-//! dispatch on `m`); call resolution is not done here -- the analysis joins the call to a
-//! definition or model by name. A call whose callee is a bare local/parameter that is *not* a
-//! defined function (a first-class function value, e.g. a closure) is instead a
-//! [`CallStyle::FuncPtrCall`], resolved by data flow. A handful of standard-library calls
-//! (`table.insert`, `ipairs`/`pairs`, `select`) are recognized syntactically and lowered directly
-//! to data flow rather than a call, since they carry taint but have no definition or model.
+//! calls lower to [`StatementKind::CallAssign`]. Most calls are staged as a
+//! [`CallStyle::DirectCall`] whose [`CallEdges::Explicit`] list holds the resolved qualified
+//! callee name; the analysis joins the call to a definition or model by that name. A call whose
+//! callee is a bare local/parameter that resolves to no definition (a first-class function value,
+//! e.g. a closure) is instead a [`CallStyle::FuncPtrCall`], resolved by data flow, and a method
+//! call `o:m(...)` is a [`CallStyle::LuaCall`] dispatched on the bare method name through the
+//! recovered metatable hierarchy (a Lua receiver has no static type). A handful of standard-library
+//! calls (`table.insert`, `ipairs`/`pairs`, `select`) are recognized syntactically and lowered
+//! directly to data flow rather than a call, since they carry taint but have no definition or model.
 //!
 //! ## Globals
 //!
@@ -58,7 +79,7 @@
 //! are otherwise ignored (no error is raised).
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ctadl_ir::ThinVec;
 use ctadl_ir::index::idx::Idx;
@@ -66,49 +87,151 @@ use ctadl_ir::mir::*;
 use ctadl_ir::mir::call::{JavaClass, VirtualMethodTable};
 use smallvec::SmallVec;
 use source_info::{ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
-use tree_sitter::{Node, Parser};
+use tree_sitter::{Node, Parser, Tree};
 
 use crate::error::Error;
 
-/// Parse a Lua source file and translate it into CTADL IR.
-pub fn import_lua(path: &Path) -> Result<ProgramInfo, Error> {
-    let source = std::fs::read_to_string(path)?;
-    lower_lua_source(&source, path)
+/// One Lua source file in an import: where it came from, the `require` name it answers to, and
+/// its text.
+struct SourceUnit {
+    path: PathBuf,
+    /// The file's `require` module name, e.g. `kong.pdk.request` (see [`module_name`]).
+    module: String,
+    source: String,
 }
 
-/// Translate an in-memory Lua `source` (labeled by `path` for diagnostics/spans) into CTADL IR.
-/// Shared by [`import_lua`] and the unit tests.
-fn lower_lua_source(source: &str, path: &Path) -> Result<ProgramInfo, Error> {
+/// Parse a Lua artifact and translate it into CTADL IR.
+///
+/// `path` is either a directory -- imported whole, and taken as the `require` root -- or a single
+/// `.lua` file, which is just the one-unit case (its parent directory is the root). Importing a
+/// tree at once is what lets `require` be resolved to a module in the same import, which is what
+/// makes call sites resolvable to fully-qualified definition names.
+pub fn import_lua(path: &Path) -> Result<ProgramInfo, Error> {
+    lower_lua_units(collect_units(path)?)
+}
+
+/// Gathers the source units under `path`, in a stable order.
+fn collect_units(path: &Path) -> Result<Vec<SourceUnit>, Error> {
+    let (root, files) = if path.is_dir() {
+        let mut files = Vec::new();
+        collect_lua_files(path, &mut files)?;
+        files.sort();
+        (path.to_path_buf(), files)
+    } else {
+        let root = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        (root, vec![path.to_path_buf()])
+    };
+
+    if files.is_empty() {
+        return Err(Error::TreeSitterParse(format!(
+            "no .lua files found under {}",
+            path.display()
+        )));
+    }
+
+    files
+        .into_iter()
+        .map(|file| {
+            let source = std::fs::read_to_string(&file)?;
+            Ok(SourceUnit {
+                module: module_name(&root, &file),
+                path: file,
+                source,
+            })
+        })
+        .collect()
+}
+
+/// Recursively collects `.lua` files under `dir`.
+fn collect_lua_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), Error> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let meta = std::fs::symlink_metadata(&path)?;
+        if meta.is_dir() {
+            collect_lua_files(&path, out)?;
+        } else if meta.is_file() && path.extension().and_then(|e| e.to_str()) == Some("lua") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// The `require` name for `file` relative to the import root: the relative path with separators
+/// replaced by `.` and `.lua` dropped, folding a trailing `init` away. This is what
+/// `package.path`'s default `?.lua;?/init.lua` resolves, so `require "kong.pdk.request"` names
+/// `<root>/kong/pdk/request.lua` and `require "kong"` names `<root>/kong/init.lua`.
+fn module_name(root: &Path, file: &Path) -> String {
+    let rel = file.strip_prefix(root).unwrap_or(file);
+    let mut parts: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    if let Some(last) = parts.last_mut()
+        && let Some(stem) = last.strip_suffix(".lua")
+    {
+        *last = stem.to_string();
+    }
+    if parts.len() > 1 && parts.last().map(String::as_str) == Some("init") {
+        parts.pop();
+    }
+    parts.join(".")
+}
+
+/// Parses and lowers every unit of an import into one [`ProgramInfo`].
+fn lower_lua_units(units: Vec<SourceUnit>) -> Result<ProgramInfo, Error> {
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_lua::LANGUAGE.into())
         .map_err(Error::TreeSitterLanguage)?;
 
-    let tree = parser.parse(source, None).ok_or_else(|| {
-        Error::TreeSitterParse(format!("tree-sitter failed to parse {}", path.display()))
-    })?;
-
-    let root = tree.root_node();
-    if root.has_error() {
-        // A syntax error in a source frontend is worth surfacing rather than
-        // silently importing a partial tree.
-        return Err(Error::TreeSitterParse(format!(
-            "syntax error while parsing {}",
-            path.display()
-        )));
+    // A syntax error in a single-file import is worth surfacing rather than silently importing a
+    // partial tree. In a directory import it must not sink the other 600 files, so the bad unit is
+    // dropped and counted instead.
+    let single = units.len() == 1;
+    let mut parsed: Vec<SourceUnit> = Vec::with_capacity(units.len());
+    let mut trees: Vec<Tree> = Vec::with_capacity(units.len());
+    let mut skipped = 0usize;
+    for unit in units {
+        match parser.parse(&unit.source, None) {
+            Some(tree) if !tree.root_node().has_error() => {
+                parsed.push(unit);
+                trees.push(tree);
+            }
+            _ if single => {
+                return Err(Error::TreeSitterParse(format!(
+                    "syntax error while parsing {}",
+                    unit.path.display()
+                )));
+            }
+            _ => {
+                log::warn!("lua: skipping {}: syntax error", unit.path.display());
+                skipped += 1;
+            }
+        }
+    }
+    if parsed.is_empty() {
+        return Err(Error::TreeSitterParse(
+            "every Lua file in the import failed to parse".to_string(),
+        ));
+    }
+    if skipped > 0 {
+        log::warn!("lua: {skipped} file(s) skipped due to syntax errors");
     }
 
-    let mut lowerer = Lowerer::new(source, path);
-    lowerer.run(root)?;
+    let mut lowerer = Lowerer::new(&parsed, &trees);
+    lowerer.run()?;
 
     let vmt = std::mem::take(&mut lowerer.vmt);
-    let program = lowerer.program;
+    let program = std::mem::take(&mut lowerer.program);
     let source_info = lowerer.sib.finish();
     Ok(ProgramInfo {
         program,
         source_info,
         vmt,
-        ..Default::default()
     })
 }
 
@@ -139,6 +262,8 @@ enum Binding {
 #[derive(Clone)]
 struct FuncEntry<'a> {
     fidx: FunctionIdx,
+    /// Index of the source unit this function was found in.
+    unit: usize,
     /// Body node: a `block` for a function definition, or the `chunk` root for the top-level.
     body: Node<'a>,
     /// Parameter list node (`parameters`), if any.
@@ -147,20 +272,54 @@ struct FuncEntry<'a> {
     is_method: bool,
 }
 
+/// Chunk-level name facts for one source unit, recovered before that unit is lowered. These drive
+/// both fully-qualified definition names and call-site name resolution.
+#[derive(Default)]
+struct UnitScope {
+    /// The chunk-level local this file `return`s, if any. Its fields are the module's exports, so
+    /// `function <it>.f()` is named `<module>.f` rather than `<module>.<it>.f`.
+    module_table: Option<String>,
+    /// Chunk-level local names, whether or not they denote anything nameable. A local with no
+    /// alias holds an ordinary value, which is *not* a name -- distinguishing it from a global is
+    /// what keeps `local buf = {}` from being mistaken for a global table named `buf`.
+    locals: HashSet<String>,
+    /// Name -> the fully-qualified name it denotes, for names visible to every function in the
+    /// unit: file-local tables used as namespaces, `require` results, aliased API paths, and each
+    /// `local function`. Seeded into every function's alias environment.
+    aliases: HashMap<String, String>,
+    /// File-local tables that something is defined *into* (`function T.m`, `T.f = ...`), mapped to
+    /// the qualified name they denote (`<module>.T`). A table used this way is a namespace rather
+    /// than a value; a global one already names itself and is not listed here.
+    ///
+    /// Nesting is deliberately ignored: Kong's PDK declares its tables inside `function new()`,
+    /// and `function _REQUEST.get_headers()` there means the same `_REQUEST` as the call
+    /// `_REQUEST.get_headers()` beside it. Qualifying by file rather than by scope is what keeps
+    /// the two agreeing -- and keeps two files' `_REQUEST` apart.
+    namespaces: HashMap<String, String>,
+}
+
 struct Lowerer<'a> {
-    src: &'a str,
+    /// The units of this import, and their parse trees (parallel; indexed by `unit`).
+    units: &'a [SourceUnit],
+    trees: &'a [Tree],
+    /// Per-unit source-info key (parallel to `units`).
+    keys: Vec<ArtifactKey>,
+    /// Per-unit chunk-level name facts, filled by [`Lowerer::scan_unit`].
+    unit_scopes: Vec<UnitScope>,
+    /// The unit currently being scanned/collected/lowered; selects `src`, `module` and `key`.
+    unit: usize,
+
     program: Program,
     sib: SourceInfoBuilder,
-    key: ArtifactKey,
 
     /// All functions to lower, in discovery order.
     funcs: Vec<FuncEntry<'a>>,
     /// Set of names already used for a function definition (for uniqueness).
     used_names: HashMap<String, FunctionIdx>,
     anon_counter: usize,
-    /// Maps a function-definition node (by id) to the function it was collected as, so a closure
-    /// value expression can recover the [`FunctionIdx`] of its anonymous function.
-    func_by_node: HashMap<usize, FunctionIdx>,
+    /// Maps a function-definition node (by unit and node id) to the function it was collected as,
+    /// so a closure value expression can recover the [`FunctionIdx`] of its anonymous function.
+    func_by_node: HashMap<(usize, usize), FunctionIdx>,
     /// For each closure (anonymous function that captures upvalues), the names it captures. The
     /// enclosing function stores each captured value into a field of the closure object, and the
     /// closure body reads it back from its synthetic self-parameter (`build_var`).
@@ -183,6 +342,9 @@ struct Lowerer<'a> {
     /// Count of construction sites whose metatable could not be resolved to a class (surfaced at
     /// import so precision regressions are visible; Phase 1d).
     opaque_alloc_count: usize,
+    /// Count of call sites whose callee could not be resolved to a qualified name, and so fall
+    /// back to the path as written (surfaced at import alongside `opaque_alloc_count`).
+    unresolved_call_count: usize,
     /// Virtual method table recovered for this module (set in [`Lowerer::build_vmt`]).
     vmt: VirtualMethodTable,
 
@@ -193,6 +355,11 @@ struct Lowerer<'a> {
     cur_upvalues: HashMap<String, ()>,
     /// Lexical scope stack; innermost last.
     scopes: Vec<HashMap<String, Binding>>,
+    /// Name -> the qualified name it denotes, per lexical scope (pushed and popped with `scopes`).
+    /// A `None` entry is a name that denotes nothing nameable, which is how a `local` shadows an
+    /// outer alias -- `local Account = {}` inside a function must not resolve to the file's
+    /// `Account`.
+    alias_scopes: Vec<HashMap<String, Option<String>>>,
     /// Label name -> pre-allocated block for that label.
     labels: HashMap<String, BasicBlockIdx>,
     /// Stack of `break` targets (the continuation block of each enclosing loop).
@@ -205,18 +372,24 @@ struct Lowerer<'a> {
 }
 
 impl<'a> Lowerer<'a> {
-    fn new(src: &'a str, path: &Path) -> Self {
-        let key = ArtifactKey {
-            path: path.to_string_lossy().into_owned(),
-            sub_artifact_id: 0,
-            hash: Vec::new(),
-            encoding: source_info::ArtifactEncoding::Utf8,
-        };
+    fn new(units: &'a [SourceUnit], trees: &'a [Tree]) -> Self {
+        let keys = units
+            .iter()
+            .map(|u| ArtifactKey {
+                path: u.path.to_string_lossy().into_owned(),
+                sub_artifact_id: 0,
+                hash: Vec::new(),
+                encoding: source_info::ArtifactEncoding::Utf8,
+            })
+            .collect();
         Self {
-            src,
+            units,
+            trees,
+            keys,
+            unit_scopes: units.iter().map(|_| UnitScope::default()).collect(),
+            unit: 0,
             program: Program::default(),
             sib: SourceInfoBuilder::new(ArtifactMetadata::new()),
-            key,
             funcs: Vec::new(),
             used_names: HashMap::new(),
             anon_counter: 0,
@@ -228,10 +401,12 @@ impl<'a> Lowerer<'a> {
             method_names: HashSet::new(),
             opaque_classes: HashSet::new(),
             opaque_alloc_count: 0,
+            unresolved_call_count: 0,
             vmt: VirtualMethodTable::new_lua(),
             fidx: FunctionIdx::new(0),
             cur_upvalues: HashMap::new(),
             scopes: Vec::new(),
+            alias_scopes: Vec::new(),
             labels: HashMap::new(),
             loop_breaks: Vec::new(),
             normal_arity: 0,
@@ -240,33 +415,369 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn run(&mut self, root: Node<'a>) -> Result<(), Error> {
-        self.collect_functions(root);
+    fn run(&mut self) -> Result<(), Error> {
+        // Each phase runs over every unit before the next begins, because each depends on the
+        // previous having covered the *whole* import: names are resolved against modules defined
+        // in other files, so nothing can be named until every unit has been scanned.
+        for unit in 0..self.units.len() {
+            self.scan_unit(unit);
+        }
+        for unit in 0..self.units.len() {
+            self.unit = unit;
+            self.collect_functions(self.root_node(unit));
+        }
         // Recover class/metatable structure before lowering, so construction sites can be tagged
         // and method calls routed to `LuaCall` (Phase 1a/1c).
-        self.recognize_classes(root);
+        for unit in 0..self.units.len() {
+            self.unit = unit;
+            self.recognize_classes(self.root_node(unit));
+        }
         self.build_vmt();
         for entry in self.funcs.clone() {
+            self.unit = entry.unit;
             self.lower_function(&entry)?;
         }
+        log::info!(
+            "lua: imported {} file(s), {} function(s)",
+            self.units.len(),
+            self.program.functions.functions.len()
+        );
         if self.opaque_alloc_count > 0 {
             log::warn!(
                 "lua: {} construction site(s) had an unresolved metatable; instances fall back to name-based dispatch",
                 self.opaque_alloc_count
             );
         }
+        if self.unresolved_call_count > 0 {
+            log::warn!(
+                "lua: {} call site(s) had a callee that could not be resolved to a qualified name",
+                self.unresolved_call_count
+            );
+        }
         Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Per-unit accessors
+    // ------------------------------------------------------------------
+
+    /// Source text of the unit currently being processed.
+    fn src(&self) -> &'a str {
+        self.units[self.unit].source.as_str()
+    }
+
+    /// `require` module name of the unit currently being processed.
+    fn module(&self) -> &'a str {
+        self.units[self.unit].module.as_str()
+    }
+
+    fn root_node(&self, unit: usize) -> Node<'a> {
+        self.trees[unit].root_node()
+    }
+
+    /// Qualifies `name` under the current unit's module (`<module>.name`).
+    fn in_module(&self, name: &str) -> String {
+        qualify(self.module(), name)
+    }
+
+    /// The unit whose module name is `module`, if this import contains it. `package.path`'s
+    /// `?.lua` and `?/init.lua` both reach `a/b/init.lua`, so `require "a.b.init"` names the same
+    /// unit as `require "a.b"`.
+    fn unit_of_module(&self, module: &str) -> Option<usize> {
+        self.units
+            .iter()
+            .position(|u| u.module == module)
+            .or_else(|| {
+                let stripped = module.strip_suffix(".init")?;
+                self.units.iter().position(|u| u.module == stripped)
+            })
+    }
+
+    /// The module a `require` names, canonicalized to the module name of the unit it resolves to,
+    /// so that every spelling of a file resolves to the one name its definitions carry. A module
+    /// outside the import keeps the name as written -- it is still a name, just an external one.
+    fn required_module_canonical(&self, node: Node<'a>) -> Option<String> {
+        let module = self.required_module(node)?;
+        Some(match self.unit_of_module(&module) {
+            Some(unit) => self.units[unit].module.clone(),
+            None => module,
+        })
+    }
+
+    // ------------------------------------------------------------------
+    // Chunk-level name scanning (per unit, before any naming happens)
+    // ------------------------------------------------------------------
+
+    /// Recovers `unit`'s chunk-level name facts: which locals it declares, which of them are used
+    /// as namespaces, what each `require`/alias binding denotes, and which local it returns as its
+    /// module table. Runs before function collection, since definition names depend on all of it.
+    fn scan_unit(&mut self, unit: usize) {
+        self.unit = unit;
+        let root = self.root_node(unit);
+        let mut scope = UnitScope::default();
+
+        // Namespaces first: a table only *is* a namespace by virtue of something being defined
+        // into it, which can happen textually before or after its `local` declaration.
+        let mut roots = Vec::new();
+        let mut declared = HashSet::new();
+        self.scan_namespace_roots(root, &mut roots, &mut declared);
+        for name in roots {
+            if declared.contains(&name) {
+                let qualified = self.in_module(&name);
+                scope.namespaces.insert(name, qualified);
+            }
+        }
+
+        // Everything derived lands in one alias map, so name resolution is a single lookup.
+        // Namespaces go in before the chunk is walked, so a binding to one (`local B = A`)
+        // resolves.
+        scope.aliases.extend(scope.namespaces.clone());
+
+        self.scan_chunk_bindings(root, &mut scope);
+        scope.module_table = self.scan_module_table(root, &scope);
+
+        // The module table wins over the namespace rule: its fields are the module's exports.
+        if let Some(table) = scope.module_table.clone() {
+            scope.aliases.insert(table, self.module().to_string());
+        }
+        self.unit_scopes[unit] = scope;
+    }
+
+    /// Collects, over the whole unit at any nesting depth, every name that has something defined
+    /// *into* it -- the table root of a `function T.m` / `function T:m` definition or of a
+    /// `T.field = ...` assignment -- into `roots`, and every name the unit declares `local` into
+    /// `declared`. A local table things are defined into is a namespace; a plain `local buf = {}`
+    /// is a value and stays one, and a global root already names itself.
+    fn scan_namespace_roots(
+        &self,
+        node: Node<'a>,
+        roots: &mut Vec<String>,
+        declared: &mut HashSet<String>,
+    ) {
+        let root_of = |name: Node<'a>| -> Option<String> {
+            matches!(name.kind(), "dot_index_expression" | "method_index_expression")
+                .then(|| self.flatten_name(name).0)
+        };
+        match node.kind() {
+            "function_declaration" => {
+                if let Some(name) = node.child_by_field_name("name") {
+                    if let Some(root) = root_of(name) {
+                        roots.push(root);
+                    } else if is_local_declaration(node) {
+                        declared.insert(self.node_text(name).to_string());
+                    }
+                }
+            }
+            "assignment_statement" => {
+                if let Some(vlist) = child_of_kind(node, "variable_list") {
+                    for t in named_of(vlist) {
+                        if let Some(root) = root_of(t) {
+                            roots.push(root);
+                        }
+                    }
+                }
+            }
+            "variable_declaration" if is_local_declaration(node) => {
+                // `local x` and `local x = ...` both bind names in the enclosed variable list.
+                let list = node.named_child(0).and_then(|inner| match inner.kind() {
+                    "assignment_statement" => child_of_kind(inner, "variable_list"),
+                    "variable_list" => Some(inner),
+                    _ => None,
+                });
+                if let Some(list) = list {
+                    for v in named_of(list).into_iter().filter(|n| n.kind() == "identifier") {
+                        declared.insert(self.node_text(v).to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.scan_namespace_roots(child, roots, declared);
+        }
+    }
+
+    /// Walks the chunk's statements in order, recording each chunk-level local and the qualified
+    /// name it denotes, if any: `local req = require "a.b"` denotes module `a.b`, and
+    /// `local get = ngx.req.get_headers` denotes that API path. Resolution consults the aliases
+    /// recorded so far, so chains (`local sub = req.sub`) resolve left to right.
+    fn scan_chunk_bindings(&self, chunk: Node<'a>, scope: &mut UnitScope) {
+        for stmt in named_of(chunk) {
+            let decl = match stmt.kind() {
+                "variable_declaration" => stmt.named_child(0),
+                _ => None,
+            };
+            let Some(decl) = decl else { continue };
+            match decl.kind() {
+                "assignment_statement" => {
+                    let targets = child_of_kind(decl, "variable_list")
+                        .map(|v| named_of(v))
+                        .unwrap_or_default();
+                    let values = child_of_kind(decl, "expression_list")
+                        .map(|e| named_of(e))
+                        .unwrap_or_default();
+                    // Resolve every value against the *pre-declaration* scope, so `local x = x`
+                    // denotes what the outer `x` did. Dropping the targets' own aliases first is
+                    // what makes OpenResty's pervasive `local kong = kong` keep meaning the
+                    // global `kong` rather than becoming this file's `kong`.
+                    for t in targets.iter().filter(|n| n.kind() == "identifier") {
+                        scope.aliases.remove(self.node_text(*t));
+                    }
+                    let qnames: Vec<Option<String>> = values
+                        .iter()
+                        .map(|&v| self.scan_qname(v, scope))
+                        .collect();
+                    for (i, t) in targets.iter().filter(|n| n.kind() == "identifier").enumerate() {
+                        let name = self.node_text(*t).to_string();
+                        match qnames.get(i) {
+                            Some(Some(q)) => {
+                                scope.aliases.insert(name.clone(), q.clone());
+                            }
+                            // Binds a value, not a name -- unless the file defines into it, in
+                            // which case it is a namespace and keeps denoting one.
+                            _ => match scope.namespaces.get(&name).cloned() {
+                                Some(q) => {
+                                    scope.aliases.insert(name.clone(), q);
+                                }
+                                None => {
+                                    scope.aliases.remove(&name);
+                                }
+                            },
+                        }
+                        scope.locals.insert(name);
+                    }
+                }
+                "variable_list" => {
+                    // A bare `local x` binds nothing yet, but a later `x.f = ...` can still make
+                    // it a namespace, so keep that name if it has one.
+                    for v in named_of(decl).into_iter().filter(|n| n.kind() == "identifier") {
+                        let name = self.node_text(v).to_string();
+                        if !scope.namespaces.contains_key(&name) {
+                            scope.aliases.remove(&name);
+                        }
+                        scope.locals.insert(name);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The chunk-level local a file `return`s -- its module table.
+    fn scan_module_table(&self, chunk: Node<'a>, scope: &UnitScope) -> Option<String> {
+        let ret = named_of(chunk).into_iter().find(|n| n.kind() == "return_statement")?;
+        let expr = named_of(child_of_kind(ret, "expression_list")?).into_iter().next()?;
+        if expr.kind() != "identifier" {
+            return None;
+        }
+        let name = self.node_text(expr).to_string();
+        scope.locals.contains(&name).then_some(name)
+    }
+
+    /// Name resolution against a [`UnitScope`] under construction (see [`Lowerer::qname_of`] for
+    /// the lowering-time counterpart, which additionally honors function-local scopes).
+    fn scan_qname(&self, node: Node<'a>, scope: &UnitScope) -> Option<String> {
+        match node.kind() {
+            "identifier" | "global" => {
+                let name = self.node_text(node);
+                if let Some(q) = scope.aliases.get(name) {
+                    return Some(q.clone());
+                }
+                // An unaliased local holds a value, not a name; anything else is a global, which
+                // names itself.
+                (!scope.locals.contains(name)).then(|| name.to_string())
+            }
+            "dot_index_expression" => {
+                let table = node.child_by_field_name("table")?;
+                let field = node.child_by_field_name("field")?;
+                Some(format!("{}.{}", self.scan_qname(table, scope)?, self.node_text(field)))
+            }
+            "parenthesized_expression" => self.scan_qname(node.named_child(0)?, scope),
+            "function_call" => self.required_module_canonical(node),
+            _ => None,
+        }
+    }
+
+    /// The module named by a `require "a.b"` / `require("a.b")` call, when the argument is a
+    /// string literal. The module need not be part of this import (an external `require` still
+    /// names a module); [`Lowerer::unit_of_module`] decides whether it resolves to a chunk here.
+    fn required_module(&self, node: Node<'a>) -> Option<String> {
+        let name = node.child_by_field_name("name")?;
+        if !matches!(name.kind(), "identifier" | "global") || self.node_text(name) != "require" {
+            return None;
+        }
+        let arg = named_of(node.child_by_field_name("arguments")?).into_iter().next()?;
+        (arg.kind() == "string").then(|| self.string_content(arg))
+    }
+
+    // ------------------------------------------------------------------
+    // Name qualification
+    // ------------------------------------------------------------------
+
+    /// Splits a (possibly dotted) name into its root identifier and the field components after it:
+    /// `A.b.c` -> `("A", ["b", "c"])`, `A:m` -> `("A", ["m"])`.
+    fn flatten_name(&self, node: Node<'a>) -> (String, Vec<String>) {
+        let field = match node.kind() {
+            "dot_index_expression" => "field",
+            "method_index_expression" => "method",
+            _ => return (self.node_text(node).to_string(), Vec::new()),
+        };
+        let Some(table) = node.child_by_field_name("table") else {
+            return (self.node_text(node).to_string(), Vec::new());
+        };
+        let (root, mut rest) = self.flatten_name(table);
+        if let Some(f) = node.child_by_field_name(field) {
+            rest.push(self.node_text(f).to_string());
+        }
+        (root, rest)
+    }
+
+    /// The fully-qualified IR name for a `function` definition, from its name node.
+    ///
+    /// The root decides the qualification: a `local function` and any file-local table are
+    /// namespaced under the module, the module table's fields *are* the module's exports, a
+    /// `require`d module keeps that module's name, and a global root names itself -- so
+    /// `function kong.request.get_header()` is `kong.request.get_header` in every file that
+    /// defines it, which is what lets an externals shim stand in for the real thing.
+    fn qualified_def_name(&self, name: Node<'a>, is_local: bool) -> String {
+        let (root, rest) = self.flatten_name(name);
+        let scope = &self.unit_scopes[self.unit];
+        let qualified_root = if is_local {
+            self.in_module(&root)
+        } else if let Some(q) = scope.aliases.get(&root) {
+            q.clone()
+        } else {
+            // A root that is neither aliased nor a plain local is a global: it names itself.
+            root
+        };
+        std::iter::once(qualified_root)
+            .chain(rest)
+            .collect::<Vec<_>>()
+            .join(".")
     }
 
     // ------------------------------------------------------------------
     // Class / metatable recognition (Phase 1a/1b/1c)
     // ------------------------------------------------------------------
 
-    /// The stable class symbol for a class table's lexical name (`Account` ->
-    /// `lua$class$Account`). Kept in the same symbol space as the allocation tags emitted at
-    /// construction sites, so the CHA resolvents join.
+    /// The stable class symbol for a class table's qualified name (`Account` in `oop.lua` ->
+    /// `lua$class$oop.Account`). Kept in the same symbol space as the allocation tags emitted at
+    /// construction sites, so the CHA resolvents join; qualifying it keeps two files' same-named
+    /// class tables apart.
     fn class_symbol(&self, name: &str) -> Symbol {
         Symbol::from(format!("lua$class${name}").as_str())
+    }
+
+    /// The qualified name a chunk-level identifier denotes in the current unit, falling back to
+    /// the identifier itself (a global names itself). Used by the class recognition pass, which
+    /// runs outside the lowering scopes.
+    fn unit_qname(&self, name: &str) -> String {
+        self.unit_scopes[self.unit]
+            .aliases
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
     }
 
     /// Walks the whole tree recovering class tables, their methods, and the `__index` hierarchy.
@@ -279,9 +790,9 @@ impl<'a> Lowerer<'a> {
                     && matches!(name.kind(), "dot_index_expression" | "method_index_expression")
                     && let Some(tbl) = name.child_by_field_name("table")
                     && tbl.kind() == "identifier"
-                    && let Some(&fidx) = self.func_by_node.get(&node.id())
+                    && let Some(&fidx) = self.func_by_node.get(&(self.unit, node.id()))
                 {
-                    let cls = self.node_text(tbl).to_string();
+                    let cls = self.unit_qname(self.node_text(tbl));
                     let m = self.def_name(name);
                     self.class_names.insert(cls.clone());
                     self.method_names.insert(m.clone());
@@ -327,11 +838,11 @@ impl<'a> Lowerer<'a> {
                     else {
                         continue;
                     };
-                    let cls = self.node_text(tbl).to_string();
+                    let cls = self.unit_qname(self.node_text(tbl));
                     self.class_names.insert(cls.clone());
                     match val.map(|v| v.kind()) {
                         Some("identifier") => {
-                            let x = self.node_text(val.unwrap()).to_string();
+                            let x = self.unit_qname(self.node_text(val.unwrap()));
                             // `T.__index = T` is a self-lookup root; a different name is a parent.
                             if x != cls {
                                 self.class_parent.insert(cls, x);
@@ -354,7 +865,7 @@ impl<'a> Lowerer<'a> {
                         && mt.kind() == "table_constructor"
                         && let Some(parent) = self.index_parent_of_constructor(mt)
                     {
-                        let cls = self.node_text(*t).to_string();
+                        let cls = self.unit_qname(self.node_text(*t));
                         self.class_names.insert(cls.clone());
                         self.class_parent.insert(cls, parent);
                     }
@@ -393,7 +904,7 @@ impl<'a> Lowerer<'a> {
                 && let Some(value) = field.child_by_field_name("value")
                 && value.kind() == "identifier"
             {
-                return Some(self.node_text(value).to_string());
+                return Some(self.unit_qname(self.node_text(value)));
             }
         }
         None
@@ -431,10 +942,12 @@ impl<'a> Lowerer<'a> {
     // ------------------------------------------------------------------
 
     fn collect_functions(&mut self, root: Node<'a>) {
-        // The top-level chunk is a synthetic function holding all top-level statements.
-        let fidx = self.new_named_function("%chunk".to_string());
+        // The top-level chunk is a synthetic function holding all top-level statements. It is the
+        // module's body, so `require "a.b"` resolves to `a.b.%chunk` (see `eval_call`).
+        let fidx = self.new_named_function(self.in_module("%chunk"));
         self.funcs.push(FuncEntry {
             fidx,
+            unit: self.unit,
             body: root,
             params: None,
             is_method: false,
@@ -456,16 +969,30 @@ impl<'a> Lowerer<'a> {
                     let name_node = child.child_by_field_name("name");
                     let is_method =
                         name_node.map(|n| n.kind() == "method_index_expression").unwrap_or(false);
-                    // Name the function by the bare final component of its definition name
-                    // (`function A.b.c` -> `c`, `function A:m` -> `m`), because calls resolve by
-                    // that syntactic tail (`o:m(...)` / `A.b.c(...)` both dispatch on `c`/`m`).
+                    let is_local = is_local_declaration(child);
+                    // Name the function by its fully-qualified name (see `qualified_def_name`).
                     let base = name_node
-                        .map(|n| self.def_name(n))
+                        .map(|n| self.qualified_def_name(n, is_local))
                         .unwrap_or_else(|| self.fresh_anon_name());
                     let fidx = self.new_named_function(base);
-                    self.func_by_node.insert(child.id(), fidx);
+                    self.func_by_node.insert((self.unit, child.id()), fidx);
+                    // A `local function f` is a name every call site in the file spells simply as
+                    // `f`, so record what it denotes. Nesting is flattened: the alias is recorded
+                    // for the whole unit, which is what makes a recursive call inside `f`'s own
+                    // body -- lowered as its own function, with its own scopes -- resolve.
+                    if is_local
+                        && let Some(name) = name_node.filter(|n| n.kind() == "identifier")
+                    {
+                        let simple = self.node_text(name).to_string();
+                        let qualified = self.program[fidx].name.clone();
+                        self.unit_scopes[self.unit]
+                            .aliases
+                            .entry(simple)
+                            .or_insert(qualified);
+                    }
                     self.funcs.push(FuncEntry {
                         fidx,
+                        unit: self.unit,
                         body: child.child_by_field_name("body").unwrap_or(child),
                         params: child.child_by_field_name("parameters"),
                         is_method,
@@ -474,9 +1001,10 @@ impl<'a> Lowerer<'a> {
                 "function_definition" => {
                     let name = self.fresh_anon_name();
                     let fidx = self.new_named_function(name);
-                    self.func_by_node.insert(child.id(), fidx);
+                    self.func_by_node.insert((self.unit, child.id()), fidx);
                     self.funcs.push(FuncEntry {
                         fidx,
+                        unit: self.unit,
                         body: child.child_by_field_name("body").unwrap_or(child),
                         params: child.child_by_field_name("parameters"),
                         is_method: false,
@@ -491,7 +1019,7 @@ impl<'a> Lowerer<'a> {
     fn fresh_anon_name(&mut self) -> String {
         let n = self.anon_counter;
         self.anon_counter += 1;
-        format!("%anon{n}")
+        self.in_module(&format!("%anon{n}"))
     }
 
     /// Allocates a new function and gives it a unique, non-empty name.
@@ -521,6 +1049,20 @@ impl<'a> Lowerer<'a> {
     fn lower_function(&mut self, entry: &FuncEntry<'a>) -> Result<(), Error> {
         self.fidx = entry.fidx;
         self.scopes = vec![HashMap::new()];
+        // Every function starts out seeing the names its file established at chunk level (module
+        // tables, `require` results, hoisted API aliases, `local function`s), which in Lua it
+        // reaches as upvalues. Chunk-level locals that denote no name are seeded too, as `None`:
+        // they are values, and a function that captures one must not mistake it for a global of
+        // the same name.
+        let scope = &self.unit_scopes[entry.unit];
+        self.alias_scopes = vec![
+            scope
+                .locals
+                .iter()
+                .map(|name| (name.clone(), None))
+                .chain(scope.aliases.iter().map(|(k, v)| (k.clone(), Some(v.clone()))))
+                .collect(),
+        ];
         self.labels = HashMap::new();
         self.loop_breaks = Vec::new();
         self.temp_counter = 0;
@@ -626,7 +1168,7 @@ impl<'a> Lowerer<'a> {
             }
         }
         let mut max = 0;
-        walk(self.src, body, &mut max);
+        walk(self.src(), body, &mut max);
         max
     }
 
@@ -634,7 +1176,7 @@ impl<'a> Lowerer<'a> {
     /// backward `goto`s can target them. Does not descend into nested functions.
     fn prealloc_labels(&mut self, body: Node<'a>) {
         let mut names = Vec::new();
-        collect_label_names(self.src, body, &mut names);
+        collect_label_names(self.src(), body, &mut names);
         for name in names {
             let blk = self.new_block();
             self.labels.entry(name).or_insert(blk);
@@ -664,10 +1206,12 @@ impl<'a> Lowerer<'a> {
 
     fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
+        self.alias_scopes.push(HashMap::new());
     }
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
+        self.alias_scopes.pop();
     }
 
     fn declare_local(&mut self, name: &str) {
@@ -675,6 +1219,22 @@ impl<'a> Lowerer<'a> {
             .last_mut()
             .unwrap()
             .insert(name.to_string(), Binding::Local);
+        // Shadow whatever the name denoted outside: until something binds it to a name, it holds a
+        // value. A file-local namespace is the exception -- it denotes the same table wherever the
+        // file declares it, which is what makes a definition into it and a call through it agree.
+        let namespace = self.unit_scopes[self.unit].namespaces.get(name).cloned();
+        self.alias_scopes
+            .last_mut()
+            .unwrap()
+            .insert(name.to_string(), namespace);
+    }
+
+    /// Records that `name` denotes the qualified name `qname` in the innermost scope.
+    fn declare_alias(&mut self, name: &str, qname: Option<String>) {
+        self.alias_scopes
+            .last_mut()
+            .unwrap()
+            .insert(name.to_string(), qname);
     }
 
     fn lookup(&self, name: &str) -> Option<Binding> {
@@ -684,6 +1244,46 @@ impl<'a> Lowerer<'a> {
             }
         }
         None
+    }
+
+    /// The innermost binding of `name` in the alias environment: `Some(Some(q))` when it denotes
+    /// the qualified name `q`, `Some(None)` when it is bound but denotes only a value, and `None`
+    /// when it is not bound at all (a global).
+    fn lookup_alias(&self, name: &str) -> Option<Option<&str>> {
+        for scope in self.alias_scopes.iter().rev() {
+            if let Some(q) = scope.get(name) {
+                return Some(q.as_deref());
+            }
+        }
+        None
+    }
+
+    /// The fully-qualified name an expression denotes, or `None` when it names nothing the
+    /// frontend can resolve statically (a call result, a computed index, or a local holding a
+    /// plain value). This is the call-site counterpart of [`Lowerer::qualified_def_name`]: it is
+    /// what lets `get_headers()` -- hoisted from `ngx.req.get_headers` -- reach the definition
+    /// that call actually names.
+    fn qname_of(&self, node: Node<'a>) -> Option<String> {
+        match node.kind() {
+            "identifier" | "global" => {
+                let name = self.node_text(node);
+                match self.lookup_alias(name) {
+                    Some(Some(q)) => Some(q.to_string()),
+                    Some(None) => None,
+                    // Not bound anywhere: a free name is a global, and a global names itself.
+                    None if self.lookup(name).is_none() => Some(name.to_string()),
+                    None => None,
+                }
+            }
+            "dot_index_expression" => {
+                let table = node.child_by_field_name("table")?;
+                let field = node.child_by_field_name("field")?;
+                Some(format!("{}.{}", self.qname_of(table)?, self.node_text(field)))
+            }
+            "parenthesized_expression" => self.qname_of(node.named_child(0)?),
+            "function_call" => self.required_module_canonical(node),
+            _ => None,
+        }
     }
 
     // ------------------------------------------------------------------
@@ -743,14 +1343,18 @@ impl<'a> Lowerer<'a> {
             match s.kind() {
                 "comment" | "hash_bang_line" | "empty_statement" => {}
                 "function_declaration" => {
-                    // Register a `local function f` name so later value-uses resolve to a local
-                    // (calls resolve by syntactic name regardless). The body was collected
-                    // separately and is lowered on its own.
+                    // Register a `local function f` name so later value-uses resolve to a local,
+                    // and record the qualified name it denotes so calls to it resolve. The body was
+                    // collected separately and is lowered on its own.
                     if let Some(name) = s.child_by_field_name("name")
                         && name.kind() == "identifier"
+                        && is_local_declaration(s)
                     {
                         let nm = self.node_text(name).to_string();
+                        let qualified =
+                            self.func_by_node.get(&(self.unit, s.id())).map(|&f| self.program[f].name.clone());
                         self.declare_local(&nm);
+                        self.declare_alias(&nm, qualified);
                     }
                 }
                 "variable_declaration" => {
@@ -838,11 +1442,18 @@ impl<'a> Lowerer<'a> {
                     .unwrap_or_default();
                 let rhs: Vec<Node<'a>> = elist.map(named_of).unwrap_or_default();
                 // Evaluate RHS before declaring the new locals so `local x = x` reads the outer x.
+                // Resolve what each value *names* first, for the same reason.
+                let qnames: Vec<Option<String>> = rhs.iter().map(|&e| self.qname_of(e)).collect();
                 let values: Vec<Exp> = rhs.iter().map(|&e| self.eval_expr(e, blk)).collect();
-                for t in &targets {
+                for (i, t) in targets.iter().enumerate() {
                     if t.kind() == "identifier" {
                         let nm = self.node_text(*t).to_string();
                         self.declare_local(&nm);
+                        // `local req = require "a.b"` / `local get = ngx.req.get_headers`: the new
+                        // local is another name for something the frontend can already name.
+                        if let Some(Some(q)) = qnames.get(i) {
+                            self.declare_alias(&nm, Some(q.clone()));
+                        }
                     }
                 }
                 for (i, t) in targets.iter().enumerate() {
@@ -1250,7 +1861,7 @@ impl<'a> Lowerer<'a> {
     /// indirect call can resolve it) and carries each captured upvalue in a like-named field. The
     /// closure body reads those fields back through its synthetic self-parameter.
     fn eval_closure(&mut self, node: Node<'a>, blk: BasicBlockIdx) -> Exp {
-        let Some(&fidx) = self.func_by_node.get(&node.id()) else {
+        let Some(&fidx) = self.func_by_node.get(&(self.unit, node.id())) else {
             return Exp::new_str("<function>");
         };
         let fn_name = self.program[fidx].name.clone();
@@ -1269,7 +1880,7 @@ impl<'a> Lowerer<'a> {
             })
             .unwrap_or_default();
         let mut names = Vec::new();
-        collect_identifiers(self.src, node.child_by_field_name("body").unwrap_or(node), &mut names);
+        collect_identifiers(self.src(), node.child_by_field_name("body").unwrap_or(node), &mut names);
         let mut upvalues: Vec<String> = Vec::new();
         let mut seen: HashMap<String, ()> = HashMap::new();
         for name in names {
@@ -1315,7 +1926,10 @@ impl<'a> Lowerer<'a> {
             return None;
         }
         let name = self.node_text(name_node);
-        if self.used_names.contains_key(name) {
+        // A name that denotes a definition -- directly, or through an alias -- is a direct call.
+        if let Some(q) = self.qname_of(name_node)
+            && self.used_names.contains_key(&q)
+        {
             return None;
         }
         match self.lookup(name) {
@@ -1376,13 +1990,14 @@ impl<'a> Lowerer<'a> {
                         lua_method = Some((recv_var, method.clone()));
                     }
                 }
-                method
+                (method, true)
             } else {
-                self.call_name(name_node)
+                self.resolve_call_name(node, name_node)
             }
         } else {
-            String::new()
+            (String::new(), false)
         };
+        let (callee, callee_resolved) = callee;
 
         // An indirect (value) call: the callee is a bare name bound to a first-class function value
         // (a closure or a function passed as an argument) rather than a defined function. Resolve
@@ -1414,6 +2029,13 @@ impl<'a> Lowerer<'a> {
                 method: Symbol::from(method.as_str()),
             }
         } else {
+            // Tier 3: a callee the frontend could not resolve to a name gets the path as written.
+            // It is a sound edge -- nothing else claims that name -- but it will only connect if a
+            // shim or model defines the same string, so count it.
+            if !callee_resolved {
+                self.unresolved_call_count += 1;
+                log::trace!("lua: unresolved callee `{callee}`");
+            }
             CallStyle::DirectCall {
                 call_edges: CallEdges::Explicit(ThinVec::from(vec![callee])),
             }
@@ -1546,7 +2168,7 @@ impl<'a> Lowerer<'a> {
         if !matches!(mt.kind(), "identifier" | "global") {
             return None;
         }
-        let name = self.node_text(mt).to_string();
+        let name = self.qname_of(mt)?;
         self.class_names.contains(&name).then_some(name)
     }
 
@@ -1566,19 +2188,28 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// The syntactic name of a call target (used as the direct-call edge string).
-    fn call_name(&self, node: Node<'a>) -> String {
-        match node.kind() {
-            "identifier" | "global" => self.node_text(node).to_string(),
-            "dot_index_expression" => node
-                .child_by_field_name("field")
-                .map(|f| self.node_text(f).to_string())
-                .unwrap_or_default(),
-            "parenthesized_expression" => node
-                .named_child(0)
-                .map(|n| self.call_name(n))
-                .unwrap_or_default(),
-            _ => self.node_text(node).to_string(),
+    /// The name a call site gives its target: the fully-qualified name the callee expression
+    /// denotes, so that a call and the definition it reaches spell the same string even across
+    /// files. A callee the frontend cannot name statically falls back to the path as written,
+    /// which is what an externals shim would have to spell too.
+    ///
+    /// A `require "a.b"` whose module is part of this import names that module's chunk, so the
+    /// module body -- and the table it returns -- is a real call edge rather than an opaque
+    /// builtin.
+    ///
+    /// Returns the name and whether it was actually resolved; an unresolved callee is reported at
+    /// import so the imprecision is visible.
+    fn resolve_call_name(&mut self, call: Node<'a>, name: Node<'a>) -> (String, bool) {
+        if let Some(module) = self.required_module(call) {
+            return match self.unit_of_module(&module) {
+                Some(unit) => (qualify(&self.units[unit].module, "%chunk"), true),
+                // A `require` of a module outside this import stays an opaque builtin call.
+                None => ("require".to_string(), false),
+            };
+        }
+        match self.qname_of(name) {
+            Some(q) => (q, true),
+            None => (self.node_text(name).to_string(), false),
         }
     }
 
@@ -1663,7 +2294,7 @@ impl<'a> Lowerer<'a> {
     // ------------------------------------------------------------------
 
     fn node_text(&self, node: Node<'_>) -> &'a str {
-        node.utf8_text(self.src.as_bytes()).unwrap_or("").trim()
+        node.utf8_text(self.src().as_bytes()).unwrap_or("").trim()
     }
 
     /// The content of a string literal with its surrounding quotes/long-brackets removed, so a key
@@ -1683,7 +2314,8 @@ impl<'a> Lowerer<'a> {
     fn span(&mut self, node: Node<'_>) -> SourceInfo {
         let start = node.start_byte() as u32;
         let len = (node.end_byte() - node.start_byte()) as u32;
-        SourceInfo::new(self.sib.span_for(self.key.clone(), start, SpanLen::ByteLen(len)))
+        let key = self.keys[self.unit].clone();
+        SourceInfo::new(self.sib.span_for(key, start, SpanLen::ByteLen(len)))
     }
 }
 
@@ -1693,6 +2325,23 @@ fn empty_exp() -> Exp {
 
 fn nil_exp() -> Exp {
     Exp::new_str("nil")
+}
+
+/// Qualifies `name` under `module`. A module with an empty name (a single file imported as the
+/// root itself) contributes no prefix.
+fn qualify(module: &str, name: &str) -> String {
+    if module.is_empty() {
+        name.to_string()
+    } else {
+        format!("{module}.{name}")
+    }
+}
+
+/// Whether a declaration is a `local` one (`local function f`, `local x = ...`). The grammar
+/// aliases the local and global forms to the same node kind, distinguishing them only by the
+/// leading keyword.
+fn is_local_declaration(node: Node<'_>) -> bool {
+    node.child(0).map(|c| c.kind() == "local").unwrap_or(false)
 }
 
 /// The named children of `node`, collected.
@@ -1763,8 +2412,36 @@ mod tests {
     use super::*;
     use ctadl_ir::mir::visit::Visitor;
 
+    /// Imports one in-memory file as module `m`.
     fn import_str(src: &str) -> ProgramInfo {
-        lower_lua_source(src, Path::new("<test>.lua")).expect("lua lowering failed")
+        import_modules(&[("m", src)])
+    }
+
+    /// Imports several in-memory files as one directory import, each with the given module name,
+    /// so `require` resolution between them can be exercised without touching the filesystem.
+    fn import_modules(modules: &[(&str, &str)]) -> ProgramInfo {
+        let units = modules
+            .iter()
+            .map(|(module, src)| SourceUnit {
+                path: PathBuf::from(format!("{}.lua", module.replace('.', "/"))),
+                module: (*module).to_string(),
+                source: (*src).to_string(),
+            })
+            .collect();
+        lower_lua_units(units).expect("lua lowering failed")
+    }
+
+    /// The names of every function in the imported program, sorted.
+    fn function_names(info: &ProgramInfo) -> Vec<String> {
+        let mut names: Vec<String> = info
+            .program
+            .functions
+            .functions
+            .iter()
+            .map(|f| f.name.clone())
+            .collect();
+        names.sort();
+        names
     }
 
     /// The recovered `(class, method)` pairs, sorted, ignoring the function-id column.
@@ -1837,14 +2514,19 @@ mod tests {
         assert_eq!(
             method_pairs(&info.vmt),
             vec![
-                ("lua$class$Account".to_string(), "balance".to_string()),
-                ("lua$class$Account".to_string(), "deposit".to_string()),
-                ("lua$class$Account".to_string(), "new".to_string()),
+                ("lua$class$m.Account".to_string(), "balance".to_string()),
+                ("lua$class$m.Account".to_string(), "deposit".to_string()),
+                ("lua$class$m.Account".to_string(), "new".to_string()),
             ]
         );
         assert!(hierarchy_edges(&info.vmt).is_empty());
         // The `setmetatable({}, Account)` construction site is tagged with the class.
-        assert_eq!(object_tags(&info), vec!["lua$class$Account".to_string()]);
+        assert_eq!(object_tags(&info), vec!["lua$class$m.Account".to_string()]);
+        // Methods are named by the class table they are defined into, under the module.
+        assert_eq!(
+            function_names(&info),
+            vec!["m.%chunk", "m.Account.balance", "m.Account.deposit", "m.Account.new"]
+        );
     }
 
     #[test]
@@ -1864,18 +2546,205 @@ mod tests {
         assert_eq!(
             method_pairs(&info.vmt),
             vec![
-                ("lua$class$Base".to_string(), "get_data".to_string()),
-                ("lua$class$Base".to_string(), "set_data".to_string()),
-                ("lua$class$Derived".to_string(), "new".to_string()),
+                ("lua$class$m.Base".to_string(), "get_data".to_string()),
+                ("lua$class$m.Base".to_string(), "set_data".to_string()),
+                ("lua$class$m.Derived".to_string(), "new".to_string()),
             ]
         );
         assert_eq!(
             hierarchy_edges(&info.vmt),
-            vec![("lua$class$Derived".to_string(), "lua$class$Base".to_string())]
+            vec![("lua$class$m.Derived".to_string(), "lua$class$m.Base".to_string())]
         );
         // Only the `setmetatable({}, Derived)` instance site is tagged; the class-table definition
         // `setmetatable({}, { __index = Base })` (a table-constructor metatable) is not.
-        assert_eq!(object_tags(&info), vec!["lua$class$Derived".to_string()]);
+        assert_eq!(object_tags(&info), vec!["lua$class$m.Derived".to_string()]);
+    }
+
+    #[test]
+    fn definitions_are_qualified_by_what_their_root_denotes() {
+        // A local function and a file-local table are namespaced under the module; the module
+        // table's fields are the module's exports; a global root names itself.
+        let src = r#"
+            local _M = {}
+            local Helper = {}
+            local function private() end
+            function _M.get_headers() end
+            function Helper.trim(s) return s end
+            function Helper:run() end
+            function kong.request.get_header() end
+            function global_fn() end
+            return _M
+        "#;
+        let info = import_modules(&[("kong.pdk.request", src)]);
+        assert_eq!(
+            function_names(&info),
+            vec![
+                "global_fn",
+                "kong.pdk.request.%chunk",
+                "kong.pdk.request.Helper.run",
+                "kong.pdk.request.Helper.trim",
+                "kong.pdk.request.get_headers",
+                "kong.pdk.request.private",
+                "kong.request.get_header",
+            ]
+        );
+    }
+
+    /// The callee names of every `DirectCall` in `function`, in order.
+    #[derive(Default)]
+    struct DirectCallFinder(Vec<String>);
+    impl Visitor for DirectCallFinder {
+        fn visit_call_edges(&mut self, edges: &CallEdges) {
+            let CallEdges::Explicit(targets) = edges;
+            self.0.extend(targets.iter().cloned());
+        }
+    }
+    fn direct_calls(info: &ProgramInfo, function: &str) -> Vec<String> {
+        let func = info
+            .program
+            .functions
+            .functions
+            .iter()
+            .find(|f| f.name == function)
+            .unwrap_or_else(|| panic!("no function named {function}"));
+        let mut f = DirectCallFinder::default();
+        f.visit_function_data(FunctionIdx::new(0), func);
+        f.0
+    }
+
+    #[test]
+    fn calls_resolve_through_require_and_aliases() {
+        // A `require`d module, a field of it, and an alias of an external API each resolve to the
+        // qualified name the call actually denotes -- not to the bare trailing name.
+        let request = r#"
+            local _M = {}
+            function _M.get_headers() end
+            return _M
+        "#;
+        let handler = r#"
+            local request = require "kong.pdk.request"
+            local get_headers = request.get_headers
+            local ngx_headers = ngx.req.get_headers
+            local function run()
+              request.get_headers()
+              get_headers()
+              ngx_headers()
+              kong.request.get_header()
+            end
+        "#;
+        let info = import_modules(&[("kong.pdk.request", request), ("handler", handler)]);
+        assert_eq!(
+            direct_calls(&info, "handler.run"),
+            vec![
+                // Both spellings reach the one definition, including the hoisted local alias.
+                "kong.pdk.request.get_headers",
+                "kong.pdk.request.get_headers",
+                // An alias of an API outside the import keeps that API's name rather than
+                // colliding with the `get_headers` above.
+                "ngx.req.get_headers",
+                "kong.request.get_header",
+            ]
+        );
+        // The `require` itself is a call to the required module's chunk, so the module table it
+        // returns flows to the caller.
+        assert_eq!(
+            direct_calls(&info, "handler.%chunk"),
+            vec!["kong.pdk.request.%chunk"]
+        );
+    }
+
+    #[test]
+    fn a_namespace_declared_inside_a_function_is_still_module_qualified() {
+        // Kong's PDK shape: the exported table is declared inside `new()`, not at chunk level.
+        // The definition and the call beside it must agree on the name, and two files' `_REQUEST`
+        // must stay apart.
+        let src = r#"
+            local _M = {}
+            function _M.new()
+              local _REQUEST = {}
+              function _REQUEST.get_headers() end
+              function _REQUEST.get_header(name)
+                local h = _REQUEST.get_headers()
+                return h[name]
+              end
+              return _REQUEST
+            end
+            return _M
+        "#;
+        let info = import_modules(&[("kong.pdk.request", src), ("kong.pdk.response", src)]);
+        assert!(function_names(&info).contains(&"kong.pdk.request._REQUEST.get_headers".to_string()));
+        assert!(function_names(&info).contains(&"kong.pdk.response._REQUEST.get_headers".to_string()));
+        assert_eq!(
+            direct_calls(&info, "kong.pdk.request._REQUEST.get_header"),
+            vec!["kong.pdk.request._REQUEST.get_headers"]
+        );
+    }
+
+    #[test]
+    fn localizing_a_global_keeps_the_global_meaning() {
+        // `local kong = kong` is pervasive in OpenResty. The local must keep denoting the global,
+        // even in a file that also defines into it -- otherwise every call through it would be
+        // renamed to that one file's private `kong`.
+        let src = r#"
+            local kong = kong
+            local ngx = ngx
+            kong.plugin_flag = true
+            local function run()
+              kong.request.get_header("x")
+              ngx.req.get_headers()
+            end
+        "#;
+        let info = import_modules(&[("kong.plugins.cors.handler", src)]);
+        assert_eq!(
+            direct_calls(&info, "kong.plugins.cors.handler.run"),
+            vec!["kong.request.get_header", "ngx.req.get_headers"]
+        );
+    }
+
+    #[test]
+    fn every_spelling_of_a_module_resolves_to_one_name() {
+        // `package.path` reaches `a/b/init.lua` through both `?.lua` and `?/init.lua`, so Kong
+        // requires the same file as `kong.db.dao` in one place and `kong.db.dao.init` in another.
+        // Both must name the definitions that file actually carries.
+        let dao = "local _M = {}\nfunction _M.new() end\nreturn _M";
+        let caller = r#"
+            local short = require "kong.db.dao"
+            local long = require "kong.db.dao.init"
+            local function run()
+              short.new()
+              long.new()
+            end
+        "#;
+        let info = import_modules(&[("kong.db.dao", dao), ("caller", caller)]);
+        assert_eq!(
+            direct_calls(&info, "caller.run"),
+            vec!["kong.db.dao.new", "kong.db.dao.new"]
+        );
+    }
+
+    #[test]
+    fn same_named_functions_in_different_modules_stay_distinct() {
+        // The defect this naming scheme exists to fix: two unrelated `get_headers` definitions
+        // must not collapse into one symbol.
+        let a = "local _M = {}\nfunction _M.get_headers() end\nreturn _M";
+        let b = "local _M = {}\nfunction _M.get_headers() end\nreturn _M";
+        let info = import_modules(&[("a.req", a), ("b.req", b)]);
+        assert!(function_names(&info).contains(&"a.req.get_headers".to_string()));
+        assert!(function_names(&info).contains(&"b.req.get_headers".to_string()));
+    }
+
+    #[test]
+    fn a_local_holding_a_closure_is_still_an_indirect_call() {
+        // Aliasing must not swallow first-class function values: `h` denotes no name, so the call
+        // stays resolved by data flow rather than becoming a direct edge to something named `h`.
+        let src = r#"
+            local function run(g)
+              local h = function(x) return x end
+              return h(1), g(2)
+            end
+        "#;
+        let info = import_modules(&[("m", src)]);
+        assert_eq!(direct_calls(&info, "m.run"), Vec::<String>::new());
     }
 
     #[test]
