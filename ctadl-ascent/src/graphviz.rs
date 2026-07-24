@@ -218,6 +218,13 @@ pub struct IndexGraphViz<'a> {
 }
 
 impl<'a> IndexGraphViz<'a> {
+    /// Renders a vertex as `function(<name>)\n<variable><access-path>`.
+    ///
+    /// The access path is part of both the label and the node id, so vertices are
+    /// keyed by the triple `(function, variable, path)` — `local(t)` and
+    /// `local(t).x` are distinct nodes. Note that [`Path::empty`] renders as the
+    /// empty string: a label with no `.field` suffix denotes the *empty* path, not
+    /// a path that was omitted from the rendering.
     fn node_to_string(&self, f: &FunctionId, v: &FlowVariable, p: &Path) -> String {
         let func_name = self
             .id_map

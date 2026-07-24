@@ -52,12 +52,38 @@ fn build_query_endpoints(
     let func_num_params = facts.compute_arg_arity();
 
     // Field access paths that actually occur on each `(function, variable)` vertex
-    // in the index graph.
+    // in the index graph, keyed by the vertex's *copy class* representative rather
+    // than the vertex itself.
+    //
+    // A wildcard port is anchored at a call-arg vertex (`call-arg(site, i)`), but the
+    // frontend records field paths on the local that the call passes, not on the
+    // synthesized call-arg vertex: `t.headers = h; sink(t)` yields the vertex
+    // `local(t).headers` plus the empty-path copy edges `call-arg ↔ local(t)`. Keying
+    // by vertex therefore finds only the empty path and expands nothing. Copy classes
+    // are exactly the sets of vertices holding the same value, so a path seen on any
+    // member is a real path of the argument — and the copy chain between the actual
+    // and the call-arg vertex may be several hops long, which is why this is the
+    // union-find closure and not a one-hop lookup.
+    let mut copy_rep: HashMap<(facts::FunctionId, FlowVariable), FlowVariable> = HashMap::new();
+    for (func, member, rep) in crate::query_engine::compute_copy_alias(assign_like) {
+        copy_rep.insert((func, member), rep);
+    }
+    // Resolves a vertex to its copy-class representative; a vertex in no copy edge is
+    // its own representative.
+    let rep_of = |func: facts::FunctionId, v: FlowVariable| -> FlowVariable {
+        copy_rep.get(&(func, v)).copied().unwrap_or(v)
+    };
     let mut vertex_paths: HashMap<(facts::FunctionId, FlowVariable), BTreeSet<facts::Path>> =
         HashMap::new();
     for (func, v1, p1, v2, p2) in assign_like {
-        vertex_paths.entry((*func, *v1)).or_default().insert(*p1);
-        vertex_paths.entry((*func, *v2)).or_default().insert(*p2);
+        vertex_paths
+            .entry((*func, rep_of(*func, *v1)))
+            .or_default()
+            .insert(*p1);
+        vertex_paths
+            .entry((*func, rep_of(*func, *v2)))
+            .or_default()
+            .insert(*p2);
     }
 
     let mut out_eps = Vec::new();
@@ -164,9 +190,11 @@ fn build_query_endpoints(
                     continue;
                 }
                 // Seed every concrete field path that lives on THIS call's argument
-                // vertex and extends the port, always including the port path itself.
+                // (i.e. on any member of its copy class) and extends the port, always
+                // including the port path itself.
                 let mut seeded_port = false;
-                if let Some(paths) = vertex_paths.get(&(ep.infunc, ep.vertex.0)) {
+                if let Some(paths) = vertex_paths.get(&(ep.infunc, rep_of(ep.infunc, ep.vertex.0)))
+                {
                     for p in paths {
                         if !p.is_extension_of(&ap) {
                             continue;
@@ -431,9 +459,37 @@ fn dump_index_graph_dot(
     dot_path: &Path,
 ) -> Result<(), Error> {
     let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+    // Embed the legend as a leading DOT comment so the file documents itself
+    // (kept in sync with the stderr message below).
+    {
+        use std::io::Write as _;
+        writeln!(
+            file,
+            "// Index (assign-like) graph. An edge `A -> B` is the assignment `B = A`;\n\
+             // both directions appear for by-ref/aliased vertices.\n\
+             //\n\
+             // Node label grammar (two lines):\n\
+             //   function(<name>)\n\
+             //   <variable><access-path>\n\
+             //\n\
+             // The access path is a suffix of the second line, so a node is identified by\n\
+             // the TRIPLE (function, variable, access path) -- `local(t)` and `local(t).x`\n\
+             // are distinct nodes. The EMPTY access path renders as the empty string, so a\n\
+             // label with no `.field` suffix means \"this vertex, empty path\" -- it does\n\
+             // NOT mean paths are omitted from labels.\n"
+        )
+        .err_context(|| "writing index graph legend")?;
+    }
     crate::graphviz::render_index_graph(assign_like, id_map, &mut file)
         .err_context(|| "rendering index graph")?;
-    eprintln!("Wrote index graph to '{}'", dot_path.display());
+    eprintln!(
+        "Wrote index graph to '{}'\n  \
+         edge A -> B is the assignment B = A\n  \
+         node label: `function(<name>)` / `<variable><access-path>`; nodes are keyed by\n  \
+         (function, variable, access path), and an empty access path renders as nothing\n  \
+         (a label with no `.field` suffix is the empty path, not an omitted one)",
+        dot_path.display()
+    );
     Ok(())
 }
 

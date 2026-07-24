@@ -322,7 +322,7 @@ fn copy_find(parent: &mut std::collections::HashMap<CopyKey, CopyKey>, x: CopyKe
 /// Θ(C²) all-pairs empty-path `alias_of_field` closure: instead of materializing
 /// every pair of a C-variable copy group, we hand the taint engine one edge per
 /// non-representative member and let taint equalize through the representative.
-fn compute_copy_alias(
+pub(crate) fn compute_copy_alias(
     assign: &[(FunctionId, FlowVariable, Path, FlowVariable, Path)],
 ) -> Vec<(FunctionId, FlowVariable, FlowVariable)> {
     use std::collections::HashMap;
