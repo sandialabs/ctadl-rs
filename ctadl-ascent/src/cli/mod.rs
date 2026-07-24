@@ -52,12 +52,38 @@ fn build_query_endpoints(
     let func_num_params = facts.compute_arg_arity();
 
     // Field access paths that actually occur on each `(function, variable)` vertex
-    // in the index graph.
+    // in the index graph, keyed by the vertex's *copy class* representative rather
+    // than the vertex itself.
+    //
+    // A wildcard port is anchored at a call-arg vertex (`call-arg(site, i)`), but the
+    // frontend records field paths on the local that the call passes, not on the
+    // synthesized call-arg vertex: `t.headers = h; sink(t)` yields the vertex
+    // `local(t).headers` plus the empty-path copy edges `call-arg ↔ local(t)`. Keying
+    // by vertex therefore finds only the empty path and expands nothing. Copy classes
+    // are exactly the sets of vertices holding the same value, so a path seen on any
+    // member is a real path of the argument — and the copy chain between the actual
+    // and the call-arg vertex may be several hops long, which is why this is the
+    // union-find closure and not a one-hop lookup.
+    let mut copy_rep: HashMap<(facts::FunctionId, FlowVariable), FlowVariable> = HashMap::new();
+    for (func, member, rep) in crate::query_engine::compute_copy_alias(assign_like) {
+        copy_rep.insert((func, member), rep);
+    }
+    // Resolves a vertex to its copy-class representative; a vertex in no copy edge is
+    // its own representative.
+    let rep_of = |func: facts::FunctionId, v: FlowVariable| -> FlowVariable {
+        copy_rep.get(&(func, v)).copied().unwrap_or(v)
+    };
     let mut vertex_paths: HashMap<(facts::FunctionId, FlowVariable), BTreeSet<facts::Path>> =
         HashMap::new();
     for (func, v1, p1, v2, p2) in assign_like {
-        vertex_paths.entry((*func, *v1)).or_default().insert(*p1);
-        vertex_paths.entry((*func, *v2)).or_default().insert(*p2);
+        vertex_paths
+            .entry((*func, rep_of(*func, *v1)))
+            .or_default()
+            .insert(*p1);
+        vertex_paths
+            .entry((*func, rep_of(*func, *v2)))
+            .or_default()
+            .insert(*p2);
     }
 
     let mut out_eps = Vec::new();
@@ -164,9 +190,11 @@ fn build_query_endpoints(
                     continue;
                 }
                 // Seed every concrete field path that lives on THIS call's argument
-                // vertex and extends the port, always including the port path itself.
+                // (i.e. on any member of its copy class) and extends the port, always
+                // including the port path itself.
                 let mut seeded_port = false;
-                if let Some(paths) = vertex_paths.get(&(ep.infunc, ep.vertex.0)) {
+                if let Some(paths) = vertex_paths.get(&(ep.infunc, rep_of(ep.infunc, ep.vertex.0)))
+                {
                     for p in paths {
                         if !p.is_extension_of(&ap) {
                             continue;
