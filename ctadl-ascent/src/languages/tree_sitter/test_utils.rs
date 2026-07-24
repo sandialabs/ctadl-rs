@@ -108,6 +108,23 @@ pub(crate) fn function_named<'a>(prog: &'a Program, name: &str) -> Option<&'a Fu
     prog.functions.functions.raw.iter().find(|f| f.name == name)
 }
 
+/* Renders the local named `local` in function `func` the way the IR dump does (`%L{idx}`), by
+looking its interned `LocalIdx` up in the function's locals table. Lets dump-based assertions be
+written in terms of the readable source name rather than a hard-coded, hard-to-follow index. Panics
+if the function or local does not exist. */
+#[track_caller]
+pub(crate) fn local_render(prog: &Program, func: &str, local: &str) -> String {
+    let f = function_named(prog, func)
+        .unwrap_or_else(|| panic!("no function named {func:?}\n{prog}"));
+    let idx = f
+        .locals
+        .iter_enumerated()
+        .find(|(_, decl)| decl.name.as_str() == local)
+        .map(|(idx, _)| idx)
+        .unwrap_or_else(|| panic!("no local named {local:?} in function {func:?}\n{prog}"));
+    format!("%L{}", idx.index())
+}
+
 /* Asserts the function `name` has the given return arity (the `N` in the dump's `define name() ->
 N`): a value-returning function is arity 1, a `void` function is arity 0. Panics at the caller's
 line on mismatch. */

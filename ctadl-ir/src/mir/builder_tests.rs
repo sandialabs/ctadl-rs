@@ -1,7 +1,14 @@
 use crate::index::idx::Idx;
 use crate::mir::builder::BasicBlockBuilder;
 use crate::mir::call::CallStyle;
-use crate::mir::{BasicBlockData, BasicBlockIdx, Exp, Locals, ParameterIdx, StatementIdx};
+use crate::mir::{BasicBlockData, BasicBlockIdx, Exp, Locals, ParameterIdx, StatementIdx, VariableRef};
+
+/// The source name of a local variable ref, via the locals table.
+fn local_name(locals: &Locals, var: &VariableRef) -> String {
+    locals
+        .name(var.variable.local().expect("expected a local"))
+        .to_string()
+}
 
 #[test]
 fn test_builder_basic_operations() {
@@ -69,7 +76,7 @@ fn test_builder_insertion_at_positions() {
 
     match &block_data.statements[StatementIdx::new(1)].kind {
         crate::mir::StatementKind::Assign { dest, sources } => {
-            assert_eq!(dest.to_string(), "%L0");
+            assert_eq!(local_name(&locals, dest), "a");
             assert_eq!(sources.len(), 1);
         }
         _ => panic!("Expected Assign at position 1"),
@@ -136,23 +143,25 @@ fn test_builder_convenience_methods() {
     let mut locals = Locals::default();
     let mut builder = BasicBlockBuilder::new(&mut block_data, &mut locals);
 
-    // Test variable creation
+    // Create everything through the builder first; its `&mut locals` borrow ends
+    // once we stop using it, letting us resolve local names below.
     let local_var = builder.new_local_var("test");
-    assert_eq!(local_var.to_string(), "%L0");
-
     let param_var = builder.new_param_var(ParameterIdx::new(0));
-    assert_eq!(param_var.to_string(), "@p0");
-
     let global_var = builder.new_global_var();
-    assert_eq!(global_var.to_string(), "$globals");
-
-    // Test access path creation (offset-only)
+    // Access path creation (offset-only)
     let access_path = builder.new_access_path(local_var.clone(), [1, 2]);
-    assert_eq!(access_path.to_string(), "%L0.[0x1].[0x2]");
-
-    // Test expression creation
+    // Expression creation
     let str_exp = builder.new_str_exp("hello");
     let bytes_exp = builder.new_bytes_exp(vec![1, 2, 3]);
+
+    // Test variable creation
+    assert_eq!(local_name(&locals, &local_var), "test");
+    assert_eq!(param_var.to_string(), "@p0");
+    assert_eq!(global_var.to_string(), "$globals");
+
+    // Access path base is the local `test`, followed by the two offsets.
+    assert_eq!(local_name(&locals, &access_path.variable_ref), "test");
+    assert_eq!(access_path.path.to_string(), ".[0x1].[0x2]");
 
     match str_exp {
         Exp::Str(s) => assert_eq!(format!("{}", s), "hello"),

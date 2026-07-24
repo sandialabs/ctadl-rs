@@ -137,7 +137,10 @@ fn test_field_accesses_with_offsets() {
         variable_ref: var,
         path: field_accesses,
     };
-    assert_eq!(format!("{}", access_path), "%L0.[0x5]");
+    // Base is the local `obj`, followed by the single offset.
+    let base = access_path.variable_ref.variable.local().unwrap();
+    assert_eq!(locals.name(base), "obj");
+    assert_eq!(format!("{}", access_path.path), ".[0x5]");
 }
 
 #[test]
