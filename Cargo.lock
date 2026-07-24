@@ -3797,17 +3797,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sarif-util"
-version = "0.1.0"
-dependencies = [
- "clap",
- "percent-encoding",
- "serde",
- "serde_json",
- "url",
-]
-
-[[package]]
 name = "schemafy_core"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

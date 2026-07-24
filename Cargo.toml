@@ -1,12 +1,22 @@
 [workspace]
 resolver = "3"
-members = ["ctadl-ascent", "ctadl-flowy", "ctadl-ir", "pcode-reader", "sarif-util", "trie", "tailshare", "immortal", "xtask"]
-# In-tree path dependencies become workspace members, so their bins would be
-# installed into the distro by `nix build .#packages.default`. dex-reader and
+members = ["ctadl-ascent", "ctadl-flowy", "ctadl-ir", "pcode-reader", "trie", "tailshare", "immortal", "xtask"]
+# `nix build .#packages.default` runs a bare `cargo build` at this root, so
+# every member's bins land in the distro. Excluding a directory drops its
+# membership, and with it those bins.
+#
+# In-tree path dependencies become members automatically: dex-reader and
 # jvm-reader are libraries used by ctadl-ascent but their standalone bins must
-# not ship; excluding them drops their membership (and bins) while they are
-# still built as ordinary path-dependency libraries.
-exclude = ["dex-reader", "jvm-reader"]
+# not ship, so they are excluded here while still being built as ordinary
+# path-dependency libraries.
+#
+# sarif-util is different -- nothing depends on it. It is a standalone
+# developer utility for inspecting SARIF output (`sarif-util`, `show-regions`)
+# that must not ship either. Excluding it means nothing in-tree builds it at
+# all: it is outside `cargo test --workspace` and the per-PR clippy job, keeps
+# its own Cargo.lock, and is built on demand with
+#   cargo build --manifest-path sarif-util/Cargo.toml
+exclude = ["dex-reader", "jvm-reader", "sarif-util"]
 
 [workspace.package]
 version = "0.1.0"

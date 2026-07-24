@@ -13,10 +13,6 @@ name = "tree-sitter-compile"
 path = "src/languages/tree_sitter/bin/tree-sitter-compile.rs"
 
 [[bin]]
-name = "analyze-ir"
-path = "src/index_engine/bin/analyze-ir.rs"
-
-[[bin]]
 name = "flowy"
 path = "src/bin/flowy.rs"
 
