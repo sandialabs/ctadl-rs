@@ -4,8 +4,14 @@ use smallvec::smallvec;
 
 use crate::mir::call::{CallEdges, CallStyle};
 
+thread_local! {
+    static LOCALS: std::cell::RefCell<crate::mir::Locals> =
+        std::cell::RefCell::new(crate::mir::Locals::default());
+}
+
+/// Interns `name` into a per-thread table so repeated names share one `LocalIdx`.
 fn local(name: &str) -> VariableRef {
-    VariableRef::new_local(name.to_string())
+    VariableRef::new_local_idx(LOCALS.with(|l| l.borrow_mut().get_or_intern(name)))
 }
 
 fn param(idx: usize) -> VariableRef {

@@ -644,7 +644,6 @@ impl FlowyCtx {
         defined_functions: &HashSet<String>,
     ) -> Result<(), FlowyError> {
         use StatementKind::*;
-        let data = &mut self.program[function][block];
         let source_info = SourceInfo::new({
             let span = stmt_pair.as_span();
             let start = span.start().try_into().unwrap();
@@ -653,18 +652,33 @@ impl FlowyCtx {
             self.source_info_builder
                 .span_for(self.artifact_key.clone(), start, len)
         });
+        // Disjoint borrow of the block being built and the function's locals table, so temporaries
+        // and named locals can be interned while lowering statements.
+        let func = &mut self.program[function];
+        let data = &mut func.blocks[block];
+        let local_table = &mut func.locals;
         match stmt_pair.as_rule() {
             Rule::assign_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let (dst_base, dst_segments) =
-                    parse_ap(locals, inner.next().unwrap(), defined_functions)?;
+                let (dst_base, dst_segments) = parse_ap(
+                    locals,
+                    local_table,
+                    inner.next().unwrap(),
+                    defined_functions,
+                )?;
                 // src is comma-separated; a field read on the RHS lowers to loads.
                 let src = {
                     let mut result = Vec::new();
                     for p in inner.next().unwrap().into_inner() {
-                        let r = parse_ref(locals, p, defined_functions);
-                        result.push(lower_ref(&mut self.counter, data, source_info, r));
+                        let r = parse_ref(locals, local_table, p, defined_functions);
+                        result.push(lower_ref(
+                            &mut self.counter,
+                            data,
+                            local_table,
+                            source_info,
+                            r,
+                        ));
                     }
                     result
                 };
@@ -690,7 +704,11 @@ impl FlowyCtx {
                         dst_segments,
                         src[0].clone(),
                         &mut stmts,
-                        || VariableRef::new_local(format!("t{}?", counter.next())),
+                        || {
+                            VariableRef::new_local_idx(
+                                local_table.get_or_intern(&format!("t{}?", counter.next())),
+                            )
+                        },
                     );
                     for mut s in stmts {
                         s.source_info = source_info;
@@ -701,31 +719,51 @@ impl FlowyCtx {
             Rule::assign_call_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let (lhs_base, lhs_segments) =
-                    parse_ap(locals, inner.next().unwrap(), defined_functions)?;
-                let (variable, segments) =
-                    match parse_ref(locals, inner.next().unwrap(), defined_functions) {
-                        ParsedRef::Ap(base, segments) => (base, segments),
-                        ParsedRef::Value(_) => {
-                            return Err(FlowyError::Compile {
-                                message: "bad call ap".to_string(),
-                                line,
-                                col,
-                            });
-                        }
-                    };
-                let actuals = parse_actuals(locals, inner.next().unwrap(), defined_functions);
+                let (lhs_base, lhs_segments) = parse_ap(
+                    locals,
+                    local_table,
+                    inner.next().unwrap(),
+                    defined_functions,
+                )?;
+                let (variable, segments) = match parse_ref(
+                    locals,
+                    local_table,
+                    inner.next().unwrap(),
+                    defined_functions,
+                ) {
+                    ParsedRef::Ap(base, segments) => (base, segments),
+                    ParsedRef::Value(_) => {
+                        return Err(FlowyError::Compile {
+                            message: "bad call ap".to_string(),
+                            line,
+                            col,
+                        });
+                    }
+                };
+                let actuals = parse_actuals(
+                    locals,
+                    local_table,
+                    inner.next().unwrap(),
+                    defined_functions,
+                );
                 let style = if !segments.is_empty() {
                     // Indirect call: lower symbolic derefs to loads, leaving an offset-only callee.
-                    let callee =
-                        lower_callee_addr(&mut self.counter, data, source_info, variable, segments);
+                    let callee = lower_callee_addr(
+                        &mut self.counter,
+                        data,
+                        local_table,
+                        source_info,
+                        variable,
+                        segments,
+                    );
                     CallStyle::FuncPtrCall {
                         callee,
                         signature: None,
                     }
                 } else {
                     let is_direct = match variable.variable.as_ref() {
-                        Variable::Local(name) => {
+                        Variable::Local(idx) => {
+                            let name = local_table.name(*idx);
                             name == "source"
                                 || name == "errsource"
                                 || defined_functions.contains(name)
@@ -734,9 +772,10 @@ impl FlowyCtx {
                     };
 
                     if is_direct {
-                        let Variable::Local(name) = variable.variable.as_ref() else {
+                        let Variable::Local(idx) = variable.variable.as_ref() else {
                             unreachable!()
                         };
+                        let name = local_table.name(*idx);
                         CallStyle::DirectCall {
                             call_edges: CallEdges::Explicit(vec![name.to_string()].into()),
                         }
@@ -761,14 +800,22 @@ impl FlowyCtx {
                         // Stringify only the label (index 0); pass any trailing actuals
                         // (e.g. the path-count int in `source(Label, n)`) through, lowering
                         // any field reads, so they reach `ExtractSpec` as-is.
-                        args.push(Exp::Str(format!("{x}").into()));
+                        args.push(Exp::Str(label_string(local_table, &x).into()));
                     } else {
-                        args.push(lower_ref(&mut self.counter, data, source_info, x));
+                        args.push(lower_ref(
+                            &mut self.counter,
+                            data,
+                            local_table,
+                            source_info,
+                            x,
+                        ));
                     }
                 }
 
                 // use a temporary for the result of the call
-                let tmp = VariableRef::new_local(format!("t{}?", self.counter.next()));
+                let tmp = VariableRef::new_local_idx(
+                    local_table.get_or_intern(&format!("t{}?", self.counter.next())),
+                );
                 let call = CallAssign {
                     style,
                     rets: thin_vec![tmp.clone()],
@@ -786,7 +833,11 @@ impl FlowyCtx {
                     lhs_segments,
                     Exp::Variable(tmp),
                     &mut stmts,
-                    || VariableRef::new_local(format!("t{}?", counter.next())),
+                    || {
+                        VariableRef::new_local_idx(
+                            local_table.get_or_intern(&format!("t{}?", counter.next())),
+                        )
+                    },
                 );
                 for mut s in stmts {
                     s.source_info = source_info;
@@ -796,39 +847,56 @@ impl FlowyCtx {
             Rule::call_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let (variable, segments) =
-                    match parse_ref(locals, inner.next().unwrap(), defined_functions) {
-                        ParsedRef::Ap(base, segments) => (base, segments),
-                        ParsedRef::Value(_) => {
-                            return Err(FlowyError::Compile {
-                                message: "bad call ap".to_string(),
-                                line,
-                                col,
-                            });
-                        }
-                    };
-                let actuals = parse_actuals(locals, inner.next().unwrap(), defined_functions);
+                let (variable, segments) = match parse_ref(
+                    locals,
+                    local_table,
+                    inner.next().unwrap(),
+                    defined_functions,
+                ) {
+                    ParsedRef::Ap(base, segments) => (base, segments),
+                    ParsedRef::Value(_) => {
+                        return Err(FlowyError::Compile {
+                            message: "bad call ap".to_string(),
+                            line,
+                            col,
+                        });
+                    }
+                };
+                let actuals = parse_actuals(
+                    locals,
+                    local_table,
+                    inner.next().unwrap(),
+                    defined_functions,
+                );
 
                 let style = if !segments.is_empty() {
                     // Indirect call: lower symbolic derefs to loads, leaving an offset-only callee.
-                    let callee =
-                        lower_callee_addr(&mut self.counter, data, source_info, variable, segments);
+                    let callee = lower_callee_addr(
+                        &mut self.counter,
+                        data,
+                        local_table,
+                        source_info,
+                        variable,
+                        segments,
+                    );
                     CallStyle::FuncPtrCall {
                         callee,
                         signature: None,
                     }
                 } else {
                     let is_direct = match variable.variable.as_ref() {
-                        Variable::Local(name) => {
+                        Variable::Local(idx) => {
+                            let name = local_table.name(*idx);
                             name == "sink" || name == "errsink" || defined_functions.contains(name)
                         }
                         _ => false,
                     };
 
                     if is_direct {
-                        let Variable::Local(name) = variable.variable.as_ref() else {
+                        let Variable::Local(idx) = variable.variable.as_ref() else {
                             unreachable!()
                         };
+                        let name = local_table.name(*idx);
                         CallStyle::DirectCall {
                             call_edges: CallEdges::Explicit(vec![name.to_string()].into()),
                         }
@@ -850,7 +918,9 @@ impl FlowyCtx {
                 let args: ThinVec<Exp> = if is_sink {
                     // Lowers `sink(x.y.z, Test)` into `t0 = x.y.z; sink(t0, Test)` so that when
                     // the sink call is removed, x.y.z remains in the program.
-                    let tmp = VariableRef::new_local(format!("t{}?", self.counter.next()));
+                    let tmp = VariableRef::new_local_idx(
+                        local_table.get_or_intern(&format!("t{}?", self.counter.next())),
+                    );
                     let mut args = ThinVec::with_capacity(actuals.len());
                     let mut port_ref: Option<ParsedRef> = None;
                     for (i, x) in actuals.into_iter().enumerate() {
@@ -859,15 +929,22 @@ impl FlowyCtx {
                             args.push(Exp::Variable(tmp.clone()));
                             port_ref = Some(x);
                         } else if i == 1 {
-                            args.push(Exp::Str(format!("{x}").into()));
+                            args.push(Exp::Str(label_string(local_table, &x).into()));
                         } else {
-                            args.push(lower_ref(&mut self.counter, data, source_info, x));
+                            args.push(lower_ref(
+                                &mut self.counter,
+                                data,
+                                local_table,
+                                source_info,
+                                x,
+                            ));
                         }
                     }
                     // `t0 = x.y.z` (loading the port's field path if any), keeping the reference
                     // alive after the sink call is stripped.
                     if let Some(port) = port_ref {
-                        let port_val = lower_ref(&mut self.counter, data, source_info, port);
+                        let port_val =
+                            lower_ref(&mut self.counter, data, local_table, source_info, port);
                         let assign_tmp = StatementKind::assign(tmp.clone(), [port_val]);
                         data.push_back(Statement::new(assign_tmp, source_info));
                     }
@@ -875,7 +952,13 @@ impl FlowyCtx {
                 } else {
                     let mut args = ThinVec::with_capacity(actuals.len());
                     for x in actuals {
-                        args.push(lower_ref(&mut self.counter, data, source_info, x));
+                        args.push(lower_ref(
+                            &mut self.counter,
+                            data,
+                            local_table,
+                            source_info,
+                            x,
+                        ));
                     }
                     args
                 };
@@ -888,8 +971,8 @@ impl FlowyCtx {
                 let mut inner = stmt_pair.into_inner();
                 let terminator = match inner.next() {
                     Some(var) => {
-                        let r = parse_ref(locals, var, defined_functions);
-                        let src = lower_ref(&mut self.counter, data, source_info, r);
+                        let r = parse_ref(locals, local_table, var, defined_functions);
+                        let src = lower_ref(&mut self.counter, data, local_table, source_info, r);
                         TerminatorKind::Return {
                             args: vec![src].into(),
                         }
@@ -1084,12 +1167,42 @@ impl std::fmt::Display for ParsedRef {
     }
 }
 
+/// Renders a source/sink label from a parsed operand. Local bases are resolved to their source
+/// *name* (`%S`) rather than their interned display (`%L{idx}`): a label like `S` is a taint
+/// category shared across functions, but interning assigns it a different [`LocalIdx`] in each
+/// function, so the raw index display would make `source(S)` and `sink(_, S)` disagree.
+fn label_string(local_table: &Locals, r: &ParsedRef) -> String {
+    use std::fmt::Write as _;
+    match r {
+        ParsedRef::Value(e) => format!("{e}"),
+        ParsedRef::Ap(base, segments) => {
+            let mut s = String::new();
+            match base.variable.as_ref() {
+                Variable::Local(idx) => {
+                    let _ = write!(s, "%{}", local_table.name(*idx));
+                    if let Some(v) = base.version {
+                        let _ = write!(s, "_{v}");
+                    }
+                }
+                _ => {
+                    let _ = write!(s, "{base}");
+                }
+            }
+            for seg in segments {
+                let _ = write!(s, ".{seg}");
+            }
+            s
+        }
+    }
+}
+
 /// Lowers a parsed operand into an rvalue [`Exp`]. A value passes through; an access path is
 /// lowered into a sequence of loads (appended to `data`, tagged with `source_info`) and the
 /// loaded variable is returned. Fresh temporaries come from `counter`.
 fn lower_ref(
     counter: &mut Counter,
     data: &mut BasicBlockData,
+    local_table: &mut Locals,
     source_info: SourceInfo,
     r: ParsedRef,
 ) -> Exp {
@@ -1098,7 +1211,9 @@ fn lower_ref(
         ParsedRef::Ap(base, segments) => {
             let mut loads = Vec::new();
             let addr = ctadl_ir::mir::load_access_path(base, segments, &mut loads, || {
-                VariableRef::new_local(format!("t{}?", counter.next()))
+                VariableRef::new_local_idx(
+                    local_table.get_or_intern(&format!("t{}?", counter.next())),
+                )
             });
             for mut s in loads {
                 s.source_info = source_info;
@@ -1114,13 +1229,14 @@ fn lower_ref(
 fn lower_callee_addr(
     counter: &mut Counter,
     data: &mut BasicBlockData,
+    local_table: &mut Locals,
     source_info: SourceInfo,
     base: VariableRef,
     segments: ThinVec<PathSegment>,
 ) -> AccessPath {
     let mut loads = Vec::new();
     let addr = ctadl_ir::mir::load_access_path(base, segments, &mut loads, || {
-        VariableRef::new_local(format!("t{}?", counter.next()))
+        VariableRef::new_local_idx(local_table.get_or_intern(&format!("t{}?", counter.next())))
     });
     for mut s in loads {
         s.source_info = source_info;
@@ -1147,11 +1263,12 @@ fn check_store_target(segments: &[PathSegment], line: usize, col: usize) -> Resu
 
 fn parse_ap(
     parameters: &Env,
+    local_table: &mut Locals,
     pair: Pair<'_, Rule>,
     defined_functions: &HashSet<String>,
 ) -> Result<(VariableRef, ThinVec<PathSegment>), FlowyError> {
     let (line, col) = pair.line_col();
-    match parse_ref(parameters, pair, defined_functions) {
+    match parse_ref(parameters, local_table, pair, defined_functions) {
         ParsedRef::Ap(base, segments) => Ok((base, segments)),
         ParsedRef::Value(_) => Err(FlowyError::Compile {
             message: "bad lhs ap".to_string(),
@@ -1162,7 +1279,12 @@ fn parse_ap(
 }
 
 /// A regular access path is variable + fields (as opposed to a summary access path)
-fn parse_ref(env: &Env, pair: Pair<'_, Rule>, defined_functions: &HashSet<String>) -> ParsedRef {
+fn parse_ref(
+    env: &Env,
+    local_table: &mut Locals,
+    pair: Pair<'_, Rule>,
+    defined_functions: &HashSet<String>,
+) -> ParsedRef {
     // int | string | ident ~ p* | function_ptr
     let mut iter = pair.into_inner();
     let first = iter.next().unwrap();
@@ -1204,7 +1326,12 @@ fn parse_ref(env: &Env, pair: Pair<'_, Rule>, defined_functions: &HashSet<String
                     }
                 })
                 // treat it as local
-                .unwrap_or_else(|| (VariableRef::new_local(name.clone()), field_accesses));
+                .unwrap_or_else(|| {
+                    (
+                        VariableRef::new_local_idx(local_table.get_or_intern(&name)),
+                        field_accesses,
+                    )
+                });
             ParsedRef::Ap(base, segments)
         }
     }
@@ -1212,12 +1339,13 @@ fn parse_ref(env: &Env, pair: Pair<'_, Rule>, defined_functions: &HashSet<String
 
 fn parse_actuals(
     locals: &Env,
+    local_table: &mut Locals,
     pair: Pair<'_, Rule>,
     defined_functions: &HashSet<String>,
 ) -> Vec<ParsedRef> {
     assert!(pair.as_rule() == Rule::actuals);
     pair.into_inner()
-        .map(|ap| parse_ref(locals, ap, defined_functions))
+        .map(|ap| parse_ref(locals, local_table, ap, defined_functions))
         .collect()
 }
 

@@ -117,7 +117,7 @@ macro_rules! make_ast_visitor {
             }
 
             fn super_function_data(&mut self, idx: FunctionIdx, data: &$($mutability)? FunctionData) {
-                let FunctionData { name: _, params, return_type, blocks } = data;
+                let FunctionData { name: _, params, return_type, blocks, locals: _ } = data;
                 self.visit_params(params);
                 self.visit_return_type(return_type);
                 self.visit_basic_blocks(idx, blocks);

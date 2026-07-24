@@ -204,12 +204,15 @@ fn params_and_simple_assign_in_example_2() {
           return a;
         }
         "#;
-    let (_, dump) = program_from_string(src);
+    let (program, dump) = program_from_string(src);
     dump_ir(&dump);
 
-    assert!(check_match(&dump, "return %a"), "has return a");
+    // Locals render by index (`%L{idx}`); resolve `a`'s index by name so the assertions stay
+    // readable rather than hard-coding `%L0`.
+    let a = local_render(&program, "foo", "a");
+    assert!(check_match(&dump, &format!("return {a}")), "has return a");
     assert!(
-        check_match(&dump, "assign %a = @p1"),
+        check_match(&dump, &format!("assign {a} = @p1")),
         "has the simplest assign, a=b"
     );
     assert!(
@@ -291,6 +294,9 @@ fn block_without_return() {
         }
         ";
     let (program, dump) = program_from_string(src);
+    // Resolve `x`'s interned index by name before `program` is consumed below, so the assertion
+    // reads in terms of the source name rather than a hard-coded `%L0`.
+    let x = local_render(&program, "bar", "x");
     let program_info = ProgramInfo {
         program,
         ..Default::default()
@@ -300,7 +306,7 @@ fn block_without_return() {
     let (summary, _source_info) = get_summary(program_info.program).unwrap();
     log::info!("{:?}", summary);
 
-    assert!(check_match(&dump, "assign %x"));
+    assert!(check_match(&dump, &format!("assign {x}")));
 }
 
 //msvc has an extension for try/catch, tree-sitter

@@ -21,6 +21,7 @@ use crate::facts::Path;
 use ctadl_ir::graph::{DirectedGraph, Successors};
 use ctadl_ir::mir::TerminatorKind;
 use ctadl_ir::mir::call::{CallEdges, CallStyle};
+use ctadl_ir::mir::{LocalIdx, Locals};
 use ctadl_ir::{
     AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, Statement, StatementKind, VariableRef, ssa,
 };
@@ -107,6 +108,23 @@ pub(crate) fn function_named<'a>(prog: &'a Program, name: &str) -> Option<&'a Fu
     prog.functions.functions.raw.iter().find(|f| f.name == name)
 }
 
+/* Renders the local named `local` in function `func` the way the IR dump does (`%L{idx}`), by
+looking its interned `LocalIdx` up in the function's locals table. Lets dump-based assertions be
+written in terms of the readable source name rather than a hard-coded, hard-to-follow index. Panics
+if the function or local does not exist. */
+#[track_caller]
+pub(crate) fn local_render(prog: &Program, func: &str, local: &str) -> String {
+    let f =
+        function_named(prog, func).unwrap_or_else(|| panic!("no function named {func:?}\n{prog}"));
+    let idx = f
+        .locals
+        .iter_enumerated()
+        .find(|(_, decl)| decl.name.as_str() == local)
+        .map(|(idx, _)| idx)
+        .unwrap_or_else(|| panic!("no local named {local:?} in function {func:?}\n{prog}"));
+    format!("%L{}", idx.index())
+}
+
 /* Asserts the function `name` has the given return arity (the `N` in the dump's `define name() ->
 N`): a value-returning function is arity 1, a `void` function is arity 0. Panics at the caller's
 line on mismatch. */
@@ -181,7 +199,10 @@ pub(crate) fn check_direct_call<I>(prog: &Program, name: &str, callee: &str, arg
 where
     I: IntoIterator<Item = &'static str>,
 {
-    let want_args: Vec<Exp> = args.into_iter().map(exp_from_str).collect();
+    let locals = &function_named(prog, name)
+        .expect("expected function to exist")
+        .locals;
+    let want_args: Vec<Exp> = args.into_iter().map(|s| exp_from_str(s, locals)).collect();
     let calls = direct_calls_in(prog, name);
     let found = calls
         .iter()
@@ -281,7 +302,20 @@ struct DslPath {
     fields: Vec<PathSegment>,
 }
 
-fn access_path_from_str(s: &str) -> DslPath {
+/// Resolves a local's DSL name to a `VariableRef` using the same `Locals` table the parser built,
+/// so the interned `LocalIdx` matches the IR under test. If the name was never interned (e.g. an
+/// assertion for a local that does not exist), a one-past-the-end index is used so the resulting
+/// ref compares unequal to every real local rather than panicking.
+fn resolve_local(locals: &Locals, name: &str) -> VariableRef {
+    let idx = locals
+        .iter_enumerated()
+        .find(|(_, decl)| decl.name.as_str() == name)
+        .map(|(idx, _)| idx)
+        .unwrap_or_else(|| LocalIdx::new(locals.len()));
+    VariableRef::new_local_idx(idx)
+}
+
+fn access_path_from_str(s: &str, locals: &Locals) -> DslPath {
     if let Some(rest) = s.strip_prefix("$globals") {
         return DslPath {
             base: VariableRef::new_global(),
@@ -300,7 +334,7 @@ fn access_path_from_str(s: &str) -> DslPath {
 
     let (base, suffix) = s.split_once('.').unwrap_or((s, ""));
     DslPath {
-        base: VariableRef::new_local(base.to_string()),
+        base: resolve_local(locals, base),
         fields: parse_fields(suffix),
     }
 }
@@ -308,11 +342,11 @@ fn access_path_from_str(s: &str) -> DslPath {
 /* Builds a source expression from the DSL. A `#`-prefixed string is a constant literal (`"#7"` =>
 `Exp::Str("7")`, matching how the C frontend lowers a literal — see `flatten_expr` in mod.rs);
 anything else is an access path (variable / param / global / field). */
-fn exp_from_str(s: &str) -> Exp {
+fn exp_from_str(s: &str, locals: &Locals) -> Exp {
     match s.strip_prefix('#') {
         Some(lit) => Exp::new_str(lit),
         None => {
-            let dsl = access_path_from_str(s);
+            let dsl = access_path_from_str(s, locals);
             assert!(
                 dsl.fields.is_empty(),
                 "DSL source with a field path is not directly expressible; use check_loads: {s}"
@@ -335,9 +369,15 @@ pub(crate) fn check_assign_or_update<I>(
 ) where
     I: IntoIterator<Item = &'static str>,
 {
-    let srcs: Vec<Exp> = src_strs.into_iter().map(exp_from_str).collect();
+    let locals = &get_only_function(prog)
+        .expect("expected exactly one function")
+        .locals;
+    let srcs: Vec<Exp> = src_strs
+        .into_iter()
+        .map(|s| exp_from_str(s, locals))
+        .collect();
 
-    let dst_ap = access_path_from_str(dst);
+    let dst_ap = access_path_from_str(dst, locals);
 
     let expected = if dst_ap.fields.is_empty() {
         StatementKind::assign(dst_ap.base, srcs)
@@ -385,7 +425,10 @@ string like `f.[3]` or `$globals.a`). Field reads lower to loads through a tempo
 the load-based complement to `check_assign_or_update`'s field-path source. Panics if not found. */
 #[track_caller]
 pub(crate) fn check_loads(prog: &Program, source_str: &str) {
-    let ap = access_path_from_str(source_str);
+    let locals = &get_only_function(prog)
+        .expect("expected exactly one function")
+        .locals;
+    let ap = access_path_from_str(source_str, locals);
     let found = statements_of(prog).any(|s| {
         let StatementKind::Load { source, field, .. } = &s.kind else {
             return false;
@@ -441,7 +484,10 @@ fn writes_dest(kind: &StatementKind, dst: &DslPath) -> bool {
 /* Counts the statements of the (single) function that write to `dst`, ignoring the source
 expression. Destination DSL is the same as `check_assign_or_update`'s `dst` (`x`, `@p0.x`, ...). */
 pub(crate) fn count_writes_to(prog: &Program, dst: &str) -> usize {
-    let dst_ap = access_path_from_str(dst);
+    let locals = &get_only_function(prog)
+        .expect("expected exactly one function")
+        .locals;
+    let dst_ap = access_path_from_str(dst, locals);
     statements_of(prog)
         .filter(|s| writes_dest(&s.kind, &dst_ap))
         .count()
@@ -499,6 +545,43 @@ pub(crate) fn get_summary(
     );
     let result = taint_index(facts);
     Ok((result.summary, source_info))
+}
+
+/// Indexes `program` end-to-end (SSA → codegen → taint index) and returns the pieces
+/// [`crate::query_engine::build_query_endpoints`] consumes: the [`IndexFacts`], the
+/// [`IndexSourceInfo`] (whose `.sites` is the [`fx::IdMap`]), and the `assign_like` relation.
+/// Unlike [`get_summary`], nothing is discarded, so a test can drive Stage 2 against a real index.
+#[allow(clippy::type_complexity)]
+pub(crate) fn index_program(
+    program: Program,
+) -> (
+    IndexFacts,
+    IndexSourceInfo,
+    Vec<(
+        fx::FunctionId,
+        fx::FlowVariable,
+        Path,
+        fx::FlowVariable,
+        Path,
+    )>,
+) {
+    let mut program_info = ProgramInfo {
+        program,
+        ..Default::default()
+    };
+    program_info.program.verify().unwrap();
+    let mut facts = IndexFacts::default();
+    ssa::transform_program(&mut program_info.program, true);
+    let mut source_info = IndexSourceInfo::default();
+    codegen_program(
+        program_info,
+        &mut facts,
+        &mut source_info,
+        CallResolutionStrategy::Mixed,
+    );
+    // `taint_index` consumes the facts; clone so the caller keeps them for Stage 2.
+    let result = taint_index(facts.clone());
+    (facts, source_info, result.assign_like)
 }
 
 pub(crate) fn summary_count(summary: &[FunctionSummary], count: usize) -> bool {
@@ -615,15 +698,17 @@ mod ap_tests {
 
     #[test]
     fn local_no_fields() {
-        let ap = access_path_from_str("b");
-        assert_eq!(ap.base, VariableRef::new_local("b".to_string()));
+        let mut locals = Locals::default();
+        let b = locals.get_or_intern("b");
+        let ap = access_path_from_str("b", &locals);
+        assert_eq!(ap.base, VariableRef::new_local_idx(b));
         assert!(ap.fields.is_empty());
     }
 
     #[test]
     fn param_with_field() {
         assert_eq!(
-            access_path_from_str("@p1.f2"),
+            access_path_from_str("@p1.f2", &Locals::default()),
             DslPath {
                 base: VariableRef::new_parameter(1u32.into()),
                 fields: vec![PathSegment::symbol("f2")],
@@ -634,7 +719,7 @@ mod ap_tests {
     #[test]
     fn global_with_field() {
         assert_eq!(
-            access_path_from_str("$globals.a"),
+            access_path_from_str("$globals.a", &Locals::default()),
             DslPath {
                 base: VariableRef::new_global(),
                 fields: vec![PathSegment::symbol("a")],
@@ -644,10 +729,12 @@ mod ap_tests {
 
     #[test]
     fn nested_fields() {
+        let mut locals = Locals::default();
+        let v = locals.get_or_intern("v");
         assert_eq!(
-            access_path_from_str("v.f1.f2"),
+            access_path_from_str("v.f1.f2", &locals),
             DslPath {
-                base: VariableRef::new_local("v".to_string()),
+                base: VariableRef::new_local_idx(v),
                 fields: vec![PathSegment::symbol("f1"), PathSegment::symbol("f2")],
             },
         );
@@ -667,10 +754,12 @@ mod ap_tests {
     fn subscript_is_symbol_segment() {
         // The C frontend lowers `f[3]` to `PathSegment::Symbol("[3]")` (not a real Offset), so the
         // DSL must too — `"f.[3]"` becomes base `f` with field `[Symbol("[3]")]`.
+        let mut locals = Locals::default();
+        let f = locals.get_or_intern("f");
         assert_eq!(
-            access_path_from_str("f.[3]"),
+            access_path_from_str("f.[3]", &locals),
             DslPath {
-                base: VariableRef::new_local("f".to_string()),
+                base: VariableRef::new_local_idx(f),
                 fields: vec![PathSegment::symbol("[3]")],
             },
         );
@@ -678,12 +767,14 @@ mod ap_tests {
 
     #[test]
     fn constant_source() {
+        let mut locals = Locals::default();
+        locals.get_or_intern("b");
         // A `#`-prefixed source is a constant literal, not a variable.
-        assert_eq!(exp_from_str("#7"), Exp::new_str("7"));
+        assert_eq!(exp_from_str("#7", &locals), Exp::new_str("7"));
         // ...while a bare name is still an access-path variable.
         assert_eq!(
-            exp_from_str("b"),
-            Exp::Variable(access_path_from_str("b").base)
+            exp_from_str("b", &locals),
+            Exp::Variable(access_path_from_str("b", &locals).base)
         );
     }
 }

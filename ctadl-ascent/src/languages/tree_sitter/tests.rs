@@ -187,7 +187,10 @@ fn unique_temps() {
         .flat_map(|b| b.statements.iter())
         .filter_map(|stmt| match &stmt.kind {
             StatementKind::Assign { dest, .. } => match dest.variable.as_ref() {
-                Variable::Local(name) if name.starts_with("<t") => Some(name.clone()),
+                Variable::Local(idx) => {
+                    let name = fun.locals.name(*idx);
+                    name.starts_with("<t").then(|| name.to_string())
+                }
                 _ => None,
             },
             _ => None,
@@ -1045,4 +1048,193 @@ fn funcptr_array_multistore_flows() {
         }";
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&summary, 1, "");
+}
+
+/// End-to-end check of the `Variable(name)` source/sink selector: Stage 1 resolves the local
+/// name to a base `LocalIdx`, and Stage 2 (`build_query_endpoints`) seeds exactly ONE versioned
+/// vertex — the lowest *existing* SSA version — against a real index. `buf` is defined twice, so
+/// it has multiple SSA versions; the test pins that we seed one (the lowest), not one per version.
+#[test_log::test]
+fn variable_port_selects_lowest_ssa_version() {
+    use crate::facts::{Function, TaintDirection};
+    use crate::models::ModelBuilders;
+    use crate::models::json::ModelGeneratorIngest;
+    use crate::query_engine::build_query_endpoints;
+    use ctadl_ir::ProgramInfo;
+    use serde_json::json;
+
+    // `buf` is assigned twice → two SSA versions (`%L{idx}_1`, `%L{idx}_2`).
+    let src = r"
+        int MySource();
+        int Other();
+        void MySink(int x);
+        void f() {
+            int buf = MySource();
+            MySink(buf);
+            buf = Other();
+            MySink(buf);
+        }";
+
+    // Stage 1 runs on the pre-SSA program (local names → base LocalIdx).
+    let ingest_prog = program_from_string(src).0;
+    // `%L{idx}` for `buf`; strip the `%L` to get the numeric base index the selector resolves to.
+    let render = local_render(&ingest_prog, "f", "buf");
+    let idx: u32 = render.strip_prefix("%L").unwrap().parse().unwrap();
+    let program_info = ProgramInfo {
+        program: ingest_prog,
+        ..Default::default()
+    };
+    let mut mb = ModelBuilders::new();
+    {
+        let mut ingest = ModelGeneratorIngest::new(&program_info, &mut mb);
+        let generator = json!({
+            "find": "methods",
+            "where": [{"constraint": "name", "pattern": "^f$"}],
+            "model": {"sources": [{"kind": "K", "port": "Variable(buf)"}]}
+        });
+        ingest.encode_models(vec![generator]).unwrap();
+    }
+    let batch = mb.endpoint.finish().unwrap();
+    // Stage 1 recorded exactly one endpoint row, tagged `Local`, carrying the base index.
+    let rows: Vec<_> = batch.iter_endpoints().collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].selector_ty,
+        crate::models::FormalIndexTypeTag::Local
+    );
+    assert_eq!(rows[0].local_index, Some(idx));
+
+    // Index the same source and run Stage 2.
+    let (facts, source_info, assign_like) = index_program(program_from_string(src).0);
+    let f_id = source_info
+        .sites
+        .get_function_id(Function("f".into()))
+        .expect("function f indexed");
+
+    // The lowest existing SSA version of `buf` among the real graph vertices — the vertex we
+    // expect Stage 2 to seed. Computed from the index (not hard-coded) so the test tracks SSA
+    // numbering, while still proving "lowest existing version" (version 0 is typically dead).
+    let prefix = format!("%L{idx}_");
+    let expected_version = assign_like
+        .iter()
+        .flat_map(|(func, v1, _, v2, _)| [(*func, *v1), (*func, *v2)])
+        .filter(|(func, _)| *func == f_id)
+        .filter_map(|(_, v)| {
+            v.as_local()?
+                .as_str()
+                .strip_prefix(&prefix)?
+                .parse::<u32>()
+                .ok()
+        })
+        .min()
+        .expect("buf has at least one versioned vertex");
+    // `buf` really does have more than one version, so "pick one" is a meaningful claim.
+    let distinct_versions = assign_like
+        .iter()
+        .flat_map(|(func, v1, _, v2, _)| [(*func, *v1), (*func, *v2)])
+        .filter(|(func, _)| *func == f_id)
+        .filter_map(|(_, v)| {
+            v.as_local()?
+                .as_str()
+                .strip_prefix(&prefix)?
+                .parse::<u32>()
+                .ok()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(
+        distinct_versions.len() >= 2,
+        "fixture should give buf multiple SSA versions, got {distinct_versions:?}"
+    );
+
+    let (eps, formals) = build_query_endpoints(&batch, &facts, &source_info.sites, &assign_like);
+
+    // Exactly one endpoint (not one per version), anchored in f, forward, and — since a local is
+    // not a formal — no formal registered.
+    assert_eq!(eps.len(), 1, "expected exactly one seeded vertex");
+    let (ep,) = &eps[0];
+    assert_eq!(ep.infunc, f_id);
+    assert_eq!(ep.direction, TaintDirection::Forward);
+    assert_eq!(ep.call_site, None);
+    assert!(formals.is_empty(), "a local selector registers no formal");
+    let seeded = ep.vertex.0.as_local().expect("seeded a local vertex");
+    assert_eq!(seeded.as_str(), format!("%L{idx}_{expected_version}"));
+}
+
+/// `Variable(name)` is resolved to a `LocalIdx` *per matched function*, not once for the
+/// generator: one generator matching several functions must record each function's own index for
+/// the same name. `g2` declares two locals ahead of `buf`, so `buf` lands on a different index
+/// there than in `g1` — a resolution hoisted out of the per-function loop would give both rows the
+/// same index and fail here. `g3` has no `buf` at all: that function is skipped with a warning
+/// (the other matches still emit) rather than failing the whole model.
+#[test_log::test]
+fn variable_port_resolves_per_matched_function() {
+    use crate::models::ModelBuilders;
+    use crate::models::json::ModelGeneratorIngest;
+    use ctadl_ir::ProgramInfo;
+    use serde_json::json;
+
+    let src = r"
+        int MySource();
+        void MySink(int x);
+        void g1() {
+            int buf = MySource();
+            MySink(buf);
+        }
+        void g2() {
+            int pad1 = MySource();
+            int pad2 = MySource();
+            int buf = MySource();
+            MySink(pad1);
+            MySink(pad2);
+            MySink(buf);
+        }
+        void g3() {
+            int other = MySource();
+            MySink(other);
+        }";
+
+    let prog = program_from_string(src).0;
+    // Expected base index per function, read from each function's own locals table.
+    let want = |func: &str| -> u32 {
+        local_render(&prog, func, "buf")
+            .strip_prefix("%L")
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let (g1_idx, g2_idx) = (want("g1"), want("g2"));
+    assert_ne!(
+        g1_idx, g2_idx,
+        "fixture must give buf different indices in g1/g2 for this test to mean anything"
+    );
+
+    let program_info = ProgramInfo {
+        program: prog,
+        ..Default::default()
+    };
+    let mut mb = ModelBuilders::new();
+    {
+        let mut ingest = ModelGeneratorIngest::new(&program_info, &mut mb);
+        let generator = json!({
+            "find": "methods",
+            "where": [{"constraint": "name", "pattern": "^g[0-9]$"}],
+            "model": {"sources": [{"kind": "K", "port": "Variable(buf)"}]}
+        });
+        // g3 lacking `buf` is a skip, not an error.
+        ingest.encode_models(vec![generator]).unwrap();
+    }
+    let batch = mb.endpoint.finish().unwrap();
+
+    let rows: std::collections::BTreeMap<&str, Option<u32>> = batch
+        .iter_endpoints()
+        .map(|r| {
+            assert_eq!(r.selector_ty, crate::models::FormalIndexTypeTag::Local);
+            (r.function, r.local_index)
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        std::collections::BTreeMap::from([("g1", Some(g1_idx)), ("g2", Some(g2_idx))]),
+        "expected one row per matched function that has `buf`, each with that function's own index"
+    );
 }

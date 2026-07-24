@@ -42,8 +42,8 @@ fn test_store_verifies() {
     // Add a Store statement; verification should succeed.
     let f_idx = FunctionIdx::new(0);
     let f = &mut prog[f_idx];
+    let var = VariableRef::new_local_idx(f.locals.get_or_intern("x"));
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
-    let var = VariableRef::new_local("x".to_string());
     let store = StatementKind::store(
         AccessPath::without_fields(var.clone()),
         FieldPath::symbol("f"),
@@ -64,12 +64,10 @@ fn test_parameter_does_not_exist_error() {
     f.params = Params::default();
     // Reference a non‑existent parameter.
     let var = VariableRef::new_parameter(ParameterIdx::new(0));
+    let tmp = VariableRef::new_local_idx(f.locals.get_or_intern("tmp"));
     // Add an assign that uses the nonexistent parameter (as an access path).
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
-    let stmt = Statement::new_kind(StatementKind::assign(
-        VariableRef::new_local("tmp".to_string()),
-        [Exp::Variable(var.clone())],
-    ));
+    let stmt = Statement::new_kind(StatementKind::assign(tmp, [Exp::Variable(var.clone())]));
     block.statements.push_back(stmt);
     // Run verification; we don't assert on the result because the behavior may be buggy.
     let result = prog.verify();
@@ -78,6 +76,81 @@ fn test_parameter_does_not_exist_error() {
         "errors: {:?}",
         &result
     );
+}
+
+#[test]
+fn test_local_does_not_exist_error() {
+    let mut prog = make_program();
+    let f_idx = FunctionIdx::new(0);
+    let f = &mut prog[f_idx];
+    // One declared local, but the statement references the index just past the end.
+    let declared = f.locals.get_or_intern("tmp");
+    let dangling = VariableRef::new_local_idx(LocalIdx::new(declared.index() + 1));
+    let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
+    block
+        .statements
+        .push_back(Statement::new_kind(StatementKind::assign(
+            dangling,
+            [Exp::new_str("a")],
+        )));
+    let result = prog.verify();
+    assert!(
+        matches!(&result, Err(e) if e.iter().any(|err| matches!(err, VerifyError::LocalDoesNotExist { .. }))),
+        "errors: {:?}",
+        &result
+    );
+}
+
+/// `by_name` is `#[serde(skip)]`, so a deserialized `Locals` has declarations but no name index.
+/// Interning must still dedupe against those declarations -- a second index for a name already in
+/// the table would break SSA and every name-based lookup.
+#[test]
+fn test_intern_after_losing_name_index() {
+    let mut locals = Locals::default();
+    let a = locals.get_or_intern("a");
+    let b = locals.get_or_intern("b");
+
+    // Exactly the state `Locals` deserializes into.
+    locals.by_name.clear();
+
+    assert_eq!(locals.get_or_intern("a"), a);
+    assert_eq!(locals.get_or_intern("b"), b);
+    assert_eq!(locals.len(), 2, "interning must not duplicate declarations");
+    // A genuinely new name still gets a fresh index.
+    let c = locals.get_or_intern("c");
+    assert_ne!(c, a);
+    assert_ne!(c, b);
+    assert_eq!(locals.name(c), "c");
+}
+
+/// The default dump keeps locals opaque (`%L0`, the form the fact base keys on); wrapping in
+/// `WithLocalNames` -- what `ctadl inspect` does -- resolves them through the function's table.
+#[test]
+fn test_display_with_local_names() {
+    let mut prog = make_program();
+    let f = &mut prog[FunctionIdx::new(0)];
+    let buf = VariableRef::new_local_idx(f.locals.get_or_intern("buf"));
+    f.blocks[BasicBlockIdx::START_BLOCK]
+        .statements
+        .push_back(Statement::new_kind(StatementKind::assign(
+            buf,
+            [Exp::new_str("a")],
+        )));
+
+    let plain = format!("{prog}");
+    assert!(plain.contains("%L0"), "plain dump keeps the index: {plain}");
+    assert!(!plain.contains("locals:"), "no locals table: {plain}");
+
+    let named = format!("{}", WithLocalNames(&prog));
+    assert!(named.contains("%buf"), "names resolved: {named}");
+    assert!(!named.contains("%L0 ="), "no bare index in body: {named}");
+    assert!(
+        named.contains("locals: %L0=buf"),
+        "header maps index to name: {named}"
+    );
+
+    // The scoped setting is restored, so later renders are unaffected.
+    assert_eq!(format!("{prog}"), plain);
 }
 
 #[test]
@@ -129,13 +202,17 @@ fn test_field_accesses_with_offsets() {
     assert_eq!(format!("{}", mixed_path), ".[0xa].[0x14]");
 
     // Test creating access path with offsets
-    let var = VariableRef::new_local("obj".to_string());
+    let mut locals = Locals::default();
+    let var = VariableRef::new_local_idx(locals.get_or_intern("obj"));
     let field_accesses = FieldAccesses::with_offset(5);
     let access_path = AccessPath {
         variable_ref: var,
         path: field_accesses,
     };
-    assert_eq!(format!("{}", access_path), "%obj.[0x5]");
+    // Base is the local `obj`, followed by the single offset.
+    let base = access_path.variable_ref.variable.local().unwrap();
+    assert_eq!(locals.name(base), "obj");
+    assert_eq!(format!("{}", access_path.path), ".[0x5]");
 }
 
 #[test]

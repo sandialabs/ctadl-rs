@@ -491,3 +491,77 @@ fn unknown_constraint_is_hard_error() {
 fn top_level_integer_compare_is_hard_error() {
     assert_unexpected_constraint(json!([{"constraint": "==", "value": 1}]));
 }
+
+#[test]
+fn variable_port_on_propagation_is_rejected() {
+    let program_info = ProgramInfo::default();
+    let mut model_builders = ModelBuilders::new();
+    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut model_builders);
+
+    let malformed_json = json!({
+        "find": "methods",
+        "model": {
+            "propagation": [
+                {
+                    "input": "Variable(x)",
+                    "output": "Argument(0)"
+                }
+            ]
+        }
+    });
+
+    let result = ingest.encode_models(vec![malformed_json]);
+    match result {
+        Err(Error::JsonModel(errors)) => {
+            assert_eq!(errors.len(), 1);
+            match &errors[0] {
+                JsonModelError::UnexpectedField { message, .. } => {
+                    assert!(
+                        message.contains("Variable(...)"),
+                        "unexpected message: {message}"
+                    );
+                }
+                other => panic!("expected UnexpectedField error, got: {other:?}"),
+            }
+        }
+        Ok(_) => panic!("expected error for Variable(...) on propagation"),
+        Err(e) => panic!("expected JsonModel error, got: {e}"),
+    }
+}
+
+#[test]
+fn variable_port_with_find_callsites_is_rejected() {
+    let program_info = ProgramInfo::default();
+    let mut model_builders = ModelBuilders::new();
+    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut model_builders);
+
+    let malformed_json = json!({
+        "find": "callsites",
+        "model": {
+            "sources": [
+                {
+                    "kind": "K",
+                    "port": "Variable(x)"
+                }
+            ]
+        }
+    });
+
+    let result = ingest.encode_models(vec![malformed_json]);
+    match result {
+        Err(Error::JsonModel(errors)) => {
+            assert_eq!(errors.len(), 1);
+            match &errors[0] {
+                JsonModelError::UnexpectedField { message, .. } => {
+                    assert!(
+                        message.contains("find: callsites"),
+                        "unexpected message: {message}"
+                    );
+                }
+                other => panic!("expected UnexpectedField error, got: {other:?}"),
+            }
+        }
+        Ok(_) => panic!("expected error for Variable(...) with find: callsites"),
+        Err(e) => panic!("expected JsonModel error, got: {e}"),
+    }
+}

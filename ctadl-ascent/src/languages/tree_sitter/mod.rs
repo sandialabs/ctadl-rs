@@ -1210,6 +1210,7 @@ impl<'a> Context<'a> {
         name_pre_scope: &str,
         mut field_path: ThinVec<PathSegment>,
         scope_view: &ScopeView,
+        locals: &mut Locals,
     ) -> RawPath {
         let name: String;
         let varkind: VarKind;
@@ -1239,7 +1240,10 @@ impl<'a> Context<'a> {
                 fields.append(&mut field_path);
                 RawPath::new(VariableRef::new_global(), fields)
             }
-            VarKind::Local => RawPath::new(VariableRef::new_local(name), field_path),
+            VarKind::Local => RawPath::new(
+                VariableRef::new_local_idx(locals.get_or_intern(&name)),
+                field_path,
+            ),
             VarKind::Parameter => {
                 if let Some(param_idx) =
                     self.get_param_idx(scope_view.func_name.as_str(), name.as_str())
@@ -1355,7 +1359,12 @@ impl<'a> Context<'a> {
                     // A read of a variable. A global identifier `a` is really `$globals.a` (a
                     // field of the globals object), so this may lower to a load; a local is a
                     // bare variable (no load emitted).
-                    let ap = self.build_access_path(text, Default::default(), scope_view);
+                    let ap = self.build_access_path(
+                        text,
+                        Default::default(),
+                        scope_view,
+                        &mut program[scope_view.fidx].locals,
+                    );
                     Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
                 }
             }
@@ -1403,6 +1412,7 @@ impl<'a> Context<'a> {
                     final_ident,
                     path_vec.into_iter().map(PathSegment::symbol).collect(),
                     scope_view,
+                    &mut program[scope_view.fidx].locals,
                 );
                 Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
             }
@@ -1459,7 +1469,12 @@ impl<'a> Context<'a> {
                     None,
                     None,
                 );
-                let ap = self.build_access_path(symbol, Default::default(), scope_view);
+                let ap = self.build_access_path(
+                    symbol,
+                    Default::default(),
+                    scope_view,
+                    &mut program[scope_view.fidx].locals,
+                );
                 Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
             } else {
                 //iden was something nested
@@ -1489,7 +1504,12 @@ impl<'a> Context<'a> {
         let right_val = self.flatten_expr(program, right_node, source, scope_view)?;
         // 3. Generate a new temporary for this specific operation
         let temp_name = self.allocator.next_temp();
-        let target = self.build_access_path(temp_name.as_str(), Default::default(), scope_view);
+        let target = self.build_access_path(
+            temp_name.as_str(),
+            Default::default(),
+            scope_view,
+            &mut program[scope_view.fidx].locals,
+        );
 
         match operator.kind() {
             "==" | "<=" | ">=" => {
@@ -1507,7 +1527,9 @@ impl<'a> Context<'a> {
             }
         }
 
-        Ok(Exp::Variable(VariableRef::new_local(temp_name)))
+        Ok(Exp::Variable(VariableRef::new_local_idx(
+            program[scope_view.fidx].locals.get_or_intern(&temp_name),
+        )))
     }
 
     fn flatten_update_expression(
@@ -1525,7 +1547,12 @@ impl<'a> Context<'a> {
         let one = Exp::Str(ArcIntern::<str>::from("1"));
         // temp = cur + 1
         let temp_name = self.allocator.next_temp();
-        let target = self.build_access_path(temp_name.as_str(), Default::default(), scope_view);
+        let target = self.build_access_path(
+            temp_name.as_str(),
+            Default::default(),
+            scope_view,
+            &mut program[scope_view.fidx].locals,
+        );
         self.add_assign_to_program(program, scope_view, &target, &cur, Some(&one));
         // loc = temp
         let new_val = Exp::Variable(target.base.clone());
@@ -1601,20 +1628,33 @@ impl<'a> Context<'a> {
         // parenthesized/pointer expression, so route it through flatten_expr to
         // recover the underlying variable (`op_func`).
         let access_path = if func_node.kind() == "identifier" {
-            self.build_access_path(func_name, Default::default(), scope_view)
+            self.build_access_path(
+                func_name,
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            )
         } else {
             // The callee is a call-target location (e.g. `(*op_func)(...)`); resolve it as an
             // lvalue so its access path is preserved rather than lowered into a load.
             self.flatten_lvalue(program, func_node, source, scope_view)
                 .unwrap_or_else(|_| {
-                    self.build_access_path(func_name, Default::default(), scope_view)
+                    self.build_access_path(
+                        func_name,
+                        Default::default(),
+                        scope_view,
+                        &mut program[scope_view.fidx].locals,
+                    )
                 })
         };
 
         let var = access_path.base.variable.clone();
         let style = match &*var {
             Variable::Local(name) => {
-                log::info!("This is an Indirect LOCAL call: {}", name);
+                log::info!(
+                    "This is an Indirect LOCAL call: {}",
+                    program[scope_view.fidx].locals.name(*name)
+                );
                 // The callee is a call-target address. Any symbolic field (e.g. `%o.f`, a
                 // function pointer stored in a field) is lowered to a load, leaving an
                 // offset-only callee address.
@@ -1635,17 +1675,24 @@ impl<'a> Context<'a> {
             Variable::GlobalHeap => CallStyle::DirectCall { call_edges },
         };
 
+        let ret =
+            VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name));
         program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
             StatementKind::CallAssign {
                 style,
-                rets: vec![VariableRef::new_local(temp_name.clone())].into(),
+                rets: vec![ret].into(),
                 args,
             },
         ));
         //we return the temp_name, so that the assignment expression for the actual int x = foo() gets the result of foo()
         Ok(Exp::Variable(
-            self.build_access_path(temp_name.as_str(), Default::default(), scope_view)
-                .base,
+            self.build_access_path(
+                temp_name.as_str(),
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            )
+            .base,
         ))
     }
 
@@ -1773,12 +1820,14 @@ impl<'a> Context<'a> {
             // (matching the prior behavior for field stores). Any intermediate dereferences are
             // materialized as loads by `store_access_path`.
             let mut stmts = Vec::new();
+            let allocator = &mut self.allocator;
+            let locals = &mut program[scope_view.fidx].locals;
             ctadl_ir::mir::store_access_path(
                 target.base.clone(),
                 target.fields.iter().cloned(),
                 val_exp.clone(),
                 &mut stmts,
-                || VariableRef::new_local(self.allocator.next_temp()),
+                || VariableRef::new_local_idx(locals.get_or_intern(&allocator.next_temp())),
             );
             for s in stmts {
                 program[scope_view.fidx].blocks[scope_view.blidx].push_back(s);
@@ -1797,9 +1846,12 @@ impl<'a> Context<'a> {
         scope_view: &ScopeView,
     ) -> Result<RawPath, Error> {
         match node.kind() {
-            "identifier" => {
-                Ok(self.build_access_path(to_str(&node, source), Default::default(), scope_view))
-            }
+            "identifier" => Ok(self.build_access_path(
+                to_str(&node, source),
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            )),
             "field_expression" => {
                 let mut path_vec = Vec::<&str>::new();
                 let final_ident = extract_field_expression(node, source, &mut path_vec)?;
@@ -1807,6 +1859,7 @@ impl<'a> Context<'a> {
                     final_ident,
                     path_vec.into_iter().map(PathSegment::symbol).collect(),
                     scope_view,
+                    &mut program[scope_view.fidx].locals,
                 ))
             }
             "subscript_expression" => {
@@ -1863,8 +1916,10 @@ impl<'a> Context<'a> {
         ap: RawPath,
     ) -> AccessPath {
         let mut stmts = Vec::new();
+        let allocator = &mut self.allocator;
+        let locals = &mut program[scope_view.fidx].locals;
         let v = ctadl_ir::mir::load_access_path(ap.base, ap.fields, &mut stmts, || {
-            VariableRef::new_local(self.allocator.next_temp())
+            VariableRef::new_local_idx(locals.get_or_intern(&allocator.next_temp()))
         });
         for s in stmts {
             program[scope_view.fidx].blocks[scope_view.blidx].push_back(s);
