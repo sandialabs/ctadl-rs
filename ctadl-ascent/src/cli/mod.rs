@@ -459,9 +459,37 @@ fn dump_index_graph_dot(
     dot_path: &Path,
 ) -> Result<(), Error> {
     let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+    // Embed the legend as a leading DOT comment so the file documents itself
+    // (kept in sync with the stderr message below).
+    {
+        use std::io::Write as _;
+        writeln!(
+            file,
+            "// Index (assign-like) graph. An edge `A -> B` is the assignment `B = A`;\n\
+             // both directions appear for by-ref/aliased vertices.\n\
+             //\n\
+             // Node label grammar (two lines):\n\
+             //   function(<name>)\n\
+             //   <variable><access-path>\n\
+             //\n\
+             // The access path is a suffix of the second line, so a node is identified by\n\
+             // the TRIPLE (function, variable, access path) -- `local(t)` and `local(t).x`\n\
+             // are distinct nodes. The EMPTY access path renders as the empty string, so a\n\
+             // label with no `.field` suffix means \"this vertex, empty path\" -- it does\n\
+             // NOT mean paths are omitted from labels.\n"
+        )
+        .err_context(|| "writing index graph legend")?;
+    }
     crate::graphviz::render_index_graph(assign_like, id_map, &mut file)
         .err_context(|| "rendering index graph")?;
-    eprintln!("Wrote index graph to '{}'", dot_path.display());
+    eprintln!(
+        "Wrote index graph to '{}'\n  \
+         edge A -> B is the assignment B = A\n  \
+         node label: `function(<name>)` / `<variable><access-path>`; nodes are keyed by\n  \
+         (function, variable, access path), and an empty access path renders as nothing\n  \
+         (a label with no `.field` suffix is the empty path, not an omitted one)",
+        dot_path.display()
+    );
     Ok(())
 }
 
