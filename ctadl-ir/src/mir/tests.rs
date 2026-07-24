@@ -42,8 +42,8 @@ fn test_store_verifies() {
     // Add a Store statement; verification should succeed.
     let f_idx = FunctionIdx::new(0);
     let f = &mut prog[f_idx];
+    let var = VariableRef::new_local_idx(f.locals.get_or_intern("x"));
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
-    let var = VariableRef::new_local("x".to_string());
     let store = StatementKind::store(
         AccessPath::without_fields(var.clone()),
         FieldPath::symbol("f"),
@@ -64,10 +64,11 @@ fn test_parameter_does_not_exist_error() {
     f.params = Params::default();
     // Reference a non‑existent parameter.
     let var = VariableRef::new_parameter(ParameterIdx::new(0));
+    let tmp = VariableRef::new_local_idx(f.locals.get_or_intern("tmp"));
     // Add an assign that uses the nonexistent parameter (as an access path).
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
     let stmt = Statement::new_kind(StatementKind::assign(
-        VariableRef::new_local("tmp".to_string()),
+        tmp,
         [Exp::Variable(var.clone())],
     ));
     block.statements.push_back(stmt);
@@ -129,13 +130,14 @@ fn test_field_accesses_with_offsets() {
     assert_eq!(format!("{}", mixed_path), ".[0xa].[0x14]");
 
     // Test creating access path with offsets
-    let var = VariableRef::new_local("obj".to_string());
+    let mut locals = Locals::default();
+    let var = VariableRef::new_local_idx(locals.get_or_intern("obj"));
     let field_accesses = FieldAccesses::with_offset(5);
     let access_path = AccessPath {
         variable_ref: var,
         path: field_accesses,
     };
-    assert_eq!(format!("{}", access_path), "%obj.[0x5]");
+    assert_eq!(format!("{}", access_path), "%L0.[0x5]");
 }
 
 #[test]

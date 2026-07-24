@@ -18,6 +18,7 @@ fn function_f() -> FunctionData {
     f.set_return_type(ReturnType { arity: 1 });
     f.params.push(ParameterType::ByVal);
     f.params.push(ParameterType::ByVal);
+    let a_idx = f.intern_local("a");
     let blocks = f.blocks.blocks_mut();
     let _start = blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
         TerminatorKind::Goto {
@@ -27,7 +28,7 @@ fn function_f() -> FunctionData {
     let body = blocks.push(BasicBlockData::new(None));
     {
         let a = AccessPath {
-            variable_ref: VariableRef::new_local("a".to_string()),
+            variable_ref: VariableRef::new_local_idx(a_idx),
             path: Default::default(),
         };
         let p = AccessPath {
@@ -70,8 +71,10 @@ fn function_g() -> FunctionData {
     };
     g.set_return_type(ReturnType { arity: 1 });
     g.params.push(ParameterType::ByVal);
+    let a_idx = g.intern_local("a");
+    let c_idx = g.intern_local("c");
     let a = AccessPath {
-        variable_ref: VariableRef::new_local("a".to_string()),
+        variable_ref: VariableRef::new_local_idx(a_idx),
         path: Default::default(),
     };
     let b = AccessPath {
@@ -79,7 +82,7 @@ fn function_g() -> FunctionData {
         path: Default::default(),
     };
     let c = AccessPath {
-        variable_ref: VariableRef::new_local("c".to_string()),
+        variable_ref: VariableRef::new_local_idx(c_idx),
         path: Default::default(),
     };
     let call_edges = CallEdges::Explicit(thin_vec::thin_vec!["F".to_string()]);
@@ -91,7 +94,7 @@ fn function_g() -> FunctionData {
         )),
         Statement::new_kind(StatementKind::CallAssign {
             style,
-            rets: vec![VariableRef::new_local("c".to_string())].into(),
+            rets: vec![VariableRef::new_local_idx(c_idx)].into(),
             args: vec![Exp::from(a), Exp::from(b)].into()
         }),
     ];
@@ -119,8 +122,11 @@ fn function_g1() -> FunctionData {
     };
     g.set_return_type(ReturnType { arity: 1 });
     g.params.push(ParameterType::ByVal);
+    let a_idx = g.intern_local("a");
+    let c_idx = g.intern_local("c");
+    let c1_idx = g.intern_local("c1");
     let a = AccessPath {
-        variable_ref: VariableRef::new_local("a".to_string()),
+        variable_ref: VariableRef::new_local_idx(a_idx),
         path: Default::default(),
     };
     let b = AccessPath {
@@ -128,11 +134,11 @@ fn function_g1() -> FunctionData {
         path: Default::default(),
     };
     let _c = AccessPath {
-        variable_ref: VariableRef::new_local("c".to_string()),
+        variable_ref: VariableRef::new_local_idx(c_idx),
         path: Default::default(),
     };
     let c1 = AccessPath {
-        variable_ref: VariableRef::new_local("c1".to_string()),
+        variable_ref: VariableRef::new_local_idx(c1_idx),
         path: Default::default(),
     };
     let call_edges = CallEdges::Explicit(thin_vec::thin_vec!["F".to_string()]);
@@ -144,7 +150,7 @@ fn function_g1() -> FunctionData {
         )),
         Statement::new_kind(StatementKind::CallAssign {
             style,
-            rets: vec![VariableRef::new_local("c".to_string())].into(),
+            rets: vec![VariableRef::new_local_idx(c_idx)].into(),
             args: vec![Exp::from(a), Exp::from(b)].into()
         }),
     ];

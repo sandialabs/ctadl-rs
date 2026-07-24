@@ -207,9 +207,10 @@ fn params_and_simple_assign_in_example_2() {
     let (_, dump) = program_from_string(src);
     dump_ir(&dump);
 
-    assert!(check_match(&dump, "return %a"), "has return a");
+    // Locals now render by index (`%L{idx}`); `a` is the function's first-interned local (`%L0`).
+    assert!(check_match(&dump, "return %L0"), "has return a");
     assert!(
-        check_match(&dump, "assign %a = @p1"),
+        check_match(&dump, "assign %L0 = @p1"),
         "has the simplest assign, a=b"
     );
     assert!(
@@ -300,7 +301,8 @@ fn block_without_return() {
     let (summary, _source_info) = get_summary(program_info.program).unwrap();
     log::info!("{:?}", summary);
 
-    assert!(check_match(&dump, "assign %x"));
+    // `x` is the sole local, rendered by index as `%L0`.
+    assert!(check_match(&dump, "assign %L0"));
 }
 
 //msvc has an extension for try/catch, tree-sitter

@@ -171,7 +171,10 @@ fn complete(function: &mut FunctionData) {
     // blocks to add the assignments and gotos, we don't actually wire up the exit block until the
     // end of this function.
     let retvars: Vec<_> = (0..function.return_type.arity)
-        .map(|i| VariableRef::new_local(format!("_$ret{i}").to_string()))
+        .map(|i| {
+            let idx = function.intern_local(&format!("_$ret{i}"));
+            VariableRef::new_local_idx(idx)
+        })
         .collect();
 
     // Exit block observes parameters and returns retvars

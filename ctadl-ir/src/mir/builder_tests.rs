@@ -1,12 +1,13 @@
 use crate::index::idx::Idx;
 use crate::mir::builder::BasicBlockBuilder;
 use crate::mir::call::CallStyle;
-use crate::mir::{BasicBlockData, BasicBlockIdx, Exp, ParameterIdx, StatementIdx};
+use crate::mir::{BasicBlockData, BasicBlockIdx, Exp, Locals, ParameterIdx, StatementIdx};
 
 #[test]
 fn test_builder_basic_operations() {
     let mut block_data = BasicBlockData::new(None);
-    let mut builder = BasicBlockBuilder::new(&mut block_data);
+    let mut locals = Locals::default();
+    let mut builder = BasicBlockBuilder::new(&mut block_data, &mut locals);
 
     // Test insertion point management
     assert_eq!(builder.get_insertion_point(), 0);
@@ -33,7 +34,8 @@ fn test_builder_basic_operations() {
 #[test]
 fn test_builder_insertion_at_positions() {
     let mut block_data = BasicBlockData::new(None);
-    let mut builder = BasicBlockBuilder::new(&mut block_data);
+    let mut locals = Locals::default();
+    let mut builder = BasicBlockBuilder::new(&mut block_data, &mut locals);
 
     let var_a = builder.new_local_var("a");
     let var_b = builder.new_local_var("b");
@@ -67,7 +69,7 @@ fn test_builder_insertion_at_positions() {
 
     match &block_data.statements[StatementIdx::new(1)].kind {
         crate::mir::StatementKind::Assign { dest, sources } => {
-            assert_eq!(dest.to_string(), "%a");
+            assert_eq!(dest.to_string(), "%L0");
             assert_eq!(sources.len(), 1);
         }
         _ => panic!("Expected Assign at position 1"),
@@ -77,7 +79,8 @@ fn test_builder_insertion_at_positions() {
 #[test]
 fn test_builder_call_statement() {
     let mut block_data = BasicBlockData::new(None);
-    let mut builder = BasicBlockBuilder::new(&mut block_data);
+    let mut locals = Locals::default();
+    let mut builder = BasicBlockBuilder::new(&mut block_data, &mut locals);
 
     let var_result = builder.new_local_var("result");
     let var_arg1 = builder.new_local_var("arg1");
@@ -108,7 +111,8 @@ fn test_builder_call_statement() {
 #[test]
 fn test_builder_terminators() {
     let mut block_data = BasicBlockData::new(None);
-    let mut builder = BasicBlockBuilder::new(&mut block_data);
+    let mut locals = Locals::default();
+    let mut builder = BasicBlockBuilder::new(&mut block_data, &mut locals);
 
     let var_x = builder.new_local_var("x");
 
@@ -119,7 +123,8 @@ fn test_builder_terminators() {
 
     // Test goto terminator
     let mut block_data2 = BasicBlockData::new(None);
-    let mut builder2 = BasicBlockBuilder::new(&mut block_data2);
+    let mut locals2 = Locals::default();
+    let mut builder2 = BasicBlockBuilder::new(&mut block_data2, &mut locals2);
     builder2.create_goto(vec![BasicBlockIdx::new(1), BasicBlockIdx::new(2)]);
 
     assert!(block_data2.terminator.is_some());
@@ -128,11 +133,12 @@ fn test_builder_terminators() {
 #[test]
 fn test_builder_convenience_methods() {
     let mut block_data = BasicBlockData::new(None);
-    let builder = BasicBlockBuilder::new(&mut block_data);
+    let mut locals = Locals::default();
+    let mut builder = BasicBlockBuilder::new(&mut block_data, &mut locals);
 
     // Test variable creation
     let local_var = builder.new_local_var("test");
-    assert_eq!(local_var.to_string(), "%test");
+    assert_eq!(local_var.to_string(), "%L0");
 
     let param_var = builder.new_param_var(ParameterIdx::new(0));
     assert_eq!(param_var.to_string(), "@p0");
@@ -142,7 +148,7 @@ fn test_builder_convenience_methods() {
 
     // Test access path creation (offset-only)
     let access_path = builder.new_access_path(local_var.clone(), [1, 2]);
-    assert_eq!(access_path.to_string(), "%test.[0x1].[0x2]");
+    assert_eq!(access_path.to_string(), "%L0.[0x1].[0x2]");
 
     // Test expression creation
     let str_exp = builder.new_str_exp("hello");

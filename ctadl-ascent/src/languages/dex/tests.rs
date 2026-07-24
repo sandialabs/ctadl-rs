@@ -43,10 +43,12 @@ fn dummy_code_item() -> CodeItem {
     }
 }
 
-fn assign_from(inst: Instruction) -> Vec<(VariableRef, Exp)> {
+fn assign_from(inst: Instruction) -> (Vec<(VariableRef, Exp)>, Locals) {
     let parser = dummy_parser();
     let mut ctx = Context::new();
-    ctx.dataflow_to_assign(&parser, &dummy_code_item(), &inst)
+    let mut locals = Locals::default();
+    let assigns = ctx
+        .dataflow_to_assign(&parser, &dummy_code_item(), &inst, &mut locals)
         .unwrap()
         .into_iter()
         .flat_map(|s| match s {
@@ -56,16 +58,22 @@ fn assign_from(inst: Instruction) -> Vec<(VariableRef, Exp)> {
             } => sources.into_iter().map(|s| (dest.clone(), s)).collect(),
             _ => Vec::new(),
         })
-        .collect()
+        .collect();
+    (assigns, locals)
+}
+
+/// The source name of a local variable ref, via the locals table.
+fn local_name(locals: &Locals, var: &VariableRef) -> String {
+    locals.name(var.variable.local().expect("expected a local")).to_string()
 }
 
 #[test]
 fn const4_assign() {
     let inst = Instruction::Const4(Format11n { a: Reg(0), lit: 5 });
-    let assigns = assign_from(inst);
+    let (assigns, locals) = assign_from(inst);
     assert_eq!(assigns.len(), 1);
     let (var, exp) = &assigns[0];
-    assert_eq!(*var.variable, Variable::Local("v0".into()));
+    assert_eq!(local_name(&locals, var), "v0");
     assert_eq!(exp, &Exp::new_bytes(5i8.to_be_bytes().to_vec()));
 }
 
@@ -75,10 +83,10 @@ fn const16_assign() {
         a: Reg(1),
         lit: 0x1234,
     });
-    let assigns = assign_from(inst);
+    let (assigns, locals) = assign_from(inst);
     assert_eq!(assigns.len(), 1);
     let (var, exp) = &assigns[0];
-    assert_eq!(*var.variable, Variable::Local("v1".into()));
+    assert_eq!(local_name(&locals, var), "v1");
     assert_eq!(exp, &Exp::new_bytes(0x1234i16.to_be_bytes().to_vec()));
 }
 
@@ -88,10 +96,10 @@ fn const_assign() {
         a: Reg(2),
         lit: 0x7fffffff,
     });
-    let assigns = assign_from(inst);
+    let (assigns, locals) = assign_from(inst);
     assert_eq!(assigns.len(), 1);
     let (var, exp) = &assigns[0];
-    assert_eq!(*var.variable, Variable::Local("v2".into()));
+    assert_eq!(local_name(&locals, var), "v2");
     assert_eq!(exp, &Exp::new_bytes(0x7fffffffi32.to_be_bytes().to_vec()));
 }
 
@@ -101,11 +109,11 @@ fn const_wide16_assign() {
         a: Reg(3),
         lit: 0x1234,
     });
-    let assigns = assign_from(inst);
+    let (assigns, locals) = assign_from(inst);
     assert_eq!(assigns.len(), 2);
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 3 + i);
-        assert_eq!(*var.variable, Variable::Local(expected_reg.into()));
+        assert_eq!(local_name(&locals, var), expected_reg);
         assert_eq!(exp, &Exp::new_bytes((0x1234i16).to_be_bytes().to_vec()));
     }
 }
@@ -116,11 +124,11 @@ fn const_wide32_assign() {
         a: Reg(5),
         lit: 0xdeadbeefu32 as i32,
     });
-    let assigns = assign_from(inst);
+    let (assigns, locals) = assign_from(inst);
     assert_eq!(assigns.len(), 2);
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 5 + i);
-        assert_eq!(*var.variable, Variable::Local(expected_reg.into()));
+        assert_eq!(local_name(&locals, var), expected_reg);
         assert_eq!(
             exp,
             &Exp::new_bytes((0xdeadbeefu32 as i32).to_be_bytes().to_vec())
@@ -134,11 +142,11 @@ fn const_wide_assign() {
         a: Reg(7),
         lit: 0x1122334455667788,
     });
-    let assigns = assign_from(inst);
+    let (assigns, locals) = assign_from(inst);
     assert_eq!(assigns.len(), 2);
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 7 + i);
-        assert_eq!(*var.variable, Variable::Local(expected_reg.into()));
+        assert_eq!(local_name(&locals, var), expected_reg);
         assert_eq!(
             exp,
             &Exp::new_bytes(0x1122334455667788i64.to_be_bytes().to_vec())
@@ -152,12 +160,12 @@ fn const_wide_high16_assign() {
         a: Reg(10),
         lit: 0x1234,
     });
-    let assigns = assign_from(inst);
+    let (assigns, locals) = assign_from(inst);
     assert_eq!(assigns.len(), 2);
     let shifted = (0x1234i16 as i64) << 48;
     for (i, (var, exp)) in assigns.iter().enumerate() {
         let expected_reg = format!("v{}", 10 + i);
-        assert_eq!(*var.variable, Variable::Local(expected_reg.into()));
+        assert_eq!(local_name(&locals, var), expected_reg);
         assert_eq!(exp, &Exp::new_bytes(shifted.to_be_bytes().to_vec()));
     }
 }
@@ -174,7 +182,8 @@ fn test_throw_instruction_terminator() {
 
     // For now, verify our helper functions work correctly
     let empty_exp = Exp::new_bytes(Vec::new());
-    let throw_var = VariableRef::new_local("v0".to_string());
+    let mut locals = Locals::default();
+    let throw_var = VariableRef::new_local_idx(locals.get_or_intern("v0"));
     let throw_exp = Exp::from(AccessPath::without_fields(throw_var));
 
     // This should be the structure of a throw terminator
@@ -219,9 +228,10 @@ fn new_instance_assign() {
         idx: TypeIdx(0),
     });
 
+    let mut locals = Locals::default();
     let assigns = {
         let mut ctx = Context::new();
-        ctx.dataflow_to_assign(&parser, &dummy_code_item(), &inst)
+        ctx.dataflow_to_assign(&parser, &dummy_code_item(), &inst, &mut locals)
             .unwrap()
             .into_iter()
             .flat_map(|s| match s {
@@ -236,7 +246,7 @@ fn new_instance_assign() {
 
     assert_eq!(assigns.len(), 1);
     let (var, exp) = &assigns[0];
-    assert_eq!(var.variable.as_ref(), &Variable::Local("v0".into()));
+    assert_eq!(local_name(&locals, var), "v0");
 
     if let Exp::ObjectRef(CallObject::JavaObject(cls)) = exp {
         assert_eq!(&**cls, "Ljava/lang/Object;");

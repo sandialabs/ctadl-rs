@@ -4,15 +4,24 @@ use smallvec::smallvec;
 
 use crate::index::idx::Idx;
 
+thread_local! {
+    static LOCALS: std::cell::RefCell<crate::mir::Locals> =
+        std::cell::RefCell::new(crate::mir::Locals::default());
+}
+
+fn intern(name: &str) -> VariableRef {
+    VariableRef::new_local_idx(LOCALS.with(|l| l.borrow_mut().get_or_intern(name)))
+}
+
 /// A versioned local `name_version`.
 fn v(name: &str, version: u32) -> VariableRef {
-    VariableRef::new_local(name.to_string()).with_version(version)
+    intern(name).with_version(version)
 }
 
 /// An *unversioned* local — the shape of the pre-SSA anchor source (`p`, in
 /// `p_0 = p`). The pass must never treat these as copies.
 fn bare(name: &str) -> VariableRef {
-    VariableRef::new_local(name.to_string())
+    intern(name)
 }
 
 fn read(var: VariableRef) -> Exp {

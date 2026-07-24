@@ -447,18 +447,18 @@ fn function_with_phi() -> FunctionData {
     let _cond = VariableRef::new_parameter(ParameterIdx::new(0));
     let a = VariableRef::new_parameter(ParameterIdx::new(1));
     let b = VariableRef::new_parameter(ParameterIdx::new(2));
-    let x = VariableRef::new_local("x".to_string());
+    let x = VariableRef::new_local_idx(f.locals.get_or_intern("x"));
 
     // True branch: x = a (using builder API)
-    let mut true_builder = BasicBlockBuilder::new(&mut f[true_branch]);
+    let mut true_builder = BasicBlockBuilder::new(&mut f.blocks[true_branch], &mut f.locals);
     true_builder.create_assign_or_store(x.clone(), None, Exp::Variable(a));
 
     // False branch: x = b (using builder API)
-    let mut false_builder = BasicBlockBuilder::new(&mut f[false_branch]);
+    let mut false_builder = BasicBlockBuilder::new(&mut f.blocks[false_branch], &mut f.locals);
     false_builder.create_assign_or_store(x.clone(), None, Exp::Variable(b));
 
     // Merge block will get phi node during SSA conversion (using builder API)
-    let mut merge_builder = BasicBlockBuilder::new(&mut f[merge]);
+    let mut merge_builder = BasicBlockBuilder::new(&mut f.blocks[merge], &mut f.locals);
     merge_builder.create_ret(vec![Exp::Variable(x)]);
 
     f.verify().expect("doesn't verify");
@@ -491,7 +491,7 @@ fn function_with_update() -> FunctionData {
 
     // Body block
     let body = blocks.push(BasicBlockData::new(None));
-    let mut builder = BasicBlockBuilder::new(&mut f[body]);
+    let mut builder = BasicBlockBuilder::new(&mut f.blocks[body], &mut f.locals);
 
     // Create variables using builder helpers
     let s_var = builder.new_param_var(ParameterIdx::new(0));
@@ -530,7 +530,7 @@ fn function_with_param_to_global_field() -> FunctionData {
 
     // Body block
     let body = blocks.push(BasicBlockData::new(None));
-    let mut builder = BasicBlockBuilder::new(&mut f[body]);
+    let mut builder = BasicBlockBuilder::new(&mut f.blocks[body], &mut f.locals);
 
     // Create local variable and assign it a value
     let local_var = builder.new_param_var(ParameterIdx::new(0));
@@ -565,7 +565,7 @@ fn test_cap_algorithm() {
 
     let blocks = f.blocks.blocks_mut();
     let body = blocks.push(BasicBlockData::new(None));
-    let mut builder = BasicBlockBuilder::new(&mut f[body]);
+    let mut builder = BasicBlockBuilder::new(&mut f.blocks[body], &mut f.locals);
 
     // x = p0
     let x = builder.new_param_var(ParameterIdx::new(0));
