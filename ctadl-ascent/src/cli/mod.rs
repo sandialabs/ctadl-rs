@@ -16,10 +16,9 @@ use itertools::Itertools;
 
 use crate::codegen::models::codegen_summary;
 use crate::codegen::{CallResolutionStrategy, codegen_program};
-use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
 use crate::error::{Error, ErrorContext};
 use crate::facts;
-use crate::facts::{FlowVariable, FlowVertex, Label};
+use crate::facts::FlowVariable;
 use crate::index_engine::{
     IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index_with_config,
 };
@@ -30,192 +29,6 @@ use crate::query_engine::{QueryFactsBuilder, taint_analysis};
 use ctadl_ir::graph::is_connected;
 use ctadl_ir::ssa;
 use ctadl_ir::{ProgramInfo, encode};
-
-/// Helper: turn model endpoint table into QueryEndpoint vec
-fn build_query_endpoints(
-    batch: &crate::models::EndpointBatch,
-    facts: &IndexFacts,
-    idmap: &facts::IdMap,
-    assign_like: &[(
-        facts::FunctionId,
-        FlowVariable,
-        facts::Path,
-        FlowVariable,
-        facts::Path,
-    )],
-) -> (
-    Vec<(crate::query_engine::QueryEndpoint,)>,
-    Vec<(facts::FunctionId, facts::FlowVariable, facts::FormalType)>,
-) {
-    use crate::models::FormalIndexTypeTag;
-    let ap_map = batch.aps.build_ap_map();
-    let func_num_params = facts.compute_arg_arity();
-
-    // Field access paths that actually occur on each `(function, variable)` vertex
-    // in the index graph, keyed by the vertex's *copy class* representative rather
-    // than the vertex itself.
-    //
-    // A wildcard port is anchored at a call-arg vertex (`call-arg(site, i)`), but the
-    // frontend records field paths on the local that the call passes, not on the
-    // synthesized call-arg vertex: `t.headers = h; sink(t)` yields the vertex
-    // `local(t).headers` plus the empty-path copy edges `call-arg ↔ local(t)`. Keying
-    // by vertex therefore finds only the empty path and expands nothing. Copy classes
-    // are exactly the sets of vertices holding the same value, so a path seen on any
-    // member is a real path of the argument — and the copy chain between the actual
-    // and the call-arg vertex may be several hops long, which is why this is the
-    // union-find closure and not a one-hop lookup.
-    let mut copy_rep: HashMap<(facts::FunctionId, FlowVariable), FlowVariable> = HashMap::new();
-    for (func, member, rep) in crate::query_engine::compute_copy_alias(assign_like) {
-        copy_rep.insert((func, member), rep);
-    }
-    // Resolves a vertex to its copy-class representative; a vertex in no copy edge is
-    // its own representative.
-    let rep_of = |func: facts::FunctionId, v: FlowVariable| -> FlowVariable {
-        copy_rep.get(&(func, v)).copied().unwrap_or(v)
-    };
-    let mut vertex_paths: HashMap<(facts::FunctionId, FlowVariable), BTreeSet<facts::Path>> =
-        HashMap::new();
-    for (func, v1, p1, v2, p2) in assign_like {
-        vertex_paths
-            .entry((*func, rep_of(*func, *v1)))
-            .or_default()
-            .insert(*p1);
-        vertex_paths
-            .entry((*func, rep_of(*func, *v2)))
-            .or_default()
-            .insert(*p2);
-    }
-
-    let mut out_eps = Vec::new();
-    let mut out_formals = Vec::new();
-    for crate::models::EndpointRow {
-        function: func_name,
-        selector_ty,
-        index: idx_opt,
-        path_id,
-        label: label_str,
-        direction,
-        wildcard,
-        saturating,
-        in_function,
-        callsite_scoped,
-    } in batch.iter_endpoints()
-    {
-        // Resolve function name → FunctionId; skip if not present. For a callsite endpoint
-        // this is the *callee*.
-        let infunc = match idmap.get_function_id(crate::facts::Function(func_name.into())) {
-            Some(id) => id,
-            None => continue,
-        };
-
-        // For a callsite-scoped endpoint, resolve the caller filter (the containing
-        // function). `None` in_function means "any caller"; an unresolvable name means no
-        // callsite can match, so skip the endpoint entirely.
-        let caller_filter = if callsite_scoped {
-            match in_function {
-                Some(name) => match idmap.get_function_id(crate::facts::Function(name.into())) {
-                    Some(id) => Some(id),
-                    None => continue,
-                },
-                None => None,
-            }
-        } else {
-            None
-        };
-
-        // Map selector tag to variables.
-        let vars = match selector_ty {
-            FormalIndexTypeTag::Index => {
-                let i16_val = idx_opt.expect("index missing");
-                vec![FlowVariable::formal_index(i16_val.into())]
-            }
-            FormalIndexTypeTag::Return => {
-                vec![FlowVariable::formal_index(RETURN_INDEX.into())]
-            }
-            FormalIndexTypeTag::Global => {
-                vec![FlowVariable::formal_index(GLOBALS_INDEX.into())]
-            }
-            FormalIndexTypeTag::AnyArgument => func_num_params
-                .get(&infunc)
-                .map(|n| {
-                    (0..*n)
-                        .map(|i| FlowVariable::formal_index(i.into()))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        };
-
-        let ap: facts::Path = ap_map[&path_id].iter().cloned().collect();
-
-        // A wildcard sink port denotes the whole subtree beneath `ap` on the sink
-        // call's argument: it matches every concrete access path, rooted at that
-        // argument, that extends the port. Sinks seed *backward* taint and the
-        // formatter resolves each endpoint vertex to a graph node by exact `Path`
-        // equality, so the wildcard cannot be left abstract -- it is expanded below
-        // into concrete paths.
-        let expand_wildcard = wildcard && direction == facts::TaintDirection::Backward;
-
-        // Build label and direction.
-        let lbl = Label(label_str.into());
-
-        for var in vars {
-            // Register the model function's formal so taint can cross the call boundary
-            // for flow-through, independent of how the endpoint is anchored below.
-            if var.is_formal() {
-                out_formals.push((infunc, var, facts::FormalType::ByRef));
-            }
-            // Anchor at the call sites of `infunc` (the modeled function) so flows that
-            // share a formal but differ by call site stay distinct. Anchoring uses the
-            // port path; wildcard expansion (if any) then happens per anchored vertex.
-            let base = crate::query_engine::QueryEndpoint {
-                infunc,
-                vertex: FlowVertex(var, ap),
-                label: lbl.clone(),
-                direction,
-                call_site: None,
-                saturating,
-            };
-            let fanned = match var.as_formal() {
-                Some(formal) if callsite_scoped => {
-                    // Anchor only at the matching call sites (callee is `infunc`, caller is
-                    // constrained by `caller_filter`); no function-anchored fallback.
-                    base.anchored_at_callsites_filtered(formal, &facts.call, caller_filter)
-                }
-                Some(formal) => base.anchored_at_callsites(formal, &facts.call),
-                None => vec![base],
-            };
-            for ep in fanned {
-                if !expand_wildcard {
-                    out_eps.push((ep,));
-                    continue;
-                }
-                // Seed every concrete field path that lives on THIS call's argument
-                // (i.e. on any member of its copy class) and extends the port, always
-                // including the port path itself.
-                let mut seeded_port = false;
-                if let Some(paths) = vertex_paths.get(&(ep.infunc, rep_of(ep.infunc, ep.vertex.0)))
-                {
-                    for p in paths {
-                        if !p.is_extension_of(&ap) {
-                            continue;
-                        }
-                        if *p == ap {
-                            seeded_port = true;
-                        }
-                        out_eps.push((crate::query_engine::QueryEndpoint {
-                            vertex: FlowVertex(ep.vertex.0, *p),
-                            ..ep.clone()
-                        },));
-                    }
-                }
-                if !seeded_port {
-                    out_eps.push((ep,));
-                }
-            }
-        }
-    }
-    (out_eps, out_formals)
-}
 
 // Imports a program for an artifact into the store
 pub fn import(import: &ArtifactImport) -> Result<(), Error> {
@@ -372,7 +185,7 @@ pub fn query(
         }
         let mut formal_params = index_facts.formal_param.clone();
         if let Some(ref batch) = models_batch {
-            let (eps, model_formals) = build_query_endpoints(
+            let (eps, model_formals) = query_engine::build_query_endpoints(
                 &batch.endpoint,
                 &index_facts,
                 &ids,
