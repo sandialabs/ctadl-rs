@@ -38,6 +38,25 @@ be used on the right hand side. To express multiple flows into a field, first a 
 then update the field: `tmp = a, b; c.foo = tmp;`. The comma operator is used on the right-hand
 side to merge multiple flows into a variable.
 
+A field can also be set *functionally*, with the bracket form:
+
+```text
+x = [y.foo := v]; // x is y, but with .foo set to v
+x = [x.foo := v]; // a fresh version of x
+```
+
+This reads "x is y with .foo replaced by v", and it differs from the assignment `x.foo = v` in
+what happens to the rest of the aggregate. An assignment writes through `x` and says nothing about
+where `x` came from; the bracket form names the source aggregate `y` separately from the
+destination `x` it defines, so everything in `y` that the update did not overwrite flows into `x`
+as well. Naming the two apart is also what lets SSA give the destination a fresh version of the
+variable the source reads, which is why `x = [x.foo := v]` is meaningful rather than circular.
+
+The path may carry offsets (`x = [y.[8].foo := v]`), which are address arithmetic, but it names
+exactly one field: the form denotes a single update instruction, and a nested update would instead
+have to rebuild each enclosing aggregate. Globals cannot be updated, since a global is itself a
+field of the global heap.
+
 The function `F` is required to have a summary that returns its first
 argument. `F` satisfies this requirement.
 
@@ -718,6 +737,86 @@ impl FlowyCtx {
                     }
                 }
             }
+            Rule::update_stmt => {
+                let (line, col) = stmt_pair.line_col();
+                let mut inner = stmt_pair.into_inner();
+                let dst_pair = inner.next().unwrap();
+                let src_pair = inner.next().unwrap();
+                // A global is modeled as a symbolic field of the global heap, so `g` already
+                // spends the one field an `Update` carries and `g.f` would need two.
+                if names_global(locals, &dst_pair) || names_global(locals, &src_pair) {
+                    return Err(FlowyError::Compile {
+                        message: "a global cannot be updated: a global is a field of the global \
+                                  heap, so an update of one would have to write two fields; use \
+                                  the assignment form `g.f = v`"
+                            .to_string(),
+                        line,
+                        col,
+                    });
+                }
+                let (dst_base, dst_segments) = parse_ap(locals, dst_pair, defined_functions)?;
+                let (src_base, mut src_segments) = parse_ap(locals, src_pair, defined_functions)?;
+                // The destination is the variable the update *defines* — the fresh version of the
+                // aggregate — so it is a bare name. The path being written belongs to the source,
+                // which is where it reads.
+                if !dst_segments.is_empty() {
+                    return Err(FlowyError::Compile {
+                        message: "an update's destination is the variable it defines, so it takes \
+                                  no field path: write `x = [y.f := v]`"
+                            .to_string(),
+                        line,
+                        col,
+                    });
+                }
+                // An `Update` writes exactly one symbolic field, so the source names exactly one.
+                // A nested update would have to rebuild every enclosing aggregate, which is a
+                // chain of updates rather than the single instruction this syntax denotes.
+                let Some(i) = src_segments.iter().position(PathSegment::is_symbol) else {
+                    return Err(FlowyError::Compile {
+                        message: "an update must write a field: write `x = [y.f := v]`".to_string(),
+                        line,
+                        col,
+                    });
+                };
+                if src_segments[i + 1..].iter().any(PathSegment::is_symbol) {
+                    return Err(FlowyError::Compile {
+                        message: "an update writes a single field, so its source names one: write \
+                                  `x = [y.f := v]`"
+                            .to_string(),
+                        line,
+                        col,
+                    });
+                }
+                let PathSegment::Symbol(field) = src_segments.remove(i) else {
+                    unreachable!()
+                };
+                let value = {
+                    let r = parse_ref(locals, inner.next().unwrap(), defined_functions);
+                    lower_ref(&mut self.counter, data, source_info, r)
+                };
+                // What is left of the source path is pure offsets: address arithmetic, which lives
+                // on the update's destination address exactly as it lives on a store's. Lowering
+                // it through `load_access_path` merges consecutive offsets and emits nothing.
+                let mut offsets = Vec::new();
+                let counter = &mut self.counter;
+                let addr =
+                    ctadl_ir::mir::load_access_path(src_base, src_segments, &mut offsets, || {
+                        VariableRef::new_local(format!("t{}?", counter.next()))
+                    });
+                debug_assert!(offsets.is_empty(), "an offset-only path emits no loads");
+                data.push_back(Statement::new(
+                    StatementKind::update(
+                        AccessPath {
+                            variable_ref: dst_base,
+                            path: addr.path,
+                        },
+                        addr.variable_ref,
+                        field,
+                        value,
+                    ),
+                    source_info,
+                ));
+            }
             Rule::assign_call_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
@@ -1285,6 +1384,20 @@ fn check_store_target(segments: &[PathSegment], line: usize, col: usize) -> Resu
         });
     }
     Ok(())
+}
+
+/// Whether an operand's leading identifier names a global variable. A global is modeled as a
+/// symbolic field of the global heap, so its name contributes a leading path segment that belongs
+/// to the variable itself rather than to any field path spelled after it.
+fn names_global(env: &Env, pair: &Pair<'_, Rule>) -> bool {
+    let Some(first) = pair.clone().into_inner().next() else {
+        return false;
+    };
+    if first.as_rule() != Rule::ident {
+        return false;
+    }
+    let name = first.as_str();
+    !env.parameters.contains_key(name) && env.globals.contains(name)
 }
 
 fn parse_ap(
