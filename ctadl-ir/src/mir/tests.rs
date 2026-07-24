@@ -67,10 +67,7 @@ fn test_parameter_does_not_exist_error() {
     let tmp = VariableRef::new_local_idx(f.locals.get_or_intern("tmp"));
     // Add an assign that uses the nonexistent parameter (as an access path).
     let block = &mut f.blocks[BasicBlockIdx::START_BLOCK];
-    let stmt = Statement::new_kind(StatementKind::assign(
-        tmp,
-        [Exp::Variable(var.clone())],
-    ));
+    let stmt = Statement::new_kind(StatementKind::assign(tmp, [Exp::Variable(var.clone())]));
     block.statements.push_back(stmt);
     // Run verification; we don't assert on the result because the behavior may be buggy.
     let result = prog.verify();

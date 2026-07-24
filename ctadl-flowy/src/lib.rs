@@ -661,14 +661,24 @@ impl FlowyCtx {
             Rule::assign_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let (dst_base, dst_segments) =
-                    parse_ap(locals, local_table, inner.next().unwrap(), defined_functions)?;
+                let (dst_base, dst_segments) = parse_ap(
+                    locals,
+                    local_table,
+                    inner.next().unwrap(),
+                    defined_functions,
+                )?;
                 // src is comma-separated; a field read on the RHS lowers to loads.
                 let src = {
                     let mut result = Vec::new();
                     for p in inner.next().unwrap().into_inner() {
                         let r = parse_ref(locals, local_table, p, defined_functions);
-                        result.push(lower_ref(&mut self.counter, data, local_table, source_info, r));
+                        result.push(lower_ref(
+                            &mut self.counter,
+                            data,
+                            local_table,
+                            source_info,
+                            r,
+                        ));
                     }
                     result
                 };
@@ -709,21 +719,33 @@ impl FlowyCtx {
             Rule::assign_call_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let (lhs_base, lhs_segments) =
-                    parse_ap(locals, local_table, inner.next().unwrap(), defined_functions)?;
-                let (variable, segments) =
-                    match parse_ref(locals, local_table, inner.next().unwrap(), defined_functions) {
-                        ParsedRef::Ap(base, segments) => (base, segments),
-                        ParsedRef::Value(_) => {
-                            return Err(FlowyError::Compile {
-                                message: "bad call ap".to_string(),
-                                line,
-                                col,
-                            });
-                        }
-                    };
-                let actuals =
-                    parse_actuals(locals, local_table, inner.next().unwrap(), defined_functions);
+                let (lhs_base, lhs_segments) = parse_ap(
+                    locals,
+                    local_table,
+                    inner.next().unwrap(),
+                    defined_functions,
+                )?;
+                let (variable, segments) = match parse_ref(
+                    locals,
+                    local_table,
+                    inner.next().unwrap(),
+                    defined_functions,
+                ) {
+                    ParsedRef::Ap(base, segments) => (base, segments),
+                    ParsedRef::Value(_) => {
+                        return Err(FlowyError::Compile {
+                            message: "bad call ap".to_string(),
+                            line,
+                            col,
+                        });
+                    }
+                };
+                let actuals = parse_actuals(
+                    locals,
+                    local_table,
+                    inner.next().unwrap(),
+                    defined_functions,
+                );
                 let style = if !segments.is_empty() {
                     // Indirect call: lower symbolic derefs to loads, leaving an offset-only callee.
                     let callee = lower_callee_addr(
@@ -780,7 +802,13 @@ impl FlowyCtx {
                         // any field reads, so they reach `ExtractSpec` as-is.
                         args.push(Exp::Str(label_string(local_table, &x).into()));
                     } else {
-                        args.push(lower_ref(&mut self.counter, data, local_table, source_info, x));
+                        args.push(lower_ref(
+                            &mut self.counter,
+                            data,
+                            local_table,
+                            source_info,
+                            x,
+                        ));
                     }
                 }
 
@@ -819,19 +847,27 @@ impl FlowyCtx {
             Rule::call_stmt => {
                 let (line, col) = stmt_pair.line_col();
                 let mut inner = stmt_pair.into_inner();
-                let (variable, segments) =
-                    match parse_ref(locals, local_table, inner.next().unwrap(), defined_functions) {
-                        ParsedRef::Ap(base, segments) => (base, segments),
-                        ParsedRef::Value(_) => {
-                            return Err(FlowyError::Compile {
-                                message: "bad call ap".to_string(),
-                                line,
-                                col,
-                            });
-                        }
-                    };
-                let actuals =
-                    parse_actuals(locals, local_table, inner.next().unwrap(), defined_functions);
+                let (variable, segments) = match parse_ref(
+                    locals,
+                    local_table,
+                    inner.next().unwrap(),
+                    defined_functions,
+                ) {
+                    ParsedRef::Ap(base, segments) => (base, segments),
+                    ParsedRef::Value(_) => {
+                        return Err(FlowyError::Compile {
+                            message: "bad call ap".to_string(),
+                            line,
+                            col,
+                        });
+                    }
+                };
+                let actuals = parse_actuals(
+                    locals,
+                    local_table,
+                    inner.next().unwrap(),
+                    defined_functions,
+                );
 
                 let style = if !segments.is_empty() {
                     // Indirect call: lower symbolic derefs to loads, leaving an offset-only callee.
@@ -895,7 +931,13 @@ impl FlowyCtx {
                         } else if i == 1 {
                             args.push(Exp::Str(label_string(local_table, &x).into()));
                         } else {
-                            args.push(lower_ref(&mut self.counter, data, local_table, source_info, x));
+                            args.push(lower_ref(
+                                &mut self.counter,
+                                data,
+                                local_table,
+                                source_info,
+                                x,
+                            ));
                         }
                     }
                     // `t0 = x.y.z` (loading the port's field path if any), keeping the reference
@@ -910,7 +952,13 @@ impl FlowyCtx {
                 } else {
                     let mut args = ThinVec::with_capacity(actuals.len());
                     for x in actuals {
-                        args.push(lower_ref(&mut self.counter, data, local_table, source_info, x));
+                        args.push(lower_ref(
+                            &mut self.counter,
+                            data,
+                            local_table,
+                            source_info,
+                            x,
+                        ));
                     }
                     args
                 };
@@ -1163,7 +1211,9 @@ fn lower_ref(
         ParsedRef::Ap(base, segments) => {
             let mut loads = Vec::new();
             let addr = ctadl_ir::mir::load_access_path(base, segments, &mut loads, || {
-                VariableRef::new_local_idx(local_table.get_or_intern(&format!("t{}?", counter.next())))
+                VariableRef::new_local_idx(
+                    local_table.get_or_intern(&format!("t{}?", counter.next())),
+                )
             });
             for mut s in loads {
                 s.source_info = source_info;

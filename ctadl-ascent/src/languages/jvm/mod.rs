@@ -230,9 +230,8 @@ impl Context {
 
                             // Exception handler entry: model MoveException (thrown value → stack slot).
                             if handler_pcs.contains(&bb.start_pc) {
-                                let dest = VariableRef::new_local_idx(
-                                    fdat.locals.get_or_intern("stack0"),
-                                );
+                                let dest =
+                                    VariableRef::new_local_idx(fdat.locals.get_or_intern("stack0"));
                                 let except = Self::except(&mut fdat.locals);
                                 bb_data.push_back(Statement::new_kind(StatementKind::Assign {
                                     dest,
@@ -281,19 +280,22 @@ impl Context {
                                             call_info,
                                             &dup_slot_pairs,
                                             &mut fdat.locals,
-                                        )
-                                        {
+                                        ) {
                                             link.source_info = source_info;
                                             Self::note_assign_aliases(&link, &mut stack_aliases);
                                             bb_data.push_back(link);
                                         }
                                     }
                                 }
-                                let dup_stmts = if Self::is_stack_dup_opcode(instr.opcode) {
-                                    Some(self.stack_dup_statements(&instr.dataflow, &mut fdat.locals))
-                                } else {
-                                    None
-                                };
+                                let dup_stmts =
+                                    if Self::is_stack_dup_opcode(instr.opcode) {
+                                        Some(self.stack_dup_statements(
+                                            &instr.dataflow,
+                                            &mut fdat.locals,
+                                        ))
+                                    } else {
+                                        None
+                                    };
                                 if let Some(stmts) = dup_stmts {
                                     Self::record_dup_slot_pairs(
                                         &mut dup_slot_pairs,
@@ -880,8 +882,10 @@ impl Context {
         if !dup_slot_pairs.contains(&pair) {
             return None;
         }
-        let survivor = VariableRef::new_local_idx(locals.get_or_intern(&format!("stack{survivor_idx}")));
-        let recv_var = VariableRef::new_local_idx(locals.get_or_intern(&format!("stack{recv_idx}")));
+        let survivor =
+            VariableRef::new_local_idx(locals.get_or_intern(&format!("stack{survivor_idx}")));
+        let recv_var =
+            VariableRef::new_local_idx(locals.get_or_intern(&format!("stack{recv_idx}")));
         Some(Self::assign_var(survivor, recv_var))
     }
 
@@ -1028,8 +1032,14 @@ impl Context {
             // *aload
             0x2e..=0x35 if Self::array_base(&data.sources).is_some() => {
                 let base = Self::array_base(&data.sources).expect("aload base");
-                let object =
-                    self.field_object_base(base, aliases, last_aload_reg, block_instrs, instr_idx, locals);
+                let object = self.field_object_base(
+                    base,
+                    aliases,
+                    last_aload_reg,
+                    block_instrs,
+                    instr_idx,
+                    locals,
+                );
                 smallvec![Statement::new_kind(StatementKind::load(
                     self.convert_location_to_var_ref(&data.destination, locals),
                     object,
@@ -1047,8 +1057,14 @@ impl Context {
                         .expect("astore value"),
                     locals,
                 );
-                let object =
-                    self.field_object_base(base, aliases, last_aload_reg, block_instrs, instr_idx, locals);
+                let object = self.field_object_base(
+                    base,
+                    aliases,
+                    last_aload_reg,
+                    block_instrs,
+                    instr_idx,
+                    locals,
+                );
                 smallvec![Statement::new_kind(StatementKind::store(
                     AccessPath::without_fields(object),
                     mir::FieldPath::symbol("[]"),

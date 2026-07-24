@@ -1098,7 +1098,10 @@ fn variable_port_selects_lowest_ssa_version() {
     // Stage 1 recorded exactly one endpoint row, tagged `Local`, carrying the base index.
     let rows: Vec<_> = batch.iter_endpoints().collect();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].selector_ty, crate::models::FormalIndexTypeTag::Local);
+    assert_eq!(
+        rows[0].selector_ty,
+        crate::models::FormalIndexTypeTag::Local
+    );
     assert_eq!(rows[0].local_index, Some(idx));
 
     // Index the same source and run Stage 2.
@@ -1116,7 +1119,13 @@ fn variable_port_selects_lowest_ssa_version() {
         .iter()
         .flat_map(|(func, v1, _, v2, _)| [(*func, *v1), (*func, *v2)])
         .filter(|(func, _)| *func == f_id)
-        .filter_map(|(_, v)| v.as_local()?.as_str().strip_prefix(&prefix)?.parse::<u32>().ok())
+        .filter_map(|(_, v)| {
+            v.as_local()?
+                .as_str()
+                .strip_prefix(&prefix)?
+                .parse::<u32>()
+                .ok()
+        })
         .min()
         .expect("buf has at least one versioned vertex");
     // `buf` really does have more than one version, so "pick one" is a meaningful claim.
@@ -1124,7 +1133,13 @@ fn variable_port_selects_lowest_ssa_version() {
         .iter()
         .flat_map(|(func, v1, _, v2, _)| [(*func, *v1), (*func, *v2)])
         .filter(|(func, _)| *func == f_id)
-        .filter_map(|(_, v)| v.as_local()?.as_str().strip_prefix(&prefix)?.parse::<u32>().ok())
+        .filter_map(|(_, v)| {
+            v.as_local()?
+                .as_str()
+                .strip_prefix(&prefix)?
+                .parse::<u32>()
+                .ok()
+        })
         .collect::<std::collections::BTreeSet<_>>();
     assert!(
         distinct_versions.len() >= 2,

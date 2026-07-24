@@ -1240,9 +1240,10 @@ impl<'a> Context<'a> {
                 fields.append(&mut field_path);
                 RawPath::new(VariableRef::new_global(), fields)
             }
-            VarKind::Local => {
-                RawPath::new(VariableRef::new_local_idx(locals.get_or_intern(&name)), field_path)
-            }
+            VarKind::Local => RawPath::new(
+                VariableRef::new_local_idx(locals.get_or_intern(&name)),
+                field_path,
+            ),
             VarKind::Parameter => {
                 if let Some(param_idx) =
                     self.get_param_idx(scope_view.func_name.as_str(), name.as_str())
@@ -1639,11 +1640,11 @@ impl<'a> Context<'a> {
             self.flatten_lvalue(program, func_node, source, scope_view)
                 .unwrap_or_else(|_| {
                     self.build_access_path(
-                func_name,
-                Default::default(),
-                scope_view,
-                &mut program[scope_view.fidx].locals,
-            )
+                        func_name,
+                        Default::default(),
+                        scope_view,
+                        &mut program[scope_view.fidx].locals,
+                    )
                 })
         };
 
@@ -1674,9 +1675,8 @@ impl<'a> Context<'a> {
             Variable::GlobalHeap => CallStyle::DirectCall { call_edges },
         };
 
-        let ret = VariableRef::new_local_idx(
-            program[scope_view.fidx].locals.get_or_intern(&temp_name),
-        );
+        let ret =
+            VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name));
         program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
             StatementKind::CallAssign {
                 style,
@@ -1687,12 +1687,12 @@ impl<'a> Context<'a> {
         //we return the temp_name, so that the assignment expression for the actual int x = foo() gets the result of foo()
         Ok(Exp::Variable(
             self.build_access_path(
-            temp_name.as_str(),
-            Default::default(),
-            scope_view,
-            &mut program[scope_view.fidx].locals,
-        )
-                .base,
+                temp_name.as_str(),
+                Default::default(),
+                scope_view,
+                &mut program[scope_view.fidx].locals,
+            )
+            .base,
         ))
     }
 

@@ -651,7 +651,9 @@ impl Context {
                 // flow sources to temp
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
-                    source.cloned().map(|r| reg_to_var(code_item, r, locals).into()),
+                    source
+                        .cloned()
+                        .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
                 // flow temp into field update
                 stmts.push(Statement::new_kind(StatementKind::store(
@@ -670,7 +672,11 @@ impl Context {
             | Instruction::SGetWide(f) => {
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
-                for dest in dest.iter().cloned().map(|d| reg_to_var(code_item, d, locals)) {
+                for dest in dest
+                    .iter()
+                    .cloned()
+                    .map(|d| reg_to_var(code_item, d, locals))
+                {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
                         VariableRef::new_global(),
@@ -716,7 +722,11 @@ impl Context {
                 let object = reg_to_var(code_item, f.b, locals);
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
-                for dest in dest.iter().cloned().map(|d| reg_to_var(code_item, d, locals)) {
+                for dest in dest
+                    .iter()
+                    .cloned()
+                    .map(|d| reg_to_var(code_item, d, locals))
+                {
                     stmts.push(Statement::new_kind(StatementKind::load(
                         dest,
                         object.clone(),
@@ -782,7 +792,9 @@ impl Context {
                         let dst_var = reg_to_var(code_item, *dest, locals);
                         stmts.push(Statement::new_kind(StatementKind::assign(
                             dst_var,
-                            sources.iter().map(|s| reg_to_var(code_item, *s, locals).into()),
+                            sources
+                                .iter()
+                                .map(|s| reg_to_var(code_item, *s, locals).into()),
                         )));
                     }
                 }

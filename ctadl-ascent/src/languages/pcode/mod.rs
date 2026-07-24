@@ -1412,8 +1412,9 @@ impl Context {
         };
 
         let outputs = outputs.err_context(|| format!("handling call: {:?}", pcode))?;
-        let temps: ctadl_ir::ThinVec<VariableRef> =
-            (0..outputs.len()).map(|_| self.create_temp(locals)).collect();
+        let temps: ctadl_ir::ThinVec<VariableRef> = (0..outputs.len())
+            .map(|_| self.create_temp(locals))
+            .collect();
         let kind = StatementKind::CallAssign {
             style,
             rets: temps.clone(),

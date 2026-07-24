@@ -1053,8 +1053,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                                 } else {
                                     "output".to_string()
                                 },
-                                message: "'Variable(...)' ports are only valid on source/sink ports"
-                                    .to_string(),
+                                message:
+                                    "'Variable(...)' ports are only valid on source/sink ports"
+                                        .to_string(),
                             });
                             return;
                         }

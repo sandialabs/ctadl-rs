@@ -114,8 +114,8 @@ written in terms of the readable source name rather than a hard-coded, hard-to-f
 if the function or local does not exist. */
 #[track_caller]
 pub(crate) fn local_render(prog: &Program, func: &str, local: &str) -> String {
-    let f = function_named(prog, func)
-        .unwrap_or_else(|| panic!("no function named {func:?}\n{prog}"));
+    let f =
+        function_named(prog, func).unwrap_or_else(|| panic!("no function named {func:?}\n{prog}"));
     let idx = f
         .locals
         .iter_enumerated()
@@ -557,7 +557,13 @@ pub(crate) fn index_program(
 ) -> (
     IndexFacts,
     IndexSourceInfo,
-    Vec<(fx::FunctionId, fx::FlowVariable, Path, fx::FlowVariable, Path)>,
+    Vec<(
+        fx::FunctionId,
+        fx::FlowVariable,
+        Path,
+        fx::FlowVariable,
+        Path,
+    )>,
 ) {
     let mut program_info = ProgramInfo {
         program,

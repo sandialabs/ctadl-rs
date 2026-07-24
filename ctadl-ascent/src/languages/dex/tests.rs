@@ -64,7 +64,9 @@ fn assign_from(inst: Instruction) -> (Vec<(VariableRef, Exp)>, Locals) {
 
 /// The source name of a local variable ref, via the locals table.
 fn local_name(locals: &Locals, var: &VariableRef) -> String {
-    locals.name(var.variable.local().expect("expected a local")).to_string()
+    locals
+        .name(var.variable.local().expect("expected a local"))
+        .to_string()
 }
 
 #[test]

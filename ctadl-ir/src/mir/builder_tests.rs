@@ -1,7 +1,9 @@
 use crate::index::idx::Idx;
 use crate::mir::builder::BasicBlockBuilder;
 use crate::mir::call::CallStyle;
-use crate::mir::{BasicBlockData, BasicBlockIdx, Exp, Locals, ParameterIdx, StatementIdx, VariableRef};
+use crate::mir::{
+    BasicBlockData, BasicBlockIdx, Exp, Locals, ParameterIdx, StatementIdx, VariableRef,
+};
 
 /// The source name of a local variable ref, via the locals table.
 fn local_name(locals: &Locals, var: &VariableRef) -> String {
