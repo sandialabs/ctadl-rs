@@ -69,6 +69,7 @@ pub struct ModelGeneratorIngest<'p, 'b> {
 
 static ARGUMENT_REGEX: OnceLock<Regex> = OnceLock::new();
 static RETURN_REGEX: OnceLock<Regex> = OnceLock::new();
+static VARIABLE_REGEX: OnceLock<Regex> = OnceLock::new();
 
 #[inline]
 fn argument_regex() -> &'static Regex {
@@ -78,6 +79,13 @@ fn argument_regex() -> &'static Regex {
 #[inline]
 fn return_regex() -> &'static Regex {
     RETURN_REGEX.get_or_init(|| Regex::new(r#"Return(.*)?"#).unwrap())
+}
+
+#[inline]
+fn variable_regex() -> &'static Regex {
+    // `Variable(name)` selects a source/sink port by the local's source name, with an
+    // optional trailing access path (`Variable(buf).headers`).
+    VARIABLE_REGEX.get_or_init(|| Regex::new(r#"Variable\(([^)]+)\)(.*)?"#).unwrap())
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -375,22 +383,68 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         &mut self,
         n: usize,
         idx: (FormalIndexTypeTag, Option<i16>),
+        var_name: Option<&str>,
         ap: &[&str],
         label: &str,
         direction: TaintDirection,
         wildcard: bool,
         saturating: bool,
     ) {
+        let tag = idx.0;
+        let is_callsites = matches!(self.find_method.get(n), Some(FindMethod::Callsites));
+        // A callsite-scoped endpoint models the callee at a call site; the callee's locals are
+        // not a call-site concept and Stage 2 gives `Local` vars no call-site fan-out. Reject
+        // rather than silently degrade to function-anchored.
+        if tag == FormalIndexTypeTag::Local && is_callsites {
+            self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                index: n,
+                field_name: "port".to_string(),
+                message: "'Variable(...)' is not supported with find: callsites".to_string(),
+            });
+            return;
+        }
         let callees = matched_functions(&self.methods[n], self.vmt);
-        if !matches!(self.find_method.get(n), Some(FindMethod::Callsites)) {
+        if !is_callsites {
             for func in callees {
+                // For a `Variable(name)` port, resolve the name to a base `LocalIdx` in *this*
+                // matched function. Copy the `&FunctionData` out first so `self.program_functions`
+                // is not borrowed across the `self.builder` mutable borrow below.
+                let local_index = if tag == FormalIndexTypeTag::Local {
+                    let name = var_name.expect("Local port without var_name");
+                    let fd = self.program_functions.get(func.as_str()).copied();
+                    match fd.and_then(|fd| {
+                        fd.locals
+                            .iter_enumerated()
+                            .find(|(_, d)| d.name.as_str() == name)
+                            .map(|(i, _)| u32::from(i))
+                    }) {
+                        Some(li) => Some(li),
+                        None => {
+                            // Skip only this function; other matched functions may have the local.
+                            log::warn!("named local {name:?} not found in {func}");
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
                 self.builder.endpoint.append(
-                    &func, idx, ap, label, direction, wildcard, saturating, None, false,
+                    &func,
+                    idx,
+                    local_index,
+                    ap,
+                    label,
+                    direction,
+                    wildcard,
+                    saturating,
+                    None,
+                    false,
                 );
             }
             return;
         }
-        // Callsite-scoped: resolve the caller filter. `All` means "any caller".
+        // Callsite-scoped: resolve the caller filter. `All` means "any caller". (`Local` ports
+        // were rejected above, so `local_index` is always `None` here.)
         let callers: Vec<Option<String>> = match &self.in_functions[n] {
             UniverseSet::All => vec![None],
             _ => matched_functions(&self.in_functions[n], self.vmt)
@@ -403,6 +457,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 self.builder.endpoint.append(
                     func,
                     idx,
+                    None,
                     ap,
                     label,
                     direction,
@@ -984,13 +1039,30 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             };
 
             match parse_port(input_str, n) {
-                Ok((in_tag, in_index, in_ap)) => match parse_port(output_str, n) {
-                    Ok((out_tag, out_index, out_ap)) => {
+                Ok(input) => match parse_port(output_str, n) {
+                    Ok(output) => {
+                        // `Variable(name)` selects a named local; summaries carry no local-index
+                        // column and do no per-function name resolution, so reject it here.
+                        if input.tag == FormalIndexTypeTag::Local
+                            || output.tag == FormalIndexTypeTag::Local
+                        {
+                            self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                                index: n,
+                                field_name: if input.tag == FormalIndexTypeTag::Local {
+                                    "input".to_string()
+                                } else {
+                                    "output".to_string()
+                                },
+                                message: "'Variable(...)' ports are only valid on source/sink ports"
+                                    .to_string(),
+                            });
+                            return;
+                        }
                         for func in matched_functions(&self.methods[n], self.vmt) {
                             self.builder.summary.append(
                                 &func,
-                                (out_tag, out_index, &out_ap),
-                                (in_tag, in_index, &in_ap),
+                                (output.tag, output.index, &output.ap),
+                                (input.tag, input.index, &input.ap),
                             );
                         }
                     }
@@ -1070,10 +1142,16 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         };
 
         match parse_port(port_str, n) {
-            Ok((tag, index, ap)) => {
+            Ok(ParsedPort {
+                tag,
+                index,
+                var_name,
+                ap,
+            }) => {
                 self.emit_endpoints(
                     n,
                     (tag, index),
+                    var_name,
                     &ap,
                     label,
                     TaintDirection::Forward,
@@ -1153,10 +1231,16 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         };
 
         match parse_port(port_str, n) {
-            Ok((tag, index, ap)) => {
+            Ok(ParsedPort {
+                tag,
+                index,
+                var_name,
+                ap,
+            }) => {
                 self.emit_endpoints(
                     n,
                     (tag, index),
+                    var_name,
                     &ap,
                     label,
                     TaintDirection::Backward,
@@ -1169,29 +1253,56 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     }
 }
 
+/// A parsed source/sink/propagation port. `var_name` is `Some` only for a `Variable(name)`
+/// port (`tag == Local`); `index` is `Some` only for a positional `Argument(n)` port
+/// (`tag == Index`). Both `var_name` and `ap` borrow from the port `text`.
+struct ParsedPort<'a> {
+    tag: FormalIndexTypeTag,
+    index: Option<i16>,
+    var_name: Option<&'a str>,
+    ap: Vec<&'a str>,
+}
+
 /// Entry point for parsing propagation inputs and inputs, which are called ports
-fn parse_port(
-    text: &str,
-    index: usize,
-) -> Result<(FormalIndexTypeTag, Option<i16>, Vec<&str>), crate::error::JsonModelError> {
-    if let Some(m) = return_regex().captures(text) {
-        let tag = FormalIndexTypeTag::Return;
-        let index = None;
-        Ok((tag, index, parse_access_path(m.get(1).map(|m| m.as_str()))))
-    } else {
-        parse_argument(text).map_err(|mut err| {
-            // Update the index in the error
-            match &mut err {
-                crate::error::JsonModelError::InvalidArgumentFormat {
-                    index: err_index, ..
-                } => *err_index = index,
-                crate::error::JsonModelError::InvalidInteger {
-                    index: err_index, ..
-                } => *err_index = index,
-                _ => {}
-            }
-            err
+fn parse_port(text: &str, index: usize) -> Result<ParsedPort<'_>, crate::error::JsonModelError> {
+    if let Some(m) = variable_regex().captures(text) {
+        // `Variable(name)` — name-based local selector. The base `LocalIdx` is resolved
+        // per-function later (in `emit_endpoints`), so no index is known here.
+        Ok(ParsedPort {
+            tag: FormalIndexTypeTag::Local,
+            index: None,
+            var_name: m.get(1).map(|m| m.as_str()),
+            ap: parse_access_path(m.get(2).map(|m| m.as_str())),
         })
+    } else if let Some(m) = return_regex().captures(text) {
+        Ok(ParsedPort {
+            tag: FormalIndexTypeTag::Return,
+            index: None,
+            var_name: None,
+            ap: parse_access_path(m.get(1).map(|m| m.as_str())),
+        })
+    } else {
+        parse_argument(text)
+            .map(|(tag, idx, ap)| ParsedPort {
+                tag,
+                index: idx,
+                var_name: None,
+                ap,
+            })
+            .map_err(|mut err| {
+                // Update the index in the error
+                match &mut err {
+                    crate::error::JsonModelError::InvalidArgumentFormat {
+                        index: err_index,
+                        ..
+                    } => *err_index = index,
+                    crate::error::JsonModelError::InvalidInteger {
+                        index: err_index, ..
+                    } => *err_index = index,
+                    _ => {}
+                }
+                err
+            })
     }
 }
 
@@ -1539,5 +1650,39 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
                 Vec::new()
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod parse_port_tests {
+    use super::*;
+
+    #[test]
+    fn parses_variable_selector() {
+        let p = parse_port("Variable(buf)", 0).expect("parse");
+        assert_eq!(p.tag, FormalIndexTypeTag::Local);
+        assert_eq!(p.var_name, Some("buf"));
+        assert_eq!(p.index, None);
+        assert!(p.ap.is_empty());
+    }
+
+    #[test]
+    fn parses_variable_selector_with_access_path() {
+        let p = parse_port("Variable(buf).headers", 0).expect("parse");
+        assert_eq!(p.tag, FormalIndexTypeTag::Local);
+        assert_eq!(p.var_name, Some("buf"));
+        assert_eq!(p.ap, vec!["headers"]);
+    }
+
+    #[test]
+    fn argument_and_return_still_parse() {
+        let a = parse_port("Argument(1)", 0).expect("parse");
+        assert_eq!(a.tag, FormalIndexTypeTag::Index);
+        assert_eq!(a.index, Some(1));
+        assert_eq!(a.var_name, None);
+
+        let r = parse_port("Return", 0).expect("parse");
+        assert_eq!(r.tag, FormalIndexTypeTag::Return);
+        assert_eq!(r.var_name, None);
     }
 }

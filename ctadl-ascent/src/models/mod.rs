@@ -10,10 +10,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use arrow::array::builder::{
-    ArrayBuilder, BooleanBuilder, Int16Builder, StringBuilder, UInt8Builder, UInt64Builder,
+    ArrayBuilder, BooleanBuilder, Int16Builder, StringBuilder, UInt8Builder, UInt32Builder,
+    UInt64Builder,
 };
 use arrow::array::{
-    ArrayRef, BooleanArray, Int16Array, RecordBatch, StringArray, UInt8Array, UInt64Array,
+    ArrayRef, BooleanArray, Int16Array, RecordBatch, StringArray, UInt8Array, UInt32Array,
+    UInt64Array,
 };
 use arrow::compute::concat_batches;
 use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaBuilder, SchemaRef};
@@ -519,6 +521,9 @@ pub enum FormalIndexTypeTag {
     Global,
     /// Any parameter (excluding return and global)
     AnyArgument,
+    /// A named local variable, selected by source name (`Variable(name)`). The resolved base
+    /// `LocalIdx` is carried out-of-band in the endpoint's `local_index` column, not in `index`.
+    Local,
 }
 
 impl From<FormalIndexTypeTag> for u8 {
@@ -530,6 +535,7 @@ impl From<FormalIndexTypeTag> for u8 {
             Return => 1,
             Global => 2,
             AnyArgument => 3,
+            Local => 4,
         }
     }
 }
@@ -543,6 +549,7 @@ impl From<u8> for FormalIndexTypeTag {
             1 => Return,
             2 => Global,
             3 => AnyArgument,
+            4 => Local,
             _ => panic!("bad FormalIndexTypeTag"),
         }
     }
@@ -683,6 +690,10 @@ pub struct EndpointBuilder {
     func: StringBuilder,
     /// Argument of the endpoint
     index: FormalIndexBuilder,
+    /// Base `LocalIdx` (`u32`) for a `Variable(name)` (`FormalIndexTypeTag::Local`) port,
+    /// resolved per-function in Stage 1. `null` for every non-`Local` selector. Kept separate
+    /// from `index` (an `Int16` shared with `SummaryBuilder`) because a `LocalIdx` is `u32`.
+    local_index: UInt32Builder,
     /// ID of the access path
     path_id: UInt64Builder,
     /// Taint label
@@ -723,6 +734,7 @@ impl EndpointBuilder {
             func: Default::default(),
             // No prefix – column names will be "selector_ty" and "index"
             index: FormalIndexBuilder::new(""),
+            local_index: UInt32Builder::new(),
             path_id: UInt64Builder::new(),
             label: Default::default(),
             direction: BooleanBuilder::new(),
@@ -738,6 +750,8 @@ impl EndpointBuilder {
     /// Append an endpoint entry.
     /// `function` – name of the function containing the endpoint.
     /// `idx` – selector type tag and optional formal index for the variable.
+    /// `local_index` – base `LocalIdx` for a `Variable(name)` (`FormalIndexTypeTag::Local`)
+    ///   port, resolved per-function in Stage 1; `None` for every other selector.
     /// `ap` – access‑path components (as string slices).
     /// `label` – label associated with the endpoint.
     /// `direction` – true for forward (source), false for backward (sink).
@@ -754,6 +768,7 @@ impl EndpointBuilder {
         &mut self,
         function: &str,
         idx: (FormalIndexTypeTag, Option<i16>),
+        local_index: Option<u32>,
         ap: &[&str],
         label: &str,
         direction: TaintDirection,
@@ -765,6 +780,7 @@ impl EndpointBuilder {
         let (tag, opt_idx) = idx;
         self.func.append_value(function);
         self.index.append(tag, opt_idx);
+        self.local_index.append_option(local_index);
         let path_id_val = self.ap_len.append(ap);
         self.path_id.append_value(path_id_val);
         self.label.append_value(label);
@@ -869,9 +885,18 @@ impl EndpointBuilder {
             )]))),
             vec![Arc::new(self.callsite_scoped.finish())],
         )?;
+        // local_index column (nullable u32): base LocalIdx for Variable(name) ports
+        let local_index = RecordBatch::try_new(
+            Arc::new(Schema::new(Fields::from(vec![Field::new(
+                "local_index",
+                DataType::UInt32,
+                true,
+            )]))),
+            vec![Arc::new(self.local_index.finish())],
+        )?;
 
         // Build final schema: function, index fields, path_id, label, direction, wildcard,
-        // in_function, callsite_scoped
+        // in_function, callsite_scoped, local_index
         let endpoint_schema: SchemaRef = {
             let mut b = SchemaBuilder::new();
             b.push(Field::new("function", DataType::Utf8, false));
@@ -883,6 +908,7 @@ impl EndpointBuilder {
             b.push(Field::new("saturating", DataType::Boolean, false));
             b.push(Field::new("in_function", DataType::Utf8, true));
             b.push(Field::new("callsite_scoped", DataType::Boolean, false));
+            b.push(Field::new("local_index", DataType::UInt32, true));
             b.finish().into()
         };
         // Assemble columns in the same order as the schema
@@ -896,6 +922,7 @@ impl EndpointBuilder {
         data.extend(sat.columns().iter().cloned());
         data.extend(in_function.columns().iter().cloned());
         data.extend(callsite_scoped.columns().iter().cloned());
+        data.extend(local_index.columns().iter().cloned());
 
         let records = RecordBatch::try_new(endpoint_schema.clone(), data)?;
         // Access‑path auxiliary tables
@@ -1024,6 +1051,14 @@ impl EndpointBatch {
                 .unwrap()
                 .iter()
                 .map(|b| b.unwrap()),
+            self.endpoints
+                .column_by_name("local_index")
+                .unwrap()
+                .as_ref()
+                .as_any()
+                .downcast_ref::<UInt32Array>()
+                .unwrap()
+                .iter(),
         ]
         .map(
             |(
@@ -1037,6 +1072,7 @@ impl EndpointBatch {
                 saturating,
                 in_function,
                 callsite_scoped,
+                local_index,
             )| EndpointRow {
                 function,
                 selector_ty,
@@ -1048,6 +1084,7 @@ impl EndpointBatch {
                 saturating,
                 in_function,
                 callsite_scoped,
+                local_index,
             },
         )
     }
@@ -1076,6 +1113,9 @@ pub struct EndpointRow<'a> {
     pub in_function: Option<&'a str>,
     /// `true` when the endpoint is anchored at individual call sites rather than the function.
     pub callsite_scoped: bool,
+    /// Base `LocalIdx` for a `Variable(name)` (`FormalIndexTypeTag::Local`) port; `None` for
+    /// every other selector. Resolved to a versioned graph vertex in Stage 2.
+    pub local_index: Option<u32>,
 }
 
 #[derive(Debug)]

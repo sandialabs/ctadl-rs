@@ -230,6 +230,15 @@
         { "pattern": "^Return" }
       ]
     },
+    "source-sink-port-spec": {
+      "description": "A source/sink port. In addition to the positional selectors (Argument(n)/Argument(*)/Return), a source/sink may select a local by its source name with Variable(name), e.g. Variable(buf), optionally refined by a trailing access path (Variable(buf).headers). Variable(...) is valid only here, NOT on propagation inputs/outputs, and NOT with find: callsites.",
+      "type": "string",
+      "anyOf": [
+        { "pattern": "^Argument\\((-?[0-9]+|\\*)\\)" },
+        { "pattern": "^Return" },
+        { "pattern": "^Variable\\([^)]+\\)" }
+      ]
+    },
     "field-spec": {
       "type": "string",
       "pattern": "^([.][^.]+)*"
@@ -243,8 +252,8 @@
           "description": "The taint label (your choice) to associate with the source/sink",
           "type": "string", "minLength": 1 },
         "port": {
-          "description": "The part of the matched SUT element to designate as source/sink",
-          "$ref": "#/$defs/port-spec"
+          "description": "The part of the matched SUT element to designate as source/sink. Positional (Argument(n)/Argument(*)/Return) or, for a local, by source name via Variable(name) (e.g. Variable(buf)).",
+          "$ref": "#/$defs/source-sink-port-spec"
         },
         "field": {
           "description": "The field of the matched variable to designate as source/sink",

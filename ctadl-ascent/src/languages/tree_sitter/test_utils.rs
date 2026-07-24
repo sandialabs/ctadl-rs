@@ -547,6 +547,37 @@ pub(crate) fn get_summary(
     Ok((result.summary, source_info))
 }
 
+/// Indexes `program` end-to-end (SSA → codegen → taint index) and returns the pieces
+/// [`crate::query_engine::build_query_endpoints`] consumes: the [`IndexFacts`], the
+/// [`IndexSourceInfo`] (whose `.sites` is the [`fx::IdMap`]), and the `assign_like` relation.
+/// Unlike [`get_summary`], nothing is discarded, so a test can drive Stage 2 against a real index.
+#[allow(clippy::type_complexity)]
+pub(crate) fn index_program(
+    program: Program,
+) -> (
+    IndexFacts,
+    IndexSourceInfo,
+    Vec<(fx::FunctionId, fx::FlowVariable, Path, fx::FlowVariable, Path)>,
+) {
+    let mut program_info = ProgramInfo {
+        program,
+        ..Default::default()
+    };
+    program_info.program.verify().unwrap();
+    let mut facts = IndexFacts::default();
+    ssa::transform_program(&mut program_info.program, true);
+    let mut source_info = IndexSourceInfo::default();
+    codegen_program(
+        program_info,
+        &mut facts,
+        &mut source_info,
+        CallResolutionStrategy::Mixed,
+    );
+    // `taint_index` consumes the facts; clone so the caller keeps them for Stage 2.
+    let result = taint_index(facts.clone());
+    (facts, source_info, result.assign_like)
+}
+
 pub(crate) fn summary_count(summary: &[FunctionSummary], count: usize) -> bool {
     summary.len() == count
 }

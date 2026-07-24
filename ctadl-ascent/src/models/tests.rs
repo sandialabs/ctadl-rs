@@ -9,6 +9,7 @@ fn endpoint_builder_basic() {
     builder.append(
         "func1",
         (FormalIndexTypeTag::Return, Some(RETURN_INDEX)),
+        None,
         &["field1", "sub"],
         "lbl1",
         TaintDirection::Forward,
@@ -21,6 +22,7 @@ fn endpoint_builder_basic() {
     builder.append(
         "func2",
         (FormalIndexTypeTag::Global, None),
+        None,
         &[],
         "lbl2",
         TaintDirection::Backward,
@@ -43,6 +45,7 @@ fn endpoint_builder_basic() {
         "saturating",
         "in_function",
         "callsite_scoped",
+        "local_index",
     ];
     let actual: Vec<_> = batch
         .endpoints
@@ -65,6 +68,7 @@ fn endpoint_batch_iter_endpoints() {
     builder.append(
         "func1",
         (FormalIndexTypeTag::Return, Some(RETURN_INDEX)),
+        None,
         &["fieldA"],
         "lbl1",
         TaintDirection::Forward,
@@ -77,6 +81,7 @@ fn endpoint_batch_iter_endpoints() {
     builder.append(
         "func2",
         (FormalIndexTypeTag::Global, None),
+        None,
         &[],
         "lbl2",
         TaintDirection::Backward,
@@ -101,6 +106,7 @@ fn endpoint_batch_iter_endpoints() {
             saturating: false,
             in_function: None,
             callsite_scoped: false,
+            local_index: None,
         },
     );
     assert_eq!(
@@ -116,8 +122,33 @@ fn endpoint_batch_iter_endpoints() {
             saturating: false,
             in_function: Some("caller_fn"),
             callsite_scoped: true,
+            local_index: None,
         },
     );
+}
+
+#[test]
+fn endpoint_builder_local_selector_roundtrip() {
+    let mut builder = EndpointBuilder::new();
+    // A `Variable(name)`-style port carries its base LocalIdx out-of-band in `local_index`.
+    builder.append(
+        "func1",
+        (FormalIndexTypeTag::Local, None),
+        Some(7),
+        &["headers"],
+        "lbl1",
+        TaintDirection::Forward,
+        false,
+        false,
+        None,
+        false,
+    );
+    let batch = builder.finish().expect("finish failed");
+    let endpoints: Vec<_> = batch.iter_endpoints().collect();
+    assert_eq!(endpoints.len(), 1);
+    assert_eq!(endpoints[0].selector_ty, FormalIndexTypeTag::Local);
+    assert_eq!(endpoints[0].index, None);
+    assert_eq!(endpoints[0].local_index, Some(7));
 }
 
 // Tests for UniverseSet set difference (backs the `not` combinator).

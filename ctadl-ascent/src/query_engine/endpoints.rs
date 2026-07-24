@@ -69,6 +69,9 @@ pub fn build_query_endpoints(
     };
     let mut vertex_paths: HashMap<(facts::FunctionId, FlowVariable), BTreeSet<facts::Path>> =
         HashMap::new();
+    // All local (SSA-versioned) vertices that actually occur per function, used to resolve a
+    // `Variable(name)` base index to an existing versioned vertex (see the `Local` arm below).
+    let mut local_vars: HashMap<facts::FunctionId, BTreeSet<FlowVariable>> = HashMap::new();
     for (func, v1, p1, v2, p2) in assign_like {
         vertex_paths
             .entry((*func, rep_of(*func, *v1)))
@@ -78,6 +81,12 @@ pub fn build_query_endpoints(
             .entry((*func, rep_of(*func, *v2)))
             .or_default()
             .insert(*p2);
+        if v1.is_local() {
+            local_vars.entry(*func).or_default().insert(*v1);
+        }
+        if v2.is_local() {
+            local_vars.entry(*func).or_default().insert(*v2);
+        }
     }
 
     let mut out_eps = Vec::new();
@@ -93,6 +102,7 @@ pub fn build_query_endpoints(
         saturating,
         in_function,
         callsite_scoped,
+        local_index,
     } in batch.iter_endpoints()
     {
         // Resolve function name → FunctionId; skip if not present. For a callsite endpoint
@@ -137,6 +147,40 @@ pub fn build_query_endpoints(
                         .collect()
                 })
                 .unwrap_or_default(),
+            // `Variable(name)` — the base `LocalIdx` was resolved to `local_index` in Stage 1.
+            // Graph local vertices are SSA-versioned (`%L{idx}_{version}`); a bare `%L{idx}` is
+            // not a vertex. Seed exactly ONE vertex: the lowest existing SSA version (version 0,
+            // the incoming value, when present; otherwise the first real def). The min is over
+            // the parsed integer suffix, not lexical order (`_10 < _2` lexically). Seeding the
+            // first version treats the local as a source/sink at its incoming definition; a
+            // source's taint then propagates to later versions along SSA def-use edges.
+            FormalIndexTypeTag::Local => {
+                let li = local_index.expect("local_index missing for Local selector");
+                // Trailing '_' disambiguates `%L12_*` from `%L123_*`.
+                let prefix = format!("%L{li}_");
+                let seed = local_vars
+                    .get(&infunc)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| {
+                        let s = v.as_local()?;
+                        let ver: u32 = s.as_str().strip_prefix(&prefix)?.parse().ok()?;
+                        Some((ver, *v))
+                    })
+                    .min_by_key(|(ver, _)| *ver)
+                    .map(|(_, v)| v);
+                match seed {
+                    Some(v) => vec![v],
+                    None => {
+                        // The named local exists in the program but has no vertex in this
+                        // function's index (never read/written into a flow) — seed nothing.
+                        log::debug!(
+                            "Variable selector: local {li} has no versioned vertex in {func_name}"
+                        );
+                        vec![]
+                    }
+                }
+            }
         };
 
         let ap: facts::Path = ap_map[&path_id].iter().cloned().collect();
