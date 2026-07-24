@@ -27,6 +27,12 @@ use ctadl_ir::mir::call::VirtualMethodTable;
 ///
 /// This object indexes the metadata in a useful way so that model_generators can be efficiently
 /// matched. It also implements a visitor for model_generators.
+///
+/// **Stage 1** of source/sink matching: match MIR elements (function names, signatures,
+/// arity, regexes) → the name-based columnar
+/// [`EndpointBatch`](crate::models::EndpointBatch) intermediate (see [`Self::emit_endpoints`]).
+/// [`query_engine::build_query_endpoints`](crate::query_engine::build_query_endpoints) is
+/// Stage 2, which resolves and expands that intermediate into `QueryEndpoint`s.
 pub struct ModelGeneratorIngest<'p, 'b> {
     builder: &'b mut ModelBuilders,
     find_method: Vec<FindMethod>,

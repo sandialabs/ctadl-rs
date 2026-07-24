@@ -622,8 +622,11 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
     }
 }
 
+mod endpoints;
 pub mod formatter;
 pub mod search;
+
+pub use endpoints::build_query_endpoints;
 
 struct DisplayTaint<'a> {
     taint: &'a [(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)],
