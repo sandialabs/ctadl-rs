@@ -500,6 +500,13 @@ pub struct Locals {
 impl Locals {
     /// Returns the index for `name`, interning a new local if this name has not been seen.
     pub fn get_or_intern(&mut self, name: &str) -> LocalIdx {
+        // `by_name` is `#[serde(skip)]`, so a deserialized table arrives with declarations but no
+        // index. Rebuild it before interning: otherwise a name already in `decls` would intern to
+        // a *second* index, and the one-local-per-name invariant that SSA (and every name-based
+        // lookup into this table) relies on would silently break.
+        if self.by_name.is_empty() && !self.decls.is_empty() {
+            self.rebuild_index();
+        }
         if let Some(&idx) = self.by_name.get(name) {
             return idx;
         }
@@ -540,13 +547,105 @@ impl Locals {
         self.decls.iter_enumerated()
     }
 
-    /// Rebuild the transient `by_name` index from the declarations. Use after deserialization if
-    /// further interning is required (the map is `#[serde(skip)]`).
+    /// Rebuild the transient `by_name` index from the declarations. [`Self::get_or_intern`] calls
+    /// this itself when it finds an unindexed table (the map is `#[serde(skip)]`, so a
+    /// deserialized table has none), so callers only need it to pre-warm the map.
     pub fn rebuild_index(&mut self) {
         self.by_name.clear();
         for (idx, decl) in self.decls.iter_enumerated() {
             self.by_name.entry(decl.name.clone()).or_insert(idx);
         }
+    }
+}
+
+/// Renders MIR with [`Variable::Local`]s resolved to their source names.
+///
+/// [`Display for Variable`](Variable#impl-Display-for-Variable) has no access to the enclosing
+/// function, so by default a local prints as its opaque index (`%L7`) — the same form the fact
+/// base and graphviz labels use. Wrapping a value in `WithLocalNames` turns on name resolution for
+/// the duration of that render: every [`FunctionData`] publishes its [`Locals`] table, locals
+/// inside it print as `%name`, and the function header gains a `locals:` line giving the
+/// index↔name mapping (so a dump can still be correlated with `%L7_2`-style graph vertices).
+///
+/// ```text
+/// define f(@p0[byval]) -> 1:
+///   locals: %L0=buf %L1=t0?
+///   bb0:
+///     assign %buf = @p0
+/// ```
+pub struct WithLocalNames<T>(pub T);
+
+impl<T: Display> Display for WithLocalNames<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let _guard = local_names::enable();
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Scoped, thread-local plumbing for [`WithLocalNames`]: `Display for FunctionData` publishes the
+/// table it is rendering and `Display for Variable` reads it back. Inert unless a `WithLocalNames`
+/// render is in progress on this thread, so ordinary `{}` output — including the `format!("{v}")`
+/// that gives a local its identity in the fact base — is unchanged.
+mod local_names {
+    use std::cell::{Cell, RefCell};
+
+    use super::{LocalIdx, Locals};
+    use crate::index::idx::Idx;
+
+    thread_local! {
+        static ENABLED: Cell<bool> = const { Cell::new(false) };
+        /// One entry per enclosing `FunctionData` render; the innermost is the one in effect.
+        static FRAMES: RefCell<Vec<Vec<String>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Restores the previous setting, so nesting a plain render inside a named one (or vice
+    /// versa) behaves.
+    pub(super) struct EnableGuard(bool);
+
+    impl Drop for EnableGuard {
+        fn drop(&mut self) {
+            ENABLED.set(self.0);
+        }
+    }
+
+    pub(super) fn enable() -> EnableGuard {
+        EnableGuard(ENABLED.replace(true))
+    }
+
+    pub(super) fn is_enabled() -> bool {
+        ENABLED.get()
+    }
+
+    pub(super) struct FrameGuard;
+
+    impl Drop for FrameGuard {
+        fn drop(&mut self) {
+            FRAMES.with_borrow_mut(|frames| {
+                frames.pop();
+            });
+        }
+    }
+
+    /// Publishes `locals` for the nested render. Returns `None` — allocating nothing — when name
+    /// resolution is off, which is every render but `ctadl inspect`'s.
+    pub(super) fn push(locals: &Locals) -> Option<FrameGuard> {
+        if !is_enabled() {
+            return None;
+        }
+        let names = locals
+            .iter_enumerated()
+            .map(|(_, decl)| decl.name.clone())
+            .collect();
+        FRAMES.with_borrow_mut(|frames| frames.push(names));
+        Some(FrameGuard)
+    }
+
+    /// The source name of `idx` in the innermost published table, if there is one.
+    pub(super) fn name_of(idx: LocalIdx) -> Option<String> {
+        if !is_enabled() {
+            return None;
+        }
+        FRAMES.with_borrow(|frames| frames.last()?.get(idx.index()).cloned())
     }
 }
 
@@ -854,7 +953,12 @@ impl From<ParameterIdx> for Variable {
 impl Display for Variable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Variable::Local(idx) => write!(f, "%L{}", idx.index()),
+            // Only a `WithLocalNames` render can resolve the index; everywhere else a local is
+            // its index, which is what the fact base keys on.
+            Variable::Local(idx) => match local_names::name_of(*idx) {
+                Some(name) => write!(f, "%{name}"),
+                None => write!(f, "%L{}", idx.index()),
+            },
             Variable::Param(i) => write!(f, "@p{}", i.index()),
             Variable::GlobalHeap => write!(f, "$globals"),
         }
@@ -1544,10 +1648,21 @@ impl Display for FunctionData {
             name,
             params,
             blocks,
-            locals: _,
+            locals,
             return_type,
         } = self;
+        // Held until this function's body has been written, so locals nested anywhere inside it
+        // resolve against this table. `None` (and no output below) unless a `WithLocalNames`
+        // render asked for names.
+        let _names = local_names::push(locals);
         writeln!(f, "define {name}({params}) -> {return_type}:")?;
+        if local_names::is_enabled() && !locals.is_empty() {
+            write!(f, "  locals:")?;
+            for (idx, decl) in locals.iter_enumerated() {
+                write!(f, " %L{}={}", idx.index(), decl.name)?;
+            }
+            writeln!(f)?;
+        }
         write!(f, "{blocks}")
     }
 }

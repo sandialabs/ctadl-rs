@@ -55,6 +55,18 @@ pub fn init_store_path<P: AsRef<Path>>(override_path: Option<P>) -> Result<(), &
         .map_err(|_| "STORE_PATH already initialized")
 }
 
+/// Version of the on-disk import format: the serialized IR program, VMT, and the rest of an
+/// import directory's contents.
+///
+/// Bump this whenever the serialized shape changes, so a stale import fails with a clear
+/// "re-import" message instead of an opaque deserialization error (or, worse, silently decoding
+/// into something wrong). History:
+///
+/// - `1`: original format.
+/// - `2`: MIR locals moved into a per-function `Locals` table and `Variable::Local` became a
+///   `LocalIdx` instead of a name, changing the `bitcode` wire format of `ir-program.bitcode`.
+pub const IMPORT_FORMAT_VERSION: &str = "2";
+
 /// Represents our local import of an artifact
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub struct ArtifactImport {
@@ -65,6 +77,8 @@ pub struct ArtifactImport {
     pub artifact_path: PathBuf,
     /// Path to the import directory for the artifact.
     pub import_path: PathBuf,
+    /// The [`IMPORT_FORMAT_VERSION`] this import was written with. [`Self::load`] rejects
+    /// anything else.
     pub version: String,
     /// Base address the disassembler (Ghidra) loaded the artifact at. Used to
     /// recover section-relative offsets from absolute instruction addresses
@@ -110,7 +124,7 @@ impl ArtifactImport {
             language,
             artifact_path,
             import_path,
-            version: "1".to_string(),
+            version: IMPORT_FORMAT_VERSION.to_string(),
             image_base: None,
             hash: None,
         };
@@ -138,11 +152,21 @@ impl ArtifactImport {
     ///
     /// # Errors
     ///
-    /// If there are i/o or deserialization errors
+    /// If there are i/o or deserialization errors, or if the import was written by an
+    /// incompatible version of ctadl (see [`IMPORT_FORMAT_VERSION`]).
     #[inline]
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         let file = File::open(path)?;
-        let result = serde_json::from_reader(file)?;
+        let result: Self = serde_json::from_reader(file)?;
+        // Refuse a stale import here rather than letting the caller hit an opaque `bitcode` error
+        // (or a successful-but-wrong decode) when it reads the IR out of the import directory.
+        if result.version != IMPORT_FORMAT_VERSION {
+            return Err(Error::IncompatibleImport {
+                name: result.name,
+                found: result.version,
+                expected: IMPORT_FORMAT_VERSION.to_string(),
+            });
+        }
         Ok(result)
     }
 

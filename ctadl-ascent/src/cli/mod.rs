@@ -582,14 +582,16 @@ fn load_and_map_summaries(
 
 /// Pretty-print the imported IR. With `filter`, only functions whose name contains that
 /// substring are printed; otherwise every function is printed. Uses the `Display` impls in
-/// `ctadl_ir::mir`, so the output matches the in-memory AST the analysis consumes.
+/// `ctadl_ir::mir`, so the output matches the in-memory AST the analysis consumes -- except that
+/// locals are resolved to their source names through each function's `Locals` table
+/// (`WithLocalNames`), since `%L7` on its own tells a reader nothing.
 pub fn dump_ir(import: &ArtifactImport, filter: Option<&str>) -> Result<(), Error> {
     let program_info = load_program_info_without_source_info(import)?;
     let mut matched = 0usize;
     for func in program_info.program.functions.iter() {
         if filter.is_none_or(|pat| func.name.contains(pat)) {
             matched += 1;
-            println!("{func}");
+            println!("{}", ctadl_ir::mir::WithLocalNames(func));
         }
     }
     if let Some(pat) = filter
@@ -789,7 +791,9 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
     let data = std::fs::read(path)?;
     if filename == "ir-program.bitcode" {
         let program = ctadl_ir::encode::decode_program(&data)?;
-        println!("{}", program);
+        // Resolve locals through each function's table: a dump full of `%L7` is unreadable now
+        // that the name lives in `FunctionData::locals` rather than in the variable itself.
+        println!("{}", ctadl_ir::mir::WithLocalNames(&program));
     } else if filename == "ir-vmt.bitcode" {
         let vmt: ctadl_ir::call::VirtualMethodTable = bitcode::deserialize(&data)?;
         println!("{}", vmt);

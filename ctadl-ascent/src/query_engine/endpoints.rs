@@ -172,10 +172,17 @@ pub fn build_query_endpoints(
                 match seed {
                     Some(v) => vec![v],
                     None => {
-                        // The named local exists in the program but has no vertex in this
-                        // function's index (never read/written into a flow) — seed nothing.
-                        log::debug!(
-                            "Variable selector: local {li} has no versioned vertex in {func_name}"
+                        // Stage 1 resolved this name against the *pre-optimization* program, but
+                        // the graph is built after `eliminate_dead_temps` / `coalesce_copies` /
+                        // `propagate_copies` have run. A local that was fused into another or
+                        // dropped as dead has no `%L{li}_{version}` vertex left, as does one that
+                        // never flows anywhere. Either way the endpoint silently disappears, so
+                        // say so loudly rather than at debug level.
+                        log::warn!(
+                            "Variable selector: local %L{li} has no versioned vertex in \
+                             '{func_name}', so this source/sink seeds nothing (the local may have \
+                             been coalesced or eliminated before indexing, or it never \
+                             participates in a flow)"
                         );
                         vec![]
                     }
