@@ -8,10 +8,6 @@ default-run = "ctadl"
 name = "ctadl"
 path = "src/main.rs"
 
-[[bin]]
-name = "tree-sitter-compile"
-path = "src/languages/tree_sitter/bin/tree-sitter-compile.rs"
-
 [dependencies]
 anyhow = "1.0"
 arrow = "58"
