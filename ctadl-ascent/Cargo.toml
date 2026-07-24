@@ -12,10 +12,6 @@ path = "src/main.rs"
 name = "tree-sitter-compile"
 path = "src/languages/tree_sitter/bin/tree-sitter-compile.rs"
 
-[[bin]]
-name = "flowy"
-path = "src/bin/flowy.rs"
-
 [dependencies]
 anyhow = "1.0"
 arrow = "58"

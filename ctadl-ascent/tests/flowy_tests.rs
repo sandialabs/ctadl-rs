@@ -9,7 +9,7 @@ fn tnt_test<P: AsRef<std::path::Path>>(filename: P) -> anyhow::Result<()> {
         .map(|_| ())
         .with_context(|| {
             format!(
-            "Running test {}. Run 'cargo test -- --nocapture' to see full output. Run 'cargo run -p ctadl-ascent --bin flowy' on the file to run individual test case",
+            "Running test {}. Run 'cargo test -- --nocapture' to see full output. Run 'cargo run -p ctadl-ascent --example flowy --' on the file to run individual test case",
             filename.display()
         )
         })
