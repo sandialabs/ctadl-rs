@@ -1318,22 +1318,16 @@ dependencies = [
 name = "ctadl-flowy"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ctadl-ir",
- "datafusion",
- "env_logger",
  "hashbrown 0.16.1",
  "internment",
  "log",
  "pest",
  "pest_derive",
  "serde",
- "serde-sarif",
- "serde_json",
  "smallvec",
  "source-info",
  "thiserror",
- "tokio",
 ]
 
 [[package]]
