@@ -1326,7 +1326,7 @@ impl<'a> Lowerer<'a> {
     fn fresh_temp(&mut self) -> VariableRef {
         let n = self.temp_counter;
         self.temp_counter += 1;
-        VariableRef::new_local(format!("%t{n}"))
+        self.local_ref(&format!("%t{n}"))
     }
 
     // ------------------------------------------------------------------
@@ -2219,7 +2219,13 @@ impl<'a> Lowerer<'a> {
 
     /// Builds a [`RawPath`] for a bare name: a parameter or local becomes a bare variable; a free
     /// name is a field of the global heap (`$globals.name`), modeling `_ENV`.
-    fn build_var(&self, name: &str) -> RawPath {
+    /// Interns `name` into the current function's locals table and returns a reference to it.
+    fn local_ref(&mut self, name: &str) -> VariableRef {
+        let fidx = self.fidx;
+        VariableRef::new_local_idx(self.program[fidx].locals.get_or_intern(name))
+    }
+
+    fn build_var(&mut self, name: &str) -> RawPath {
         // A captured upvalue is stored in a field of the closure's self-parameter.
         if self.cur_upvalues.contains_key(name)
             && let Some(Binding::Param(idx)) = self.lookup("%self")
@@ -2235,7 +2241,7 @@ impl<'a> Lowerer<'a> {
                 fields: ThinVec::new(),
             },
             Some(Binding::Local) => RawPath {
-                base: VariableRef::new_local(name.to_string()),
+                base: self.local_ref(name),
                 fields: ThinVec::new(),
             },
             None => RawPath {
@@ -2250,8 +2256,10 @@ impl<'a> Lowerer<'a> {
     fn emit_loads(&mut self, blk: BasicBlockIdx, rp: RawPath) -> AccessPath {
         let mut stmts = Vec::new();
         let mut counter = self.temp_counter;
+        let fidx = self.fidx;
+        let locals = &mut self.program[fidx].locals;
         let ap = load_access_path(rp.base, rp.fields, &mut stmts, || {
-            let v = VariableRef::new_local(format!("%t{counter}"));
+            let v = VariableRef::new_local_idx(locals.get_or_intern(&format!("%t{counter}")));
             counter += 1;
             v
         });
@@ -2268,8 +2276,10 @@ impl<'a> Lowerer<'a> {
         } else {
             let mut stmts = Vec::new();
             let mut counter = self.temp_counter;
+            let fidx = self.fidx;
+            let locals = &mut self.program[fidx].locals;
             store_access_path(target.base, target.fields, value, &mut stmts, || {
-                let v = VariableRef::new_local(format!("%t{counter}"));
+                let v = VariableRef::new_local_idx(locals.get_or_intern(&format!("%t{counter}")));
                 counter += 1;
                 v
             });
