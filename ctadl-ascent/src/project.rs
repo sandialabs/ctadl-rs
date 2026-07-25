@@ -165,6 +165,7 @@ impl ArtifactImport {
                 name: result.name,
                 found: result.version,
                 expected: IMPORT_FORMAT_VERSION.to_string(),
+                artifact_path: result.artifact_path,
             });
         }
         Ok(result)

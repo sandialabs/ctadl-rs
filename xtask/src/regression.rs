@@ -26,6 +26,7 @@ use crate::dex;
 use crate::discovery::{self, Frontend, Kind, TestCase};
 use crate::exec;
 use crate::jvm;
+use crate::sarif;
 
 /// Historical fallback base address for SARIF that predates the analyzer
 /// emitting `relativeAddress`. Newer output carries the section-relative offset
@@ -126,6 +127,10 @@ fn default_jobs() -> usize {
 pub(crate) enum Outcome {
     Pass,
     Fail(String),
+    /// A failure the JVM allowlist must not demote to XFAIL. Reported exactly
+    /// like [`Outcome::Fail`]; see [`with_valid_sarif`] for the one thing that
+    /// raises it.
+    HardFail(String),
     Skip(String),
     /// Expected failure on a non-enforced JVM E2E case; does not fail the suite.
     Xfail(String),
@@ -220,7 +225,7 @@ pub fn run(opts: &Options) -> Result<bool> {
                 skipped += 1;
                 println!("  SKIP  {name}  ({why})");
             }
-            Outcome::Fail(why) => {
+            Outcome::Fail(why) | Outcome::HardFail(why) => {
                 failures += 1;
                 println!(
                     "  FAIL  {name}\n        {}",
@@ -427,7 +432,34 @@ fn preflight(cases: &[TestCase], ghidra_selected: bool, release: bool) -> Result
     if needs_pcode {
         preflight_java()?;
     }
+    // Every taint case validates the SARIF it emits; resolve the validator here
+    // so the "not available" notice is printed once rather than per case.
+    sarif::preflight();
     Ok(())
+}
+
+/// Fold `checksarif`'s verdict on the SARIF a case emitted into that case's
+/// outcome.
+///
+/// SARIF that does not validate is a defect of its own, so it fails the case
+/// even when the taint assertions were satisfied -- a consumer cannot read a log
+/// it cannot parse, however good the answer inside it is. It fails as
+/// [`Outcome::HardFail`] so [`apply_jvm_allowlist`] cannot turn it into an
+/// XFAIL: the allowlist exists for the JVM frontend's taint precision, which
+/// this says nothing about.
+fn with_valid_sarif(work: &Path, files: &[&Path], outcome: Outcome) -> Result<Outcome> {
+    let Some(why) = sarif::validate(work, files)? else {
+        return Ok(outcome);
+    };
+    // Both verdicts are worth reading: the taint failure says what the analyzer
+    // concluded, the validation failure says the log it wrote is malformed.
+    Ok(match outcome {
+        Outcome::Fail(prior) | Outcome::HardFail(prior) => {
+            Outcome::HardFail(format!("{prior}\n{why}"))
+        }
+        Outcome::Skip(prior) => Outcome::HardFail(format!("(case would SKIP: {prior})\n{why}")),
+        _ => Outcome::HardFail(why),
+    })
 }
 
 /// Fail fast when the JDK that Ghidra needs is missing or unusable.
@@ -478,7 +510,9 @@ fn apply_xfail_allowlists(name: &str, outcome: Outcome) -> Outcome {
 }
 
 /// Non-enforced JVM E2E failures are reported as XFAIL so the suite can stay
-/// green while the frontend matures.
+/// green while the frontend matures. This covers the *taint* answer only:
+/// [`Outcome::HardFail`] (invalid SARIF) is never demoted, since the shape of
+/// the output does not depend on how good the frontend's taint results are.
 fn apply_jvm_allowlist(name: &str, outcome: Outcome) -> Outcome {
     match outcome {
         Outcome::Fail(why) if name.starts_with("Jvm:") && !JVM_E2E_ENFORCED.contains(&name) => {
@@ -589,7 +623,8 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
         .arg(&linemap);
     exec::run_checked(reader, "dex-reader")?;
 
-    check_flow_case(config, &sarif, &machine_sarif, &linemap)
+    let outcome = check_flow_case(config, &sarif, &machine_sarif, &linemap)?;
+    with_valid_sarif(&work, &[&sarif, &machine_sarif], outcome)
 }
 
 // --- JVM / Java -----------------------------------------------------------
@@ -686,7 +721,8 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
         .arg(&linemap);
     exec::run_checked(reader, "jvm-reader")?;
 
-    check_flow_case(config, &sarif, &machine_sarif, &linemap)
+    let outcome = check_flow_case(config, &sarif, &machine_sarif, &linemap)?;
+    with_valid_sarif(&work, &[&sarif, &machine_sarif], outcome)
 }
 
 /// DEX/JVM pass criterion, over the human profile (code flows) and machine profile
@@ -965,6 +1001,20 @@ fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result
         ],
     )?;
 
+    let outcome = check_pcode_case(query, &sarif, &obj, &work, &addr2line)?;
+    with_valid_sarif(&work, &[&sarif], outcome)
+}
+
+/// Pcode pass criterion over one case's SARIF: every `expected_lines` entry is
+/// among the source lines the tainted instructions map back to, no
+/// `unexpected_lines` entry is, and a code flow connects a source to a sink.
+fn check_pcode_case(
+    query: &Path,
+    sarif: &Path,
+    obj: &Path,
+    work: &Path,
+    addr2line: &str,
+) -> Result<Outcome> {
     // Read the known answer up front so a negative case (`expected_lines: []`)
     // can be judged purely on code-flow connectivity, without needing any tainted
     // instruction output at all.
@@ -979,7 +1029,7 @@ fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result
     // on `address.absoluteAddress`, so the specific dedup bug we fixed never
     // manifested here; this check guards against a future regression, not a current
     // one. A negative case inverts it: no such flow may exist.
-    let connects = assertions::codeflow_connects_source_and_sink(&sarif)?;
+    let connects = assertions::codeflow_connects_source_and_sink(sarif)?;
     if expected.is_empty() {
         return Ok(if connects {
             Outcome::Fail(
@@ -994,11 +1044,11 @@ fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result
     // already subtracted via the `PROGRAM_IMAGE_BASE` fact). Fall back to
     // absolute addresses minus the historical base for older SARIF that
     // predates `relativeAddress`.
-    let relative = assertions::collect_relative_addresses(&sarif)?;
+    let relative = assertions::collect_relative_addresses(sarif)?;
     let offsets: Vec<i64> = if !relative.is_empty() {
         relative.into_iter().collect()
     } else {
-        assertions::collect_absolute_addresses(&sarif)?
+        assertions::collect_absolute_addresses(sarif)?
             .into_iter()
             .map(|addr| addr - PCODE_BASE_ADDRESS)
             .collect()
@@ -1027,9 +1077,9 @@ fn run_pcode(name: &str, source: &Path, query: &Path, worker: &Worker) -> Result
     let mut found: BTreeSet<i64> = BTreeSet::new();
     for off in &offsets {
         let rel = format!("0x{:x}", off);
-        let mut cmd = Command::new(&addr2line);
-        cmd.current_dir(&work).arg("-e").arg(&obj).arg(&rel);
-        let out = exec::capture_stdout(cmd, &addr2line)?;
+        let mut cmd = Command::new(addr2line);
+        cmd.current_dir(work).arg("-e").arg(obj).arg(&rel);
+        let out = exec::capture_stdout(cmd, addr2line)?;
         if let Some(line) = parse_addr2line_line(&out) {
             found.insert(line);
         }

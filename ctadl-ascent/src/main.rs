@@ -652,7 +652,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
 fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
     let project = project::AnalysisProject::try_load_name(&args.name)
         .with_context(|| format!("loading project: '{}'", args.name))?;
-    cli::query(
+    let status = cli::query(
         &project,
         &args.models,
         args.compact,
@@ -660,6 +660,15 @@ fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
         args.sarif_profile,
         args.dump_taint_graph.as_deref(),
     )?;
+    // SARIF §3.58.6: a run carrying an error-level notification SHOULD exit non-zero. This
+    // is deliberately after `cli::query` has written (and announced) the output file, since
+    // that file is what explains the failure.
+    if !status.execution_successful {
+        anyhow::bail!(
+            "query produced no analyzable endpoints; see '{}' for details",
+            args.output.display()
+        );
+    }
     Ok(())
 }
 

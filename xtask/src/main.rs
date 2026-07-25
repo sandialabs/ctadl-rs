@@ -16,6 +16,7 @@ mod discovery;
 mod exec;
 mod jvm;
 mod regression;
+mod sarif;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

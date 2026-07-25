@@ -2159,7 +2159,11 @@ fn variable_port_selects_lowest_ssa_version() {
         "fixture should give buf multiple SSA versions, got {distinct_versions:?}"
     );
 
-    let (eps, formals) = build_query_endpoints(&batch, &facts, &source_info.sites, &assign_like);
+    let crate::query_engine::BuiltEndpoints {
+        endpoints: eps,
+        formals,
+        ..
+    } = build_query_endpoints(&batch, &facts, &source_info.sites, &assign_like);
 
     // Exactly one endpoint (not one per version), anchored in f, forward, and — since a local is
     // not a formal — no formal registered.

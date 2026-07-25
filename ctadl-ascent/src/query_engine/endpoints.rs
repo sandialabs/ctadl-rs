@@ -24,6 +24,20 @@ use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
 use crate::facts::{self, FlowVariable, FlowVertex, Label};
 use crate::index_engine::IndexFacts;
 
+/// The outcome of Stage 2: the resolved endpoints, the formals they register, and the
+/// names that could not be resolved at all.
+///
+/// The last field exists because dropping an endpoint here is otherwise invisible: Stage 1
+/// matched the name against the *model's* view of the program, but if the index does not
+/// contain that function the endpoint silently disappears and the query quietly narrows.
+/// Reporting the names lets `cli::query` emit the `CTADL0005` SARIF notification.
+pub struct BuiltEndpoints {
+    pub endpoints: Vec<(crate::query_engine::QueryEndpoint,)>,
+    pub formals: Vec<(facts::FunctionId, facts::FlowVariable, facts::FormalType)>,
+    /// Names Stage 1 matched that the index does not contain, deduplicated.
+    pub unresolved_functions: BTreeSet<String>,
+}
+
 /// Turn the name-based model endpoint table (Stage 1) into resolved, expanded
 /// `QueryEndpoint`s (Stage 2). See the module docs for the two expansions performed.
 pub fn build_query_endpoints(
@@ -37,10 +51,7 @@ pub fn build_query_endpoints(
         FlowVariable,
         facts::Path,
     )],
-) -> (
-    Vec<(crate::query_engine::QueryEndpoint,)>,
-    Vec<(facts::FunctionId, facts::FlowVariable, facts::FormalType)>,
-) {
+) -> BuiltEndpoints {
     use crate::models::FormalIndexTypeTag;
     let ap_map = batch.aps.build_ap_map();
     let func_num_params = facts.compute_arg_arity();
@@ -91,6 +102,7 @@ pub fn build_query_endpoints(
 
     let mut out_eps = Vec::new();
     let mut out_formals = Vec::new();
+    let mut unresolved_functions = BTreeSet::new();
     for crate::models::EndpointRow {
         function: func_name,
         selector_ty,
@@ -109,7 +121,10 @@ pub fn build_query_endpoints(
         // this is the *callee*.
         let infunc = match idmap.get_function_id(crate::facts::Function(func_name.into())) {
             Some(id) => id,
-            None => continue,
+            None => {
+                unresolved_functions.insert(func_name.to_string());
+                continue;
+            }
         };
 
         // For a callsite-scoped endpoint, resolve the caller filter (the containing
@@ -119,7 +134,10 @@ pub fn build_query_endpoints(
             match in_function {
                 Some(name) => match idmap.get_function_id(crate::facts::Function(name.into())) {
                     Some(id) => Some(id),
-                    None => continue,
+                    None => {
+                        unresolved_functions.insert(name.to_string());
+                        continue;
+                    }
                 },
                 None => None,
             }
@@ -259,5 +277,9 @@ pub fn build_query_endpoints(
             }
         }
     }
-    (out_eps, out_formals)
+    BuiltEndpoints {
+        endpoints: out_eps,
+        formals: out_formals,
+        unresolved_functions,
+    }
 }
