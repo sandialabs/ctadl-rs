@@ -38,8 +38,9 @@ use memmap::MmapOptions;
 use packed_struct::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_sarif::sarif::{
-    Address, ArtifactLocation, CodeFlow, Location, LogicalLocation, Message,
-    MultiformatMessageString, PhysicalLocation, PropertyBag, Region, ReportingDescriptor,
+    Address, ArtifactLocation, CodeFlow, ConfigurationOverride, Invocation, Location,
+    LogicalLocation, Message, MultiformatMessageString, Notification, PhysicalLocation,
+    PropertyBag, Region, ReportingConfiguration, ReportingDescriptor, ReportingDescriptorReference,
     Result as SarifResult, ResultKind, ResultLevel, Run, Sarif, ThreadFlow, ThreadFlowLocation,
     Tool, ToolComponent,
 };
@@ -115,6 +116,640 @@ const ALMOST_PATH_FUNCTION_RULE_DESCRIPTION: &str = "A function which contains s
 const ABSORBING_FUNCTION_RULE_ID: &str = "C0007.absorbing-function";
 const ABSORBING_FUNCTION_RULE_NAME: &str = "Absorbing functions";
 const ABSORBING_FUNCTION_RULE_DESCRIPTION: &str = "An external function that receives tainted data";
+
+// Notification descriptor ids (SARIF §3.19.24, referenced from
+// `invocation.toolConfigurationNotifications` / `toolExecutionNotifications`). The
+// `CTADL00xx` block describes how the query was *configured*; the `CTADL01xx` block
+// describes what running it *did*. See `notification_descriptors` for the message
+// strings, and `build_invocation` for the conditions.
+const NOTIF_NO_ENDPOINTS: &str = "CTADL0001.no-endpoints-configured";
+const NOTIF_NO_SOURCES_CONFIGURED: &str = "CTADL0002.no-sources-configured";
+const NOTIF_NO_SINKS_CONFIGURED: &str = "CTADL0003.no-sinks-configured";
+const NOTIF_GENERATOR_DEAD: &str = "CTADL0004.generator-matched-nothing";
+const NOTIF_FUNCTION_NOT_INDEXED: &str = "CTADL0005.endpoint-function-not-indexed";
+const NOTIF_NO_SOURCES_MATCHED: &str = "CTADL0006.no-sources-matched";
+const NOTIF_NO_SINKS_MATCHED: &str = "CTADL0007.no-sinks-matched";
+const NOTIF_MATCH_SUMMARY: &str = "CTADL0100.endpoint-match-summary";
+const NOTIF_PATHS_DISABLED: &str = "CTADL0101.path-generation-disabled";
+const NOTIF_NO_PATHS: &str = "CTADL0102.no-paths-found";
+const NOTIF_PATH_DROPPED: &str = "CTADL0103.path-dropped-no-location";
+
+/// Everything the SARIF writer needs to explain what the query *did*, independent of what
+/// it *found*. Assembled in `cli::query`, which is the only place that sees both the model
+/// files and the resolved endpoints.
+///
+/// The `_declared` counts are per-generator (plus flowy's already-resolved endpoints); the
+/// `_matched` counts are post-fan-out `QueryEndpoint`s. They are therefore not comparable
+/// to each other in magnitude — what matters is which of them are zero.
+#[derive(Debug, Default, Clone)]
+pub struct QueryDiagnostics {
+    /// Endpoint rows Stage 1 emitted, keyed by (model file, generator index, direction).
+    /// A zero value is a generator that declared an endpoint and matched nothing.
+    pub generator_stats: BTreeMap<(path::PathBuf, usize, TaintDirection), usize>,
+    /// Names Stage 1 matched that the index does not contain (see [`BuiltEndpoints`]).
+    ///
+    /// [`BuiltEndpoints`]: crate::query_engine::BuiltEndpoints
+    pub unresolved_functions: BTreeSet<String>,
+    pub sources_declared: usize,
+    pub sinks_declared: usize,
+    pub sources_matched: usize,
+    pub sinks_matched: usize,
+    pub command_line: String,
+    pub arguments: Vec<String>,
+    /// SARIF-format UTC timestamp; see [`utc_timestamp`].
+    pub start_time_utc: String,
+}
+
+/// What happened to the `C0001.tainted-path` rule this run. Exactly one of these holds, and
+/// it is what the single non-`fail` `C0001` result (if any) reports — see
+/// [`path_status_result`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PathOutcome {
+    /// The profile does not perform path search at all, so the rule did not run.
+    Disabled,
+    /// One end of the query was empty, so the rule could not be evaluated. Carries the
+    /// human-readable reason.
+    NotApplicable(String),
+    /// Both ends matched and the search completed without finding a flow.
+    NoneFound,
+    /// Flows were found and reported as `kind: "fail"` results.
+    Found(usize),
+}
+
+/// Counts collected while assembling path results, for the `CTADL01xx` notifications.
+#[derive(Debug, Default, Clone, Copy)]
+struct PathStats {
+    /// `C0001` results actually emitted.
+    reported: usize,
+    /// Paths that were found but discarded for want of a resolvable reporting location.
+    dropped_no_location: usize,
+}
+
+impl PathStats {
+    fn merge(&mut self, other: PathStats) {
+        self.reported += other.reported;
+        self.dropped_no_location += other.dropped_no_location;
+    }
+}
+
+/// Assemble `run.invocations[0]`: the configuration and execution notifications, the rules
+/// the profile turned off, and the whole-run status.
+///
+/// Per SARIF §3.20.21/§3.20.22 the presence of any `error`-level notification means the run
+/// failed, so `execution_successful` is exactly "no error notification was emitted", and the
+/// caller sets a non-zero process exit code to match (§3.58.6).
+fn build_invocation(
+    diagnostics: &QueryDiagnostics,
+    config: &FormatConfig,
+    outcome: &PathOutcome,
+    path_stats: PathStats,
+) -> Invocation {
+    let mut config_notifications: Vec<Notification> = Vec::new();
+    let mut exec_notifications: Vec<Notification> = Vec::new();
+
+    let model_files: BTreeSet<&path::Path> = diagnostics
+        .generator_stats
+        .keys()
+        .map(|(f, _, _)| f.as_path())
+        .collect();
+
+    // --- Configuration: what the models declared (§3.20.22). ---
+    if diagnostics.sources_declared == 0 && diagnostics.sinks_declared == 0 {
+        config_notifications.push(notification(
+            NOTIF_NO_ENDPOINTS,
+            "error",
+            vec![model_files.len().to_string()],
+            format!(
+                "No taint sources or sinks were configured ({} model file(s) loaded, no \
+                 built-in endpoints), so the query has nothing to search for.",
+                model_files.len()
+            ),
+            BTreeMap::from([(
+                "modelFiles".to_string(),
+                serde_json::json!(model_files.len()),
+            )]),
+        ));
+    } else if diagnostics.sources_declared == 0 {
+        config_notifications.push(notification(
+            NOTIF_NO_SOURCES_CONFIGURED,
+            "error",
+            vec![diagnostics.sinks_declared.to_string()],
+            format!(
+                "No taint sources were configured, but {} sink endpoint(s) were. A taint query \
+                 with no source is vacuous.",
+                diagnostics.sinks_declared
+            ),
+            BTreeMap::from([(
+                "sinksDeclared".to_string(),
+                serde_json::json!(diagnostics.sinks_declared),
+            )]),
+        ));
+    } else if diagnostics.sinks_declared == 0 {
+        config_notifications.push(notification(
+            NOTIF_NO_SINKS_CONFIGURED,
+            "error",
+            vec![diagnostics.sources_declared.to_string()],
+            format!(
+                "No taint sinks were configured, but {} source endpoint(s) were. A taint query \
+                 with no sink is vacuous.",
+                diagnostics.sources_declared
+            ),
+            BTreeMap::from([(
+                "sourcesDeclared".to_string(),
+                serde_json::json!(diagnostics.sources_declared),
+            )]),
+        ));
+    }
+
+    // CTADL0004: a generator that declared an endpoint and matched no function. The
+    // notification points at the model *file* — `EndpointRow` carries no provenance and
+    // serde_json gives no spans, so there is no line/column to point at.
+    let mut generators_dead = 0usize;
+    for ((file, index, direction), count) in &diagnostics.generator_stats {
+        if *count > 0 {
+            continue;
+        }
+        generators_dead += 1;
+        let direction = match direction {
+            TaintDirection::Forward => "source",
+            TaintDirection::Backward => "sink",
+        };
+        let file_display = file.display().to_string();
+        let mut notif = notification(
+            NOTIF_GENERATOR_DEAD,
+            "warning",
+            vec![
+                index.to_string(),
+                file_display.clone(),
+                direction.to_string(),
+            ],
+            format!(
+                "Model generator {index} in '{file_display}' declares a {direction} but matched \
+                 no function in the program, so it contributes nothing to the query."
+            ),
+            BTreeMap::from([
+                ("generatorIndex".to_string(), serde_json::json!(index)),
+                ("direction".to_string(), serde_json::json!(direction)),
+            ]),
+        );
+        notif.locations = Some(vec![
+            Location::builder()
+                .physical_location(
+                    PhysicalLocation::builder()
+                        .artifact_location(
+                            ArtifactLocation::builder().uri(artifact_uri(file)).build(),
+                        )
+                        .build(),
+                )
+                .build(),
+        ]);
+        config_notifications.push(notif);
+    }
+
+    // CTADL0005: Stage 1 matched a name that Stage 2 could not resolve against the index.
+    for name in &diagnostics.unresolved_functions {
+        config_notifications.push(notification(
+            NOTIF_FUNCTION_NOT_INDEXED,
+            "warning",
+            vec![name.clone()],
+            format!(
+                "Function '{name}' was matched by a model but is not present in the index, so \
+                 its source/sink endpoints were dropped."
+            ),
+            BTreeMap::from([("function".to_string(), serde_json::json!(name))]),
+        ));
+    }
+
+    // CTADL0006/0007: declared but nothing survived to a `QueryEndpoint`. These carry
+    // `associatedRule` (§3.58.3) because they explain why `C0001` could not be evaluated.
+    let associate_c0001 = |mut notif: Notification| -> Notification {
+        notif.associated_rule = Some(
+            ReportingDescriptorReference::builder()
+                .id(TAINTED_PATH_RULE_ID.to_string())
+                .build(),
+        );
+        notif
+    };
+    if diagnostics.sources_declared > 0 && diagnostics.sources_matched == 0 {
+        config_notifications.push(associate_c0001(notification(
+            NOTIF_NO_SOURCES_MATCHED,
+            "error",
+            vec![diagnostics.sources_declared.to_string()],
+            format!(
+                "{} source endpoint(s) were configured but none matched the program, so no \
+                 taint could be seeded.",
+                diagnostics.sources_declared
+            ),
+            BTreeMap::from([(
+                "sourcesDeclared".to_string(),
+                serde_json::json!(diagnostics.sources_declared),
+            )]),
+        )));
+    }
+    if diagnostics.sinks_declared > 0 && diagnostics.sinks_matched == 0 {
+        config_notifications.push(associate_c0001(notification(
+            NOTIF_NO_SINKS_MATCHED,
+            "error",
+            vec![diagnostics.sinks_declared.to_string()],
+            format!(
+                "{} sink endpoint(s) were configured but none matched the program, so no flow \
+                 could be detected.",
+                diagnostics.sinks_declared
+            ),
+            BTreeMap::from([(
+                "sinksDeclared".to_string(),
+                serde_json::json!(diagnostics.sinks_declared),
+            )]),
+        )));
+    }
+
+    // --- Execution: what running the query did (§3.20.21). ---
+    // One per (model file, generator, direction), so a generator declaring both a source and
+    // a sink counts twice — the unit is the endpoint declaration, not the generator.
+    let generators_evaluated = diagnostics.generator_stats.len();
+    exec_notifications.push(notification(
+        NOTIF_MATCH_SUMMARY,
+        "note",
+        vec![
+            diagnostics.sources_matched.to_string(),
+            diagnostics.sinks_matched.to_string(),
+            generators_evaluated.to_string(),
+            generators_dead.to_string(),
+        ],
+        format!(
+            "Matched {} source and {} sink endpoints from {} declared model endpoint(s); {} \
+             declaration(s) matched nothing.",
+            diagnostics.sources_matched,
+            diagnostics.sinks_matched,
+            generators_evaluated,
+            generators_dead
+        ),
+        BTreeMap::from([
+            (
+                "sourcesDeclared".to_string(),
+                serde_json::json!(diagnostics.sources_declared),
+            ),
+            (
+                "sinksDeclared".to_string(),
+                serde_json::json!(diagnostics.sinks_declared),
+            ),
+            (
+                "sourcesMatched".to_string(),
+                serde_json::json!(diagnostics.sources_matched),
+            ),
+            (
+                "sinksMatched".to_string(),
+                serde_json::json!(diagnostics.sinks_matched),
+            ),
+            (
+                "generatorsEvaluated".to_string(),
+                serde_json::json!(generators_evaluated),
+            ),
+            (
+                "generatorsDead".to_string(),
+                serde_json::json!(generators_dead),
+            ),
+        ]),
+    ));
+
+    match outcome {
+        PathOutcome::Disabled => {
+            let profile = format!("{:?}", config.profile).to_lowercase();
+            exec_notifications.push(notification(
+                NOTIF_PATHS_DISABLED,
+                "note",
+                vec![profile.clone(), TAINTED_PATH_RULE_ID.to_string()],
+                format!(
+                    "The '{profile}' SARIF profile does not perform source-to-sink path search, \
+                     so this run cannot produce '{TAINTED_PATH_RULE_ID}' results."
+                ),
+                BTreeMap::from([("profile".to_string(), serde_json::json!(profile))]),
+            ));
+        }
+        PathOutcome::NoneFound => {
+            exec_notifications.push(notification(
+                NOTIF_NO_PATHS,
+                "note",
+                vec![
+                    diagnostics.sources_matched.to_string(),
+                    diagnostics.sinks_matched.to_string(),
+                ],
+                format!(
+                    "Path search completed over {} source and {} sink endpoints and found no \
+                     source-to-sink flow.",
+                    diagnostics.sources_matched, diagnostics.sinks_matched
+                ),
+                BTreeMap::new(),
+            ));
+        }
+        PathOutcome::NotApplicable(_) | PathOutcome::Found(_) => {}
+    }
+
+    if path_stats.dropped_no_location > 0 {
+        exec_notifications.push(notification(
+            NOTIF_PATH_DROPPED,
+            "warning",
+            vec![path_stats.dropped_no_location.to_string()],
+            format!(
+                "{} source-to-sink path(s) were found but discarded because no reporting \
+                 location could be resolved for them.",
+                path_stats.dropped_no_location
+            ),
+            BTreeMap::from([(
+                "droppedPaths".to_string(),
+                serde_json::json!(path_stats.dropped_no_location),
+            )]),
+        ));
+    }
+
+    // §3.20.22 / §3.20.21: an error-level notification in either array means the run failed.
+    let is_error = |n: &Notification| n.level.as_ref().and_then(|l| l.as_str()) == Some("error");
+    let execution_successful =
+        !config_notifications.iter().any(is_error) && !exec_notifications.iter().any(is_error);
+
+    let rule_configuration_overrides: Vec<ConfigurationOverride> = disabled_rules(config.profile)
+        .into_iter()
+        .map(|rule_id| {
+            ConfigurationOverride::builder()
+                .descriptor(
+                    ReportingDescriptorReference::builder()
+                        .id(rule_id.to_string())
+                        .build(),
+                )
+                .configuration(ReportingConfiguration::builder().enabled(false).build())
+                .build()
+        })
+        .collect();
+
+    Invocation::builder()
+        .execution_successful(execution_successful)
+        .exit_code(if execution_successful { 0 } else { 1 })
+        .exit_code_description(if execution_successful {
+            "query completed".to_string()
+        } else {
+            "query configuration produced no analyzable endpoints".to_string()
+        })
+        .command_line(diagnostics.command_line.clone())
+        .arguments(diagnostics.arguments.clone())
+        .start_time_utc(diagnostics.start_time_utc.clone())
+        .end_time_utc(utc_timestamp())
+        .tool_configuration_notifications(config_notifications)
+        .tool_execution_notifications(exec_notifications)
+        .rule_configuration_overrides(rule_configuration_overrides)
+        // No `environmentVariables`: §3.20.20 NOTE 2 — it leaks credentials.
+        .build()
+}
+
+/// Why the taint query has an empty end, if it does. `Some` means `C0001` cannot be
+/// evaluated at all: there is nothing to search from, or nothing to search for.
+pub fn empty_end_reason(diagnostics: &QueryDiagnostics) -> Option<String> {
+    match (
+        diagnostics.sources_declared,
+        diagnostics.sinks_declared,
+        diagnostics.sources_matched,
+        diagnostics.sinks_matched,
+    ) {
+        (0, 0, _, _) => Some("no taint sources or sinks were configured".to_string()),
+        (0, _, _, _) => Some("no taint sources were configured".to_string()),
+        (_, 0, _, _) => Some("no taint sinks were configured".to_string()),
+        (_, _, 0, 0) => Some("no configured source or sink matched the program".to_string()),
+        (_, _, 0, _) => Some("no configured source matched the program".to_string()),
+        (_, _, _, 0) => Some("no configured sink matched the program".to_string()),
+        _ => None,
+    }
+}
+
+/// The single `C0001` result reporting the rule's *evaluation state* when no path result
+/// was emitted (§3.27.9).
+///
+/// `notApplicable` means the rule was not evaluated because one end of the query was empty.
+/// `open` means it *was* evaluated and the tool has insufficient information to decide —
+/// CTADL does not prove the absence of a flow, so `pass` would overclaim. When the profile
+/// disabled path search there is no result at all; the `ruleConfigurationOverride` and
+/// `CTADL0101` say why.
+fn path_status_result(outcome: &PathOutcome) -> Option<SarifResult> {
+    let (kind, text) = match outcome {
+        PathOutcome::Disabled | PathOutcome::Found(_) => return None,
+        PathOutcome::NotApplicable(reason) => (
+            ResultKind::NotApplicable,
+            format!("Taint path analysis was not applicable: {reason}."),
+        ),
+        PathOutcome::NoneFound => (
+            ResultKind::Open,
+            "Taint path analysis ran to completion and found no source-to-sink flow. CTADL \
+             does not prove the absence of a flow, so this is reported as 'open' rather than \
+             'pass'."
+                .to_string(),
+        ),
+    };
+    Some(
+        SarifResult::builder()
+            .rule_id(TAINTED_PATH_RULE_ID.to_string())
+            .kind(kind)
+            // §3.27.10: when `kind` is not "fail", `level` SHALL be "none".
+            .level(ResultLevel::None)
+            .message(Message::builder().text(text).build())
+            .build(),
+    )
+}
+
+/// A `file:` URI for a path a notification points at, falling back to the lossy display
+/// form when the path cannot be made absolute (SARIF wants a URI, but a readable relative
+/// path beats no location at all).
+fn artifact_uri(p: &path::Path) -> String {
+    path::absolute(p)
+        .ok()
+        .and_then(|abs| url::Url::from_file_path(abs).ok())
+        .map(|u| u.to_string())
+        .unwrap_or_else(|| p.to_string_lossy().replace('\\', "/"))
+}
+
+/// A UTC timestamp in the `date-time` form SARIF requires (§3.9).
+pub fn utc_timestamp() -> String {
+    chrono::Utc::now()
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string()
+}
+
+/// Whether `profile` runs the source → sink path search that produces `C0001` results.
+/// This is the same condition the graph construction and the path-result loop use.
+fn profile_finds_paths(profile: SarifProfile) -> bool {
+    matches!(
+        profile,
+        SarifProfile::Human | SarifProfile::Debug | SarifProfile::Agent
+    )
+}
+
+/// The rules `profile` does not evaluate, reported as `invocation.ruleConfigurationOverrides`
+/// so the SARIF says why a rule produced nothing instead of leaving it to be inferred from
+/// an absence. Mirrors the profile gates in `format_source_info_results`; keep in sync.
+fn disabled_rules(profile: SarifProfile) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if !profile_finds_paths(profile) {
+        out.push(TAINTED_PATH_RULE_ID);
+    }
+    if !matches!(profile, SarifProfile::Machine | SarifProfile::Debug) {
+        out.push(TAINTED_INSTRUCTION_RULE_ID);
+    }
+    // C0003/C0004 are emitted in every profile and so are never overridden.
+    // C0005 and C0006 are declared in the rules array but no code path emits them; marking
+    // them permanently disabled stops the log advertising results the tool cannot produce.
+    out.push(TAINTED_DATA_RULE_ID);
+    out.push(ALMOST_PATH_FUNCTION_RULE_ID);
+    if profile != SarifProfile::Agent {
+        out.push(ABSORBING_FUNCTION_RULE_ID);
+    }
+    out
+}
+
+/// Build a notification carrying `message.id` + `arguments` (so consumers can read it
+/// structurally rather than by parsing prose) plus a `properties` bag of raw counts.
+fn notification(
+    descriptor_id: &str,
+    level: &str,
+    arguments: Vec<String>,
+    text: String,
+    properties: BTreeMap<String, serde_json::Value>,
+) -> Notification {
+    let mut notif = Notification::builder()
+        .descriptor(
+            ReportingDescriptorReference::builder()
+                .id(descriptor_id.to_string())
+                .build(),
+        )
+        // `level` is `Option<serde_json::Value>` in serde-sarif (unlike `ResultLevel`), so
+        // the enum value goes in as a JSON string.
+        .level(serde_json::json!(level))
+        .message(
+            // Both forms: `text` for a human reading the file, `id` + `arguments` so a
+            // consumer can read the condition without parsing prose.
+            Message::builder()
+                .id("default".to_string())
+                .arguments(arguments)
+                .text(text)
+                .build(),
+        )
+        .build();
+    // Set after building: the generated builder is type-state, so an optional field cannot
+    // be assigned conditionally.
+    if !properties.is_empty() {
+        notif.properties = Some(
+            PropertyBag::builder()
+                .additional_properties(properties)
+                .build(),
+        );
+    }
+    notif
+}
+
+/// Declare a notification descriptor with a single `default` message string. The `{n}`
+/// placeholders are filled from each notification's `message.arguments`.
+fn notification_descriptor(
+    id: &str,
+    name: &str,
+    description: &str,
+    message: &str,
+) -> ReportingDescriptor {
+    ReportingDescriptor::builder()
+        .id(id.to_string())
+        .name(name.to_string())
+        .short_description(
+            MultiformatMessageString::builder()
+                .text(description.to_string())
+                .build(),
+        )
+        .message_strings(BTreeMap::from([(
+            "default".to_string(),
+            MultiformatMessageString::builder()
+                .text(message.to_string())
+                .build(),
+        )]))
+        .build()
+}
+
+/// The `CTADL00xx`/`CTADL01xx` descriptors, declared once in `tool.driver.notifications`
+/// (§3.19.24) so every notification's `message.id` resolves.
+fn notification_descriptors() -> Vec<ReportingDescriptor> {
+    vec![
+        notification_descriptor(
+            NOTIF_NO_ENDPOINTS,
+            "No endpoints configured",
+            "Neither a source nor a sink was declared anywhere",
+            "No taint sources or sinks were configured ({0} model file(s) loaded, no built-in \
+             endpoints), so the query has nothing to search for.",
+        ),
+        notification_descriptor(
+            NOTIF_NO_SOURCES_CONFIGURED,
+            "No sources configured",
+            "Sinks were declared but no source was",
+            "No taint sources were configured, but {0} sink endpoint(s) were. A taint query \
+             with no source is vacuous.",
+        ),
+        notification_descriptor(
+            NOTIF_NO_SINKS_CONFIGURED,
+            "No sinks configured",
+            "Sources were declared but no sink was",
+            "No taint sinks were configured, but {0} source endpoint(s) were. A taint query \
+             with no sink is vacuous.",
+        ),
+        notification_descriptor(
+            NOTIF_GENERATOR_DEAD,
+            "Model generator matched nothing",
+            "A model generator declared an endpoint that matched no function",
+            "Model generator {0} in '{1}' declares a {2} but matched no function in the \
+             program, so it contributes nothing to the query.",
+        ),
+        notification_descriptor(
+            NOTIF_FUNCTION_NOT_INDEXED,
+            "Endpoint function not indexed",
+            "A matched function name is absent from the index",
+            "Function '{0}' was matched by a model but is not present in the index, so its \
+             source/sink endpoints were dropped.",
+        ),
+        notification_descriptor(
+            NOTIF_NO_SOURCES_MATCHED,
+            "No sources matched",
+            "Sources were declared but none matched the program",
+            "{0} source endpoint(s) were configured but none matched the program, so no taint \
+             could be seeded.",
+        ),
+        notification_descriptor(
+            NOTIF_NO_SINKS_MATCHED,
+            "No sinks matched",
+            "Sinks were declared but none matched the program",
+            "{0} sink endpoint(s) were configured but none matched the program, so no flow \
+             could be detected.",
+        ),
+        notification_descriptor(
+            NOTIF_MATCH_SUMMARY,
+            "Endpoint match summary",
+            "How many endpoints the models declared and how many matched",
+            "Matched {0} source and {1} sink endpoints from {2} declared model endpoint(s); \
+             {3} declaration(s) matched nothing.",
+        ),
+        notification_descriptor(
+            NOTIF_PATHS_DISABLED,
+            "Path generation disabled",
+            "The selected SARIF profile does not perform path search",
+            "The '{0}' SARIF profile does not perform source-to-sink path search, so this run \
+             cannot produce '{1}' results.",
+        ),
+        notification_descriptor(
+            NOTIF_NO_PATHS,
+            "No paths found",
+            "Path search completed without finding a flow",
+            "Path search completed over {0} source and {1} sink endpoints and found no \
+             source-to-sink flow.",
+        ),
+        notification_descriptor(
+            NOTIF_PATH_DROPPED,
+            "Path dropped for want of a location",
+            "A path was found but could not be reported",
+            "{0} source-to-sink path(s) were found but discarded because no reporting location \
+             could be resolved for them.",
+        ),
+    ]
+}
 
 #[derive(Default, Builder, Clone)]
 pub struct FormatFacts {
@@ -506,6 +1141,11 @@ async fn register_parquet_checked(
     Ok(())
 }
 
+/// Formats the query results as SARIF and writes them to `output`.
+///
+/// Returns `invocation.executionSuccessful`: false when an `error`-level notification was
+/// emitted, which per §3.58.6 the caller turns into a non-zero exit code — *after* the file
+/// has been written, since the file is what explains the failure.
 pub fn format_sarif(
     project: &AnalysisProject,
     facts: &FormatFacts,
@@ -513,12 +1153,14 @@ pub fn format_sarif(
     compact: bool,
     output: &path::Path,
     profile: SarifProfile,
-) -> Result<(), Error> {
+    diagnostics: &QueryDiagnostics,
+) -> Result<bool, Error> {
     log::trace!("format_sarif entry");
     let rt = tokio::runtime::Runtime::new()?;
     let config = FormatConfig { compact, profile };
-    let final_sarif =
-        rt.block_on(async { async_format_sarif(project, taint_results, facts, &config).await })?;
+    let (final_sarif, execution_successful) = rt.block_on(async {
+        async_format_sarif(project, taint_results, facts, &config, diagnostics).await
+    })?;
 
     let writer: Box<dyn std::io::Write> = if output.to_str() == Some("-") {
         Box::new(std::io::stdout())
@@ -527,10 +1169,11 @@ pub fn format_sarif(
     };
 
     if compact {
-        serde_json::to_writer(writer, &final_sarif).err_context(|| "writing sarif")
+        serde_json::to_writer(writer, &final_sarif).err_context(|| "writing sarif")?;
     } else {
-        serde_json::to_writer_pretty(writer, &final_sarif).err_context(|| "writing sarif")
+        serde_json::to_writer_pretty(writer, &final_sarif).err_context(|| "writing sarif")?;
     }
+    Ok(execution_successful)
 }
 
 #[derive(Default)]
@@ -551,7 +1194,8 @@ async fn async_format_sarif(
     taint_results: &TaintAnalysisResults,
     facts: &FormatFacts,
     config: &FormatConfig,
-) -> Result<serde_json::Value, Error> {
+    diagnostics: &QueryDiagnostics,
+) -> Result<(serde_json::Value, bool), Error> {
     let path = project
         .index_path()?
         .join(schema::index_source_map::FILENAME);
@@ -587,6 +1231,7 @@ async fn async_format_sarif(
         }
     }
     let mut results = Vec::new();
+    let mut path_stats = PathStats::default();
     let mut sarif_data = SarifData::default();
     let index_dir = project.index_path()?;
     // projects should have only one set of parquet files, so just take the last one
@@ -605,11 +1250,30 @@ async fn async_format_sarif(
             language: import.language,
             image_base: import.image_base,
         };
-        let sarif_results = format_source_info_results(&ctx, config, &mut sarif_data)
-            .await
-            .err_context(|| "formatting results")?;
+        let (sarif_results, import_path_stats) =
+            format_source_info_results(&ctx, config, &mut sarif_data)
+                .await
+                .err_context(|| "formatting results")?;
         results.extend(sarif_results);
+        path_stats.merge(import_path_stats);
     }
+
+    // What happened to `C0001` this run. Decided here rather than per import: the profile
+    // gate and the endpoint counts are run-wide, and exactly one status result may be
+    // emitted no matter how many imports the project has.
+    let path_outcome = if !profile_finds_paths(config.profile) {
+        PathOutcome::Disabled
+    } else if let Some(reason) = empty_end_reason(diagnostics) {
+        PathOutcome::NotApplicable(reason)
+    } else if path_stats.reported == 0 {
+        PathOutcome::NoneFound
+    } else {
+        PathOutcome::Found(path_stats.reported)
+    };
+    results.extend(path_status_result(&path_outcome));
+
+    let invocation = build_invocation(diagnostics, config, &path_outcome, path_stats);
+    let execution_successful = invocation.execution_successful;
 
     const CTADL_FULL_DESCRIPTION: &str = "CTADL (Compositional Taint Analysis in Datalog).";
     let tool = Tool::builder()
@@ -730,6 +1394,7 @@ async fn async_format_sarif(
                         )]))
                         .build(),
                 ])
+                .notifications(notification_descriptors())
                 .build(),
         )
         .build();
@@ -741,11 +1406,18 @@ async fn async_format_sarif(
         )]))
         .build();
 
+    // `results` is always set, never omitted: per the JSON schema it "must be present (but
+    // may be empty) if a log file represents an actual scan".
     let run = if sarif_data.global_logical_locations.is_empty() {
-        Run::builder().tool(tool).results(results).build()
+        Run::builder()
+            .tool(tool)
+            .invocations(vec![invocation])
+            .results(results)
+            .build()
     } else {
         Run::builder()
             .tool(tool)
+            .invocations(vec![invocation])
             .results(results)
             .logical_locations(sarif_data.global_logical_locations)
             .build()
@@ -755,6 +1427,12 @@ async fn async_format_sarif(
         serde_json::Value::Object(mut old_map) => {
             let mut new_map = serde_json::Map::new();
             new_map.insert("tool".to_string(), old_map.remove("tool").unwrap());
+            // `invocations` right after `tool`: it is the run's status, and pinning it here
+            // keeps diffs between runs stable.
+            new_map.insert(
+                "invocations".to_string(),
+                old_map.remove("invocations").unwrap(),
+            );
             // the order of the rest doesn't matter
             for (k, v) in old_map {
                 new_map.insert(k, v);
@@ -797,7 +1475,7 @@ async fn async_format_sarif(
         }
         _ => panic!("Failed to extract serde_json sarif map"),
     };
-    Ok(final_sarif)
+    Ok((final_sarif, execution_successful))
 }
 
 async fn populate_source_info<P: AsRef<path::Path>>(
@@ -1053,7 +1731,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     ctx: &ProjectContext<'_, P>,
     config: &FormatConfig,
     sarif_data: &mut SarifData,
-) -> Result<Vec<SarifResult>, Error> {
+) -> Result<(Vec<SarifResult>, PathStats), Error> {
     // Prepare graph for path finding when the selected profile emits path traces.
     let mut id_to_node: Vec<FlowNode> = Vec::new();
     // The call instruction anchoring each graph edge, keyed by `(src_id, dst_id)`
@@ -1576,17 +2254,17 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         results.extend(results_by_span.into_values());
     }
 
-    // Add source and sink location results (for Debug and Agent profiles)
-    if matches!(config.profile, SarifProfile::Debug | SarifProfile::Agent) {
-        results.extend(format_source_sink_results(
-            sarif_data,
-            &endpoints,
-            &source_data.id_to_name,
-            &call_callee,
-            &site_by_var,
-            &source_data.all_locations,
-        ));
-    }
+    // Which sources and sinks actually matched is part of what the run *did*, so it is
+    // reported in every profile rather than only where the extra detail was wanted. These
+    // stay `kind: "informational"` / `level: "none"`: they are context, not findings.
+    results.extend(format_source_sink_results(
+        sarif_data,
+        &endpoints,
+        &source_data.id_to_name,
+        &call_callee,
+        &site_by_var,
+        &source_data.all_locations,
+    ));
 
     if config.profile == SarifProfile::Agent {
         results.extend(format_absorbing_function_results(
@@ -1597,14 +2275,15 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     }
 
     // Now build results for paths (for Human, Debug, or Agent profiles, one per path)
-    if matches!(
-        config.profile,
-        SarifProfile::Human | SarifProfile::Debug | SarifProfile::Agent
-    ) {
+    let mut path_stats = PathStats::default();
+    if profile_finds_paths(config.profile) {
         for (_path, (file_span_id, details)) in results_by_path {
             let location = if let Some(loc) = span_to_location.get(&file_span_id) {
                 loc.clone()
             } else {
+                // A path was found but has nowhere to be reported. Counted so the run can
+                // say so via `CTADL0103` instead of dropping it in silence.
+                path_stats.dropped_no_location += 1;
                 continue;
             };
 
@@ -1695,8 +2374,12 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             if let Some(code_flows) = code_flows_by_span.get(&file_span_id) {
                 let result = SarifResult::builder()
                     .rule_id(TAINTED_PATH_RULE_ID.to_string())
-                    .kind(ResultKind::Informational)
-                    .level(ResultLevel::None)
+                    // A reported taint path is a finding, not a note: `kind: "fail"` puts
+                    // it on the same axis as the `open`/`notApplicable` states the rule
+                    // reports when it finds nothing (§3.27.9). `informational` there and
+                    // `open` here would be incoherent.
+                    .kind(ResultKind::Fail)
+                    .level(ResultLevel::Warning)
                     .message(Message::builder().text(final_msg_text).build())
                     .locations(vec![location])
                     .properties(properties)
@@ -1704,11 +2387,16 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     .build();
 
                 results.push(result);
+                path_stats.reported += 1;
+            } else {
+                // Same silent drop as above, one step later: located, but no code flow
+                // survived to describe it.
+                path_stats.dropped_no_location += 1;
             }
         }
     }
 
-    Ok(results)
+    Ok((results, path_stats))
 }
 
 /// The callee function an endpoint denotes for source/sink *naming*.

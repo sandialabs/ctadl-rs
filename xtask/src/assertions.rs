@@ -75,9 +75,34 @@ fn line_array(array: &Value, key: &str, config: &Path) -> Result<Vec<i64>> {
 /// machine profile, whose results are the tainted *instructions* (there are no code
 /// flows to scope to); the union of these with the human profile's code-flow offsets
 /// is what a DEX/JVM case's `expected_lines` must be covered by.
+///
+/// Endpoint results (`C0003.taint-source` / `C0004.taint-sink`) are excluded. They are
+/// emitted in every profile, and their locations are the *declared* source and sink lines
+/// rather than lines a flow reached -- counting them would make a sink's own line satisfy
+/// `expected_lines`, and would let it trip `unexpected_lines` for a case whose point is
+/// that a modeled endpoint stays clean.
 pub fn collect_byte_offsets(sarif: &Path) -> Result<BTreeSet<i64>> {
+    let value = read_json(sarif)?;
     let mut out = BTreeSet::new();
-    collect_int_values(&read_json(sarif)?, "byteOffset", &mut out);
+    for run in value
+        .get("runs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for result in run
+            .get("results")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let rule_id = result.get("ruleId").and_then(Value::as_str).unwrap_or("");
+            if matches!(rule_id, "C0003.taint-source" | "C0004.taint-sink") {
+                continue;
+            }
+            collect_int_values(result, "byteOffset", &mut out);
+        }
+    }
     Ok(out)
 }
 

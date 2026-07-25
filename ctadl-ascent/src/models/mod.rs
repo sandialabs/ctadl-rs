@@ -4,6 +4,7 @@ Defines a [`ModelBuilders`] in which to express summary and call models.
 */
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::rc::Rc;
@@ -156,28 +157,36 @@ pub fn try_load_models_from_values(
     let batch_size = 1024;
     let mut batch: Vec<serde_json::Value> = Vec::with_capacity(batch_size);
 
+    // Index of the first generator of the current batch within the model file. Generator
+    // indices must count across batches: they name the generator in JSON error messages and
+    // in the `CTADL0004` SARIF notification, and they key `endpoint_stats`.
+    let mut base = 0usize;
+
     loop {
-        // Fill the batch
-        for item in items.by_ref() {
-            let item = item?;
-            if batch.len() < batch_size {
-                batch.push(item);
-            } else {
-                break;
-            }
+        // Fill the batch. `take` is what bounds it: pulling from `items` directly and
+        // breaking on a full batch would consume an item and then drop it on the floor,
+        // silently losing every 1025th generator in the file.
+        for item in items.by_ref().take(batch_size) {
+            batch.push(item?);
         }
         if batch.is_empty() {
             break;
         }
         // Process the batch
+        let count = batch.len();
         model_gen
-            .encode_models(batch.drain(..))
+            .encode_models_from(base, batch.drain(..))
             .err_context(|| "encoding models".to_string())?;
         batch.clear();
+        base += count;
     }
+    // Taken before `builder.finish()`: `model_gen` holds the `&mut builder` borrow, so this
+    // is also what releases it.
+    let endpoint_stats = std::mem::take(&mut model_gen.endpoint_stats);
     log::trace!("matched {} summary models", builder.summary.len());
     log::trace!("matched {} source/sink models", builder.endpoint.len());
-    let encmodels = builder.finish()?;
+    let mut encmodels = builder.finish()?;
+    encmodels.endpoint_stats = endpoint_stats;
     Ok(encmodels)
 }
 
@@ -186,6 +195,11 @@ pub fn try_load_models_from_values(
 pub struct ModelsBatch {
     pub summary: SummaryBatch,
     pub endpoint: EndpointBatch,
+    /// Endpoint rows Stage 1 emitted per (generator index, direction) — see
+    /// [`json::ModelGeneratorIngest::endpoint_stats`]. Key presence means the generator
+    /// declared an endpoint of that direction; a zero value means it matched nothing,
+    /// which `cli::query` turns into a `CTADL0004` SARIF notification.
+    pub endpoint_stats: BTreeMap<(usize, TaintDirection), usize>,
 }
 
 impl ModelsBatch {
@@ -194,6 +208,12 @@ impl ModelsBatch {
     pub fn union_with(&mut self, other: &Self) -> Result<(), Error> {
         self.summary.union_with(&other.summary)?;
         self.endpoint.union_with(&other.endpoint)?;
+        // Sum per key, mirroring `EndpointBatch::union_with`'s row concatenation: the same
+        // model file is re-matched once per import, and a generator that is dead against one
+        // import but live against another must come out live.
+        for (key, count) in &other.endpoint_stats {
+            *self.endpoint_stats.entry(*key).or_insert(0) += count;
+        }
         Ok(())
     }
 }
@@ -374,10 +394,17 @@ impl ModelBuilders {
         }
     }
 
+    /// Finishes both tables. `endpoint_stats` is a Stage-1 matching artifact owned by the
+    /// [`json::ModelGeneratorIngest`] rather than by these builders, so the caller attaches
+    /// it to the returned batch (see [`try_load_models_from_values`]).
     pub fn finish(&mut self) -> Result<ModelsBatch, Error> {
         let summary = self.summary.finish()?;
         let endpoint = self.endpoint.finish()?;
-        Ok(ModelsBatch { summary, endpoint })
+        Ok(ModelsBatch {
+            summary,
+            endpoint,
+            endpoint_stats: BTreeMap::new(),
+        })
     }
 }
 

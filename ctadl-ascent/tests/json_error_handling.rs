@@ -565,3 +565,38 @@ fn variable_port_with_find_callsites_is_rejected() {
         Err(e) => panic!("expected JsonModel error, got: {e}"),
     }
 }
+
+/// `find` is optional as far as the JSON goes, so a generator that omits it must be reported
+/// as a missing field. It used to leave a hole in a positional table and panic the *next*
+/// generator with "insertion index should be <= len".
+#[test]
+fn test_missing_find_field_error() {
+    let program_info = ProgramInfo::default();
+    let mut model_builders = ModelBuilders::new();
+    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut model_builders);
+
+    let no_find = json!({
+        "where": [{"constraint": "name", "pattern": "^f$"}],
+        "model": {"sources": [{"port": "Argument(0)", "kind": "K"}]}
+    });
+    let with_find = json!({
+        "find": "methods",
+        "where": [{"constraint": "name", "pattern": "^g$"}],
+        "model": {"sinks": [{"port": "Argument(0)", "kind": "K"}]}
+    });
+
+    match ingest.encode_models(vec![no_find, with_find]) {
+        Err(Error::JsonModel(errors)) => {
+            assert_eq!(errors.len(), 1);
+            match &errors[0] {
+                JsonModelError::MissingField { index, field_name } => {
+                    assert_eq!(*index, 0);
+                    assert_eq!(field_name, "find");
+                }
+                other => panic!("expected MissingField error, got: {other:?}"),
+            }
+        }
+        Ok(_) => panic!("expected error for a generator with no 'find'"),
+        Err(e) => panic!("expected JsonModel error, got: {e}"),
+    }
+}

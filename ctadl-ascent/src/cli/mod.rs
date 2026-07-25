@@ -138,6 +138,15 @@ pub fn index(
     Ok(())
 }
 
+/// What [`query`] concluded about the run as a whole, mirroring
+/// `invocation.executionSuccessful` in the SARIF it just wrote. `false` means an
+/// `error`-level notification was emitted — the query was vacuous — and per SARIF §3.58.6
+/// the process should exit non-zero, *after* the SARIF file has been written.
+#[derive(Debug, Clone, Copy)]
+pub struct QueryStatus {
+    pub execution_successful: bool,
+}
+
 /// Runs a taint query and formats the results as SARIF.
 ///
 /// Taint results are computed in memory and handed straight to the formatter; they are
@@ -151,12 +160,28 @@ pub fn query(
     output: &Path,
     profile: query_engine::formatter::SarifProfile,
     dump_taint_graph: Option<&Path>,
-) -> Result<(), Error> {
+) -> Result<QueryStatus, Error> {
+    let start_time_utc = query_engine::formatter::utc_timestamp();
     let index_path = project.index_path()?;
     let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
     // Load the index tables once; they seed the query and are reused to format the results.
     let index_facts = IndexFacts::try_load(&index_path).err_context(|| "loading index facts")?;
     let index_result = IndexResult::try_load(&index_path).err_context(|| "loading index result")?;
+
+    // Assembled alongside the query itself and handed to the SARIF writer, which turns it
+    // into `run.invocations[0]`. See `formatter::QueryDiagnostics`.
+    let mut diagnostics = query_engine::formatter::QueryDiagnostics {
+        command_line: std::env::args_os()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" "),
+        arguments: std::env::args_os()
+            .skip(1)
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect(),
+        start_time_utc,
+        ..Default::default()
+    };
 
     let facts = {
         let mut models_batch: Option<crate::models::ModelsBatch> = None;
@@ -165,6 +190,17 @@ pub fn query(
                 let import = import?;
                 let program_info = load_program_info_without_source_info(&import)?;
                 let s = crate::models::try_load_models(&program_info, model_path)?;
+                // Re-key this file's Stage-1 counts by file *before* the batches are
+                // unioned: `ModelsBatch::union_with` sums by (generator index, direction)
+                // alone, which would conflate two model files that happen to number their
+                // generators the same. Summing over imports is what makes a generator that
+                // is dead against one import but live against another come out live.
+                for ((index, direction), count) in &s.endpoint_stats {
+                    *diagnostics
+                        .generator_stats
+                        .entry((model_path.clone(), *index, *direction))
+                        .or_insert(0) += count;
+                }
                 if let Some(ref mut s0) = models_batch {
                     s0.union_with(&s)?;
                 } else {
@@ -183,17 +219,42 @@ pub fn query(
                 endpoints.extend(eps);
             }
         }
+        // Flowy endpoints are already resolved, so they count as both declared and matched:
+        // a flowy-only run configures endpoints without any `-m` and must not be reported
+        // as having configured none.
+        let flowy_sources = endpoints
+            .iter()
+            .filter(|(ep,)| ep.direction == crate::facts::TaintDirection::Forward)
+            .count();
+        let flowy_sinks = endpoints.len() - flowy_sources;
+
         let mut formal_params = index_facts.formal_param.clone();
         if let Some(ref batch) = models_batch {
-            let (eps, model_formals) = query_engine::build_query_endpoints(
+            let built = query_engine::build_query_endpoints(
                 &batch.endpoint,
                 &index_facts,
                 &ids,
                 &index_result.assign_like,
             );
-            endpoints.extend(eps);
-            formal_params.extend(model_formals);
+            diagnostics.unresolved_functions = built.unresolved_functions;
+            endpoints.extend(built.endpoints);
+            formal_params.extend(built.formals);
         }
+
+        // Declared: one per (model file, generator) that named an endpoint of that
+        // direction, plus flowy's. Matched: post-fan-out `QueryEndpoint`s. The two are not
+        // comparable in magnitude — which of them is zero is the question they answer.
+        let count_declared = |direction| {
+            diagnostics
+                .generator_stats
+                .keys()
+                .filter(|(_, _, d)| *d == direction)
+                .count()
+        };
+        diagnostics.sources_declared =
+            count_declared(crate::facts::TaintDirection::Forward) + flowy_sources;
+        diagnostics.sinks_declared =
+            count_declared(crate::facts::TaintDirection::Backward) + flowy_sinks;
 
         let sources = endpoints
             .iter()
@@ -203,7 +264,14 @@ pub fn query(
             .iter()
             .filter(|(ep,)| ep.direction == crate::facts::TaintDirection::Backward)
             .count();
+        diagnostics.sources_matched = sources;
+        diagnostics.sinks_matched = sinks;
         eprintln!("Matched {} sources and {} sinks", sources, sinks);
+        // The line above reads the same whether an end is empty by accident or by design,
+        // so say which it is rather than leaving the terminal silent about a vacuous query.
+        if let Some(reason) = query_engine::formatter::empty_end_reason(&diagnostics) {
+            eprintln!("Warning: {reason}; see the SARIF invocation for details");
+        }
 
         // `actual_param` and `call` are also needed by `FormatFacts` below, so the
         // query facts take clones and the originals feed the formatter. `assign`,
@@ -239,13 +307,14 @@ pub fn query(
         .id_to_name(ids.get_id_to_name_map());
     let facts = b.build().unwrap();
 
-    query_engine::formatter::format_sarif(
+    let execution_successful = query_engine::formatter::format_sarif(
         project,
         &facts,
         &taint_results,
         compact,
         output,
         profile,
+        &diagnostics,
     )
     .err_context(|| "formatting sarif")?;
 
@@ -256,7 +325,9 @@ pub fn query(
     if output.to_str() != Some("-") {
         eprintln!("Wrote '{}'", output.display());
     }
-    Ok(())
+    Ok(QueryStatus {
+        execution_successful,
+    })
 }
 
 /// Renders the index (assign-like) graph to a Graphviz DOT file.

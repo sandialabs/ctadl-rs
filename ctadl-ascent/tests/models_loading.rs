@@ -66,3 +66,40 @@ fn test_load_models_json5() {
         result.err()
     );
 }
+
+/// Loading is batched in chunks of 1024 (`try_load_models_from_values`). Every generator must
+/// survive that batching, and every generator's index must keep counting across batch
+/// boundaries: the index names the generator in JSON error messages and in the `CTADL0004`
+/// SARIF notification, and it keys `endpoint_stats`, so a per-batch index both misnames
+/// generators and collides their match counts.
+#[test]
+fn test_load_models_across_batch_boundary() {
+    const COUNT: usize = 1030;
+    let program_info = ProgramInfo::default();
+    let mut file = NamedTempFile::new().unwrap();
+    let generators: Vec<serde_json::Value> = (0..COUNT)
+        .map(|i| {
+            serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "name", "pattern": format!("^f{i}$")}],
+                "model": {"sources": [{"port": "Argument(0)", "kind": "K"}]}
+            })
+        })
+        .collect();
+    write!(
+        file,
+        "{}",
+        serde_json::json!({ "model_generators": generators })
+    )
+    .unwrap();
+
+    let batch = try_load_models(&program_info, file.path()).expect("loading models");
+    let indices: Vec<usize> = batch.endpoint_stats.keys().map(|(i, _)| *i).collect();
+    assert_eq!(
+        indices.len(),
+        COUNT,
+        "every generator should be accounted for, including #1025"
+    );
+    assert_eq!(indices.first().copied(), Some(0));
+    assert_eq!(indices.last().copied(), Some(COUNT - 1));
+}
