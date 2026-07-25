@@ -115,6 +115,32 @@ point of the test and is named in `unexpected_lines`.
 An **empty** `expected_lines` (the DEX/JVM negative test) already asserts that
 nothing flows at all, which subsumes any `unexpected_lines`.
 
+## SARIF validation
+
+Every case also validates the SARIF it emitted with `checksarif`
+(`nix/sarif-multitool/checksarif.nix`), which checks a file against the SARIF
+2.1.0 schema and the SARIF Multitool's rule set. A file that draws any `error`
+or `warning` diagnostic fails its case whatever the taint answer was: a log a
+consumer cannot read is a defect on its own. The report lists every diagnostic
+and the path to the validation log, which is left in the case's scratch
+directory as `checksarif-log.sarif`.
+
+This is the one check the JVM allowlist cannot demote to XFAIL. The allowlist
+exists for the maturity of that frontend's *taint results*, which the shape of
+the log says nothing about.
+
+Rules are configured in `nix/sarif-multitool/sarif-validation.xml`. A rule that
+cannot apply to a binary/bytecode analyzer belongs there, turned off with a
+comment saying why -- `SARIF2017` is the worked example: it asks every result
+location for a `region.startLine`, and results here point into a `.jar`/`.dex`
+by byte offset or into an executable by address. Keeping the exceptions there
+rather than in `xtask` keeps "checksarif says nothing" as the pass criterion,
+whether it is the suite running it or a person.
+
+`checksarif` is a .NET tool that only the Nix environments supply; both paths
+under [Running](#running) have it. A suite run from a shell without it prints a
+warning and skips the validation rather than failing every case.
+
 ## Notes
 
 - Each case runs in its own scratch directory under `$TMPDIR`; nothing is
@@ -122,7 +148,7 @@ nothing flows at all, which subsumes any `unexpected_lines`.
 - Cases are independent — one failure does not abort the rest; every case is run
   and the final line reports `N passed, M skipped, K failed`.
 - The runner expects its tools (`ctadl`, `dex-reader`, `javac`, `dx`, `gcc`,
-  `addr2line`, Ghidra) on `PATH`. The flake check in [Running](#running) builds
+  `addr2line`, Ghidra, `checksarif`) on `PATH`. The flake check in [Running](#running) builds
   and supplies all of them and `nix develop .#regression` provides an
   interactive shell with the same toolchain for local iteration.
 - `scripts/*.py` are unused by the current suite and kept only for reference.

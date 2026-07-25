@@ -1,4 +1,5 @@
 use regex::Error as RegexError;
+use std::path::PathBuf;
 use thiserror::Error;
 
 /// CTADL error. This is used for interface functions in this crate.
@@ -196,12 +197,14 @@ pub enum Error {
     JsonModel(#[from] JsonModelErrors),
     #[error(
         "import '{name}' was created by an incompatible version of ctadl \
-         (import format {found}, this build expects {expected}); re-import the artifact"
+         (import format {found}, this build expects {expected}); the original \
+         artifact was imported from '{}'; re-import it", .artifact_path.display()
     )]
     IncompatibleImport {
         name: String,
         found: String,
         expected: String,
+        artifact_path: PathBuf,
     },
     #[error("{context}")]
     Context {

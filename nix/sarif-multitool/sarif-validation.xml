@@ -162,4 +162,18 @@
   <Properties Key="SARIF2016.FileUrisShouldBeRelative.Options">
     <Property Key="RuleEnabled" Value="Default" Type="Driver.RuleEnabledState" />
   </Properties>
+  <!--Disabled: this rule asks every result location for a 'region' with a
+  'startLine', which assumes the artifact is text. ctadl analyzes binaries and
+  bytecode, where a result points into a .jar/.dex by 'region.byteOffset' or into
+  a stripped executable by 'address' - neither has a line to give, and the source
+  line is recovered downstream from a linemap or DWARF. Enabled, it fires on every
+  tainted-instruction and tainted-path result the analyzer emits.
+  The key is the rule's id plus its *class* name, and this one really is
+  'SARIFProvideRequiredRegionProperties' - dropping the prefix to match GH1003's
+  'ProvideRequiredRegionProperties' silently stops the setting from applying. The
+  tool confirms it took by reporting 'WRN999.RuleExplicitlyDisabled' for the rule
+  on every run.-->
+  <Properties Key="SARIF2017.SARIFProvideRequiredRegionProperties.Options">
+    <Property Key="RuleEnabled" Value="Disabled" Type="Driver.RuleEnabledState" />
+  </Properties>
 </Properties>

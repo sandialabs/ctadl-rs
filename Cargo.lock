@@ -1265,6 +1265,7 @@ dependencies = [
  "ascent_base",
  "ascent_macro",
  "bitcode",
+ "chrono",
  "clap",
  "csv",
  "ctadl-flowy",

@@ -9,6 +9,7 @@ To convert a `json` model file into `jsonl`, you can do:
 jq -c '.model_generators[] // empty' models.json > models.jsonl
 ```
 */
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 use hashbrown::hash_map::HashMap;
@@ -35,7 +36,10 @@ use ctadl_ir::mir::call::VirtualMethodTable;
 /// Stage 2, which resolves and expands that intermediate into `QueryEndpoint`s.
 pub struct ModelGeneratorIngest<'p, 'b> {
     builder: &'b mut ModelBuilders,
-    find_method: Vec<FindMethod>,
+    /// Keyed by generator index rather than positional: `find` is optional in the JSON, so a
+    /// generator that omits it leaves no entry, and a `Vec` would then misalign every later
+    /// generator (it used to panic outright).
+    find_method: HashMap<usize, FindMethod>,
     methods: Vec<UniverseSet<&'p str>>,
     /// For `find: callsites`, the set of caller functions matched by `in_function`
     /// (parallel to `methods`, which holds the matched callee functions).
@@ -65,6 +69,65 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     scratch: Vec<UniverseSet<&'p str>>,
     // collected JSON parsing errors
     pub errors: Vec<crate::error::JsonModelError>,
+    /// What Stage 1 did per (generator index, direction) — see [`EndpointStats`]. Key
+    /// presence means the generator *declared* a port of that direction; a zero
+    /// `endpoints_matched` means it declared one and matched nothing. Drives the
+    /// `CTADL0004` SARIF notification, so a `where` constraint that selects no function is
+    /// reported instead of vanishing.
+    pub endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats>,
+}
+
+/// What Stage 1 did with one generator's port declarations in one direction.
+///
+/// `ports_declared` and `endpoints_matched` are the two ends of the same fan-out: a model
+/// file declares *ports* (one `{"port": "Argument(0)"}` entry each), and each port matches
+/// zero or more functions, every one of which becomes an endpoint row. Reporting the first
+/// count as though it were the second is what made `CTADL0100` read as nonsense; the SARIF
+/// writer now names the unit of every number it prints.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct EndpointStats {
+    /// Ports the generator declared in this direction: one per `sources`/`sinks` entry whose
+    /// `port` parsed. A property of the model file alone, so [`Self::merge`] does *not* sum
+    /// it — the same file is re-matched once per import.
+    pub ports_declared: usize,
+    /// Endpoint rows emitted for those ports, after fanning out over the matched functions.
+    /// Summed by [`Self::merge`]: a generator dead against one import but live against
+    /// another is live.
+    pub endpoints_matched: usize,
+    /// How many functions the generator's `where` constraints selected. Reported by
+    /// `CTADL0004` to separate "nothing matched" from "functions matched but the port did
+    /// not resolve in any of them".
+    pub functions_matched: usize,
+    /// Why nothing matched. Meaningful only when `endpoints_matched` is zero; a generator
+    /// declaring several ports of one direction can fail for several reasons at once.
+    pub unmatched: BTreeSet<UnmatchedReason>,
+}
+
+impl EndpointStats {
+    /// Folds in the stats for the same (generator, direction) from another load of the same
+    /// model file — one per import. Each field combines differently; see the field docs.
+    pub fn merge(&mut self, other: &Self) {
+        self.ports_declared = self.ports_declared.max(other.ports_declared);
+        self.endpoints_matched += other.endpoints_matched;
+        self.functions_matched = self.functions_matched.max(other.functions_matched);
+        self.unmatched.extend(other.unmatched.iter().cloned());
+    }
+}
+
+/// Why a declared port produced no endpoint row. The generator matching zero functions is
+/// only one of the ways; `CTADL0004` used to report all of them as that one.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum UnmatchedReason {
+    /// The generator's `where` constraints selected no function in the program.
+    NoFunctionMatched,
+    /// Functions matched, but none of them declares a local by this name, so the
+    /// `Variable(name)` port resolved in none of them.
+    LocalNotFound(String),
+    /// `find: callsites` with an `in_function` constraint that no caller satisfied.
+    NoCallerMatched,
+    /// The port is not usable in this generator's context. Always accompanied by a hard JSON
+    /// error, so in practice the load fails before any SARIF is written.
+    PortRejected,
 }
 
 static ARGUMENT_REGEX: OnceLock<Regex> = OnceLock::new();
@@ -92,6 +155,26 @@ fn variable_regex() -> &'static Regex {
 pub enum FindMethod {
     Methods,
     Callsites,
+}
+
+/// What one [`ModelGeneratorIngest::emit_endpoint_rows`] call did, folded into
+/// [`EndpointStats`] by its caller.
+struct PortEmit {
+    /// Endpoint rows appended for this port.
+    rows: usize,
+    /// Functions the generator's `where` constraints selected (the callees, for
+    /// `find: callsites`).
+    functions: usize,
+    /// Set exactly when `rows` is zero.
+    reason: Option<UnmatchedReason>,
+}
+
+/// Put `value` in the slot for generator index `n`, growing `v` with empty sets as needed.
+fn set_slot<'p>(v: &mut Vec<UniverseSet<&'p str>>, n: usize, value: UniverseSet<&'p str>) {
+    if v.len() <= n {
+        v.resize_with(n + 1, UniverseSet::empty);
+    }
+    v[n] = value;
 }
 
 /// Which universe set a set-narrowing constraint (e.g. `signature_match`) currently
@@ -182,7 +265,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         // constructs index for the program
         Self {
             builder,
-            find_method: Vec::new(),
+            find_method: HashMap::new(),
             methods: Vec::new(),
             in_functions: Vec::new(),
             current_set: CurrentSet::Methods,
@@ -194,6 +277,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             universe,
             scratch: Vec::new(),
             errors: Vec::new(),
+            endpoint_stats: BTreeMap::new(),
         }
     }
 
@@ -390,8 +474,39 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         wildcard: bool,
         saturating: bool,
     ) {
+        let emit =
+            self.emit_endpoint_rows(n, idx, var_name, ap, label, direction, wildcard, saturating);
+        // Key presence records that generator `n` *declared* a port in this direction even
+        // when it matched nothing; a zero `endpoints_matched` is exactly the `CTADL0004`
+        // condition. Ports are counted per call because one generator may declare several of
+        // the same direction; the rows are accumulated because matching in any of those ports
+        // makes the generator live.
+        let stats = self.endpoint_stats.entry((n, direction)).or_default();
+        stats.ports_declared += 1;
+        stats.endpoints_matched += emit.rows;
+        // Max, not sum: every port of a generator re-derives the same matched-function set.
+        stats.functions_matched = stats.functions_matched.max(emit.functions);
+        if let Some(reason) = emit.reason {
+            stats.unmatched.insert(reason);
+        }
+    }
+
+    /// The body of [`Self::emit_endpoints`], reporting what it did so the caller can record
+    /// it. Every early `return` here is a "matched nothing" path.
+    fn emit_endpoint_rows(
+        &mut self,
+        n: usize,
+        idx: (FormalIndexTypeTag, Option<i16>),
+        var_name: Option<&str>,
+        ap: &[&str],
+        label: &str,
+        direction: TaintDirection,
+        wildcard: bool,
+        saturating: bool,
+    ) -> PortEmit {
         let tag = idx.0;
-        let is_callsites = matches!(self.find_method.get(n), Some(FindMethod::Callsites));
+        let mut rows = 0usize;
+        let is_callsites = matches!(self.find_method.get(&n), Some(FindMethod::Callsites));
         // A callsite-scoped endpoint models the callee at a call site; the callee's locals are
         // not a call-site concept and Stage 2 gives `Local` vars no call-site fan-out. Reject
         // rather than silently degrade to function-anchored.
@@ -401,9 +516,14 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 field_name: "port".to_string(),
                 message: "'Variable(...)' is not supported with find: callsites".to_string(),
             });
-            return;
+            return PortEmit {
+                rows,
+                functions: 0,
+                reason: Some(UnmatchedReason::PortRejected),
+            };
         }
         let callees = matched_functions(&self.methods[n], self.vmt);
+        let functions = callees.len();
         if !is_callsites {
             for func in callees {
                 // For a `Variable(name)` port, resolve the name to a base `LocalIdx` in *this*
@@ -440,8 +560,23 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                     None,
                     false,
                 );
+                rows += 1;
             }
-            return;
+            // A non-`Local` port appends a row for every matched function, so `rows == 0`
+            // with `functions > 0` can only be the `continue` above: the local named by a
+            // `Variable(...)` port exists in none of them.
+            let reason = match (rows, var_name) {
+                (0, Some(name)) if functions > 0 => {
+                    Some(UnmatchedReason::LocalNotFound(name.to_string()))
+                }
+                (0, _) => Some(UnmatchedReason::NoFunctionMatched),
+                _ => None,
+            };
+            return PortEmit {
+                rows,
+                functions,
+                reason,
+            };
         }
         // Callsite-scoped: resolve the caller filter. `All` means "any caller". (`Local` ports
         // were rejected above, so `local_index` is always `None` here.)
@@ -466,7 +601,20 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                     caller.as_deref(),
                     true,
                 );
+                rows += 1;
             }
+        }
+        // `callers` is `[None]` when no `in_function` was given, so an empty product with
+        // matched callees means the `in_function` constraint itself selected no caller.
+        let reason = match rows {
+            0 if functions > 0 => Some(UnmatchedReason::NoCallerMatched),
+            0 => Some(UnmatchedReason::NoFunctionMatched),
+            _ => None,
+        };
+        PortEmit {
+            rows,
+            functions,
+            reason,
         }
     }
 
@@ -475,8 +623,23 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         &mut self,
         batch: impl IntoIterator<Item = serde_json::Value>,
     ) -> Result<(), Error> {
+        self.encode_models_from(0, batch)
+    }
+
+    /// [`Self::encode_models`] for a batch that starts at generator index `start` in the
+    /// model file. Loading is batched (see
+    /// [`try_load_models_from_values`](crate::models::try_load_models_from_values)) but the
+    /// generator index must keep counting across batches: it is what JSON error messages and
+    /// the `CTADL0004` SARIF notification name the offending generator by, and what
+    /// [`Self::endpoint_stats`] is keyed on, so restarting it per batch both misnames
+    /// generators and collides their match counts.
+    pub fn encode_models_from(
+        &mut self,
+        start: usize,
+        batch: impl IntoIterator<Item = serde_json::Value>,
+    ) -> Result<(), Error> {
         for (i, value) in batch.into_iter().enumerate() {
-            self.visit_model_generator(i, &value);
+            self.visit_model_generator(start + i, &value);
         }
         // Check for any collected errors and return them
         let errors = std::mem::take(&mut self.errors);
@@ -493,8 +656,11 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
 impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Entry point. Clear the model_generator set then visit it.
     fn visit_model_generator(&mut self, n: usize, value: &serde_json::Value) {
-        self.methods.insert(n, UniverseSet::all());
-        self.in_functions.insert(n, UniverseSet::all());
+        // Assign at `n`, don't `Vec::insert` at `n`: insert *shifts* the tail, which is only
+        // ever a no-op because generators arrive in index order. Grow-then-assign keeps the
+        // slot for generator `n` at index `n` no matter how the caller batches.
+        set_slot(&mut self.methods, n, UniverseSet::all());
+        set_slot(&mut self.in_functions, n, UniverseSet::all());
         self.current_set = CurrentSet::Methods;
         self.super_model_generator(n, value);
         self.methods[n] = UniverseSet::empty();
@@ -503,12 +669,24 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     fn visit_find(&mut self, n: usize, value: &serde_json::Value) {
         self.super_find(n, value);
         match value.as_str() {
-            Some("methods") => self.find_method.insert(n, FindMethod::Methods),
-            Some("callsites") => self.find_method.insert(n, FindMethod::Callsites),
+            Some("methods") => {
+                self.find_method.insert(n, FindMethod::Methods);
+            }
+            Some("callsites") => {
+                self.find_method.insert(n, FindMethod::Callsites);
+            }
             Some(other) => {
                 self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
                     index: n,
                     constraint_type: other.to_string(),
+                })
+            }
+            // `super_model_generator` indexes `find` out of the object, so an absent field
+            // arrives as `Null` — report that as missing rather than as a type error.
+            None if value.is_null() => {
+                self.add_json_error(crate::error::JsonModelError::MissingField {
+                    index: n,
+                    field_name: "find".to_string(),
                 })
             }
             None => self.add_json_error(crate::error::JsonModelError::FieldNotString {
@@ -522,7 +700,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     fn visit_signature_match_constraint(&mut self, n: usize, value: &serde_json::Value) {
         self.super_signature_match_constraint(n, value);
         if matches!(
-            self.find_method.get(n),
+            self.find_method.get(&n),
             Some(FindMethod::Methods | FindMethod::Callsites)
         ) {
             let has_names = value.get("names").or(value.get("name")).is_some();
@@ -610,7 +788,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     fn visit_signature_constraint(&mut self, n: usize, value: &serde_json::Value) {
         self.super_signature_constraint(n, value);
         if matches!(
-            self.find_method.get(n),
+            self.find_method.get(&n),
             Some(FindMethod::Methods | FindMethod::Callsites)
         ) && let Some(pattern) = value.get("pattern")
         {
@@ -651,7 +829,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Matches the containing (caller) function of a callsite by evaluating the wrapped
     /// `inner` constraint against the caller set. Only meaningful for `find: callsites`.
     fn visit_in_function_constraint(&mut self, n: usize, value: &serde_json::Value) {
-        if let Some(FindMethod::Callsites) = self.find_method.get(n) {
+        if let Some(FindMethod::Callsites) = self.find_method.get(&n) {
             let prev = self.current_set;
             self.current_set = CurrentSet::InFunction;
             self.super_in_function_constraint(n, value);
@@ -756,7 +934,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Matches functions/variables by a regex on their (simple) name. All frontends.
     fn visit_name_constraint(&mut self, n: usize, value: &serde_json::Value) {
         if !matches!(
-            self.find_method.get(n),
+            self.find_method.get(&n),
             Some(FindMethod::Methods | FindMethod::Callsites)
         ) {
             return;
@@ -980,7 +1158,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.super_propagation(n, value);
         // Propagation (summaries) at a callsite is a function-level fact and is not
         // supported for `find: callsites`.
-        if let Some(FindMethod::Callsites) = self.find_method.get(n) {
+        if let Some(FindMethod::Callsites) = self.find_method.get(&n) {
             self.add_json_error(crate::error::JsonModelError::UnexpectedField {
                 index: n,
                 field_name: "propagation".to_string(),
@@ -997,7 +1175,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             });
             return;
         }
-        if let Some(FindMethod::Methods) = self.find_method.get(n) {
+        if let Some(FindMethod::Methods) = self.find_method.get(&n) {
             let input_str = match value.get("input") {
                 Some(v) => match v.as_str() {
                     Some(s) => s,

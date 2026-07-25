@@ -16,6 +16,7 @@ ascent-byods-rels = "0.8.0"
 ascent_base = "0.8.0"
 ascent_macro = "0.8.0"
 bitcode = { version = "0.6", features = ["serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.5", features = ["cargo", "derive", "wrap_help", "env"] }
 csv = "1.3.*"
 ctadl-flowy = { path = "../ctadl-flowy", features = ["serde"] }
