@@ -2255,3 +2255,103 @@ fn variable_port_resolves_per_matched_function() {
         "expected one row per matched function that has `buf`, each with that function's own index"
     );
 }
+
+#[test_log::test]
+fn prefix_increment_in_for_update() {
+    // A prefix `++i` as a `for` update clause. The clause reaches `walk_statement` as a
+    // bare `update_expression`, not wrapped in an `expression_statement`, and the arm used
+    // to lower `child(0)` -- which for a *prefix* update is the `++` token itself, so the
+    // whole ingest failed with ERR 78 (for a postfix `i++` it was the bare operand, which
+    // silently dropped the increment). `i` must be written twice: `i = 0`, then the update.
+    let src = r"
+        int f(int n, int t) {
+            int i;
+            int s = 0;
+            for (i = 0; i < n; ++i)
+                s = t;
+            return s;
+        }";
+    let prog = program_from_string(src).0;
+    check_writes_to(&prog, "i", 2);
+    let (summary, _si) = get_summary(prog).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn empty_for_header_clauses() {
+    // `for (;;)` -- every clause of a `for` header is optional in C. Each used to be
+    // `expect`ed to exist, so an omitted one panicked the import.
+    let src = r"
+        int f(int a) {
+            int s = 0;
+            for (;;) {
+                s = a;
+                break;
+            }
+            return s;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn label_after_return_is_lowered() {
+    // The standard C error-handling shape: the success path `return`s immediately before
+    // the `err:` label that the body's own `goto` jumps to. A diverging statement used to
+    // end the enclosing compound outright, so everything after the `return` -- including
+    // that label -- was never lowered. The label's block had been pre-created for the
+    // `goto` to target, so it stayed empty *and* without a terminator, which is a CFG
+    // defect `program_from_string` asserts against, and `r = b` was lost outright.
+    let src = r"
+        int f(int a, int b) {
+            int r = 0;
+            if (a)
+                goto err;
+            return r;
+        err:
+            r = b;
+            return r;
+        }";
+    let prog = program_from_string(src).0;
+    check_writes_to(&prog, "r", 2); // `r = 0`, and the `r = b` under the label
+    let (summary, _si) = get_summary(prog).unwrap();
+    check_returns_param(&summary, 1, "");
+}
+
+#[test_log::test]
+fn nested_block_with_if_rejoins() {
+    // A bare `{ .. }` block containing an `if`. The block introduces a lexical scope but
+    // no basic block of its own, so the statements *after* the braces must continue from
+    // wherever the `if` left control -- they used to be lowered into the block the braces
+    // started in, which the `if` had already left, losing the rejoin. `s = a` happens
+    // inside the braces and `r = s` after them, so the flow only survives if they meet.
+    let src = r"
+        int f(int a, int c) {
+            int s = 0;
+            {
+                int t = 0;
+                if (c)
+                    s = a;
+            }
+            int r = s;
+            return r;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn ternary_with_omitted_consequence() {
+    // GNU's `a ?: b` -- the consequence is omitted and the condition itself is the value
+    // of that arm. The consequence used to be `expect`ed to exist, panicking the import.
+    // Both arms must reach the return: param 0 via the elided consequence, param 1 via
+    // the alternative.
+    let src = r"
+        int f(int a, int b) {
+            int r = a ?: b;
+            return r;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 0, "");
+    check_returns_param(&summary, 1, "");
+}
