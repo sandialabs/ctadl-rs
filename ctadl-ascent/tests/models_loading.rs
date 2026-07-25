@@ -1,4 +1,6 @@
-use ctadl_ascent::models::try_load_models;
+use ctadl_ascent::facts::TaintDirection;
+use ctadl_ascent::models::json::ModelGeneratorIngest;
+use ctadl_ascent::models::{ModelBuilders, UnmatchedReason, try_load_models};
 use ctadl_ir::mir::ProgramInfo;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -102,4 +104,168 @@ fn test_load_models_across_batch_boundary() {
     );
     assert_eq!(indices.first().copied(), Some(0));
     assert_eq!(indices.last().copied(), Some(COUNT - 1));
+}
+
+/// `CTADL0100` reports two different units: model *ports* declared, and *endpoints* matched
+/// after fanning those ports out over the program. `ports_declared` therefore counts one per
+/// `sources`/`sinks` entry, not one per (generator, direction) — counting the latter made the
+/// summary compare a count of generators against a count of endpoints.
+///
+/// `CTADL0004` reports which of the several ways a port can produce no endpoint happened.
+/// "Matched no function" is only one of them: functions can match and the port still resolve
+/// in none of them, and reporting that as a failed `where` sends the reader to rewrite a
+/// constraint that was working.
+#[test]
+fn test_endpoint_stats_ports_and_unmatched_reasons() {
+    const PROGRAM: &str = r#"
+def reader(buf):1 {
+s:
+  x = buf;
+  return x;
+}
+
+def writer(dst):1 {
+s:
+  y = dst;
+  return y;
+}
+
+def main() {
+s:
+  a = reader(1);
+  b = writer(a);
+  return;
+}
+"#;
+    let program_info = ctadl_flowy::compile_program_contents("test.tnt", PROGRAM)
+        .expect("compiling flowy program")
+        .program_info;
+    let mut builders = ModelBuilders::new();
+    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut builders);
+    let generators = vec![
+        // 0: two source ports on one generator, both matching `reader`.
+        serde_json::json!({
+            "find": "methods",
+            "where": [{"constraint": "name", "pattern": "^reader$"}],
+            "model": {"sources": [
+                {"port": "Argument(0)", "kind": "S"},
+                {"port": "Return", "kind": "S"},
+            ]},
+        }),
+        // 1: the `where` constraint selects no function.
+        serde_json::json!({
+            "find": "methods",
+            "where": [{"constraint": "name", "pattern": "^nosuchfunction$"}],
+            "model": {"sinks": [{"port": "Argument(0)", "kind": "S"}]},
+        }),
+        // 2: `writer` matches, but has no local named `nope`.
+        serde_json::json!({
+            "find": "methods",
+            "where": [{"constraint": "name", "pattern": "^writer$"}],
+            "model": {"sinks": [{"port": "Variable(nope)", "kind": "S"}]},
+        }),
+        // 3: `writer` matches as a callee, but no caller satisfies `in_function`.
+        serde_json::json!({
+            "find": "callsites",
+            "where": [
+                {"constraint": "name", "pattern": "^writer$"},
+                {"constraint": "in_function",
+                 "inner": {"constraint": "name", "pattern": "^nosuchcaller$"}},
+            ],
+            "model": {"sinks": [{"port": "Argument(0)", "kind": "S"}]},
+        }),
+        // 4: two sink ports of one direction failing for two different reasons.
+        serde_json::json!({
+            "find": "methods",
+            "where": [{"constraint": "name", "pattern": "^writer$"}],
+            "model": {"sinks": [
+                {"port": "Variable(nope)", "kind": "S"},
+                {"port": "Variable(alsonope)", "kind": "S"},
+            ]},
+        }),
+    ];
+    ingest.encode_models(generators).expect("encoding models");
+    let stats = &ingest.endpoint_stats;
+    let get = |index: usize, direction| {
+        stats
+            .get(&(index, direction))
+            .unwrap_or_else(|| panic!("no stats for generator {index}"))
+    };
+
+    let live = get(0, TaintDirection::Forward);
+    assert_eq!(live.ports_declared, 2, "one per `sources` entry");
+    assert_eq!(live.endpoints_matched, 2, "one function per port");
+    assert!(live.unmatched.is_empty());
+
+    let no_function = get(1, TaintDirection::Backward);
+    assert_eq!(no_function.ports_declared, 1);
+    assert_eq!(no_function.endpoints_matched, 0);
+    assert_eq!(no_function.functions_matched, 0);
+    assert_eq!(
+        no_function.unmatched.iter().collect::<Vec<_>>(),
+        vec![&UnmatchedReason::NoFunctionMatched]
+    );
+
+    let no_local = get(2, TaintDirection::Backward);
+    assert_eq!(no_local.endpoints_matched, 0);
+    assert_eq!(
+        no_local.functions_matched, 1,
+        "the `where` constraint did match; only the port did not resolve"
+    );
+    assert_eq!(
+        no_local.unmatched.iter().collect::<Vec<_>>(),
+        vec![&UnmatchedReason::LocalNotFound("nope".to_string())]
+    );
+
+    let no_caller = get(3, TaintDirection::Backward);
+    assert_eq!(no_caller.endpoints_matched, 0);
+    assert_eq!(no_caller.functions_matched, 1, "the callee matched");
+    assert_eq!(
+        no_caller.unmatched.iter().collect::<Vec<_>>(),
+        vec![&UnmatchedReason::NoCallerMatched]
+    );
+
+    let mixed = get(4, TaintDirection::Backward);
+    assert_eq!(mixed.ports_declared, 2);
+    assert_eq!(mixed.endpoints_matched, 0);
+    assert_eq!(
+        mixed.unmatched.iter().collect::<Vec<_>>(),
+        vec![
+            &UnmatchedReason::LocalNotFound("alsonope".to_string()),
+            &UnmatchedReason::LocalNotFound("nope".to_string()),
+        ],
+        "each port's own reason survives, so `CTADL0004` can list both"
+    );
+}
+
+/// The same model file is matched once per import, so the per-import stats are folded
+/// together. Only the endpoint counts sum: `ports_declared` is a property of the file and
+/// would otherwise be multiplied by the number of imports, re-inflating the count
+/// `CTADL0100` prints.
+#[test]
+fn test_endpoint_stats_merge_across_imports() {
+    use ctadl_ascent::models::EndpointStats;
+
+    let import_a = EndpointStats {
+        ports_declared: 2,
+        endpoints_matched: 0,
+        functions_matched: 0,
+        unmatched: [UnmatchedReason::NoFunctionMatched].into_iter().collect(),
+    };
+    let import_b = EndpointStats {
+        ports_declared: 2,
+        endpoints_matched: 3,
+        functions_matched: 3,
+        unmatched: Default::default(),
+    };
+    let mut merged = EndpointStats::default();
+    merged.merge(&import_a);
+    merged.merge(&import_b);
+
+    assert_eq!(merged.ports_declared, 2, "not 4");
+    assert_eq!(
+        merged.endpoints_matched, 3,
+        "dead against one import, live against another, so live"
+    );
+    assert_eq!(merged.functions_matched, 3);
 }

@@ -54,6 +54,7 @@ use crate::facts::{
     CallArgId, FlowEdge, FlowVariable, FlowVertex, FormalIndex, FunctionId, InsnId, InsnSiteId,
     Label, PackedInsnSiteId, Path, TaintDirection, TaintState,
 };
+use crate::models::{EndpointStats, UnmatchedReason};
 use crate::project::{AnalysisProject, ArtifactLanguage};
 use crate::query_engine::QueryEndpoint;
 
@@ -138,14 +139,15 @@ const NOTIF_PATH_DROPPED: &str = "CTADL0103.path-dropped-no-location";
 /// it *found*. Assembled in `cli::query`, which is the only place that sees both the model
 /// files and the resolved endpoints.
 ///
-/// The `_declared` counts are per-generator (plus flowy's already-resolved endpoints); the
-/// `_matched` counts are post-fan-out `QueryEndpoint`s. They are therefore not comparable
-/// to each other in magnitude — what matters is which of them are zero.
+/// The `_declared` counts are model *ports* — one per `sources`/`sinks` entry, plus one per
+/// flowy endpoint; the `_matched` counts are the post-fan-out `QueryEndpoint`s those ports
+/// resolved to. One port can match many functions, so the two are not equal, but they are
+/// the two ends of one fan-out and every message that prints them names which is which.
 #[derive(Debug, Default, Clone)]
 pub struct QueryDiagnostics {
-    /// Endpoint rows Stage 1 emitted, keyed by (model file, generator index, direction).
-    /// A zero value is a generator that declared an endpoint and matched nothing.
-    pub generator_stats: BTreeMap<(path::PathBuf, usize, TaintDirection), usize>,
+    /// What Stage 1 did, keyed by (model file, generator index, direction). A zero
+    /// `endpoints_matched` is a generator that declared a port and matched nothing.
+    pub generator_stats: BTreeMap<(path::PathBuf, usize, TaintDirection), EndpointStats>,
     /// Names Stage 1 matched that the index does not contain (see [`BuiltEndpoints`]).
     ///
     /// [`BuiltEndpoints`]: crate::query_engine::BuiltEndpoints
@@ -235,8 +237,8 @@ fn build_invocation(
             "error",
             vec![diagnostics.sinks_declared.to_string()],
             format!(
-                "No taint sources were configured, but {} sink endpoint(s) were. A taint query \
-                 with no source is vacuous.",
+                "No taint sources were configured, but {} sink port(s) were declared. A taint \
+                 query with no source is vacuous.",
                 diagnostics.sinks_declared
             ),
             BTreeMap::from([(
@@ -250,8 +252,8 @@ fn build_invocation(
             "error",
             vec![diagnostics.sources_declared.to_string()],
             format!(
-                "No taint sinks were configured, but {} source endpoint(s) were. A taint query \
-                 with no sink is vacuous.",
+                "No taint sinks were configured, but {} source port(s) were declared. A taint \
+                 query with no sink is vacuous.",
                 diagnostics.sources_declared
             ),
             BTreeMap::from([(
@@ -261,36 +263,48 @@ fn build_invocation(
         ));
     }
 
-    // CTADL0004: a generator that declared an endpoint and matched no function. The
+    // CTADL0004: a generator that declared a port and produced no endpoint. The
     // notification points at the model *file* — `EndpointRow` carries no provenance and
-    // serde_json gives no spans, so there is no line/column to point at.
-    let mut generators_dead = 0usize;
-    for ((file, index, direction), count) in &diagnostics.generator_stats {
-        if *count > 0 {
+    // serde_json gives no spans, so there is no line/column to point at. Which of the
+    // several ways it can produce nothing happened is what `unmatched_message` reports:
+    // "matched no function" is only one of them.
+    let mut unmatched_declarations = 0usize;
+    let mut ports_unmatched = 0usize;
+    for ((file, index, direction), stats) in &diagnostics.generator_stats {
+        if stats.endpoints_matched > 0 {
             continue;
         }
-        generators_dead += 1;
+        unmatched_declarations += 1;
+        ports_unmatched += stats.ports_declared;
         let direction = match direction {
             TaintDirection::Forward => "source",
             TaintDirection::Backward => "sink",
         };
         let file_display = file.display().to_string();
-        let mut notif = notification(
-            NOTIF_GENERATOR_DEAD,
-            "warning",
-            vec![
-                index.to_string(),
-                file_display.clone(),
-                direction.to_string(),
-            ],
-            format!(
-                "Model generator {index} in '{file_display}' declares a {direction} but matched \
-                 no function in the program, so it contributes nothing to the query."
+        let detail = unmatched_message(*index, &file_display, direction, stats);
+        let mut properties = BTreeMap::from([
+            ("generatorIndex".to_string(), serde_json::json!(index)),
+            ("direction".to_string(), serde_json::json!(direction)),
+            (
+                "portsDeclared".to_string(),
+                serde_json::json!(stats.ports_declared),
             ),
-            BTreeMap::from([
-                ("generatorIndex".to_string(), serde_json::json!(index)),
-                ("direction".to_string(), serde_json::json!(direction)),
-            ]),
+            (
+                "functionsMatched".to_string(),
+                serde_json::json!(stats.functions_matched),
+            ),
+            ("reason".to_string(), serde_json::json!(detail.message_id)),
+        ]);
+        if let Some(name) = &detail.variable {
+            properties.insert("variableName".to_string(), serde_json::json!(name));
+        }
+        let mut notif = notification_with_message_id(
+            NOTIF_GENERATOR_DEAD,
+            detail.message_id,
+            "warning",
+            detail.arguments,
+            detail.text,
+            properties,
         );
         notif.locations = Some(vec![
             Location::builder()
@@ -336,8 +350,8 @@ fn build_invocation(
             "error",
             vec![diagnostics.sources_declared.to_string()],
             format!(
-                "{} source endpoint(s) were configured but none matched the program, so no \
-                 taint could be seeded.",
+                "{} source port(s) were declared but none of them matched anything in the \
+                 program, so no taint could be seeded.",
                 diagnostics.sources_declared
             ),
             BTreeMap::from([(
@@ -352,8 +366,8 @@ fn build_invocation(
             "error",
             vec![diagnostics.sinks_declared.to_string()],
             format!(
-                "{} sink endpoint(s) were configured but none matched the program, so no flow \
-                 could be detected.",
+                "{} sink port(s) were declared but none of them matched anything in the \
+                 program, so no flow could be detected.",
                 diagnostics.sinks_declared
             ),
             BTreeMap::from([(
@@ -364,25 +378,28 @@ fn build_invocation(
     }
 
     // --- Execution: what running the query did (§3.20.21). ---
-    // One per (model file, generator, direction), so a generator declaring both a source and
-    // a sink counts twice — the unit is the endpoint declaration, not the generator.
-    let generators_evaluated = diagnostics.generator_stats.len();
+    // Declared and matched are the two ends of one fan-out — ports in, endpoints out — so
+    // the message states both units rather than printing the numbers side by side as though
+    // they were the same thing. `ports_unmatched` is in port units too: it sums the ports of
+    // every declaration that produced no endpoint.
     exec_notifications.push(notification(
         NOTIF_MATCH_SUMMARY,
         "note",
         vec![
+            diagnostics.sources_declared.to_string(),
+            diagnostics.sinks_declared.to_string(),
             diagnostics.sources_matched.to_string(),
             diagnostics.sinks_matched.to_string(),
-            generators_evaluated.to_string(),
-            generators_dead.to_string(),
+            ports_unmatched.to_string(),
         ],
         format!(
-            "Matched {} source and {} sink endpoints from {} declared model endpoint(s); {} \
-             declaration(s) matched nothing.",
+            "Declared {} source and {} sink port(s), which matched {} source and {} sink \
+             endpoint(s) in the program; {} declared port(s) matched nothing.",
+            diagnostics.sources_declared,
+            diagnostics.sinks_declared,
             diagnostics.sources_matched,
             diagnostics.sinks_matched,
-            generators_evaluated,
-            generators_dead
+            ports_unmatched
         ),
         BTreeMap::from([
             (
@@ -402,12 +419,18 @@ fn build_invocation(
                 serde_json::json!(diagnostics.sinks_matched),
             ),
             (
-                "generatorsEvaluated".to_string(),
-                serde_json::json!(generators_evaluated),
+                "portsDeclared".to_string(),
+                serde_json::json!(diagnostics.sources_declared + diagnostics.sinks_declared),
             ),
             (
-                "generatorsDead".to_string(),
-                serde_json::json!(generators_dead),
+                "portsUnmatched".to_string(),
+                serde_json::json!(ports_unmatched),
+            ),
+            // One per `CTADL0004` above: the (generator, direction) declarations that
+            // produced no endpoint. In generator-direction units, not ports.
+            (
+                "unmatchedDeclarations".to_string(),
+                serde_json::json!(unmatched_declarations),
             ),
         ]),
     ));
@@ -611,6 +634,20 @@ fn notification(
     text: String,
     properties: BTreeMap<String, serde_json::Value>,
 ) -> Notification {
+    notification_with_message_id(descriptor_id, "default", level, arguments, text, properties)
+}
+
+/// [`notification`] for a descriptor that declares more than one message string. `message_id`
+/// selects which (§3.11.7) and must be a key of the descriptor's `messageStrings`, otherwise
+/// a consumer re-rendering the message from `arguments` has nothing to render.
+fn notification_with_message_id(
+    descriptor_id: &str,
+    message_id: &str,
+    level: &str,
+    arguments: Vec<String>,
+    text: String,
+    properties: BTreeMap<String, serde_json::Value>,
+) -> Notification {
     let mut notif = Notification::builder()
         .descriptor(
             ReportingDescriptorReference::builder()
@@ -624,7 +661,7 @@ fn notification(
             // Both forms: `text` for a human reading the file, `id` + `arguments` so a
             // consumer can read the condition without parsing prose.
             Message::builder()
-                .id("default".to_string())
+                .id(message_id.to_string())
                 .arguments(arguments)
                 .text(text)
                 .build(),
@@ -650,6 +687,19 @@ fn notification_descriptor(
     description: &str,
     message: &str,
 ) -> ReportingDescriptor {
+    notification_descriptor_multi(id, name, description, &[("default", message)])
+}
+
+/// [`notification_descriptor`] for a notification whose prose depends on which of several
+/// conditions fired, one `messageStrings` entry per condition (§3.49.11). The entry a given
+/// notification selects is its `message.id`; `default` is the one used when the condition is
+/// not known more precisely.
+fn notification_descriptor_multi(
+    id: &str,
+    name: &str,
+    description: &str,
+    messages: &[(&str, &str)],
+) -> ReportingDescriptor {
     ReportingDescriptor::builder()
         .id(id.to_string())
         .name(name.to_string())
@@ -658,13 +708,162 @@ fn notification_descriptor(
                 .text(description.to_string())
                 .build(),
         )
-        .message_strings(BTreeMap::from([(
-            "default".to_string(),
-            MultiformatMessageString::builder()
-                .text(message.to_string())
-                .build(),
-        )]))
+        .message_strings(
+            messages
+                .iter()
+                .map(|(key, text)| {
+                    (
+                        (*key).to_string(),
+                        MultiformatMessageString::builder()
+                            .text((*text).to_string())
+                            .build(),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>(),
+        )
         .build()
+}
+
+/// The `message.id`s [`unmatched_message`] can select on `CTADL0004`, one per way a declared
+/// port can produce no endpoint. Also the notification's `properties.reason`, so a consumer
+/// can branch on the cause without parsing prose.
+const DEAD_UNKNOWN: &str = "default";
+const DEAD_NO_FUNCTION: &str = "noFunctionMatched";
+const DEAD_LOCAL_NOT_FOUND: &str = "localNotFound";
+const DEAD_NO_CALLER: &str = "noCallerMatched";
+const DEAD_PORT_REJECTED: &str = "portRejected";
+const DEAD_MIXED: &str = "mixedReasons";
+
+/// The prose, `message.id` and `message.arguments` for one `CTADL0004`.
+struct UnmatchedMessage {
+    message_id: &'static str,
+    arguments: Vec<String>,
+    text: String,
+    /// The `Variable(name)` the port named, when that is what failed to resolve.
+    variable: Option<String>,
+}
+
+/// Explain *why* a generator's declaration produced no endpoint.
+///
+/// The count reaching zero is not by itself evidence that nothing matched the generator's
+/// `where` constraints: functions can match and the port still resolve in none of them.
+/// Saying "matched no function" in that case sends the reader to rewrite a constraint that
+/// was working. Every arm shares `{0}` = generator index, `{1}` = model file, `{2}` =
+/// direction; later placeholders are arm-specific.
+fn unmatched_message(
+    index: usize,
+    file: &str,
+    direction: &str,
+    stats: &EndpointStats,
+) -> UnmatchedMessage {
+    let head = vec![index.to_string(), file.to_string(), direction.to_string()];
+    let functions = stats.functions_matched;
+    // A generator declaring several ports of one direction can fail for several reasons at
+    // once; naming one of them would misreport the others.
+    let mut reasons = stats.unmatched.iter();
+    let (first, rest) = (reasons.next(), reasons.next());
+    match (first, rest) {
+        (Some(UnmatchedReason::NoFunctionMatched), None) => UnmatchedMessage {
+            message_id: DEAD_NO_FUNCTION,
+            arguments: head,
+            text: format!(
+                "Model generator {index} in '{file}' declares a {direction}, but no function in \
+                 the program matched its 'where' constraints, so it contributes nothing to the \
+                 query."
+            ),
+            variable: None,
+        },
+        (Some(UnmatchedReason::LocalNotFound(name)), None) => UnmatchedMessage {
+            message_id: DEAD_LOCAL_NOT_FOUND,
+            arguments: {
+                let mut a = head;
+                a.push(name.clone());
+                a.push(functions.to_string());
+                a
+            },
+            text: format!(
+                "Model generator {index} in '{file}' declares a {direction} on port \
+                 'Variable({name})': its 'where' constraints matched {functions} function(s), but \
+                 none of them has a local variable named '{name}', so it contributes nothing to \
+                 the query."
+            ),
+            variable: Some(name.clone()),
+        },
+        (Some(UnmatchedReason::NoCallerMatched), None) => UnmatchedMessage {
+            message_id: DEAD_NO_CALLER,
+            arguments: {
+                let mut a = head;
+                a.push(functions.to_string());
+                a
+            },
+            text: format!(
+                "Model generator {index} in '{file}' declares a {direction} at call sites: its \
+                 'where' constraints matched {functions} function(s), but no caller of them \
+                 satisfied its 'in_function' constraint, so it contributes nothing to the query."
+            ),
+            variable: None,
+        },
+        (Some(UnmatchedReason::PortRejected), None) => UnmatchedMessage {
+            message_id: DEAD_PORT_REJECTED,
+            arguments: head,
+            text: format!(
+                "Model generator {index} in '{file}' declares a {direction} on a port that is not \
+                 valid for its 'find' method, so it contributes nothing to the query."
+            ),
+            variable: None,
+        },
+        (Some(_), Some(_)) => {
+            let joined = stats
+                .unmatched
+                .iter()
+                .map(unmatched_reason_phrase)
+                .collect::<Vec<_>>()
+                .join("; ");
+            UnmatchedMessage {
+                message_id: DEAD_MIXED,
+                arguments: {
+                    let mut a = head;
+                    a.push(stats.ports_declared.to_string());
+                    a.push(joined.clone());
+                    a
+                },
+                text: format!(
+                    "Model generator {index} in '{file}' declares {} {direction} port(s), none of \
+                     which matched anything in the program ({joined}), so it contributes nothing \
+                     to the query.",
+                    stats.ports_declared
+                ),
+                variable: None,
+            }
+        }
+        // Unreachable in practice: Stage 1 records a reason on every zero-row path. Fall back
+        // to prose that claims no cause rather than to one that might be wrong.
+        (None, _) => UnmatchedMessage {
+            message_id: DEAD_UNKNOWN,
+            arguments: head,
+            text: format!(
+                "Model generator {index} in '{file}' declares a {direction} that matched nothing \
+                 in the program, so it contributes nothing to the query."
+            ),
+            variable: None,
+        },
+    }
+}
+
+/// One clause of the `mixedReasons` list.
+fn unmatched_reason_phrase(reason: &UnmatchedReason) -> String {
+    match reason {
+        UnmatchedReason::NoFunctionMatched => {
+            "no function matched its 'where' constraints".to_string()
+        }
+        UnmatchedReason::LocalNotFound(name) => {
+            format!("no matched function has a local named '{name}'")
+        }
+        UnmatchedReason::NoCallerMatched => {
+            "no caller satisfied its 'in_function' constraint".to_string()
+        }
+        UnmatchedReason::PortRejected => "a port is not valid for its 'find' method".to_string(),
+    }
 }
 
 /// The `CTADL00xx`/`CTADL01xx` descriptors, declared once in `tool.driver.notifications`
@@ -692,12 +891,46 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
             "No taint sinks were configured, but {0} source endpoint(s) were. A taint query \
              with no sink is vacuous.",
         ),
-        notification_descriptor(
+        notification_descriptor_multi(
             NOTIF_GENERATOR_DEAD,
             "Model generator matched nothing",
-            "A model generator declared an endpoint that matched no function",
-            "Model generator {0} in '{1}' declares a {2} but matched no function in the \
-             program, so it contributes nothing to the query.",
+            "A model generator declared a port that produced no endpoint",
+            // One message per cause; see `unmatched_message`. `{0}` = generator index,
+            // `{1}` = model file, `{2}` = direction throughout.
+            &[
+                (
+                    DEAD_UNKNOWN,
+                    "Model generator {0} in '{1}' declares a {2} that matched nothing in the \
+                     program, so it contributes nothing to the query.",
+                ),
+                (
+                    DEAD_NO_FUNCTION,
+                    "Model generator {0} in '{1}' declares a {2}, but no function in the program \
+                     matched its 'where' constraints, so it contributes nothing to the query.",
+                ),
+                (
+                    DEAD_LOCAL_NOT_FOUND,
+                    "Model generator {0} in '{1}' declares a {2} on port 'Variable({3})': its \
+                     'where' constraints matched {4} function(s), but none of them has a local \
+                     variable named '{3}', so it contributes nothing to the query.",
+                ),
+                (
+                    DEAD_NO_CALLER,
+                    "Model generator {0} in '{1}' declares a {2} at call sites: its 'where' \
+                     constraints matched {3} function(s), but no caller of them satisfied its \
+                     'in_function' constraint, so it contributes nothing to the query.",
+                ),
+                (
+                    DEAD_PORT_REJECTED,
+                    "Model generator {0} in '{1}' declares a {2} on a port that is not valid for \
+                     its 'find' method, so it contributes nothing to the query.",
+                ),
+                (
+                    DEAD_MIXED,
+                    "Model generator {0} in '{1}' declares {3} {2} port(s), none of which matched \
+                     anything in the program ({4}), so it contributes nothing to the query.",
+                ),
+            ],
         ),
         notification_descriptor(
             NOTIF_FUNCTION_NOT_INDEXED,
@@ -710,22 +943,22 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
             NOTIF_NO_SOURCES_MATCHED,
             "No sources matched",
             "Sources were declared but none matched the program",
-            "{0} source endpoint(s) were configured but none matched the program, so no taint \
-             could be seeded.",
+            "{0} source port(s) were declared but none of them matched anything in the program, \
+             so no taint could be seeded.",
         ),
         notification_descriptor(
             NOTIF_NO_SINKS_MATCHED,
             "No sinks matched",
             "Sinks were declared but none matched the program",
-            "{0} sink endpoint(s) were configured but none matched the program, so no flow \
-             could be detected.",
+            "{0} sink port(s) were declared but none of them matched anything in the program, so \
+             no flow could be detected.",
         ),
         notification_descriptor(
             NOTIF_MATCH_SUMMARY,
             "Endpoint match summary",
-            "How many endpoints the models declared and how many matched",
-            "Matched {0} source and {1} sink endpoints from {2} declared model endpoint(s); \
-             {3} declaration(s) matched nothing.",
+            "How many ports the models declared and how many endpoints they matched",
+            "Declared {0} source and {1} sink port(s), which matched {2} source and {3} sink \
+             endpoint(s) in the program; {4} declared port(s) matched nothing.",
         ),
         notification_descriptor(
             NOTIF_PATHS_DISABLED,

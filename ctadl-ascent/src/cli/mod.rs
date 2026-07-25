@@ -195,11 +195,12 @@ pub fn query(
                 // alone, which would conflate two model files that happen to number their
                 // generators the same. Summing over imports is what makes a generator that
                 // is dead against one import but live against another come out live.
-                for ((index, direction), count) in &s.endpoint_stats {
-                    *diagnostics
+                for ((index, direction), stats) in &s.endpoint_stats {
+                    diagnostics
                         .generator_stats
                         .entry((model_path.clone(), *index, *direction))
-                        .or_insert(0) += count;
+                        .or_default()
+                        .merge(stats);
                 }
                 if let Some(ref mut s0) = models_batch {
                     s0.union_with(&s)?;
@@ -241,15 +242,17 @@ pub fn query(
             formal_params.extend(built.formals);
         }
 
-        // Declared: one per (model file, generator) that named an endpoint of that
-        // direction, plus flowy's. Matched: post-fan-out `QueryEndpoint`s. The two are not
-        // comparable in magnitude — which of them is zero is the question they answer.
+        // Declared: model *ports* of that direction, plus flowy's already-resolved
+        // endpoints (one port each). Matched: post-fan-out `QueryEndpoint`s. Counting
+        // (generator, direction) keys here instead made `CTADL0100` compare a count of
+        // generators against a count of endpoints.
         let count_declared = |direction| {
             diagnostics
                 .generator_stats
-                .keys()
-                .filter(|(_, _, d)| *d == direction)
-                .count()
+                .iter()
+                .filter(|((_, _, d), _)| *d == direction)
+                .map(|(_, stats)| stats.ports_declared)
+                .sum::<usize>()
         };
         diagnostics.sources_declared =
             count_declared(crate::facts::TaintDirection::Forward) + flowy_sources;

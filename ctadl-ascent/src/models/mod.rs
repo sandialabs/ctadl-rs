@@ -32,6 +32,8 @@ pub mod codegen;
 pub mod json;
 pub mod universe_set;
 
+pub use json::{EndpointStats, UnmatchedReason};
+
 #[cfg(test)]
 mod tests;
 
@@ -195,11 +197,15 @@ pub fn try_load_models_from_values(
 pub struct ModelsBatch {
     pub summary: SummaryBatch,
     pub endpoint: EndpointBatch,
-    /// Endpoint rows Stage 1 emitted per (generator index, direction) — see
+    /// What Stage 1 did per (generator index, direction) — see
     /// [`json::ModelGeneratorIngest::endpoint_stats`]. Key presence means the generator
-    /// declared an endpoint of that direction; a zero value means it matched nothing,
-    /// which `cli::query` turns into a `CTADL0004` SARIF notification.
-    pub endpoint_stats: BTreeMap<(usize, TaintDirection), usize>,
+    /// declared a port of that direction; a zero `endpoints_matched` means it matched
+    /// nothing, which `cli::query` turns into a `CTADL0004` SARIF notification.
+    ///
+    /// The key has no model file in it, so batches unioned across *different* model files
+    /// conflate generators that share an index. `cli::query` therefore re-keys each file's
+    /// stats before unioning, and reads them from there rather than from here.
+    pub endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats>,
 }
 
 impl ModelsBatch {
@@ -208,11 +214,12 @@ impl ModelsBatch {
     pub fn union_with(&mut self, other: &Self) -> Result<(), Error> {
         self.summary.union_with(&other.summary)?;
         self.endpoint.union_with(&other.endpoint)?;
-        // Sum per key, mirroring `EndpointBatch::union_with`'s row concatenation: the same
+        // Merge per key, mirroring `EndpointBatch::union_with`'s row concatenation: the same
         // model file is re-matched once per import, and a generator that is dead against one
-        // import but live against another must come out live.
-        for (key, count) in &other.endpoint_stats {
-            *self.endpoint_stats.entry(*key).or_insert(0) += count;
+        // import but live against another must come out live. See [`EndpointStats::merge`]
+        // for why the declared-port count is *not* summed here.
+        for (key, stats) in &other.endpoint_stats {
+            self.endpoint_stats.entry(*key).or_default().merge(stats);
         }
         Ok(())
     }

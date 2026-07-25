@@ -9,7 +9,7 @@ To convert a `json` model file into `jsonl`, you can do:
 jq -c '.model_generators[] // empty' models.json > models.jsonl
 ```
 */
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 use hashbrown::hash_map::HashMap;
@@ -69,11 +69,65 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     scratch: Vec<UniverseSet<&'p str>>,
     // collected JSON parsing errors
     pub errors: Vec<crate::error::JsonModelError>,
-    /// Rows Stage 1 emitted per (generator index, direction). Key presence means the
-    /// generator *declared* an endpoint of that direction; a zero value means it
-    /// declared one and matched nothing. Drives the `CTADL0004` SARIF notification, so a
-    /// `where` constraint that selects no function is reported instead of vanishing.
-    pub endpoint_stats: BTreeMap<(usize, TaintDirection), usize>,
+    /// What Stage 1 did per (generator index, direction) — see [`EndpointStats`]. Key
+    /// presence means the generator *declared* a port of that direction; a zero
+    /// `endpoints_matched` means it declared one and matched nothing. Drives the
+    /// `CTADL0004` SARIF notification, so a `where` constraint that selects no function is
+    /// reported instead of vanishing.
+    pub endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats>,
+}
+
+/// What Stage 1 did with one generator's port declarations in one direction.
+///
+/// `ports_declared` and `endpoints_matched` are the two ends of the same fan-out: a model
+/// file declares *ports* (one `{"port": "Argument(0)"}` entry each), and each port matches
+/// zero or more functions, every one of which becomes an endpoint row. Reporting the first
+/// count as though it were the second is what made `CTADL0100` read as nonsense; the SARIF
+/// writer now names the unit of every number it prints.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct EndpointStats {
+    /// Ports the generator declared in this direction: one per `sources`/`sinks` entry whose
+    /// `port` parsed. A property of the model file alone, so [`Self::merge`] does *not* sum
+    /// it — the same file is re-matched once per import.
+    pub ports_declared: usize,
+    /// Endpoint rows emitted for those ports, after fanning out over the matched functions.
+    /// Summed by [`Self::merge`]: a generator dead against one import but live against
+    /// another is live.
+    pub endpoints_matched: usize,
+    /// How many functions the generator's `where` constraints selected. Reported by
+    /// `CTADL0004` to separate "nothing matched" from "functions matched but the port did
+    /// not resolve in any of them".
+    pub functions_matched: usize,
+    /// Why nothing matched. Meaningful only when `endpoints_matched` is zero; a generator
+    /// declaring several ports of one direction can fail for several reasons at once.
+    pub unmatched: BTreeSet<UnmatchedReason>,
+}
+
+impl EndpointStats {
+    /// Folds in the stats for the same (generator, direction) from another load of the same
+    /// model file — one per import. Each field combines differently; see the field docs.
+    pub fn merge(&mut self, other: &Self) {
+        self.ports_declared = self.ports_declared.max(other.ports_declared);
+        self.endpoints_matched += other.endpoints_matched;
+        self.functions_matched = self.functions_matched.max(other.functions_matched);
+        self.unmatched.extend(other.unmatched.iter().cloned());
+    }
+}
+
+/// Why a declared port produced no endpoint row. The generator matching zero functions is
+/// only one of the ways; `CTADL0004` used to report all of them as that one.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum UnmatchedReason {
+    /// The generator's `where` constraints selected no function in the program.
+    NoFunctionMatched,
+    /// Functions matched, but none of them declares a local by this name, so the
+    /// `Variable(name)` port resolved in none of them.
+    LocalNotFound(String),
+    /// `find: callsites` with an `in_function` constraint that no caller satisfied.
+    NoCallerMatched,
+    /// The port is not usable in this generator's context. Always accompanied by a hard JSON
+    /// error, so in practice the load fails before any SARIF is written.
+    PortRejected,
 }
 
 static ARGUMENT_REGEX: OnceLock<Regex> = OnceLock::new();
@@ -101,6 +155,18 @@ fn variable_regex() -> &'static Regex {
 pub enum FindMethod {
     Methods,
     Callsites,
+}
+
+/// What one [`ModelGeneratorIngest::emit_endpoint_rows`] call did, folded into
+/// [`EndpointStats`] by its caller.
+struct PortEmit {
+    /// Endpoint rows appended for this port.
+    rows: usize,
+    /// Functions the generator's `where` constraints selected (the callees, for
+    /// `find: callsites`).
+    functions: usize,
+    /// Set exactly when `rows` is zero.
+    reason: Option<UnmatchedReason>,
 }
 
 /// Put `value` in the slot for generator index `n`, growing `v` with empty sets as needed.
@@ -408,17 +474,25 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         wildcard: bool,
         saturating: bool,
     ) {
-        let rows =
+        let emit =
             self.emit_endpoint_rows(n, idx, var_name, ap, label, direction, wildcard, saturating);
-        // Key presence records that generator `n` *declared* an endpoint in this direction
-        // even when it matched nothing; a zero total is exactly the `CTADL0004` condition.
-        // Accumulated rather than assigned: one generator may declare several ports of the
-        // same direction, and matching in any of them makes the generator live.
-        *self.endpoint_stats.entry((n, direction)).or_insert(0) += rows;
+        // Key presence records that generator `n` *declared* a port in this direction even
+        // when it matched nothing; a zero `endpoints_matched` is exactly the `CTADL0004`
+        // condition. Ports are counted per call because one generator may declare several of
+        // the same direction; the rows are accumulated because matching in any of those ports
+        // makes the generator live.
+        let stats = self.endpoint_stats.entry((n, direction)).or_default();
+        stats.ports_declared += 1;
+        stats.endpoints_matched += emit.rows;
+        // Max, not sum: every port of a generator re-derives the same matched-function set.
+        stats.functions_matched = stats.functions_matched.max(emit.functions);
+        if let Some(reason) = emit.reason {
+            stats.unmatched.insert(reason);
+        }
     }
 
-    /// The body of [`Self::emit_endpoints`], returning the number of endpoint rows appended
-    /// so the caller can record it. Every `return` here is a "matched nothing" path.
+    /// The body of [`Self::emit_endpoints`], reporting what it did so the caller can record
+    /// it. Every early `return` here is a "matched nothing" path.
     fn emit_endpoint_rows(
         &mut self,
         n: usize,
@@ -429,7 +503,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         direction: TaintDirection,
         wildcard: bool,
         saturating: bool,
-    ) -> usize {
+    ) -> PortEmit {
         let tag = idx.0;
         let mut rows = 0usize;
         let is_callsites = matches!(self.find_method.get(&n), Some(FindMethod::Callsites));
@@ -442,9 +516,14 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 field_name: "port".to_string(),
                 message: "'Variable(...)' is not supported with find: callsites".to_string(),
             });
-            return rows;
+            return PortEmit {
+                rows,
+                functions: 0,
+                reason: Some(UnmatchedReason::PortRejected),
+            };
         }
         let callees = matched_functions(&self.methods[n], self.vmt);
+        let functions = callees.len();
         if !is_callsites {
             for func in callees {
                 // For a `Variable(name)` port, resolve the name to a base `LocalIdx` in *this*
@@ -483,7 +562,21 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 );
                 rows += 1;
             }
-            return rows;
+            // A non-`Local` port appends a row for every matched function, so `rows == 0`
+            // with `functions > 0` can only be the `continue` above: the local named by a
+            // `Variable(...)` port exists in none of them.
+            let reason = match (rows, var_name) {
+                (0, Some(name)) if functions > 0 => {
+                    Some(UnmatchedReason::LocalNotFound(name.to_string()))
+                }
+                (0, _) => Some(UnmatchedReason::NoFunctionMatched),
+                _ => None,
+            };
+            return PortEmit {
+                rows,
+                functions,
+                reason,
+            };
         }
         // Callsite-scoped: resolve the caller filter. `All` means "any caller". (`Local` ports
         // were rejected above, so `local_index` is always `None` here.)
@@ -511,7 +604,18 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 rows += 1;
             }
         }
-        rows
+        // `callers` is `[None]` when no `in_function` was given, so an empty product with
+        // matched callees means the `in_function` constraint itself selected no caller.
+        let reason = match rows {
+            0 if functions > 0 => Some(UnmatchedReason::NoCallerMatched),
+            0 => Some(UnmatchedReason::NoFunctionMatched),
+            _ => None,
+        };
+        PortEmit {
+            rows,
+            functions,
+            reason,
+        }
     }
 
     /// Encodes models. It is assumed that each json element of the iterator represents an element of `model_generators`.
