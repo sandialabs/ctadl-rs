@@ -48,14 +48,14 @@
               "type": "array",
               "items": { "type": "string" }
             },
-            "extends": {
-              "description": "Matches against base class of method",
-              "type": ["string", "array"],
-              "items": { "type": "string" }
-            },
-            "unqualified-id": {
-              "description": "Matches exactly with the unqualified-id of the method",
+            "qualified-id": {
+              "description": "Exact, whole-string match on the method's fully-qualified id (no regex). On jvm/dex this is the method id, e.g. 'Lcom/example/Foo;->bar(I)V'; on pcode it is the namespace-qualified but address-free name, e.g. 'Foo::bar' or '<EXTERNAL>::system'.",
               "type": "string"
+            },
+            "qualified-ids": {
+              "description": "As 'qualified-id', but matches any id in the list.",
+              "type": "array",
+              "items": { "type": "string" }
             }
           }
         },
@@ -214,10 +214,6 @@
               "description": "Names of fields",
               "type": "array",
               "items": { "type": "string" }
-            },
-            "unqualified-id": {
-              "description": "Matches exactly with the unqualified-id of the field",
-              "type": "string"
             }
           }
         }

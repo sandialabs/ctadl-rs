@@ -459,6 +459,12 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
             // Example 2: Define a sink using an exact signature match.
             // This will match the exact method signature 'executeQuery' and mark its first argument
             // as a sink for taint analysis.
+            //
+            // "name" matches the bare method name, so it selects every 'executeQuery' in the
+            // program. To pin down one specific method, use "qualified-id" instead: an exact
+            // (non-regex) match on the fully-qualified id, e.g.
+            //     {"constraint": "signature_match", "qualified-id": "Lcom/example/Db;->executeQuery(Ljava/lang/String;)V"}
+            // on jvm/dex, or "Db::executeQuery" on pcode.
             "find": "methods",
             "where": [
                 {
@@ -685,7 +691,8 @@ fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
                     return cli::inspect_parquet(path).map_err(Into::into);
                 }
                 if let Some(file_name) = path.file_name().and_then(|n| n.to_str())
-                    && (file_name == "ir-program.bitcode" || file_name == "ir-vmt.bitcode")
+                    && (file_name == project::PROGRAM_BITCODE_FILE
+                        || file_name == project::VMT_BITCODE_FILE)
                 {
                     return cli::inspect_bitcode(path).map_err(Into::into);
                 }

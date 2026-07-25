@@ -65,7 +65,37 @@ pub fn init_store_path<P: AsRef<Path>>(override_path: Option<P>) -> Result<(), &
 /// - `1`: original format.
 /// - `2`: MIR locals moved into a per-function `Locals` table and `Variable::Local` became a
 ///   `LocalIdx` instead of a name, changing the `bitcode` wire format of `ir-program.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "2";
+/// - `3`: the native VMT gained a fully-qualified-name column (`NativeQualifiedName`, backing
+///   the `qualified-id` model constraint), changing the `bitcode` wire format of
+///   `ir-vmt.bitcode`.
+pub const IMPORT_FORMAT_VERSION: &str = "3";
+
+/// Filename of the serialized IR program inside an import directory.
+///
+/// Shared with the `inspect` command, which recognizes a raw path into the store by filename
+/// rather than by resolving an [`ArtifactImport`]. Keeping the spelling in one place means
+/// renaming an artifact file cannot silently desync the writer from the inspector.
+pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
+
+/// Filename of the serialized virtual method table inside an import directory.
+/// See [`PROGRAM_BITCODE_FILE`].
+pub const VMT_BITCODE_FILE: &str = "ir-vmt.bitcode";
+
+/// Filename of an import's config, which records its [`IMPORT_FORMAT_VERSION`].
+pub const IMPORT_CONFIG_FILE: &str = "import_config.json";
+
+/// Reads just the format version out of the `import_config.json` beside `path`, skipping the
+/// compatibility check [`ArtifactImport::load`] applies.
+///
+/// `load` refuses a stale import outright, which is right for anything that goes on to *use*
+/// it and wrong for diagnosing one: the version worth reporting is precisely the one that
+/// makes `load` fail. Returns `None` when there is no readable config beside `path`.
+pub fn import_format_version_beside<P: AsRef<Path>>(path: P) -> Option<String> {
+    let config = path.as_ref().parent()?.join(IMPORT_CONFIG_FILE);
+    let text = std::fs::read_to_string(config).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    Some(value.get("version")?.as_str()?.to_string())
+}
 
 /// Represents our local import of an artifact
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
@@ -179,19 +209,19 @@ impl ArtifactImport {
     pub fn load_by_name(name: &str) -> Result<Self, Error> {
         let path = StorePaths::import_path()
             .join(name)
-            .join("import_config.json");
+            .join(IMPORT_CONFIG_FILE);
         Self::load(&path).err_context(|| format!("reading import config: '{}'", path.display()))
     }
 
     /// Path to the serialized IR program for this artifact
     #[inline]
     pub fn program_path(&self) -> PathBuf {
-        self.import_path.join("ir-program.bitcode")
+        self.import_path.join(PROGRAM_BITCODE_FILE)
     }
 
     /// Path to the serialized virtual method table
     pub fn vmt_path(&self) -> PathBuf {
-        self.import_path.join("ir-vmt.bitcode")
+        self.import_path.join(VMT_BITCODE_FILE)
     }
 
     /// Path to the serialized flowy requirements
@@ -206,7 +236,7 @@ impl ArtifactImport {
     /// Path to the IR program for this artifact
     #[inline]
     pub fn config_path(&self) -> PathBuf {
-        self.import_path.join("import_config.json")
+        self.import_path.join(IMPORT_CONFIG_FILE)
     }
 
     /// True if the import destination (the serialized IR program) is already present

@@ -127,28 +127,20 @@ fn test_valid_json_still_works() {
 #[test]
 fn test_callsites_matches_callee_and_caller() {
     use ctadl_ir::mir::call::{
-        NativeFunction, NativeSignature, NativeSimpleName, VirtualMethodTable,
+        NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
     };
 
+    let method = |n: &str| {
+        (
+            NativeSimpleName(n.into()),
+            NativeSignature(n.into()),
+            NativeFunction(n.into()),
+            NativeQualifiedName(n.into()),
+        )
+    };
     let program_info = ProgramInfo {
         vmt: VirtualMethodTable::Native {
-            methods: vec![
-                (
-                    NativeSimpleName("get".into()),
-                    NativeSignature("get".into()),
-                    NativeFunction("get".into()),
-                ),
-                (
-                    NativeSimpleName("read_http_data".into()),
-                    NativeSignature("read_http_data".into()),
-                    NativeFunction("read_http_data".into()),
-                ),
-                (
-                    NativeSimpleName("unrelated".into()),
-                    NativeSignature("unrelated".into()),
-                    NativeFunction("unrelated".into()),
-                ),
-            ],
+            methods: vec![method("get"), method("read_http_data"), method("unrelated")],
         },
         ..Default::default()
     };
@@ -218,8 +210,8 @@ fn test_callsites_propagation_rejected() {
 // ---------------------------------------------------------------------------
 
 use ctadl_ir::mir::call::{
-    JavaClass, JavaMethod, JavaSignature, JavaSimpleName, NativeFunction, NativeSignature,
-    NativeSimpleName, VirtualMethodTable,
+    JavaClass, JavaMethod, JavaSignature, JavaSimpleName, NativeFunction, NativeQualifiedName,
+    NativeSignature, NativeSimpleName, VirtualMethodTable,
 };
 use ctadl_ir::mir::{
     AccessPath, BasicBlockData, Exp, FieldPath, FunctionData, Functions, ParameterIdx,
@@ -266,6 +258,7 @@ fn native_program() -> ProgramInfo {
             NativeSimpleName(n.into()),
             NativeSignature(n.into()),
             NativeFunction(n.into()),
+            NativeQualifiedName(n.into()),
         )
     };
     ProgramInfo {
@@ -490,6 +483,368 @@ fn unknown_constraint_is_hard_error() {
 #[test]
 fn top_level_integer_compare_is_hard_error() {
     assert_unexpected_constraint(json!([{"constraint": "==", "value": 1}]));
+}
+
+// ---------------------------------------------------------------------------
+// Fail-open `where` constraints are hard errors.
+//
+// A constraint the loader could not act on used to be a silent no-op, and because
+// the working set starts as `UniverseSet::all()` a no-op constraint left the
+// generator matching *every* function in the program. `CTADL0004` only reports
+// generators that matched nothing, so nothing caught it.
+// ---------------------------------------------------------------------------
+
+/// Loads a `find: methods` generator with the given `where` against `program_info`, returning
+/// the collected model errors. Panics if the load *succeeded* — for these cases that is the
+/// bug under test.
+fn load_errors_with(program_info: &ProgramInfo, where_c: serde_json::Value) -> Vec<String> {
+    let mut model_builders = ModelBuilders::new();
+    let mut ingest = ModelGeneratorIngest::new(program_info, &mut model_builders);
+    let model = json!({"find": "methods", "where": where_c, "model": {}});
+    match ingest.encode_models(vec![model]) {
+        Err(Error::JsonModel(errors)) => errors.iter().map(|e| e.to_string()).collect(),
+        other => panic!("expected the model to fail loading, got: {other:?}"),
+    }
+}
+
+/// Asserts that loading a generator with the given `where` fails with an `UnexpectedField`
+/// naming `field_name`.
+fn assert_unexpected_field(where_c: serde_json::Value, field_name: &str) {
+    let program_info = native_program();
+    let mut model_builders = ModelBuilders::new();
+    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut model_builders);
+    let model = json!({"find": "methods", "where": where_c, "model": {}});
+    match ingest.encode_models(vec![model]) {
+        Err(Error::JsonModel(errors)) => assert!(
+            errors.iter().any(|e| matches!(
+                e,
+                JsonModelError::UnexpectedField { field_name: f, .. } if f == field_name
+            )),
+            "expected UnexpectedField {field_name:?}, got: {errors:?}"
+        ),
+        other => panic!("expected UnexpectedField {field_name:?}, got: {other:?}"),
+    }
+}
+
+/// Asserts that loading a generator with the given `where` fails with a `MissingField`.
+fn assert_missing_field(where_c: serde_json::Value) {
+    let program_info = native_program();
+    let mut model_builders = ModelBuilders::new();
+    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut model_builders);
+    let model = json!({"find": "methods", "where": where_c, "model": {}});
+    match ingest.encode_models(vec![model]) {
+        Err(Error::JsonModel(errors)) => assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, JsonModelError::MissingField { .. })),
+            "expected MissingField, got: {errors:?}"
+        ),
+        other => panic!("expected MissingField error, got: {other:?}"),
+    }
+}
+
+#[test]
+fn signature_constraint_keyed_on_name_is_hard_error() {
+    // The real typo this whole class of bug was found through: `name` where `pattern` was
+    // meant. It used to match every function in the program.
+    assert_missing_field(json!([{"constraint": "signature", "name": ".*sink.*"}]));
+    assert_unexpected_field(
+        json!([{"constraint": "signature", "name": ".*sink.*"}]),
+        "name",
+    );
+}
+
+#[test]
+fn signature_match_with_no_selector_is_hard_error() {
+    assert_missing_field(json!([{"constraint": "signature_match"}]));
+}
+
+#[test]
+fn signature_match_with_unknown_key_is_hard_error() {
+    // `extends` was documented on `signature_match` but never implemented, so it was
+    // silently dropped — leaving the generator matching on `name` alone.
+    assert_unexpected_field(
+        json!([{"constraint": "signature_match", "name": "a", "extends": "Y"}]),
+        "extends",
+    );
+}
+
+#[test]
+fn dropped_unqualified_id_is_hard_error() {
+    // `unqualified-id` was a pure alias for `name` on `uses_field` and unimplemented on
+    // `signature_match`. Dropping it from the honored key sets makes both loud.
+    assert_unexpected_field(
+        json!([{"constraint": "signature_match", "unqualified-id": "a"}]),
+        "unqualified-id",
+    );
+    assert_unexpected_field(
+        json!([{"constraint": "uses_field", "unqualified-id": "secret"}]),
+        "unqualified-id",
+    );
+}
+
+#[test]
+fn uses_field_with_no_selector_is_hard_error() {
+    assert_missing_field(json!([{"constraint": "uses_field"}]));
+}
+
+#[test]
+fn in_function_under_find_methods_is_hard_error() {
+    // There is no caller set to narrow under `find: methods`, so this used to vanish.
+    assert_unexpected_field(
+        json!([{"constraint": "in_function",
+                "inner": {"constraint": "name", "pattern": "^a$"}}]),
+        "in_function",
+    );
+}
+
+#[test]
+fn in_function_with_no_inner_is_hard_error() {
+    assert_missing_field(json!([{"constraint": "in_function"}]));
+}
+
+#[test]
+fn fail_open_constraint_no_longer_matches_everything() {
+    // The assertion that would have caught the original bug. Each of these `where` clauses
+    // was a silent no-op, so `matched_functions` returned all of {a, b, c} — a model meant to
+    // mark one method as a source became a global source. They must now fail to load.
+    for where_c in [
+        json!([{"constraint": "signature", "name": ".*sink.*"}]),
+        json!([{"constraint": "signature_match"}]),
+        json!([{"constraint": "uses_field"}]),
+        json!([{"constraint": "in_function",
+                "inner": {"constraint": "name", "pattern": "^a$"}}]),
+    ] {
+        let errors = load_errors_with(&native_program(), where_c.clone());
+        assert!(
+            !errors.is_empty(),
+            "expected {where_c} to be rejected, but it loaded"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `qualified-id`: exact, whole-string match on a method's fully-qualified id.
+// ---------------------------------------------------------------------------
+
+/// A native C++-style program with two same-named methods in different namespaces:
+/// `Foo::bar` and `Baz::bar`, both with simple name `bar`, plus a namespace-less `main`.
+/// This is the disambiguation `qualified-id` exists for — `name` cannot express it, and
+/// `parent` is populated only for the Java VMT.
+fn native_cpp_program() -> ProgramInfo {
+    let method = |simple: &str, qualified: &str, fq: &str| {
+        (
+            NativeSimpleName(simple.into()),
+            NativeSignature("()".into()),
+            NativeFunction(fq.into()),
+            NativeQualifiedName(qualified.into()),
+        )
+    };
+    ProgramInfo {
+        vmt: VirtualMethodTable::Native {
+            methods: vec![
+                method("bar", "Foo::bar", "Foo::bar@00101000"),
+                method("bar", "Baz::bar", "Baz::bar@00102000"),
+                method("main", "main", "main"),
+            ],
+        },
+        program: Program::new(Functions::new([
+            make_function("Foo::bar@00101000", 0, false, &[]),
+            make_function("Baz::bar@00102000", 0, false, &[]),
+            make_function("main", 0, false, &[]),
+        ])),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn qualified_id_disambiguates_same_named_natives() {
+    let program = native_cpp_program();
+    // `name` cannot tell the two `bar`s apart...
+    assert_eq!(
+        matched_functions(
+            &program,
+            json!([{"constraint": "signature_match", "name": "bar"}])
+        ),
+        set(&["Foo::bar@00101000", "Baz::bar@00102000"]),
+    );
+    // ...but `qualified-id` selects exactly one.
+    assert_eq!(
+        matched_functions(
+            &program,
+            json!([{"constraint": "signature_match", "qualified-id": "Foo::bar"}])
+        ),
+        set(&["Foo::bar@00101000"]),
+    );
+}
+
+#[test]
+fn qualified_ids_ors_within_itself() {
+    assert_eq!(
+        matched_functions(
+            &native_cpp_program(),
+            json!([{"constraint": "signature_match",
+                    "qualified-ids": ["Foo::bar", "main"]}])
+        ),
+        set(&["Foo::bar@00101000", "main"]),
+    );
+}
+
+#[test]
+fn qualified_id_is_exact_not_regex() {
+    // A regex that would match under `name` selects nothing here.
+    for id in ["bar", "Foo::.*", "^Foo::bar$", "Foo::ba"] {
+        let got = matched_functions(
+            &native_cpp_program(),
+            json!([{"constraint": "signature_match", "qualified-id": id}]),
+        );
+        assert!(
+            got.is_empty(),
+            "expected {id:?} to match nothing, got {got:?}"
+        );
+    }
+}
+
+#[test]
+fn qualified_id_accepts_the_verbatim_ir_id() {
+    // Models that spell the decorated id out still resolve, as they do for `name`.
+    assert_eq!(
+        matched_functions(
+            &native_cpp_program(),
+            json!([{"constraint": "signature_match", "qualified-id": "Foo::bar@00101000"}])
+        ),
+        set(&["Foo::bar@00101000"]),
+    );
+}
+
+#[test]
+fn qualified_id_for_absent_function_matches_nothing() {
+    // Fail-closed: naming a function the program does not have must not match everything.
+    let got = matched_functions(
+        &native_program(),
+        json!([{"constraint": "signature_match", "qualified-id": "nosuchfunction"}]),
+    );
+    assert!(got.is_empty(), "expected no matches, got: {got:?}");
+}
+
+#[test]
+fn qualified_id_ands_with_name() {
+    // Both keys narrow the same set, so a contradictory pair matches nothing.
+    let got = matched_functions(
+        &native_cpp_program(),
+        json!([{"constraint": "signature_match", "name": "main", "qualified-id": "Foo::bar"}]),
+    );
+    assert!(got.is_empty(), "expected no matches, got: {got:?}");
+}
+
+#[test]
+fn qualified_id_matches_every_function_sharing_a_qualified_name() {
+    // On pcode the qualified name is address-free, so imported thunks for the same symbol
+    // share one: Ghidra's `getName(true)` is `<EXTERNAL>::system` for all of them and only
+    // the entry point differs. `qualified-id` therefore selects the whole group, not one
+    // function. That is the intended granularity — they are the same logical callee — but it
+    // means `qualified-id` does not guarantee a single match on native frontends.
+    let method = |qualified: &str, fq: &str| {
+        (
+            NativeSimpleName("system".into()),
+            NativeSignature("()".into()),
+            NativeFunction(fq.into()),
+            NativeQualifiedName(qualified.into()),
+        )
+    };
+    let program = ProgramInfo {
+        vmt: VirtualMethodTable::Native {
+            methods: vec![
+                method("<EXTERNAL>::system", "<EXTERNAL>::system@00008d90"),
+                method("<EXTERNAL>::system", "<EXTERNAL>::system@00008da4"),
+                method("<EXTERNAL>::system", "<EXTERNAL>::system@00008db8"),
+            ],
+        },
+        program: Program::new(Functions::new([
+            make_function("<EXTERNAL>::system@00008d90", 0, false, &[]),
+            make_function("<EXTERNAL>::system@00008da4", 0, false, &[]),
+            make_function("<EXTERNAL>::system@00008db8", 0, false, &[]),
+        ])),
+        ..Default::default()
+    };
+    assert_eq!(
+        matched_functions(
+            &program,
+            json!([{"constraint": "signature_match", "qualified-id": "<EXTERNAL>::system"}])
+        ),
+        set(&[
+            "<EXTERNAL>::system@00008d90",
+            "<EXTERNAL>::system@00008da4",
+            "<EXTERNAL>::system@00008db8",
+        ]),
+    );
+    // Spelling the decorated id out picks exactly one out of the group.
+    assert_eq!(
+        matched_functions(
+            &program,
+            json!([{"constraint": "signature_match",
+                    "qualified-id": "<EXTERNAL>::system@00008da4"}])
+        ),
+        set(&["<EXTERNAL>::system@00008da4"]),
+    );
+}
+
+#[test]
+fn qualified_id_matches_java_method_id() {
+    // On jvm/dex the id is the `JavaMethod`, which until now was only ever a lookup *value*.
+    assert_eq!(
+        matched_functions(
+            &java_program(),
+            json!([{"constraint": "signature_match", "qualified-id": "Child.m"}])
+        ),
+        set(&["Child.m"]),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Predicate validation is hoisted out of the per-candidate evaluation loop.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn invalid_predicate_is_reported_exactly_once() {
+    // `eval_predicate` runs once per candidate class, so reporting from inside it emitted one
+    // copy of the same error per method in the program.
+    let errors = load_errors_with(
+        &java_program(),
+        json!([{"constraint": "parent", "inner": {"constraint": "totally_bogus"}}]),
+    );
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected exactly one error, got: {errors:?}"
+    );
+}
+
+#[test]
+fn invalid_predicate_is_reported_on_non_java_frontends() {
+    // `parent` matches nothing on a native VMT and used to return before evaluating, so a
+    // broken predicate was reported zero times — the same model file loaded cleanly or failed
+    // depending on which artifact it was run against.
+    let errors = load_errors_with(
+        &native_program(),
+        json!([{"constraint": "parent", "inner": {"constraint": "totally_bogus"}}]),
+    );
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected exactly one error, got: {errors:?}"
+    );
+}
+
+#[test]
+fn nested_signature_match_rejects_keys_it_cannot_honor() {
+    // The subject of a nested `signature_match` is already a class name, so `parent` is
+    // meaningless there and was silently dropped.
+    assert_unexpected_field(
+        json!([{"constraint": "parent",
+                "inner": {"constraint": "signature_match", "name": "Child", "parent": "X"}}]),
+        "parent",
+    );
 }
 
 #[test]

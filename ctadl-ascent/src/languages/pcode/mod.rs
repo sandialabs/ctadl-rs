@@ -10,7 +10,9 @@ use source_info::{ArtifactKey, SourceInfoBuilder};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{Error, ErrorContext};
-use ctadl_ir::mir::call::{NativeFunction, NativeSignature, NativeSimpleName, VirtualMethodTable};
+use ctadl_ir::mir::call::{
+    NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+};
 use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;
@@ -346,7 +348,25 @@ impl Context {
             } else {
                 stripped
             };
+            // The namespace-qualified name, e.g. `Foo::bar`. Ghidra's exporter builds
+            // `func_id` as `getName(true) + "@" + entryPoint` (ExportPcode.java), so the
+            // qualification is recoverable only from the id: `func_data.name` is the bare
+            // name and `func_name` above drops the namespace whenever the bare name happens
+            // to be globally unique. Compute it here, outside that branch, so the value
+            // never depends on which naming branch ran. Split on the LAST `@`: entry points
+            // contain none, so `<EXTERNAL>::system@EXTERNAL:00000007` splits correctly.
+            // Re-attach `simple_name` rather than the id's own tail so a namespace-less
+            // function's qualified name equals its simple name even on Mach-O, where
+            // `simple_name` has stripped a leading `_`.
             let signature = Self::format_native_signature(func_data, proto_facts);
+            let func_id_str: &str = func_id;
+            let qualified_raw = func_id_str
+                .rsplit_once('@')
+                .map_or(func_id_str, |(qualified, _entry_point)| qualified);
+            let qualified_name = match qualified_raw.rfind("::") {
+                Some(sep) => format!("{}::{}", &qualified_raw[..sep], simple_name),
+                None => simple_name.to_string(),
+            };
             let fq_name = func_name.clone();
 
             // Create a new function
@@ -380,6 +400,7 @@ impl Context {
                     NativeSimpleName(simple_name.into()),
                     NativeSignature(signature.as_str().into()),
                     NativeFunction(fq_name.as_str().into()),
+                    NativeQualifiedName(qualified_name.as_str().into()),
                 ));
             }
 
