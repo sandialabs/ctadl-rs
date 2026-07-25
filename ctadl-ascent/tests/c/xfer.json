@@ -22,7 +22,7 @@
       "where": [
         {
           "constraint": "signature",
-          "name": ".*sink.*"
+          "pattern": ".*sink.*"
         }
       ],
       "model": {

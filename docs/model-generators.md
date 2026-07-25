@@ -121,6 +121,20 @@ described below. If `where` is omitted, the rule matches everything of that
 > constraints previously masked real bugs (e.g. `any_of` behaving as AND). Keep
 > your model files in sync with the analyzer you run them against.
 
+> **So are unrecognized *fields*, and constraints with no usable field.** A
+> constraint must carry at least one field the loader acts on, and every field it
+> carries must be one that constraint honors. `{"constraint": "signature", "name":
+> "…"}` — `name` where `pattern` was meant — is rejected on both counts.
+>
+> This matters more than it looks. A generator's working set starts as *every*
+> function, and each constraint narrows it, so a constraint the loader could not
+> act on used to leave the generator matching **the whole program**: a model meant
+> to mark one method as a source silently became a global source. The
+> `CTADL0004` diagnostic only reports generators that matched *nothing*, so
+> nothing caught it. This mirrors `additionalProperties: false` in the JSON
+> schema, so an editor wired to the `$schema` URL flags the same mistakes as you
+> type.
+
 ### `model` — how to model them
 
 A `model` object carries one or more of: `sources`, `sinks`, `taint`,
@@ -146,9 +160,27 @@ fields. The main ones:
 | `constraint`       | Fields | Matches |
 | ------------------ | ------ | ------- |
 | `name`             | `pattern` | Regex match against a function/variable **name**. |
-| `signature_match`  | `name` / `names`, `parent` / `parents`, `extends`, `unqualified-id` | Structured match on a method signature: a name (or list), an owning class (`parent`/`parents`), a base class (`extends`), or an exact unqualified id. This is the workhorse for library modeling. |
+| `signature_match`  | `name` / `names`, `parent` / `parents`, `qualified-id` / `qualified-ids` | Structured match on a method signature: a simple name (or list), an owning class (`parent`/`parents`, Java only), or an exact fully-qualified id. This is the workhorse for library modeling. Fields given together are ANDed; a list field ORs within itself. |
 | `signature` / `signature_pattern` | `pattern` | Regex against the whole mangled signature, e.g. `".*\\(\\)Ljava/lang/String;"`. |
-| `unqualified-id`   | (on `signature_match`) | Exact match on the method's unqualified id. |
+| `qualified-id` / `qualified-ids` | (on `signature_match`) | **Exact, whole-string** match — not a regex — on the method's fully-qualified id. See below. |
+
+`qualified-id` is the one way to name a single method on every frontend. `name` matches the
+bare name, so it cannot separate two same-named methods; `parent`/`parents` can, but the
+class hierarchy exists only for the Java VMT. What the id looks like:
+
+| Frontend | `qualified-id` | Notes |
+| -------- | -------------- | ----- |
+| jvm / dex | `Lcom/example/Foo;->bar(I)V` | The method id, descriptor included. |
+| pcode | `Foo::bar`, `<EXTERNAL>::system` | Namespace-qualified but **not** address-qualified, so it is stable across binaries. A function in no namespace has its simple name as its id. The decorated IR id (e.g. `<EXTERNAL>::system@00101008`) also resolves, for models that spell it out verbatim. |
+
+An id that names no function in the program matches nothing (it does not match everything).
+
+> **On pcode, one id can select several functions.** Because the id carries no
+> address, every imported thunk for the same symbol shares one — a binary with three
+> `system` thunks has three functions whose `qualified-id` is `<EXTERNAL>::system`,
+> and the constraint selects all three. That is usually what you want (they are the
+> same logical callee), but if you need exactly one, spell out the decorated IR id
+> instead. On jvm/dex the id is unique, so this does not arise.
 
 ### Structural / nesting
 
@@ -156,7 +188,7 @@ fields. The main ones:
 | -------------- | ------ | ------- |
 | `parent`       | `inner` | **Java-only.** The method's owning class satisfies the `inner` constraint (a `name` regex or `signature_match` equality). On non-Java frontends this warns and matches nothing. |
 | `extends`      | `inner` | **Java-only.** A superclass/interface of the method's owning class satisfies `inner`. On non-Java frontends this warns and matches nothing. |
-| `uses_field`   | `name` / `names`, `unqualified-id` | The function reads or writes the named field(s) (via an IR `Load`/`Store`). |
+| `uses_field`   | `name` / `names` | The function reads or writes the named field(s) (via an IR `Load`/`Store`). |
 
 ### Predicates on the element
 
@@ -178,7 +210,7 @@ fields. The main ones:
 
 | `constraint`  | Fields | Matches |
 | ------------- | ------ | ------- |
-| `in_function` | `inner` | For `find: callsites`, restricts to call sites located *inside* a caller function that satisfies `inner`. See [§8](#8-callsites-and-in_function). |
+| `in_function` | `inner` | For `find: callsites`, restricts to call sites located *inside* a caller function that satisfies `inner`. Under `find: methods` there is no caller to restrict, so it is a load-time error rather than a no-op. See [§8](#8-callsites-and-in_function). |
 
 ---
 

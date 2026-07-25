@@ -144,7 +144,13 @@ pub enum VirtualMethodTable {
         /// - Simple name of the function, e.g. `system`
         /// - Type signature of the function, e.g. `(int, char**)`
         /// - Fully-qualified function name (the id used everywhere else)
-        methods: Vec<(NativeSimpleName, NativeSignature, NativeFunction)>,
+        /// - Namespace-qualified name, e.g. `Foo::bar` (see [`NativeQualifiedName`])
+        methods: Vec<(
+            NativeSimpleName,
+            NativeSignature,
+            NativeFunction,
+            NativeQualifiedName,
+        )>,
     },
     CplusPlus,
 }
@@ -182,8 +188,8 @@ impl Display for VirtualMethodTable {
             }
             VirtualMethodTable::Native { methods } => {
                 writeln!(f, "native virtual method table")?;
-                for (name, sig, func) in methods {
-                    writeln!(f, "{name}{sig}: {func}")?;
+                for (name, sig, func, qualified) in methods {
+                    writeln!(f, "{name}{sig}: {func} (qualified {qualified})")?;
                 }
                 writeln!(f, "end native virtual method table")?;
                 Ok(())
@@ -355,6 +361,36 @@ impl From<NativeFunction> for Symbol {
 }
 
 impl Display for NativeFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Namespace-qualified name of a native function, e.g. `Foo::bar` or
+/// `<EXTERNAL>::system`.
+///
+/// Unlike [`NativeFunction`] this carries no address, so it is stable across
+/// binaries; unlike [`NativeSimpleName`] it keeps the enclosing namespace, so two
+/// same-named methods in different namespaces stay distinguishable. Frontends that
+/// cannot recover a namespace populate it with the simple name.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct NativeQualifiedName(pub Symbol);
+
+impl Deref for NativeQualifiedName {
+    type Target = Symbol;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<NativeQualifiedName> for Symbol {
+    fn from(c: NativeQualifiedName) -> Self {
+        c.0.clone()
+    }
+}
+
+impl Display for NativeQualifiedName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }

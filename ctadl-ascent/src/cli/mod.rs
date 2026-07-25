@@ -862,14 +862,43 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
             message: "invalid filename".to_string(),
         })?;
 
+    // Unlike every other reader of these files, this one is handed a raw path rather than an
+    // `ArtifactImport` — deliberately, so a store can still be inspected when its import is
+    // too old for `ArtifactImport::load` to accept. The cost is that nothing has checked
+    // `IMPORT_FORMAT_VERSION` by the time we decode, and `bitcode::Error` is a zero-sized type
+    // outside debug builds that renders as a bare "bitcode error". Read the version out of the
+    // sibling config so the failure names the real cause instead of guessing at it.
+    let decode_failed = |what: &str| {
+        let expected = crate::project::IMPORT_FORMAT_VERSION;
+        match crate::project::import_format_version_beside(path) {
+            Some(found) if found != expected => format!(
+                "decoding {what} '{}': it was written with import format {found}, but this \
+                 build expects {expected}; re-import the artifact",
+                path.display(),
+            ),
+            Some(_) => format!(
+                "decoding {what} '{}': its import format ({expected}) matches this build, so \
+                 the file is likely truncated or corrupt",
+                path.display(),
+            ),
+            None => format!(
+                "decoding {what} '{}': no readable '{}' beside it, so its import format is \
+                 unknown; this build expects {expected}",
+                path.display(),
+                crate::project::IMPORT_CONFIG_FILE,
+            ),
+        }
+    };
     let data = std::fs::read(path)?;
-    if filename == "ir-program.bitcode" {
-        let program = ctadl_ir::encode::decode_program(&data)?;
+    if filename == crate::project::PROGRAM_BITCODE_FILE {
+        let program =
+            ctadl_ir::encode::decode_program(&data).err_context(|| decode_failed("program"))?;
         // Resolve locals through each function's table: a dump full of `%L7` is unreadable now
         // that the name lives in `FunctionData::locals` rather than in the variable itself.
         println!("{}", ctadl_ir::mir::WithLocalNames(&program));
-    } else if filename == "ir-vmt.bitcode" {
-        let vmt: ctadl_ir::call::VirtualMethodTable = bitcode::deserialize(&data)?;
+    } else if filename == crate::project::VMT_BITCODE_FILE {
+        let vmt: ctadl_ir::call::VirtualMethodTable =
+            bitcode::deserialize(&data).err_context(|| decode_failed("vmt"))?;
         println!("{}", vmt);
     } else {
         return Err(Error::Path {

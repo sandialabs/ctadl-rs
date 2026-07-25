@@ -54,6 +54,13 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     program_method_parents: HashMap<&'p str, Vec<&'p str>>,
     // maps signatures to fully qualified name
     program_method_signatures: HashMap<&'p str, Vec<&'p str>>,
+    /// Maps a method's fully-qualified id to its fq-name, backing the exact-match
+    /// `qualified-id` constraint. The key is whatever spelling uniquely names the
+    /// method on this frontend: the `JavaMethod` id on jvm/dex, the
+    /// namespace-qualified (but address-free) name on native. Unlike
+    /// [`Self::program_method_names`] this is never keyed on a bare name, so it can
+    /// disambiguate two same-named methods in different namespaces.
+    program_method_qualified_ids: HashMap<&'p str, Vec<&'p str>>,
     /// fq-name (== `FunctionData.name`) → the function's IR data. Backs the
     /// `has_code` / `number_parameters` / `uses_field` constraints, which need
     /// per-function body/parameter/field information.
@@ -197,12 +204,24 @@ enum Subject<'a> {
     Class(&'a str),
 }
 
+/// Which [`Subject`] variant a predicate tree will be evaluated against.
+///
+/// The kind is fixed before evaluation begins and is what makes
+/// [`ModelGeneratorIngest::validate_predicate`] possible: every authoring error a predicate
+/// can have is a function of its shape plus this, never of the subject's value.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum SubjectKind {
+    Int,
+    Class,
+}
+
 impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
     pub fn new(program_info: &'p ProgramInfo, builder: &'b mut ModelBuilders) -> Self {
         let vmt = &program_info.vmt;
         let mut program_method_names: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
         let mut program_method_parents: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
         let mut program_method_signatures: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
+        let mut program_method_qualified_ids: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
 
         if let VirtualMethodTable::Java { methods, .. } = vmt {
             methods
@@ -219,6 +238,19 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 .iter()
                 .map(|(_cls, _name, sig, fid)| (sig.as_ref(), fid.as_ref()))
                 .for_each(|(key, val)| program_method_signatures.entry(key).or_default().push(val));
+
+            // The `JavaMethod` id, e.g. `Lcom/example/Foo;->bar(I)V`. Descriptor-bearing and
+            // stable, but until now only ever a *value* above — never a key — which is what
+            // made exact fully-qualified matching impossible on jvm/dex.
+            methods
+                .iter()
+                .map(|(_cls, _name, _sig, fid)| (fid.as_ref(), fid.as_ref()))
+                .for_each(|(key, val)| {
+                    program_method_qualified_ids
+                        .entry(key)
+                        .or_default()
+                        .push(val)
+                });
         } else if let VirtualMethodTable::Native { methods } = vmt {
             // Native frontends (pcode, clang) carry, per function, a simple
             // (un-decorated) name and a best-effort type signature alongside the
@@ -226,13 +258,22 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             // pattern like `^system$` resolves even when the IR name is decorated
             // (e.g. Ghidra's `<EXTERNAL>::system@00101008`). The fully-qualified
             // name is also kept matchable for models that spell it out verbatim.
-            for (simple, sig, fq) in methods {
+            for (simple, sig, fq, qualified) in methods {
                 let simple = simple.as_ref();
                 let fq = fq.as_ref();
                 program_method_names.entry(simple).or_default().push(fq);
                 program_method_signatures.entry(sig).or_default().push(fq);
                 program_method_names.entry(fq).or_default().push(fq);
                 program_method_signatures.entry(fq).or_default().push(fq);
+                // The namespace-qualified name, e.g. `Foo::bar` or `<EXTERNAL>::system`.
+                // Double-key on the fq id as well, mirroring the names/signatures maps
+                // above, so a model that spells the decorated id out verbatim still
+                // resolves through `qualified-id`.
+                program_method_qualified_ids
+                    .entry(qualified.as_ref())
+                    .or_default()
+                    .push(fq);
+                program_method_qualified_ids.entry(fq).or_default().push(fq);
             }
         } else {
             // Fallback (Unknown / CplusPlus): use the IR function names directly.
@@ -243,6 +284,10 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                     .or_default()
                     .push(name);
                 program_method_names.entry(name).or_default().push(name);
+                program_method_qualified_ids
+                    .entry(name)
+                    .or_default()
+                    .push(name);
             }
         }
         // Index every IR function by its fq-name for the body/parameter/field
@@ -257,7 +302,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 methods.iter().map(|(_, _, _, fid)| fid.as_ref()).collect()
             }
             VirtualMethodTable::Native { methods } => {
-                methods.iter().map(|(_, _, fq)| fq.as_ref()).collect()
+                methods.iter().map(|(_, _, fq, _)| fq.as_ref()).collect()
             }
             VirtualMethodTable::Unknown | VirtualMethodTable::CplusPlus => UniverseSet::empty(),
         };
@@ -273,6 +318,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             program_method_names,
             program_method_parents,
             program_method_signatures,
+            program_method_qualified_ids,
             program_functions,
             universe,
             scratch: Vec::new(),
@@ -284,6 +330,68 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
     /// Add a JSON parsing error to the collection
     fn add_json_error(&mut self, error: crate::error::JsonModelError) {
         self.errors.push(error);
+    }
+
+    /// Validates the key set of a leaf constraint object: every key must be one the visitor
+    /// actually honors, and at least one honored key must be present.
+    ///
+    /// A constraint the loader cannot act on is *not* harmless. The working set starts as
+    /// [`UniverseSet::all`] (see [`Self::visit_model_generator`]), so a constraint that
+    /// narrows nothing leaves the generator matching **every function in the program** — a
+    /// model meant to mark one method as a source silently becomes a global source, and
+    /// `CTADL0004` only reports generators that matched *nothing*. Erroring only on "no
+    /// honored key" would still let `{"constraint": "signature_match", "name": "x",
+    /// "extends": "Y"}` drop `extends` on the floor, so the unknown-key half is the
+    /// important one: it mirrors the schema's `additionalProperties: false` and makes key
+    /// removals self-enforcing.
+    ///
+    /// `constraint` — the discriminator itself — is the only structural key; nothing in the
+    /// `super_*` traversal injects or wraps anything, so the object seen here is verbatim
+    /// from the model file.
+    ///
+    /// Returns false if anything was reported, so callers can skip the set math.
+    fn check_constraint_keys(
+        &mut self,
+        n: usize,
+        value: &serde_json::Value,
+        honored: &[&str],
+    ) -> bool {
+        // `visit_where_constraint` already rejected anything without a string `constraint`
+        // discriminator, so a non-object cannot reach a leaf visitor.
+        let Some(obj) = value.as_object() else {
+            return false;
+        };
+        let kind = obj
+            .get("constraint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<missing>");
+        let expected = honored
+            .iter()
+            .map(|h| format!("'{h}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut ok = true;
+        for key in obj.keys() {
+            if key == "constraint" || honored.contains(&key.as_str()) {
+                continue;
+            }
+            self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                index: n,
+                field_name: key.clone(),
+                message: format!(
+                    "not a recognized field of the '{kind}' constraint; expected one of {expected}"
+                ),
+            });
+            ok = false;
+        }
+        if !honored.iter().any(|h| obj.contains_key(*h)) {
+            self.add_json_error(crate::error::JsonModelError::MissingField {
+                index: n,
+                field_name: honored.join("' / '"),
+            });
+            ok = false;
+        }
+        ok
     }
 
     /// The universe set that set-narrowing constraints currently intersect.
@@ -324,61 +432,36 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
     /// `parent`, and `extends` bind their `inner` to a specific integer (arity) or class name
     /// rather than to the function working set. Combinators (`any_of`/`all_of`/`not`) are handled
     /// at the boolean level. A constraint that does not apply to the subject (e.g. an integer
-    /// comparison on a class, or a `name` match on an integer) is a hard authoring error
-    /// (`UnexpectedConstraint`) and evaluates to `false`.
-    fn eval_predicate(&mut self, n: usize, c: &serde_json::Value, subj: Subject<'_>) -> bool {
+    /// comparison on a class, or a `name` match on an integer) evaluates to `false`.
+    ///
+    /// **This function reports no errors.** It runs once per candidate — per function arity,
+    /// per class, and for `extends` inside a short-circuiting `any` over supertypes — so
+    /// reporting from here emitted one copy of the same authoring error per candidate
+    /// (thousands of identical lines on a real program, a count that depended on
+    /// short-circuiting for `extends`) and reported *nothing at all* when the candidate list
+    /// was empty, e.g. `parent` on a non-Java program. Every such error is a property of the
+    /// constraint's shape and the subject's kind, both fixed before the loop starts, so
+    /// [`Self::validate_predicate`] is the single reporter and runs exactly once.
+    fn eval_predicate(&self, c: &serde_json::Value, subj: Subject<'_>) -> bool {
         match c["constraint"].as_str() {
             Some("any_of") => match c.get("inners").and_then(|v| v.as_array()) {
-                Some(inners) => inners
-                    .iter()
-                    .any(|inner| self.eval_predicate(n, inner, subj)),
-                None => {
-                    self.add_json_error(crate::error::JsonModelError::FieldNotArray {
-                        index: n,
-                        field_name: "inners".to_string(),
-                    });
-                    false
-                }
+                Some(inners) => inners.iter().any(|inner| self.eval_predicate(inner, subj)),
+                None => false,
             },
             Some("all_of") => match c.get("inners").and_then(|v| v.as_array()) {
-                Some(inners) => inners
-                    .iter()
-                    .all(|inner| self.eval_predicate(n, inner, subj)),
-                None => {
-                    self.add_json_error(crate::error::JsonModelError::FieldNotArray {
-                        index: n,
-                        field_name: "inners".to_string(),
-                    });
-                    false
-                }
+                Some(inners) => inners.iter().all(|inner| self.eval_predicate(inner, subj)),
+                None => false,
             },
             Some("not") => match c.get("inner") {
-                Some(inner) => !self.eval_predicate(n, inner, subj),
-                None => {
-                    self.add_json_error(crate::error::JsonModelError::MissingField {
-                        index: n,
-                        field_name: "inner".to_string(),
-                    });
-                    false
-                }
+                Some(inner) => !self.eval_predicate(inner, subj),
+                None => false,
             },
             Some(op @ ("<" | "<=" | ">" | ">=" | "!=" | "==")) => {
                 let Subject::Int(lhs) = subj else {
-                    self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
-                        index: n,
-                        constraint_type: op.to_string(),
-                    });
                     return false;
                 };
-                let rhs = match c.get("value").and_then(|v| v.as_i64()) {
-                    Some(v) => v,
-                    None => {
-                        self.add_json_error(crate::error::JsonModelError::InvalidInteger {
-                            index: n,
-                            source: "".parse::<i64>().unwrap_err(),
-                        });
-                        return false;
-                    }
+                let Some(rhs) = c.get("value").and_then(|v| v.as_i64()) else {
+                    return false;
                 };
                 match op {
                     "<" => lhs < rhs,
@@ -392,40 +475,15 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             }
             Some("name") => {
                 let Subject::Class(cls) = subj else {
-                    self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
-                        index: n,
-                        constraint_type: "name".to_string(),
-                    });
                     return false;
                 };
-                let pattern = match c.get("pattern").and_then(|v| v.as_str()) {
-                    Some(p) => p,
-                    None => {
-                        self.add_json_error(crate::error::JsonModelError::FieldNotString {
-                            index: n,
-                            field_name: "pattern".to_string(),
-                        });
-                        return false;
-                    }
+                let Some(pattern) = c.get("pattern").and_then(|v| v.as_str()) else {
+                    return false;
                 };
-                match Regex::new(pattern) {
-                    Ok(rx) => rx.is_match(cls),
-                    Err(source) => {
-                        self.add_json_error(crate::error::JsonModelError::InvalidRegex {
-                            index: n,
-                            pattern: pattern.to_string(),
-                            source,
-                        });
-                        false
-                    }
-                }
+                Regex::new(pattern).is_ok_and(|rx| rx.is_match(cls))
             }
             Some("signature_match") => {
                 let Subject::Class(cls) = subj else {
-                    self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
-                        index: n,
-                        constraint_type: "signature_match".to_string(),
-                    });
                     return false;
                 };
                 // Equality of the class name against `name`/`names`.
@@ -439,20 +497,102 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                     .is_some_and(|names| names.iter().filter_map(|v| v.as_str()).any(|s| s == cls));
                 name_matches || names_match
             }
+            Some(_) | None => false,
+        }
+    }
+
+    /// Structural validation of a predicate tree — the `inner` of `number_parameters`,
+    /// `parent`, and `extends` — run exactly once, before evaluation.
+    ///
+    /// This is the sole reporter for that tree; see [`Self::eval_predicate`] for why the
+    /// evaluator itself stays silent. The arms mirror the evaluator's one-for-one, so a
+    /// predicate that passes here can still evaluate to `false`, but never for a reason the
+    /// model author would want to hear about.
+    fn validate_predicate(&mut self, n: usize, c: &serde_json::Value, kind: SubjectKind) {
+        match c["constraint"].as_str() {
+            Some("any_of" | "all_of") => match c.get("inners").and_then(|v| v.as_array()) {
+                Some(inners) => {
+                    for inner in inners {
+                        self.validate_predicate(n, inner, kind);
+                    }
+                }
+                None => self.add_json_error(crate::error::JsonModelError::FieldNotArray {
+                    index: n,
+                    field_name: "inners".to_string(),
+                }),
+            },
+            Some("not") => match c.get("inner") {
+                Some(inner) => self.validate_predicate(n, inner, kind),
+                None => self.add_json_error(crate::error::JsonModelError::MissingField {
+                    index: n,
+                    field_name: "inner".to_string(),
+                }),
+            },
+            Some(op @ ("<" | "<=" | ">" | ">=" | "!=" | "==")) => {
+                if kind != SubjectKind::Int {
+                    self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
+                        index: n,
+                        constraint_type: op.to_string(),
+                    });
+                    return;
+                }
+                if c.get("value").and_then(|v| v.as_i64()).is_none() {
+                    self.add_json_error(crate::error::JsonModelError::InvalidInteger {
+                        index: n,
+                        source: "".parse::<i64>().unwrap_err(),
+                    });
+                    return;
+                }
+                self.check_constraint_keys(n, c, &["value"]);
+            }
+            Some("name") => {
+                if kind != SubjectKind::Class {
+                    self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
+                        index: n,
+                        constraint_type: "name".to_string(),
+                    });
+                    return;
+                }
+                let Some(pattern) = c.get("pattern").and_then(|v| v.as_str()) else {
+                    self.add_json_error(crate::error::JsonModelError::FieldNotString {
+                        index: n,
+                        field_name: "pattern".to_string(),
+                    });
+                    return;
+                };
+                if let Err(source) = Regex::new(pattern) {
+                    self.add_json_error(crate::error::JsonModelError::InvalidRegex {
+                        index: n,
+                        pattern: pattern.to_string(),
+                        source,
+                    });
+                    return;
+                }
+                self.check_constraint_keys(n, c, &["pattern"]);
+            }
+            Some("signature_match") => {
+                if kind != SubjectKind::Class {
+                    self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
+                        index: n,
+                        constraint_type: "signature_match".to_string(),
+                    });
+                    return;
+                }
+                // Only `name`/`names` are honored here: the subject is already a class name,
+                // so `parent`/`parents` are meaningless and `qualified-id` would be a pure
+                // synonym for `name`. Both would otherwise be silently dropped conjuncts.
+                self.check_constraint_keys(n, c, &["name", "names"]);
+            }
             Some(other) => {
                 self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
                     index: n,
                     constraint_type: other.to_string(),
-                });
-                false
+                })
             }
-            None => {
-                self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
-                    index: n,
-                    constraint_type: "<missing>".to_string(),
-                });
-                false
-            }
+            None => self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
+                index: n,
+                constraint_type: "<missing>".to_string(),
+            }),
         }
     }
 
@@ -699,6 +839,30 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Intersects existing `self.methods[n]` with the matches for the constraint
     fn visit_signature_match_constraint(&mut self, n: usize, value: &serde_json::Value) {
         self.super_signature_match_constraint(n, value);
+        // Validate before the `find_method` gate: whether a model file is well-formed must
+        // not depend on the frontend or on whether `find` parsed.
+        //
+        // `parent`/`parents` stay honored unconditionally even though
+        // `program_method_parents` is populated only for the Java VMT. On a native VMT they
+        // intersect with the empty set and match nothing, which is fail-*closed* and matches
+        // the documented Java-only behavior of the standalone `parent` constraint. Rejecting
+        // them per-frontend would make one model file valid or invalid depending on which
+        // artifact it is loaded against.
+        if !self.check_constraint_keys(
+            n,
+            value,
+            &[
+                "name",
+                "names",
+                "parent",
+                "parents",
+                "qualified-id",
+                "qualified-ids",
+            ],
+        ) {
+            self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            return;
+        }
         if matches!(
             self.find_method.get(&n),
             Some(FindMethod::Methods | FindMethod::Callsites)
@@ -781,12 +945,67 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                     self.target_set_mut(n).intersect_with(parents);
                 }
             }
+            // Exact, whole-string match on a method's fully-qualified id. Unlike `name` this
+            // is neither a regex nor keyed on the bare name, so it is the one lever that can
+            // pick out a single method on a frontend with no class hierarchy: `parent` is
+            // populated only for the Java VMT, and `signature_pattern` regexes (unanchored,
+            // and only incidentally over the fq name). An id naming no function in the
+            // program intersects with the empty set and matches nothing — the same
+            // fail-closed behavior an unmatched `name` has today.
+            let has_qualified_ids = value
+                .get("qualified-ids")
+                .or(value.get("qualified-id"))
+                .is_some();
+            if has_qualified_ids {
+                let ids_result: Result<UniverseSet<&'p str>, ()> = (|| {
+                    let ids_iter = value
+                        .get("qualified-ids")
+                        .map(|v| {
+                            v.as_array().ok_or_else(|| {
+                                self.add_json_error(crate::error::JsonModelError::FieldNotArray {
+                                    index: n,
+                                    field_name: "qualified-ids".to_string(),
+                                });
+                            })
+                        })
+                        .transpose()?
+                        .into_iter()
+                        .flatten();
+
+                    let id_iter = value.get("qualified-id").into_iter();
+
+                    let ids: UniverseSet<&'p str> = ids_iter
+                        .chain(id_iter)
+                        .filter_map(|v| {
+                            v.as_str().and_then(|id| {
+                                self.program_method_qualified_ids
+                                    .get(id)
+                                    .map(|fids| fids.iter().copied())
+                            })
+                        })
+                        .flatten()
+                        .collect();
+
+                    Ok(ids)
+                })();
+
+                if let Ok(ids) = ids_result {
+                    self.target_set_mut(n).intersect_with(ids);
+                }
+            }
         }
     }
 
     /// Intersects existing `self.methods[n]` with the matches for the constraint
     fn visit_signature_constraint(&mut self, n: usize, value: &serde_json::Value) {
         self.super_signature_constraint(n, value);
+        // A missing `pattern` used to fall out of the `let` chain below as a no-op, so
+        // `{"constraint": "signature", "name": ".*sink.*"}` — `name` where `pattern` was
+        // meant — matched every function in the program instead of failing.
+        if !self.check_constraint_keys(n, value, &["pattern"]) {
+            self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            return;
+        }
         if matches!(
             self.find_method.get(&n),
             Some(FindMethod::Methods | FindMethod::Callsites)
@@ -829,11 +1048,33 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Matches the containing (caller) function of a callsite by evaluating the wrapped
     /// `inner` constraint against the caller set. Only meaningful for `find: callsites`.
     fn visit_in_function_constraint(&mut self, n: usize, value: &serde_json::Value) {
-        if let Some(FindMethod::Callsites) = self.find_method.get(&n) {
-            let prev = self.current_set;
-            self.current_set = CurrentSet::InFunction;
-            self.super_in_function_constraint(n, value);
-            self.current_set = prev;
+        if !self.check_constraint_keys(n, value, &["inner"]) {
+            self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            return;
+        }
+        match self.find_method.get(&n) {
+            Some(FindMethod::Callsites) => {
+                let prev = self.current_set;
+                self.current_set = CurrentSet::InFunction;
+                self.super_in_function_constraint(n, value);
+                self.current_set = prev;
+            }
+            Some(FindMethod::Methods) => {
+                // There is no caller set to narrow under `find: methods`, so the constraint
+                // used to vanish silently, leaving the generator matching on its remaining
+                // constraints alone. That is a mis-authored model, not a harmless one.
+                self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                    index: n,
+                    field_name: "in_function".to_string(),
+                    message: "'in_function' is only supported with find: callsites".to_string(),
+                });
+                self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            }
+            // `find` itself was missing or unrecognized; `visit_find` already reported it,
+            // so don't pile a second, more confusing error on top.
+            None => {
+                self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            }
         }
     }
 
@@ -1015,7 +1256,11 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// On-demand scan of every function body; frontends without symbolic loads/stores yield
     /// no match.
     fn visit_uses_field_constraint(&mut self, n: usize, value: &serde_json::Value) {
-        // Collect the wanted field names from `name` / `names` / `unqualified-id`.
+        if !self.check_constraint_keys(n, value, &["name", "names"]) {
+            self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            return;
+        }
+        // Collect the wanted field names from `name` / `names`.
         let mut wanted: Vec<&str> = Vec::new();
         if let Some(names) = value.get("names") {
             match names.as_array() {
@@ -1032,12 +1277,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         if let Some(name) = value.get("name").and_then(|v| v.as_str()) {
             wanted.push(name);
         }
-        if let Some(uid) = value.get("unqualified-id").and_then(|v| v.as_str()) {
-            wanted.push(uid);
-        }
-        if wanted.is_empty() {
-            return;
-        }
+        // `check_constraint_keys` guaranteed `name` or `names` is present, so an empty
+        // `wanted` here means every entry was a non-string or the array was empty; either
+        // way, narrow to nothing rather than leaving the set untouched (== matching all).
         let matches: UniverseSet<&'p str> = self
             .program_functions
             .iter()
@@ -1065,7 +1307,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             });
             return;
         };
-        // Snapshot (fid, arity) so the predicate evaluator can borrow `self` mutably.
+        self.validate_predicate(n, inner, SubjectKind::Int);
+        // Snapshot (fid, arity) so `target_set_mut` below can take `self` mutably.
         let funcs: Vec<(&'p str, i64)> = self
             .program_functions
             .iter()
@@ -1073,7 +1316,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             .collect();
         let mut matched: Vec<&'p str> = Vec::new();
         for (fid, arity) in funcs {
-            if self.eval_predicate(n, inner, Subject::Int(arity)) {
+            if self.eval_predicate(inner, Subject::Int(arity)) {
                 matched.push(fid);
             }
         }
@@ -1091,6 +1334,10 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             });
             return;
         };
+        // Validate before the frontend check below: a mis-authored predicate is a property
+        // of the model file, and reporting it only on Java programs would make the same file
+        // load cleanly or fail depending on the artifact.
+        self.validate_predicate(n, inner, SubjectKind::Class);
         let entries: Vec<(&'p str, &'p str)> = match self.vmt {
             VirtualMethodTable::Java { methods, .. } => methods
                 .iter()
@@ -1104,7 +1351,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         };
         let mut matched: Vec<&'p str> = Vec::new();
         for (cls, fid) in entries {
-            if self.eval_predicate(n, inner, Subject::Class(cls)) {
+            if self.eval_predicate(inner, Subject::Class(cls)) {
                 matched.push(fid);
             }
         }
@@ -1122,6 +1369,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             });
             return;
         };
+        self.validate_predicate(n, inner, SubjectKind::Class);
         // Snapshot (fid, [supertypes]) — `hierarchy[cls]` is `[0]` = superclass, rest = interfaces.
         let entries: Vec<(&'p str, Vec<&'p str>)> = match self.vmt {
             VirtualMethodTable::Java { methods, hierarchy } => methods
@@ -1144,7 +1392,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         for (fid, supers) in &entries {
             if supers
                 .iter()
-                .any(|sc| self.eval_predicate(n, inner, Subject::Class(sc)))
+                .any(|sc| self.eval_predicate(inner, Subject::Class(sc)))
             {
                 matched.push(*fid);
             }
