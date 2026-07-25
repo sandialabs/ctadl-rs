@@ -1,4 +1,4 @@
-# Lua support: real-world test against Kong
+# Lua support: real-world test against Kong - DO-NOT-MERGE
 
 Exercising the tree-sitter Lua frontend (branch `lua`) on a production OpenResty
 codebase — [Kong](https://github.com/Kong/kong), checked out at **`../kong`**
