@@ -208,21 +208,28 @@ fn test_cli_query_c_sources_and_sinks() {
         let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
         let results = doc["runs"][0]["results"].as_array().unwrap();
 
+        // Every profile also emits informational `taint-source`/`taint-sink` results
+        // describing which endpoints matched, and `tainted-path` itself reports a non-`fail`
+        // result when the query ran but found nothing. Those are context, not findings, so
+        // the flow assertions look only at the `fail` `tainted-path` results.
+        let paths: Vec<_> = results
+            .iter()
+            .filter(|r| {
+                r["ruleId"]
+                    .as_str()
+                    .is_some_and(|id| id.contains("tainted-path"))
+                    && r["kind"].as_str() == Some("fail")
+            })
+            .collect();
+
         // The source (`s = source()`) flows through `transfer` to the sink (`sink(x[2])`),
         // so there is exactly one tainted-path result.
         assert_eq!(
-            results.len(),
+            paths.len(),
             1,
             "expected exactly one source->sink flow, got: {text}"
         );
-        let result = &results[0];
-        assert!(
-            result["ruleId"]
-                .as_str()
-                .is_some_and(|r| r.contains("tainted-path")),
-            "unexpected ruleId: {}",
-            result["ruleId"]
-        );
+        let result = paths[0];
 
         // The reported location resolves back to a line in the C source, proving the
         // importer attached source-info spans that survive to SARIF.
