@@ -52,6 +52,9 @@ pub fn codegen_summary(
                 .get(&func_id)
                 .map(|n| (0..*n).map(|i| i.into()).collect())
                 .unwrap_or_default(),
+            // `Variable(name)` ports are rejected on propagations/summaries in Stage 1
+            // (see `json::visit_propagation`), so they never reach summary codegen.
+            Local => unreachable!("Variable(name) is not valid on a propagation port"),
         };
         let src_ap: facts::Path = ap_map[&src_ap].iter().cloned().collect();
         let src_index: Vec<facts::FormalIndex> = match src_tag {
@@ -65,6 +68,8 @@ pub fn codegen_summary(
                 .get(&func_id)
                 .map(|n| (0..*n).map(|i| i.into()).collect())
                 .unwrap_or_default(),
+            // See the `dst_tag` match above: `Variable(name)` never reaches summary codegen.
+            Local => unreachable!("Variable(name) is not valid on a propagation port"),
         };
 
         log::trace!("dst_index: {}", dst_index.len());

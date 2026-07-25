@@ -1,4 +1,7 @@
 use crate::error::Error;
+use flate2::Compression;
+use flate2::write::GzEncoder;
+use rayon::prelude::*;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -243,6 +246,54 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
     Ok(())
 }
 
+/// Gzip every `*.facts` file in `facts_dir` in place, replacing it with a
+/// `*.facts.gz` sibling and removing the original.
+///
+/// Ghidra emits ~43 large tab-separated fact tables; compressing them keeps the
+/// store small. Files already ending in `.facts.gz` are skipped, which makes this
+/// idempotent and safe to re-run on the `CTADL_REUSE_FACTS` reuse path. Each file
+/// is written to a `.tmp` sibling and renamed over the final `.gz`, so an
+/// interrupted run never leaves a truncated `.gz` behind.
+pub fn compress_facts_dir(facts_dir: &Path) -> Result<(), Error> {
+    let entries: Vec<PathBuf> = fs::read_dir(facts_dir)?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| {
+            let name = path.file_name().and_then(|n| n.to_str());
+            matches!(name, Some(name) if name.ends_with(".facts") && !name.ends_with(".facts.gz"))
+        })
+        .collect();
+
+    entries
+        .par_iter()
+        .try_for_each(|path| compress_one_fact_file(path))
+}
+
+/// Gzip a single `*.facts` file into a `*.facts.gz` sibling (via a `.tmp` +
+/// rename) and remove the original.
+fn compress_one_fact_file(path: &Path) -> Result<(), Error> {
+    let gz_path = {
+        let mut name = path.as_os_str().to_owned();
+        name.push(".gz");
+        PathBuf::from(name)
+    };
+    let tmp_path = {
+        let mut name = gz_path.as_os_str().to_owned();
+        name.push(".tmp");
+        PathBuf::from(name)
+    };
+
+    let mut input = fs::File::open(path)?;
+    let output = fs::File::create(&tmp_path)?;
+    let mut encoder = GzEncoder::new(output, Compression::default());
+    std::io::copy(&mut input, &mut encoder)?;
+    encoder.finish()?;
+
+    fs::rename(&tmp_path, &gz_path)?;
+    fs::remove_file(path)?;
+
+    Ok(())
+}
+
 fn find_ghidra_base() -> Result<PathBuf, Error> {
     if let Ok(ghidra_home) = env::var("GHIDRA_HOME") {
         return Ok(PathBuf::from(ghidra_home));
@@ -368,5 +419,69 @@ mod tests {
                 program: None,
             }
         );
+    }
+
+    // --- Fact compression ------------------------------------------------------
+
+    fn gunzip(path: &Path) -> Vec<u8> {
+        use std::io::Read;
+        let mut decoder = flate2::read::GzDecoder::new(fs::File::open(path).unwrap());
+        let mut out = Vec::new();
+        decoder.read_to_end(&mut out).unwrap();
+        out
+    }
+
+    #[test]
+    fn compress_replaces_facts_with_gz_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let facts = dir.path().join("PCODE_INPUT.facts");
+        let content = b"a\t1\nb\t2\n";
+        fs::write(&facts, content).unwrap();
+
+        compress_facts_dir(dir.path()).unwrap();
+
+        let gz = dir.path().join("PCODE_INPUT.facts.gz");
+        assert!(!facts.exists(), "original .facts should be removed");
+        assert!(gz.exists(), ".facts.gz should be created");
+        assert_eq!(gunzip(&gz), content);
+        // No leftover temp file from the write-then-rename.
+        assert!(!dir.path().join("PCODE_INPUT.facts.gz.tmp").exists());
+    }
+
+    #[test]
+    fn compress_skips_already_compressed_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        // A pre-existing `.gz` (e.g. from an earlier run) must be left untouched so
+        // re-running on the reuse path is a no-op.
+        let gz = dir.path().join("DONE.facts.gz");
+        let gz_bytes = {
+            let mut e = GzEncoder::new(Vec::new(), Compression::default());
+            std::io::Write::write_all(&mut e, b"already\tcompressed\n").unwrap();
+            e.finish().unwrap()
+        };
+        fs::write(&gz, &gz_bytes).unwrap();
+
+        // A fresh `.facts` alongside it should get compressed.
+        let facts = dir.path().join("FRESH.facts");
+        fs::write(&facts, b"x\t9\n").unwrap();
+
+        compress_facts_dir(dir.path()).unwrap();
+        // Untouched pre-existing gz.
+        assert_eq!(fs::read(&gz).unwrap(), gz_bytes);
+        assert_eq!(gunzip(&dir.path().join("FRESH.facts.gz")), b"x\t9\n");
+
+        // Second run has nothing to do and leaves everything as-is.
+        compress_facts_dir(dir.path()).unwrap();
+        assert_eq!(fs::read(&gz).unwrap(), gz_bytes);
+        assert_eq!(gunzip(&dir.path().join("FRESH.facts.gz")), b"x\t9\n");
+    }
+
+    #[test]
+    fn compress_leaves_non_facts_files_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("notes.txt"), b"hi").unwrap();
+        compress_facts_dir(dir.path()).unwrap();
+        assert!(dir.path().join("notes.txt").exists());
+        assert!(!dir.path().join("notes.txt.gz").exists());
     }
 }

@@ -16,10 +16,9 @@ use itertools::Itertools;
 
 use crate::codegen::models::codegen_summary;
 use crate::codegen::{CallResolutionStrategy, codegen_program};
-use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
 use crate::error::{Error, ErrorContext};
 use crate::facts;
-use crate::facts::{FlowVariable, FlowVertex, Label};
+use crate::facts::FlowVariable;
 use crate::index_engine::{
     IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index_with_config,
 };
@@ -30,132 +29,6 @@ use crate::query_engine::{QueryFactsBuilder, taint_analysis};
 use ctadl_ir::graph::is_connected;
 use ctadl_ir::ssa;
 use ctadl_ir::{ProgramInfo, encode};
-
-/// Helper: turn model endpoint table into QueryEndpoint vec
-fn build_query_endpoints(
-    batch: &crate::models::EndpointBatch,
-    facts: &IndexFacts,
-    idmap: &facts::IdMap,
-    assign_like: &[(
-        facts::FunctionId,
-        FlowVariable,
-        facts::Path,
-        FlowVariable,
-        facts::Path,
-    )],
-) -> (
-    Vec<(crate::query_engine::QueryEndpoint,)>,
-    Vec<(facts::FunctionId, facts::FlowVariable, facts::FormalType)>,
-) {
-    use crate::models::FormalIndexTypeTag;
-    let ap_map = batch.aps.build_ap_map();
-    let func_num_params = facts.compute_arg_arity();
-
-    // Field access paths that actually occur on each `(function, variable)` vertex
-    // in the index graph.
-    let mut vertex_paths: HashMap<(facts::FunctionId, FlowVariable), BTreeSet<facts::Path>> =
-        HashMap::new();
-    for (func, v1, p1, v2, p2) in assign_like {
-        vertex_paths.entry((*func, *v1)).or_default().insert(*p1);
-        vertex_paths.entry((*func, *v2)).or_default().insert(*p2);
-    }
-
-    let mut out_eps = Vec::new();
-    let mut out_formals = Vec::new();
-    for (func_name, selector_ty, idx_opt, path_id, label_str, direction, wildcard) in
-        batch.iter_endpoints()
-    {
-        // Resolve function name → FunctionId; skip if not present.
-        let infunc = match idmap.get_function_id(crate::facts::Function(func_name.into())) {
-            Some(id) => id,
-            None => continue,
-        };
-
-        // Map selector tag to variables.
-        let vars = match selector_ty {
-            FormalIndexTypeTag::Index => {
-                let i16_val = idx_opt.expect("index missing");
-                vec![FlowVariable::formal_index(i16_val.into())]
-            }
-            FormalIndexTypeTag::Return => {
-                vec![FlowVariable::formal_index(RETURN_INDEX.into())]
-            }
-            FormalIndexTypeTag::Global => {
-                vec![FlowVariable::formal_index(GLOBALS_INDEX.into())]
-            }
-            FormalIndexTypeTag::AnyArgument => func_num_params
-                .get(&infunc)
-                .map(|n| {
-                    (0..*n)
-                        .map(|i| FlowVariable::formal_index(i.into()))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        };
-
-        let ap: facts::Path = ap_map[&path_id].iter().cloned().collect();
-
-        // A wildcard sink port denotes the whole subtree beneath `ap` on the sink
-        // call's argument: it matches every concrete access path, rooted at that
-        // argument, that extends the port. Sinks seed *backward* taint and the
-        // formatter resolves each endpoint vertex to a graph node by exact `Path`
-        // equality, so the wildcard cannot be left abstract -- it is expanded below
-        // into concrete paths.
-        let expand_wildcard = wildcard && direction == facts::TaintDirection::Backward;
-
-        // Build label and direction.
-        let lbl = Label(label_str.into());
-
-        for var in vars {
-            // Register the model function's formal so taint can cross the call boundary
-            // for flow-through, independent of how the endpoint is anchored below.
-            if var.is_formal() {
-                out_formals.push((infunc, var, facts::FormalType::ByRef));
-            }
-            // Anchor at the call sites of `infunc` (the modeled function) so flows that
-            // share a formal but differ by call site stay distinct. Anchoring uses the
-            // port path; wildcard expansion (if any) then happens per anchored vertex.
-            let base = crate::query_engine::QueryEndpoint {
-                infunc,
-                vertex: FlowVertex(var, ap),
-                label: lbl.clone(),
-                direction,
-                call_site: None,
-            };
-            let fanned = match var.as_formal() {
-                Some(formal) => base.anchored_at_callsites(formal, &facts.call),
-                None => vec![base],
-            };
-            for ep in fanned {
-                if !expand_wildcard {
-                    out_eps.push((ep,));
-                    continue;
-                }
-                // Seed every concrete field path that lives on THIS call's argument
-                // vertex and extends the port, always including the port path itself.
-                let mut seeded_port = false;
-                if let Some(paths) = vertex_paths.get(&(ep.infunc, ep.vertex.0)) {
-                    for p in paths {
-                        if !p.is_extension_of(&ap) {
-                            continue;
-                        }
-                        if *p == ap {
-                            seeded_port = true;
-                        }
-                        out_eps.push((crate::query_engine::QueryEndpoint {
-                            vertex: FlowVertex(ep.vertex.0, *p),
-                            ..ep.clone()
-                        },));
-                    }
-                }
-                if !seeded_port {
-                    out_eps.push((ep,));
-                }
-            }
-        }
-    }
-    (out_eps, out_formals)
-}
 
 // Imports a program for an artifact into the store
 pub fn import(import: &ArtifactImport) -> Result<(), Error> {
@@ -203,11 +76,16 @@ pub fn index(
         }
 
         log::trace!("summary length: {}", models_batch.summary.num_rows());
-        // Fuse single-use copy temporaries before SSA. Cuts the statement /
-        // variable count that SSA and the datalog fact base pay for. A no-op
-        // on programs already in SSA form (e.g. flowy imports).
+        // Delete assigned-but-never-read temporaries, then fuse single-use
+        // copy temporaries, both before SSA. Together they cut the statement /
+        // variable count that SSA and the datalog fact base pay for. Dead-temp
+        // elimination runs first: it removes defs that coalescing can't (a dead
+        // temp has no use to fuse into) and shrinks the input coalescing scans.
+        // Both are no-ops on programs already in SSA form (e.g. flowy imports).
+        ssa::eliminate_dead_temps(&mut program_info.program);
         ssa::coalesce_copies(&mut program_info.program);
         ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
+        ssa::propagate_copies(&mut program_info.program);
         log::info!(
             "[mem cp] after SSA transform: {:.1} MB",
             phys_footprint_mb()
@@ -307,7 +185,7 @@ pub fn query(
         }
         let mut formal_params = index_facts.formal_param.clone();
         if let Some(ref batch) = models_batch {
-            let (eps, model_formals) = build_query_endpoints(
+            let (eps, model_formals) = query_engine::build_query_endpoints(
                 &batch.endpoint,
                 &index_facts,
                 &ids,
@@ -394,9 +272,37 @@ fn dump_index_graph_dot(
     dot_path: &Path,
 ) -> Result<(), Error> {
     let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+    // Embed the legend as a leading DOT comment so the file documents itself
+    // (kept in sync with the stderr message below).
+    {
+        use std::io::Write as _;
+        writeln!(
+            file,
+            "// Index (assign-like) graph. An edge `A -> B` is the assignment `B = A`;\n\
+             // both directions appear for by-ref/aliased vertices.\n\
+             //\n\
+             // Node label grammar (two lines):\n\
+             //   function(<name>)\n\
+             //   <variable><access-path>\n\
+             //\n\
+             // The access path is a suffix of the second line, so a node is identified by\n\
+             // the TRIPLE (function, variable, access path) -- `local(t)` and `local(t).x`\n\
+             // are distinct nodes. The EMPTY access path renders as the empty string, so a\n\
+             // label with no `.field` suffix means \"this vertex, empty path\" -- it does\n\
+             // NOT mean paths are omitted from labels.\n"
+        )
+        .err_context(|| "writing index graph legend")?;
+    }
     crate::graphviz::render_index_graph(assign_like, id_map, &mut file)
         .err_context(|| "rendering index graph")?;
-    eprintln!("Wrote index graph to '{}'", dot_path.display());
+    eprintln!(
+        "Wrote index graph to '{}'\n  \
+         edge A -> B is the assignment B = A\n  \
+         node label: `function(<name>)` / `<variable><access-path>`; nodes are keyed by\n  \
+         (function, variable, access path), and an empty access path renders as nothing\n  \
+         (a label with no `.field` suffix is the empty path, not an omitted one)",
+        dot_path.display()
+    );
     Ok(())
 }
 
@@ -674,6 +580,28 @@ fn load_and_map_summaries(
     Ok(())
 }
 
+/// Pretty-print the imported IR. With `filter`, only functions whose name contains that
+/// substring are printed; otherwise every function is printed. Uses the `Display` impls in
+/// `ctadl_ir::mir`, so the output matches the in-memory AST the analysis consumes -- except that
+/// locals are resolved to their source names through each function's `Locals` table
+/// (`WithLocalNames`), since `%L7` on its own tells a reader nothing.
+pub fn dump_ir(import: &ArtifactImport, filter: Option<&str>) -> Result<(), Error> {
+    let program_info = load_program_info_without_source_info(import)?;
+    let mut matched = 0usize;
+    for func in program_info.program.functions.iter() {
+        if filter.is_none_or(|pat| func.name.contains(pat)) {
+            matched += 1;
+            println!("{}", ctadl_ir::mir::WithLocalNames(func));
+        }
+    }
+    if let Some(pat) = filter
+        && matched == 0
+    {
+        log::warn!("no function name contains '{pat}'");
+    }
+    Ok(())
+}
+
 pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
     let program_info = load_program_info_without_source_info(import)?;
     let program = &program_info.program;
@@ -837,9 +765,9 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
         actual_param,
         call,
         assign,
-        java_obj_assign,
-        java_call,
-        java_resolvents,
+        call_target_assign,
+        callee_info,
+        callee_resolvents,
         summary,
         paths,
         taint,
@@ -863,7 +791,9 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
     let data = std::fs::read(path)?;
     if filename == "ir-program.bitcode" {
         let program = ctadl_ir::encode::decode_program(&data)?;
-        println!("{}", program);
+        // Resolve locals through each function's table: a dump full of `%L7` is unreadable now
+        // that the name lives in `FunctionData::locals` rather than in the variable itself.
+        println!("{}", ctadl_ir::mir::WithLocalNames(&program));
     } else if filename == "ir-vmt.bitcode" {
         let vmt: ctadl_ir::call::VirtualMethodTable = bitcode::deserialize(&data)?;
         println!("{}", vmt);
@@ -898,9 +828,9 @@ pub fn inspect_index_facts(
     log::info!("  assign:         {}", facts.assign.len());
     log::info!("  summary:        {}", facts.summary.len());
     log::info!("  paths:          {}", facts.paths.len());
-    log::info!("  indirect_call:  {}", facts.indirect_call.len());
-    log::info!("  java_call:      {}", facts.java_call.len());
-    log::info!("  java_obj_assign:{}", facts.java_obj_assign.len());
+    log::info!("  callee_info:    {}", facts.callee_info.len());
+    log::info!("  callee_resolvents: {}", facts.callee_resolvents.len());
+    log::info!("  call_target_assign:{}", facts.call_target_assign.len());
     log::info!("  external_function: {}", facts.external_function.len());
 
     use crate::facts::InsnSiteId;

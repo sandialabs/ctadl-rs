@@ -1117,23 +1117,52 @@ impl Display for FlowVertex {
     }
 }
 
-/// Resolvents represent target information for a virtual function call or indirect call. They con
-/// be either a function ID or an object. The function ID can be used directly. Typically the object
-/// is used in conjunction with virtual method table information to resolve the call.
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Serialize, Deserialize)]
-pub enum Resolvent {
-    #[default]
-    Unresolved,
-    Function(FunctionId),
-    Object(Symbol),
+/// A call target: either a concrete function (a C-style function pointer, `v = ptr<f>`,
+/// a [`FunctionId`]) or a class name (a Java object, `v = new Foo()`, a [`Symbol`]), the
+/// latter resolved against the virtual method table at the call site.
+///
+/// It appears both as a *stored* target — what an assignment writes at a vertex, in
+/// `call_target_assign` (unifying the former `func_ptr_assign` and `java_obj_assign`
+/// relations into one) — and as the *resolved* target carried through the `resolvent`
+/// relation during call resolution.
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
+pub enum CallTargetObject {
+    FunctionId(FunctionId),
+    Symbol(Symbol),
 }
 
-impl Display for Resolvent {
+impl Display for CallTargetObject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Resolvent::Unresolved => write!(f, "unresolved"),
-            Resolvent::Function(func_id) => write!(f, "function({})", func_id.id),
-            Resolvent::Object(cls) => write!(f, "object({cls})"),
+            CallTargetObject::FunctionId(func_id) => write!(f, "ptr<{}>", func_id.id),
+            CallTargetObject::Symbol(cls) => write!(f, "java<{cls}>"),
+        }
+    }
+}
+
+/// The frontend-specific dispatch key that, together with a [`CallTargetObject`], resolves an
+/// indirect / virtual call to concrete callee function(s). It is the *single extension point*
+/// for a new language frontend's call-resolution scheme: adding an arm here plus emitting the
+/// matching `callee_resolvents` facts in codegen is sufficient.
+///
+/// - `Java(simple_name, descriptor)` — a JVM / Dex virtual call, resolved by class-hierarchy
+///   analysis: `callee_resolvents(CallTargetObject::Symbol(class), Java(name, desc), target)`.
+/// - `C` — a C-style function-pointer call. The stored `CallTargetObject::FunctionId(f)`
+///   resolves to itself via the identity `callee_resolvents(FunctionId(f), C, f)` emitted in
+///   codegen for every function that appears as a call target.
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
+pub enum CallDispatchKey {
+    /// JVM / Dex virtual call: (method simple name, method descriptor).
+    Java(Symbol, Symbol),
+    /// C-style function-pointer call: no additional key beyond the stored target.
+    C,
+}
+
+impl Display for CallDispatchKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CallDispatchKey::Java(name, desc) => write!(f, "java_call<{name}{desc}>"),
+            CallDispatchKey::C => write!(f, "c_call"),
         }
     }
 }
@@ -1146,6 +1175,25 @@ pub enum TaintState {
     #[default]
     Free,
     Restricted,
+}
+
+/// Taint-magnitude lattice: `Bottom < Saturating < Plain`.
+///
+/// `Bottom` is the absence of taint (never held in-band by a reached search
+/// state — the search only ever carries `Saturating` or `Plain`). `Saturating`
+/// means the vertex is tainted AND any subfield/offset read off it is also
+/// tainted (recursively). `Plain` ("Taint", the top) just means tainted.
+///
+/// This is orthogonal to [`TaintState`], which is the call/return-matching
+/// discipline threaded as the search annotation, not the taint magnitude.
+/// Declaration order gives the derived `Ord` we want (`Bottom < Saturating <
+/// Plain`); the join (lub) is `max`.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
+pub enum TaintLevel {
+    #[default]
+    Bottom,
+    Saturating,
+    Plain,
 }
 
 /// The kind of a taint-graph edge, in execution / data-flow order.
@@ -1525,13 +1573,22 @@ mod tests {
         let field = sym("a"); // a struct member, not a subscript
 
         // `[_elem_]` may-alias a concrete index, both directions.
-        assert!(match_prefix(&c0, &elem).is_some(), "[_elem_] should match [0]");
-        assert!(match_prefix(&elem, &c0).is_some(), "[0] should match [_elem_]");
+        assert!(
+            match_prefix(&c0, &elem).is_some(),
+            "[_elem_] should match [0]"
+        );
+        assert!(
+            match_prefix(&elem, &c0).is_some(),
+            "[0] should match [_elem_]"
+        );
         // Distinct constant indices stay disjoint (sound precision preserved).
         assert!(match_prefix(&c0, &c1).is_none(), "[0] must not match [1]");
         assert!(match_prefix(&c1, &c0).is_none(), "[1] must not match [0]");
         // `[_elem_]` must not alias a non-subscript (struct) field symbol.
-        assert!(match_prefix(&field, &elem).is_none(), "[_elem_] must not match .a");
+        assert!(
+            match_prefix(&field, &elem).is_none(),
+            "[_elem_] must not match .a"
+        );
         // Exact matches still hold.
         assert!(match_prefix(&elem, &elem).is_some());
         assert!(match_prefix(&c0, &c0).is_some());

@@ -3,7 +3,8 @@ use crate::mir::call::CallStyle;
 use crate::mir::terminator::{Terminator, TerminatorKind};
 use crate::mir::{
     AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldAccesses, FieldPath, FunctionData,
-    ParameterIdx, ParameterType, Statement, StatementIdx, StatementKind, VariableRef,
+    LocalIdx, Locals, ParameterIdx, ParameterType, Statement, StatementIdx, StatementKind,
+    VariableRef,
 };
 
 /// A builder for creating functions.
@@ -30,7 +31,17 @@ impl<'a> FunctionBuilder<'a> {
 
     /// Get a builder for a specific basic block
     pub fn at_block(&mut self, block_idx: BasicBlockIdx) -> BasicBlockBuilder<'_> {
-        BasicBlockBuilder::new(&mut self.function.blocks[block_idx])
+        // Disjoint borrow of the two separate fields of `FunctionData` so the block builder can
+        // intern locals into the same function's table while building a block.
+        BasicBlockBuilder::new(
+            &mut self.function.blocks[block_idx],
+            &mut self.function.locals,
+        )
+    }
+
+    /// Intern a local by name into the function's locals table, returning its index.
+    pub fn intern_local(&mut self, name: &str) -> LocalIdx {
+        self.function.intern_local(name)
     }
 
     /// Set the name of the function
@@ -52,15 +63,18 @@ impl<'a> FunctionBuilder<'a> {
 pub struct BasicBlockBuilder<'a> {
     /// Mutable reference to the basic block being constructed
     block_data: &'a mut BasicBlockData,
+    /// Mutable reference to the enclosing function's locals table, for interning local names
+    locals: &'a mut Locals,
     /// Current insertion point within the basic block
     insertion_point: usize,
 }
 
 impl<'a> BasicBlockBuilder<'a> {
-    /// Create a new BasicBlockBuilder with given basic block
-    pub fn new(block_data: &'a mut BasicBlockData) -> Self {
+    /// Create a new BasicBlockBuilder with given basic block and locals table
+    pub fn new(block_data: &'a mut BasicBlockData, locals: &'a mut Locals) -> Self {
         Self {
             block_data,
+            locals,
             insertion_point: 0,
         }
     }
@@ -257,12 +271,17 @@ impl<'a> BasicBlockBuilder<'a> {
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create a new local variable reference
+    /// Create a new local variable reference, interning `name` into the function's locals table
     ///
     /// # Arguments
     /// * `name` - Variable name
-    pub fn new_local_var(&self, name: &str) -> VariableRef {
-        VariableRef::new_local(name.to_string())
+    pub fn new_local_var(&mut self, name: &str) -> VariableRef {
+        VariableRef::new_local_idx(self.locals.get_or_intern(name))
+    }
+
+    /// Intern a local by name into the function's locals table, returning its index.
+    pub fn intern_local(&mut self, name: &str) -> LocalIdx {
+        self.locals.get_or_intern(name)
     }
 
     /// Create a new parameter variable reference

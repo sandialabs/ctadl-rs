@@ -194,6 +194,15 @@ pub enum Error {
     TreeSitterParse(String),
     #[error("JSON model parsing error")]
     JsonModel(#[from] JsonModelErrors),
+    #[error(
+        "import '{name}' was created by an incompatible version of ctadl \
+         (import format {found}, this build expects {expected}); re-import the artifact"
+    )]
+    IncompatibleImport {
+        name: String,
+        found: String,
+        expected: String,
+    },
     #[error("{context}")]
     Context {
         context: String,

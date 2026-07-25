@@ -54,6 +54,12 @@ pub struct QueryEndpoint {
     /// with no callers). It is human-facing metadata; the taint machinery seeds and searches
     /// from `infunc`/`vertex` alone.
     pub call_site: Option<PackedInsnSiteId>,
+    /// Source-only: when `true`, this source is *saturating* — the seeded vertex is tainted
+    /// and reading any subfield/offset off it is also tainted (recursively). Declared per
+    /// source in the model (`"saturating": true`), defaulting to `false`. Purely internal to
+    /// the search graph: it selects the seed's [`TaintLevel`](crate::facts::TaintLevel) and is
+    /// never emitted downstream.
+    pub saturating: bool,
 }
 
 impl QueryEndpoint {
@@ -80,6 +86,9 @@ impl QueryEndpoint {
             label: endpoint.label,
             direction: endpoint.direction,
             call_site: None,
+            // `TaintEndpoint` does not carry the saturating flag; it is a search-graph
+            // concern re-derived from the model, so default it here.
+            saturating: false,
         }
     }
 
@@ -118,9 +127,56 @@ impl QueryEndpoint {
                 label: self.label.clone(),
                 direction: self.direction,
                 call_site: Some(*site),
+                saturating: self.saturating,
             });
         }
         if out.is_empty() { vec![self] } else { out }
+    }
+
+    /// Like [`anchored_at_callsites`], but for endpoints that denote a *specific set of call
+    /// sites* rather than a whole function. `self.infunc` is the **callee**; a call site
+    /// matches when it targets that callee and — when `caller_filter` is `Some` — sits inside
+    /// that caller function. Unlike [`anchored_at_callsites`], there is no function-anchored
+    /// fallback: if no call site matches, the result is empty (a callsite endpoint that names
+    /// no real call site seeds nothing). The globals pseudo-formal cannot be anchored at a
+    /// call site and yields an empty result.
+    ///
+    /// [`anchored_at_callsites`]: Self::anchored_at_callsites
+    pub fn anchored_at_callsites_filtered(
+        self,
+        formal: FormalIndex,
+        call: &[(PackedInsnSiteId, FunctionId)],
+        caller_filter: Option<FunctionId>,
+    ) -> Vec<Self> {
+        if *formal == crate::codegen::GLOBALS_INDEX {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (site, callee) in call {
+            if *callee != self.infunc {
+                continue;
+            }
+            let Ok(insn_site) = InsnSiteId::try_from(site) else {
+                continue;
+            };
+            if let Some(caller) = caller_filter
+                && insn_site.func_id != caller
+            {
+                continue;
+            }
+            let Ok(call_arg) = PackedCallArg::try_from_parts(insn_site.insn_id, formal) else {
+                continue;
+            };
+            out.push(QueryEndpoint {
+                infunc: insn_site.func_id,
+                vertex: FlowVertex(FlowVariable::call_arg_packed(call_arg), self.vertex.1),
+                label: self.label.clone(),
+                direction: self.direction,
+                call_site: Some(*site),
+                saturating: self.saturating,
+            });
+        }
+        out
     }
 }
 
@@ -266,7 +322,7 @@ fn copy_find(parent: &mut std::collections::HashMap<CopyKey, CopyKey>, x: CopyKe
 /// Θ(C²) all-pairs empty-path `alias_of_field` closure: instead of materializing
 /// every pair of a C-variable copy group, we hand the taint engine one edge per
 /// non-representative member and let taint equalize through the representative.
-fn compute_copy_alias(
+pub(crate) fn compute_copy_alias(
     assign: &[(FunctionId, FlowVariable, Path, FlowVariable, Path)],
 ) -> Vec<(FunctionId, FlowVariable, FlowVariable)> {
     use std::collections::HashMap;
@@ -355,7 +411,7 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
         // Initialize taint with source
         taint(infunc, TaintState::Free, v.clone(), p.clone(), s) <--
             sources(s),
-            let QueryEndpoint { infunc, vertex, label, direction, call_site: _ } = s,
+            let QueryEndpoint { infunc, vertex, label, direction, call_site: _, saturating: _ } = s,
             let FlowVertex(v, p) = vertex;
 
         // Propagate taint locally onto fields
@@ -566,8 +622,11 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
     }
 }
 
+mod endpoints;
 pub mod formatter;
 pub mod search;
+
+pub use endpoints::build_query_endpoints;
 
 struct DisplayTaint<'a> {
     taint: &'a [(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)],
@@ -618,6 +677,7 @@ impl<'a> std::fmt::Display for QueryEndpointDisplay<'a> {
             infunc,
             vertex,
             call_site,
+            saturating: _,
         } = self.endpoint;
 
         let func_name = self

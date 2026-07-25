@@ -30,21 +30,38 @@ The regime:
    rows, which the SARIF formatter walks exactly as before.
 */
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
+use std::hash::BuildHasherDefault;
+
+use rustc_hash::FxHasher;
 
 use ctadl_ir::graph::{LazyAnnotation, LazySuccessors, find_annotated_paths_from_set};
 
+/// `hashbrown` maps/sets keyed by the deterministic, fast `FxHasher` rather than
+/// the DoS-resistant SipHash the std collections default to — the taint tables
+/// hold trusted, program-derived keys, so the faster hash is a free win.
+type HashMap<K, V> = hashbrown::HashMap<K, V, BuildHasherDefault<FxHasher>>;
+type HashSet<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
+
 use crate::facts::{
     CallArgId, FlowEdge, FlowVariable, FormalType, FunctionId, IdMap, InsnSiteId, Label,
-    PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintState, isout,
+    PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintLevel, TaintState, isout,
 };
 
 use super::{QueryEndpoint, QueryFacts, QueryResult, compute_copy_alias};
 
 /// A node of the implicit taint graph: a variable and access path within a
-/// function. The taint state is not part of the node — it is the annotation the
-/// search threads along the edges.
-pub type TaintNode = (FunctionId, FlowVariable, Path);
+/// function, plus the [`TaintLevel`] magnitude carried in-band. The level must
+/// live in the node (not the annotation) because successor generation
+/// ([`LazySuccessors::labeled_successors`]) sees only the node, and a saturating
+/// vertex generates extra edges a plain one does not. The [`TaintState`]
+/// call/return discipline stays the annotation — the two are orthogonal.
+pub type TaintNode = (FunctionId, FlowVariable, Path, TaintLevel);
+
+/// The level-agnostic vertex identity `(function, variable, access path)`, used
+/// for sink matching and emission — where the taint magnitude is invisible (the
+/// lattice "collapses" to a plain reached state).
+type TaintVertex = (FunctionId, FlowVariable, Path);
 
 /// The implicit taint dataflow graph: edges are computed on demand from indexed
 /// program tables, never materialized. Edge expansion mirrors the closure
@@ -62,6 +79,11 @@ pub struct TaintSearchGraph {
     /// *alias* of `a.q`, so taint on `x` also lives at `a.q` — the back-flow
     /// direction the direct `assign_by_src` edges don't cover.
     loads_by_dst: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>>,
+    /// The same loads `x = a.q` indexed by *base*: `(f, a) -> [(x, q)]`. The
+    /// mirror of `loads_by_dst`, consulted only by the saturating rule: reading
+    /// any offset `q` off a saturating base `a` taints the load's destination
+    /// `x`, regardless of whether `q` matches the tainted path.
+    loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>>,
     /// `formal_param`, keyed by `(function, formal variable)`.
     formal_ty: HashMap<(FunctionId, FlowVariable), FormalType>,
     /// Call sites indexed by callee, for formal-to-actual (function exit) steps.
@@ -78,6 +100,14 @@ pub struct TaintSearchGraph {
     /// so successor order — and therefore search tie-breaking — is
     /// deterministic.
     copy_members: HashMap<(FunctionId, FlowVariable), Vec<FlowVariable>>,
+    /// Sink access paths per `(function, variable)`, from the backward
+    /// endpoints. Consulted only by the saturating rule: a saturating vertex
+    /// `(v, p)` reaches any sink `(v, q)` whose path `q` extends `p` (reading
+    /// further off the saturating value is tainted). This is the sink-side of
+    /// saturation — the read the sink performs (`system`'s `Argument(0).deref`)
+    /// is external code, so it is not a `load` edge and must be matched here
+    /// rather than through `loads_by_src`. Bounded by the number of sinks.
+    sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>>,
 }
 
 impl TaintSearchGraph {
@@ -85,9 +115,11 @@ impl TaintSearchGraph {
         let mut assign_by_src: HashMap<
             (FunctionId, FlowVariable),
             Vec<(FlowVariable, Path, Path)>,
-        > = HashMap::new();
+        > = HashMap::default();
         let mut loads_by_dst: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>> =
-            HashMap::new();
+            HashMap::default();
+        let mut loads_by_src: HashMap<(FunctionId, FlowVariable), Vec<(FlowVariable, Path)>> =
+            HashMap::default();
         for (f, dst, dp, src, sp) in &facts.assign {
             assign_by_src
                 .entry((*f, *src))
@@ -98,6 +130,10 @@ impl TaintSearchGraph {
                     .entry((*f, *dst))
                     .or_default()
                     .push((*src, *sp));
+                loads_by_src
+                    .entry((*f, *src))
+                    .or_default()
+                    .push((*dst, *sp));
             }
         }
 
@@ -107,8 +143,8 @@ impl TaintSearchGraph {
             .map(|(f, v, ty)| ((*f, *v), *ty))
             .collect();
 
-        let mut callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>> = HashMap::new();
-        let mut callee_by_site = HashMap::new();
+        let mut callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>> = HashMap::default();
+        let mut callee_by_site = HashMap::default();
         for (site, callee) in &facts.call {
             callers_by_callee.entry(*callee).or_default().push(*site);
             callee_by_site.insert(*site, *callee);
@@ -116,9 +152,9 @@ impl TaintSearchGraph {
 
         let paths = facts.paths.iter().map(|(p,)| *p).collect();
 
-        let mut copy_rep = HashMap::new();
+        let mut copy_rep = HashMap::default();
         let mut copy_members: HashMap<(FunctionId, FlowVariable), Vec<FlowVariable>> =
-            HashMap::new();
+            HashMap::default();
         for (f, member, rep) in compute_copy_alias(&facts.assign) {
             copy_rep.insert((f, member), rep);
             copy_members.entry((f, rep)).or_default().push(member);
@@ -127,15 +163,30 @@ impl TaintSearchGraph {
             members.sort_unstable();
         }
 
+        // Sink access paths per variable, for the saturating rule's sink-side
+        // read. Only backward endpoints contribute.
+        let mut sink_ext_by_var: HashMap<(FunctionId, FlowVariable), Vec<Path>> =
+            HashMap::default();
+        for (ep,) in &facts.endpoints {
+            if ep.direction == TaintDirection::Backward {
+                sink_ext_by_var
+                    .entry((ep.infunc, ep.vertex.0))
+                    .or_default()
+                    .push(ep.vertex.1);
+            }
+        }
+
         TaintSearchGraph {
             assign_by_src,
             loads_by_dst,
+            loads_by_src,
             formal_ty,
             callers_by_callee,
             callee_by_site,
             paths,
             copy_rep,
             copy_members,
+            sink_ext_by_var,
         }
     }
 }
@@ -145,8 +196,12 @@ impl LazySuccessors for TaintSearchGraph {
     type Label = FlowEdge;
 
     fn labeled_successors(&self, node: &TaintNode) -> Vec<(TaintNode, FlowEdge)> {
-        let (f, v, p) = *node;
+        let (f, v, p, level) = *node;
         let mut out = Vec::new();
+
+        // The taint level rides along every existing edge unchanged, so
+        // saturating-ness is preserved through precise propagation (e.g. across
+        // the bare-base copy `formal(1) -> @p1_0`, making `@p1_0` saturating).
 
         // Direct assign-like flow with path substitution: taint on `src.p` with
         // `p = sp·rest` flows to `dst.(dp·rest)`, for materialized paths only.
@@ -155,7 +210,7 @@ impl LazySuccessors for TaintSearchGraph {
                 if let Some(p2) = p.substitute_prefix(sp, dp)
                     && self.paths.contains(&p2)
                 {
-                    out.push(((f, *dst, p2), FlowEdge::Intra));
+                    out.push(((f, *dst, p2, level), FlowEdge::Intra));
                 }
             }
         }
@@ -170,11 +225,11 @@ impl LazySuccessors for TaintSearchGraph {
         if let Some(loads) = self.loads_by_dst.get(&(f, v)) {
             for (a, q) in loads {
                 if p.is_empty() {
-                    out.push(((f, *a, *q), FlowEdge::Intra));
+                    out.push(((f, *a, *q, level), FlowEdge::Intra));
                 } else {
                     let qp = q.concat(&p);
                     if self.paths.contains(&qp) {
-                        out.push(((f, *a, qp), FlowEdge::Intra));
+                        out.push(((f, *a, qp, level), FlowEdge::Intra));
                     }
                 }
             }
@@ -187,11 +242,47 @@ impl LazySuccessors for TaintSearchGraph {
         // two hops.
         if p.is_empty() || self.paths.contains(&p) {
             if let Some(rep) = self.copy_rep.get(&(f, v)) {
-                out.push(((f, *rep, p), FlowEdge::Intra));
+                out.push(((f, *rep, p, level), FlowEdge::Intra));
             }
             if let Some(members) = self.copy_members.get(&(f, v)) {
                 for m in members {
-                    out.push(((f, *m, p), FlowEdge::Intra));
+                    out.push(((f, *m, p, level), FlowEdge::Intra));
+                }
+            }
+        }
+
+        // Saturating vertex-level read: any subfield/offset read off a
+        // saturating vertex is tainted, regardless of the tainted path `p` and
+        // without the materialized-paths gate. For every load `x = v.q` off
+        // this vertex, taint the destination `x` (at the empty path) and keep it
+        // `Saturating`, so saturation fills the whole access-path subtree
+        // (recursively). This is what reconnects `@p1_0.[8].deref` to the
+        // saturating `@p1_0`. Plain nodes get no such edges, so precise sources
+        // (e.g. `getenv`) keep their path-sensitive behavior and cannot
+        // over-taint.
+        if level == TaintLevel::Saturating {
+            if let Some(loads) = self.loads_by_src.get(&(f, v)) {
+                for (dst, _q) in loads {
+                    out.push((
+                        (f, *dst, Path::empty(), TaintLevel::Saturating),
+                        FlowEdge::Intra,
+                    ));
+                }
+            }
+
+            // Saturating sink-side read: the sink reads a subfield/offset `q`
+            // off this saturating value (`system`'s `Argument(0).deref` reads
+            // `.deref` off the tainted pointer). That read is external code, not
+            // a `load` edge, so step the same vertex `v` from the tainted path
+            // `p` to the (strictly longer) sink path `q` that extends it. The
+            // resulting `(v, q)` vertex exact-matches the sink, is emitted as a
+            // sink-vertex row, and the `(v, p) -> (v, q)` edge joins the flow
+            // graph the formatter walks. Bounded by the sinks on `v`.
+            if let Some(qs) = self.sink_ext_by_var.get(&(f, v)) {
+                for q in qs {
+                    if q.len() > p.len() && q.is_extension_of(&p) {
+                        out.push(((f, v, *q, TaintLevel::Saturating), FlowEdge::Intra));
+                    }
                 }
             }
         }
@@ -210,7 +301,7 @@ impl LazySuccessors for TaintSearchGraph {
                 let InsnSiteId { func_id, insn_id } = InsnSiteId::try_from(site).unwrap();
                 let call_arg = PackedCallArg::try_from_parts(insn_id, formal).unwrap();
                 out.push((
-                    (func_id, FlowVariable::call_arg_packed(call_arg), p),
+                    (func_id, FlowVariable::call_arg_packed(call_arg), p, level),
                     FlowEdge::Return(*site),
                 ));
             }
@@ -224,7 +315,7 @@ impl LazySuccessors for TaintSearchGraph {
             if let Some(callee) = self.callee_by_site.get(&site) {
                 let formal_var = FlowVariable::formal_index(call_arg_id.formal());
                 if self.formal_ty.contains_key(&(*callee, formal_var)) {
-                    out.push(((*callee, formal_var, p), FlowEdge::Call(site)));
+                    out.push(((*callee, formal_var, p, level), FlowEdge::Call(site)));
                 }
             }
         }
@@ -291,7 +382,9 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     // the same search. Sinks (backward endpoints) are the targets of every
     // search, keyed by the exact vertex they name.
     let mut source_sets: BTreeMap<Label, Vec<QueryEndpoint>> = BTreeMap::new();
-    let mut sink_nodes: HashMap<TaintNode, Vec<QueryEndpoint>> = HashMap::new();
+    // Sinks key on the level-agnostic vertex: the taint magnitude is invisible to
+    // sink matching (a saturating flow arriving at a sink is just a flow arriving).
+    let mut sink_nodes: HashMap<TaintVertex, Vec<QueryEndpoint>> = HashMap::default();
     for (ep,) in &facts.endpoints {
         match ep.direction {
             TaintDirection::Forward => {
@@ -341,19 +434,25 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     let mut states_total = 0usize;
     for (label, endpoints) in &source_sets {
         // The start set: each distinct vertex once, attributed to the first
-        // endpoint that names it.
-        let mut start_origin: HashMap<TaintNode, u32> = HashMap::new();
+        // endpoint that names it. A saturating source seeds its start node at
+        // level `Saturating`; a plain source at `Plain`.
+        let mut start_origin: HashMap<TaintNode, u32> = HashMap::default();
         let mut starts: Vec<TaintNode> = Vec::new();
         for (i, ep) in endpoints.iter().enumerate() {
-            let node = (ep.infunc, ep.vertex.0, ep.vertex.1);
-            if let std::collections::hash_map::Entry::Vacant(e) = start_origin.entry(node) {
+            let level = if ep.saturating {
+                TaintLevel::Saturating
+            } else {
+                TaintLevel::Plain
+            };
+            let node = (ep.infunc, ep.vertex.0, ep.vertex.1, level);
+            if let hashbrown::hash_map::Entry::Vacant(e) = start_origin.entry(node) {
                 e.insert(i as u32);
                 starts.push(node);
             }
         }
 
         let search = find_annotated_paths_from_set(&graph, starts, |n, _s: &TaintState| {
-            sink_nodes.contains_key(n)
+            sink_nodes.contains_key(&(n.0, n.1, n.2))
         });
         states_total += search.states.len();
 
@@ -376,9 +475,13 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
             // (instruction-level projections and the formatter's pairing nodes)
             // and sink vertices (a flow arrived). Interior states are search
             // bookkeeping, not results.
-            if st.node.1.as_call_arg().is_none() && !sink_nodes.contains_key(&st.node) {
+            if st.node.1.as_call_arg().is_none()
+                && !sink_nodes.contains_key(&(st.node.0, st.node.1, st.node.2))
+            {
                 continue;
             }
+            // Emission drops the level (the "collapse"): every reached state is a
+            // plain tainted row, exactly as before.
             let ep = &endpoints[origin[i] as usize];
             taint.push((st.node.0, st.annot, st.node.1, st.node.2, ep.clone()));
         }
@@ -389,11 +492,14 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         // formatter walks, and every node on it is tagged with the sink's
         // endpoint — the backward-direction tag that marks the flow's source
         // end as completing a source -> sink flow.
-        let mut reported: HashSet<TaintNode> = HashSet::new();
+        // Dedup by the level-agnostic vertex: one path per sink vertex, even if
+        // the vertex is reached as both `Saturating` and `Plain`.
+        let mut reported: HashSet<TaintVertex> = HashSet::default();
         let mut paths_found = 0usize;
         for &t in &search.targets {
             let node = search.states[t as usize].node;
-            if !reported.insert(node) {
+            let vertex = (node.0, node.1, node.2);
+            if !reported.insert(vertex) {
                 continue;
             }
             paths_found += 1;
@@ -413,7 +519,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
             }
             for i in path {
                 let st = &search.states[i as usize];
-                for sink in &sink_nodes[&node] {
+                for sink in &sink_nodes[&vertex] {
                     sink_tags.insert((st.node.0, st.annot, st.node.1, st.node.2, sink.clone()));
                 }
             }
@@ -476,5 +582,131 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         taint_edge: taint_edge.into_iter().collect(),
         tainted_insn: tainted_insn.into_iter().collect(),
         absorbing_functions: absorbing.into_iter().collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::facts::{FlowVertex, Label};
+
+    /// A single-field access path `.field`.
+    fn field_path(field: &str) -> Path {
+        Path::from_accesses([ctadl_ir::mir::PathSegment::Symbol(
+            internment::ArcIntern::from(field),
+        )])
+    }
+
+    /// A forward (source) endpoint on `(func, var)` at the empty path.
+    fn source(func: u32, var: FlowVariable, saturating: bool) -> QueryEndpoint {
+        QueryEndpoint {
+            infunc: FunctionId::new(func),
+            vertex: FlowVertex(var, Path::empty()),
+            label: Label("argv_input".into()),
+            direction: TaintDirection::Forward,
+            call_site: None,
+            saturating,
+        }
+    }
+
+    /// A backward (sink) endpoint on `(func, var)` at the empty path.
+    fn sink(func: u32, var: FlowVariable) -> QueryEndpoint {
+        QueryEndpoint {
+            infunc: FunctionId::new(func),
+            vertex: FlowVertex(var, Path::empty()),
+            label: Label("cmdi".into()),
+            direction: TaintDirection::Backward,
+            call_site: None,
+            saturating: false,
+        }
+    }
+
+    /// A saturating source reconnects an offset/field read off its base to the
+    /// read's destination (the `argv[1]` regression, in miniature): the base
+    /// `p` is the source, and the sink `q` is read via a *sibling* load `q =
+    /// p.field` whose path is never matched by precise, path-sensitive
+    /// propagation. Only saturation reconnects it, so a `Saturating` seed
+    /// reaches the sink where a `Plain` seed does not.
+    #[test]
+    fn saturating_source_reaches_offset_read() {
+        let f = 0u32;
+        let base = FlowVariable::local("base".into());
+        let dst = FlowVariable::local("dst".into());
+        let q = field_path("field");
+
+        // A load `dst = base.field` (destination path empty, source path `.field`).
+        let assign = vec![(FunctionId::new(f), dst, Path::empty(), base, q)];
+        // `.field` is materialized; the empty path is implicitly present.
+        let paths = vec![(q,), (Path::empty(),)];
+        let sink_ep = sink(f, dst);
+
+        let run = |saturating: bool| {
+            let facts = QueryFacts {
+                assign: assign.clone(),
+                paths: paths.clone(),
+                endpoints: vec![(source(f, base, saturating),), (sink_ep.clone(),)],
+                ..Default::default()
+            };
+            taint_search(facts, None)
+        };
+
+        // Saturating: the base saturates, so reading `.field` off it taints
+        // `dst` — a source -> sink path exists.
+        let sat = run(true);
+        assert!(
+            !sat.taint_edge.is_empty(),
+            "saturating source should reconnect the offset read to the sink"
+        );
+
+        // Plain: path-sensitive propagation never matches the sibling path, so
+        // the sink is unreachable.
+        let plain = run(false);
+        assert!(
+            plain.taint_edge.is_empty(),
+            "plain source must not reach the offset read (no over-tainting)"
+        );
+    }
+
+    /// The sink-side of saturation: a saturating pointer flows to a sink that
+    /// reads a subfield/offset off it (`system(argv[1])` reads `.deref` off the
+    /// tainted pointer). The taint arrives at the sink vertex at the *bare*
+    /// path, and only saturation extends it to the sink's `.field` path. A
+    /// `Plain` seed, arriving at the same bare vertex, does not.
+    #[test]
+    fn saturating_source_reaches_extended_sink() {
+        let f = 0u32;
+        let base = FlowVariable::local("base".into());
+        let deref = field_path("field");
+
+        // No loads: the source vertex *is* the sink's variable, but the sink
+        // reads `.field` off it while the taint sits at the bare (empty) path.
+        let assign: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)> = vec![];
+        let paths = vec![(deref,), (Path::empty(),)];
+
+        let run = |saturating: bool| {
+            let src = source(f, base, saturating);
+            // Sink on the same vertex, at the extended path `.field`.
+            let mut sink_ep = sink(f, base);
+            sink_ep.vertex = FlowVertex(base, deref);
+            let facts = QueryFacts {
+                assign: assign.clone(),
+                paths: paths.clone(),
+                endpoints: vec![(src,), (sink_ep,)],
+                ..Default::default()
+            };
+            taint_search(facts, None)
+        };
+
+        let sat = run(true);
+        assert!(
+            !sat.taint_edge.is_empty(),
+            "saturating source should reach a sink that reads a subfield off it"
+        );
+
+        let plain = run(false);
+        assert!(
+            plain.taint_edge.is_empty(),
+            "plain source at the bare path must not reach the `.field` sink"
+        );
     }
 }

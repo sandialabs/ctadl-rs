@@ -65,9 +65,11 @@ pub fn codegen_program(
             let func_id = source_info
                 .sites
                 .get_or_add_function(fx::Function(target.clone().into()));
-            facts
-                .java_resolvents
-                .push((cls.clone(), name.clone(), desc.clone(), func_id));
+            facts.callee_resolvents.push((
+                fx::CallTargetObject::Symbol(cls.clone()),
+                fx::CallDispatchKey::Java(name.clone(), desc.clone()),
+                func_id,
+            ));
         }
     }
     let mut v = CodegenVisitor::new(cha, facts, source_info, strategy);
@@ -101,9 +103,11 @@ pub fn codegen_function(
             let func_id = source_info
                 .sites
                 .get_or_add_function(fx::Function(target.clone().into()));
-            facts
-                .java_resolvents
-                .push((cls.clone(), name.clone(), desc.clone(), func_id));
+            facts.callee_resolvents.push((
+                fx::CallTargetObject::Symbol(cls.clone()),
+                fx::CallDispatchKey::Java(name.clone(), desc.clone()),
+                func_id,
+            ));
         }
     }
     log::trace!("codegen for {}", function_data.name);
@@ -158,6 +162,12 @@ struct CodegenVisitor<'a> {
     /// (`x.a.b.c := v`), so a write through a loaded pointer is recorded at the object it names
     /// rather than at the temporary. Cleared per block.
     cap_path: BTreeMap<VariableRef, (VariableRef, fx::Path)>,
+    /// Distinct functions stored as C-style call targets (`CallTargetObject::FunctionId`)
+    /// anywhere in this codegen unit. Each gets an identity `callee_resolvents(FunctionId(f),
+    /// C, f)` fact emitted in [`Self::finish`] — the function-pointer analogue of the CHA
+    /// `callee_resolvents`, which is what lets the unified resolution rules resolve a reached
+    /// function pointer to itself without a `C`-specific rule in the index engine.
+    funcptr_targets: BTreeSet<fx::FunctionId>,
 }
 
 impl<'a> CodegenVisitor<'a> {
@@ -178,6 +188,7 @@ impl<'a> CodegenVisitor<'a> {
             strategy,
             paths_dedup: Default::default(),
             cap_path: Default::default(),
+            funcptr_targets: Default::default(),
         }
     }
 
@@ -193,6 +204,16 @@ impl<'a> CodegenVisitor<'a> {
         }
         let paths = std::mem::take(&mut self.paths_dedup);
         self.facts.paths.extend(paths);
+        let funcptr_targets = std::mem::take(&mut self.funcptr_targets);
+        self.facts
+            .callee_resolvents
+            .extend(funcptr_targets.into_iter().map(|f| {
+                (
+                    fx::CallTargetObject::FunctionId(f),
+                    fx::CallDispatchKey::C,
+                    f,
+                )
+            }));
     }
 
     /// Does finish and also runs a datalog modeling pass
@@ -355,18 +376,19 @@ impl Visitor for CodegenVisitor<'_> {
                         let dest = self.trans_variable_ref(dest);
                         let target = fx::Function(name.clone().into());
                         let target = self.source_info.sites.get_or_add_function(target);
-                        self.facts.func_ptr_assign.push((
+                        self.facts.call_target_assign.push((
                             site,
                             FlowVertex(dest, fx::Path::empty()),
-                            target,
+                            fx::CallTargetObject::FunctionId(target),
                         ));
+                        self.funcptr_targets.insert(target);
                     }
                     if let Exp::ObjectRef(CallObject::JavaObject(cls)) = src {
                         let dest = self.trans_variable_ref(dest);
-                        self.facts.java_obj_assign.push((
+                        self.facts.call_target_assign.push((
                             site,
                             FlowVertex(dest, fx::Path::empty()),
-                            cls.0.clone(),
+                            fx::CallTargetObject::Symbol(cls.0.clone()),
                         ));
                     }
                     let Some(src) = self.trans_exp(src) else {
@@ -452,11 +474,13 @@ impl Visitor for CodegenVisitor<'_> {
                                 }
                             }
                             CallResolutionStrategy::Hi => {
-                                self.facts.java_call.push((
+                                self.facts.callee_info.push((
                                     site,
                                     FlowVertex(recv_var, fx::Path::empty()),
-                                    simple_name.clone(),
-                                    descriptor.clone(),
+                                    fx::CallDispatchKey::Java(
+                                        simple_name.clone(),
+                                        descriptor.clone(),
+                                    ),
                                 ));
                                 log::trace!(
                                     "java: HI resolve {cls}.{simple_name}{descriptor} (deferred)"
@@ -477,11 +501,13 @@ impl Visitor for CodegenVisitor<'_> {
                                         "java: no resolvents {cls}.{simple_name}{descriptor}",
                                     );
                                 } else {
-                                    self.facts.java_call.push((
+                                    self.facts.callee_info.push((
                                         site,
                                         FlowVertex(recv_var, fx::Path::empty()),
-                                        simple_name.clone(),
-                                        descriptor.clone(),
+                                        fx::CallDispatchKey::Java(
+                                            simple_name.clone(),
+                                            descriptor.clone(),
+                                        ),
                                     ));
                                     log::trace!(
                                         "java: hybrid resolve {cls}.{simple_name}{descriptor} with {} targets",
@@ -493,7 +519,9 @@ impl Visitor for CodegenVisitor<'_> {
                     }
                     CallStyle::FuncPtrCall { callee, .. } => {
                         let vertex = self.trans_access_path(callee);
-                        self.facts.indirect_call.push((site, vertex));
+                        self.facts
+                            .callee_info
+                            .push((site, vertex, fx::CallDispatchKey::C));
                     }
                     _ => log::warn!("unhandled call style: {style:?}"),
                 }
@@ -515,11 +543,12 @@ impl Visitor for CodegenVisitor<'_> {
                         )
                         .unwrap();
                         let call_arg_var = FlowVariable::call_arg_packed(call_arg_packed);
-                        self.facts.func_ptr_assign.push((
+                        self.facts.call_target_assign.push((
                             site,
                             FlowVertex(call_arg_var, fx::Path::empty()),
-                            target,
+                            fx::CallTargetObject::FunctionId(target),
                         ));
+                        self.funcptr_targets.insert(target);
                     }
 
                     if let Exp::ObjectRef(CallObject::JavaObject(cls)) = arg_exp {
@@ -529,10 +558,10 @@ impl Visitor for CodegenVisitor<'_> {
                         )
                         .unwrap();
                         let call_arg_var = FlowVariable::call_arg_packed(call_arg_packed);
-                        self.facts.java_obj_assign.push((
+                        self.facts.call_target_assign.push((
                             site,
                             FlowVertex(call_arg_var, fx::Path::empty()),
-                            cls.0.clone(),
+                            fx::CallTargetObject::Symbol(cls.0.clone()),
                         ));
                     }
 
@@ -569,20 +598,27 @@ impl Visitor for CodegenVisitor<'_> {
                 field,
             } => {
                 let dest = self.trans_variable_ref(dest);
-                let source_var = self.trans_variable_ref(&source.variable_ref);
-                // The read path is the source's (offset) address arithmetic then the loaded field.
+                // Re-anchor a read through a load-chain temporary onto the root composed path it
+                // addresses, the read-side mirror of the `Store` arm.
+                let (root_var, base_path) = self
+                    .cap_path
+                    .get(&source.variable_ref)
+                    .cloned()
+                    .unwrap_or_else(|| (source.variable_ref.clone(), fx::Path::empty()));
+                let source_var = self.trans_variable_ref(&root_var);
+                // The read path is the captured chain path, then the source's own (offset) address
+                // arithmetic, then the loaded field.
                 let path = fx::Path::from_accesses(
-                    source
-                        .path
+                    base_path
                         .iter()
                         .cloned()
-                        .map(PathSegment::from)
+                        .chain(source.path.iter().cloned().map(PathSegment::from))
                         .chain(std::iter::once(PathSegment::Symbol(
                             field.symbol_ref().clone(),
                         ))),
                 );
                 self.paths_dedup.insert((path,));
-                // dest <- source.field
+                // dest <- root.<composed path>
                 self.facts.assign.push((
                     site,
                     FlowVertex(dest, fx::Path::empty()),
@@ -625,14 +661,19 @@ impl Visitor for CodegenVisitor<'_> {
                 if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = value {
                     let target = fx::Function(name.clone().into());
                     let target = self.source_info.sites.get_or_add_function(target);
-                    self.facts
-                        .func_ptr_assign
-                        .push((site, dest.clone(), target));
+                    self.facts.call_target_assign.push((
+                        site,
+                        dest.clone(),
+                        fx::CallTargetObject::FunctionId(target),
+                    ));
+                    self.funcptr_targets.insert(target);
                 }
                 if let Exp::ObjectRef(CallObject::JavaObject(cls)) = value {
-                    self.facts
-                        .java_obj_assign
-                        .push((site, dest.clone(), cls.0.clone()));
+                    self.facts.call_target_assign.push((
+                        site,
+                        dest.clone(),
+                        fx::CallTargetObject::Symbol(cls.0.clone()),
+                    ));
                 }
                 if let Some(value) = self.trans_exp(value) {
                     self.facts.assign.push((site, dest, value));
@@ -727,13 +768,15 @@ impl ClassHierarchyAnalysis {
                     .cloned()
                     .map(|(a, b, c, d)| (a.into(), b.into(), c.into(), d.into()))
                     .collect();
-                let direct_superclass = hierarchy
+                let mut direct_superclass: Vec<(Symbol, Symbol)> = hierarchy
                     .iter()
                     .flat_map(|(sub, sups)| {
                         sups.into_iter()
                             .map(|sup| (sup.clone().into(), sub.clone().into()))
                     })
                     .collect();
+                // Sort for determinism
+                direct_superclass.sort_unstable();
                 let interface_type = Default::default();
                 let super_interface = Default::default();
                 let instantiated_classes_vec =
@@ -823,8 +866,11 @@ fn run_cha(
             // RTA rule: Only resolve if there is an instantiated subtype
             //instantiated_class(sub);
     };
+    let mut rows: Vec<_> = prog.cha_resolve.into_iter().collect();
+    // Sort for determinism
+    rows.sort_unstable();
     let mut result: BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>> = BTreeMap::new();
-    for (c, n, d, id) in prog.cha_resolve.into_iter() {
+    for (c, n, d, id) in rows {
         log::trace!("Adding entry: {c}, {n}, {d} -> {id}");
         result.entry((c, n, d)).or_default().push(id);
     }

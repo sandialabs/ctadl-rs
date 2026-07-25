@@ -101,6 +101,7 @@ parameters, and instructions.
 - Varargs parameter passing
 
 */
+use std::collections::HashMap;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::{fmt, fmt::Display};
 
@@ -358,8 +359,8 @@ pub enum Variable {
     /// A global variable represents a heap for storing globals. This variable may only be written
     /// in a [`StatementKind::Store`] instruction.
     GlobalHeap,
-    /// A local variable
-    Local(String),
+    /// A local variable, identified by its index into the enclosing function's [`Locals`] table.
+    Local(LocalIdx),
     /// A parameter
     Param(ParameterIdx),
 }
@@ -452,6 +453,9 @@ pub struct FunctionData {
     /// List of basic blocks of the function. It is allowed to be empty, meaning the function has
     /// no code.
     pub blocks: BasicBlocks,
+    /// Declaration table for the function's local variables. Every [`Variable::Local`] reachable in
+    /// this function indexes into this table.
+    pub locals: Locals,
 }
 
 /// Parameter declarations for a function. Parameter passing matches the declaration order
@@ -467,6 +471,181 @@ newtype_index!(ParameterIdx, u32);
 impl From<u16> for ParameterIdx {
     fn from(v: u16) -> Self {
         ParameterIdx::new(v.into())
+    }
+}
+
+// Index into a local declaration in a function's `Locals` table.
+newtype_index!(LocalIdx, u32);
+
+/// The declaration of a single local variable. Currently only holds the local's source name, but
+/// has room to grow (type, source info, is_temp, …).
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LocalDecl {
+    pub name: String,
+}
+
+/// A per-function table of local variable declarations. Locals are interned by name via
+/// [`Locals::get_or_intern`]: a repeated name within a function returns the same [`LocalIdx`], so
+/// every occurrence of a source register maps to one local (required for SSA).
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Locals {
+    decls: IndexVec<LocalIdx, LocalDecl>,
+    /// Transient name→index map used only during interning; rebuilt on demand after deserialize.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    by_name: HashMap<String, LocalIdx>,
+}
+
+impl Locals {
+    /// Returns the index for `name`, interning a new local if this name has not been seen.
+    pub fn get_or_intern(&mut self, name: &str) -> LocalIdx {
+        // `by_name` is `#[serde(skip)]`, so a deserialized table arrives with declarations but no
+        // index. Rebuild it before interning: otherwise a name already in `decls` would intern to
+        // a *second* index, and the one-local-per-name invariant that SSA (and every name-based
+        // lookup into this table) relies on would silently break.
+        if self.by_name.is_empty() && !self.decls.is_empty() {
+            self.rebuild_index();
+        }
+        if let Some(&idx) = self.by_name.get(name) {
+            return idx;
+        }
+        let idx = self.decls.push(LocalDecl {
+            name: name.to_string(),
+        });
+        self.by_name.insert(name.to_string(), idx);
+        idx
+    }
+
+    /// The source name of the local at `i`.
+    #[inline]
+    pub fn name(&self, i: LocalIdx) -> &str {
+        &self.decls[i].name
+    }
+
+    /// The declaration of the local at `i`, if it exists.
+    #[inline]
+    pub fn get(&self, i: LocalIdx) -> Option<&LocalDecl> {
+        self.decls.get(i)
+    }
+
+    /// The number of declared locals.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.decls.len()
+    }
+
+    /// Whether the table has no declared locals.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.decls.is_empty()
+    }
+
+    /// Iterate over `(LocalIdx, &LocalDecl)` pairs.
+    #[inline]
+    pub fn iter_enumerated(&self) -> impl DoubleEndedIterator<Item = (LocalIdx, &LocalDecl)> {
+        self.decls.iter_enumerated()
+    }
+
+    /// Rebuild the transient `by_name` index from the declarations. [`Self::get_or_intern`] calls
+    /// this itself when it finds an unindexed table (the map is `#[serde(skip)]`, so a
+    /// deserialized table has none), so callers only need it to pre-warm the map.
+    pub fn rebuild_index(&mut self) {
+        self.by_name.clear();
+        for (idx, decl) in self.decls.iter_enumerated() {
+            self.by_name.entry(decl.name.clone()).or_insert(idx);
+        }
+    }
+}
+
+/// Renders MIR with [`Variable::Local`]s resolved to their source names.
+///
+/// [`Display for Variable`](Variable#impl-Display-for-Variable) has no access to the enclosing
+/// function, so by default a local prints as its opaque index (`%L7`) — the same form the fact
+/// base and graphviz labels use. Wrapping a value in `WithLocalNames` turns on name resolution for
+/// the duration of that render: every [`FunctionData`] publishes its [`Locals`] table, locals
+/// inside it print as `%name`, and the function header gains a `locals:` line giving the
+/// index↔name mapping (so a dump can still be correlated with `%L7_2`-style graph vertices).
+///
+/// ```text
+/// define f(@p0[byval]) -> 1:
+///   locals: %L0=buf %L1=t0?
+///   bb0:
+///     assign %buf = @p0
+/// ```
+pub struct WithLocalNames<T>(pub T);
+
+impl<T: Display> Display for WithLocalNames<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let _guard = local_names::enable();
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Scoped, thread-local plumbing for [`WithLocalNames`]: `Display for FunctionData` publishes the
+/// table it is rendering and `Display for Variable` reads it back. Inert unless a `WithLocalNames`
+/// render is in progress on this thread, so ordinary `{}` output — including the `format!("{v}")`
+/// that gives a local its identity in the fact base — is unchanged.
+mod local_names {
+    use std::cell::{Cell, RefCell};
+
+    use super::{LocalIdx, Locals};
+    use crate::index::idx::Idx;
+
+    thread_local! {
+        static ENABLED: Cell<bool> = const { Cell::new(false) };
+        /// One entry per enclosing `FunctionData` render; the innermost is the one in effect.
+        static FRAMES: RefCell<Vec<Vec<String>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Restores the previous setting, so nesting a plain render inside a named one (or vice
+    /// versa) behaves.
+    pub(super) struct EnableGuard(bool);
+
+    impl Drop for EnableGuard {
+        fn drop(&mut self) {
+            ENABLED.set(self.0);
+        }
+    }
+
+    pub(super) fn enable() -> EnableGuard {
+        EnableGuard(ENABLED.replace(true))
+    }
+
+    pub(super) fn is_enabled() -> bool {
+        ENABLED.get()
+    }
+
+    pub(super) struct FrameGuard;
+
+    impl Drop for FrameGuard {
+        fn drop(&mut self) {
+            FRAMES.with_borrow_mut(|frames| {
+                frames.pop();
+            });
+        }
+    }
+
+    /// Publishes `locals` for the nested render. Returns `None` — allocating nothing — when name
+    /// resolution is off, which is every render but `ctadl inspect`'s.
+    pub(super) fn push(locals: &Locals) -> Option<FrameGuard> {
+        if !is_enabled() {
+            return None;
+        }
+        let names = locals
+            .iter_enumerated()
+            .map(|(_, decl)| decl.name.clone())
+            .collect();
+        FRAMES.with_borrow_mut(|frames| frames.push(names));
+        Some(FrameGuard)
+    }
+
+    /// The source name of `idx` in the innermost published table, if there is one.
+    pub(super) fn name_of(idx: LocalIdx) -> Option<String> {
+        if !is_enabled() {
+            return None;
+        }
+        FRAMES.with_borrow(|frames| frames.last()?.get(idx.index()).cloned())
     }
 }
 
@@ -544,8 +723,8 @@ impl Default for SourceInfo {
 
 impl Variable {
     #[inline]
-    pub fn new_local(name: String) -> Self {
-        Variable::Local(name)
+    pub fn new_local(idx: LocalIdx) -> Self {
+        Variable::Local(idx)
     }
 
     #[inline]
@@ -559,9 +738,9 @@ impl Variable {
     }
 
     #[inline]
-    pub fn local(&self) -> Option<&str> {
+    pub fn local(&self) -> Option<LocalIdx> {
         match self {
-            Variable::Local(name) => Some(name),
+            Variable::Local(idx) => Some(*idx),
             _ => None,
         }
     }
@@ -584,11 +763,11 @@ impl VariableRef {
         }
     }
 
-    /// Creates a local reference with no version
+    /// Creates a local reference with no version from a local index
     #[inline]
-    pub fn new_local(name: String) -> Self {
+    pub fn new_local_idx(idx: LocalIdx) -> Self {
         VariableRef {
-            variable: Variable::new_local(name).into(),
+            variable: Variable::new_local(idx).into(),
             version: None,
         }
     }
@@ -636,13 +815,6 @@ impl AccessPath {
             variable_ref: variable,
             path: FieldAccesses::new(std::iter::empty::<FieldAccess>()),
         }
-    }
-}
-
-impl From<&str> for AccessPath {
-    #[inline]
-    fn from(s: &str) -> Self {
-        AccessPath::without_fields(VariableRef::new_local(s.to_string()))
     }
 }
 
@@ -772,19 +944,6 @@ impl Display for FieldPath {
     }
 }
 
-impl From<&str> for Variable {
-    #[inline]
-    fn from(s: &str) -> Self {
-        Variable::new_local(s.to_string())
-    }
-}
-
-impl From<String> for Variable {
-    fn from(s: String) -> Self {
-        Variable::new_local(s)
-    }
-}
-
 impl From<ParameterIdx> for Variable {
     fn from(idx: ParameterIdx) -> Self {
         Variable::Param(idx)
@@ -794,7 +953,12 @@ impl From<ParameterIdx> for Variable {
 impl Display for Variable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Variable::Local(name) => write!(f, "%{name}"),
+            // Only a `WithLocalNames` render can resolve the index; everywhere else a local is
+            // its index, which is what the fact base keys on.
+            Variable::Local(idx) => match local_names::name_of(*idx) {
+                Some(name) => write!(f, "%{name}"),
+                None => write!(f, "%L{}", idx.index()),
+            },
             Variable::Param(i) => write!(f, "@p{}", i.index()),
             Variable::GlobalHeap => write!(f, "$globals"),
         }
@@ -1332,6 +1496,7 @@ impl FunctionData {
             name: name.to_string(),
             params,
             blocks,
+            locals: Locals::default(),
             return_type,
         }
     }
@@ -1339,6 +1504,13 @@ impl FunctionData {
     #[inline]
     pub fn num_parameters(&self) -> usize {
         self.params.parameters.len()
+    }
+
+    /// Interns a local by name into this function's [`Locals`] table, returning its index. Repeated
+    /// names return the same index.
+    #[inline]
+    pub fn intern_local(&mut self, name: &str) -> LocalIdx {
+        self.locals.get_or_intern(name)
     }
 
     pub fn set_name(&mut self, name: String) {
@@ -1476,9 +1648,21 @@ impl Display for FunctionData {
             name,
             params,
             blocks,
+            locals,
             return_type,
         } = self;
+        // Held until this function's body has been written, so locals nested anywhere inside it
+        // resolve against this table. `None` (and no output below) unless a `WithLocalNames`
+        // render asked for names.
+        let _names = local_names::push(locals);
         writeln!(f, "define {name}({params}) -> {return_type}:")?;
+        if local_names::is_enabled() && !locals.is_empty() {
+            write!(f, "  locals:")?;
+            for (idx, decl) in locals.iter_enumerated() {
+                write!(f, " %L{}={}", idx.index(), decl.name)?;
+            }
+            writeln!(f)?;
+        }
         write!(f, "{blocks}")
     }
 }

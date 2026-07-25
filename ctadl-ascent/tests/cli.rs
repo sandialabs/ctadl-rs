@@ -174,12 +174,9 @@ fn test_cli_query_c_sources_and_sinks() {
     use ctadl_ascent::query_engine::formatter::SarifProfile;
 
     run_store_test(|| {
-        let import = ArtifactImport::try_create(
-            "test_xfer_c",
-            ArtifactLanguage::C,
-            &c_fixture("xfer.c"),
-        )
-        .unwrap();
+        let import =
+            ArtifactImport::try_create("test_xfer_c", ArtifactLanguage::C, &c_fixture("xfer.c"))
+                .unwrap();
         cli::import(&import).unwrap();
 
         let project = AnalysisProject::try_create("test_xfer_c_proj", &["test_xfer_c"]).unwrap();

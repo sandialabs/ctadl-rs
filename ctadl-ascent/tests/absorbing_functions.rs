@@ -26,6 +26,7 @@ fn test_absorbing_functions() {
         label: Label("Net".into()),
         direction: TaintDirection::Forward,
         call_site: None,
+        saturating: false,
     };
 
     let facts = QueryFacts {

@@ -181,6 +181,15 @@ pub enum ImportLanguage {
 pub struct InspectArgs {
     /// Artifact name, project name, or store path
     pub name: Option<String>,
+
+    /// Instead of summary statistics, pretty-print the imported IR. Prints every function
+    /// unless `--function` narrows the set. Requires an artifact/project name.
+    #[arg(long)]
+    pub dump_ir: bool,
+
+    /// With `--dump-ir`, only print functions whose name contains this substring.
+    #[arg(long, value_name = "SUBSTR")]
+    pub function: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -569,7 +578,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
     // Detect the language
     let language = {
         use project::ArtifactLanguage::*;
-        match autodetect_by_extension(path, args.language)? {
+        match autodetect_import_language(path, args.language)? {
             ImportLanguage::Apk => Apk,
             ImportLanguage::Dex => Dex,
             ImportLanguage::Jar => Jar,
@@ -676,20 +685,26 @@ fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
 
         let import = project::ArtifactImport::load_by_name(name)
             .with_context(|| format!("loading artifact import: '{}'", name))?;
-        cli::inspect(&import)?;
+        if args.dump_ir {
+            cli::dump_ir(&import, args.function.as_deref())?;
+        } else {
+            cli::inspect(&import)?;
+        }
     } else {
+        if args.dump_ir {
+            anyhow::bail!("--dump-ir requires an artifact or project name");
+        }
         cli::list_store_contents()?;
     }
     Ok(())
 }
 
-/// If language is 'auto', returns the language using the extension. Otherwise just returns the
-/// language.
+/// If language is 'auto', detects a language using extension, url scheme, or file type.
 ///
 /// # Errors
 ///
-/// If autodetection finds no filename extension or doesn't recognize it
-fn autodetect_by_extension<P: AsRef<Path>>(
+/// If autodetection fails
+fn autodetect_import_language<P: AsRef<Path>>(
     path: P,
     language: ImportLanguage,
 ) -> anyhow::Result<ImportLanguage> {
@@ -713,19 +728,41 @@ fn autodetect_by_extension<P: AsRef<Path>>(
                 Some("gpr") => ImportLanguage::Pcode,
                 // A C source file or header.
                 Some("c") | Some("h") => ImportLanguage::C,
-                _ => {
-                    // A directory with no recognized extension is treated as a tree
-                    // of C sources (headers and `.c` files).
-                    if path.is_dir() {
-                        ImportLanguage::C
-                    } else if let Some(ext) = ext {
-                        anyhow::bail!("unrecognized filename extension: '{}'", ext);
-                    } else {
-                        anyhow::bail!("no filename extension");
-                    }
+                // A directory with no recognized extension is treated as a tree
+                // of C sources (headers and `.c` files).
+                _ if path.is_dir() => ImportLanguage::C,
+                // No recognized extension: if the file's contents look binary,
+                // route it through the pcode (Ghidra) frontend.
+                _ if file_looks_binary(path) => ImportLanguage::Pcode,
+                Some(ext) => {
+                    anyhow::bail!("unrecognized filename extension: '{}'", ext)
                 }
+                None => anyhow::bail!("no filename extension"),
             }
         }
         _ => language,
     })
+}
+
+/// Heuristically decides whether `path` refers to a binary file.
+///
+/// Reads a prefix of the file and treats it as binary if it contains a NUL
+/// byte -- the same heuristic git uses to tell binary from text. Returns
+/// `false` if `path` is not a readable regular file (e.g. a directory or a
+/// missing path), so callers fall through to their other detection logic.
+fn file_looks_binary(path: &Path) -> bool {
+    use std::io::Read;
+
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    // A directory opens successfully but is not a binary we can import.
+    if file.metadata().map(|m| !m.is_file()).unwrap_or(true) {
+        return false;
+    }
+    let mut buf = [0u8; 8192];
+    match file.read(&mut buf) {
+        Ok(n) => buf[..n].contains(&0),
+        Err(_) => false,
+    }
 }

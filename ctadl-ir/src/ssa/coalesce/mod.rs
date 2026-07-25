@@ -38,9 +38,11 @@ use crate::mir::*;
 /// Runs copy coalescing on every function of `program`. Intended to run
 /// before SSA conversion; see the module docs.
 pub fn coalesce_copies(program: &mut Program) {
+    let mut removed = 0usize;
     for (_, f) in program.functions.iter_enumerated_mut() {
-        coalesce_function(f);
+        removed += coalesce_function(f);
     }
+    log::info!("coalesce_copies: removed {removed} fused copy statement(s)");
 }
 
 /// A candidate def whose fusion into its (single) use is still possible.
@@ -53,9 +55,11 @@ struct Pending {
     src_vars: SmallVec<[ArcIntern<Variable>; 2]>,
 }
 
-pub fn coalesce_function(function: &mut FunctionData) {
+/// Runs copy coalescing on one function, returning the number of fused copy
+/// statements deleted.
+pub fn coalesce_function(function: &mut FunctionData) -> usize {
     if function.blocks.is_empty() {
-        return;
+        return 0;
     }
 
     // Def/use counts over the whole function. Only variables with exactly one
@@ -84,6 +88,7 @@ pub fn coalesce_function(function: &mut FunctionData) {
             && uses.get(var) == Some(&1)
     };
 
+    let mut removed = 0usize;
     for block in function.blocks.blocks_mut_preserves_cfg().iter_mut() {
         let mut pending: HashMap<ArcIntern<Variable>, Pending> = HashMap::new();
         // Def statement positions that were fused and must be deleted.
@@ -195,6 +200,7 @@ pub fn coalesce_function(function: &mut FunctionData) {
 
         // Delete fused defs.
         if !dead.is_empty() {
+            removed += dead.len();
             dead.sort_unstable();
             let mut dead = dead.into_iter().peekable();
             let old = std::mem::take(&mut block.statements);
@@ -207,6 +213,7 @@ pub fn coalesce_function(function: &mut FunctionData) {
             }
         }
     }
+    removed
 }
 
 /// If `exp` is the (single) read of a pending pure-copy def, substitute the

@@ -1,7 +1,9 @@
 [package]
 name = "sarif-util"
 edition = "2024"
-version.workspace = true
+# Literal rather than `version.workspace`: this crate is workspace-excluded
+# (see the root Cargo.toml), so there is no workspace to inherit from.
+version = "0.1.0"
 
 [[bin]]
 name = "show-regions"
@@ -14,5 +16,15 @@ serde_json = "1.0"
 percent-encoding = "2.3"
 url = "2.5"
 
-[lints]
-workspace = true
+# Copied verbatim from the root `[workspace.lints]` for the same reason as
+# `version` above -- excluded crates cannot inherit them.
+[lints.rust]
+rust-2018-idioms = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
+type_complexity = "allow"
+too_many_arguments = "allow"
+large_enum_variant = "allow"
+result_large_err = "allow"
+just_underscores_and_digits = "allow"

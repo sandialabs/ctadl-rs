@@ -229,6 +229,10 @@
                   # the same samples down to .dex (via `dx`) and also parse a
                   # real-world APK owned by xtask. javac/javap/jar/dx come from
                   # the JDK and Android SDK in testEnv / PATH.
+                  # xtask normally rebuilds ctadl from source to guard against a
+                  # stale binary, but the Nix sandbox has no source tree or cargo.
+                  # Point it at the ctadl that ships in packages.default instead.
+                  export CTADL_BIN="${self.packages.${system}.default}/bin/ctadl"
                   ${self.packages.${system}.default}/bin/xtask regression \
                     --jvm-samples ${./jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk}

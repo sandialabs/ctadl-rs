@@ -8,18 +8,6 @@ default-run = "ctadl"
 name = "ctadl"
 path = "src/main.rs"
 
-[[bin]]
-name = "tree-sitter-compile"
-path = "src/languages/tree_sitter/bin/tree-sitter-compile.rs"
-
-[[bin]]
-name = "analyze-ir"
-path = "src/index_engine/bin/analyze-ir.rs"
-
-[[bin]]
-name = "flowy"
-path = "src/bin/flowy.rs"
-
 [dependencies]
 anyhow = "1.0"
 arrow = "58"
@@ -36,6 +24,7 @@ datafusion = "53"
 derive_builder = "0.20"
 dex-reader = { path = "../dex-reader" }
 env_logger = "0.11"
+flate2 = "1"
 hashbrown = "0.16"
 internment = { version = "0.8", features = ["arc", "serde"] }
 itertools = "0.14"
@@ -57,6 +46,7 @@ regex = "1.12"
 serde = { version = "1.0", features = ["derive"] }
 serde-sarif = "0.8"
 rustc_graphviz = { path = "../rustc_graphviz" }
+rustc-hash = "2"
 serde_json = { version = "1", features = ["preserve_order"] }
 smallvec = "1"
 tailshare = { path = "../tailshare", features = ["serde"] }

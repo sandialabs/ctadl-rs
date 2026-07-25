@@ -1274,6 +1274,7 @@ dependencies = [
  "dex-reader",
  "elsa",
  "env_logger",
+ "flate2",
  "hashbrown 0.16.1",
  "immortal",
  "internment",
@@ -1293,6 +1294,7 @@ dependencies = [
  "pest_derive",
  "rayon",
  "regex",
+ "rustc-hash",
  "rustc_graphviz",
  "serde",
  "serde-sarif",
@@ -1316,22 +1318,16 @@ dependencies = [
 name = "ctadl-flowy"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ctadl-ir",
- "datafusion",
- "env_logger",
  "hashbrown 0.16.1",
  "internment",
  "log",
  "pest",
  "pest_derive",
  "serde",
- "serde-sarif",
- "serde_json",
  "smallvec",
  "source-info",
  "thiserror",
- "tokio",
 ]
 
 [[package]]
@@ -3366,6 +3362,7 @@ dependencies = [
  "ascent_base",
  "csv",
  "datafusion",
+ "flate2",
  "hashbrown 0.16.1",
  "internment",
  "log",
@@ -3791,17 +3788,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
-]
-
-[[package]]
-name = "sarif-util"
-version = "0.1.0"
-dependencies = [
- "clap",
- "percent-encoding",
- "serde",
- "serde_json",
- "url",
 ]
 
 [[package]]

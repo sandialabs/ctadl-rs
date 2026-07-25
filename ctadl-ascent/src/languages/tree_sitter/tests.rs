@@ -187,7 +187,10 @@ fn unique_temps() {
         .flat_map(|b| b.statements.iter())
         .filter_map(|stmt| match &stmt.kind {
             StatementKind::Assign { dest, .. } => match dest.variable.as_ref() {
-                Variable::Local(name) if name.starts_with("<t") => Some(name.clone()),
+                Variable::Local(idx) => {
+                    let name = fun.locals.name(*idx);
+                    name.starts_with("<t").then(|| name.to_string())
+                }
                 _ => None,
             },
             _ => None,
@@ -1245,9 +1248,11 @@ fn nested_aggregate_initializer_lowers_recursively() {
     let prog = program_from_string(src).0;
     let dump = format!("{prog}");
     check_loads(&prog, "m.[0]"); // the outer index is loaded to address the inner element
+    // The dump renders locals as `%L{idx}`, so resolve `s` to its interned rendering.
+    let s = local_render(&prog, "f", "s");
     assert!(
-        dump.contains(".[0] := %s"),
-        "nested tainted element should store `%s` into a `.[0]` field:\n{dump}"
+        dump.contains(&format!(".[0] := {s}")),
+        "nested tainted element should store `{s}` (= `s`) into a `.[0]` field:\n{dump}"
     );
 }
 
@@ -1330,19 +1335,19 @@ fn field_increment_is_update() {
 // The F2 gap is that a *second* store into the same aggregate (struct or array) creates
 // a new SSA version of the receiver, and the stored target must propagate across that
 // version to reach the indirect call. The taint-index transitive rule that performs the
-// hop (`func_ptr_assign_like` over `assign_like`) gates on `paths(p_new)`, but program
+// hop (`call_target_assign_like` over `assign_like`) gates on `paths(p_new)`, but program
 // paths were seeded only from call *arguments* (`actual_param`) -- never from an indirect
 // call's *receiver* path. So the binding never reached the call and taint was dropped.
 //
 // Fix (ctadl-ascent/src/index_engine/mod.rs): register indirect/virtual-call receiver
-// paths as program paths --
-//     program_paths(p) <-- indirect_call(_, _, _, p);
-//     program_paths(p) <-- java_call(_, _, _, p, _, _);
+// paths as program paths -- a single context-agnostic rule over the unified call-site
+// relation (formerly two rules over `indirect_call` and `java_call`) --
+//     program_paths(p) <-- callee_info(_, _, _, p, _);
 //
 // Each test routes param 1 (`b`) through `id` and back to the return; a `return <- @p1`
 // summary can only come from `wrap` (the callee `id`'s own summary is `return <- @p0`),
-// so these assert that `wrap` carries @p1 through the indirect call. Remove the two fix
-// lines above and the two `*_multistore_flows` tests fail (taint dropped) while
+// so these assert that `wrap` carries @p1 through the indirect call. Remove the fix
+// line above and the two `*_multistore_flows` tests fail (taint dropped) while
 // `funcptr_single_store_flows` still passes -- that contrast IS the bug.
 
 #[test_log::test]
@@ -1768,7 +1773,8 @@ fn vararg_call_carries_argument() {
         }"#;
     let (prog, _dump) = program_from_string(src);
     check_has_direct_call(&prog, "f", "printf");
-    let src_exp = exp_from_str("@p0");
+    // `@p0` is a parameter reference, so it resolves without consulting any local-name table.
+    let src_exp = exp_from_str("@p0", &ctadl_ir::Locals::default());
     let carries_src = direct_calls_in(&prog, "f").iter().any(|(callees, args)| {
         callees.iter().any(|c| c == "printf") && args.iter().any(|a| *a == src_exp)
     });
@@ -2036,12 +2042,7 @@ fn import_c_registers_externs_and_spans() {
     let info = super::import_c(&file).unwrap();
 
     // `source` and `sink` are only declared, so they must appear as empty-body externs.
-    let find = |name: &str| {
-        info.program
-            .functions
-            .iter()
-            .find(|func| func.name == name)
-    };
+    let find = |name: &str| info.program.functions.iter().find(|func| func.name == name);
     for name in ["source", "sink"] {
         let func = find(name).unwrap_or_else(|| panic!("extern function `{name}` not registered"));
         assert!(
@@ -2060,4 +2061,193 @@ fn import_c_registers_externs_and_spans() {
             .any(|s| s.source_info.span_id != source_info::NO_SPAN)
     });
     assert!(has_span, "no statement carried a source-info span");
+}
+
+/// End-to-end check of the `Variable(name)` source/sink selector: Stage 1 resolves the local
+/// name to a base `LocalIdx`, and Stage 2 (`build_query_endpoints`) seeds exactly ONE versioned
+/// vertex — the lowest *existing* SSA version — against a real index. `buf` is defined twice, so
+/// it has multiple SSA versions; the test pins that we seed one (the lowest), not one per version.
+#[test_log::test]
+fn variable_port_selects_lowest_ssa_version() {
+    use crate::facts::{Function, TaintDirection};
+    use crate::models::ModelBuilders;
+    use crate::models::json::ModelGeneratorIngest;
+    use crate::query_engine::build_query_endpoints;
+    use ctadl_ir::ProgramInfo;
+    use serde_json::json;
+
+    // `buf` is assigned twice → two SSA versions (`%L{idx}_1`, `%L{idx}_2`).
+    let src = r"
+        int MySource();
+        int Other();
+        void MySink(int x);
+        void f() {
+            int buf = MySource();
+            MySink(buf);
+            buf = Other();
+            MySink(buf);
+        }";
+
+    // Stage 1 runs on the pre-SSA program (local names → base LocalIdx).
+    let ingest_prog = program_from_string(src).0;
+    // `%L{idx}` for `buf`; strip the `%L` to get the numeric base index the selector resolves to.
+    let render = local_render(&ingest_prog, "f", "buf");
+    let idx: u32 = render.strip_prefix("%L").unwrap().parse().unwrap();
+    let program_info = ProgramInfo {
+        program: ingest_prog,
+        ..Default::default()
+    };
+    let mut mb = ModelBuilders::new();
+    {
+        let mut ingest = ModelGeneratorIngest::new(&program_info, &mut mb);
+        let generator = json!({
+            "find": "methods",
+            "where": [{"constraint": "name", "pattern": "^f$"}],
+            "model": {"sources": [{"kind": "K", "port": "Variable(buf)"}]}
+        });
+        ingest.encode_models(vec![generator]).unwrap();
+    }
+    let batch = mb.endpoint.finish().unwrap();
+    // Stage 1 recorded exactly one endpoint row, tagged `Local`, carrying the base index.
+    let rows: Vec<_> = batch.iter_endpoints().collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].selector_ty,
+        crate::models::FormalIndexTypeTag::Local
+    );
+    assert_eq!(rows[0].local_index, Some(idx));
+
+    // Index the same source and run Stage 2.
+    let (facts, source_info, assign_like) = index_program(program_from_string(src).0);
+    let f_id = source_info
+        .sites
+        .get_function_id(Function("f".into()))
+        .expect("function f indexed");
+
+    // The lowest existing SSA version of `buf` among the real graph vertices — the vertex we
+    // expect Stage 2 to seed. Computed from the index (not hard-coded) so the test tracks SSA
+    // numbering, while still proving "lowest existing version" (version 0 is typically dead).
+    let prefix = format!("%L{idx}_");
+    let expected_version = assign_like
+        .iter()
+        .flat_map(|(func, v1, _, v2, _)| [(*func, *v1), (*func, *v2)])
+        .filter(|(func, _)| *func == f_id)
+        .filter_map(|(_, v)| {
+            v.as_local()?
+                .as_str()
+                .strip_prefix(&prefix)?
+                .parse::<u32>()
+                .ok()
+        })
+        .min()
+        .expect("buf has at least one versioned vertex");
+    // `buf` really does have more than one version, so "pick one" is a meaningful claim.
+    let distinct_versions = assign_like
+        .iter()
+        .flat_map(|(func, v1, _, v2, _)| [(*func, *v1), (*func, *v2)])
+        .filter(|(func, _)| *func == f_id)
+        .filter_map(|(_, v)| {
+            v.as_local()?
+                .as_str()
+                .strip_prefix(&prefix)?
+                .parse::<u32>()
+                .ok()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(
+        distinct_versions.len() >= 2,
+        "fixture should give buf multiple SSA versions, got {distinct_versions:?}"
+    );
+
+    let (eps, formals) = build_query_endpoints(&batch, &facts, &source_info.sites, &assign_like);
+
+    // Exactly one endpoint (not one per version), anchored in f, forward, and — since a local is
+    // not a formal — no formal registered.
+    assert_eq!(eps.len(), 1, "expected exactly one seeded vertex");
+    let (ep,) = &eps[0];
+    assert_eq!(ep.infunc, f_id);
+    assert_eq!(ep.direction, TaintDirection::Forward);
+    assert_eq!(ep.call_site, None);
+    assert!(formals.is_empty(), "a local selector registers no formal");
+    let seeded = ep.vertex.0.as_local().expect("seeded a local vertex");
+    assert_eq!(seeded.as_str(), format!("%L{idx}_{expected_version}"));
+}
+
+/// `Variable(name)` is resolved to a `LocalIdx` *per matched function*, not once for the
+/// generator: one generator matching several functions must record each function's own index for
+/// the same name. `g2` declares two locals ahead of `buf`, so `buf` lands on a different index
+/// there than in `g1` — a resolution hoisted out of the per-function loop would give both rows the
+/// same index and fail here. `g3` has no `buf` at all: that function is skipped with a warning
+/// (the other matches still emit) rather than failing the whole model.
+#[test_log::test]
+fn variable_port_resolves_per_matched_function() {
+    use crate::models::ModelBuilders;
+    use crate::models::json::ModelGeneratorIngest;
+    use ctadl_ir::ProgramInfo;
+    use serde_json::json;
+
+    let src = r"
+        int MySource();
+        void MySink(int x);
+        void g1() {
+            int buf = MySource();
+            MySink(buf);
+        }
+        void g2() {
+            int pad1 = MySource();
+            int pad2 = MySource();
+            int buf = MySource();
+            MySink(pad1);
+            MySink(pad2);
+            MySink(buf);
+        }
+        void g3() {
+            int other = MySource();
+            MySink(other);
+        }";
+
+    let prog = program_from_string(src).0;
+    // Expected base index per function, read from each function's own locals table.
+    let want = |func: &str| -> u32 {
+        local_render(&prog, func, "buf")
+            .strip_prefix("%L")
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let (g1_idx, g2_idx) = (want("g1"), want("g2"));
+    assert_ne!(
+        g1_idx, g2_idx,
+        "fixture must give buf different indices in g1/g2 for this test to mean anything"
+    );
+
+    let program_info = ProgramInfo {
+        program: prog,
+        ..Default::default()
+    };
+    let mut mb = ModelBuilders::new();
+    {
+        let mut ingest = ModelGeneratorIngest::new(&program_info, &mut mb);
+        let generator = json!({
+            "find": "methods",
+            "where": [{"constraint": "name", "pattern": "^g[0-9]$"}],
+            "model": {"sources": [{"kind": "K", "port": "Variable(buf)"}]}
+        });
+        // g3 lacking `buf` is a skip, not an error.
+        ingest.encode_models(vec![generator]).unwrap();
+    }
+    let batch = mb.endpoint.finish().unwrap();
+
+    let rows: std::collections::BTreeMap<&str, Option<u32>> = batch
+        .iter_endpoints()
+        .map(|r| {
+            assert_eq!(r.selector_ty, crate::models::FormalIndexTypeTag::Local);
+            (r.function, r.local_index)
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        std::collections::BTreeMap::from([("g1", Some(g1_idx)), ("g2", Some(g2_idx))]),
+        "expected one row per matched function that has `buf`, each with that function's own index"
+    );
 }

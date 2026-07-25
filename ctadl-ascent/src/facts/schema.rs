@@ -5,7 +5,6 @@ schemas and functions to save and load them.
 */
 use std::path;
 
-use ctadl_ir::Symbol;
 use source_info::FileSpanId;
 
 use crate::error::{Error, ErrorContext};
@@ -69,34 +68,37 @@ pub mod assign {
     save_load!();
 }
 
-pub mod java_obj_assign {
+pub mod call_target_assign {
     use super::*;
-    pub type Record = (FunctionId, InsnId, FlowVariable, Path, Symbol);
-    pub const COLUMNS: [&str; 5] = ["func_id", "insn_id", "dst_var", "dst_path", "class_name"];
-    pub const FILENAME: &str = "java_obj_assign.parquet";
+    use crate::facts::CallTargetObject;
+    pub type Record = (FunctionId, InsnId, FlowVariable, Path, CallTargetObject);
+    pub const COLUMNS: [&str; 5] = ["func_id", "insn_id", "dst_var", "dst_path", "target"];
+    pub const FILENAME: &str = "call_target_assign.parquet";
     save_load!();
 }
 
-pub mod java_call {
+pub mod callee_info {
     use super::*;
-    pub type Record = (FunctionId, InsnId, FlowVariable, Path, Symbol, Symbol);
-    pub const COLUMNS: [&str; 6] = [
-        "func_id",
-        "insn_id",
-        "recv_var",
-        "recv_path",
-        "name",
-        "desc",
-    ];
-    pub const FILENAME: &str = "java_call.parquet";
+    use crate::facts::CallDispatchKey;
+    /// An indirect / virtual call site awaiting resolution: the receiver vertex
+    /// (`recv_var`, `recv_path`) plus the frontend-specific [`CallDispatchKey`].
+    /// Unifies the former `java_call` and `indirect_call` relations.
+    pub type Record = (FunctionId, InsnId, FlowVariable, Path, CallDispatchKey);
+    pub const COLUMNS: [&str; 5] = ["func_id", "insn_id", "recv_var", "recv_path", "context"];
+    pub const FILENAME: &str = "callee_info.parquet";
     save_load!();
 }
 
-pub mod java_resolvents {
+pub mod callee_resolvents {
     use super::*;
-    pub type Record = (Symbol, Symbol, Symbol, FunctionId);
-    pub const COLUMNS: [&str; 4] = ["class", "name", "desc", "target_id"];
-    pub const FILENAME: &str = "java_resolvents.parquet";
+    use crate::facts::{CallDispatchKey, CallTargetObject};
+    /// How a stored call-target [`CallTargetObject`] resolves, under a given
+    /// [`CallDispatchKey`], to a concrete callee `target`. Unifies the former
+    /// `java_resolvents` (CHA) relation and the identity resolution of C function
+    /// pointers.
+    pub type Record = (CallTargetObject, CallDispatchKey, FunctionId);
+    pub const COLUMNS: [&str; 3] = ["object", "context", "target_id"];
+    pub const FILENAME: &str = "callee_resolvents.parquet";
     save_load!();
 }
 
@@ -173,7 +175,98 @@ pub mod external_function {
 
 #[cfg(test)]
 mod tests {
-    use crate::facts::{FlowEdge, FlowVariable, FunctionId, InsnId, PackedInsnSiteId, Path};
+    use crate::facts::{
+        CallTargetObject, FlowEdge, FlowVariable, FunctionId, InsnId, PackedInsnSiteId, Path,
+    };
+
+    /// The `call_target_assign` schema encodes a [`CallTargetObject`] into a tag column
+    /// plus nullable function-id and symbol columns; both variants must survive a parquet
+    /// round-trip, and the payload of each variant must land in the right column.
+    #[test]
+    fn call_target_assign_object_round_trips() {
+        let var = FlowVariable::default();
+        let records: Vec<super::call_target_assign::Record> = vec![
+            (
+                FunctionId::new(1),
+                InsnId::new(10),
+                var,
+                Path::empty(),
+                CallTargetObject::FunctionId(FunctionId::new(99)),
+            ),
+            (
+                FunctionId::new(2),
+                InsnId::new(20),
+                var,
+                Path::empty(),
+                CallTargetObject::Symbol(ctadl_ir::Symbol::from("com/example/Foo")),
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::call_target_assign::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::call_target_assign::try_load(dir.path()).unwrap();
+        assert_eq!(loaded, records);
+    }
+
+    /// The `callee_info` schema encodes a [`CallDispatchKey`] (tag + nullable name/desc
+    /// symbol columns). Both the `Java` and `C` arms must survive a parquet round-trip.
+    #[test]
+    fn callee_info_dispatch_key_round_trips() {
+        use crate::facts::CallDispatchKey;
+        let var = FlowVariable::default();
+        let records: Vec<super::callee_info::Record> = vec![
+            (
+                FunctionId::new(1),
+                InsnId::new(10),
+                var,
+                Path::empty(),
+                CallDispatchKey::Java(
+                    ctadl_ir::Symbol::from("doThing"),
+                    ctadl_ir::Symbol::from("(I)V"),
+                ),
+            ),
+            (
+                FunctionId::new(2),
+                InsnId::new(20),
+                var,
+                Path::empty(),
+                CallDispatchKey::C,
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::callee_info::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::callee_info::try_load(dir.path()).unwrap();
+        assert_eq!(loaded, records);
+    }
+
+    /// The `callee_resolvents` schema encodes both a [`CallTargetObject`] and a
+    /// [`CallDispatchKey`] (each a tag + nullable columns). The CHA (`Symbol`/`Java`) and
+    /// identity function-pointer (`FunctionId`/`C`) resolutions must both round-trip.
+    #[test]
+    fn callee_resolvents_round_trips() {
+        use crate::facts::CallDispatchKey;
+        let records: Vec<super::callee_resolvents::Record> = vec![
+            (
+                CallTargetObject::Symbol(ctadl_ir::Symbol::from("com/example/Foo")),
+                CallDispatchKey::Java(
+                    ctadl_ir::Symbol::from("doThing"),
+                    ctadl_ir::Symbol::from("(I)V"),
+                ),
+                FunctionId::new(99),
+            ),
+            (
+                CallTargetObject::FunctionId(FunctionId::new(7)),
+                CallDispatchKey::C,
+                FunctionId::new(7),
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::callee_resolvents::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::callee_resolvents::try_load(dir.path()).unwrap();
+        assert_eq!(loaded, records);
+    }
 
     /// The `taint_edge` schema encodes a [`FlowEdge`] into a tag column plus a
     /// nullable site column; every variant must survive a parquet round-trip,

@@ -109,35 +109,12 @@
           "additionalProperties": false,
           "properties": {
             "constraint": {
-              "description": "Thing to match on",
+              "description": "Matches a callsite by the function it occurs inside of (the caller)",
               "type": "string",
-              "enum": ["parameter"]
-            },
-            "idx": {
-              "description": "Index of parameter",
-              "type": "integer"
+              "enum": ["in_function"]
             },
             "inner": {
-              "description": "Constraint on parameter",
-              "$ref": "#/$defs/where-constraint"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "constraint": {
-              "description": "Thing to match on",
-              "type": "string",
-              "enum": ["any_parameter"]
-            },
-            "start_idx": {
-              "description": "Start index",
-              "type": "integer"
-            },
-            "inner": {
-              "description": "Inner constraint on parameter",
+              "description": "Constraint on the containing (caller) function",
               "$ref": "#/$defs/where-constraint"
             }
           }
@@ -199,7 +176,7 @@
             "inners": {
               "description": "Regular expression pattern matches name",
               "type": "array",
-              "items": { 
+              "items": {
                 "$ref": "#/$defs/where-constraint"
               }
             }
@@ -253,6 +230,15 @@
         { "pattern": "^Return" }
       ]
     },
+    "source-sink-port-spec": {
+      "description": "A source/sink port. In addition to the positional selectors (Argument(n)/Argument(*)/Return), a source/sink may select a local by its source name with Variable(name), e.g. Variable(buf), optionally refined by a trailing access path (Variable(buf).headers). Variable(...) is valid only here, NOT on propagation inputs/outputs, and NOT with find: callsites.",
+      "type": "string",
+      "anyOf": [
+        { "pattern": "^Argument\\((-?[0-9]+|\\*)\\)" },
+        { "pattern": "^Return" },
+        { "pattern": "^Variable\\([^)]+\\)" }
+      ]
+    },
     "field-spec": {
       "type": "string",
       "pattern": "^([.][^.]+)*"
@@ -266,8 +252,8 @@
           "description": "The taint label (your choice) to associate with the source/sink",
           "type": "string", "minLength": 1 },
         "port": {
-          "description": "The part of the matched SUT element to designate as source/sink",
-          "$ref": "#/$defs/port-spec"
+          "description": "The part of the matched SUT element to designate as source/sink. Positional (Argument(n)/Argument(*)/Return) or, for a local, by source name via Variable(name) (e.g. Variable(buf)).",
+          "$ref": "#/$defs/source-sink-port-spec"
         },
         "field": {
           "description": "The field of the matched variable to designate as source/sink",
@@ -286,6 +272,10 @@
         },
         "wildcard": {
           "description": "Sink-only (rejected on sources/propagations). If true (the DEFAULT for sinks), the sink port matches any access-path extension of the port -- i.e. any concrete path having the port path as a prefix. E.g. port Argument(1) matches Argument(1).deref and Argument(1).[12].deref. Set false to match only the exact port path.",
+          "type": "boolean"
+        },
+        "saturating": {
+          "description": "Source-only (rejected on sinks/propagations). If true (default false), marks a saturating source: the seeded vertex is tainted AND any subfield/offset read off it is tainted too, recursively, so the whole access-path subtree beneath the port is tainted. Use for values that are wholly attacker-controlled regardless of how callers index in, e.g. C's argv.",
           "type": "boolean"
         }
       }
@@ -327,12 +317,6 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "datalog": {
-      "type": "array",
-      "items": {
-	"type": "string"
-      }
-    },
     "model_generators": {
       "description": "List of model generators",
       "type": "array",
@@ -343,7 +327,7 @@
           "find": {
             "description": "The SUT element to match on",
             "type": "string",
-            "enum": ["methods", "variables", "fields", "instructions"]
+            "enum": ["methods", "variables", "fields", "callsites"]
           },
           "where": {
             "description": "Matching constraints",
