@@ -49,7 +49,7 @@
               "items": { "type": "string" }
             },
             "qualified-id": {
-              "description": "Exact, whole-string match on the method's fully-qualified id (no regex). On jvm/dex this is the method id, e.g. 'Lcom/example/Foo;->bar(I)V'; on pcode it is the namespace-qualified but address-free name, e.g. 'Foo::bar' or '<EXTERNAL>::system'.",
+              "description": "Exact, whole-string match on the method's fully-qualified id (no regex). On jvm/dex this is the method id, e.g. 'Lcom/example/Foo;->bar(I)V'; on pcode it is the namespace-qualified but address-free name, e.g. 'Foo::bar' or '<EXTERNAL>::system'; on lua it is the module-qualified IR name, e.g. 'lib.reader.read' or 'kong.pdk.request.get_headers' (a global root names itself, so 'ngx.req.get_headers').",
               "type": "string"
             },
             "qualified-ids": {

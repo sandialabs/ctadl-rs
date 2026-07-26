@@ -466,7 +466,8 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
             // program. To pin down one specific method, use "qualified-id" instead: an exact
             // (non-regex) match on the fully-qualified id, e.g.
             //     {"constraint": "signature_match", "qualified-id": "Lcom/example/Db;->executeQuery(Ljava/lang/String;)V"}
-            // on jvm/dex, or "Db::executeQuery" on pcode.
+            // on jvm/dex, "Db::executeQuery" on pcode, or the module-qualified name
+            // "kong.db.executeQuery" on lua.
             "find": "methods",
             "where": [
                 {

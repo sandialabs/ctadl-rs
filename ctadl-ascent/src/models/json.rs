@@ -57,9 +57,10 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     /// Maps a method's fully-qualified id to its fq-name, backing the exact-match
     /// `qualified-id` constraint. The key is whatever spelling uniquely names the
     /// method on this frontend: the `JavaMethod` id on jvm/dex, the
-    /// namespace-qualified (but address-free) name on native. Unlike
-    /// [`Self::program_method_names`] this is never keyed on a bare name, so it can
-    /// disambiguate two same-named methods in different namespaces.
+    /// namespace-qualified (but address-free) name on native, the module-qualified
+    /// IR name on lua. Unlike [`Self::program_method_names`] this is never keyed on
+    /// a bare name, so it can disambiguate two same-named methods in different
+    /// namespaces.
     program_method_qualified_ids: HashMap<&'p str, Vec<&'p str>>,
     /// fq-name (== `FunctionData.name`) → the function's IR data. Backs the
     /// `has_code` / `number_parameters` / `uses_field` constraints, which need
@@ -281,6 +282,14 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             // can say `^source$` without spelling the module it happens to live in -- the same
             // treatment the Native arm gives decorated names. Both spellings resolve to the
             // fully-qualified IR name.
+            //
+            // A Lua function has exactly ONE name, so unlike the Native arm there is no separate
+            // id column to key `qualified-id` on: the fq name *is* the qualified id, and one entry
+            // covers both roles. Note the `entry(fq)` below sits OUTSIDE the `keys` loop on
+            // purpose -- keying it on `simple` too would hand `qualified-id` exactly the bare-name
+            // collisions it exists to remove (see the field's doc comment). One consequence of
+            // deriving the id from the module: a single file imported as the root itself has an
+            // empty module name, so there a function's id and its bare name coincide.
             for func in &program_info.program.functions.functions {
                 let fq = func.name.as_str();
                 let simple = fq.rsplit('.').next().unwrap_or(fq);
@@ -289,6 +298,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                     program_method_names.entry(key).or_default().push(fq);
                     program_method_signatures.entry(key).or_default().push(fq);
                 }
+                program_method_qualified_ids.entry(fq).or_default().push(fq);
             }
         } else {
             // Fallback (Unknown / CplusPlus): use the IR function names directly.

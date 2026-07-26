@@ -172,6 +172,7 @@ class hierarchy exists only for the Java VMT. What the id looks like:
 | -------- | -------------- | ----- |
 | jvm / dex | `Lcom/example/Foo;->bar(I)V` | The method id, descriptor included. |
 | pcode | `Foo::bar`, `<EXTERNAL>::system` | Namespace-qualified but **not** address-qualified, so it is stable across binaries. A function in no namespace has its simple name as its id. The decorated IR id (e.g. `<EXTERNAL>::system@00101008`) also resolves, for models that spell it out verbatim. |
+| lua | `lib.reader.read`, `kong.pdk.request.get_headers` | The module-qualified IR name: the file's `require` path plus the definition's own dotted name. A **global** root names itself instead, so `function ngx.req.get_headers()` is `ngx.req.get_headers` in whatever file defines it. A Lua function has only this one name, so `qualified-id` and a fully-spelled `name` accept the same string — but `name` *also* accepts the bare trailing name (`read`), which `qualified-id` deliberately does not. A single file imported on its own is the import root, so its module name is empty and its ids are just its bare names. |
 
 An id that names no function in the program matches nothing (it does not match everything).
 
@@ -181,6 +182,15 @@ An id that names no function in the program matches nothing (it does not match e
 > and the constraint selects all three. That is usually what you want (they are the
 > same logical callee), but if you need exactly one, spell out the decorated IR id
 > instead. On jvm/dex the id is unique, so this does not arise.
+
+> **On lua, do not use `%anonN` ids.** A function with no name of its own — one
+> assigned into a table literal, say `["/acme"] = { POST = function(self) … }` — is
+> named `<module>.%anonN` from a counter that runs across the whole *import*, not
+> per file. Adding or removing any file renumbers every later one (the same Kong
+> handler is `%anon449` importing `kong/` alone and `%anon451` importing the whole
+> repo), so an id that works under one import set silently matches nothing under
+> another. Pin such a function by its enclosing module plus a `uses_field` or
+> `number_parameters` constraint instead, or give it a real name in the source.
 
 ### Structural / nesting
 
