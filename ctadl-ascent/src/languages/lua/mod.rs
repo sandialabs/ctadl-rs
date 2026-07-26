@@ -262,6 +262,12 @@ enum Binding {
 #[derive(Clone)]
 struct FuncEntry<'a> {
     fidx: FunctionIdx,
+    /// The name the definition site writes, without any qualification (`deposit` for
+    /// `function Account:deposit()`), or the synthetic `%chunk` / `%anonN` for a function with no
+    /// name of its own. Recorded here at collection time -- while the name node is still in hand --
+    /// and published in the VMT by [`Lowerer::build_vmt`], so nothing downstream has to recover it
+    /// from the qualified name.
+    simple: String,
     /// Index of the source unit this function was found in.
     unit: usize,
     /// Body node: a `block` for a function definition, or the `chunk` root for the top-level.
@@ -910,7 +916,8 @@ impl<'a> Lowerer<'a> {
         None
     }
 
-    /// Lowers the recovered class maps into [`VirtualMethodTable::Lua`] on `self.vmt`.
+    /// Lowers the recovered class maps -- and the name of every collected function -- into
+    /// [`VirtualMethodTable::Lua`] on `self.vmt`.
     fn build_vmt(&mut self) {
         let mut methods: Vec<(Symbol, Symbol, Symbol)> = Vec::new();
         for (cls, ms) in &self.class_methods {
@@ -934,7 +941,27 @@ impl<'a> Lowerer<'a> {
                 .or_default()
                 .push(self.class_symbol(sup));
         }
-        self.vmt = VirtualMethodTable::Lua { methods, hierarchy };
+        // Every collected function, with the simple name its definition site wrote. `self.funcs`
+        // holds one entry per lowered function -- the chunk, every declaration, every anonymous
+        // definition -- and collection has already run over every unit by the time this does, so
+        // the column is complete. Order follows `self.funcs`, which the collection walk builds
+        // deterministically; no sort needed.
+        let functions: Vec<(Symbol, Symbol)> = self
+            .funcs
+            .iter()
+            .map(|entry| {
+                (
+                    Symbol::from(entry.simple.as_str()),
+                    Symbol::from(self.program[entry.fidx].name.as_str()),
+                )
+            })
+            .collect();
+
+        self.vmt = VirtualMethodTable::Lua {
+            methods,
+            functions,
+            hierarchy,
+        };
     }
 
     // ------------------------------------------------------------------
@@ -947,6 +974,7 @@ impl<'a> Lowerer<'a> {
         let fidx = self.new_named_function(self.in_module("%chunk"));
         self.funcs.push(FuncEntry {
             fidx,
+            simple: "%chunk".to_string(),
             unit: self.unit,
             body: root,
             params: None,
@@ -970,10 +998,15 @@ impl<'a> Lowerer<'a> {
                     let is_method =
                         name_node.map(|n| n.kind() == "method_index_expression").unwrap_or(false);
                     let is_local = is_local_declaration(child);
-                    // Name the function by its fully-qualified name (see `qualified_def_name`).
-                    let base = name_node
-                        .map(|n| self.qualified_def_name(n, is_local))
-                        .unwrap_or_else(|| self.fresh_anon_name());
+                    // Name the function by its fully-qualified name (see `qualified_def_name`),
+                    // keeping the definition's own simple name alongside it: this is the one
+                    // place both are in hand, and `new_named_function` may disambiguate the
+                    // qualified name (`<module>.f%1`) without the function's simple name
+                    // changing.
+                    let (base, simple) = match name_node {
+                        Some(n) => (self.qualified_def_name(n, is_local), self.def_name(n)),
+                        None => self.fresh_anon_name(),
+                    };
                     let fidx = self.new_named_function(base);
                     self.func_by_node.insert((self.unit, child.id()), fidx);
                     // A `local function f` is a name every call site in the file spells simply as
@@ -992,6 +1025,7 @@ impl<'a> Lowerer<'a> {
                     }
                     self.funcs.push(FuncEntry {
                         fidx,
+                        simple,
                         unit: self.unit,
                         body: child.child_by_field_name("body").unwrap_or(child),
                         params: child.child_by_field_name("parameters"),
@@ -999,11 +1033,12 @@ impl<'a> Lowerer<'a> {
                     });
                 }
                 "function_definition" => {
-                    let name = self.fresh_anon_name();
+                    let (name, simple) = self.fresh_anon_name();
                     let fidx = self.new_named_function(name);
                     self.func_by_node.insert((self.unit, child.id()), fidx);
                     self.funcs.push(FuncEntry {
                         fidx,
+                        simple,
                         unit: self.unit,
                         body: child.child_by_field_name("body").unwrap_or(child),
                         params: child.child_by_field_name("parameters"),
@@ -1016,10 +1051,14 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn fresh_anon_name(&mut self) -> String {
+    /// A name for a function that has none of its own, as `(fully-qualified, simple)`. The
+    /// counter runs across the whole import, not per file (see the `%anonN` warning in
+    /// `docs/model-generators.md`).
+    fn fresh_anon_name(&mut self) -> (String, String) {
         let n = self.anon_counter;
         self.anon_counter += 1;
-        self.in_module(&format!("%anon{n}"))
+        let simple = format!("%anon{n}");
+        (self.in_module(&simple), simple)
     }
 
     /// Allocates a new function and gives it a unique, non-empty name.
@@ -2469,6 +2508,22 @@ mod tests {
         }
     }
 
+    /// The VMT's `(simple name, fully-qualified name)` pair for every function, sorted by
+    /// qualified name.
+    fn vmt_functions(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
+        match vmt {
+            VirtualMethodTable::Lua { functions, .. } => {
+                let mut v: Vec<(String, String)> = functions
+                    .iter()
+                    .map(|(simple, fq)| (simple.to_string(), fq.to_string()))
+                    .collect();
+                v.sort_by(|a, b| a.1.cmp(&b.1));
+                v
+            }
+            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
+        }
+    }
+
     /// The recovered `subclass -> parent` edges, sorted.
     fn hierarchy_edges(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
         match vmt {
@@ -2536,6 +2591,59 @@ mod tests {
         assert_eq!(
             function_names(&info),
             vec!["m.%chunk", "m.Account.balance", "m.Account.deposit", "m.Account.new"]
+        );
+    }
+
+    #[test]
+    fn vmt_carries_a_simple_name_for_every_function() {
+        // Every kind of definition the frontend names: the synthetic chunk, a `local function`, a
+        // module-table field, a `:` method, and an anonymous function. The VMT's simple name is the
+        // identifier each definition writes, never the module qualification around it.
+        let src = r#"
+            local M = {}
+            local function helper() return 1 end
+            function M.read() return helper() end
+            local Account = {}
+            Account.__index = Account
+            function Account:deposit(x) self.v = x end
+            M.cb = function(x) return x end
+            return M
+        "#;
+        let info = import_str(src);
+        assert_eq!(
+            vmt_functions(&info.vmt),
+            vec![
+                ("%anon0".to_string(), "m.%anon0".to_string()),
+                ("%chunk".to_string(), "m.%chunk".to_string()),
+                ("deposit".to_string(), "m.Account.deposit".to_string()),
+                ("helper".to_string(), "m.helper".to_string()),
+                ("read".to_string(), "m.read".to_string()),
+            ]
+        );
+        // The column covers the whole program, not just the class methods.
+        assert_eq!(
+            vmt_functions(&info.vmt).iter().map(|(_, fq)| fq.clone()).collect::<Vec<_>>(),
+            function_names(&info)
+        );
+    }
+
+    #[test]
+    fn simple_name_survives_a_qualified_name_collision() {
+        // Two `local function f`s in one module qualify to the same name, so the second's IR name
+        // is disambiguated to `m.f%1`. Its simple name is still `f` -- which is why the model layer
+        // reads this column instead of splitting the qualified name on `.`.
+        let src = r#"
+            local function f() return 1 end
+            local function f() return 2 end
+        "#;
+        let info = import_str(src);
+        assert_eq!(
+            vmt_functions(&info.vmt),
+            vec![
+                ("%chunk".to_string(), "m.%chunk".to_string()),
+                ("f".to_string(), "m.f".to_string()),
+                ("f".to_string(), "m.f%1".to_string()),
+            ]
         );
     }
 

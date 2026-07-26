@@ -830,7 +830,9 @@ impl ClassHierarchyAnalysis {
             // Lua mirrors the Java arm: a Lua method is a `method_implemented` with a fixed
             // empty descriptor sentinel, and each `__index` parent is a `direct_superclass`.
             // The shared `run_cha` then computes the `__index`-chain resolvents unchanged.
-            VirtualMethodTable::Lua { methods, hierarchy } => {
+            VirtualMethodTable::Lua {
+                methods, hierarchy, ..
+            } => {
                 let empty_desc = Symbol::from("");
                 let method_implemented = methods
                     .iter()

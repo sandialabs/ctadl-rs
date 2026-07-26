@@ -68,7 +68,10 @@ pub fn init_store_path<P: AsRef<Path>>(override_path: Option<P>) -> Result<(), &
 /// - `3`: the native VMT gained a fully-qualified-name column (`NativeQualifiedName`, backing
 ///   the `qualified-id` model constraint), changing the `bitcode` wire format of
 ///   `ir-vmt.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "3";
+/// - `4`: the lua VMT gained a `functions` column carrying every function's frontend-parsed
+///   simple name alongside its qualified name, so model matching reads the simple name instead
+///   of re-deriving it. Again a `bitcode` wire-format change to `ir-vmt.bitcode`.
+pub const IMPORT_FORMAT_VERSION: &str = "4";
 
 /// Filename of the serialized IR program inside an import directory.
 ///

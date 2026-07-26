@@ -177,6 +177,19 @@ pub enum VirtualMethodTable {
         /// - Simple method name (e.g. `deposit`)
         /// - Fully-qualified function id the method lowers to (the IR function name)
         methods: Vec<(Symbol, Symbol, Symbol)>,
+        /// Every function the frontend lowered, not just the class methods above. The columns
+        /// are as follows:
+        /// - Simple name, as the definition site spells it (`get_headers` in
+        ///   `function kong.request.get_headers()`, `deposit` in `function Account:deposit()`,
+        ///   `%chunk` / `%anonN` for a synthetic one)
+        /// - Fully-qualified function name (the id used everywhere else), e.g.
+        ///   `kong.pdk.request.get_headers`
+        ///
+        /// The frontend parses the simple name out of the definition's name node, so consumers
+        /// read it here instead of re-deriving it from the qualified name: the two are not the
+        /// same string operation, since a name collision within a module makes the IR name
+        /// `<module>.f%1` while the function is still simply named `f`.
+        functions: Vec<(Symbol, Symbol)>,
         /// Subclass -> its `__index` parents (usually one). Mirrors Java `hierarchy`.
         hierarchy: HashMap<Symbol, SmallVec<[Symbol; 2]>>,
     },
@@ -199,6 +212,7 @@ impl VirtualMethodTable {
     pub fn new_lua() -> Self {
         VirtualMethodTable::Lua {
             methods: Vec::new(),
+            functions: Vec::new(),
             hierarchy: HashMap::new(),
         }
     }
@@ -228,10 +242,17 @@ impl Display for VirtualMethodTable {
                 writeln!(f, "end native virtual method table")?;
                 Ok(())
             }
-            VirtualMethodTable::Lua { methods, hierarchy } => {
+            VirtualMethodTable::Lua {
+                methods,
+                functions,
+                hierarchy,
+            } => {
                 writeln!(f, "lua virtual method table")?;
                 for (cls, name, func) in methods {
                     writeln!(f, "{cls}.{name}: {func}")?;
+                }
+                for (name, func) in functions {
+                    writeln!(f, "{name}: {func}")?;
                 }
                 for (subclass, superclasses) in hierarchy {
                     for superclass in superclasses {

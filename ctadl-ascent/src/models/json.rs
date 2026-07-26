@@ -276,12 +276,17 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                     .push(fq);
                 program_method_qualified_ids.entry(fq).or_default().push(fq);
             }
-        } else if let VirtualMethodTable::Lua { .. } = vmt {
+        } else if let VirtualMethodTable::Lua { functions, .. } = vmt {
             // Lua IR names are fully qualified by module (`kong.pdk.request.get_headers`,
-            // `direct-flow.source`). Key matching off the trailing simple name as well, so a model
-            // can say `^source$` without spelling the module it happens to live in -- the same
-            // treatment the Native arm gives decorated names. Both spellings resolve to the
-            // fully-qualified IR name.
+            // `direct-flow.source`). Key matching off the simple name as well, so a model can say
+            // `^source$` without spelling the module it happens to live in -- the same treatment
+            // the Native arm gives decorated names. Both spellings resolve to the fully-qualified
+            // IR name.
+            //
+            // The simple name is read from the VMT, where the frontend put the name the definition
+            // site actually wrote; it is not re-derived from the fq name here. The two differ when
+            // a module has two functions of one name: the second's IR name is `<module>.f%1`, whose
+            // trailing component is `f%1`, while the function is still simply named `f`.
             //
             // A Lua function has exactly ONE name, so unlike the Native arm there is no separate
             // id column to key `qualified-id` on: the fq name *is* the qualified id, and one entry
@@ -290,9 +295,9 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             // collisions it exists to remove (see the field's doc comment). One consequence of
             // deriving the id from the module: a single file imported as the root itself has an
             // empty module name, so there a function's id and its bare name coincide.
-            for func in &program_info.program.functions.functions {
-                let fq = func.name.as_str();
-                let simple = fq.rsplit('.').next().unwrap_or(fq);
+            for (simple, fq) in functions {
+                let simple = simple.as_ref();
+                let fq = fq.as_ref();
                 let keys: &[&str] = if simple == fq { &[fq] } else { &[simple, fq] };
                 for key in keys {
                     program_method_names.entry(key).or_default().push(fq);
