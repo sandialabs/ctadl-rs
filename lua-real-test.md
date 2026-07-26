@@ -17,6 +17,23 @@ kong-externals.lua, README.md}`.
 > re-measured on this tree. Claims the previous write-up made that this run does
 > **not** reproduce have been rewritten or deleted rather than restated; each
 > such spot is called out inline.
+>
+> **Re-run 2026-07-26**, against `lua` on main `4d90113` ("More model validation,
+> better error messages, changed to `qualified-id`", #79) — one further main
+> release. Every measurement below was taken again on this tree. The great
+> majority reproduce *exactly*, several byte-for-byte down to SARIF vertex ids;
+> only the four items below moved, and each is marked inline:
+>
+> 1. **§5.2 `unqualified-id` is fixed** by #79 — follow-up 4's first half is done.
+> 2. **§5.2 (new) `qualified-id` matches nothing on the Lua frontend** — the
+>    replacement mechanism #79 shipped is unusable here.
+> 3. **§5.4 (new) the same mis-rendering happens on the *sink* side**, and across
+>    more of the report than the source-side account covers.
+> 4. **§5.8 (new) 57 of the 304 flows are 627 steps long.**
+>
+> Three counters drifted slightly and are restated at their measured values
+> (§5.8's global-heap share 227→**235**, the `response-ratelimiting` sink count
+> 104→**105**, and the `saturating: false` short-flow split 33/11→**31/13**).
 
 ---
 
@@ -41,6 +58,12 @@ failed. The §5.1 wildcard repro and the `require` resolution case are now
 checked-in cases (`Lua:wildcard-table-arg-flow`, `Lua:require-module-flow`) and
 both pass.
 
+**2026-07-26:** the branch now sits on `4d90113` (#79), not `c63f079` — no
+rebase conflict this time, and no hand-porting was needed. `cargo build
+--release` is clean in 73 s and the regression suite gives the same **17 passed,
+1 xfail, 0 failed**. #79 is the release that replaced `unqualified-id` with
+`qualified-id`, which is what §5.2 now turns on.
+
 ---
 
 ## 1. Headline result
@@ -58,9 +81,12 @@ most needed for (§5.5).
 
 The dominant remaining problem is not recall but **precision**, and this run
 measured it much more sharply than the last one: `$globals` is a single object,
-so **227 of the 304 reported flows (75%) ride the global heap**, and a *single*
+so **235 of the 304 reported flows (77%) ride the global heap**, and a *single*
 saturating source in `response-ratelimiting` accounts for **183 results across
-104 distinct sinks** (§5.8).
+105 distinct sinks** — 57 of them via code flows **627 steps long** (§5.8).
+
+Second in line is **triage**: a third of the report points the reviewer at the
+wrong line (§5.4).
 
 ---
 
@@ -395,21 +421,54 @@ Fully-qualified definitions and resolved call names make Kong's own
 original `opentelemetry` false positive. The disambiguation levers the original
 report asked for are not needed for this case.
 
-Two of them are still broken, and matter for the colon-call sinks that must stay
-bare-named:
+The disambiguation levers fare differently on this tree:
 
 - `parent` / `parents` are Java-only (`models/json.rs`) — they log
   *"'parent' constraint is Java-only; matching nothing on this frontend"* and
-  match nothing. Confirmed unchanged.
-- `unqualified-id` is documented for `signature_match`
-  (`docs/model-generators.md:149,151`) but is not implemented there — it is only
-  read for `uses_field` (`models/json.rs:1055`). **Its failure mode has flipped
-  and is now worse.** The previous run found it silently matched *nothing*;
-  on this tree `{"constraint": "signature_match", "unqualified-id":
-  "request_uri"}` silently matches *everything* — 287 876 sinks, versus 11 for
-  the equivalent `{"names": ["request_uri"]}`. The key is ignored and the
-  now-empty `signature_match` degenerates to a universal match. A model that
-  used it would not fail loudly; it would quietly taint the program.
+  match nothing. Confirmed unchanged in 2026-07-26.
+- `unqualified-id` — **FIXED in #79.** The previous two runs found it first
+  silently matching *nothing* and then silently matching *everything* (287 876
+  sinks). It is now rejected at model-load time with a message that enumerates
+  the alternatives, which is exactly what follow-up 4 asked for:
+
+  ```
+  > unexpected field 'unqualified-id' in model generator at index 0: not a
+    recognized field of the 'signature_match' constraint; expected one of
+    'name', 'names', 'parent', 'parents', 'qualified-id', 'qualified-ids'
+  ```
+
+  It is gone from `docs/model-generators.md` too, replaced by `qualified-id`.
+
+#### 5.2.1 `qualified-id` matches nothing on Lua — **NEW (2026-07-26)**
+
+`qualified-id` / `qualified-ids` is the mechanism #79 shipped in its place, and
+`docs/model-generators.md:167` calls it *"the one way to name a single method on
+every frontend."* On the Lua frontend it names nothing at all:
+
+| generator on the same string | sinks matched |
+| --- | ---: |
+| `{"constraint": "signature_match", "names": ["kong.request.get_headers"]}` | **15** |
+| `{"constraint": "signature_match", "qualified-id": "kong.request.get_headers"}` | **0** |
+
+The cause is a missing arm, not a naming mismatch. `ModelIndex` construction
+(`ctadl-ascent/src/models/json.rs:224-305`) builds four lookup tables; the
+`VirtualMethodTable::Lua` branch at `:278-292` fills
+`program_method_names` and `program_method_signatures` (keyed on both the
+trailing simple name and the fully-qualified IR name) and **never touches
+`program_method_qualified_ids`**. The `Java` arm fills it, the `Native` arm fills
+it, and so does the `Unknown` / `CplusPlus` *fallback* at `:294-305` — so Lua is
+the one frontend worse off than an unrecognized language. The frontend table at
+`docs/model-generators.md:171` correspondingly has rows for jvm/dex and pcode
+and none for Lua.
+
+The failure is silent but safe: `docs/model-generators.md:182` specifies that an
+id naming no function matches nothing rather than everything, so this degrades to
+zero sinks, not to §5.2's old universal match. Nothing in the checked-in model is
+affected — it uses `names` with fully-qualified spellings throughout, which
+works, and is why §2.1's qualified naming still holds. But the documented way to
+separate two same-named Lua functions does not exist, which leaves `names` and
+its trailing-simple-name collisions as the only lever, and that is precisely what
+`qualified-id` was introduced to replace.
 
 ### 5.3 `find: "variables"` and `find: "fields"` — schema/loader mismatch
 
@@ -460,7 +519,55 @@ The four `azure-functions` results have `properties.sourceCallee` of
 but all four render the identical single source step *"call-arg(145334, -1) in
 kong.request.get_headers | handler.lua:50"* and the identical sink vertex
 `call-arg(145356, 2).headers`. Three of the four point the reviewer at the wrong
-line.
+line. Re-confirmed byte-for-byte in 2026-07-26, vertex ids included.
+
+#### 5.4.1 The same defect on the sink side — **NEW (2026-07-26)**
+
+The previous runs recorded this only for sources. It is not source-specific, and
+measured across the whole base run it is the report's second-largest problem
+after §5.8. Of the 304 results:
+
+| | count | share |
+| --- | ---: | ---: |
+| result's primary `locations[0]` ≠ last code-flow step's location | **99** | 32% |
+| `properties.sinkCallee` not even named in the last code-flow step | **17** | 5% |
+| results whose whole code flow is byte-identical to another result's with a *different* `sinkCallee` | **33** (13 distinct flows) | 11% |
+
+`locations[0]` is what a SARIF viewer opens, so the first row is the one that
+bites: a third of the report opens on a line that is not where the flow ends.
+
+The clearest specimen is `request-transformer`, whose §4 row lists
+`get_raw_body` (:434) → `set_raw_body` (:450) **and** `set_header` (:451). Both
+sinks are real and both are reported — but they are reported as two results with
+*one* code flow between them:
+
+```
+result A  sinkCallee = kong.service.request.set_raw_body   locations[0] = :442
+result B  sinkCallee = kong.service.request.set_header     locations[0] = :442
+  both render, identically:
+    1 source call-arg(176294, -1) in kong.request.get_raw_body            | :434
+    2 call   call-arg(176314, 2)  in ...access.transform_url_encoded_body | :442
+    3 sink   call-arg(176332, 0)  in kong.service.request.set_raw_body    | :450
+```
+
+Against the source (`access.lua:449-451`):
+
+```lua
+  if is_body_transformed then
+    set_raw_body(body)                      -- :450
+    set_header(CONTENT_LENGTH, #body)       -- :451
+  end
+```
+
+So for result B the actual sink, `set_header` at `:451`, appears in **no** step
+and in neither location; the reviewer is sent to `:442`, an intermediate call
+into a helper. And both results anchor at `:442` rather than at `:450`, so even
+the correctly-rendered result A opens on the wrong line.
+
+This is the same underlying shape as the source-side bug above — one code flow
+computed per source/sink *pair* but rendered from a shared representative — and
+it argues that follow-up 3 should be widened from "emit the seeding local" to
+"render each result's own endpoints at both ends."
 
 ### 5.5 `ngx.var.X` reads: still effectively unmodelable
 
@@ -517,14 +624,17 @@ global, program-wide.
 
 This run quantified it, and the numbers are much starker than the previous one's:
 
-- **227 of 304 flows (75%)** contain at least one `-32768` step.
+- **235 of 304 flows (77%)** contain at least one `-32768` step. (2026-07-25 read
+  227/75% here; 2026-07-26 measures 235 by the same test — *does any step message
+  carry `-32768`* — so eight flows moved across. Everything else about the
+  measurement is unchanged.)
 - One source — `response-ratelimiting/access.lua:30`, a legitimate
   `kong.client.get_forwarded_ip()` — produces **183 of the 304 results** and
-  reaches **104 distinct sink locations**, in `conf_loader` (57),
+  reaches **105 distinct sink locations**, in `conf_loader` (57),
   `clustering/*` (48), `dns/client` (15), `api/endpoints`, `db/declarative`,
-  `llm/drivers`, `aws-lambda`, `oauth2`, `request-transformer`. The previous run
-  estimated "~20 distinct sinks" for this source; the real figure is five times
-  that.
+  `llm/drivers`, `aws-lambda`, `oauth2`, `request-transformer`. The run before
+  last estimated "~20 distinct sinks" for this source; the real figure is five
+  times that.
 
 A representative fan-out, unrelated subsystems end to end:
 
@@ -542,6 +652,36 @@ A representative fan-out, unrelated subsystems end to end:
 
 Steps 3–8 are the global heap threading through the router, the Admin API and
 the endpoint helpers, none of which the source touches.
+
+**How long these actually get — NEW (2026-07-26).** The 9-step trace above is a
+*representative*, and it badly understates the artifact. The step-count
+distribution over the 304 results is bimodal, and the upper mode is a spike:
+
+```
+steps    2   3   4   6   7   8   9  10  11  12 …  42  44  48  50 | 627
+results 23   3   7  20  10  19  18  36  26   5 …  18   4  10   5 |  57
+```
+
+**57 results — 19% of the report — carry a code flow of 627 steps.** All 57 have
+the same source (`response-ratelimiting/access.lua:30`, the one above) and the
+same sink callee (`ngx.log`), landing in `conf_loader/parse.lua`; they are the 57
+`conf_loader` sinks itemized above. A single field, `kong.ctx.plugin.identifier`,
+rides the `-32768` formal through the router, the DAOs, `cmd/utils/process_secrets`
+and the config loader, and every intermediate hop is emitted as a step:
+
+```
+  1 source call-arg(177174, -1) in kong.client.get_forwarded_ip     | access.lua:30
+  2 return call-arg(177301, -1) in ...access.execute                | access.lua:72
+  3 return call-arg(197986, -32768).kong.ctx.plugin.identifier      | atc.lua:383
+  …                            623 further global-heap steps …
+627 sink   call-arg(41427, 1).[1] in ngx.log                        | parse.lua:449
+```
+
+627 steps is not a flow a reviewer can triage — it is unreadable at any length,
+and it is wholly manufactured by the conflation this section describes. It also
+means the SARIF is far larger than the result count suggests. This is a second,
+independent argument for follow-up 1, and it is the reason that follow-up now
+carries a size cost as well as a precision cost.
 
 The worst single artifact this run found is a **command-injection report**:
 
@@ -572,11 +712,13 @@ threading, and it is the same shape as the 8→9 hop the previous run flagged in
 the `acme` trace.
 
 Quantified the other way: re-running the identical model with `saturating: false`
-on every source drops results from **304 to 65** — reproducing the previous run's
-figure exactly. The previous run described the survivors as "tight 2–3 step flows
-within one or two files"; that is true of 44 of the 65 (33 are 2 steps, 11 are
-3), but the remaining 21 are 7–15 steps, so the long-range flows do not all come
-from saturation. Turning saturation off is still not the answer — several §4
+on every source drops results from **304 to 65** — reproducing both previous runs
+exactly, and killing all 57 of the 627-step flows. The oldest run described the
+survivors as "tight 2–3 step flows within one or two files"; that is true of 44
+of the 65, but the remaining 21 are 7–15 steps, so the long-range flows do not
+all come from saturation. (The 44 split 31 two-step / 13 three-step here, against
+33/11 on 2026-07-25 — the 44 and 21 totals are identical, two flows shifted
+buckets.) Turning saturation off is still not the answer — several §4
 flows (`request-transformer`, `ai-prompt-template`) need it, because callers
 index into the returned table — but it locates the cost precisely.
 
@@ -600,7 +742,9 @@ all.
 - `find: "methods"` with no `where` matches only recognized *class* methods on a
   Lua VMT, not free functions — always supply at least one name constraint.
 - Co-indexed-program location attribution was not re-measured. At the 2 programs
-  this run uses (shim + tree) every checked location was correct.
+  this run uses (shim + tree) every location resolved to the right *file*. That
+  is a separate question from §5.4.1, which is about the wrong *line* within the
+  right file; no result was ever attributed to the wrong program or artifact.
 
 ---
 
@@ -653,22 +797,32 @@ Pointing `import` at the repo root instead works and pulls in `spec/` and `t/`
 
 1. **Contain `$globals` fan-out** (§5.8) — field-sensitivity on the global
    object, or a cap on saturating propagation through the global formal. This
-   moves to the top on this run's numbers: 75% of all reported flows ride the
-   global heap, one source owns 60% of the results, and the artifact produces a
-   plausible-looking `io.popen` command-injection report. Precision, not recall,
-   is the limiting factor at whole-tree scale.
+   stays at the top on this run's numbers: 77% of all reported flows ride the
+   global heap, one source owns 60% of the results, that source emits 57 code
+   flows of **627 steps** each, and the artifact produces a plausible-looking
+   `io.popen` command-injection report. Precision, not recall, is the limiting
+   factor at whole-tree scale.
 2. **Seed `Variable(name)` on the copy-class representative** (§5.7). Same
    `rep_of` mechanism that fixed §5.1. Takes the feature from 59% to near-100% on
    its intended idiom and is the only thing standing between the model and the
    whole `ngx.var` source class.
-3. **Fix the code-flow source step** (§5.4). Emit the seeding local as a step for
-   `Variable`-sourced findings, and stop rendering the same step for four
-   different `sourceCallee`s. A finding whose source line is absent — or wrong —
-   cannot be triaged.
-4. **Make `unqualified-id` on `signature_match` an error rather than a universal
-   match** (§5.2), and either implement it or delete it from
-   `docs/model-generators.md`. Silently matching 287 876 sinks is a worse failure
-   than silently matching zero.
+3. **Render each result's own endpoints, at both ends** (§5.4, §5.4.1). Widened
+   on 2026-07-26, because the defect is not source-specific: emit the seeding
+   local as a step for `Variable`-sourced findings; stop rendering one shared
+   code flow for results with different `sourceCallee`s *or* different
+   `sinkCallee`s (33 results); and anchor `locations[0]` on the sink step rather
+   than an intermediate call (99 results, 32% of the report). A finding whose
+   source or sink line is absent — or wrong — cannot be triaged.
+4. **Populate `program_method_qualified_ids` in the Lua arm of `ModelIndex`**
+   (§5.2.1) — `ctadl-ascent/src/models/json.rs:278-292`, keyed on the
+   fully-qualified IR name exactly as the arm already keys the names and
+   signatures maps. Without it `qualified-id` — which #79 shipped as the
+   cross-frontend way to name one method, and which even the `Unknown` fallback
+   supports — matches nothing on Lua, leaving no way to disambiguate two
+   same-named functions. Add a Lua row to the frontend table at
+   `docs/model-generators.md:171` with it.
+   *(The original follow-up 4, making `unqualified-id` an error rather than a
+   universal match, was **delivered by #79** — see §5.2.)*
 5. Name a function assigned to a table field (`_M.uuid = uuid.generate_v4`,
    `["/acme"] = { POST = function(self) … }`) after that field rather than
    `%anonN` (§5.9). Also the largest remaining source of
@@ -680,6 +834,10 @@ Pointing `import` at the repo root instead works and pulls in `spec/` and `t/`
    `ngx.req.get_headers` directly.
 8. Ship `examples/kong/kong-externals.lua` as the seed of a Lua/OpenResty
    `default-index.jsonl` once (7) lands.
-9. Add the Lua frontend to whatever CI gate keeps the other frontends compiling.
-   The branch builds against `c63f079` now, but only because it was ported by
-   hand twice.
+9. Add the Lua frontend to whatever CI gate keeps the other frontends compiling
+   **and behaving**. Rebasing onto `4d90113` needed no hand-porting, so the
+   compile half is no longer the pressing part — but #79 added a `signature_match`
+   field to three of the four `ModelIndex` arms and silently skipped Lua (§5.2.1),
+   which compiles fine and fails only at match time. A per-frontend smoke model
+   asserting that each documented constraint matches something would have caught
+   it; a build gate would not.
