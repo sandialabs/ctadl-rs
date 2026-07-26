@@ -304,7 +304,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             VirtualMethodTable::Native { methods } => {
                 methods.iter().map(|(_, _, fq, _)| fq.as_ref()).collect()
             }
-            VirtualMethodTable::Unknown | VirtualMethodTable::CplusPlus => UniverseSet::empty(),
+            VirtualMethodTable::Unknown => UniverseSet::empty(),
         };
 
         // constructs index for the program
@@ -2067,8 +2067,8 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
             VirtualMethodTable::Native { methods } => {
                 methods.iter().map(|t| t.2.to_string()).collect()
             }
-            VirtualMethodTable::Unknown | VirtualMethodTable::CplusPlus => {
-                // For PCODE (which uses Unknown or CplusPlus), we don't have a list of all methods in the VMT
+            VirtualMethodTable::Unknown => {
+                // For PCODE (which uses Unknown), we don't have a list of all methods in the VMT
                 // but we should have been able to match them via names/signatures in ModelGeneratorIngest.
                 // If it's 'All', we might need to return all known functions in the program.
                 log::warn!(

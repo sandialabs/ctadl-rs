@@ -152,7 +152,6 @@ pub enum VirtualMethodTable {
             NativeQualifiedName,
         )>,
     },
-    CplusPlus,
 }
 
 impl VirtualMethodTable {
@@ -195,7 +194,6 @@ impl Display for VirtualMethodTable {
                 Ok(())
             }
             VirtualMethodTable::Unknown => write!(f, "unknown virtual method table"),
-            VirtualMethodTable::CplusPlus => write!(f, "empty c++ virtual method table"),
         }
     }
 }
