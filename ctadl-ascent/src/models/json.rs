@@ -334,10 +334,15 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             VirtualMethodTable::Native { methods } => {
                 methods.iter().map(|(_, _, fq, _)| fq.as_ref()).collect()
             }
-            // Lua free functions (source/sink/main) are not class methods, so name-based
-            // matching happens through the Lua indexing above; the universe stays empty
-            // like the Unknown case (proven behavior; parent/extends constraints are Java-only).
-            VirtualMethodTable::Lua { .. } | VirtualMethodTable::Unknown => UniverseSet::empty(),
+            // Every lowered function, class method or not. Before the VMT carried the
+            // `functions` column there was nothing here to enumerate free functions with, so
+            // the universe was empty and a top-level `not` on lua matched *nothing* -- while
+            // `matched_functions(&All)` (the sibling of this set) returned the class methods,
+            // so the two disagreed on the one frontend.
+            VirtualMethodTable::Lua { functions, .. } => {
+                functions.iter().map(|(_, fq)| fq.as_ref()).collect()
+            }
+            VirtualMethodTable::Unknown => UniverseSet::empty(),
         };
 
         // constructs index for the program
@@ -2100,8 +2105,12 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
             VirtualMethodTable::Native { methods } => {
                 methods.iter().map(|t| t.2.to_string()).collect()
             }
-            VirtualMethodTable::Lua { methods, .. } => {
-                methods.iter().map(|t| t.2.to_string()).collect()
+            // The `functions` column, not `methods`: on lua "all" means every function, the
+            // same as it does on java and native. Reading `methods` here made a `where`-less
+            // generator select only the metatable-recovered class methods and silently skip
+            // every free function.
+            VirtualMethodTable::Lua { functions, .. } => {
+                functions.iter().map(|t| t.1.to_string()).collect()
             }
             VirtualMethodTable::Unknown => {
                 // For PCODE (which uses Unknown), we don't have a list of all methods in the VMT
