@@ -561,8 +561,11 @@ impl<'a> Lowerer<'a> {
         declared: &mut HashSet<String>,
     ) {
         let root_of = |name: Node<'a>| -> Option<String> {
-            matches!(name.kind(), "dot_index_expression" | "method_index_expression")
-                .then(|| self.flatten_name(name).0)
+            matches!(
+                name.kind(),
+                "dot_index_expression" | "method_index_expression"
+            )
+            .then(|| self.flatten_name(name).0)
         };
         match node.kind() {
             "function_declaration" => {
@@ -591,7 +594,10 @@ impl<'a> Lowerer<'a> {
                     _ => None,
                 });
                 if let Some(list) = list {
-                    for v in named_of(list).into_iter().filter(|n| n.kind() == "identifier") {
+                    for v in named_of(list)
+                        .into_iter()
+                        .filter(|n| n.kind() == "identifier")
+                    {
                         declared.insert(self.node_text(v).to_string());
                     }
                 }
@@ -630,11 +636,13 @@ impl<'a> Lowerer<'a> {
                     for t in targets.iter().filter(|n| n.kind() == "identifier") {
                         scope.aliases.remove(self.node_text(*t));
                     }
-                    let qnames: Vec<Option<String>> = values
+                    let qnames: Vec<Option<String>> =
+                        values.iter().map(|&v| self.scan_qname(v, scope)).collect();
+                    for (i, t) in targets
                         .iter()
-                        .map(|&v| self.scan_qname(v, scope))
-                        .collect();
-                    for (i, t) in targets.iter().filter(|n| n.kind() == "identifier").enumerate() {
+                        .filter(|n| n.kind() == "identifier")
+                        .enumerate()
+                    {
                         let name = self.node_text(*t).to_string();
                         match qnames.get(i) {
                             Some(Some(q)) => {
@@ -657,7 +665,10 @@ impl<'a> Lowerer<'a> {
                 "variable_list" => {
                     // A bare `local x` binds nothing yet, but a later `x.f = ...` can still make
                     // it a namespace, so keep that name if it has one.
-                    for v in named_of(decl).into_iter().filter(|n| n.kind() == "identifier") {
+                    for v in named_of(decl)
+                        .into_iter()
+                        .filter(|n| n.kind() == "identifier")
+                    {
                         let name = self.node_text(v).to_string();
                         if !scope.namespaces.contains_key(&name) {
                             scope.aliases.remove(&name);
@@ -672,8 +683,12 @@ impl<'a> Lowerer<'a> {
 
     /// The chunk-level local a file `return`s -- its module table.
     fn scan_module_table(&self, chunk: Node<'a>, scope: &UnitScope) -> Option<String> {
-        let ret = named_of(chunk).into_iter().find(|n| n.kind() == "return_statement")?;
-        let expr = named_of(child_of_kind(ret, "expression_list")?).into_iter().next()?;
+        let ret = named_of(chunk)
+            .into_iter()
+            .find(|n| n.kind() == "return_statement")?;
+        let expr = named_of(child_of_kind(ret, "expression_list")?)
+            .into_iter()
+            .next()?;
         if expr.kind() != "identifier" {
             return None;
         }
@@ -697,7 +712,11 @@ impl<'a> Lowerer<'a> {
             "dot_index_expression" => {
                 let table = node.child_by_field_name("table")?;
                 let field = node.child_by_field_name("field")?;
-                Some(format!("{}.{}", self.scan_qname(table, scope)?, self.node_text(field)))
+                Some(format!(
+                    "{}.{}",
+                    self.scan_qname(table, scope)?,
+                    self.node_text(field)
+                ))
             }
             "parenthesized_expression" => self.scan_qname(node.named_child(0)?, scope),
             "function_call" => self.required_module_canonical(node),
@@ -713,7 +732,9 @@ impl<'a> Lowerer<'a> {
         if !matches!(name.kind(), "identifier" | "global") || self.node_text(name) != "require" {
             return None;
         }
-        let arg = named_of(node.child_by_field_name("arguments")?).into_iter().next()?;
+        let arg = named_of(node.child_by_field_name("arguments")?)
+            .into_iter()
+            .next()?;
         (arg.kind() == "string").then(|| self.string_content(arg))
     }
 
@@ -793,7 +814,10 @@ impl<'a> Lowerer<'a> {
         match node.kind() {
             "function_declaration" => {
                 if let Some(name) = node.child_by_field_name("name")
-                    && matches!(name.kind(), "dot_index_expression" | "method_index_expression")
+                    && matches!(
+                        name.kind(),
+                        "dot_index_expression" | "method_index_expression"
+                    )
                     && let Some(tbl) = name.child_by_field_name("table")
                     && tbl.kind() == "identifier"
                     && let Some(&fidx) = self.func_by_node.get(&(self.unit, node.id()))
@@ -829,7 +853,12 @@ impl<'a> Lowerer<'a> {
         let vlist = child_of_kind(node, "variable_list");
         let elist = child_of_kind(node, "expression_list");
         let targets: Vec<Node<'a>> = vlist
-            .map(|v| named_of(v).into_iter().filter(|n| n.kind() != "attribute").collect())
+            .map(|v| {
+                named_of(v)
+                    .into_iter()
+                    .filter(|n| n.kind() != "attribute")
+                    .collect()
+            })
             .unwrap_or_default();
         let rhs: Vec<Node<'a>> = elist.map(named_of).unwrap_or_default();
         for (i, t) in targets.iter().enumerate() {
@@ -840,7 +869,9 @@ impl<'a> Lowerer<'a> {
                     if field != Some("__index") {
                         continue;
                     }
-                    let Some(tbl) = t.child_by_field_name("table").filter(|n| n.kind() == "identifier")
+                    let Some(tbl) = t
+                        .child_by_field_name("table")
+                        .filter(|n| n.kind() == "identifier")
                     else {
                         continue;
                     };
@@ -891,7 +922,10 @@ impl<'a> Lowerer<'a> {
         {
             return None;
         }
-        let args = node.child_by_field_name("arguments").map(named_of).unwrap_or_default();
+        let args = node
+            .child_by_field_name("arguments")
+            .map(named_of)
+            .unwrap_or_default();
         match (args.first(), args.get(1)) {
             (Some(a), Some(b)) => Some((*a, *b)),
             _ => None,
@@ -924,7 +958,11 @@ impl<'a> Lowerer<'a> {
             let cls_sym = self.class_symbol(cls);
             for (m, fidx) in ms {
                 let fname = self.program[*fidx].name.clone();
-                methods.push((cls_sym.clone(), Symbol::from(m.as_str()), Symbol::from(fname.as_str())));
+                methods.push((
+                    cls_sym.clone(),
+                    Symbol::from(m.as_str()),
+                    Symbol::from(fname.as_str()),
+                ));
             }
         }
         // Deterministic ordering (the recognition walk is deterministic, but the method map is a
@@ -995,8 +1033,9 @@ impl<'a> Lowerer<'a> {
             match child.kind() {
                 "function_declaration" => {
                     let name_node = child.child_by_field_name("name");
-                    let is_method =
-                        name_node.map(|n| n.kind() == "method_index_expression").unwrap_or(false);
+                    let is_method = name_node
+                        .map(|n| n.kind() == "method_index_expression")
+                        .unwrap_or(false);
                     let is_local = is_local_declaration(child);
                     // Name the function by its fully-qualified name (see `qualified_def_name`),
                     // keeping the definition's own simple name alongside it: this is the one
@@ -1013,9 +1052,7 @@ impl<'a> Lowerer<'a> {
                     // `f`, so record what it denotes. Nesting is flattened: the alias is recorded
                     // for the whole unit, which is what makes a recursive call inside `f`'s own
                     // body -- lowered as its own function, with its own scopes -- resolve.
-                    if is_local
-                        && let Some(name) = name_node.filter(|n| n.kind() == "identifier")
-                    {
+                    if is_local && let Some(name) = name_node.filter(|n| n.kind() == "identifier") {
                         let simple = self.node_text(name).to_string();
                         let qualified = self.program[fidx].name.clone();
                         self.unit_scopes[self.unit]
@@ -1099,7 +1136,12 @@ impl<'a> Lowerer<'a> {
                 .locals
                 .iter()
                 .map(|name| (name.clone(), None))
-                .chain(scope.aliases.iter().map(|(k, v)| (k.clone(), Some(v.clone()))))
+                .chain(
+                    scope
+                        .aliases
+                        .iter()
+                        .map(|(k, v)| (k.clone(), Some(v.clone()))),
+                )
                 .collect(),
         ];
         self.labels = HashMap::new();
@@ -1163,7 +1205,10 @@ impl<'a> Lowerer<'a> {
 
     fn add_param(&mut self, name: &str, idx: usize) {
         let pidx = ParameterIdx::new(idx);
-        self.program[self.fidx].params.parameters.push(ParameterType::ByVal);
+        self.program[self.fidx]
+            .params
+            .parameters
+            .push(ParameterType::ByVal);
         self.scopes
             .last_mut()
             .unwrap()
@@ -1229,7 +1274,9 @@ impl<'a> Lowerer<'a> {
             if self.program[fidx][blk].terminator.is_none() {
                 let args = self.empty_return_args();
                 self.program[fidx][blk].terminator =
-                    Some(Terminator::new_kind(TerminatorKind::Return { args: args.into() }));
+                    Some(Terminator::new_kind(TerminatorKind::Return {
+                        args: args.into(),
+                    }));
             }
         }
     }
@@ -1317,7 +1364,11 @@ impl<'a> Lowerer<'a> {
             "dot_index_expression" => {
                 let table = node.child_by_field_name("table")?;
                 let field = node.child_by_field_name("field")?;
-                Some(format!("{}.{}", self.qname_of(table)?, self.node_text(field)))
+                Some(format!(
+                    "{}.{}",
+                    self.qname_of(table)?,
+                    self.node_text(field)
+                ))
             }
             "parenthesized_expression" => self.qname_of(node.named_child(0)?),
             "function_call" => self.required_module_canonical(node),
@@ -1390,8 +1441,10 @@ impl<'a> Lowerer<'a> {
                         && is_local_declaration(s)
                     {
                         let nm = self.node_text(name).to_string();
-                        let qualified =
-                            self.func_by_node.get(&(self.unit, s.id())).map(|&f| self.program[f].name.clone());
+                        let qualified = self
+                            .func_by_node
+                            .get(&(self.unit, s.id()))
+                            .map(|&f| self.program[f].name.clone());
                         self.declare_local(&nm);
                         self.declare_alias(&nm, qualified);
                     }
@@ -1477,7 +1530,12 @@ impl<'a> Lowerer<'a> {
                 let vlist = child_of_kind(child, "variable_list");
                 let elist = child_of_kind(child, "expression_list");
                 let targets: Vec<Node<'a>> = vlist
-                    .map(|v| named_of(v).into_iter().filter(|n| n.kind() != "attribute").collect())
+                    .map(|v| {
+                        named_of(v)
+                            .into_iter()
+                            .filter(|n| n.kind() != "attribute")
+                            .collect()
+                    })
                     .unwrap_or_default();
                 let rhs: Vec<Node<'a>> = elist.map(named_of).unwrap_or_default();
                 // Evaluate RHS before declaring the new locals so `local x = x` reads the outer x.
@@ -1517,7 +1575,12 @@ impl<'a> Lowerer<'a> {
         let vlist = child_of_kind(node, "variable_list");
         let elist = child_of_kind(node, "expression_list");
         let targets: Vec<Node<'a>> = vlist
-            .map(|v| named_of(v).into_iter().filter(|n| n.kind() != "attribute").collect())
+            .map(|v| {
+                named_of(v)
+                    .into_iter()
+                    .filter(|n| n.kind() != "attribute")
+                    .collect()
+            })
             .unwrap_or_default();
         let rhs: Vec<Node<'a>> = elist.map(named_of).unwrap_or_default();
         let multi = targets.len() > 1;
@@ -1863,7 +1926,10 @@ impl<'a> Lowerer<'a> {
     fn eval_table(&mut self, node: Node<'a>, blk: BasicBlockIdx) -> Exp {
         let table = self.fresh_temp();
         // Define the table variable so it exists even when empty.
-        self.push_stmt(blk, StatementKind::assign(table.clone(), [Exp::new_str("{}")]));
+        self.push_stmt(
+            blk,
+            StatementKind::assign(table.clone(), [Exp::new_str("{}")]),
+        );
         for field in named_of(node) {
             if field.kind() != "field" {
                 continue;
@@ -1919,7 +1985,11 @@ impl<'a> Lowerer<'a> {
             })
             .unwrap_or_default();
         let mut names = Vec::new();
-        collect_identifiers(self.src(), node.child_by_field_name("body").unwrap_or(node), &mut names);
+        collect_identifiers(
+            self.src(),
+            node.child_by_field_name("body").unwrap_or(node),
+            &mut names,
+        );
         let mut upvalues: Vec<String> = Vec::new();
         let mut seen: HashMap<String, ()> = HashMap::new();
         for name in names {
@@ -1960,7 +2030,11 @@ impl<'a> Lowerer<'a> {
     /// function), returns the callee's access path for an indirect call; otherwise `None` (the call
     /// resolves by name). A `local function f`/global function is a defined name, so it stays a
     /// direct call.
-    fn indirect_call_target(&mut self, name_node: Node<'a>, blk: BasicBlockIdx) -> Option<AccessPath> {
+    fn indirect_call_target(
+        &mut self,
+        name_node: Node<'a>,
+        blk: BasicBlockIdx,
+    ) -> Option<AccessPath> {
         if !matches!(name_node.kind(), "identifier" | "global") {
             return None;
         }
@@ -2023,9 +2097,7 @@ impl<'a> Lowerer<'a> {
                         }
                     };
                     args.push(Exp::Variable(recv_var.clone()));
-                    if self.method_names.contains(&method)
-                        && !self.method_is_opaque(&method)
-                    {
+                    if self.method_names.contains(&method) && !self.method_is_opaque(&method) {
                         lua_method = Some((recv_var, method.clone()));
                     }
                 }
@@ -2107,8 +2179,12 @@ impl<'a> Lowerer<'a> {
 
         // `table.insert(t, v)` / `table.insert(t, pos, v)`: v flows into an element of `t`.
         if name_node.kind() == "dot_index_expression" {
-            let base = name_node.child_by_field_name("table").map(|t| self.node_text(t));
-            let field = name_node.child_by_field_name("field").map(|f| self.node_text(f));
+            let base = name_node
+                .child_by_field_name("table")
+                .map(|t| self.node_text(t));
+            let field = name_node
+                .child_by_field_name("field")
+                .map(|f| self.node_text(f));
             if base == Some("table") && field == Some("insert") && arg_nodes.len() >= 2 {
                 let mut target = self.eval_lvalue(arg_nodes[0], blk);
                 let value = self.eval_expr(*arg_nodes.last().unwrap(), blk);
@@ -2135,8 +2211,10 @@ impl<'a> Lowerer<'a> {
             // `select(k, ...)`: returns the selected varargs; over-approximate by flowing every
             // vararg operand into the result.
             "select" if arg_nodes.len() >= 2 => {
-                let srcs: Vec<Exp> =
-                    arg_nodes[1..].iter().map(|&a| self.eval_expr(a, blk)).collect();
+                let srcs: Vec<Exp> = arg_nodes[1..]
+                    .iter()
+                    .map(|&a| self.eval_expr(a, blk))
+                    .collect();
                 let t = self.fresh_temp();
                 self.push_stmt(blk, StatementKind::assign(t.clone(), srcs));
                 Some(Exp::Variable(t))
@@ -2180,7 +2258,9 @@ impl<'a> Lowerer<'a> {
         if let Some(cls) = cls {
             // A single assign carrying both the data (Variable) and the object tag (ObjectRef), so
             // one SSA version of `obj` gets both the field contents and the class tag.
-            sources.push(Exp::ObjectRef(CallObject::LuaClass(self.class_symbol(&cls))));
+            sources.push(Exp::ObjectRef(CallObject::LuaClass(
+                self.class_symbol(&cls),
+            )));
         } else {
             // Computed / non-class metatable: still model the return of `t`, but record the
             // imprecision (Phase 1d).
@@ -2332,7 +2412,11 @@ impl<'a> Lowerer<'a> {
     /// Assigns multiple source values into `target` (a bare variable), flowing all of them in.
     fn assign_multi(&mut self, blk: BasicBlockIdx, target: RawPath, srcs: Vec<Exp>) {
         if target.is_pathless() {
-            let sources: Vec<Exp> = if srcs.is_empty() { vec![nil_exp()] } else { srcs };
+            let sources: Vec<Exp> = if srcs.is_empty() {
+                vec![nil_exp()]
+            } else {
+                srcs
+            };
             self.push_stmt(blk, StatementKind::assign(target.base, sources));
         } else {
             let val = srcs.into_iter().next().unwrap_or_else(nil_exp);
@@ -2533,7 +2617,8 @@ mod tests {
                 let mut v: Vec<(String, String)> = hierarchy
                     .iter()
                     .flat_map(|(sub, sups)| {
-                        sups.iter().map(move |sup| (sub.to_string(), sup.to_string()))
+                        sups.iter()
+                            .map(move |sup| (sub.to_string(), sup.to_string()))
                     })
                     .collect();
                 v.sort();
@@ -2592,7 +2677,12 @@ mod tests {
         // Methods are named by the class table they are defined into, under the module.
         assert_eq!(
             function_names(&info),
-            vec!["m.%chunk", "m.Account.balance", "m.Account.deposit", "m.Account.new"]
+            vec![
+                "m.%chunk",
+                "m.Account.balance",
+                "m.Account.deposit",
+                "m.Account.new"
+            ]
         );
     }
 
@@ -2624,7 +2714,10 @@ mod tests {
         );
         // The column covers the whole program, not just the class methods.
         assert_eq!(
-            vmt_functions(&info.vmt).iter().map(|(_, fq)| fq.clone()).collect::<Vec<_>>(),
+            vmt_functions(&info.vmt)
+                .iter()
+                .map(|(_, fq)| fq.clone())
+                .collect::<Vec<_>>(),
             function_names(&info)
         );
     }
@@ -2673,7 +2766,10 @@ mod tests {
         );
         assert_eq!(
             hierarchy_edges(&info.vmt),
-            vec![("lua$class$m.Derived".to_string(), "lua$class$m.Base".to_string())]
+            vec![(
+                "lua$class$m.Derived".to_string(),
+                "lua$class$m.Base".to_string()
+            )]
         );
         // Only the `setmetatable({}, Derived)` instance site is tagged; the class-table definition
         // `setmetatable({}, { __index = Base })` (a table-constructor metatable) is not.
@@ -2792,8 +2888,12 @@ mod tests {
             return _M
         "#;
         let info = import_modules(&[("kong.pdk.request", src), ("kong.pdk.response", src)]);
-        assert!(function_names(&info).contains(&"kong.pdk.request._REQUEST.get_headers".to_string()));
-        assert!(function_names(&info).contains(&"kong.pdk.response._REQUEST.get_headers".to_string()));
+        assert!(
+            function_names(&info).contains(&"kong.pdk.request._REQUEST.get_headers".to_string())
+        );
+        assert!(
+            function_names(&info).contains(&"kong.pdk.response._REQUEST.get_headers".to_string())
+        );
         assert_eq!(
             direct_calls(&info, "kong.pdk.request._REQUEST.get_header"),
             vec!["kong.pdk.request._REQUEST.get_headers"]
