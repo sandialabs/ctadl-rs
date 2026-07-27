@@ -167,6 +167,8 @@ pub enum ImportLanguage {
     Apk,
     /// Treat as C files
     C,
+    /// Treat as Lua source files (parsed with the tree-sitter Lua grammar)
+    Lua,
     /// Export pcode via Ghidra. The artifact may be a binary to import, an existing
     /// local Ghidra project (`<name>.gpr` or its directory), or a Ghidra Server
     /// repository URL (`ghidra://…`).
@@ -464,7 +466,8 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
             // program. To pin down one specific method, use "qualified-id" instead: an exact
             // (non-regex) match on the fully-qualified id, e.g.
             //     {"constraint": "signature_match", "qualified-id": "Lcom/example/Db;->executeQuery(Ljava/lang/String;)V"}
-            // on jvm/dex, or "Db::executeQuery" on pcode.
+            // on jvm/dex, "Db::executeQuery" on pcode, or the module-qualified name
+            // "kong.db.executeQuery" on lua.
             "find": "methods",
             "where": [
                 {
@@ -590,6 +593,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             ImportLanguage::Jar => Jar,
             ImportLanguage::Jvm => Jvm,
             ImportLanguage::C => C,
+            ImportLanguage::Lua => Lua,
             ImportLanguage::Pcode => Pcode,
             ImportLanguage::Flowy => Flowy,
             ImportLanguage::Auto => unreachable!(),
@@ -732,6 +736,12 @@ fn autodetect_import_language<P: AsRef<Path>>(
             if project::is_ghidra_server_url(path) {
                 return Ok(ImportLanguage::Pcode);
             }
+            // A directory of Lua sources is imported whole (the directory is the `require` root),
+            // and has no extension to detect by; recognize it by containing `.lua` files.
+            if path.is_dir() && dir_contains_lua(path) {
+                return Ok(ImportLanguage::Lua);
+            }
+
             let ext = path.extension().and_then(|e| OsStr::to_str(e));
 
             match ext {
@@ -739,6 +749,7 @@ fn autodetect_import_language<P: AsRef<Path>>(
                 Some("apk") => ImportLanguage::Apk,
                 Some("class") => ImportLanguage::Jvm,
                 Some("jar") => ImportLanguage::Jar,
+                Some("lua") => ImportLanguage::Lua,
                 Some("tnt") => ImportLanguage::Flowy,
                 Some("gpr") => ImportLanguage::Pcode,
                 // No recognized extension: if the file's contents look binary,
@@ -752,6 +763,24 @@ fn autodetect_import_language<P: AsRef<Path>>(
         }
         _ => language,
     })
+}
+
+/// Whether a directory tree contains any `.lua` file.
+fn dir_contains_lua(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if dir_contains_lua(&path) {
+                return true;
+            }
+        } else if path.extension().and_then(|e| OsStr::to_str(e)) == Some("lua") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Heuristically decides whether `path` refers to a binary file.

@@ -34,6 +34,18 @@ use crate::sarif;
 /// this is only used when `relativeAddress` is absent.
 const PCODE_BASE_ADDRESS: i64 = 0x10_0000;
 
+/// Lua cases that are known to fail because they exercise analysis capabilities not yet
+/// implemented. They run for visibility but report as XFAIL rather than counting toward the
+/// suite exit code.
+///
+/// Currently empty: every `tests/lua/` case is expected to pass. `Lua:closure-flow` used to be
+/// listed here, because returning a closure out of one function and calling it in another needs
+/// the engine to propagate call-target objects through a *return*; that gap was engine-wide, not
+/// Lua-specific, and is closed by the return-direction rule in `index_engine` (the
+/// language-neutral reproducer is `tests/c/funcptrfactory.c`). Add an entry back only for a
+/// genuinely unimplemented capability, never to paper over a regression.
+const LUA_XFAIL: &[&str] = &[];
+
 /// JVM E2E cases whose failures count toward the suite exit code. All other
 /// `Jvm:*` taint cases run for visibility but report as XFAIL when they fail.
 const JVM_E2E_ENFORCED: &[&str] = &[
@@ -257,6 +269,7 @@ impl Task<'_> {
             Task::Case(case) => {
                 let outcome =
                     run_case(case, worker).unwrap_or_else(|err| Outcome::Fail(format!("{err:#}")));
+                let outcome = apply_lua_allowlist(&case.name, outcome);
                 vec![(case.name.clone(), apply_jvm_allowlist(&case.name, outcome))]
             }
             Task::JvmChecks { samples } => {
@@ -481,6 +494,15 @@ fn preflight_java() -> Result<()> {
     );
 }
 
+/// Known-unimplemented Lua failures are reported as XFAIL so the suite can stay green while the
+/// frontend and engine mature. See [`LUA_XFAIL`].
+fn apply_lua_allowlist(name: &str, outcome: Outcome) -> Outcome {
+    match outcome {
+        Outcome::Fail(why) if LUA_XFAIL.contains(&name) => Outcome::Xfail(why),
+        other => other,
+    }
+}
+
 /// Non-enforced JVM E2E failures are reported as XFAIL so the suite can stay
 /// green while the frontend matures. This covers the *taint* answer only:
 /// [`Outcome::HardFail`] (invalid SARIF) is never demoted, since the shape of
@@ -499,6 +521,7 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
         Kind::Dex { java, config } => run_dex(&case.name, java, config),
         Kind::Jvm { java, config } => run_jvm(&case.name, java, config),
         Kind::Pcode { source, query } => run_pcode(&case.name, source, query, worker),
+        Kind::Lua { source, query } => run_lua(&case.name, source, query),
     }
 }
 
@@ -912,6 +935,91 @@ fn run_ctadl(work: &Path, state: &Path, args: &[&str]) -> Result<()> {
         &format!("ctadl {}", args.first().copied().unwrap_or("")),
     )?;
     Ok(())
+}
+
+// --- Lua -------------------------------------------------------------------
+
+/// Run one Lua case: import the source through the `lua` frontend, index, query,
+/// and check the resulting SARIF.
+///
+/// Lua is a source-level frontend, so unlike DEX/JVM (bytecode offsets via a
+/// linemap) or pcode (instruction addresses via `addr2line`) the SARIF regions
+/// carry `startLine` directly. The check therefore reads lines straight from the
+/// code-flow steps -- no compilation, linemap, or disassembler in the loop.
+///
+/// The pass criteria mirror the other frontends (see `check_flow_case`):
+///   1. *Code-flow integrity*: a human-profile code flow connects a source to a
+///      sink. A negative case (`expected_lines` empty) inverts this: no such flow
+///      may exist.
+///   2. *Reached lines*: every `expected_lines` entry appears among the
+///      code-flow `startLine`s.
+///   3. *Unexpected lines*: no `unexpected_lines` entry is among them.
+fn run_lua(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
+    let work = scratch_dir(name)?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+
+    let project = format!("{}_lua", name.replace(':', "_"));
+    let sarif = work.join("output.sarif");
+    let source_str = source.to_string_lossy();
+
+    run_ctadl(
+        &work,
+        &state,
+        &["import", "-l", "lua", "--name", &project, &source_str],
+    )?;
+    run_ctadl(&work, &state, &["index", &project])?;
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "query",
+            &project,
+            "-m",
+            &query.to_string_lossy(),
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
+    )?;
+
+    let expected = assertions::read_expected_lines(query)?;
+    let connects = assertions::codeflow_connects_source_and_sink(&sarif)?;
+
+    if expected.is_empty() {
+        // Negative case: there must be no traced source -> sink flow.
+        return Ok(if connects {
+            Outcome::Fail(
+                "expected no flow, but a code flow connects a source to a sink".to_string(),
+            )
+        } else {
+            Outcome::Pass
+        });
+    }
+
+    if !connects {
+        return Ok(Outcome::Fail(
+            "no code flow connects a source to a sink".to_string(),
+        ));
+    }
+
+    let reached = assertions::collect_codeflow_start_lines(&sarif)?;
+    let missing: Vec<i64> = expected
+        .iter()
+        .copied()
+        .filter(|line| !reached.contains(line))
+        .collect();
+    if !missing.is_empty() {
+        return Ok(Outcome::Fail(format!(
+            "expected lines {missing:?} not reached (reached {reached:?}; all of {expected:?} required)"
+        )));
+    }
+
+    let unexpected = assertions::read_unexpected_lines(query)?;
+    if let Some(why) = assertions::check_unexpected_lines(&unexpected, &reached) {
+        return Ok(Outcome::Fail(why));
+    }
+
+    Ok(Outcome::Pass)
 }
 
 // --- Pcode / C ------------------------------------------------------------

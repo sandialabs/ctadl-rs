@@ -60,18 +60,7 @@ pub fn codegen_program(
     }
 
     let cha = ClassHierarchyAnalysis::new(&program_info.vmt, instantiated_classes);
-    for ((cls, name, desc), targets) in &cha.java_resolvents {
-        for target in targets {
-            let func_id = source_info
-                .sites
-                .get_or_add_function(fx::Function(target.clone().into()));
-            facts.callee_resolvents.push((
-                fx::CallTargetObject::Symbol(cls.clone()),
-                fx::CallDispatchKey::Java(name.clone(), desc.clone()),
-                func_id,
-            ));
-        }
-    }
+    emit_callee_resolvents(&cha, facts, source_info);
     let mut v = CodegenVisitor::new(cha, facts, source_info, strategy);
     for f in program_info.program.functions.drain(..) {
         v.visit_function_data(FunctionIdx::new(0), &f);
@@ -98,18 +87,7 @@ pub fn codegen_function(
     finder.visit_function_data(FunctionIdx::new(0), function_data);
 
     let cha = ClassHierarchyAnalysis::new(&VirtualMethodTable::Unknown, instantiated_classes);
-    for ((cls, name, desc), targets) in &cha.java_resolvents {
-        for target in targets {
-            let func_id = source_info
-                .sites
-                .get_or_add_function(fx::Function(target.clone().into()));
-            facts.callee_resolvents.push((
-                fx::CallTargetObject::Symbol(cls.clone()),
-                fx::CallDispatchKey::Java(name.clone(), desc.clone()),
-                func_id,
-            ));
-        }
-    }
+    emit_callee_resolvents(&cha, facts, source_info);
     log::trace!("codegen for {}", function_data.name);
     let mut v = CodegenVisitor::new(cha, facts, source_info, CallResolutionStrategy::Mixed);
     v.visit_function_data(FunctionIdx::new(0), function_data);
@@ -131,14 +109,36 @@ pub fn variable_is_globals(v: &FlowVariable) -> bool {
     }
 }
 
+/// The `call_target_assign` payload for an *object-valued* expression: the class of an
+/// allocation-site tag, in the receiving language's own [`fx::CallTargetObject`] variant.
+/// `None` for anything else, including a `FunctionPtr` ref — those carry an interned function
+/// id and so are handled at each site, which needs the id for `funcptr_targets` too.
+fn call_target_object(exp: &Exp) -> Option<fx::CallTargetObject> {
+    match exp {
+        Exp::ObjectRef(CallObject::JavaObject(cls)) => {
+            Some(fx::CallTargetObject::Symbol(cls.0.clone()))
+        }
+        Exp::ObjectRef(CallObject::LuaClass(cls)) => {
+            Some(fx::CallTargetObject::LuaClass(cls.clone()))
+        }
+        _ => None,
+    }
+}
+
 struct InstantiationFinder<'a> {
     instantiated_classes: &'a mut BTreeSet<Symbol>,
 }
 
 impl Visitor for InstantiationFinder<'_> {
     fn visit_exp(&mut self, exp: &Exp) {
-        if let Exp::ObjectRef(CallObject::JavaObject(cls)) = exp {
-            self.instantiated_classes.insert(cls.0.clone());
+        match exp {
+            Exp::ObjectRef(CallObject::JavaObject(cls)) => {
+                self.instantiated_classes.insert(cls.0.clone());
+            }
+            Exp::ObjectRef(CallObject::LuaClass(cls)) => {
+                self.instantiated_classes.insert(cls.clone());
+            }
+            _ => {}
         }
         self.super_exp(exp);
     }
@@ -383,12 +383,12 @@ impl Visitor for CodegenVisitor<'_> {
                         ));
                         self.funcptr_targets.insert(target);
                     }
-                    if let Exp::ObjectRef(CallObject::JavaObject(cls)) = src {
+                    if let Some(object) = call_target_object(src) {
                         let dest = self.trans_variable_ref(dest);
                         self.facts.call_target_assign.push((
                             site,
                             FlowVertex(dest, fx::Path::empty()),
-                            fx::CallTargetObject::Symbol(cls.0.clone()),
+                            object,
                         ));
                     }
                     let Some(src) = self.trans_exp(src) else {
@@ -517,6 +517,78 @@ impl Visitor for CodegenVisitor<'_> {
                             }
                         }
                     }
+                    CallStyle::LuaCall { receiver, method } => {
+                        // A Lua receiver has no static type, so there is no declared class to key
+                        // CHA on: the static resolvent set is every class method of this name
+                        // across the recovered `__index` hierarchy, and the receiver's actual
+                        // class comes from its allocation tag at analysis time. The receiver is
+                        // already actual arg 0 (inserted by the frontend), so it is not
+                        // re-inserted here.
+                        let recv_var = self.trans_variable_ref(receiver);
+                        let resolvents = self.cha.lua_resolvents_by_method(method);
+                        // Deferred, context-sensitive resolution: the receiver's object facts
+                        // (`call_target_assign`) join the Lua CHA `callee_resolvents` under this
+                        // dispatch key at analysis time.
+                        let deferred = (
+                            site,
+                            FlowVertex(recv_var, fx::Path::empty()),
+                            fx::CallDispatchKey::Lua(method.clone()),
+                        );
+                        match self.strategy {
+                            CallResolutionStrategy::Cha => {
+                                log::trace!(
+                                    "lua: CHA resolve {receiver}:{method} with {} targets",
+                                    resolvents.len()
+                                );
+                                for target in &resolvents {
+                                    let target = fx::Function(target.clone().into());
+                                    let target = self.source_info.sites.get_or_add_function(target);
+                                    self.facts.call.push((site, target));
+                                }
+                            }
+                            CallResolutionStrategy::Hi => {
+                                self.facts.callee_info.push(deferred);
+                                log::trace!("lua: HI resolve {receiver}:{method} (deferred)");
+                            }
+                            CallResolutionStrategy::Mixed => {
+                                if resolvents.is_empty() {
+                                    log::trace!("lua: no resolvents {receiver}:{method}");
+                                } else {
+                                    // Unlike the `JavaCall` arm above, an ambiguous Lua call keeps
+                                    // its static edges instead of deferring to `callee_info`
+                                    // alone. A `JavaCall` can defer safely because it carries a
+                                    // declared receiver class, so hybrid inlining always has a
+                                    // type to fall back on; a Lua receiver has none, and when no
+                                    // dataflow reaches its allocation tag -- a module singleton,
+                                    // a `self` handed in from opaque code, a computed metatable
+                                    // -- the deferred path resolves to nothing at all and the
+                                    // call site simply loses its callees. Measured on Prosody
+                                    // 13.0.6 (examples/prosody): deferring alone drops
+                                    // `--strategy mixed` from 2865 matched sinks / 806
+                                    // tainted-path findings to 2145 / 263. So the sound CHA set
+                                    // is always emitted, with `callee_info` on top to add the
+                                    // context-sensitive resolution for the receivers whose class
+                                    // the engine CAN reach.
+                                    for target in &resolvents {
+                                        let target = fx::Function(target.clone().into());
+                                        let target =
+                                            self.source_info.sites.get_or_add_function(target);
+                                        self.facts.call.push((site, target));
+                                    }
+                                    // `callee_info` rides along even when the static set is a
+                                    // singleton. The two are not redundant: a `call` edge is
+                                    // resolved through the callee's summary, while the deferred
+                                    // path instantiates it context-sensitively with a call
+                                    // string, and each finds flows the other merges away.
+                                    self.facts.callee_info.push(deferred);
+                                    log::trace!(
+                                        "lua: hybrid resolve {receiver}:{method} with {} target(s) + deferred",
+                                        resolvents.len()
+                                    );
+                                }
+                            }
+                        }
+                    }
                     CallStyle::FuncPtrCall { callee, .. } => {
                         let vertex = self.trans_access_path(callee);
                         self.facts
@@ -551,7 +623,7 @@ impl Visitor for CodegenVisitor<'_> {
                         self.funcptr_targets.insert(target);
                     }
 
-                    if let Exp::ObjectRef(CallObject::JavaObject(cls)) = arg_exp {
+                    if let Some(object) = call_target_object(arg_exp) {
                         let call_arg_packed = fx::PackedCallArg::try_from_parts(
                             fx::InsnSiteId::try_from(site).unwrap().insn_id,
                             formal_index,
@@ -561,7 +633,7 @@ impl Visitor for CodegenVisitor<'_> {
                         self.facts.call_target_assign.push((
                             site,
                             FlowVertex(call_arg_var, fx::Path::empty()),
-                            fx::CallTargetObject::Symbol(cls.0.clone()),
+                            object,
                         ));
                     }
 
@@ -668,12 +740,10 @@ impl Visitor for CodegenVisitor<'_> {
                     ));
                     self.funcptr_targets.insert(target);
                 }
-                if let Exp::ObjectRef(CallObject::JavaObject(cls)) = value {
-                    self.facts.call_target_assign.push((
-                        site,
-                        dest.clone(),
-                        fx::CallTargetObject::Symbol(cls.0.clone()),
-                    ));
+                if let Some(object) = call_target_object(value) {
+                    self.facts
+                        .call_target_assign
+                        .push((site, dest.clone(), object));
                 }
                 if let Some(value) = self.trans_exp(value) {
                     self.facts.assign.push((site, dest, value));
@@ -754,9 +824,23 @@ impl CodegenVisitor<'_> {
     }
 }
 
+/// Which frontend's call-resolution scheme [`ClassHierarchyAnalysis::resolvents`] is keyed for.
+/// The hierarchy computation itself ([`run_cha`]) is language-neutral; this only decides the
+/// `(CallTargetObject, CallDispatchKey)` pair the resolvents are emitted under, so that a Lua
+/// import and a JVM import sharing one fact base cannot collide in that key space.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum ChaLanguage {
+    #[default]
+    Java,
+    Lua,
+}
+
 #[derive(Debug, Default)]
 struct ClassHierarchyAnalysis {
-    java_resolvents: BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>>,
+    language: ChaLanguage,
+    /// `(class, method simple name, descriptor) -> targets`. The descriptor is a fixed empty
+    /// sentinel for [`ChaLanguage::Lua`], which has no overloading.
+    resolvents: BTreeMap<(Symbol, Symbol, Symbol), SmallVec<[Symbol; 4]>>,
 }
 
 impl ClassHierarchyAnalysis {
@@ -781,14 +865,49 @@ impl ClassHierarchyAnalysis {
                 let super_interface = Default::default();
                 let instantiated_classes_vec =
                     instantiated_classes.into_iter().map(|s| (s,)).collect();
-                let java_resolvents = run_cha(
+                let resolvents = run_cha(
                     method_implemented,
                     direct_superclass,
                     interface_type,
                     super_interface,
                     instantiated_classes_vec,
                 );
-                Self { java_resolvents }
+                Self {
+                    language: ChaLanguage::Java,
+                    resolvents,
+                }
+            }
+            // Lua mirrors the Java arm: a Lua method is a `method_implemented` with a fixed
+            // empty descriptor sentinel, and each `__index` parent is a `direct_superclass`.
+            // The shared `run_cha` then computes the `__index`-chain resolvents unchanged.
+            VirtualMethodTable::Lua {
+                methods, hierarchy, ..
+            } => {
+                let empty_desc = Symbol::from("");
+                let method_implemented = methods
+                    .iter()
+                    .cloned()
+                    .map(|(cls, name, id)| (cls, name, empty_desc.clone(), id))
+                    .collect();
+                let mut direct_superclass: Vec<(Symbol, Symbol)> = hierarchy
+                    .iter()
+                    .flat_map(|(sub, sups)| sups.iter().map(|sup| (sup.clone(), sub.clone())))
+                    .collect();
+                // Sort for determinism
+                direct_superclass.sort_unstable();
+                let instantiated_classes_vec =
+                    instantiated_classes.into_iter().map(|s| (s,)).collect();
+                let resolvents = run_cha(
+                    method_implemented,
+                    direct_superclass,
+                    Default::default(),
+                    Default::default(),
+                    instantiated_classes_vec,
+                );
+                Self {
+                    language: ChaLanguage::Lua,
+                    resolvents,
+                }
             }
             _ => {
                 log::warn!("CHA: unsupported virtual method table");
@@ -803,12 +922,60 @@ impl ClassHierarchyAnalysis {
         name: Symbol,
         descriptor: Symbol,
     ) -> impl ExactSizeIterator<Item = Symbol> + '_ {
-        self.java_resolvents
+        self.resolvents
             .get(&(cls, name, descriptor))
             .map(|syms| syms.as_slice())
             .unwrap_or(&[])
             .iter()
             .cloned()
+    }
+
+    /// The deduplicated set of CHA targets for a Lua method name, unioned across every class in the
+    /// recovered hierarchy. This is the *static* resolvent set for a Lua call site: unlike Java
+    /// there is no declared receiver class to key on, so the name alone is all a purely static
+    /// resolution has. (The `""` descriptor sentinel matches the Lua CHA arm.)
+    ///
+    /// A uniquely-named method — the common case — yields a singleton, which is an exact call
+    /// edge. When the name is shared across unrelated classes the union is sound but imprecise,
+    /// which is why [`CallResolutionStrategy::Mixed`] defers to `callee_info` instead of
+    /// emitting it (see the [`CallStyle::LuaCall`] codegen arm).
+    fn lua_resolvents_by_method(&self, method: &Symbol) -> BTreeSet<Symbol> {
+        self.resolvents
+            .iter()
+            .filter(|((_cls, name, _desc), _)| name == method)
+            .flat_map(|(_, targets)| targets.iter().cloned())
+            .collect()
+    }
+}
+
+/// Emits the `callee_resolvents` rows for a completed CHA, under the language's own
+/// `(CallTargetObject, CallDispatchKey)` pair: `(Symbol(cls), Java(name, desc))` for JVM/Dex,
+/// `(LuaClass(cls), Lua(name))` for Lua. The `""` descriptor the Lua CHA arm feeds `run_cha`
+/// stays an implementation detail of that arm and never reaches a fact.
+fn emit_callee_resolvents(
+    cha: &ClassHierarchyAnalysis,
+    facts: &mut IndexFacts,
+    source_info: &mut IndexSourceInfo,
+) {
+    for ((cls, name, desc), targets) in &cha.resolvents {
+        let (object, key) = match cha.language {
+            ChaLanguage::Java => (
+                fx::CallTargetObject::Symbol(cls.clone()),
+                fx::CallDispatchKey::Java(name.clone(), desc.clone()),
+            ),
+            ChaLanguage::Lua => (
+                fx::CallTargetObject::LuaClass(cls.clone()),
+                fx::CallDispatchKey::Lua(name.clone()),
+            ),
+        };
+        for target in targets {
+            let func_id = source_info
+                .sites
+                .get_or_add_function(fx::Function(target.clone().into()));
+            facts
+                .callee_resolvents
+                .push((object.clone(), key.clone(), func_id));
+        }
     }
 }
 

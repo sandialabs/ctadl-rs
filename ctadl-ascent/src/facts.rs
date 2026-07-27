@@ -1129,6 +1129,11 @@ impl Display for FlowVertex {
 pub enum CallTargetObject {
     FunctionId(FunctionId),
     Symbol(Symbol),
+    /// A Lua class-table symbol (`lua$class$Account`), the projection of
+    /// [`ctadl_ir::mir::call::CallObject::LuaClass`]. Kept distinct from `Symbol` so that a Lua
+    /// import and a JVM import sharing one fact base cannot collide in the
+    /// `callee_resolvents` key space.
+    LuaClass(Symbol),
 }
 
 impl Display for CallTargetObject {
@@ -1136,6 +1141,7 @@ impl Display for CallTargetObject {
         match self {
             CallTargetObject::FunctionId(func_id) => write!(f, "ptr<{}>", func_id.id),
             CallTargetObject::Symbol(cls) => write!(f, "java<{cls}>"),
+            CallTargetObject::LuaClass(cls) => write!(f, "lua<{cls}>"),
         }
     }
 }
@@ -1150,12 +1156,19 @@ impl Display for CallTargetObject {
 /// - `C` — a C-style function-pointer call. The stored `CallTargetObject::FunctionId(f)`
 ///   resolves to itself via the identity `callee_resolvents(FunctionId(f), C, f)` emitted in
 ///   codegen for every function that appears as a call target.
+/// - `Lua(method)` — a Lua `recv:m(...)` call, resolved through the recovered `__index` chain:
+///   `callee_resolvents(CallTargetObject::LuaClass(class), Lua(method), target)`. Like `Java`
+///   this is class-hierarchy analysis, but there is no descriptor — a Lua method is uniquely
+///   named within its class table — and no static receiver class on the call site, so the class
+///   comes entirely from the receiver's allocation tag.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
 pub enum CallDispatchKey {
     /// JVM / Dex virtual call: (method simple name, method descriptor).
     Java(Symbol, Symbol),
     /// C-style function-pointer call: no additional key beyond the stored target.
     C,
+    /// Lua metatable call: the method's simple name. No descriptor.
+    Lua(Symbol),
 }
 
 impl Display for CallDispatchKey {
@@ -1163,6 +1176,7 @@ impl Display for CallDispatchKey {
         match self {
             CallDispatchKey::Java(name, desc) => write!(f, "java_call<{name}{desc}>"),
             CallDispatchKey::C => write!(f, "c_call"),
+            CallDispatchKey::Lua(name) => write!(f, "lua_call<{name}>"),
         }
     }
 }

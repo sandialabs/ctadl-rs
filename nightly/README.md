@@ -28,10 +28,19 @@ cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-`--frontend` takes `pcode`, `jvm`, or `dex` (comma-separated, or repeated) and
-defaults to all three. It selects *before* anything runs, so `--frontend pcode`
-never invokes the Java toolchain, and `--frontend jvm,dex` never starts Ghidra.
-Use it with `--filter` to narrow further: `--frontend pcode --filter funcptr`.
+`--frontend` takes `pcode`, `jvm`, `dex`, or `lua` (comma-separated, or repeated)
+and defaults to all of them. It selects *before* anything runs, so
+`--frontend pcode` never invokes the Java toolchain, `--frontend jvm,dex` never
+starts Ghidra, and `--frontend lua` needs no external toolchain at all. Use it
+with `--filter` to narrow further: `--frontend pcode --filter funcptr`.
+
+> **Note:** the `lua` frontend lowers its `tests/lua/` cases end to end, including
+> table field-sensitivity, varargs, `ipairs`/`pairs` and `table.insert`, and
+> metatable-based OOP (method calls resolve through the recovered `__index` hierarchy;
+> instance fields flow across calls). All of them are expected to pass — there are no Lua
+> XFAILs. `closure-flow` (a closure returned out of one function and called in another)
+> was one until the engine gained return-direction propagation of call-target objects;
+> `tests/c/funcptrfactory.c` is the language-neutral regression guard on that rule.
 
 Under the hood both paths invoke the `xtask` task runner (`xtask/src/`) over the
 cases. The flake check above remains the canonical path and the one used in CI.
@@ -45,6 +54,11 @@ they are picked up automatically; no list to edit.
   `array-list-iterator-flow.json`). A `.java` with no matching config is ignored.
 - **Pcode / C** — `tests/c/foo.c` pairs with `tests/c/foo-query.json`, or falls
   back to a shared `tests/c/query.json`.
+- **Lua** — `tests/lua/foo.lua` pairs with `tests/lua/foo-query.json`. A `.lua`
+  with no matching config is ignored. Cases report as `Lua:foo`. Because Lua is a
+  source-level frontend, SARIF regions carry source lines directly, so
+  `expected_lines` are checked against the code-flow `startLine`s with no
+  compilation, linemap, or disassembler in the loop.
 
 ## Adding a Java/DEX test
 

@@ -121,12 +121,13 @@ cargo xtask <task>
 
 Tasks:
   regression                 Run the source-sink taint regression suite.
-    --frontend <f>           Only exercise frontend <f>: `pcode`, `jvm`, or `dex`
-                             (default: all). Accepts a comma-separated list and
-                             may be repeated; unselected frontends are skipped
-                             entirely, so their toolchains are not needed.
+    --frontend <f>           Only exercise frontend <f>: `pcode`, `jvm`, `dex`,
+                             or `lua` (default: all). Accepts a comma-separated
+                             list and may be repeated; unselected frontends are
+                             skipped entirely, so their toolchains are not needed.
                              E.g. `--frontend pcode` runs the C/pcode cases and
-                             the Ghidra checks without any Java toolchain.
+                             the Ghidra checks without any Java toolchain, and
+                             `--frontend lua` runs just the Lua source cases.
     --filter <name>          Only run cases whose name contains <name>.
                              Composes with --frontend.
     -j, --jobs <n>           Run <n> cases concurrently (default: one per core,

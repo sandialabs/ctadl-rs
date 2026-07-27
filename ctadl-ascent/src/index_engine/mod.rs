@@ -616,6 +616,7 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
                     format!("ptr {}({})", tgt_name, tgt.id)
                 }
                 CallTargetObject::Symbol(cls) => format!("java<{cls}>"),
+                CallTargetObject::LuaClass(cls) => format!("lua<{cls}>"),
             };
 
             writeln!(

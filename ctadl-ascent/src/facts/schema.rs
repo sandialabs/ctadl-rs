@@ -180,8 +180,10 @@ mod tests {
     };
 
     /// The `call_target_assign` schema encodes a [`CallTargetObject`] into a tag column
-    /// plus nullable function-id and symbol columns; both variants must survive a parquet
-    /// round-trip, and the payload of each variant must land in the right column.
+    /// plus nullable function-id and symbol columns; every variant must survive a parquet
+    /// round-trip, and the payload of each variant must land in the right column. `Symbol` and
+    /// `LuaClass` share the symbol column, so only the tag keeps them apart — the case that
+    /// would silently merge a JVM and a Lua import's classes if the tag were dropped.
     #[test]
     fn call_target_assign_object_round_trips() {
         let var = FlowVariable::default();
@@ -200,6 +202,13 @@ mod tests {
                 Path::empty(),
                 CallTargetObject::Symbol(ctadl_ir::Symbol::from("com/example/Foo")),
             ),
+            (
+                FunctionId::new(3),
+                InsnId::new(30),
+                var,
+                Path::empty(),
+                CallTargetObject::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")),
+            ),
         ];
 
         let dir = tempfile::tempdir().unwrap();
@@ -209,7 +218,8 @@ mod tests {
     }
 
     /// The `callee_info` schema encodes a [`CallDispatchKey`] (tag + nullable name/desc
-    /// symbol columns). Both the `Java` and `C` arms must survive a parquet round-trip.
+    /// symbol columns). The `Java`, `C` and `Lua` arms must all survive a parquet round-trip;
+    /// `Lua` populates the name column but leaves the descriptor null.
     #[test]
     fn callee_info_dispatch_key_round_trips() {
         use crate::facts::CallDispatchKey;
@@ -232,6 +242,13 @@ mod tests {
                 Path::empty(),
                 CallDispatchKey::C,
             ),
+            (
+                FunctionId::new(3),
+                InsnId::new(30),
+                var,
+                Path::empty(),
+                CallDispatchKey::Lua(ctadl_ir::Symbol::from("deposit")),
+            ),
         ];
 
         let dir = tempfile::tempdir().unwrap();
@@ -241,8 +258,9 @@ mod tests {
     }
 
     /// The `callee_resolvents` schema encodes both a [`CallTargetObject`] and a
-    /// [`CallDispatchKey`] (each a tag + nullable columns). The CHA (`Symbol`/`Java`) and
-    /// identity function-pointer (`FunctionId`/`C`) resolutions must both round-trip.
+    /// [`CallDispatchKey`] (each a tag + nullable columns). The JVM CHA (`Symbol`/`Java`), the
+    /// identity function-pointer (`FunctionId`/`C`) and the Lua CHA (`LuaClass`/`Lua`)
+    /// resolutions must all round-trip.
     #[test]
     fn callee_resolvents_round_trips() {
         use crate::facts::CallDispatchKey;
@@ -259,6 +277,11 @@ mod tests {
                 CallTargetObject::FunctionId(FunctionId::new(7)),
                 CallDispatchKey::C,
                 FunctionId::new(7),
+            ),
+            (
+                CallTargetObject::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")),
+                CallDispatchKey::Lua(ctadl_ir::Symbol::from("deposit")),
+                FunctionId::new(42),
             ),
         ];
 

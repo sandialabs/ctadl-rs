@@ -22,7 +22,7 @@ use crate::facts::FlowVariable;
 use crate::index_engine::{
     IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index_with_config,
 };
-use crate::languages::{dex, jvm, pcode};
+use crate::languages::{dex, jvm, lua, pcode};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
@@ -39,6 +39,7 @@ pub fn import(import: &ArtifactImport) -> Result<(), Error> {
         Jar => jvm::import_jar(&import.artifact_path)?,
         Jvm => jvm::import_class(&import.artifact_path)?,
         Pcode => pcode::import_pcode(import)?,
+        Lua => lua::import_lua(&import.artifact_path)?,
         Flowy => crate::codegen::flowy::import(import)?,
         _ => unimplemented!(),
     };
@@ -697,6 +698,7 @@ pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
                         ctadl_ir::call::CallStyle::DirectCall { .. } => "DirectCall",
                         ctadl_ir::call::CallStyle::FuncPtrCall { .. } => "FuncPtrCall",
                         ctadl_ir::call::CallStyle::JavaCall { .. } => "JavaCall",
+                        ctadl_ir::call::CallStyle::LuaCall { .. } => "LuaCall",
                     };
                     *call_style_counts.entry(style_name).or_insert(0) += 1;
                 }
