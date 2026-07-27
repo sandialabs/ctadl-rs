@@ -83,8 +83,8 @@ use std::path::{Path, PathBuf};
 
 use ctadl_ir::ThinVec;
 use ctadl_ir::index::idx::Idx;
+use ctadl_ir::mir::call::VirtualMethodTable;
 use ctadl_ir::mir::*;
-use ctadl_ir::mir::call::{JavaClass, VirtualMethodTable};
 use smallvec::SmallVec;
 use source_info::{ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 use tree_sitter::{Node, Parser, Tree};
@@ -2148,9 +2148,11 @@ impl<'a> Lowerer<'a> {
     /// Lowers `setmetatable(t, mt)` (Phase 1b). Returns `Some(value)` where `value` is a single
     /// variable that (i) carries the table `t`'s data (setmetatable returns its first argument) and
     /// (ii) is tagged with an allocation-site object ref when `mt` resolves to a known class table.
-    /// The tag rides the existing `call_target_assign` closure interprocedurally, so a
-    /// `local acct = Account.new()` receives `acct`'s class for free. Returns `None` to fall
-    /// through to the generic call path when `node` is not a `setmetatable` call.
+    /// The tag rides the existing `call_target_assign` closure interprocedurally — including the
+    /// engine's return-direction rule, which carries a tag on a callee's out-formal up to the
+    /// caller's `call_arg` — so a `local acct = Account.new()` receives `acct`'s class for free.
+    /// Returns `None` to fall through to the generic call path when `node` is not a
+    /// `setmetatable` call.
     fn eval_setmetatable(
         &mut self,
         name_node: Option<Node<'a>>,
@@ -2178,7 +2180,7 @@ impl<'a> Lowerer<'a> {
         if let Some(cls) = cls {
             // A single assign carrying both the data (Variable) and the object tag (ObjectRef), so
             // one SSA version of `obj` gets both the field contents and the class tag.
-            sources.push(Exp::ObjectRef(CallObject::JavaObject(JavaClass(self.class_symbol(&cls)))));
+            sources.push(Exp::ObjectRef(CallObject::LuaClass(self.class_symbol(&cls))));
         } else {
             // Computed / non-class metatable: still model the return of `t`, but record the
             // imprecision (Phase 1d).
@@ -2546,8 +2548,8 @@ mod tests {
     struct ObjectTagFinder(Vec<String>);
     impl Visitor for ObjectTagFinder {
         fn visit_exp(&mut self, exp: &Exp) {
-            if let Exp::ObjectRef(CallObject::JavaObject(cls)) = exp {
-                self.0.push(cls.0.to_string());
+            if let Exp::ObjectRef(CallObject::LuaClass(cls)) = exp {
+                self.0.push(cls.to_string());
             }
             self.super_exp(exp);
         }

@@ -38,14 +38,13 @@ const PCODE_BASE_ADDRESS: i64 = 0x10_0000;
 /// implemented. They run for visibility but report as XFAIL rather than counting toward the
 /// suite exit code.
 ///
-/// `Lua:closure-flow` needs the analysis engine to resolve a *closure returned out of one function
-/// and called in another*. The frontend already lowers the closure correctly (an `ObjectRef`
-/// function pointer plus captured upvalues in object fields; a same-function closure resolves and
-/// flows), but the engine only propagates call-target objects within a function or into one as an
-/// argument -- never out through a return. This limitation is engine-wide, not Lua-specific (the C
-/// `funcptr` case creates and calls its pointer in the same function for the same reason), so the
-/// fix belongs in `index_engine`, not here. Remove from this list once that lands.
-const LUA_XFAIL: &[&str] = &["Lua:closure-flow"];
+/// Currently empty: every `tests/lua/` case is expected to pass. `Lua:closure-flow` used to be
+/// listed here, because returning a closure out of one function and calling it in another needs
+/// the engine to propagate call-target objects through a *return*; that gap was engine-wide, not
+/// Lua-specific, and is closed by the return-direction rule in `index_engine` (the
+/// language-neutral reproducer is `tests/c/funcptrfactory.c`). Add an entry back only for a
+/// genuinely unimplemented capability, never to paper over a regression.
+const LUA_XFAIL: &[&str] = &[];
 
 /// JVM E2E cases whose failures count toward the suite exit code. All other
 /// `Jvm:*` taint cases run for visibility but report as XFAIL when they fail.

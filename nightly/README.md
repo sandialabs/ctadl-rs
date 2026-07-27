@@ -36,13 +36,11 @@ with `--filter` to narrow further: `--frontend pcode --filter funcptr`.
 
 > **Note:** the `lua` frontend lowers its `tests/lua/` cases end to end, including
 > table field-sensitivity, varargs, `ipairs`/`pairs` and `table.insert`, and
-> metatable-based OOP (methods resolve by name; instance fields flow across calls).
-> One case, `closure-flow`, is a known XFAIL: it needs the analysis engine to resolve
-> a closure *returned out of one function and called in another*. The frontend already
-> lowers that closure correctly, but propagating call-target objects through returns is
-> an engine-wide gap (the C `funcptr` case sidesteps it by calling in the same function),
-> so the case is allowlisted as XFAIL in `xtask/src/regression.rs` until the engine gains
-> that capability.
+> metatable-based OOP (method calls resolve through the recovered `__index` hierarchy;
+> instance fields flow across calls). All of them are expected to pass — there are no Lua
+> XFAILs. `closure-flow` (a closure returned out of one function and called in another)
+> was one until the engine gained return-direction propagation of call-target objects;
+> `tests/c/funcptrfactory.c` is the language-neutral regression guard on that rule.
 
 Under the hood both paths invoke the `xtask` task runner (`xtask/src/`) over the
 cases. The flake check above remains the canonical path and the one used in CI.

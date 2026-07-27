@@ -121,6 +121,10 @@ impl Display for CallEdges {
 pub enum CallObject {
     FunctionPtr(super::Symbol),
     JavaObject(JavaClass),
+    /// A Lua table tagged with the class table it was given a metatable from
+    /// (`setmetatable({}, Account)` ⟹ `lua$class$Account`). Resolved against
+    /// [`VirtualMethodTable::Lua`] at a [`CallStyle::LuaCall`] site.
+    LuaClass(super::Symbol),
 }
 
 impl Display for CallObject {
@@ -128,6 +132,7 @@ impl Display for CallObject {
         match self {
             CallObject::FunctionPtr(name) => write!(f, "ptr<{name}>"),
             CallObject::JavaObject(cls) => write!(f, "java<{cls}>"),
+            CallObject::LuaClass(cls) => write!(f, "lua<{cls}>"),
         }
     }
 }
