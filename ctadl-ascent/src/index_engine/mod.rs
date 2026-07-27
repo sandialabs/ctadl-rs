@@ -1262,20 +1262,67 @@ pub fn taint_index_with_config(
             let v2 = FlowVariableKind::CallArg(n2_id),
             let v1 = FlowVariableKind::CallArg(n1_id);
 
+        // Functions whose tag closure we bother to compute. `critical_call` alone is too narrow:
+        // a pure factory (`h = lookup()`, `Account.new`) contains no indirect call and calls
+        // nothing with a critical summary, so its closure would be empty and the tag would never
+        // reach its own out-formal for the return-direction rule below to pick up. A called
+        // function that holds a call-target fact is exactly the shape that can export a tag.
+        // `critical_call` itself keeps its narrower meaning for its other consumers.
+        relation tag_closure_func(FunctionId);
+        tag_closure_func(f) <-- critical_call(f);
+        tag_closure_func(f) <-- call_target_assign(f, _, _), call(_, _, f);
+
         // Call Target Propagation (function pointers and Java objects alike). The stored
         // target is carried opaquely as a `CallTargetObject`; the variant is only tested
         // downstream, where the call is actually resolved.
         call_target_assign_like(func_id, v.clone(), p.clone(), tgt) <--
             call_target_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
-            critical_call(func_id);
+            tag_closure_func(func_id);
 
         call_target_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
             // This results in large reduction on some test cases
-            critical_call(func_id),
+            tag_closure_func(func_id),
             call_target_assign_like(func_id, v2, p_context, tgt),
             assign_like(func_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
             paths(&p_new);
+
+        // Return-direction call-target propagation. Rule 2.1 pushes a caller's tag DOWN onto a
+        // callee's formal; this is its missing twin, carrying a tag a callee holds on an
+        // out-formal UP to the corresponding call-arg vertex in each caller. Without it a target
+        // manufactured inside a callee (a returned function pointer, a returned object whose
+        // concrete type drives dispatch) dies at the return boundary, and the tag only ever
+        // crosses a return when the returned value is reachable from an in-formal (pass-through,
+        // via `summary`).
+        //
+        // Clause order is load-bearing, same reason as the comment at the aliasing summary rule:
+        // drive on the `call_target_assign_like` delta and probe `formal_param` by (func, var)
+        // second, so we prune to tagged out-formals before fanning out over callers. Both probes
+        // reuse indices existing rules already require -- `formal_param` by (func, var), `call` by
+        // its target column -- so no new indices are built.
+        //
+        // No call string is needed: the head names the specific `insn`, so each call site of a
+        // factory gets its own tagged vertex; context sensitivity is inherent to this direction.
+        // `p` rides through unchanged (no `substitute_prefix`), so no path growth and no `paths`
+        // gate. `isout` holds for every negative formal index, so RETURN_INDEX and the multi-return
+        // slots all qualify, and by-ref out-params (a callee installing a target into a
+        // caller-owned object) fall out for free.
+        //
+        // Deliberately NOT seeding `resolvent` here: that is a callee-frame relation keyed on the
+        // callee's formals, so a tuple for a frame whose receiver is a local has no consumer, and
+        // it would bypass the `CallString::new().push(..)` construction. Downstream needs no
+        // change -- the transitive rule above walks this tuple from `call_arg(insn, -1)` to the
+        // receiver over the symmetric call-site `assign_like` edges, the local-dispatch bypass
+        // resolves the indirect call exactly, and if the receiver is passed onward rule 2.1
+        // derives the resolvent with a properly constructed call string.
+        call_target_assign_like(caller, cv, p.clone(), tgt) <--
+            call_target_assign_like(callee, v, p, tgt),
+            formal_param(callee, v, formal_ty),
+            if let Some(n) = v.as_formal(),
+            if isout(&n, *formal_ty, p),
+            call(caller, insn, callee),
+            critical_call(caller),
+            let cv = call_arg!(*insn, n);
 
         critical_call(func_id) <-- callee_info(func_id, _, _, _, _);
         critical_call(func_id) <--
