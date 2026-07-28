@@ -285,11 +285,6 @@ pub(crate) fn debug_output_blocks(prog: &Program) {
 /// ([`ctadl_ir::mir::path_syntax`]), so a fixture means exactly what the same text means in a
 /// model port, a `.flowy` file, or a fact column.
 ///
-/// `s` includes its leading `.` (or is empty for a bare variable). Note the consequence for
-/// subscripts: `.[3]` is an **offset**, while the C frontend lowers `f[3]` to
-/// `PathSegment::Symbol("[3]")` (see `flatten_subscript` in mod.rs), which is written `.\[3]`.
-/// A fixture that wants what the C frontend emits must escape the bracket.
-///
 /// Panics on a malformed path — that is a broken fixture, and failing loudly beats the old
 /// behavior of silently dropping empty segments.
 #[track_caller]

@@ -534,12 +534,6 @@ impl DecodeColumn<facts::Path> for DefaultDecoder {
                 if s.is_empty() {
                     facts::Path::empty()
                 } else {
-                    // `encode_column` writes the canonical grammar, so anything this build wrote
-                    // parses. A failure here means an `index/` written by an older build, which
-                    // `INDEX_FORMAT_VERSION` (see `project.rs`) is supposed to have rejected
-                    // before we got this far -- so panic rather than silently substitute the
-                    // empty path. Swallowing the error is what used to delete every `.[]` and
-                    // `.[_elem_]` segment on the way back off disk.
                     s.parse().unwrap_or_else(|e| {
                         panic!(
                             "corrupt access path {:?} in fact column {name:?}: {e}\n\

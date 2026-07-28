@@ -136,9 +136,6 @@ impl Path {
     pub fn from_accesses(iter: impl IntoIterator<Item = mir::PathSegment>) -> Self {
         let mut items = Vec::new();
         for item in iter {
-            // `Symbol("")` has no spelling in the access-path grammar, so a path holding one
-            // could not survive `to_dot_string` -> `parse`. Nothing constructs one today; this
-            // catches a frontend that starts to.
             debug_assert!(
                 !matches!(&item, mir::PathSegment::Symbol(s) if s.is_empty()),
                 "Symbol(\"\") is not a representable access-path segment"
@@ -1811,7 +1808,10 @@ mod tests {
         use ctadl_ir::mir::{Offset, PathSegment};
 
         // Adjacent offsets are summed: an access path holds at most one offset in a row.
-        assert_eq!(Path::parse(".[1].[2]").unwrap(), Path::parse(".[3]").unwrap());
+        assert_eq!(
+            Path::parse(".[1].[2]").unwrap(),
+            Path::parse(".[3]").unwrap()
+        );
         assert_eq!(
             Path::parse(".[1].[2]").unwrap(),
             Path::from_accesses([PathSegment::Offset(Offset(3))])
