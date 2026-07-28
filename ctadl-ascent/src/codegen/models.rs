@@ -33,7 +33,7 @@ pub fn codegen_summary(
     {
         log::trace!("{:?}", record);
         use FormalIndexTypeTag::*;
-        let dst_ap: facts::Path = ap_map[&dst_ap].iter().cloned().collect();
+        let dst_ap: facts::Path = ap_map[&dst_ap];
         let Some(func_id) = source_info
             .sites
             .get_function_id(facts::Function(facts::Str::from(func)))
@@ -56,7 +56,7 @@ pub fn codegen_summary(
             // (see `json::visit_propagation`), so they never reach summary codegen.
             Local => unreachable!("Variable(name) is not valid on a propagation port"),
         };
-        let src_ap: facts::Path = ap_map[&src_ap].iter().cloned().collect();
+        let src_ap: facts::Path = ap_map[&src_ap];
         let src_index: Vec<facts::FormalIndex> = match src_tag {
             Index => {
                 let src_index: i16 = src_index.unwrap();

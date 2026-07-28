@@ -220,24 +220,26 @@
       ]
     },
     "port-spec": {
+      "description": "A propagation port: a positional selector (Argument(n), Argument(*), Return) followed by an optional access path. Each access-path segment is introduced by '.' and is either a decimal offset in brackets (.[8], .[-8]) or a field name. A field name that begins with '[' must be escaped so it is not read as an offset -- a Java array element is Argument(0).\\[] -- and '.' or '\\' inside a name is escaped the same way (.a\\.b). The argument index is a non-negative decimal integer; the loader rejects a negative one.",
       "type": "string",
       "anyOf": [
-        { "pattern": "^Argument\\((-?[0-9]+|\\*)\\)" },
-        { "pattern": "^Return" }
+        { "pattern": "^Argument\\(([0-9]+|\\*)\\)(?:\\.(?:\\[[+-]?[0-9]+\\]|(?:[^.\\\\\\[]|\\\\.)(?:[^.\\\\]|\\\\.)*))*$" },
+        { "pattern": "^Return(?:\\.(?:\\[[+-]?[0-9]+\\]|(?:[^.\\\\\\[]|\\\\.)(?:[^.\\\\]|\\\\.)*))*$" }
       ]
     },
     "source-sink-port-spec": {
-      "description": "A source/sink port. In addition to the positional selectors (Argument(n)/Argument(*)/Return), a source/sink may select a local by its source name with Variable(name), e.g. Variable(buf), optionally refined by a trailing access path (Variable(buf).headers). Variable(...) is valid only here, NOT on propagation inputs/outputs, and NOT with find: callsites.",
+      "description": "A source/sink port. In addition to the positional selectors (Argument(n)/Argument(*)/Return), a source/sink may select a local by its source name with Variable(name), e.g. Variable(buf), optionally refined by a trailing access path (Variable(buf).headers). Variable(...) is valid only here, NOT on propagation inputs/outputs, and NOT with find: callsites. See port-spec for the access-path grammar.",
       "type": "string",
       "anyOf": [
-        { "pattern": "^Argument\\((-?[0-9]+|\\*)\\)" },
-        { "pattern": "^Return" },
-        { "pattern": "^Variable\\([^)]+\\)" }
+        { "pattern": "^Argument\\(([0-9]+|\\*)\\)(?:\\.(?:\\[[+-]?[0-9]+\\]|(?:[^.\\\\\\[]|\\\\.)(?:[^.\\\\]|\\\\.)*))*$" },
+        { "pattern": "^Return(?:\\.(?:\\[[+-]?[0-9]+\\]|(?:[^.\\\\\\[]|\\\\.)(?:[^.\\\\]|\\\\.)*))*$" },
+        { "pattern": "^Variable\\([^)]+\\)(?:\\.(?:\\[[+-]?[0-9]+\\]|(?:[^.\\\\\\[]|\\\\.)(?:[^.\\\\]|\\\\.)*))*$" }
       ]
     },
     "field-spec": {
+      "description": "A bare access path, e.g. '', '.deref', '.[8].deref', '.\\[_elem_]'. See port-spec for the grammar.",
       "type": "string",
-      "pattern": "^([.][^.]+)*"
+      "pattern": "^(?:\\.(?:\\[[+-]?[0-9]+\\]|(?:[^.\\\\\\[]|\\\\.)(?:[^.\\\\]|\\\\.)*))*$"
     },
     "source-sink-model": {
       "description": "Models associated SUT element as a source or a sink",

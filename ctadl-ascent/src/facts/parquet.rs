@@ -530,12 +530,17 @@ impl DecodeColumn<facts::Path> for DefaultDecoder {
     fn into_decode_array(name: &str, batch: &RecordBatch) -> impl IntoIterator<Item = facts::Path> {
         <Self as DecodeColumn<Str>>::into_decode_array(name, batch)
             .into_iter()
-            .map(|s| {
+            .map(move |s| {
                 if s.is_empty() {
                     facts::Path::empty()
                 } else {
-                    // Parse the string representation back to Path
-                    s.parse().unwrap_or_else(|_| facts::Path::empty())
+                    s.parse().unwrap_or_else(|e| {
+                        panic!(
+                            "corrupt access path {:?} in fact column {name:?}: {e}\n\
+                             this index was written by an incompatible build; re-run `ctadl index`",
+                            s.as_str()
+                        )
+                    })
                 }
             })
     }

@@ -27,6 +27,13 @@ pub enum JsonModelError {
         index: usize,
         text: String,
     },
+    /// A port's trailing access path is not a path in the canonical grammar -- e.g.
+    /// `Argument(0).[*]`, or a field name beginning with `[` that was not written `\[`.
+    InvalidAccessPath {
+        index: usize,
+        text: String,
+        source: ctadl_ir::mir::PathSyntaxError,
+    },
     InvalidInteger {
         index: usize,
         source: std::num::ParseIntError,
@@ -77,6 +84,16 @@ impl std::fmt::Display for JsonModelError {
                 write!(
                     f,
                     "invalid argument format '{text}' in model generator at index {index}"
+                )
+            }
+            JsonModelError::InvalidAccessPath {
+                index,
+                text,
+                source,
+            } => {
+                write!(
+                    f,
+                    "invalid access path '{text}' ({source}) in model generator at index {index}"
                 )
             }
             JsonModelError::InvalidInteger { index, source } => {
@@ -205,6 +222,16 @@ pub enum Error {
         found: String,
         expected: String,
         artifact_path: PathBuf,
+    },
+    #[error(
+        "the index for project '{project}' was created by an incompatible version of ctadl \
+         (index format {found}, this build expects {expected}); \
+         re-run `ctadl index {project}`"
+    )]
+    IncompatibleIndex {
+        project: String,
+        found: String,
+        expected: String,
     },
     #[error("{context}")]
     Context {

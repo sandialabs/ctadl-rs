@@ -234,13 +234,49 @@ element that carries taint. A port is a string:
   `Argument(0)` is typically the receiver / `this`).
 - `Argument(*)` — *all* arguments (wildcard).
 
-Ports can be extended into **access paths** to reach *through* a value:
+Ports can be extended into **access paths** to reach *through* a value. An access
+path is a sequence of segments, each introduced by a `.`:
 
-- `.deref` — the pointee. `Argument(0).deref` is "what argument 0 points at",
-  essential for C where data arrives through out-parameters:
-  `read(fd, buf, n)` taints `Argument(1).deref`, not `Argument(1)`.
-- **Fields** — a dot-path like `.foo.bar` reaches named fields of a
-  structured value.
+```
+path    := segment*                      -- "" is the empty path (the bare port)
+segment := '.' ( offset | symbol )       -- a leading '.' is required before every segment
+offset  := '[' ('+'|'-')? DIGIT+ ']'     -- decimal i64, nothing else
+symbol  := one or more chars, up to the next UNESCAPED '.',
+           and NOT beginning with an unescaped '['
+escape  := '\' ANY  ->  the literal char   ( '\.' '\[' '\\' )
+```
+
+This is the same grammar the IR dump and the fact store use, so a path you see in
+an IR dump can be pasted into a port and mean the same thing. A malformed path is
+a **load-time error** naming the port, not a silently-mutated path.
+
+- **Symbols** — `.deref` is the pointee. `Argument(0).deref` is "what argument 0
+  points at", essential for C where data arrives through out-parameters:
+  `read(fd, buf, n)` taints `Argument(1).deref`, not `Argument(1)`. A dot-path
+  like `.foo.bar` reaches named fields of a structured value.
+- **Offsets** — `.[n]` is a numeric offset (pointer arithmetic), a *different*
+  kind of segment from a field with a numeric-looking name. `Argument(1).[8].deref`
+  really does name `Offset(8), Symbol("deref")`, which is what the pcode frontend
+  emits for `*(p + 8)`.
+- **Escapes** — a field name that *begins* with `[` must be written `\[`, or it
+  would be read as an offset. `.` and `\` inside a name are escaped the same way,
+  so a C field literally named `a.b` is `.a\.b`. In JSON these need a second level
+  of escaping: `"Argument(0).\\[]"`.
+
+Which spelling a frontend actually emits for an array element differs, and the
+port must match:
+
+| Frontend | Array element segment | Port spelling |
+| --- | --- | --- |
+| dex, jvm | `Symbol("[]")` | `Argument(0).\[]` — JSON `"Argument(0).\\[]"` |
+| lua, C (tree-sitter) | `Symbol("[_elem_]")`, and `Symbol("[3]")` for a literal index | `Argument(0).\[_elem_]`, `Argument(0).\[3]` |
+| pcode | a real `Offset` | `Argument(0).[8]` |
+
+Note the pcode row is the only one where `.[n]` (unescaped) is right; on lua and
+the tree-sitter C frontend a source-level `t[3]` is the *symbol* `[3]`, not offset 3.
+
+There is no wildcard segment. `.*` is a field literally named `*`, and `.[*]` is a
+load error — use the sink-side `wildcard` flag or a `saturating` source instead.
 
 You can also target fields via the model's `field` (single) or `fields` (list)
 keys instead of inlining them in the port string.

@@ -208,7 +208,7 @@ pub fn build_query_endpoints(
             }
         };
 
-        let ap: facts::Path = ap_map[&path_id].iter().cloned().collect();
+        let ap: facts::Path = ap_map[&path_id];
 
         // A wildcard sink port denotes the whole subtree beneath `ap` on the sink
         // call's argument: it matches every concrete access path, rooted at that

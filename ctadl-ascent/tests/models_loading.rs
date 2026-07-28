@@ -269,3 +269,112 @@ fn test_endpoint_stats_merge_across_imports() {
     );
     assert_eq!(merged.functions_matched, 3);
 }
+
+// ---------------------------------------------------------------------------
+// A model port can name a real offset.
+//
+// Port access paths used to be a `Vec<&str>` stored verbatim and revived through a
+// blanket `FromIterator<AsRef<str>>` that made *every* segment a `Symbol`. So
+// `Argument(1).[8].deref` was `Symbol("[8]"), Symbol("deref")` and could never match
+// the `Offset(8), Symbol("deref")` that pcode's `push_offset` emits — even though the
+// docs and the JSON schema have advertised exactly that spelling all along.
+// ---------------------------------------------------------------------------
+
+/// A native (binary-frontend) program with one 2-parameter function `f`.
+fn native_program_with_f() -> ProgramInfo {
+    use ctadl_ir::mir::call::{
+        NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+    };
+    use ctadl_ir::mir::{
+        BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
+    };
+
+    let mut f = FunctionData::default();
+    f.set_name("f".to_string());
+    f.params.parameters.push(ParameterType::ByVal);
+    f.params.parameters.push(ParameterType::ByVal);
+    let blocks = f.blocks.blocks_mut();
+    let body = blocks.push(BasicBlockData::new(None));
+    blocks[body].extend(vec![Statement::new_kind(StatementKind::Nop)]);
+
+    ProgramInfo {
+        vmt: VirtualMethodTable::Native {
+            methods: vec![(
+                NativeSimpleName("f".into()),
+                NativeSignature("f".into()),
+                NativeFunction("f".into()),
+                NativeQualifiedName("f".into()),
+            )],
+        },
+        program: Program::new(Functions::new([f])),
+        ..Default::default()
+    }
+}
+
+/// Loads one propagation generator and returns every access path in the resulting
+/// summary batch, as `facts::Path`.
+fn summary_paths_for(input: &str, output: &str) -> Vec<ctadl_ascent::facts::Path> {
+    use serde_json::json;
+    let program_info = native_program_with_f();
+    let mut builders = ModelBuilders::new();
+    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut builders);
+    let model = json!({
+        "find": "methods",
+        "where": [{"constraint": "signature_match", "name": "f"}],
+        "model": {"propagation": [{"input": input, "output": output}]}
+    });
+    ingest
+        .encode_models(vec![model])
+        .unwrap_or_else(|e| panic!("loading {input:?} -> {output:?}: {e}"));
+    drop(ingest);
+    let batch = builders.finish().expect("finish");
+    assert!(
+        batch.summary.num_rows() > 0,
+        "generator matched nothing for {input:?} -> {output:?}"
+    );
+    let mut paths: Vec<_> = batch.summary.aps.build_ap_map().into_values().collect();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+#[test]
+fn offset_port_produces_a_real_offset() {
+    use ctadl_ir::mir::{Offset, PathSegment};
+
+    let paths = summary_paths_for("Argument(1).[8].deref", "Return");
+    let expected = ctadl_ascent::facts::Path::from_accesses([
+        PathSegment::Offset(Offset(8)),
+        PathSegment::symbol("deref"),
+    ]);
+    assert!(
+        paths.contains(&expected),
+        "expected a path with Offset(8), got: {:?}",
+        paths.iter().map(|p| p.to_dot_string()).collect::<Vec<_>>()
+    );
+
+    // ... and it is NOT the symbol whose name happens to be "[8]", which is what every
+    // segment used to become.
+    let as_symbol = ctadl_ascent::facts::Path::from_accesses([
+        PathSegment::symbol("[8]"),
+        PathSegment::symbol("deref"),
+    ]);
+    assert_ne!(expected, as_symbol);
+    assert!(!paths.contains(&as_symbol));
+}
+
+/// The other side of the same coin: an *escaped* bracketed name stays a symbol, so a
+/// port can still name the synthetic array-element field the dex/jvm/lua frontends emit.
+#[test]
+fn escaped_bracketed_port_stays_a_symbol() {
+    use ctadl_ir::mir::PathSegment;
+
+    let paths = summary_paths_for(r"Argument(1).\[_elem_]", "Return");
+    let expected = ctadl_ascent::facts::Path::from_accesses([PathSegment::symbol("[_elem_]")]);
+    assert!(
+        paths.contains(&expected),
+        "expected Symbol(\"[_elem_]\"), got: {:?}",
+        paths.iter().map(|p| p.to_dot_string()).collect::<Vec<_>>()
+    );
+    assert_eq!(expected.to_dot_string(), r".\[_elem_]");
+}

@@ -955,3 +955,109 @@ fn test_missing_find_field_error() {
         Err(e) => panic!("expected JsonModel error, got: {e}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Malformed access paths in ports are hard errors.
+//
+// A port's trailing access path used to be split on '.' with every segment made a
+// `Symbol`, so nothing was ever malformed: `Argument(0).[*]` became `Symbol("[*]")`
+// (a field no frontend emits, so the generator silently matched nothing),
+// `Argument(0).a..b` became `Symbol("")`, and `Argument(0).[8]` became
+// `Symbol("[8]")` rather than the offset it reads as. Ports now parse with the one
+// canonical grammar and a violation names the port.
+// ---------------------------------------------------------------------------
+
+/// Loads a generator with `port` as a source and returns the collected errors.
+/// Panics if the load succeeded — for these cases that is the bug under test.
+fn access_path_errors_for(port: &str) -> Vec<String> {
+    let program_info = ProgramInfo::default();
+    let mut model_builders = ModelBuilders::new();
+    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut model_builders);
+    let model = json!({
+        "find": "methods",
+        "where": [{"constraint": "name", "pattern": "^f$"}],
+        "model": {"sources": [{"port": port, "kind": "K"}]}
+    });
+    match ingest.encode_models(vec![model]) {
+        Err(Error::JsonModel(errors)) => errors.iter().map(|e| format!("{e:?}|{e}")).collect(),
+        Ok(_) => panic!("expected a load error for port {port:?}"),
+        Err(e) => panic!("expected JsonModel error for port {port:?}, got: {e}"),
+    }
+}
+
+fn assert_invalid_access_path(port: &str) {
+    let errors = access_path_errors_for(port);
+    assert!(
+        errors.iter().any(|e| e.starts_with("InvalidAccessPath")),
+        "expected InvalidAccessPath for port {port:?}, got: {errors:?}"
+    );
+}
+
+#[test]
+fn wildcard_offset_port_is_hard_error() {
+    assert_invalid_access_path("Argument(0).[*]");
+}
+
+#[test]
+fn empty_access_path_segment_is_hard_error() {
+    assert_invalid_access_path("Argument(0).a..b");
+}
+
+#[test]
+fn trailing_dot_in_port_is_hard_error() {
+    assert_invalid_access_path("Argument(0).a.");
+}
+
+/// A bracketed *field name* must be escaped. Unescaped it reads as an offset position
+/// and fails, rather than quietly becoming `Symbol("[_elem_]")` — which is what the
+/// lua and tree-sitter C frontends actually emit, so this is the mistake a user will
+/// make. The message names the fix.
+#[test]
+fn unescaped_bracketed_field_name_is_hard_error() {
+    assert_invalid_access_path("Argument(0).[_elem_]");
+    let errors = access_path_errors_for("Argument(0).[_elem_]");
+    assert!(
+        errors.iter().any(|e| e.contains(r"\[_elem_]")),
+        "message should name the escape: {errors:?}"
+    );
+}
+
+/// The port regexes are anchored, so junk around a selector is rejected rather than
+/// silently accepted. Unanchored, `Return(.*)?` matched "MyReturnType" and produced a
+/// `Return` port with access path `Type`.
+#[test]
+fn unanchored_port_text_is_hard_error() {
+    let errors = access_path_errors_for("MyReturnType");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.starts_with("InvalidArgumentFormat")),
+        "expected InvalidArgumentFormat, got: {errors:?}"
+    );
+}
+
+/// Errors accumulate rather than the first one hiding the rest.
+#[test]
+fn multiple_bad_ports_all_reported() {
+    let program_info = ProgramInfo::default();
+    let mut model_builders = ModelBuilders::new();
+    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut model_builders);
+    let model = json!({
+        "find": "methods",
+        "where": [{"constraint": "name", "pattern": "^f$"}],
+        "model": {"sources": [
+            {"port": "Argument(0).[*]", "kind": "K"},
+            {"port": "Argument(1).a..b", "kind": "K"},
+        ]}
+    });
+    match ingest.encode_models(vec![model]) {
+        Err(Error::JsonModel(errors)) => {
+            let n = errors
+                .iter()
+                .filter(|e| matches!(e, JsonModelError::InvalidAccessPath { .. }))
+                .count();
+            assert_eq!(n, 2, "both bad ports should be reported, got: {errors:?}");
+        }
+        other => panic!("expected two InvalidAccessPath errors, got: {other:?}"),
+    }
+}

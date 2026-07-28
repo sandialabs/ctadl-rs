@@ -156,3 +156,67 @@ fn test_hash_artifact_file_and_dir() {
 //        assert!(contents.len() > 1);
 //    });
 //}
+
+// ---------------------------------------------------------------------------
+// The index format-version gate.
+//
+// `index` and `query` are separate processes and every access path crosses the
+// parquet boundary between them. The decoders are infallible-by-construction for
+// anything this build wrote and panic on anything else, so this gate is what turns
+// a stale `index/` into an actionable "re-run `ctadl index`" instead of a panic --
+// or, before the encoding was fixed, into silently-wrong analysis results.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn index_version_gate_accepts_what_this_build_wrote() {
+    run_store_test(|| {
+        let project = AnalysisProject::try_create("gate_ok", &["nonexistent_import"]).unwrap();
+        project.write_index_config().unwrap();
+        assert!(
+            project.check_index_config().is_ok(),
+            "an index this build just stamped must be readable"
+        );
+    });
+}
+
+#[test]
+fn index_version_gate_rejects_an_index_from_before_the_gate() {
+    run_store_test(|| {
+        let project = AnalysisProject::try_create("gate_missing", &["nonexistent_import"]).unwrap();
+        // An `index/` with no config is one written before the gate existed -- exactly the
+        // stale-encoding case, since those builds wrote unescaped `.[]` / `.[_elem_]`.
+        std::fs::create_dir_all(project.index_path().unwrap()).unwrap();
+        match project.check_index_config() {
+            Err(ctadl_ascent::error::Error::IncompatibleIndex {
+                project: p,
+                expected,
+                ..
+            }) => {
+                assert_eq!(p, "gate_missing");
+                assert_eq!(expected, INDEX_FORMAT_VERSION);
+            }
+            other => panic!("expected IncompatibleIndex, got: {other:?}"),
+        }
+    });
+}
+
+#[test]
+fn index_version_gate_rejects_a_different_version() {
+    run_store_test(|| {
+        let project = AnalysisProject::try_create("gate_stale", &["nonexistent_import"]).unwrap();
+        let path = project.index_path().unwrap().join(INDEX_CONFIG_FILE);
+        std::fs::write(&path, r#"{"version":"1"}"#).unwrap();
+        match project.check_index_config() {
+            Err(ctadl_ascent::error::Error::IncompatibleIndex { found, .. }) => {
+                assert_eq!(found, "1");
+            }
+            other => panic!("expected IncompatibleIndex, got: {other:?}"),
+        }
+        // The message must name the fix -- it is the whole point of the variant.
+        let msg = project.check_index_config().unwrap_err().to_string();
+        assert!(
+            msg.contains("ctadl index gate_stale"),
+            "message must name the command to run: {msg}"
+        );
+    });
+}
