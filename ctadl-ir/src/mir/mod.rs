@@ -130,10 +130,16 @@ mod basic_blocks;
 pub mod builder;
 pub mod call;
 pub mod encode;
+pub mod path_syntax;
 pub mod pos;
 mod terminator;
 mod verify;
 pub mod visit;
+
+pub use crate::mir::path_syntax::{
+    PathSyntaxError, PathSyntaxErrorKind, parse_segment, parse_segments, path_to_string,
+    segment_to_string, write_path, write_segment,
+};
 
 // Index into basic blocks in `BasicBlocks`
 newtype_index!(BasicBlockIdx, u32);
