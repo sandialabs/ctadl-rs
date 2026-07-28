@@ -441,6 +441,8 @@ impl FlowyCtx {
             .map_err(FlowyError::Pest)?
             .next()
             .unwrap();
+        // Before any of the infallible walkers run, so `parse_p` never sees a `star_p`.
+        reject_star_paths(&parse)?;
         // Parse the var defs first so we know the set of globals
         let mut func_defs = Vec::new();
         let mut defined_functions = HashSet::new();
@@ -1123,6 +1125,29 @@ fn parse_summary_op(pair: &Pair<'_, Rule>) -> FlowSpec {
     }
 }
 
+/// Rejects `.*`, which the grammar accepts but which is not an access-path segment.
+///
+/// flowy has no wildcard field, so [`parse_p`] has no [`PathSegment`] to return for one and
+/// used to *panic* — `x.* = y;` in a `.flowy` file crashed the tool. Rejecting it here, before
+/// any of the infallible walkers run, keeps `parse_p` total and gives the user a positioned
+/// error instead of a backtrace.
+fn reject_star_paths(pair: &Pair<'_, Rule>) -> Result<(), FlowyError> {
+    for p in pair.clone().into_inner() {
+        if p.as_rule() == Rule::star_p {
+            let (line, col) = p.as_span().start_pos().line_col();
+            return Err(FlowyError::Compile {
+                message: "'.*' is not an access-path segment: there is no wildcard field. \
+                          Write the field name, or '.[n]' for an offset"
+                    .to_string(),
+                line,
+                col,
+            });
+        }
+        reject_star_paths(&p)?;
+    }
+    Ok(())
+}
+
 fn parse_p(pair: Pair<'_, Rule>) -> PathSegment {
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
@@ -1137,7 +1162,8 @@ fn parse_p(pair: Pair<'_, Rule>) -> PathSegment {
             let offset: i64 = offset_str.parse().unwrap();
             PathSegment::offset(offset)
         }
-        _ => panic!("Unexpected field access rule"),
+        // `star_p` is the only other alternative, and `reject_star_paths` has already run.
+        rule => unreachable!("unexpected access-path segment rule: {rule:?}"),
     }
 }
 
@@ -1498,5 +1524,134 @@ impl Counter {
         let v = self.value;
         self.value += 1u32;
         v
+    }
+}
+
+#[cfg(test)]
+mod path_grammar_tests {
+    use super::*;
+    use ctadl_ir::mir::path_syntax;
+
+    fn compile(src: &str) -> Result<FlowyProgram, FlowyError> {
+        compile_program_contents("test.tnt", src)
+    }
+
+    /// Every access-path segment flowy parses, in source order.
+    fn segments_of(prog: &FlowyProgram) -> Vec<PathSegment> {
+        let mut segs = Vec::new();
+        for reqs in prog.requirements.summary_requires.requires.values() {
+            for spec in reqs {
+                segs.extend(spec.dest.fields.iter().cloned());
+                segs.extend(spec.source.fields.iter().cloned());
+            }
+        }
+        segs.sort();
+        segs.dedup();
+        segs
+    }
+
+    /// Anything flowy accepts, the canonical grammar also accepts and agrees on.
+    ///
+    /// flowy's `ident` (`[A-Za-z_][A-Za-z0-9_]*`) is a strict *subset* of the canonical symbol
+    /// production and its `offset_p` is already the canonical offset, so every segment flowy
+    /// produces must print and re-parse unchanged. Otherwise a path written in a `.flowy` file
+    /// and the same path written in a model port would denote different things.
+    #[test]
+    fn flowy_segments_agree_with_the_canonical_grammar() {
+        let src = r#"
+def F(a, b): 1
+where summaries [a.foo.bar <- b.f1.[12].f2]
+{
+s:
+    a.foo.bar = b.f1.[12].f2;
+    return a;
+}
+"#;
+        let prog = compile(src).expect("flowy program should compile");
+        let segs = segments_of(&prog);
+        assert!(!segs.is_empty(), "expected segments, got none");
+        assert!(
+            segs.contains(&PathSegment::offset(12)),
+            "flowy should parse .[12] as an offset, got {segs:?}"
+        );
+
+        for seg in &segs {
+            let text = path_syntax::segment_to_string(seg);
+            let back = path_syntax::parse_segment(&text)
+                .unwrap_or_else(|e| panic!("flowy produced {seg:?} -> {text:?}, which failed: {e}"));
+            assert_eq!(&back, seg, "round trip through {text:?}");
+        }
+
+        // And the whole path, not just each segment.
+        let printed = path_syntax::path_to_string(&segs);
+        assert_eq!(path_syntax::parse_segments(&printed).unwrap(), segs);
+    }
+
+    /// Every offset spelling flowy's `offset_p` accepts is a valid canonical offset, and both
+    /// read it as the same number.
+    #[test]
+    fn flowy_offsets_agree_with_the_canonical_grammar() {
+        for (text, expect) in [(".[0]", 0i64), (".[8]", 8), (".[255]", 255)] {
+            // A store to an offset-only address must spell its dereference.
+            let src = format!(
+                "def F(a, b): 1\nwhere summaries [a{text}.deref <- b]\n\
+                 {{\ns:\n    a{text}.deref = b;\n    return a;\n}}\n"
+            );
+            let prog = compile(&src).unwrap_or_else(|e| panic!("flowy should accept {text:?}: {e}"));
+            let segs = segments_of(&prog);
+            assert!(
+                segs.contains(&PathSegment::offset(expect)),
+                "flowy should read {text:?} as Offset({expect}), got {segs:?}"
+            );
+            // The canonical grammar reads the identical text the identical way.
+            assert_eq!(
+                path_syntax::parse_segments(text).unwrap(),
+                vec![PathSegment::offset(expect)],
+                "canonical reading of {text:?}"
+            );
+        }
+    }
+
+    /// flowy rejects the bracket forms the canonical grammar rejects, so neither can be written
+    /// by accident in a `.flowy` file and mean something else in a model port.
+    #[test]
+    fn flowy_rejects_what_the_canonical_grammar_rejects() {
+        for bad in [".[foo]", ".[]", ".[0x2a]"] {
+            assert!(
+                path_syntax::parse_segments(bad).is_err(),
+                "{bad:?} should be canonically invalid"
+            );
+            let src = format!("def F(a, b): 1\n{{\ns:\n    a = b{bad};\n    return a;\n}}\n");
+            assert!(
+                compile(&src).is_err(),
+                "flowy should also reject {bad:?}"
+            );
+        }
+    }
+
+    /// `.*` used to *panic*, so `x.* = y;` in a `.flowy` file crashed the tool.
+    #[test]
+    fn star_path_is_a_compile_error_not_a_panic() {
+        let err = compile("def F(a, b): 1\n{\ns:\n    a = b.*;\n    return a;\n}\n")
+            .expect_err("'.*' should be rejected");
+        match err {
+            FlowyError::Compile { message, line, col } => {
+                assert!(
+                    message.contains("wildcard"),
+                    "message should explain: {message}"
+                );
+                assert_eq!(line, 4, "should point at the offending line");
+                assert!(col > 0);
+            }
+            other => panic!("expected a Compile error, got: {other:?}"),
+        }
+    }
+
+    /// The same on the store side, which reaches a different walker.
+    #[test]
+    fn star_path_on_a_store_is_a_compile_error() {
+        let err = compile("def F(a, b): 1\n{\ns:\n    a.* = b;\n    return a;\n}\n")
+            .expect_err("'.*' should be rejected");
+        assert!(matches!(err, FlowyError::Compile { .. }), "got {err:?}");
     }
 }

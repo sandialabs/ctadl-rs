@@ -637,8 +637,11 @@ fn if_then_while_cfg() {
 #[test_log::test]
 fn subscript_access_paths() {
     // A constant array subscript, read and written (`x = f[3];` and `f[4] = x;`). The subscript
-    // becomes a `.[N]` segment on the access path (a symbol segment, not a numeric offset): the read
-    // is `assign @p2 = f.[3]`, and the write lowers to an `update` of `f` at `.[4]`. (`int x` is @p2.)
+    // becomes a `PathSegment::Symbol("[N]")` — a *symbol whose name contains brackets*, not a
+    // numeric offset — so in the DSL it is written with the bracket escaped, `f.\[3]`. Spelled
+    // `f.[3]` it would be `Offset(3)`, which is a different path and is not what this frontend
+    // emits. The read is `assign @p2 = f.\[3]`, and the write lowers to an `update` of `f` at
+    // `.\[4]`. (`int x` is @p2.)
     let src = r"
         int brackets_simple(Donkey v, Burro* b, int x, int y) {
             int f = 1;
@@ -646,8 +649,8 @@ fn subscript_access_paths() {
             f[4] = x;
         }";
     let prog = program_from_string(src).0;
-    check_loads(&prog, "f.[3]"); // x = f[3]  (read lowers to a load of f.[3])
-    check_assign_or_update(&prog, "f.[4]", ["@p2"], None); // f[4] = x  (store)
+    check_loads(&prog, r"f.\[3]"); // x = f[3]  (read lowers to a load of f.\[3])
+    check_assign_or_update(&prog, r"f.\[4]", ["@p2"], None); // f[4] = x  (store)
 }
 
 #[test_log::test]
