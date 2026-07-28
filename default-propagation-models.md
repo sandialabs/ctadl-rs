@@ -27,7 +27,7 @@ Findings below marked **measured** were run against `target/release/ctadl` built
 A Lua import matches all 55 Java generators and all 14 C ones; a flowy import matches all 69.
 A full match pass per import, contributing nothing.
 
-### F2. Port paths are a level shift; one measured row is unexplained
+### F2. Port paths are a level shift; the one unexplained row is now explained
 
 Fixture (Lua, so that a model can be attached to a function whose body propagates nothing):
 
@@ -52,6 +52,12 @@ Only the propagation port on `id` varies. Taint is stored at `t.f`; the sink rea
 | `Argument(0).[12]` → `Return` | `u.X ← t.[12].X` | *(nothing at `t.[12]`)* | 0 | 0 |
 | `Argument(0).[_elem_]` → `Return` | `u.X ← t.[_elem_].X` | *(nothing at `t.[_elem_]`)* | **1** | **0** |
 | `Argument(0).[zzz]` → `Return` | `u.X ← t.[zzz].X` | *(nothing at `t.[zzz]`)* | **1** | **0** |
+
+> **Do not copy these port strings.** The table records the spelling as measured at `0829891`.
+> Under the canonical grammar (`f84af56`), `Argument(0).[_elem_]` and `Argument(0).[zzz]` are
+> **load errors** — an unescaped `[` at segment start means an offset. The equivalents today are
+> `Argument(0).\[_elem_]` and `Argument(0).\[zzz]`, and `Argument(0).[12]` now means a real
+> `Offset(12)` rather than `Symbol("[12]")`. The last two rows are the anomaly resolved in §0b.
 
 **The semantics.** A propagation `In → Out` becomes `assign_like(out_var, out_path, in_var,
 in_path)` (`codegen/models.rs:95-97`, consumed at `index_engine/mod.rs:1097-1103`). The two
@@ -90,21 +96,35 @@ All three are plain symbols whose *name* happens to contain brackets, and a mode
 them exactly. **The element field is modelable on all three frontends.** The earlier claim that
 it was unmodelable was inferred from the misread rows. **Withdrawn.**
 
-**What remains is one anomaly, and it is the reverse of the old one.** `.[_elem_]` and `.[zzz]`
-should both score 0 here — nothing is stored at `t.[_elem_]` or `t.[zzz]`, so
-`substitute_prefix` cannot match. Both measured 1: the score for a port strictly *wider* than
-the one written. Nothing between `parse_port` and `facts.summary` drops or rewrites the segment,
-so either the measurement is wrong or there is a fourth path not yet found. This is the single
-open question in F2 and it is far narrower than the old one — **re-measure before designing on
-it** (§0).
+**~~What remains is one anomaly~~ RESOLVED (see §0b).** `.[_elem_]` and `.[zzz]` should both
+score 0 here — nothing is stored at `t.[_elem_]` or `t.[zzz]`, so `substitute_prefix` cannot
+match. Both measured 1: the score for a port strictly *wider* than the one written. The
+measurement was correct; the "fourth path" is `facts/parquet.rs:538`, the index→query on-disk
+round trip, which lies *past* the `parse_port → facts.summary` span this trace covers. It read
+`.[_elem_]` back as the **empty** path, i.e. as the bare port, which scores 1. Fixed in
+`f84af56`; **the caveat below is therefore stale.**
 
-**One mechanism-identified defect, independent of the above.** `FromIterator for Path` maps
-every model-port segment to `PathSegment::Symbol`, so **there is no way to write a
+> **Stale, kept for the record.** The trace above concluded "(`parse_path_string` at
+> `facts.rs:457`, which *does* silently drop non-numeric bracket contents, is not on this path —
+> the earlier draft was right to rule it out.)" That is wrong. `parse_path_string` is not on the
+> `parse_port → facts.summary` path, but it *is* on the `facts.summary → parquet → query` path,
+> and that is where the segment was destroyed. The lesson: "bracketed segments are ordinary
+> symbols, everywhere" held in-process and failed across the process boundary, which is the only
+> boundary that matters when `index` and `query` are separate programs.
+
+**~~One mechanism-identified defect~~ FIXED (see §0c).** `FromIterator for Path` mapped
+every model-port segment to `PathSegment::Symbol`, so there was **no way to write a
 `PathSegment::Offset` in a model file.** pcode is the only frontend that emits offsets
-(`pcode/mod.rs:122`); on pcode a port `.[12]` is `Symbol("[12]")` and can never match the
-`Offset(12)` the frontend produced. Lua's numeric keys are `symbol(format!("[{}]", …))`
-(`lua/mod.rs:1918,1945`), so `.[12]` does work there. This affects structure-offset ports on
-native code only, which no shipped default uses — record it, do not gate on it.
+(`pcode/mod.rs:122`); on pcode a port `.[12]` was `Symbol("[12]")` and could never match the
+`Offset(12)` the frontend produced. That impl is deleted and ports now parse with the canonical
+grammar, so `.[12]` is a real `Offset(12)`.
+
+One correction to the note as written: it said "Lua's numeric keys are
+`symbol(format!("[{}]", …))` (`lua/mod.rs:1918,1945`), so `.[12]` does work there." Under the
+canonical grammar it no longer does — `.[12]` is now an *offset*, and Lua's `t[12]` is the
+*symbol* `[12]`, so a Lua port must be written `.\[12]`. The two were previously indistinguishable
+(and, across the parquet boundary, Lua's was silently converted to an offset anyway, which is how
+`t[1][2]` became `Offset(1),Offset(2)` and then summed to `Offset(3)` — the same path as `t[3]`).
 
 Remaining consequences:
 
@@ -113,7 +133,8 @@ Remaining consequences:
   emits; `List.add` writes it and `List.get` reads it, so add→get chains compose. That is by
   design. The real cost is that they never join a *real* array, which is written and read as
   `[]` — and per the trace above `[]` **is** writable, so `.rep` → `[]` is a live option (§4a),
-  gated on the F2 re-measure rather than ruled out.
+  **no longer gated** — the F2 re-measure resolved to a fixed encoding bug (§0b), and `[]`
+  now survives the index→query round trip.
 - pcode's entire default file is built on `.deref`, a plain symbol, so it is in the working
   class — **still not measured** (no Ghidra in this environment); §0 should confirm it, but it
   is no longer a project-gating risk.
@@ -169,13 +190,22 @@ would fall to the `Unknown` arm (`json.rs:308-320`). **C means pcode** — which
 `languages/mod.rs` declares `dex`, `jvm`, `lua`, `pcode`, `tree_sitter`. `languages/jadx/`
 contains one file, the model file, and no `mod.rs`.
 
-### F6. Two more spellings in the Java defaults
+### F6. Two more spellings in the Java defaults — DONE, ahead of §4a
 
 A trailing `.*` (`jadx/default-index.jsonl:22,38`) parses to the **empty** path
 (`json.rs:1776`), so `Argument(0).*` is a synonym for `Argument(0)` — harmless, but it reads
 as a wildcard and is used as one. `Argument(0).[*]` (line 22) is *not* the same case: it parses
 to `Symbol("[*]")`, a literal field name no frontend emits, so that generator matches nothing.
-Both are dropped in §4a.
+~~Both are dropped in §4a.~~ **Both are already dropped**, in `6bb2e63`, because the canonical
+grammar makes `.[*]` a hard load error and `.*` a literal field named `*` — leaving them would
+have changed their meaning silently.
+
+Two corrections to this finding as written. **The line numbers are 22, 37 and 38**, not 22 and
+38: an exhaustive scan of every port string in the tree (11 distinct ports across shipped model
+files, `nightly/tests/**` and `ctadl-ascent/tests/**`) found a third `Argument(0).*` on line 37.
+And the `.*` entries were **rewritten, not deleted** — since `.*` denoted the empty path, dropping
+the whole propagation would have silently removed a live `Argument(0) → Return` rule; only the
+suffix came off. `Argument(0).[*]`, which genuinely matched nothing, did lose its entry.
 
 ---
 
@@ -183,7 +213,7 @@ Both are dropped in §4a.
 
 | Phase | What | Gates |
 | --- | --- | --- |
-| 0 | Pin port path semantics as a test; resolve the F2 anomaly | blocks element-field ports only |
+| 0 | Pin port path semantics as a test; ~~resolve the F2 anomaly~~ (0b/0c done) | 0a only; element-field ports unblocked |
 | 1 | Dispatch defaults on the VMT; relocate the files | — |
 | 2 | Lua VMT gains externals; ship `lua-index.jsonl` | needs 1 |
 | 3 | Expand `native-index.jsonl` (C via pcode) | **measure per §6** |
@@ -191,44 +221,91 @@ Both are dropped in §4a.
 
 ---
 
-## Phase 0 — pin port path semantics, resolve the F2 anomaly
+## Phase 0 — pin port path semantics (0b and 0c resolved; 0a remains)
 
 Scope shrank once F2 was re-read: port paths are prefix substitution and behave as written on
-every row but two. Bare-port content (phases 2-4) no longer waits on this. What still depends on
+every row but two. Bare-port content (phases 2-4) no longer waits on this. ~~What still depends on
 it is anything that names an element field — `.rep` → `[]` in phase 4, the held container
-entries in phase 2.
+entries in phase 2.~~
 
-**0a. Pin the matrix as a test.** Extend `ctadl-ascent/tests/` with a fixture per frontend that
-pins, for each of `bare`, `.symbol`, `.[numeric]`, `.[symbol]`, `.deref`, and a two-segment path,
-on both the input and output side: where does taint land, and does the sink observe it? Probe at
+**Scope shrank again.** The two anomalous rows are explained and the offset gap is closed, both by
+`access-path-parsing-plan.md` (commits `f84af56` and `6bb2e63`) — see 0b and 0c below. So the
+element-field work in phases 2 and 4 is **no longer gated on anything**; what remains of phase 0
+is 0a, the semantics matrix, which is now a nice-to-have rather than a blocker. One thing did get
+*added* to it: the grammar split `.[foo]` into an escaped-symbol form and an offset form, so the
+matrix has more rows than it did.
+
+**0a. Pin the matrix as a test.** *(The one item of phase 0 still open.)* Extend
+`ctadl-ascent/tests/` with a fixture per frontend that pins, for each port shape below, on both
+the input and output side: where does taint land, and does the sink observe it? Probe at
 the level the port *predicts* under prefix substitution, not just at one fixed depth — the
 original matrix scored 0 on three rows purely because it always probed `u.f`. Do it for flowy
 (cheapest — `ctadl_flowy::compile_program_contents` needs no toolchain and `tests/tnt/` already
 exists), Lua, and pcode. The pcode `.deref` column is still unverified.
 
-**0b. Re-measure the two anomalous rows, then explain them.** `.[_elem_] → Return` and
-`.[zzz] → Return` both scored 1 where prefix substitution predicts 0. First confirm the
-measurement — it contradicts a full read of the path from `parse_port` (`json.rs:1732`) through
-`split_dot_segments`, `AccessPathFieldBuilder::append` (`models/mod.rs:703`) and
-`FromIterator for Path` (`facts.rs:540`), none of which touch bracket contents. If it
-reproduces, the drop is somewhere none of those explain; if it does not, F2's last open item
-closes and the whole finding reduces to 0c.
+The shapes have changed since this was written, because the canonical grammar split what used to
+be one case into three. The row set should now be:
 
-**0c. Make the offset gap explicit.** Model ports can only produce `PathSegment::Symbol`, so
-`.[12]` cannot match a pcode `Offset(12)`. Either give the port parser a spelling that produces
-an `Offset`, or reject `.[<numeric>]` on a `Native` VMT with an error. The one outcome to avoid
-is the status quo, where a port silently means something other than what it says — the
-fail-open class `qualified-id-plan.md` was written to eliminate, and its argument applies
-verbatim: a generator whose constraint cannot be honored must fail loudly, because a
-silently-mismatched model is indistinguishable from a working one.
+| shape | example | meaning |
+| --- | --- | --- |
+| bare | `Argument(0)` | the whole value |
+| `.symbol` | `.f` | a named field |
+| `.[numeric]` | `.[12]` | a real `Offset(12)` — matches pcode; **new**, was `Symbol("[12]")` |
+| `.\[symbol]` | `.\[_elem_]`, `.\[]` | a `Symbol` whose *name* has brackets — matches lua/dex/jvm |
+| `.[symbol]` | `.[_elem_]` | **hard load error** now; assert the error, not a score |
+| `.deref` | `.deref` | pcode's pointee |
+| two-segment | `.[8].deref` | the mixed case that motivated all of this |
+
+The `.[numeric]` / `.\[symbol]` split is the substance: those two were the *same* port before, and
+on lua and tree-sitter C the frontends emit the escaped one while pcode emits the offset. The
+existing round-trip and port tests (`facts.rs::test_path_round_trip_corpus`,
+`models_loading.rs::offset_port_produces_a_real_offset`) pin the *encoding*; 0a is still needed to
+pin the *taint semantics* end to end, which nothing does today.
+
+**~~0b. Re-measure the two anomalous rows, then explain them.~~ RESOLVED — no re-measurement
+needed.** The measurement was right and the trace was looking in the wrong place. The drop is
+`facts/parquet.rs:538`, the on-disk encoding for *every* `Path` column, which `index` writes and
+`query` reads back in a separate process. `to_dot_string` escaped `.` but not `[`, and the
+reader's `parse_path_string` treated a bare `[` as an offset and silently dropped a segment whose
+bracket contents were not a valid `i64`. So a port `Argument(0).[_elem_]` was stored correctly as
+`Symbol("[_elem_]")`, written as `.[_elem_]`, and read back as **the empty path** — i.e. as the
+bare port `Argument(0)`, which is exactly the score of 1 that was measured where 0 was predicted.
+Same for `.[zzz]`.
+
+F2's trace above was sound as far as it went — nothing between `parse_port` and `facts.summary`
+touches bracket contents — but it stopped at `facts.summary`, and the corruption happens *after*
+that, on the way back off disk. Its parenthetical ruling `parse_path_string` out was therefore
+wrong: that function is not on the `parse_port → facts.summary` path, but it is on the
+`facts.summary → parquet → query` path, which is the one that matters. **This was the "fourth
+path not yet found."** Fixed in `f84af56` (`access-path-parsing-plan.md` Changes 1–3); the
+corpus in `facts.rs::test_path_round_trip_corpus` pins it, and running the deleted parser
+verbatim against the strings found on disk confirms `.[_elem_]` → `[]` and `.[1]` → `Offset(1)`.
+
+**~~0c. Make the offset gap explicit.~~ RESOLVED — implemented, not merely diagnosed.** Model
+ports parse with the canonical access-path grammar, so `.[12]` really does produce
+`PathSegment::Offset(12)` and matches what pcode emits; a field name beginning with `[` is
+written `\[` and stays a `Symbol`. Both halves of the "avoid the status quo" requirement are met:
+the offset spelling now means what it says, and a malformed path (`.[*]`, `.[foo]`, an empty
+segment) is a hard `JsonModelError::InvalidAccessPath` naming the port and the fix, per the
+`qualified-id-plan.md` fail-loud argument. Implemented in `6bb2e63`
+(`access-path-parsing-plan.md` Changes 4 and 7); pinned by
+`models_loading.rs::offset_port_produces_a_real_offset` and the `json_error_handling.rs`
+malformed-path cases.
 
 **0d. Then take the element-field decision.** With `[]` and `[_elem_]` confirmed writable
-(F2), phase 4 can change `.rep` → `[]` and phase 2 can model Lua containers. Both are gated on
-0b coming back clean, not on 0c.
+(F2) **and now confirmed to survive the index→query round trip** (0b), phase 4 can change
+`.rep` → `[]` and phase 2 can model Lua containers. **Both are now ungated.** Note that this
+decision could not have been taken correctly before 0b: prior to the fix a `.rep` → `[]` change
+would have looked like it worked while `[]` silently collapsed to the empty path, making the
+generator match everything rather than array elements.
 
-**Deliverable:** a section in `docs/model-generators.md` §6 stating that a port pair is a prefix
-substitution — with the `A(0).f → Return` unwrapping example, which is the part that misreads —
-and, per frontend, which spellings match what. There is nothing there today.
+**Deliverable: DONE.** `docs/model-generators.md` §6 now carries the access-path grammar, states
+that `.[n]` is an offset and now really produces one, that a field name beginning with `[` is
+written `\[`, and gives the per-frontend table of which spelling matches what
+(`Symbol("[]")` on dex/jvm, `Symbol("[_elem_]")` on lua and tree-sitter C, real `Offset`s on
+pcode). **Still missing there:** the statement that a port pair is a *prefix substitution*, with
+the `A(0).f → Return` unwrapping example — that is the part that misreads, and it remains
+worth writing.
 
 ---
 
@@ -328,9 +405,11 @@ is the frontend's declared interface for this question and dex/jvm already answe
 ### 2b. `lua-index.jsonl`
 
 **Every entry below uses bare ports.** Not because paths are broken — F2's re-read shows
-`[_elem_]` is writable and matches the Lua frontend exactly — but because a bare port is the
-strictly more permissive choice and the level-shifting entries deserve their own measured pass.
-They are listed separately below so they are not forgotten.
+`[_elem_]` is writable and matches the Lua frontend exactly, and as of `f84af56` it also survives
+the index→query round trip — but because a bare port is the strictly more permissive choice and
+the level-shifting entries deserve their own measured pass. They are listed separately below so
+they are not forgotten. When they are written, the Lua element field is spelled `.\[_elem_]`
+(escaped); a bare `.[_elem_]` is now a load error.
 
 Each `names` list covers the bare form, so `string.sub(s,…)` and `s:sub(…)` both hit it.
 
@@ -349,10 +428,13 @@ Each `names` list covers the bare form, so `string.sub(s,…)` and `s:sub(…)` 
 | openresty codecs | `ngx.escape_uri`, `ngx.unescape_uri`, `ngx.encode_base64`, `ngx.decode_base64`, `ngx.encode_args`, `ngx.decode_args`, `ngx.quote_sql_str`, `ngx.md5`, `ngx.sha1_bin` | `Argument(0)` → `Return` |
 | openresty regex | `ngx.re.match`, `ngx.re.gsub`, `ngx.re.sub` | `Argument(0)` → `Return` |
 
-*Held for phase 0b* — these are the level-correct forms, writable today per F2 but unmeasured:
-`table.concat` reading `A(0).[_elem_]` rather than `A(0)`; `rawset` writing `A(0).[_elem_]`;
-a `table.remove`/`unpack` that unwraps one level (`A(0).[_elem_] → Return`, which puts an
-element's taint on the returned value rather than at `Return.[_elem_]`). The bare-port versions
+*~~Held for phase 0b~~ — unblocked (0b resolved), still unmeasured.* These are the
+level-correct forms. **Spell the element field `.\[_elem_]`, escaped** — under the canonical
+grammar a bare `.[_elem_]` is a hard load error, since `[` at segment start means an offset:
+`table.concat` reading `A(0).\[_elem_]` rather than `A(0)`; `rawset` writing
+`A(0).\[_elem_]`; a `table.remove`/`unpack` that unwraps one level
+(`A(0).\[_elem_] → Return`, which puts an element's taint on the returned value rather than
+at `Return.\[_elem_]`). The bare-port versions
 above are strictly more permissive, which is the safe direction for a default, but they lose the
 distinction between "the table is tainted" and "an element is".
 
@@ -370,8 +452,11 @@ and need `forward_call`, unimplemented (`docs/model-generators.md:144-150`).
 
 Keep the existing 14 generators; drop their `sources`/`sinks` (§1d). `.deref` is a plain symbol
 and so behaves as written; phase 0a should still confirm the pcode column, but this phase is no
-longer blocked on it. Note per F2 that `.[<numeric>]` cannot match a pcode `Offset` — no entry
-below uses one, and none should be added until 0c.
+longer blocked on it. ~~Note per F2 that `.[<numeric>]` cannot match a pcode `Offset` — no entry
+below uses one, and none should be added until 0c.~~ **0c is resolved:** `.[<numeric>]` is now a
+real `Offset` and *does* match what pcode emits, so offset entries are writable here. (On lua
+and tree-sitter C the same spelling means an offset too, which is *not* what those frontends
+emit — there the element field must be escaped, `.\[_elem_]`.)
 
 ### 3a. Highest-value addition: symbol aliases
 
@@ -435,22 +520,31 @@ families are the only `Argument(*)` users here; keep it that way.
 
 ## Phase 4 — expand `java-index.jsonl`
 
-### 4a. `.rep` → `[]` is a live option, gated on 0b
+### 4a. `.rep` → `[]` is a live option, ungated (0b resolved)
 
 The earlier draft ruled this out on the grounds that `[]` could not survive the port parser. It
-can (F2): dex and jvm both write `FieldPath::symbol("[]")`, and a model port `.[]` is
-`Symbol("[]")`. So the four collection generators at `jadx/default-index.jsonl:52-55` can be
-moved off the synthetic `.rep` and onto the field the frontends actually emit, which makes
-`List.add`/`List.get` chains join real array writes instead of only each other.
+can (F2), and as of `f84af56` it also survives the index→query round trip, which is the part that
+was actually broken (§0b). dex and jvm both write `FieldPath::symbol("[]")`. So the four
+collection generators at `jadx/default-index.jsonl:52-55` can be moved off the synthetic `.rep`
+and onto the field the frontends actually emit, which makes `List.add`/`List.get` chains join
+real array writes instead of only each other.
 
-Do it as its own commit with the F2 matrix test green, and check the `unexpected_lines` cases in
+> **Spell it `.\[]`, not `.[]`.** Under the canonical grammar an unescaped `[` at segment start
+> is an *offset*, so a port written `Argument(0).[]` is now a hard load error
+> (`InvalidOffset("")`). The Java array element is a `Symbol` whose name is `[]`, which is
+> written `Argument(0).\[]` — and in JSON, `"Argument(0).\\[]"`. The error message names the
+> fix, so getting this wrong fails loudly rather than silently matching nothing.
+
+Do it as its own commit with the 0a matrix test green, and check the `unexpected_lines` cases in
 `nightly/tests/java` — `[]` is a real field with real writes behind it, so this widens what the
-generators reach, which is the point and also the risk. If 0b comes back showing bracketed
-symbols behave anomalously after all, leave `.rep` and add a comment saying why.
+generators reach, which is the point and also the risk. ~~If 0b comes back showing bracketed
+symbols behave anomalously after all, leave `.rep` and add a comment saying why.~~ 0b came back
+clean: the anomaly was the parquet encoding, now fixed, so there is no remaining reason to hedge.
 
-Independently, drop the bare trailing `.*` on lines 22 and 38 — it already parses as the empty
-path (`json.rs:1776`) and reads as a wildcard. `Argument(0).[*]` on line 22 is
-`Symbol("[*]")`, which no frontend emits and nothing will ever match; drop it too.
+~~Independently, drop the bare trailing `.*` on lines 22 and 38 … `Argument(0).[*]` … drop it
+too.~~ **Already done** in `6bb2e63` — see F6, including the two corrections there (it was lines
+22, 37 *and* 38, and the `.*` entries were rewritten rather than deleted, since `.*` denoted the
+empty path and dropping them outright would have removed a live rule).
 
 ### 4b. The rule for `parents`
 
@@ -465,7 +559,8 @@ must stay positional — named-field ports are not portable between the two Java
 ### 4c. New generators
 
 The gap is `java.util`. All bare-port except where a level change is genuinely required, and
-those are marked *(held)* pending phase 0b.
+those are marked *(held)* — ~~pending phase 0b~~ **now unblocked (0b resolved)**; they remain
+unmeasured. Any element-field port among them is written `.\[]` on dex/jvm, escaped.
 
 | Group | Parents | Members | Propagation |
 | --- | --- | --- | --- |
