@@ -25,8 +25,11 @@ use hashbrown::hash_set::HashSet;
 use itertools::izip;
 
 use crate::error::{Error, ErrorContext};
+use crate::facts;
 use crate::facts::TaintDirection;
 use ctadl_ir::ProgramInfo;
+use ctadl_ir::mir;
+use ctadl_ir::mir::PathSegment;
 
 pub mod codegen;
 pub mod json;
@@ -270,29 +273,33 @@ impl SummaryBatch {
             self.iter_summaries()
         {
             // Resolve paths for destination and source access‑paths
-            let dst_path = ap_map.get(&dst_ap_id).cloned().unwrap_or_default();
-            let src_path = ap_map.get(&src_ap_id).cloned().unwrap_or_default();
+            let dst_path = ap_map.get(&dst_ap_id).copied().unwrap_or_default();
+            let src_path = ap_map.get(&src_ap_id).copied().unwrap_or_default();
 
+            // The key is the canonical segment spellings, which distinguish `Symbol("[8]")` from
+            // `Offset(8)` -- as `Vec<String>` did not when every segment was a `Symbol`.
+            let key_of = |p: &facts::Path| -> Vec<String> {
+                p.iter().map(mir::segment_to_string).collect()
+            };
             let key = (
                 func.to_string(),
                 dst_tag as u8,
                 dst_index,
-                dst_path.clone(),
+                key_of(&dst_path),
                 src_tag as u8,
                 src_index,
-                src_path.clone(),
+                key_of(&src_path),
             );
 
             if !seen.contains(&key) {
                 seen.insert(key);
-                // Convert Vec<String> to slice of &str for the builder API
-                let dst_slice: Vec<&str> = dst_path.iter().map(|s| s.as_str()).collect();
-                let src_slice: Vec<&str> = src_path.iter().map(|s| s.as_str()).collect();
+                let dst_segs: Vec<PathSegment> = dst_path.iter().cloned().collect();
+                let src_segs: Vec<PathSegment> = src_path.iter().cloned().collect();
 
                 builder.append(
                     func,
-                    (dst_tag, dst_index, &dst_slice),
-                    (src_tag, src_index, &src_slice),
+                    (dst_tag, dst_index, &dst_segs),
+                    (src_tag, src_index, &src_segs),
                 );
             }
         }
@@ -452,8 +459,8 @@ impl SummaryBuilder {
     pub fn append(
         &mut self,
         function: &str,
-        dst: (FormalIndexTypeTag, Option<i16>, &[&str]),
-        src: (FormalIndexTypeTag, Option<i16>, &[&str]),
+        dst: (FormalIndexTypeTag, Option<i16>, &[PathSegment]),
+        src: (FormalIndexTypeTag, Option<i16>, &[PathSegment]),
     ) {
         let (dst_ty, dst_index, dst_path) = dst;
         let (src_ty, src_index, src_path) = src;
@@ -648,15 +655,15 @@ impl AccessPathBuilder {
     }
 
     #[inline]
-    pub fn append(&mut self, ap: &[&str]) -> u64 {
+    pub fn append(&mut self, ap: &[PathSegment]) -> u64 {
         let id = self.id.len().try_into().expect("too many APs");
         self.id.append_value(id);
         self.len
             .append_value(ap.len().try_into().expect("AP too big"));
-        for (pos, field) in ap.iter().enumerate() {
+        for (pos, seg) in ap.iter().enumerate() {
             self.fields
                 .borrow_mut()
-                .append(id, pos.try_into().expect("too many fields"), field);
+                .append(id, pos.try_into().expect("too many fields"), seg);
         }
         id
     }
@@ -699,11 +706,17 @@ impl AccessPathFieldBuilder {
         }
     }
 
+    /// Stores one segment as its canonical **escaped segment** spelling, no leading dot -- so
+    /// `Symbol("[]")` is stored as `\[]` and `Offset(8)` as `[8]`, and the two stay distinct.
+    ///
+    /// Chosen over adding a `kind: UInt8` discriminator column because it needs no schema change,
+    /// no second encoding decision, and it exercises the same round-trip guarantee as everything
+    /// else; `models_loading.rs` pins it.
     #[inline]
-    pub fn append(&mut self, ap_id: u64, pos: u8, field: &str) {
+    pub fn append(&mut self, ap_id: u64, pos: u8, seg: &PathSegment) {
         self.id.append_value(ap_id);
         self.pos.append_value(pos);
-        self.field.append_value(field);
+        self.field.append_value(mir::segment_to_string(seg));
     }
 
     #[inline]
@@ -803,7 +816,7 @@ impl EndpointBuilder {
         function: &str,
         idx: (FormalIndexTypeTag, Option<i16>),
         local_index: Option<u32>,
-        ap: &[&str],
+        ap: &[PathSegment],
         label: &str,
         direction: TaintDirection,
         wildcard: bool,
@@ -1167,8 +1180,13 @@ impl AccessPathBatch {
         Ok(())
     }
 
-    /// Helper that creates a map from AP id -> ordered list of path components.
-    pub fn build_ap_map(&self) -> HashMap<u64, Vec<String>> {
+    /// Helper that creates a map from AP id -> the port's access path.
+    ///
+    /// Each stored row is one canonical **escaped segment** (see
+    /// [`AccessPathFieldBuilder::append`]), so it is parsed back with `parse_segment` rather than
+    /// blanket-converted to a `Symbol`. That is what lets `Argument(1).[8].deref` produce a real
+    /// `Offset(8)` and match what pcode emits.
+    pub fn build_ap_map(&self) -> HashMap<u64, facts::Path> {
         // Collect lengths per AP
         let mut len_map: HashMap<u64, u8> = self.iter_ap_len().collect();
         // Temporary storage for fields by (ap_id, pos)
@@ -1179,20 +1197,27 @@ impl AccessPathBatch {
                 .or_default()
                 .insert(pos, field.to_string());
         }
-        // Assemble final vectors respecting order 0..len-1
-        let mut result: HashMap<u64, Vec<String>> = HashMap::new();
+        // Assemble final paths respecting order 0..len-1
+        let mut result: HashMap<u64, facts::Path> = HashMap::new();
         for (ap_id, len) in len_map.drain() {
-            if let Some(pos_map) = field_by_pos.get(&ap_id) {
-                let mut vec = Vec::with_capacity(len as usize);
-                for p in 0..len {
-                    // Unwrap is safe because the builder always filled each position
-                    let f = pos_map.get(&{ p }).expect("missing AP field");
-                    vec.push(f.clone());
+            let path = match field_by_pos.get(&ap_id) {
+                Some(pos_map) => {
+                    let mut segs = Vec::with_capacity(len as usize);
+                    for p in 0..len {
+                        // Unwrap is safe because the builder always filled each position
+                        let f = pos_map.get(&{ p }).expect("missing AP field");
+                        // Infallible by construction: the builder wrote this with
+                        // `segment_to_string`. A failure means the batch was written by an
+                        // incompatible build.
+                        segs.push(mir::parse_segment(f).unwrap_or_else(|e| {
+                            panic!("corrupt access-path segment {f:?} in model batch: {e}")
+                        }));
+                    }
+                    facts::Path::from_accesses(segs)
                 }
-                result.insert(ap_id, vec);
-            } else {
-                result.insert(ap_id, Vec::new());
-            }
+                None => facts::Path::empty(),
+            };
+            result.insert(ap_id, path);
         }
         result
     }
