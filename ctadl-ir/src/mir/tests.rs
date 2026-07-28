@@ -194,12 +194,12 @@ fn test_field_accesses_with_offsets() {
     assert_eq!(offset_path.len(), 1);
 
     // Test display format for offsets
-    assert_eq!(format!("{}", offset_path), ".[0x2a]");
+    assert_eq!(format!("{}", offset_path), ".[42]");
 
     // Test multiple offsets (access paths are offset-only)
     let mixed_path = FieldAccesses::with_offsets([10, 20]);
     assert_eq!(mixed_path.len(), 2);
-    assert_eq!(format!("{}", mixed_path), ".[0xa].[0x14]");
+    assert_eq!(format!("{}", mixed_path), ".[10].[20]");
 
     // Test creating access path with offsets
     let mut locals = Locals::default();
@@ -212,7 +212,7 @@ fn test_field_accesses_with_offsets() {
     // Base is the local `obj`, followed by the single offset.
     let base = access_path.variable_ref.variable.local().unwrap();
     assert_eq!(locals.name(base), "obj");
-    assert_eq!(format!("{}", access_path.path), ".[0x5]");
+    assert_eq!(format!("{}", access_path.path), ".[5]");
 }
 
 #[test]
@@ -220,12 +220,49 @@ fn test_offset_newtype() {
     // Test Offset newtype
     let offset = Offset(123);
     assert_eq!(offset.0, 123);
-    assert_eq!(format!("{}", offset), "0x7b");
+    assert_eq!(format!("{}", offset), "123");
 
     // Test FieldAccess (offset-only) and PathSegment (mixed) display
     let symbol_access = PathSegment::symbol("test");
     let offset_access = FieldAccess::Offset(Offset(456));
 
     assert_eq!(format!("{}", symbol_access), "test");
-    assert_eq!(format!("{}", offset_access), "[0x1c8]");
+    assert_eq!(format!("{}", offset_access), "[456]");
+}
+
+/// The IR's `Display` impls emit the canonical access-path grammar, so an IR dump can be pasted
+/// into a model port or a `.flowy` file and mean the same thing. Before this, none of them
+/// escaped anything: a C field literally named `a.b` rendered as `.a.b`, indistinguishable from
+/// two segments, and the frontends' `Symbol("[3]")` rendered as `.[3]`, indistinguishable from
+/// an offset.
+#[test]
+fn test_display_uses_canonical_grammar() {
+    // A leading '[' is escaped; a '[' inside a name needs no escape.
+    assert_eq!(PathSegment::symbol("[_elem_]").to_string(), r"\[_elem_]");
+    assert_eq!(PathSegment::symbol("[3]").to_string(), r"\[3]");
+    assert_eq!(PathSegment::symbol("a[3]").to_string(), "a[3]");
+    // ... so a bracketed symbol and a real offset are now distinguishable.
+    assert_ne!(
+        PathSegment::symbol("[3]").to_string(),
+        PathSegment::offset(3).to_string()
+    );
+    assert_eq!(PathSegment::offset(3).to_string(), "[3]");
+
+    // Dots and backslashes in a field name are escaped.
+    assert_eq!(PathSegment::symbol("a.b").to_string(), r"a\.b");
+    assert_eq!(PathSegment::symbol(r"a\b").to_string(), r"a\\b");
+    assert_eq!(FieldPath::symbol("a.b").to_string(), r".a\.b");
+
+    // Offsets are decimal, negatives included.
+    assert_eq!(FieldAccesses::with_offsets([-40, 255]).to_string(), ".[-40].[255]");
+
+    // And everything the IR prints parses back to what it printed.
+    for seg in [
+        PathSegment::symbol("[_elem_]"),
+        PathSegment::symbol("a.b"),
+        PathSegment::symbol(r"a\b"),
+        PathSegment::offset(-40),
+    ] {
+        assert_eq!(path_syntax::parse_segment(&seg.to_string()).unwrap(), seg);
+    }
 }

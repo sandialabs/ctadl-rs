@@ -163,7 +163,7 @@ fn test_builder_convenience_methods() {
 
     // Access path base is the local `test`, followed by the two offsets.
     assert_eq!(local_name(&locals, &access_path.variable_ref), "test");
-    assert_eq!(access_path.path.to_string(), ".[0x1].[0x2]");
+    assert_eq!(access_path.path.to_string(), ".[1].[2]");
 
     match str_exp {
         Exp::Str(s) => assert_eq!(format!("{}", s), "hello"),

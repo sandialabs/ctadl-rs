@@ -227,31 +227,28 @@ impl From<FieldAccess> for PathSegment {
     }
 }
 
+/// Renders one segment in the canonical access-path grammar, WITHOUT its leading `.`: symbols
+/// escape `\`, `.`, and a leading `[`; offsets are decimal in brackets.
 impl Display for PathSegment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PathSegment::Symbol(symbol) => write!(f, "{symbol}"),
-            PathSegment::Offset(offset) => write!(f, "[{offset}]"),
-        }
+        f.write_str(&path_syntax::segment_to_string(self))
     }
 }
 
 impl Display for Offset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Print signed hex
-        if self.0 < 0i64 {
-            let pos = -self.0;
-            write!(f, "-0x{:x}", pos)
-        } else {
-            write!(f, "0x{:x}", self.0)
-        }
+        // Decimal, so the IR dump, the fact store, model ports and the flowy grammar all agree on
+        // one spelling. If hex is wanted for readability in an IR dump it belongs in a side
+        // comment on the statement, never inside a path.
+        write!(f, "{}", self.0)
     }
 }
 
 impl Display for FieldAccess {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let FieldAccess::Offset(offset) = self;
-        write!(f, "[{offset}]")
+        f.write_str(&path_syntax::segment_to_string(&PathSegment::from(
+            self.clone(),
+        )))
     }
 }
 
@@ -894,11 +891,12 @@ impl FromIterator<FieldAccess> for FieldAccesses {
 
 impl Display for FieldAccesses {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut out = String::new();
         for field in &self.fields {
-            let FieldAccess::Offset(offset) = field;
-            write!(f, ".[{offset}]")?;
+            out.push('.');
+            path_syntax::write_segment(&mut out, &PathSegment::from(field.clone()));
         }
-        Ok(())
+        f.write_str(&out)
     }
 }
 
@@ -946,7 +944,9 @@ impl From<&str> for FieldPath {
 
 impl Display for FieldPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, ".{}", self.field)
+        let mut out = String::from(".");
+        path_syntax::write_segment(&mut out, &PathSegment::Symbol(self.field.clone()));
+        f.write_str(&out)
     }
 }
 
