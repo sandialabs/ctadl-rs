@@ -1029,7 +1029,9 @@ fn unescaped_bracketed_field_name_is_hard_error() {
 fn unanchored_port_text_is_hard_error() {
     let errors = access_path_errors_for("MyReturnType");
     assert!(
-        errors.iter().any(|e| e.starts_with("InvalidArgumentFormat")),
+        errors
+            .iter()
+            .any(|e| e.starts_with("InvalidArgumentFormat")),
         "expected InvalidArgumentFormat, got: {errors:?}"
     );
 }

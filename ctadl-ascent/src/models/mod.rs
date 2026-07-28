@@ -278,9 +278,8 @@ impl SummaryBatch {
 
             // The key is the canonical segment spellings, which distinguish `Symbol("[8]")` from
             // `Offset(8)` -- as `Vec<String>` did not when every segment was a `Symbol`.
-            let key_of = |p: &facts::Path| -> Vec<String> {
-                p.iter().map(mir::segment_to_string).collect()
-            };
+            let key_of =
+                |p: &facts::Path| -> Vec<String> { p.iter().map(mir::segment_to_string).collect() };
             let key = (
                 func.to_string(),
                 dst_tag as u8,

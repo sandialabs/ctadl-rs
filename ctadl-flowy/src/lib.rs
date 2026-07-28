@@ -1577,8 +1577,9 @@ s:
 
         for seg in &segs {
             let text = path_syntax::segment_to_string(seg);
-            let back = path_syntax::parse_segment(&text)
-                .unwrap_or_else(|e| panic!("flowy produced {seg:?} -> {text:?}, which failed: {e}"));
+            let back = path_syntax::parse_segment(&text).unwrap_or_else(|e| {
+                panic!("flowy produced {seg:?} -> {text:?}, which failed: {e}")
+            });
             assert_eq!(&back, seg, "round trip through {text:?}");
         }
 
@@ -1597,7 +1598,8 @@ s:
                 "def F(a, b): 1\nwhere summaries [a{text}.deref <- b]\n\
                  {{\ns:\n    a{text}.deref = b;\n    return a;\n}}\n"
             );
-            let prog = compile(&src).unwrap_or_else(|e| panic!("flowy should accept {text:?}: {e}"));
+            let prog =
+                compile(&src).unwrap_or_else(|e| panic!("flowy should accept {text:?}: {e}"));
             let segs = segments_of(&prog);
             assert!(
                 segs.contains(&PathSegment::offset(expect)),
@@ -1622,10 +1624,7 @@ s:
                 "{bad:?} should be canonically invalid"
             );
             let src = format!("def F(a, b): 1\n{{\ns:\n    a = b{bad};\n    return a;\n}}\n");
-            assert!(
-                compile(&src).is_err(),
-                "flowy should also reject {bad:?}"
-            );
+            assert!(compile(&src).is_err(), "flowy should also reject {bad:?}");
         }
     }
 

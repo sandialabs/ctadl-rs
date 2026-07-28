@@ -2245,7 +2245,12 @@ mod parse_port_tests {
 
         // Junk *before* the selector: no regex matches at all, so this is the existing
         // InvalidArgumentFormat.
-        for text in ["MyReturnType", "prefixReturn", "xxArgument(0)", "aVariable(b)"] {
+        for text in [
+            "MyReturnType",
+            "prefixReturn",
+            "xxArgument(0)",
+            "aVariable(b)",
+        ] {
             let e = parse_port(text, 5).unwrap_err();
             assert!(
                 matches!(&e, JsonModelError::InvalidArgumentFormat { index: 5, text: t } if t == text),

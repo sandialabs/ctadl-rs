@@ -283,8 +283,7 @@ fn test_endpoint_stats_merge_across_imports() {
 /// A native (binary-frontend) program with one 2-parameter function `f`.
 fn native_program_with_f() -> ProgramInfo {
     use ctadl_ir::mir::call::{
-        NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName,
-        VirtualMethodTable,
+        NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
     };
     use ctadl_ir::mir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
@@ -371,8 +370,7 @@ fn escaped_bracketed_port_stays_a_symbol() {
     use ctadl_ir::mir::PathSegment;
 
     let paths = summary_paths_for(r"Argument(1).\[_elem_]", "Return");
-    let expected =
-        ctadl_ascent::facts::Path::from_accesses([PathSegment::symbol("[_elem_]")]);
+    let expected = ctadl_ascent::facts::Path::from_accesses([PathSegment::symbol("[_elem_]")]);
     assert!(
         paths.contains(&expected),
         "expected Symbol(\"[_elem_]\"), got: {:?}",

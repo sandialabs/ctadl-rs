@@ -254,7 +254,10 @@ fn test_display_uses_canonical_grammar() {
     assert_eq!(FieldPath::symbol("a.b").to_string(), r".a\.b");
 
     // Offsets are decimal, negatives included.
-    assert_eq!(FieldAccesses::with_offsets([-40, 255]).to_string(), ".[-40].[255]");
+    assert_eq!(
+        FieldAccesses::with_offsets([-40, 255]).to_string(),
+        ".[-40].[255]"
+    );
 
     // And everything the IR prints parses back to what it printed.
     for seg in [
