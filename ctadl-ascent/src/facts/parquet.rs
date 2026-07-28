@@ -530,12 +530,23 @@ impl DecodeColumn<facts::Path> for DefaultDecoder {
     fn into_decode_array(name: &str, batch: &RecordBatch) -> impl IntoIterator<Item = facts::Path> {
         <Self as DecodeColumn<Str>>::into_decode_array(name, batch)
             .into_iter()
-            .map(|s| {
+            .map(move |s| {
                 if s.is_empty() {
                     facts::Path::empty()
                 } else {
-                    // Parse the string representation back to Path
-                    s.parse().unwrap_or_else(|_| facts::Path::empty())
+                    // `encode_column` writes the canonical grammar, so anything this build wrote
+                    // parses. A failure here means an `index/` written by an older build, which
+                    // `INDEX_FORMAT_VERSION` (see `project.rs`) is supposed to have rejected
+                    // before we got this far -- so panic rather than silently substitute the
+                    // empty path. Swallowing the error is what used to delete every `.[]` and
+                    // `.[_elem_]` segment on the way back off disk.
+                    s.parse().unwrap_or_else(|e| {
+                        panic!(
+                            "corrupt access path {:?} in fact column {name:?}: {e}\n\
+                             this index was written by an incompatible build; re-run `ctadl index`",
+                            s.as_str()
+                        )
+                    })
                 }
             })
     }

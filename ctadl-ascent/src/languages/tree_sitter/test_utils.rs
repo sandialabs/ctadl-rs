@@ -595,8 +595,13 @@ pub(crate) fn summary_search(
     to_index: i16,
     to_path: &str,
 ) -> bool {
-    let from_path: Path = from_path.parse().unwrap();
-    let to_path: Path = to_path.parse().unwrap();
+    // Fixtures are written in the canonical access-path grammar: every segment carries its
+    // leading dot (`.f2.f3`), and `""` is the empty path.
+    let parse = |s: &str| {
+        Path::parse(s).unwrap_or_else(|e| panic!("test access path {s:?} does not parse: {e}"))
+    };
+    let from_path = parse(from_path);
+    let to_path = parse(to_path);
     summary.iter().any(|r| {
         r.1 == fx::FormalIndex::new(to_index)
             && r.2 == to_path
@@ -620,11 +625,8 @@ fn fmt_endpoint(index: i16, path: &str) -> String {
     } else {
         format!("@p{index}")
     };
-    if path.is_empty() {
-        base
-    } else {
-        format!("{base}.{path}")
-    }
+    // `path` is already in the canonical grammar, leading dot and all.
+    format!("{base}{path}")
 }
 
 /* Asserting wrappers around the summary predicates above. Unlike a bare `assert!(summary_*(...))`,

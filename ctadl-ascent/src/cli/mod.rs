@@ -136,6 +136,8 @@ pub fn index(
     result
         .try_save(&path)
         .err_context(|| format!("saving index: {}", path.display()))?;
+    // Last, so a run that dies partway through leaves no stamp claiming the index is readable.
+    project.write_index_config()?;
     Ok(())
 }
 
@@ -163,6 +165,9 @@ pub fn query(
     dump_taint_graph: Option<&Path>,
 ) -> Result<QueryStatus, Error> {
     let start_time_utc = query_engine::formatter::utc_timestamp();
+    // Before touching a table: the parquet decoders panic on an encoding they cannot read, and
+    // this is what turns that into an actionable "re-run `ctadl index`".
+    project.check_index_config()?;
     let index_path = project.index_path()?;
     let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
     // Load the index tables once; they seed the query and are reused to format the results.
@@ -592,6 +597,7 @@ fn load_and_map_summaries(
         .err_context(|| format!("loading summary project: {}", summary_project_name))?;
 
     // Load summaries directly using schema::summary::try_load
+    summary_project.check_index_config()?;
     let summary_index_path = summary_project.index_path()?;
     let source_summaries = crate::facts::schema::summary::try_load(&summary_index_path)
         .err_context(|| format!("loading source project summaries: {}", summary_project_name))?;

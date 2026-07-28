@@ -206,6 +206,16 @@ pub enum Error {
         expected: String,
         artifact_path: PathBuf,
     },
+    #[error(
+        "the index for project '{project}' was created by an incompatible version of ctadl \
+         (index format {found}, this build expects {expected}); \
+         re-run `ctadl index {project}`"
+    )]
+    IncompatibleIndex {
+        project: String,
+        found: String,
+        expected: String,
+    },
     #[error("{context}")]
     Context {
         context: String,

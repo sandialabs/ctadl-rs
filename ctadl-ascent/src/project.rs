@@ -28,6 +28,7 @@ use std::{
 };
 
 use hashbrown::hash_set::HashSet;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, ErrorContext};
 
@@ -86,6 +87,35 @@ pub const VMT_BITCODE_FILE: &str = "ir-vmt.bitcode";
 
 /// Filename of an import's config, which records its [`IMPORT_FORMAT_VERSION`].
 pub const IMPORT_CONFIG_FILE: &str = "import_config.json";
+
+/// Version of the on-disk index format: the parquet fact and result tables written by `ctadl
+/// index` into a project's `index/` directory.
+///
+/// Separate from [`IMPORT_FORMAT_VERSION`] because the two artifacts change independently -- an
+/// import holds structural `bitcode`, an index holds parquet columns whose *textual* encodings
+/// can shift without the schema moving. Bump this whenever a column's encoding or the table
+/// schema changes, so `ctadl query` fails with "re-run `ctadl index`" instead of decoding stale
+/// bytes into something wrong. History:
+///
+/// - `1`: original format. Every `Path` column was written by `Path::to_dot_string`, which
+///   escaped `.` but not `[`, and read back by a parser that treated a leading `[` as an offset.
+///   The frontends' bracketed symbol names round-tripped wrong: `Symbol("[]")` and
+///   `Symbol("[_elem_]")` were *deleted* (read back as the empty path) and `Symbol("[3]")` flipped
+///   to `Offset(3)`.
+/// - `2`: `Path` columns use the canonical access-path grammar (`ctadl_ir::mir::path_syntax`),
+///   which escapes a leading `[` on print, so those segments survive as the symbols the frontend
+///   emitted.
+pub const INDEX_FORMAT_VERSION: &str = "2";
+
+/// Filename of an index's config, which records its [`INDEX_FORMAT_VERSION`], inside a project's
+/// `index/` directory.
+pub const INDEX_CONFIG_FILE: &str = "index_config.json";
+
+/// The contents of `index/index_config.json`: what build wrote this index.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexConfig {
+    pub version: String,
+}
 
 /// Reads just the format version out of the `import_config.json` beside `path`, skipping the
 /// compatibility check [`ArtifactImport::load`] applies.
@@ -472,6 +502,62 @@ impl AnalysisProject {
             .map_err(Error::Io)
             .err_context(|| format!("in create index dir: '{}'", path.display()))?;
         Ok(path)
+    }
+
+    /// Stamps the index directory with [`INDEX_FORMAT_VERSION`].
+    ///
+    /// Call this *last* in `index`, after every table is on disk, so a run that dies partway
+    /// through leaves no stamp claiming the index is readable.
+    ///
+    /// # Errors
+    ///
+    /// If there is an error creating the index dir, or serializing or writing the config
+    #[inline]
+    pub fn write_index_config(&self) -> Result<(), Error> {
+        let path = self.index_path()?.join(INDEX_CONFIG_FILE);
+        let file = File::create(&path)?;
+        serde_json::to_writer(
+            file,
+            &IndexConfig {
+                version: INDEX_FORMAT_VERSION.to_string(),
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Refuses an index written by an incompatible build.
+    ///
+    /// Every reader of a project's `index/` calls this before touching a table. The decoders
+    /// below it are infallible-by-construction for anything this build wrote, so they panic
+    /// rather than silently substitute a default -- this check is what turns that panic into an
+    /// actionable "re-run `ctadl index`".
+    ///
+    /// # Errors
+    ///
+    /// [`Error::IncompatibleIndex`] if the version is missing or does not match
+    /// [`INDEX_FORMAT_VERSION`]; [`Error::Io`] / [`Error::Json`] on a malformed config file.
+    #[inline]
+    pub fn check_index_config(&self) -> Result<(), Error> {
+        let path = self.dir.join("index").join(INDEX_CONFIG_FILE);
+        // A missing config file is an index from before the version gate existed, which is
+        // exactly the stale-encoding case this is here to catch.
+        let found = match File::open(&path) {
+            Ok(file) => {
+                let config: IndexConfig = serde_json::from_reader(file)
+                    .err_context(|| format!("deserializing index config: '{}'", path.display()))?;
+                config.version
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => "1 (or older)".to_string(),
+            Err(e) => return Err(Error::Io(e)),
+        };
+        if found != INDEX_FORMAT_VERSION {
+            return Err(Error::IncompatibleIndex {
+                project: self.name.clone(),
+                found,
+                expected: INDEX_FORMAT_VERSION.to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// Save the analysis project configuration

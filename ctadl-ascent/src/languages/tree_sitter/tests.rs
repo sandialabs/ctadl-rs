@@ -316,7 +316,7 @@ fn call_arg_flows_through_return() {
             return v;
         }";
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 0, "f1");
+    check_returns_param(&summary, 0, ".f1");
 }
 
 #[test_log::test]
@@ -346,7 +346,7 @@ fn unbraced_if_returns_param_field() {
             return x;
         }";
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 0, "unbraced");
+    check_returns_param(&summary, 0, ".unbraced");
 }
 
 #[test_log::test]
@@ -368,17 +368,17 @@ fn field_write_flows() {
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     // direct + deep-path field writes
-    check_flow(&s, 2, "", 0, "f2");
-    check_flow(&s, 1, "f2.f3.f4", 0, "f2.nf1.y");
+    check_flow(&s, 2, "", 0, ".f2");
+    check_flow(&s, 1, ".f2.f3.f4", 0, ".f2.nf1.y");
     // blended RHS feeding a field (temp-free)
-    check_flow(&s, 1, "fa", 0, "f5");
-    check_flow(&s, 1, "fb", 0, "f5");
-    check_flow(&s, 2, "", 0, "f3");
-    check_flow(&s, 3, "", 0, "f3");
+    check_flow(&s, 1, ".fa", 0, ".f5");
+    check_flow(&s, 1, ".fb", 0, ".f5");
+    check_flow(&s, 2, "", 0, ".f3");
+    check_flow(&s, 3, "", 0, ".f3");
     // value-field source + field-write-then-return
-    check_flow(&s, 1, "xyz", 0, "f1");
-    check_returns_param(&s, 0, "f1"); // formal field returned
-    check_returns_param(&s, 1, "xyz"); // resolved b.xyz reaches return
+    check_flow(&s, 1, ".xyz", 0, ".f1");
+    check_returns_param(&s, 0, ".f1"); // formal field returned
+    check_returns_param(&s, 1, ".xyz"); // resolved b.xyz reaches return
 }
 
 #[test_log::test]
@@ -662,9 +662,9 @@ fn field_blend_into_field_update() {
             int x = v->f4 = v->f5 + b;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_flow(&s, 0, "f5", 0, "f4"); // direct
-    check_flow(&s, 0, "f1", 0, "f4"); // via b
-    check_flow(&s, 0, "f3", 0, "f4"); // via b
+    check_flow(&s, 0, ".f5", 0, ".f4"); // direct
+    check_flow(&s, 0, ".f1", 0, ".f4"); // via b
+    check_flow(&s, 0, ".f3", 0, ".f4"); // via b
 }
 
 #[test_log::test]
