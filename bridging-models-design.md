@@ -168,11 +168,32 @@ Two additions to the generator object and one to `model`.
 ### 3.1 `in` — scope a generator to one program
 
 ```jsonc
-{ "find": "methods", "in": { "language": "dex" }, "where": [ … ], "model": { … } }
+{ "find": "methods", "in": { "language":  "dex" },                          "where": [ … ], "model": { … } }
+{ "find": "methods", "in": { "languages": ["jvm", "jar", "dex", "apk"] },   "where": [ … ], "model": { … } }
 ```
 
-`in` takes `language` (an `ArtifactLanguage`: `jvm`, `jar`, `dex`, `apk`, `c`, `lua`, `pcode`,
-`flowy`) and/or `import` (the import's name). Omitted means every program.
+`in` takes:
+
+- **`language`** — one `ArtifactLanguage` (`jvm`, `jar`, `dex`, `apk`, `c`, `lua`, `pcode`,
+  `flowy`);
+- **`languages`** — a non-empty array of them, admitting a program whose language is any one;
+- **`import`** — the import's name.
+
+Omitting `in` means every program, as does an `in` naming no language key. Keys *within* one `in`
+block are ANDed: `{ "languages": ["dex", "apk"], "import": "app_dex" }` is that import, and only if
+it is one of those two languages.
+
+**`language` is exactly the one-element case of `languages`.** Both are accepted because the
+one-language scope is the common one and `["dex"]` reads worse than `"dex"`; they normalize to the
+same thing (§4.1). Giving both keys in one block is a hard error rather than a union — a reader
+cannot tell which was meant — and so is `"languages": []`, which would match nothing quietly.
+
+The plural is not sugar. A language *boundary* has a set on each side, not a language: "the Java
+side" is `jvm`/`jar`/`dex`/`apk` and "the native side" is `pcode` and eventually `c`. A bridge
+scoped to `"dex"` matches nothing the day the same app is imported from a `.jar` — no error, just an
+analysis with no cross-language flow, which is §7's dominant failure mode. Making the natural
+scope expressible in one generator is cheaper than asking every author to duplicate it per frontend
+and remember to.
 
 This is independently useful — a `--models` file otherwise has no way to say "these are libc
 models, only apply them to the binary" — and it is what lets a bridge read symmetrically, with the
@@ -245,7 +266,7 @@ the analysis cannot:
 ```jsonc
 {
   "find": "methods",
-  "in": { "language": "dex" },
+  "in": { "languages": ["dex", "apk"] },
   "where": [{ "constraint": "signature_match",
               "qualified-id": "Lcom/example/Crypto;->encrypt(Ljava/lang/String;)Ljava/lang/String;" }],
   "model": { "bridge": {
@@ -263,7 +284,9 @@ the analysis cannot:
 `Argument(0)` on the callee side is `JNIEnv*`: deliberately unmapped. `Argument(1)` on the Dex side
 is the first declared parameter only because no earlier parameter is wide — with a leading `long`
 it would be `Argument(2)` here and `Argument(1)` if the same class were imported as a `.jar`
-(§2.2). Write these against the artifact you are actually indexing.
+(§2.2). Write these against the artifact you are actually indexing. The scope spans `dex` and `apk`
+safely for exactly that reason: those two are the same frontend and so share a slot model, whereas
+`["dex", "jar"]` with this `arguments` map would be right for one of them at most (§7).
 
 Note what this example is *not*: a method whose implementation is named by the JNI rules needs no
 generator at all. If you find yourself writing one, check the `jni bridge:` line in the `index` log
@@ -323,7 +346,17 @@ struct SideSpec {
     find:  FindMethod,
     where_: Vec<serde_json::Value>,     // raw JSON — handed back to the existing evaluator in §4.3
 }
+
+struct ProgramScope {
+    languages: SmallVec<[ArtifactLanguage; 2]>,   // empty ⇒ any language
+    import:    Option<String>,
+}
 ```
+
+`ProgramScope` **normalizes at parse time**: `language` and `languages` both land in the one vector,
+so `admits()` has a single implementation and no caller ever asks which spelling the file used. The
+mutual-exclusion and non-empty checks (§3.1) belong here too, next to the unknown-key checks below —
+the schema catches neither at load time.
 
 Constraints stay as raw JSON deliberately: they are evaluated later by the *existing* evaluator
 against the *existing* match indexes, so nothing here needs to understand them.
@@ -451,8 +484,11 @@ worthwhile follow-up and should be scoped as one.
 
 In `ctadl-model-generator.schema.json`:
 
-1. `$defs/program-scope`: `{ "language": enum(ArtifactLanguage), "import": string }`,
-   `additionalProperties: false`.
+1. `$defs/program-scope`: `{ "language": enum(ArtifactLanguage), "languages": { "type": "array",
+   "items": enum(ArtifactLanguage), "minItems": 1, "uniqueItems": true }, "import": string }`,
+   `additionalProperties: false`, plus `"not": { "required": ["language", "languages"] }` so an
+   editor flags giving both. That last one is the only rule here a schema can express and a careless
+   load-time check would miss, which is why §4.1 repeats it.
 2. `$defs/port-map`: `{ "from": port-spec, "to": port-spec, "direction": enum }`, both ports
    required.
 3. `$defs/bridge-model`: `to` (required: `{ in?, where }`), `arguments`, `cardinality`,
@@ -516,6 +552,12 @@ mapped one. Options: reject nothing and document it; validate the map against th
 (catches some cases, not this one); or accept declaration-ordinal ports and translate. Undecided,
 and worth deciding before the syntax is published rather than after.
 
+`languages` (§3.1) sharpens this rather than causing it: `{ "languages": ["dex", "jar"] }` is
+precisely the scope whose two frontends disagree about wide-parameter slots, and it makes that scope
+a natural thing to write. The two features want resolving together — if ports stay slot-valued, a
+multi-language scope carrying an `arguments` map is arguably worth a warning; if they become
+declaration-ordinal, the conflict disappears and the plural is unambiguously the right default.
+
 **Memory of retained match indexes** (§4.2) is unquantified until measured on a real APK + `.so`.
 
 **Callee-side paths and callsite attachment are both unvalidated** (§2, §2.1) — the JNI pass needed
@@ -526,7 +568,10 @@ enough that a surprise there can still change the design.
 
 - **Parse/validate, no program needed.** Unknown key at generator level, at `model` level, and
   inside `bridge`; missing `to`; `Argument(*)` in a port map; cardinality violation; empty match
-  under each `on-unmatched` setting.
+  under each `on-unmatched` setting. For `in`: `language` and `languages` given together, an empty
+  `languages`, an unrecognized `ArtifactLanguage`, and — the one positive case — that
+  `{"language": "dex"}` and `{"languages": ["dex"]}` parse to the identical `ProgramScope`, so the
+  two spellings cannot drift.
 - **Matching.** A two-`ProgramMatchIndex` fixture asserting the side-A and side-B match sets and the
   resulting pairs directly, without touching the fact base.
 - **Emission.** Given a pair and a port map, assert the exact `call` / `actual_param` /
