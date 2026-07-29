@@ -151,6 +151,19 @@ pub enum VirtualMethodTable {
         /// - Fully qualified method name
         methods: Vec<(JavaClass, JavaSimpleName, JavaSignature, JavaMethod)>,
         hierarchy: HashMap<JavaClass, SmallVec<[JavaClass; 2]>>,
+        /// Methods declared `native`. They also appear in `methods` above, so
+        /// that CHA resolves a virtual call to one; this column is what the JNI
+        /// bridge joins against, and it is the only one carrying the staticness
+        /// the bridge's port map needs. A consumer walking both columns must
+        /// therefore expect to see a native method twice.
+        ///
+        /// The columns are as follows:
+        /// - Fully qualified class name declaring the method
+        /// - Simple name of the method, e.g., nativeStash
+        /// - Signature of the method, e.g., (Ljava/lang/String;)V
+        /// - Fully qualified method name
+        /// - Whether the method is `static` (it has no `this` parameter)
+        natives: Vec<(JavaClass, JavaSimpleName, JavaSignature, JavaMethod, bool)>,
     },
     /// Table for native / binary frontends (pcode today, clang later). There is
     /// no class hierarchy; each function contributes its simple (un-decorated)
@@ -224,6 +237,7 @@ impl VirtualMethodTable {
         VirtualMethodTable::Java {
             methods: Vec::new(),
             hierarchy: HashMap::new(),
+            natives: Vec::new(),
         }
     }
 
@@ -246,10 +260,22 @@ impl VirtualMethodTable {
 impl Display for VirtualMethodTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VirtualMethodTable::Java { methods, hierarchy } => {
+            VirtualMethodTable::Java {
+                methods,
+                hierarchy,
+                natives,
+            } => {
                 writeln!(f, "java virtual method table")?;
                 for (cls, name, sig, method) in methods {
                     writeln!(f, "{cls}.{name} has signature {sig}: {method}")?;
+                }
+                for (cls, name, sig, method, is_static) in natives {
+                    let kind = if *is_static {
+                        "static native"
+                    } else {
+                        "native"
+                    };
+                    writeln!(f, "{cls}.{name} has signature {sig}: {method} ({kind})")?;
                 }
                 for (subclass, superclasses) in hierarchy {
                     for superclass in superclasses {

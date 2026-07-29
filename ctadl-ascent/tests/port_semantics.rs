@@ -51,9 +51,10 @@ fn store_dir() -> &'static Path {
 /// The program every case runs, with the store and the probe filled in.
 ///
 /// `id` is defined and propagates nothing -- it returns a constant -- so any flow from `handler`'s
-/// parameter to its return is the model on `id` and nothing else. The source is `handler`'s
-/// argument 0 and the sink is its bare return, so the *probe expression* is what says at which
-/// level the case is looking.
+/// parameter to `p` is the model on `id` and nothing else. `observe` is likewise inert; it exists
+/// only to give the query a vertex to name, playing the role flowy's `sink()` primitive plays in
+/// `tests/tnt/port_*.tnt`. The source is `handler`'s argument 0 and the sink is `observe`'s
+/// argument 0, so the *probe expression* is what says at which level the case is looking.
 fn program(store: &str, probe: &str) -> String {
     format!(
         r#"
@@ -62,12 +63,17 @@ local function id(v)
   return w
 end
 
+local function observe(z)
+  local q = "nothing"
+  return q
+end
+
 local function handler(x, k)
   local t = {{}}
   {store}
   local u = id(t)
   local p = {probe}
-  return p
+  observe(p)
 end
 
 return handler
@@ -77,7 +83,22 @@ return handler
 
 /// Imports the program, indexes it with `index_model` (and no defaults, so the model under test
 /// is the only summary in play), then queries with a source on `handler`'s argument 0 and a sink
-/// on its bare return. Returns whether a source-to-sink flow was reported.
+/// on `observe`'s argument 0. Returns whether a source-to-sink flow was reported.
+///
+/// Both endpoints name **one exact vertex**, which is what makes these cases decidable rather
+/// than incidental. CTADL promises *a* path from source to sink when one exists, not a
+/// particular path among many, so a query that names a family of endpoints is asking a question
+/// with more than one right answer and gets whichever the search happened to reach first.
+///
+/// Two things widen an endpoint into a family, and this query closes both:
+///
+/// - **A sink port is a wildcard by default**, matching every access path that extends it, so a
+///   sink written `Argument(0)` seeds `call-arg(...)` *and* `call-arg(...).f` and everything
+///   below. `wildcard: false` pins it to the single vertex the port names. (A source port is
+///   never expanded this way, so the source needs no such flag.)
+/// - **A sink anchored on a function's own return** is reached by every route through that
+///   function, and the reported flow is whichever route the search discovered first. Naming an
+///   actual argument at a call instead pins the flow to that call site.
 fn flows(case: &str, store: &str, index_model: &str, probe: &str) -> bool {
     let dir = store_dir();
     let src = dir.join(format!("{case}.lua"));
@@ -92,8 +113,8 @@ fn flows(case: &str, store: &str, index_model: &str, probe: &str) -> bool {
         r#"{"model_generators":[
 {"find":"methods","where":[{"constraint":"signature_match","name":"handler"}],
  "model":{"sources":[{"port":"Argument(0)","kind":"K"}]}},
-{"find":"methods","where":[{"constraint":"signature_match","name":"handler"}],
- "model":{"sinks":[{"port":"Return","kind":"K"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","name":"observe"}],
+ "model":{"sinks":[{"port":"Argument(0)","kind":"K","wildcard":false}]}}
 ]}"#,
     )
     .expect("writing query model");
@@ -109,6 +130,8 @@ fn flows(case: &str, store: &str, index_model: &str, probe: &str) -> bool {
         // Defaults suppressed. `lua-index.jsonl` models none of the names this program calls,
         // but a case about what is *not* modeled should not also depend on that staying true.
         true,
+        // No Java or native import here, so the JNI bridge has nothing to do either way.
+        false,
         CallResolutionStrategy::Mixed,
         true,
         true,
@@ -157,12 +180,10 @@ fn without_a_model_nothing_flows() {
 /// A bare port is a pure level-preserving copy: `Argument(0) -> Return` maps `t.X` to `u.X` for
 /// every `X`, so taint stored at `t.f` is readable at `u.f` -- no deeper, and no shallower.
 ///
-/// Only the "no deeper" half is asserted here. A model **sink port materializes over the paths
-/// reachable at its vertex**, so a sink written `Return` seeds `formal(-1)` *and* `formal(-1).f`;
-/// reading a whole object therefore observes taint in its fields, and no bare-port sink can say
-/// "the object itself is clean". flowy's declared endpoints are exact vertices instead, which is
-/// why `tests/tnt/port_bare.tnt` asserts the shallow half and this does not. The difference is
-/// worth knowing before writing a model whose sink is meant to be precise.
+/// Both halves are asserted, matching `tests/tnt/port_bare.tnt`. The shallow half is the one
+/// that needs an exact sink: a wildcard sink port materializes over the paths reachable at its
+/// vertex, so reading a whole object also observes taint in its fields and "the object itself is
+/// clean" becomes unsayable. See `flows` for why both endpoints are pinned.
 #[test]
 fn a_bare_port_preserves_the_suffix() {
     let m = model("Argument(0)", "Return");
@@ -173,6 +194,10 @@ fn a_bare_port_preserves_the_suffix() {
     assert!(
         !flows("port_lua_bare_deep", "t.f = x", &m, "u.f.f"),
         "and no deeper -- the port adds nothing"
+    );
+    assert!(
+        !flows("port_lua_bare_shallow", "t.f = x", &m, "u"),
+        "and no shallower -- the port shifts nothing onto the object itself"
     );
 }
 

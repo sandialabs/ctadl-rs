@@ -413,9 +413,13 @@ fn preflight(cases: &[TestCase], ghidra_selected: bool, release: bool) -> Result
     CTADL_BIN
         .set(bin)
         .map_err(|_| anyhow::anyhow!("internal error: ctadl binary built more than once"))?;
-    let needs_dex = cases.iter().any(|c| matches!(c.kind, Kind::Dex { .. }));
+    // A JNI case builds both halves of the boundary, so it needs the dex toolchain
+    // (javac/dx/dex-reader) *and* Ghidra, exactly as the dex and pcode cases do.
+    let needs_jni = cases.iter().any(|c| matches!(c.kind, Kind::Jni { .. }));
+    let needs_dex = needs_jni || cases.iter().any(|c| matches!(c.kind, Kind::Dex { .. }));
     let needs_jvm = cases.iter().any(|c| matches!(c.kind, Kind::Jvm { .. }));
-    let needs_pcode = ghidra_selected || cases.iter().any(|c| matches!(c.kind, Kind::Pcode { .. }));
+    let needs_pcode =
+        ghidra_selected || needs_jni || cases.iter().any(|c| matches!(c.kind, Kind::Pcode { .. }));
     if needs_dex && exec::which("dex-reader").is_none() {
         bail!("`dex-reader` not found on PATH");
     }
@@ -522,6 +526,11 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
         Kind::Jvm { java, config } => run_jvm(&case.name, java, config),
         Kind::Pcode { source, query } => run_pcode(&case.name, source, query, worker),
         Kind::Lua { source, query } => run_lua(&case.name, source, query),
+        Kind::Jni {
+            java,
+            native,
+            config,
+        } => run_jni(&case.name, java, native, config, worker),
     }
 }
 
@@ -723,6 +732,9 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
 ///     from the traced flow while it still shows up as a tainted instruction -- so a
 ///     line the flow visits only "through" an alias is covered by the machine profile.
 ///  3. *Unexpected lines*: no `unexpected_lines` entry is among the reached lines.
+///
+/// No DEX or JVM case uses `unexpected_lines` today. [`check_jni_case`] does, and
+/// narrows step 3 to the traced lines for the reason spelled out in [`ReachedLines`].
 fn check_flow_case(
     config: &Path,
     human_sarif: &Path,
@@ -751,13 +763,7 @@ fn check_flow_case(
         ));
     }
 
-    let entries = assertions::load_linemap(linemap)?;
-    let mut offsets = assertions::collect_codeflow_byte_offsets(human_sarif)?;
-    offsets.extend(assertions::collect_byte_offsets(machine_sarif)?);
-    let reached: BTreeSet<i64> = offsets
-        .iter()
-        .filter_map(|&off| assertions::map_offset_to_line(&entries, off))
-        .collect();
+    let reached = reached_lines(human_sarif, machine_sarif, linemap)?.reached;
 
     let missing: Vec<i64> = expected
         .iter()
@@ -775,6 +781,40 @@ fn check_flow_case(
     }
 
     Ok(Outcome::Pass)
+}
+
+/// The two source-line sets a DEX/JVM-shaped case can be judged against.
+struct ReachedLines {
+    /// Lines the human profile's code flows actually visited. Every one of them is
+    /// on a traced source -> sink path.
+    traced: BTreeSet<i64>,
+    /// `traced` plus the lines of the machine profile's tainted instructions.
+    ///
+    /// Wider in both a useful and a useless direction. Useful: aliasing
+    /// legitimately elides a pure copy hop (`local = tainted_field`) from the
+    /// traced flow while it still shows up as a tainted instruction, so a line the
+    /// flow visits only "through" an alias is covered here. Useless: the machine
+    /// profile also carries the *backward* slice from each sink, so every sink call
+    /// site is in here whether or not any source reaches it.
+    ///
+    /// That makes it the right set for `expected_lines` (a reachability claim, where
+    /// being permissive costs nothing) and the wrong one for `unexpected_lines` (a
+    /// precision claim, which `traced` answers).
+    reached: BTreeSet<i64>,
+}
+
+fn reached_lines(human_sarif: &Path, machine_sarif: &Path, linemap: &Path) -> Result<ReachedLines> {
+    let entries = assertions::load_linemap(linemap)?;
+    let to_lines = |offsets: BTreeSet<i64>| -> BTreeSet<i64> {
+        offsets
+            .iter()
+            .filter_map(|&off| assertions::map_offset_to_line(&entries, off))
+            .collect()
+    };
+    let traced = to_lines(assertions::collect_codeflow_byte_offsets(human_sarif)?);
+    let mut reached = traced.clone();
+    reached.extend(to_lines(assertions::collect_byte_offsets(machine_sarif)?));
+    Ok(ReachedLines { traced, reached })
 }
 
 fn class_files(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -1143,16 +1183,7 @@ fn check_pcode_case(
     }
 
     // Map each tainted offset back to a source line via addr2line.
-    let mut found: BTreeSet<i64> = BTreeSet::new();
-    for off in &offsets {
-        let rel = format!("0x{:x}", off);
-        let mut cmd = Command::new(addr2line);
-        cmd.current_dir(work).arg("-e").arg(obj).arg(&rel);
-        let out = exec::capture_stdout(cmd, addr2line)?;
-        if let Some(line) = parse_addr2line_line(&out) {
-            found.insert(line);
-        }
-    }
+    let found = addr2line_lines(&offsets, obj, work, addr2line)?;
 
     let missing: Vec<i64> = expected
         .iter()
@@ -1174,6 +1205,29 @@ fn check_pcode_case(
     // PASS only if every expected line was found (the pcode criterion) and no
     // unexpected line was.
     Ok(Outcome::Pass)
+}
+
+/// Map section-relative offsets in `binary` back to source lines with `addr2line`.
+///
+/// Offsets that resolve to nothing (`??:?`) are dropped rather than reported as a line, so the
+/// result is exactly the set of source lines the analyzer's output points at.
+fn addr2line_lines(
+    offsets: &[i64],
+    binary: &Path,
+    work: &Path,
+    addr2line: &str,
+) -> Result<BTreeSet<i64>> {
+    let mut found = BTreeSet::new();
+    for off in offsets {
+        let rel = format!("0x{:x}", off);
+        let mut cmd = Command::new(addr2line);
+        cmd.current_dir(work).arg("-e").arg(binary).arg(&rel);
+        let out = exec::capture_stdout(cmd, addr2line)?;
+        if let Some(line) = parse_addr2line_line(&out) {
+            found.insert(line);
+        }
+    }
+    Ok(found)
 }
 
 /// Parse the line number from an `addr2line` `file:line` result, ignoring any
@@ -1224,6 +1278,296 @@ fn run_ctadl_env(work: &Path, state: &Path, env: &[(String, String)], args: &[&s
         &format!("ctadl {}", args.first().copied().unwrap_or("")),
     )?;
     Ok(())
+}
+
+// --- JNI (Java + native, two imports) --------------------------------------
+
+/// Run one JNI case: compile `Foo.java` to a DEX and `Foo.c` to a shared library,
+/// import each as its own program, index the two *together* as one project, and
+/// check that taint crossed the boundary.
+///
+/// This is the only two-import runner. Everything else in the suite builds a
+/// single-import project; here the whole point is that the Java `native` stub and
+/// the `Java_…` implementation live in different artifacts and are joined at index
+/// time by the JNI bridge (`ctadl-ascent/src/languages/jni.rs`).
+///
+/// The claims are made against both halves of the boundary; see [`check_jni_case`].
+fn run_jni(
+    name: &str,
+    java: &Path,
+    native: &Path,
+    config: &Path,
+    worker: &Worker,
+) -> Result<Outcome> {
+    for tool in ["javac", "dx"] {
+        if exec::which(tool).is_none() {
+            return Ok(Outcome::Skip(format!("`{tool}` not on PATH")));
+        }
+    }
+    // Both halves of the pcode toolchain are in the loop: the compiler builds the native
+    // half, and `addr2line` maps the addresses reported in it back to C source lines for
+    // `expected_native_lines`.
+    let (cc, addr2line) = pick_toolchain();
+    for tool in [&cc, &addr2line] {
+        if exec::which(tool).is_none() {
+            return Ok(Outcome::Skip(format!("`{tool}` not on PATH")));
+        }
+    }
+
+    let work = scratch_dir(name)?;
+    let state = work.join("state");
+    std::fs::create_dir_all(&state)?;
+
+    // The class name drives every derived name, so read it off the source rather
+    // than off the case name (which carries the `Jni:` prefix).
+    let class = java
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .with_context(|| format!("invalid java file name: {}", java.display()))?
+        .to_string();
+
+    // Compile the Java half to a DEX. Only this source is copied in, so the
+    // `*.class` glob handed to `dx` cannot pick up an unrelated class.
+    let src = work.join(format!("{class}.java"));
+    std::fs::copy(java, &src)
+        .with_context(|| format!("failed to copy {} into scratch dir", java.display()))?;
+    let mut javac = Command::new("javac");
+    javac.current_dir(&work).args(["--release", "8"]).arg(&src);
+    exec::run_checked(javac, "javac")?;
+
+    let classes = class_files(&work)?;
+    if classes.is_empty() {
+        bail!("javac produced no .class files");
+    }
+    let dex = work.join(format!("{class}.dex"));
+    let mut dx = Command::new("dx");
+    dx.current_dir(&work)
+        .arg("--dex")
+        .arg(format!("--output={}", dex.display()));
+    // `dx` derives the package path from the class file path, so pass bare file
+    // names relative to the scratch cwd.
+    for class_file in &classes {
+        dx.arg(class_file.file_name().context("class file has no name")?);
+    }
+    exec::run_checked(dx, "dx")?;
+
+    // Compile the native half to a real shared library, not a relocatable object:
+    // the point of the case is the ABI a `System.loadLibrary` target actually has.
+    // `-g` gives Ghidra's DWARF analyzer the exact prototypes, which is what makes
+    // the bridge's native-arity check pass instead of warning.
+    let lib = work.join(format!("lib{}.so", class.to_lowercase()));
+    let mut compile = Command::new(&cc);
+    compile
+        .current_dir(&work)
+        .args(["-g", "-O0", "-shared", "-fPIC"])
+        .arg(native)
+        .arg("-o")
+        .arg(&lib);
+    exec::run_checked(compile, &cc)?;
+
+    // Two imports, one project. `ctadl index <project> <prog>...` takes the
+    // programs to co-index positionally.
+    let dex_project = format!("{class}_dex");
+    let native_project = format!("{class}_native");
+    let project = format!("{class}_jni");
+    let sarif = work.join(format!("{class}_output.sarif"));
+    let machine_sarif = work.join(format!("{class}_machine.sarif"));
+    let env = &worker.ghidra_env;
+
+    run_ctadl_env(
+        &work,
+        &state,
+        env,
+        &["import", "--name", &dex_project, &dex_arg(&dex)],
+    )?;
+    run_ctadl_env(
+        &work,
+        &state,
+        env,
+        &[
+            "import",
+            "-l",
+            "pcode",
+            &lib.to_string_lossy(),
+            "-n",
+            &native_project,
+        ],
+    )?;
+    run_ctadl_env(
+        &work,
+        &state,
+        env,
+        &["index", &project, &dex_project, &native_project],
+    )?;
+    run_ctadl_env(
+        &work,
+        &state,
+        env,
+        &[
+            "query",
+            &project,
+            "-m",
+            &config.to_string_lossy(),
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
+    )?;
+    run_ctadl_env(
+        &work,
+        &state,
+        env,
+        &[
+            "query",
+            &project,
+            "-m",
+            &config.to_string_lossy(),
+            "--sarif-profile",
+            "machine",
+            "-o",
+            &machine_sarif.to_string_lossy(),
+        ],
+    )?;
+
+    // Build the Java-side offset -> line map, exactly as `run_dex` does.
+    let linemap = work.join(format!("{class}_linemap.json"));
+    let mut reader = Command::new("dex-reader");
+    reader
+        .current_dir(&work)
+        .arg(&dex)
+        .arg("--linemap-json")
+        .arg(&linemap);
+    exec::run_checked(reader, "dex-reader")?;
+
+    let outcome = check_jni_case(
+        config,
+        &sarif,
+        &machine_sarif,
+        &linemap,
+        &lib,
+        &work,
+        &addr2line,
+    )?;
+    with_valid_sarif(&work, &[&sarif, &machine_sarif], outcome)
+}
+
+/// JNI pass criterion. Claims 1-3 are about *Java* source lines; claim 4 crosses the
+/// boundary and is about the case's C source:
+///
+///  1. *Code-flow integrity*: a human-profile code flow connects a source to a sink.
+///     For these cases that is the whole assertion that the bridge fired at all --
+///     the Java half alone cannot carry the taint from the source to the sink, so a
+///     connected flow exists only if the native half was linked in with its
+///     arguments mapped correctly.
+///  2. *Reached lines*: as [`check_flow_case`], against the wider `reached` set.
+///  3. *Unexpected lines*: against `traced`, the lines a code flow actually visited,
+///     rather than `check_flow_case`'s wider set. A JNI case's negative claim is
+///     naturally "the taint did not reach *that* sink", and every sink call site is
+///     in the wider set whether or not a source reaches it (see [`ReachedLines`]).
+///  4. *Native lines*: every `expected_native_lines` entry is among the C source lines
+///     the reported native addresses map back to, via [`native_lines`]. This is the
+///     claim that the taint is where it should be on the far side, in the artifact it
+///     should be in -- not merely that a Java-side flow exists.
+///
+/// There is deliberately no Darwin self-skip, unlike [`check_pcode_case`]: every
+/// criterion here, native lines included, is satisfied on Darwin today. If Ghidra
+/// ever stops recovering the native half, "no code flow connects a source to a sink"
+/// is the truth and is worth failing on.
+fn check_jni_case(
+    config: &Path,
+    human_sarif: &Path,
+    machine_sarif: &Path,
+    linemap: &Path,
+    lib: &Path,
+    work: &Path,
+    addr2line: &str,
+) -> Result<Outcome> {
+    let expected = assertions::read_expected_lines(config)?;
+    let connects = assertions::codeflow_connects_source_and_sink(human_sarif)?;
+
+    if expected.is_empty() {
+        return Ok(if connects {
+            Outcome::Fail(
+                "expected no flow, but a code flow connects a source to a sink".to_string(),
+            )
+        } else {
+            Outcome::Pass
+        });
+    }
+    if !connects {
+        return Ok(Outcome::Fail(
+            "no code flow connects a source to a sink".to_string(),
+        ));
+    }
+
+    let lines = reached_lines(human_sarif, machine_sarif, linemap)?;
+    let missing: Vec<i64> = expected
+        .iter()
+        .copied()
+        .filter(|line| !lines.reached.contains(line))
+        .collect();
+    if !missing.is_empty() {
+        return Ok(Outcome::Fail(format!(
+            "expected lines {missing:?} not reached (reached {:?}; all of {expected:?} required)",
+            lines.reached
+        )));
+    }
+
+    let unexpected = assertions::read_unexpected_lines(config)?;
+    if let Some(why) = assertions::check_unexpected_lines(&unexpected, &lines.traced) {
+        return Ok(Outcome::Fail(why));
+    }
+
+    let expected_native = assertions::read_expected_native_lines(config)?;
+    if !expected_native.is_empty() {
+        let native = native_lines(human_sarif, machine_sarif, lib, work, addr2line)?;
+        let missing: Vec<i64> = expected_native
+            .iter()
+            .copied()
+            .filter(|line| !native.contains(line))
+            .collect();
+        if !missing.is_empty() {
+            return Ok(Outcome::Fail(format!(
+                "expected native lines {missing:?} not reached (reached {native:?}; \
+                 all of {expected_native:?} required)"
+            )));
+        }
+    }
+    Ok(Outcome::Pass)
+}
+
+/// The C source lines the flow reached inside the case's shared library.
+///
+/// Reads the *addresses* out of both profiles' SARIF and maps them with `addr2line`, the same
+/// way [`check_pcode_case`] does for a single-import pcode case. Only a pcode import carries
+/// an `address`, so every address in a JNI case's output is native by construction -- which is
+/// exactly what made this check impossible before: the formatter used to resolve each span
+/// against every import's source-info database in turn, so Java-side results reappeared
+/// carrying addresses in the shared library and any set of lines derived from them was
+/// fiction. Now each span is resolved only in the import that numbered it.
+fn native_lines(
+    human_sarif: &Path,
+    machine_sarif: &Path,
+    lib: &Path,
+    work: &Path,
+    addr2line: &str,
+) -> Result<BTreeSet<i64>> {
+    let mut offsets: BTreeSet<i64> = BTreeSet::new();
+    for sarif in [human_sarif, machine_sarif] {
+        // Prefer the section-relative offsets (image base already subtracted), falling back
+        // to absolute addresses minus the historical base, as `check_pcode_case` does.
+        let relative = assertions::collect_relative_addresses(sarif)?;
+        if relative.is_empty() {
+            offsets.extend(
+                assertions::collect_absolute_addresses(sarif)?
+                    .into_iter()
+                    .map(|addr| addr - PCODE_BASE_ADDRESS),
+            );
+        } else {
+            offsets.extend(relative);
+        }
+    }
+    let offsets: Vec<i64> = offsets.into_iter().collect();
+    addr2line_lines(&offsets, lib, work, addr2line)
 }
 
 // --- Ghidra existing-project import ---------------------------------------

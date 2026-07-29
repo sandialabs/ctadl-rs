@@ -72,7 +72,11 @@ pub fn init_store_path<P: AsRef<Path>>(override_path: Option<P>) -> Result<(), &
 /// - `4`: the lua VMT gained a `functions` column carrying every function's frontend-parsed
 ///   simple name alongside its qualified name, so model matching reads the simple name instead
 ///   of re-deriving it. Again a `bitcode` wire-format change to `ir-vmt.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "4";
+/// - `5`: the java VMT gained a `natives` column listing methods declared `native`, which are
+///   bodyless and so were invisible to the dex frontend's `methods` column. It is what the JNI
+///   bridge (`languages::jni`) joins against. Again a `bitcode` wire-format change to
+///   `ir-vmt.bitcode`.
+pub const IMPORT_FORMAT_VERSION: &str = "5";
 
 /// Filename of the serialized IR program inside an import directory.
 ///
@@ -105,7 +109,12 @@ pub const IMPORT_CONFIG_FILE: &str = "import_config.json";
 /// - `2`: `Path` columns use the canonical access-path grammar (`ctadl_ir::mir::path_syntax`),
 ///   which escapes a leading `[` on print, so those segments survive as the symbols the frontend
 ///   emitted.
-pub const INDEX_FORMAT_VERSION: &str = "2";
+/// - `3`: `index_source_map` gained an `import_id` column, and `import_id.parquet` names what
+///   each id stands for. Source span ids are per-import indices, and an index without the
+///   column cannot say which import's source-info database to read one in -- which is exactly
+///   how a multi-import project used to render every result once per import, each copy
+///   carrying an unrelated line from another artifact.
+pub const INDEX_FORMAT_VERSION: &str = "3";
 
 /// Filename of an index's config, which records its [`INDEX_FORMAT_VERSION`], inside a project's
 /// `index/` directory.

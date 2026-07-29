@@ -184,6 +184,40 @@ impl Context {
                     &mut builders.program[fidx]
                 };
                 fdat.name = sig.clone();
+
+                // A `native` method is bodyless (`code_off == 0`), so the VMT push in the
+                // `code` branch below never runs for it, and the extern-stub loop at the end
+                // of `process` skips it too because it is in `self.defined`. Without a row
+                // here it reaches the fact base with no table entry at all.
+                if ACC_NATIVE.is_set_in(enc.access_flags) {
+                    let (class_name, method_name, method_descr) = parser.method_triple(mi)?;
+                    let cls = JavaClass(class_name.into());
+                    let simple = JavaSimpleName(method_name.into());
+                    let descr = JavaSignature(method_descr.into());
+                    let method = JavaMethod(sig.as_str().into());
+                    if let VirtualMethodTable::Java {
+                        methods, natives, ..
+                    } = &mut builders.vmt
+                    {
+                        // In `methods` because CHA builds its resolvent map from that column:
+                        // without a row there, an `invoke-virtual` of a native method resolves
+                        // to nothing and the call site is lost -- bridge or no bridge. (A
+                        // `static` native is reached by `invoke-static`, which resolves by name
+                        // and never consults the table.) The jvm frontend lists native methods
+                        // there for the same reason, because it walks every declared method.
+                        methods.push((cls.clone(), simple.clone(), descr.clone(), method.clone()));
+                        // ... and in `natives` because that is where the JNI bridge looks, and
+                        // it is the only column carrying the staticness the bridge needs.
+                        natives.push((
+                            cls,
+                            simple,
+                            descr,
+                            method,
+                            ACC_STATIC.is_set_in(enc.access_flags),
+                        ));
+                    }
+                }
+
                 // Handle instructions
 
                 // Parse the instruction stream for the method.

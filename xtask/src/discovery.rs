@@ -27,6 +27,14 @@ pub enum Kind {
     /// Lua source imported directly; SARIF regions carry source lines, so no
     /// linemap or compilation step is needed.
     Lua { source: PathBuf, query: PathBuf },
+    /// Java `native` methods plus the shared library implementing them,
+    /// co-indexed as two imports of one project so the JNI bridge has both
+    /// halves to join. The only two-import case kind.
+    Jni {
+        java: PathBuf,
+        native: PathBuf,
+        config: PathBuf,
+    },
 }
 
 impl Kind {
@@ -36,6 +44,7 @@ impl Kind {
             Kind::Jvm { .. } => Frontend::Jvm,
             Kind::Pcode { .. } => Frontend::Pcode,
             Kind::Lua { .. } => Frontend::Lua,
+            Kind::Jni { .. } => Frontend::Jni,
         }
     }
 }
@@ -50,11 +59,20 @@ pub enum Frontend {
     Jvm,
     Pcode,
     Lua,
+    /// Not a frontend of its own: the JNI bridge, which needs the dex *and*
+    /// pcode toolchains at once. It selects separately so `--frontend jni` runs
+    /// the two-import cases without also running every dex and pcode case.
+    Jni,
 }
 
 impl Frontend {
-    pub const ALL: &'static [Frontend] =
-        &[Frontend::Dex, Frontend::Jvm, Frontend::Pcode, Frontend::Lua];
+    pub const ALL: &'static [Frontend] = &[
+        Frontend::Dex,
+        Frontend::Jvm,
+        Frontend::Pcode,
+        Frontend::Lua,
+        Frontend::Jni,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -62,6 +80,7 @@ impl Frontend {
             Frontend::Jvm => "jvm",
             Frontend::Pcode => "pcode",
             Frontend::Lua => "lua",
+            Frontend::Jni => "jni",
         }
     }
 }
@@ -75,7 +94,10 @@ impl FromStr for Frontend {
             "jvm" => Ok(Frontend::Jvm),
             "pcode" => Ok(Frontend::Pcode),
             "lua" => Ok(Frontend::Lua),
-            other => bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, lua)"),
+            "jni" => Ok(Frontend::Jni),
+            other => {
+                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, lua, jni)")
+            }
         }
     }
 }
@@ -106,6 +128,7 @@ pub fn discover(tests_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = discover_dex(&tests_dir.join("java"))?;
     cases.extend(discover_pcode(&tests_dir.join("c"))?);
     cases.extend(discover_lua(&tests_dir.join("lua"))?);
+    cases.extend(discover_jni(&tests_dir.join("jni"))?);
     cases.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(cases)
 }
@@ -209,6 +232,45 @@ fn discover_lua(lua_dir: &Path) -> Result<Vec<TestCase>> {
     Ok(cases)
 }
 
+/// Pair each `Foo.java` with its sibling `Foo.c` -- the shared library implementing
+/// its `native` methods -- and its kebab-cased `foo.json`. All three must be present:
+/// a case here is by construction about the boundary between the two artifacts, so a
+/// `.java` with no `.c` (or no config) is not a degenerate JNI case, it is not one at
+/// all. Cases report as `Jni:Foo`.
+fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
+    let mut cases = Vec::new();
+    if !jni_dir.is_dir() {
+        return Ok(cases);
+    }
+    for entry in read_dir_sorted(jni_dir)? {
+        if entry.extension().and_then(|e| e.to_str()) != Some("java") {
+            continue;
+        }
+        let stem = file_stem(&entry)?;
+        let native = jni_dir.join(format!("{stem}.c"));
+        if !native.is_file() {
+            continue;
+        }
+        // Prefer a JSON5 config (it can carry inline comments), as the dex cases do.
+        let kebab = to_kebab_case(&stem);
+        let json5 = jni_dir.join(format!("{kebab}.json5"));
+        let json = jni_dir.join(format!("{kebab}.json"));
+        let config = if json5.is_file() { json5 } else { json };
+        if !config.is_file() {
+            continue;
+        }
+        cases.push(TestCase {
+            name: format!("Jni:{stem}"),
+            kind: Kind::Jni {
+                java: absolute(&entry)?,
+                native: absolute(&native)?,
+                config: absolute(&config)?,
+            },
+        });
+    }
+    Ok(cases)
+}
+
 fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = std::fs::read_dir(dir)
         .with_context(|| format!("failed to read {}", dir.display()))?
@@ -258,9 +320,15 @@ mod tests {
         assert_eq!("pcode".parse::<Frontend>().unwrap(), Frontend::Pcode);
         assert_eq!("jvm".parse::<Frontend>().unwrap(), Frontend::Jvm);
         assert_eq!("dex".parse::<Frontend>().unwrap(), Frontend::Dex);
+        assert_eq!("jni".parse::<Frontend>().unwrap(), Frontend::Jni);
         // Tolerate stray whitespace/case from a comma-separated list.
         assert_eq!(" Pcode ".parse::<Frontend>().unwrap(), Frontend::Pcode);
         assert!("bogus".parse::<Frontend>().is_err());
+        // Every variant round-trips through its own name, so `--frontend <x>`
+        // accepts anything the report prints.
+        for frontend in Frontend::ALL {
+            assert_eq!(frontend.as_str().parse::<Frontend>().unwrap(), *frontend);
+        }
     }
 
     #[test]

@@ -10,7 +10,8 @@ use source_info::FileSpanId;
 use crate::error::{Error, ErrorContext};
 use crate::facts::parquet;
 use crate::facts::{
-    FlowEdge, FlowVariable, FormalIndex, FormalType, Function, FunctionId, InsnId, Path, TaintState,
+    FlowEdge, FlowVariable, FormalIndex, FormalType, Function, FunctionId, ImportId, InsnId, Path,
+    TaintState,
 };
 use crate::query_engine::QueryEndpoint;
 
@@ -151,9 +152,34 @@ pub mod taint_edge {
 
 pub mod index_source_map {
     use super::*;
-    pub type Record = (FunctionId, InsnId, FileSpanId);
-    pub const COLUMNS: [&str; 3] = ["func_id", "insn_id", "source_span_id"];
+    /// Where an indexed instruction came from in its artifact's source.
+    ///
+    /// The [`FileSpanId`] is only meaningful *inside* the import named by the [`ImportId`]:
+    /// each import has its own source-info database and numbers its spans from zero, while
+    /// function and instruction ids are project-global. A span read against the wrong
+    /// import's database still resolves -- to an unrelated line in an unrelated artifact --
+    /// so the two travel together and are joined together (see [`import_id`]).
+    pub type Record = (FunctionId, InsnId, FileSpanId, ImportId);
+    pub const COLUMNS: [&str; 4] = ["func_id", "insn_id", "source_span_id", "import_id"];
     pub const FILENAME: &str = "index_source_map.parquet";
+    save_load!();
+}
+
+pub mod import_id {
+    use super::*;
+    /// The artifact import each [`ImportId`] in [`index_source_map`] stands for, by the name
+    /// it has in the store, in the order `ctadl index` walked them.
+    ///
+    /// Recorded rather than recomputed from the project config, so a project whose import
+    /// list changed after it was indexed cannot silently shift every span onto the wrong
+    /// artifact: the index says what it was built from.
+    ///
+    /// A plain `String` rather than the interned `Str` every other name column uses: there is
+    /// one row per import, so interning buys nothing, and `ctadl inspect` prints the name
+    /// instead of the opaque intern id.
+    pub type Record = (ImportId, String);
+    pub const COLUMNS: [&str; 2] = ["id", "name"];
+    pub const FILENAME: &str = "import_id.parquet";
     save_load!();
 }
 

@@ -549,6 +549,7 @@ impl_encode_newtype!(facts::Function, Str, GenericStringArray<i64>);
 impl_encode_newtype!(facts::Label, Str, GenericStringArray<i64>);
 impl_encode_newtype!(facts::FormalIndex, i16, Int16Array);
 impl_encode_newtype!(source_info::FileSpanId, u32, UInt32Array);
+impl_encode_newtype!(facts::ImportId, u32, UInt32Array);
 
 macro_rules! impl_encode_newtype_field {
     ($newty:path, $newcon:path, $rustty:ty, $fld:ident, $parquetty:ty) => {

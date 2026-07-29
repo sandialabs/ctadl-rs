@@ -225,6 +225,15 @@ pub struct IndexArgs {
     #[arg(long)]
     pub no_default_models: bool,
 
+    /// Do not link Java `native` methods to their native implementations.
+    ///
+    /// When a Java/Dex artifact is co-indexed with native code, CTADL joins each `native` method
+    /// to the `Java_…` symbol implementing it, mapping arguments across the JNI ABI's two-slot
+    /// shift so taint flows both ways. Pass this to reproduce the pre-bridge behaviour, or to
+    /// measure what the bridge contributes. See `docs/jni.md`.
+    #[arg(long)]
+    pub no_jni_bridge: bool,
+
     /// Call resolution strategy: cha, hi, mixed
     #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
     pub strategy: CallResolutionStrategy,
@@ -293,6 +302,11 @@ pub struct GoArgs {
     /// See `ctadl index --help`.
     #[arg(long)]
     pub no_default_models: bool,
+
+    /// Do not link Java `native` methods to their native implementations.
+    /// See `ctadl index --help`.
+    #[arg(long)]
+    pub no_jni_bridge: bool,
 
     /// One or more artifacts to import in this one-shot flow
     #[arg(required = true)]
@@ -416,6 +430,7 @@ fn main() -> anyhow::Result<()> {
                 summary: vec![],
                 models: args.models.clone(),
                 no_default_models: args.no_default_models,
+                no_jni_bridge: args.no_jni_bridge,
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
@@ -556,6 +571,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 summary: vec![],
                 models: args.models.clone(),
                 no_default_models: false,
+                no_jni_bridge: false,
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
@@ -668,6 +684,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         &args.summary,
         &args.models,
         args.no_default_models,
+        args.no_jni_bridge,
         args.strategy,
         args.prune_unreachable_cfg_nodes.unwrap_or(true),
         args.alias_rule.unwrap_or(true),
