@@ -3,14 +3,15 @@
 BLUF: Overhaul the model matching so that it is done on demand, as we load IR, and stored into its
 own datastructure that is generated into facts during a new, second phase inside codegen.
 
-We use the bridging-models-design.md as the concrete model_generator syntax to specify bridging models.
+We use the bridging-models-design.md as the concrete model_generator syntax to specify bridging
+models. Also include its section 2 and section 4.4 as corrected for emission semantics.
 
 Design principles: all model matching is done on the VMT in the IR, irrespective of (and before)
 codegen.
 
 The core thing we add is a new struct `ProgramModelMatches`. As we stream IR, we populate a
-persistent `ProgramModelMatches`, explained next. It gets codegen'd after all the IR. It stores the
-exact information about matched models:
+`ProgramModelMatches` that is shared across the streaming, explained next. It gets codegen'd after
+all the IR. It stores the exact information about matched models:
 
 - a `propagations` field to express propagation models, their associated access paths, etc. Codegen
   can use this directly to generate code and record the relevant access paths. The "propagations"
@@ -28,10 +29,15 @@ exact information about matched models:
   codegen them directly. Bridging models don't need to be optimized, like real IR code, either. They
   should faithfully represent the model the user chose.
 
+As we stream IR, we compute matches for any applicable models.
+
 What stays the same:
 
 - Matching is done against the VirtualMethodTable (VMT) for each language. This has the appropriate
   information and language-specific metadata needed for matching.
+
+- We keep one matcher implementation for `where` clauses. You can share the ProgramMatchIndex
+  extraction design.
 
 The codegen is now split into two phases; the first is what it does today, and the second is
 populating facts for all the models:
@@ -41,9 +47,10 @@ populating facts for all the models:
 
 - The `access_paths` field gets included the initial indexer paths.
 
-- The bridging model paths are individually added to the indexer paths. At this time we can compose
-  the from/to paths and add them to the indexer paths. If a bridge model goes from "Argument(0).foo"
-  to "Argument(3).bar" then we can add the access path ".foo.bar".
+- The bridging model paths are individually added to the indexer paths. This is not a no-op, because
+  bridging model paths can name fields that exist nowhere else in the program or in summaries. Any
+  data flows that require composed paths can be added to `access_paths` if a user desires to recover
+  such flows.
 
 - The bridging models are also codegen'd directly into facts.
   - A fresh callsite is generated inside the "from" function so that assignments and the call to the
@@ -54,10 +61,12 @@ populating facts for all the models:
 - The new phase is important because it allows us to handle `AnyArgument` expansion, as by the time
   all the IR is codegen'd, we can consult the actual parameters and call sites.
 
+- phase 2 logs matched/paired counts per generator, unconditionally
+
 
 Some notes:
 
-- Matched/instantiated models are represented by the new `PrograModelMatches` struct, populated by
+- Matched/instantiated models are represented by the new `ProgramModelMatches` struct, populated by
   matching the `model_generator` specs against loaded IR. It represents an instantiation of all the
   model specs, specialized to the IR to index. We don't have to generate new functions or anything;
   we just lift the modeling concepts into first-class IR concepts.
@@ -65,14 +74,14 @@ Some notes:
 - The query continues to take a `--models` flag and does its own source/sink matching, issuing a
   single warning that query ignores propagation/bridging models if any were found.
 
-- The matched models stored in the VMT are stored in-memory only, because the IR is modified after
-  the index loads the artifacts from disk.
+- The matched models stored in the ProgramModelMatches are stored in-memory only
 
 - By default, any bridge model match that isn't unique, i.e., singleton x singleton, gets a warning.
-  The warning should specify that one can add "on-multiple-match: ignore" to silence the warning.
-  So, by default, it is on-multiple-match: warn. "error" can be used when the user knows this is
-  bad. Perhaps there's a better name for this? "cardinality" doesn't seem intuitive for users; is
-  there some precedent somewhere?
+  The warning should specify that one can add "on-ambiguous: ignore" to silence the warning.
+  So, by default, it is on-ambiguous: warn. "error" can be used when the user knows this is
+  bad.
+
+- For bridging models, Globals should be mapped unconditionally.
 
 Notes on incorporating existing designs:
 
@@ -84,12 +93,12 @@ Notes on incorporating existing designs:
     "to" side of a bridging model.
   - On the "from" side, on-unmatched: warn is the default
   - On the "to" side, on-unmatched: warn is the default
-  - If the "from" side doesn't match anything, then the "to" side isn't even attempted a match. So,
-    for example, if the from side has on-unmatched: ignore and it matches nothing, then the "to"
-    side won't warn even if there were no matches, because no match is attempted.
+  - If the "from" side doesn't match anything, then reporting whether the "to" side matched isn't
+    attempted. So, for example, if the from side has on-unmatched: ignore and it matches nothing,
+    then the "to" side won't warn even if there were no matches, because no reporting is attempted.
   - If the "from" side matches but the "to" side matches nothing, then by default a warning should
     be produced. In other words, the attempt to match the "to" side is conditional on the "from"
     side matching something.
+  - The on-unmatched means "not matched anywhere." it is not calculated independently per import.
 
-- `forward_self` and `forward_call` are special cases of bridging models, so they should be deleted
-  in favor of the bridging models.
+- `forward_call` is a special cases of bridging models, so delete it.
