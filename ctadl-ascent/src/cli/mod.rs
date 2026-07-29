@@ -74,6 +74,9 @@ pub fn index(
     let mut jni_observer = jni::JniObserver::new();
     for import in project.iter_imports() {
         let import = import?;
+        // Everything codegen records from here to the next import belongs to this one. Source
+        // spans are per-import indices, so this is what keeps them resolvable afterwards.
+        source_info.begin_import(&import.name);
         let mut program_info = load_program_info_without_source_info(&import)?;
         log::info!(
             "[mem cp] loaded IR program (before SSA/codegen): {:.1} MB",
@@ -876,6 +879,7 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
         paths,
         taint,
         index_source_map,
+        import_id,
         function_id,
         external_function
     );

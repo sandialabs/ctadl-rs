@@ -800,6 +800,23 @@ impl InsnId {
     }
 }
 
+/// Which artifact import an indexed instruction came from.
+///
+/// A project indexes several imports into *one* fact base: function and instruction ids are
+/// project-global, interned across every import. Source spans are not. A
+/// [`source_info::FileSpanId`] is an index into the source-info database of the import the
+/// instruction was codegen'd from, so the same number denotes a different line in every other
+/// import. This id says which database to read it in; without it a span resolves everywhere and
+/// means nothing anywhere. See [`schema::index_source_map`](crate::facts::schema::index_source_map).
+///
+/// The value is a position in the index-time import list, and
+/// [`schema::import_id`](crate::facts::schema::import_id) records the name it stood for.
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, Default,
+)]
+#[repr(transparent)]
+pub struct ImportId(pub u32);
+
 /// A variable with metadata that relates it to functions and call sites
 ///
 /// Flow variables are crafted to be 8 bytes. There are four variants, requiring 2 bits to

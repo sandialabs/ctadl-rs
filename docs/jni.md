@@ -106,6 +106,30 @@ work.
 
 ---
 
+## Reading the results
+
+A bridged project is the ordinary multi-import case, and its SARIF locates every
+result in the artifact that result is actually in: the Java half by byte offset
+into the `.dex`/`.jar`, the native half by instruction address into the shared
+library. Nothing is reported twice, and a location never names the other
+artifact.
+
+This works because `ctadl index` records, per instruction, which import its
+source span came from. Span ids are *per-import* indices — each artifact's
+source-info database numbers its spans from zero, while function and instruction
+ids are project-global — so a span read against the wrong import's database still
+resolves, to an unrelated line in an unrelated file. That is what used to happen:
+every result was rendered once per import, and a Java finding reappeared carrying
+an address in the `.so`.
+
+A note on what the native half contributes: CTADL reports a tainted *instruction*
+at a call whose argument is tainted, so native code shows up in the log where it
+passes tainted data to a function. A native body that only assigns (`g = data;`)
+carries the taint just as far — the flow is there and crosses back to Java — but
+has no call site to report it at.
+
+---
+
 ## Diagnostics
 
 The bridge warns, at `warn` level, on the two situations it cannot resolve
@@ -147,13 +171,11 @@ contributes — pass `--no-jni-bridge` to `ctadl index` or `ctadl go`.
   through two Java frontends at once (a Dex and a JVM import of the same class),
   the first observation's slot model is used. The two agree except on
   `long`/`double` parameters.
-- **SARIF for a multi-import project repeats each result.** Not a property of the
-  bridge, but you will meet it as soon as you use one: the formatter resolves each
-  result's source span against *every* import's source-info database in turn, and
-  those span ids are per-import indices, so a finding in the Java half is emitted
-  a second time carrying an unrelated address in the shared library. The dataflow
-  is right; only the extra rendering is wrong. Read the copy whose
-  `artifactLocation` names the artifact the finding is actually in.
+- **An index written before this feature cannot be queried.** The index records
+  which import each source span belongs to, without which a multi-import project's
+  results could not be located (see [Reading the
+  results](#reading-the-results)). That is an index format change, so `ctadl
+  query` on an older index says so and asks for a re-`index`.
 
 ---
 

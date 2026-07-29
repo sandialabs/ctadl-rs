@@ -116,8 +116,9 @@ the strict check runs on Linux/CI.
    `Java_…` names. Declare the JNI types locally (`typedef void *jstring;` and
    friends) rather than including `<jni.h>`: the flake ships no NDK, and only the
    arity and the dataflow shape matter.
-2. Write `tests/jni/foo.json` exactly as a Java/DEX config. Every line number in
-   it refers to the **Java** source.
+2. Write `tests/jni/foo.json` exactly as a Java/DEX config. `expected_lines` and
+   `unexpected_lines` there refer to the **Java** source; the optional
+   `expected_native_lines` refers to the **C** source (see below).
 
 **Pass criterion (JNI):** the DEX criterion above — a code flow connecting a
 source to a sink, plus `expected_lines` and `unexpected_lines` through the dex
@@ -125,13 +126,20 @@ linemap — with one difference: `unexpected_lines` is checked against the lines
 code flows actually visited, not the wider set that includes the machine profile.
 For these cases the connected flow *is* the assertion that the bridge fired, since
 the Java half alone cannot carry the taint from the source to the sink. There is
-no macOS self-skip: the criterion is on the Java side and is satisfied on Darwin
+no macOS self-skip: every criterion, native lines included, is satisfied on Darwin
 today.
 
-Nothing is asserted about native source lines. SARIF for a multi-import project
-currently renders every result once per import, so a Java result reappears
-carrying an unrelated address in the shared library; asserting on those addresses
-would pin that defect rather than the bridge.
+`expected_native_lines` is the same known-answer claim on the far side of the
+boundary: the addresses reported in the shared library are mapped back with
+`addr2line` (exactly as a pcode case's are) and must cover every line listed. It
+says the taint is where it should be *in the artifact it should be in*, which the
+Java-side claims cannot: those hold as soon as a flow exists at all.
+
+Note what is nameable there. CTADL reports a tainted **instruction** at a call
+whose argument is tainted, so only a native *call site* can appear. A body that
+writes the tainted value straight into a global carries the flow just as well but
+contributes no located result, which is why both cases' C halves pass the value
+through a small `keep()` helper: the call is the line the case asserts on.
 
 Shape the case so no per-function propagation model could fake it. `JniFlow` is
 the worked example: the taint enters one native function, survives in a native

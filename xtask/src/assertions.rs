@@ -29,9 +29,26 @@ pub fn read_expected_lines(config: &Path) -> Result<Vec<i64>> {
 /// written, say. Without it such a case can only assert the lines that *are* tainted,
 /// and would keep passing if the untainted line later became tainted.
 pub fn read_unexpected_lines(config: &Path) -> Result<Vec<i64>> {
+    read_optional_lines(config, "unexpected_lines")
+}
+
+/// Read the optional `expected_native_lines` array from a JNI case config: lines of the
+/// case's *C* source that the flow must reach on the far side of the JNI boundary.
+///
+/// Separate from `expected_lines`, which for these cases names lines of the Java source.
+/// The two halves are different files mapped back by different means -- Java through the dex
+/// linemap, native through `addr2line` over the shared library -- so they cannot share a key.
+/// A missing key means the case claims nothing about the native side.
+pub fn read_expected_native_lines(config: &Path) -> Result<Vec<i64>> {
+    read_optional_lines(config, "expected_native_lines")
+}
+
+/// Read an optional array of source line numbers from a test config, treating a missing key
+/// as an empty claim.
+fn read_optional_lines(config: &Path, key: &str) -> Result<Vec<i64>> {
     let value = read_config(config)?;
-    match value.get("unexpected_lines") {
-        Some(array) => line_array(array, "unexpected_lines", config),
+    match value.get(key) {
+        Some(array) => line_array(array, key, config),
         None => Ok(Vec::new()),
     }
 }

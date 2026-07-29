@@ -5,6 +5,9 @@
     37,
     38
   ],
+  "expected_native_lines": [
+    29
+  ],
   "model_generators": [
     {
       "find": "methods",
