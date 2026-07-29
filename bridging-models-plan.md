@@ -1,35 +1,48 @@
 # Bridging models: connecting callsites in one language to implementations in another  - DO-NOT-MERGE
 
+**Shape of the work.** This is *one* change, sequenced into four steps below plus schema/docs and
+tests. The steps exist so the work has a defined order and each has its own tests.
+
 ## Context
 
 CTADL can index several artifacts into one project (`AnalysisProject::iter_imports`,
-`project.rs:449`), and `cli::index` (`cli/mod.rs:52-139`) already codegens all of them into a
-*single* fact base with a *single* `IdMap`. What it cannot do is connect them. An Android app's
-`native` method is a bodyless extern in the Dex program; its implementation is a `Java_…` symbol
-in the pcode program. Both are functions in `facts.call`'s universe, but no edge joins them, so
-taint entering the native method vanishes and taint produced by the implementation never returns.
+`project.rs:482`), and `cli::index` (`cli/mod.rs:56-148`) already codegens all of them into a
+*single* fact base with a *single* `IdMap`. What it cannot do is connect them *by name mismatch*.
+An Android app's `native` method is a bodyless extern in the Dex program; its implementation is a
+`Java_…` symbol in the pcode program. Both are functions in `facts.call`'s universe, but no edge
+joins them, so taint entering the native method vanishes and taint produced by the implementation
+never returns.
 
 A **bridging model** is the model-generator construct that adds that edge: it pins a set of
 *callsites/callees* on one side, a set of *implementations* on the other, and describes how
 arguments and returns correspond.
 
-Three things about the current code shape the design:
+Four things about the current code shape the design:
 
-1. **The hook already exists, and it is hardcoded.** `models/codegen.rs::load_models` is
+1. **Same-named functions across imports already unify.** `codegen` interns every function through
+   `source_info.sites.get_or_add_function` (`codegen/mod.rs:231`, `facts.rs:1454`), which is keyed
+   on the *name string*. Two imports that spell a function identically therefore share one
+   `FunctionId` with no help from anyone, and taint already crosses. The bridge exists precisely
+   for the case where the two spellings differ — `Lcom/example/Crypto;->encrypt(…)` vs
+   `Java_com_example_Crypto_encrypt` — and, as §1 shows, for the argument shift that a name
+   coincidence would not fix anyway.
+2. **The hook already exists, and it is hardcoded.** `models/codegen.rs::load_models` is
    documented as the place for "models that bridge languages" (`codegen.rs:6-8`) and today
    contains exactly one, hand-written in Ascent: `AsyncTask.execute` → `doInBackground`. It
-   receives an immutable `&IdMap` and runs per import (`codegen/mod.rs:221-224`), which is
-   why nothing declarative can live there yet.
-2. **The schema already reserves the slot.** `call-model` /
-   `forward_call` (schema `:294-311`, `:371-373`) is "models a callsite by forwarding to another
-   function", with a `where` selecting the callee — a bridge is exactly this plus a port map and
-   a second program. It is unimplemented (`docs/model-generators.md:378-384`); the loader has no
-   `visit_forward_call` at all (`json.rs:2007-2029`).
-3. **The matcher is single-program.** `ModelGeneratorIngest::new` (`json.rs:218-328`) builds its
-   four match indexes from one `ProgramInfo`, and `cli::index` loads every model file once *per
-   import* (`cli/mod.rs:72-76`). A construct that must pin two sets of matches in two different
-   programs does not fit inside that loop. This is the central architectural problem, and most of
-   the work below is making room for it.
+   receives an immutable `&IdMap` and runs per import from `CodegenVisitor::finish_with_vmt`
+   (`codegen/mod.rs:219-224`), which is why nothing declarative can live there yet.
+3. **The schema already reserves the slot.** `call-model` / `forward_call` (schema `:296-313`,
+   `:373-375`) is "models a callsite by forwarding to another function", with a `where` selecting
+   the callee — a bridge is exactly this plus a port map and a second program. It is unimplemented
+   (`docs/model-generators.md:470-476`); the loader's `super_model` reads only `propagation`,
+   `sinks` and `sources` (`json.rs:2080-2101`) and has no `visit_forward_call` at all.
+4. **The matcher is single-program.** `ModelGeneratorIngest::new` (`json.rs:226-400`) builds its
+   four match indexes and its universe set from one `ProgramInfo` — now across *four* VMT arms
+   (Java, Native, Lua, and a name-only fallback) — and `cli::index` loads every model file once
+   *per import* (`cli/mod.rs:77-85`), on top of the per-import default file that
+   `try_load_default_models` selects by VMT (`models/mod.rs:79-95`). A construct that must pin two
+   sets of matches in two different programs does not fit inside that loop. This is the central
+   architectural problem, and most of the work below is making room for it.
 
 ---
 
@@ -40,11 +53,11 @@ Worth establishing first, because it constrains the syntax.
 The index engine turns a call into dataflow with two rules:
 
 ```
-// index_engine/mod.rs:1088-1093 — actual params bind caller vertices to call-arg pseudo-vars
+// index_engine/mod.rs:1088-1094 — actual params bind caller vertices to call-arg pseudo-vars
 assign_like(f, v, p, call_arg(insn,n), ∅),
 assign_like(f, call_arg(insn,n), ∅, v, p)   <-- actual_param(site, n, FlowVertex(v,p))
 
-// index_engine/mod.rs:1096-1102 — the callee's summary is instantiated at the site
+// index_engine/mod.rs:1096-1103 — the callee's summary is instantiated at the site
 assign_like(f, call_arg(insn,n1), p1, call_arg(insn,n2), p2) <--
     summary(tgt, n1, p1, n2, p2), call(f, insn, tgt)
 ```
@@ -58,9 +71,18 @@ per mapped port.** No new Ascent relation, no new rule. Two consequences:
   **The port map is not a refinement, it is the feature.**
 - **Caller-side access paths are free; callee-side paths are not.** `actual_param`'s vertex
   carries a `Path`, and those paths reach `program_paths` automatically
-  (`index_engine/mod.rs:1039`, `:851-861`). The call-arg side is pinned to `∅` by the rule above,
-  so a callee-side path (`"to": "Argument(0).stack.[1]"`) needs a different emission — a pair of
-  `facts.assign` rows plus registering the path in `facts.paths`. See §5.
+  (`index_engine/mod.rs:1040`, and `facts.paths` is folded in at `:851-862`). The call-arg side is
+  pinned to `∅` by the rule above, so a callee-side path (`"to": "Argument(0).stack.[1]"`) needs a
+  different emission — a pair of `facts.assign` rows plus registering the path in `facts.paths`.
+  See §3, Step 4.
+
+**Access paths are now one grammar.** Since `Canonicalize access path encoding (#85)`, model
+ports, `facts::Path` on disk, the IR `Display` impls and the test DSLs all parse and print through
+`ctadl-ir/src/mir/path_syntax.rs`. A bridge's port paths inherit this for free, including the
+distinction that matters most for the Lua shape below: `.[1]` is a real `PathSegment::Offset` (what
+pcode emits), `.\[1]` is a `Symbol` named `[1]` (what the Lua, dex, jvm and tree-sitter C frontends
+emit for a container element). Getting them backwards matches nothing rather than failing —
+`tests/port_semantics.rs` and `tests/tnt/port_*.tnt` exist for exactly this.
 
 **Where to attach.** Two modes, and the choice is the generator's `find`:
 
@@ -89,11 +111,17 @@ Two additions to the generator object and one to `model`.
 { "find": "methods", "in": { "language": "dex" }, "where": [ … ], "model": { … } }
 ```
 
-`in` takes `language` (an `ArtifactLanguage`, `project.rs:572-588`) and/or `import` (the import's
-`name`, `project.rs:104`); omitted means every program, which is today's behavior. It is worth
-having on its own — a model file is currently re-matched against every import with no way to say
-"these are libc models, only apply them to the binary" — and it is what makes the bridge read
-symmetrically.
+`in` takes `language` (an `ArtifactLanguage`, `project.rs:661-679` — `jvm`, `jar`, `dex`, `apk`,
+`c`, `lua`, `pcode`, `flowy`) and/or `import` (the import's `name`, `project.rs:137`); omitted
+means every program, which is today's behavior. It is worth having on its own — a `--models` file
+is currently re-matched against every import with no way to say "these are libc models, only apply
+them to the binary" — and it is what makes the bridge read symmetrically.
+
+Note the shipped defaults already solve *their* version of this problem a different way:
+`try_load_default_models` picks one file per import off the VMT variant (`models/mod.rs:79-95`).
+`in` is the user-facing equivalent for `--models` files, and the two should stay distinct — the VMT
+is the right key for "which built-in file", `in` is the right key for "which import did the user
+mean".
 
 ### 2b. `model.bridge` — the bridging model
 
@@ -124,14 +152,14 @@ symmetrically.
 Design notes on each key:
 
 - **`to` is a match block, not a scope.** It mirrors `forward_call`'s existing shape (a `where`
-  inside the model, `schema:303-309`), which is the precedent for "the second set of matches lives
+  inside the model, `schema:305-311`), which is the precedent for "the second set of matches lives
   in the model". Side A stays in the generator's own `find`/`where` so that everything already
   built keeps working on it verbatim: `in_function` for callsite mode, `any_of`/`not`,
   `qualified-id`, and the unknown-field/unknown-constraint hard errors.
 - **`arguments`** entries use the existing `port-spec` grammar (`Argument(n)`, `Return`, plus an
-  access path). Omitted entirely ⇒ identity mapping over the arity the two sides share, plus
-  `Return`. The globals pseudo-parameter (`GLOBALS_INDEX`) is *always* mapped and is not
-  user-visible; without it heap flows do not cross the bridge.
+  access path in the canonical grammar). Omitted entirely ⇒ identity mapping over the arity the
+  two sides share, plus `Return`. The globals pseudo-parameter (`GLOBALS_INDEX`) is *always*
+  mapped and is not user-visible; without it heap flows do not cross the bridge.
   `direction` is `in` | `out` | `both` (default `both`, matching how the engine treats ordinary
   calls — see the bidirectional rule in §1).
 - **`convention`** is the answer to "an APK has 200 native methods and you cannot hand-write 200
@@ -146,7 +174,7 @@ Design notes on each key:
   and **`on-unmatched`** (`error` default, `ignore`) exist because the failure mode here is
   invisible: a bridge that matches nothing produces an analysis with zero cross-language flows,
   which is indistinguishable from a clean app. Erroring by default matches the loader's existing
-  policy on unusable constraints (`json.rs:335-395`, `docs:123-136`). `on-unmatched: "ignore"` is
+  policy on unusable constraints (`json.rs:428-470`, `docs:127-155`). `on-unmatched: "ignore"` is
   what a family bridge needs, since most bodyless Dex methods are framework methods with no
   native implementation.
 
@@ -215,15 +243,21 @@ to, and the callee takes its arguments off an interpreter stack rather than posi
 }
 ```
 
-> There is **no Lua frontend in the tree** — `languages/tree_sitter` is C-only
-> (`tree_sitter/mod.rs:593`). This example specifies the shape the syntax must support; it is not
-> end-to-end testable today. The testable configurations are dex/jvm + pcode, and flowy + flowy.
+> Lua is now a first-class frontend (`languages/lua/mod.rs`, `ArtifactLanguage::Lua`,
+> `VirtualMethodTable::Lua`, `models/defaults/lua-index.jsonl`, `xtask` `Kind::Lua` /
+> `Frontend::Lua`), so side A of this example is real and matchable today — including the
+> externals column the Lua VMT carries for "called but never defined", which is exactly the shape
+> a bridge's side A wants (`json.rs:319-337`). Side B is the part that still needs a toolchain:
+> `ArtifactLanguage::C` is not importable (`cli::import` falls through to `unimplemented!()`,
+> `cli/mod.rs:34-47`), so a native implementation has to arrive through pcode/Ghidra. The
+> `.stack.[1]` above is an unescaped offset on purpose — that is what a native frontend emits; a
+> Lua-side `t[1]` would be the escaped `.\[1]` (§1).
 
 ---
 
-## 3. Architecture: four changes
+## 3. Architecture: four steps
 
-### Change 1 — parse bridge specs independently of any program
+### Step 1 — parse bridge specs independently of any program
 
 A bridge is the one model that cannot be resolved against a single `ProgramInfo`, so it must not
 be resolved inside `ModelGeneratorIngest`.
@@ -232,28 +266,46 @@ be resolved inside `ModelGeneratorIngest`.
   SideSpec, ports: PortMap, convention, cardinality, on_unmatched }`, parsed from JSON with no
   `ProgramInfo` in scope. `SideSpec` holds `{ scope: ProgramScope, find: FindMethod, where:
   Vec<serde_json::Value> }` — the constraints stay as raw JSON, to be handed back to the existing
-  evaluator in Change 3.
-- `ModelGeneratorIngest::visit_model` (`json.rs:2007-2029`) learns `bridge` and **skips** it: a
-  bridge emits no endpoint and no summary, so `endpoint_stats` must not record it (otherwise
-  every bridge trips `CTADL0004`). It still *shape-validates* it, so a typo fails at load.
-- `ModelsBatch` gains `bridges: Vec<BridgeSpec>`. Because `cli::index` loads each model file once
-  per import (`cli/mod.rs:72-76`), the same spec arrives N times; dedup by `(source, index)`.
+  evaluator in Step 3.
+- `ModelGeneratorIngest::visit_model` learns `bridge` and **skips** it: a bridge emits no endpoint
+  and no summary, so `endpoint_stats` (`json.rs:87`) must not record it (otherwise every bridge
+  trips `CTADL0004`). It still *shape-validates* it, so a typo fails at load.
+- **Unknown keys are not free here.** The loader's unknown-field checking is per-*constraint* and
+  per-*port* only (`check_constraint_keys`, `json.rs:428-470`). Nothing walks the keys of the
+  generator object or of the `model` object: `super_model_generator` reads `find`/`where`/`model`
+  (`json.rs:1889-1898`) and `super_model` reads `propagation`/`sinks`/`sources`
+  (`json.rs:2080-2101`), and everything else is silently ignored. There is no runtime schema
+  validation — `ctadl-model-generator.schema.json` is editor-time only. So `in`, `bridge`, and
+  every key inside `bridge` need an explicit key check in the same style as
+  `check_constraint_keys`, and a test that a misspelling is a hard error. (Adding a generic
+  generator-level key check would be a strictly better fix, but it will reject files that pass
+  today; treat it as a separate decision.)
+- `ModelsBatch` (`models/mod.rs:249`) gains `bridges: Vec<BridgeSpec>`, carried through
+  `union_with` (`:266`). Because `cli::index` loads each model file once per import
+  (`cli/mod.rs:82-85`), the same spec arrives N times; dedup by `(source, index)`.
 - **Better: hoist the parse out of the loop.** Since bridge parsing needs no program, scan the
   `--models` files once *before* the import loop. That both removes the dedup and lets `index`
-  know up front whether any bridge exists — which Change 2 needs.
+  know up front whether any bridge exists — which Step 2 needs.
 
-### Change 2 — make the match index a reusable, retained value
+### Step 2 — make the match index a reusable, retained value
 
-Today `ModelGeneratorIngest::new` (`json.rs:218-328`) builds `program_method_names`,
+Today `ModelGeneratorIngest::new` (`json.rs:226-400`) builds `program_method_names`,
 `…_parents`, `…_signatures`, `…_qualified_ids`, `program_functions` and `universe` from a
 borrowed `ProgramInfo`, and throws them away when the import's IR is dropped by `codegen_program`
-(`cli/mod.rs:93`).
+(`cli/mod.rs:102`).
 
 - Extract them into an owned `ProgramMatchIndex { scope: ProgramScope, vmt: VirtualMethodTable,
-  names, parents, signatures, qualified_ids, … }` and have `ModelGeneratorIngest` *borrow* one
-  instead of constructing its own. One struct, one construction path, two users — this is what
-  keeps bridge matching and ordinary matching from drifting apart. It also stops rebuilding those
-  maps once per model file per import, which is a small free win.
+  names, parents, signatures, qualified_ids, functions, universe }` and have
+  `ModelGeneratorIngest` *borrow* one instead of constructing its own. One struct, one
+  construction path, two users — this is what keeps bridge matching and ordinary matching from
+  drifting apart.
+- This is now a bigger and better-motivated extraction than when this plan was written: `new` has
+  four VMT arms (Java `:233`, Native `:261`, Lua `:285` including its externals, name-only
+  fallback `:339`) and the `universe` match `:360-391`, and every one of them encodes a matching
+  rule (bare-name vs qualified-id keying) that a second implementation would get subtly wrong.
+- It also stops rebuilding those maps once per model file per import, which is a small free win —
+  and per import there is now always at least one file, since `try_load_default_models` runs on
+  every non-flowy import.
 - `cli::index` retains a `Vec<ProgramMatchIndex>` across the import loop, built before
   `codegen_program` consumes the IR, **only when at least one bridge spec was loaded**.
 - *Memory.* The maps own their strings, so this costs roughly one copy of the VMT's name data per
@@ -261,24 +313,24 @@ borrowed `ProgramInfo`, and throws them away when the import's IR is dropped by 
   measures (`[mem cp]` logs, `index_engine::phys_footprint_mb`) — add a checkpoint after the loop
   and quote a real number for an APK + `.so` before calling it settled.
 
-### Change 3 — evaluate bridges after the import loop
+### Step 3 — evaluate bridges after the import loop
 
 - New `models::bridge::apply_bridges(&[BridgeSpec], &[ProgramMatchIndex], &mut IndexFacts, &mut
   IndexSourceInfo) -> Result<BridgeReport, Error>`, called in `cli::index` after the loop and
-  before `facts.try_save` (`cli/mod.rs:101-109`). This is the timing fix: at that point every
+  before `facts.try_save` (`cli/mod.rs:117-118`). This is the timing fix: at that point every
   program's functions are in `source_info.sites`, so both sides resolve. Running per-import
   cannot work — the second program's functions do not exist in the `IdMap` yet, and the failure
   is a silent `continue`, exactly as `codegen_summary` already does for unknown functions
-  (`codegen/models.rs:37-42`).
+  (`codegen/models.rs:37-43`).
 - Each side is matched by **reusing the existing evaluator**: build a synthetic one-generator
   value `{"find": …, "where": …}` and run `ModelGeneratorIngest` over the `ProgramMatchIndex`es
   whose scope the side's `in` admits. Do not write a second implementation of `where` — that is
-  how `signature_match` would end up meaning two different things.
-- Pair the two result sets per `cardinality` / `convention`, then emit (Change 4). Report
-  per-spec counts; violations of `cardinality`, and empty matches under `on-unmatched: "error"`,
-  are hard errors carrying the `(file, generator index)` the loader already uses for messages.
+  how `signature_match` would end up meaning two different things across four VMT arms.
+- Pair the two result sets per `cardinality` / `convention`, then emit (Step 4). Report per-spec
+  counts; violations of `cardinality`, and empty matches under `on-unmatched: "error"`, are hard
+  errors carrying the `(file, generator index)` the loader already uses for messages.
 
-### Change 4 — emit the facts
+### Step 4 — emit the facts
 
 For each pair `(a: FunctionId, b: FunctionId)` and mode:
 
@@ -290,13 +342,13 @@ facts.call.push((site.into(), b));
 for (from, to) in ports {                          // plus the implicit globals pair
     facts.actual_param.push((site.into(), to.index, FlowVertex(formal(from.index), from.path)));
     facts.formal_param.push((a, formal(from.index), ByRef));   // as codegen_summary does
-    facts.formal_param.push((b, formal(to.index),   ByRef));   // (models.rs:78-92)
-    if !from.path.is_empty() { facts.paths.push(from.path); }  // -> program_paths (:851-861)
+    facts.formal_param.push((b, formal(to.index),   ByRef));   // (codegen/models.rs:78-92)
+    if !from.path.is_empty() { facts.paths.push(from.path); }  // -> program_paths (:851-862)
 }
 ```
 
 The `formal_param` rows matter: the stub may declare fewer parameters than the map names, and
-`locals` is seeded from `formal_param` (`:1056-1059`). This mirrors what summary codegen already
+`locals` is seeded from `formal_param` (`:1056-1060`). This mirrors what summary codegen already
 does for the same reason.
 
 **`find: callsites` (attach at each call).** Same, except the from-vertices come from the
@@ -308,20 +360,21 @@ whose call-arg side is pinned to `∅`. Emit the pair directly instead —
 `facts.assign.push((site, FlowVertex(call_arg(insn,n), to_path), FlowVertex(from_var, from_path)))`
 and its converse for `direction: both` — and push `to_path` into `facts.paths`. Keep this to
 literal model paths: `program_paths` feeds a one-level concat with `model_paths`
-(`:1052-1053`), and the comment at `:915-918` records what happens when that set is inflated.
+(`:1052-1054`), and the comment at `index_engine/mod.rs:916-919` records what happens when that
+set is inflated.
 
 **Source attribution.** A synthetic site has no `source_map` entry
-(`source_info.rs:37-39`). Confirm the SARIF formatter renders a step with no span rather than
+(`source_info.rs:38-41`). Confirm the SARIF formatter renders a step with no span rather than
 panicking; if it does not, map the synthetic site to the span of the stub or of the original call.
 
 ---
 
-## 4. Schema changes
+## 4. Schema and docs changes
 
 In `ctadl-model-generator.schema.json`:
 
 1. New `$defs/program-scope`: `{ "language": enum(ArtifactLanguage), "import": string }`,
-   `additionalProperties: false`.
+   `additionalProperties: false`. The enum must include `lua`.
 2. New `$defs/port-map`: `{ "from": port-spec, "to": port-spec, "direction": enum }`, both ports
    required.
 3. New `$defs/bridge-model`: `to` (required: `{ in?, where }`), `arguments`, `convention`,
@@ -333,33 +386,42 @@ In `ctadl-model-generator.schema.json`:
    in is a one-line desugaring and `forward_self` (which selects its target per *receiver class*,
    not per program) is the only genuinely separate construct left.
 
-Every branch already sets `additionalProperties: false`, and the loader hard-errors on unknown
-fields (`json.rs:353-395`), so mis-spelled bridge keys fail in the editor and at load without
-extra work.
+Every branch sets `additionalProperties: false`, so a mis-spelled bridge key is flagged in an
+editor wired to the `$schema` URL. **That is the only place it is caught unless Step 1 adds the
+key checks** — the schema is not evaluated at load time (see Step 1).
+
+In `docs/model-generators.md`: `bridge` needs a §7 subsection alongside `forward_call`
+(`:470-484`), a row in the §9 table (`:536-546`), and — because the "what's actually wired up"
+note at `:159-164` enumerates what the loader consumes — an update there and in the `find`/`model`
+prose at `:156-158`.
 
 ---
 
 ## 5. What this makes possible, and what it does not
 
 **Retires a hack.** `models/codegen.rs`'s hand-written `AsyncTask.execute` → `doInBackground`
-Ascent rule is the only bridge in the tree. It is `forward_self`-shaped, so it is not
-*directly* expressible as a two-program `bridge`, but once the machinery exists the hardcoded
-rule should be re-expressed declaratively and the hook reduced to running models. Track it; do
-not do it in the same change.
+Ascent rule is the only bridge in the tree, and the declarative `forward_self` line that would
+replace it is still inert in the shipped defaults
+(`models/defaults/java-index.jsonl:56`). It is `forward_self`-shaped, so it is not *directly*
+expressible as a two-program `bridge`, but once the machinery exists the hardcoded rule should be
+re-expressed declaratively and the hook reduced to running models. Track it; do not do it in the
+same change.
 
 **Index-time only.** Bridges create `call` facts, which are consumed by the index fixpoint;
-`ctadl query --models` cannot act on them. This matches `propagation`, which is likewise
-index-time and likewise silently inert at query time. Document it in `docs:36-48` and the §9
+`ctadl query --models` cannot act on them (`cli::query` loads models per import at
+`cli/mod.rs:201-210`, after the index is fixed). This matches `propagation`, which is likewise
+index-time and likewise silently inert at query time. Document it in `docs:34-60` and the §9
 table rather than hard-erroring, since users pass one file to both phases — a deliberate
 exception to the fail-loud policy, for the same reason propagation already is one.
 
 **Argument-0 convention must be verified before writing any JNI expansion.** For a Dex *extern*
-(which is what a `native` method is — `parser.rs:1106-1108` returns no code, so `dex/mod.rs:190`
-never adds it as a defined method and it arrives via the extern path at `:383-421`), the
-generated `FunctionData.params` does **not** include a receiver, while the *callsite* inserts the
-receiver as actual argument 0 (`codegen/mod.rs:456-458`). If that asymmetry is real, `jni-instance`'s
-shift is off by one, and it may be a pre-existing bug affecting propagation models on extern
-instance methods too. Check it before encoding a convention on top of it:
+(which is what a `native` method is — `dex-reader/src/parser.rs:1106` returns no code, so
+`languages/dex/mod.rs:192` never adds it as a defined method and it arrives via the extern path at
+`:371-421`), the generated `FunctionData.params` is built from `method_parameters`, which does
+**not** include a receiver, while the *callsite* inserts the receiver as actual argument 0
+(`codegen/mod.rs:456-458`). If that asymmetry is real, `jni-instance`'s shift is off by one, and it
+may be a pre-existing bug affecting propagation models on extern instance methods too. Check it
+before encoding a convention on top of it:
 
 ```bash
 ctadl index <apk-project> && ctadl inspect …   # or CTADL_* trace on facts.actual_param
@@ -371,48 +433,61 @@ ctadl index <apk-project> && ctadl inspect …   # or CTADL_* trace on facts.act
 
 ## 6. Verification
 
-**Unit — `models/bridge.rs` tests.** Parse/validate: unknown key, missing `to`, `Argument(*)` in
+**Unit — `models/bridge.rs` tests.** Parse/validate: unknown key (at generator level, at `model`
+level, and inside `bridge` — all three are new checks per Step 1), missing `to`, `Argument(*)` in
 a port map (reject: a wildcard has no correspondent), `cardinality` violation, empty match under
 each `on-unmatched`. These need no program.
 
-**Unit — matching.** `tests/json_error_handling.rs` already has hand-built `native_program()`
-(`:262`) and `java_program()` (`:285`) fixtures; a bridge test needs two of them at once, so add
-a two-`ProgramMatchIndex` helper and assert the side-A/side-B sets and the resulting pairs
-directly, without touching `IndexFacts`.
+**Unit — matching.** `tests/json_error_handling.rs` has hand-built `native_program()` (`:255`),
+`java_program()` (`:279`) and `native_cpp_program()` (`:634`) fixtures and a `matched_functions`
+helper (`:309`); `tests/default_models.rs` adds `lua_program()` (`:116`) and a `program(vmt,
+names)` constructor (`:46`). A bridge test needs two fixtures at once, so add a
+two-`ProgramMatchIndex` helper and assert the side-A/side-B sets and the resulting pairs directly,
+without touching `IndexFacts`.
 
 **Unit — emission.** Given a pair and a port map, assert the exact `call` / `actual_param` /
 `formal_param` / `paths` rows, including the implicit globals pair and that the site id is
-fresh. This is the layer where the shift bug would show up.
+fresh. This is the layer where the shift bug would show up. `tests/models_loading.rs`'s
+`summary_paths_for` (`:316`) is the pattern to copy for asserting on emitted paths.
 
-**End-to-end — flowy.** The cheapest real test: two flowy imports in one project (flowy is
-already a first-class `ArtifactLanguage`, `cli/mod.rs:42`), a bridge model connecting a stub in
-artifact 1 to an implementation in artifact 2, and flowy's own `where flows [...]` /
-`where summaries [...]` assertions to check the flow arrives — including a `</-` negative case
-asserting no flow *without* the model. This exercises the whole path with no Android or Ghidra
-toolchain.
+**End-to-end — flowy, two imports.** The cheapest real test. Note the `.tnt` harness cannot
+express it: `flowy::check` (`codegen/flowy.rs:317`) compiles and indexes exactly one file. But
+`cli::index` already runs `flowy::index_check` for *every* flowy import in the project
+(`cli/mod.rs:132-137`), so a two-import flowy project works today through the `cli::import` +
+`AnalysisProject::try_create` route that `tests/port_semantics.rs:81-115` establishes. Give the
+two artifacts *deliberately different* function names — same-named functions already unify through
+the `IdMap` (Context, point 1), so a name collision would make the test pass without the bridge.
+Then use flowy's own `where flows [...]` / `where summaries [...]` assertions, including a `</-`
+negative case asserting no flow *without* the model. No Android or Ghidra toolchain.
 
-**End-to-end — the real thing.** A tiny JNI app: `.java` + `.c`, built to an APK/dex and an `.so`,
-imported as two artifacts, with a source in Java reaching a sink in C and back. This needs a new
-regression-case kind: `xtask/src/discovery.rs:20-27` models a case as exactly one source file
-plus a config (`Kind::Dex { java, config }`), so add `Kind::Bridged { java, c, config }` and the
-matching build/import steps. **This is the single largest piece of test work in the plan** and
-should be scoped explicitly rather than discovered late.
+**End-to-end — two real frontends.** A tiny JNI app: `.java` + `.c`, built to an APK/dex and an
+`.so`, imported as two artifacts, with a source in Java reaching a sink in C and back. **This is
+the single largest piece of test work in the plan** and should be scoped explicitly rather than
+discovered late. It needs a new regression-case kind, and the surface is wider than a new enum
+variant: `xtask/src/discovery.rs` models a case as one source file plus a config across four
+variants (`Kind`, `:21-31`), and each also appears in `Kind::frontend` (`:34-40`), the `Frontend`
+enum and its `ALL`/`as_str`/`FromStr` (`:47-80`), the toolchain gating in
+`xtask/src/regression.rs:416-418`, and the dispatch at `:521-524`. Every existing runner
+(`run_lua`, `:957`) builds a *single*-import project, so `Kind::Bridged` also needs the first
+two-import runner.
 
 **Regression.** `cargo test --workspace`, plus `cargo xtask regression` and `cargo xtask
-regression --frontend pcode` — Changes 1 and 2 touch the loader and the model-index construction
-that every shipped `default-index.jsonl` goes through, so the existing suites are the guard that
-no bridge-free run changed behavior. Confirm with the `[mem cp]` logs that retaining the match
-indexes did not move the indexing peak on a real APK.
+regression --frontend pcode` / `--frontend lua` — Steps 1 and 2 touch the loader and the
+model-index construction that every shipped `models/defaults/*.jsonl` goes through, and
+`tests/default_models.rs` (`every_shipped_default_file_parses`, `:207`) is the guard that none of
+them broke. Confirm with the `[mem cp]` logs that retaining the match indexes did not move the
+indexing peak on a real APK.
 
 ## 7. Alternatives considered
 
 - **Alias the two functions to one `FunctionId`** (make the Dex stub and the native symbol the
-  same node). Simplest possible bridge — no synthetic site, no port map — but it cannot express
-  the JNI ABI shift, it destroys per-language attribution in SARIF, and `FunctionId` identity is
-  baked into saved facts, so it is not reversible after indexing.
+  same node). This is nearly free — the `IdMap` already unifies by name, so it amounts to renaming
+  one side. But it cannot express the JNI ABI shift (which is the actual problem, §1), it destroys
+  per-language attribution in SARIF, and `FunctionId` identity is baked into saved facts, so it is
+  not reversible after indexing.
 - **Model the stub as an indirect call** (`callee_info` + `callee_resolvents`, the machinery at
-  `:1250-1263`). Heavier, needs a receiver vertex that does not exist, and still offers nowhere
-  to put the port map.
+  `index_engine/mod.rs:1182-1263`). Heavier, needs a receiver vertex that does not exist, and
+  still offers nowhere to put the port map.
 - **A new Ascent relation and rule for bridges** (`bridge_call(site, tgt, mapping)` with a
   mapping-aware summary-instantiation rule). Cleanest conceptually, and it would give callee-side
   paths for free — but the existing `call` + `actual_param` pair already expresses everything
