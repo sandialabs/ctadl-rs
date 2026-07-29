@@ -11,7 +11,7 @@ what it left, is what this revision is about.
 
 | | state |
 | --- | --- |
-| Fact-level shape of a bridge (§2) | **shipped and validated** — `call` + `actual_param`, fresh site, synthesized caller formals |
+| Fact-level shape of a bridge (§2) | **shipped and validated** — `call` + `actual_param`, fresh site, synthesized caller formals; callee-side formals (§2, consequence 4) are a pending change to `jni::emit_bridge` |
 | JNI linking, mangling, port map | **shipped**, automatic, `--no-jni-bridge` to disable |
 | Multi-import SARIF attribution | **shipped** — `index_source_map` gained an `import_id` column (`INDEX_FORMAT_VERSION` 3) |
 | Two-import end-to-end regression runner | **shipped** — `cargo xtask regression --frontend jni` |
@@ -117,14 +117,35 @@ consequences drive the rest of the design, the last three of which the implement
 3. **Sites must be fresh.** Call-argument pseudo-variables are keyed on the site id, so a bridge
    that reused an existing site's id would alias its argument *n* to that call's argument *n* — a
    spurious bidirectional flow between two unrelated arguments. Every bridge mints a new site id.
-4. **Formals are synthesized on the caller side only.** A bodyless stub has no `formal_param` rows
-   at all — the dex frontend sets parameters up only when it finds a code item — and the summary
-   rule joins on them, so the bridge emits them itself for every mapped port, exactly as
-   `codegen_summary` does for modelled functions. The *callee* side gets no synthesized rows: its
-   formals come from its own frontend, and inventing one would fabricate a parameter the
-   disassembler never recovered. When the callee's arity is short of what the port map needs —
-   Ghidra gives a function with no recovered prototype zero parameters — the right response is a
-   warning naming both functions and both arities, which is what ships.
+4. **Formals are synthesized on both sides.** A bodyless stub has no `formal_param` rows at all —
+   the dex frontend sets parameters up only when it finds a code item — and both the `locals`
+   seeding rule and the summary rule join on them, so the bridge emits them itself for every mapped
+   port, exactly as `codegen_summary` does for modelled functions.
+
+   The callee side gets the same treatment, and for the same reason. **The port map is the more
+   authoritative statement of the callee's ABI**, and the cases where the two disagree are exactly
+   the cases the author wrote the bridge for: Ghidra gives a function with no recovered prototype
+   zero parameters; a varargs or hand-written stub declares fewer parameters than it takes; a
+   symbol-only import has no body to recover anything from. Emitting the row asserts the parameter
+   the model names, so an argument that crosses the bridge lands in the callee's `Argument(n)`
+   whatever the disassembler recovered. The earlier position — that inventing a row fabricates a
+   parameter the disassembler never saw — traded a precise model for an imprecise frontend and lost
+   the argument silently, which is the worse of the two failures. A synthesized formal that nothing
+   in the body reads is inert: it produces a `locals` seed and no flow beyond it, which is
+   precisely the state that withholding the row already produces. Trust the model.
+
+   Only *positive* argument indices are ever actually missing. `codegen_program` emits the globals
+   and return formals for every function it visits, so those two are present on any callee the
+   frontend saw at all; the bridge pushes rows for every mapped port regardless, since a duplicate
+   row is free and the uniform loop is what keeps the two sides symmetric.
+
+   An arity mismatch is still worth reporting — as a *warning*, not as the reason a fact is
+   missing. It names both functions and both arities and tells the author that the callee's
+   recovered prototype disagrees with the model, which nearly always means something else needs
+   fixing too: a missing Ghidra prototype, a wrong port index, or a map written against a different
+   build. The taint edge is emitted either way, and the warning is what says how far it will
+   actually travel. (What ships in `jni::emit_bridge` today is the caller-side half plus this
+   warning; extending it to the callee side is the change this consequence calls for.)
 5. **Return and globals are ports like any other, and the return arity is asymmetric.** A Java
    function has return arity 2 (`-1` normal, `-2` exception); a native function has one. Only the
    normal return is mappable — a JNI implementation cannot throw into the second — so a port map's
@@ -473,17 +494,24 @@ facts.call.push((site.into(), b));
 for (from, to) in ports {                          // plus the implicit globals pair
     facts.actual_param.push((site.into(), to.index, FlowVertex(formal(from.index), from.path)));
     facts.formal_param.push((a, formal(from.index), ByRef));
+    facts.formal_param.push((b, formal(to.index), ByRef));
     // No `facts.paths` push: `program_paths(p) <-- actual_param(_, _, FlowVertex(_, p))`
     // already registers `from.path` (§2, consequence 2).
 }
 ```
 
-The `formal_param` rows matter: a stub may declare fewer parameters than the port map names, and the
-engine seeds its locals from formals. This mirrors what summary emission already does, for the same
-reason. Note there is **no** row for side B (§2, consequence 4) — check `b`'s arity against the
-highest mapped callee index instead and warn when it falls short, naming both functions and both
-numbers. That warning is the only signal a user gets that a stripped or prototype-less binary is
-quietly dropping arguments.
+The `formal_param` rows matter on **both** sides (§2, consequence 4): either function may declare
+fewer parameters than the port map names — a bodyless stub declares none, a prototype-less binary
+function declares none — and the engine seeds its locals from formals and joins the summary rule on
+them. This mirrors what summary emission already does, for the same reason, and it is why the loop
+above is symmetric.
+
+Synthesizing side B's formals does not make an incomplete prototype harmless, so still check `b`'s
+arity against the highest mapped callee index and warn when it falls short, naming both functions
+and both numbers. The difference is what the warning now means: the argument *is* delivered to
+`b`'s `Argument(n)`, but a body the disassembler never connected to that parameter will not carry
+it any further. The warning points at the prototype that needs recovering, rather than reporting a
+fact the bridge declined to emit.
 
 **`find: callsites` — attach at each call.** Identical, except the from-vertices come from the
 original site's existing actual parameters rather than from formals, and the site set is derived
@@ -575,7 +603,10 @@ analysis with fewer flows, not an error. `on-unmatched: "error"` by default, car
 and an unconditional per-spec count line (§4.3) are the mitigations; none of them catch a *wrong*
 pairing, only an absent one. The JNI experience says the count line is the one that actually gets
 read, and that the two conditions worth escalating to `warn` are an ambiguous match and a callee
-whose recovered arity is short of the port map.
+whose recovered arity is short of the port map. The second of those stays a warning and never
+becomes a dropped fact (§2, consequence 4): the bridge asserts the parameters the model names, and
+the warning tells the author the callee's prototype needs recovering before taint will travel past
+them.
 
 **A hand-written port map is frontend-specific** (§2.2). The same model file is silently wrong for
 the `.jar` build of an app whose `.apk` it was written against, wherever a wide parameter precedes a
@@ -610,9 +641,12 @@ can still change the design.
   resulting pairs directly, without touching the fact base.
 - **Emission.** Given a pair and a port map, assert the exact `call` / `actual_param` /
   `formal_param` rows — plus the `assign` rows for any callee-side path port — including the
-  implicit globals pair, that the site id is fresh, and that no `formal_param` row is emitted for
-  side B. Assert no redundant `facts.paths` rows: registration is the engine's job (§2). `languages/jni/tests.rs` is the model for this
-  layer; extend it rather than starting a new fixture style.
+  implicit globals pair, that the site id is fresh, and that a `formal_param` row is emitted on
+  *both* sides for every mapped port, including ports past the callee's recovered arity (§2,
+  consequence 4). Pair that with a case where the callee's arity is short: the rows are still
+  emitted and the warning still fires. Assert no redundant `facts.paths` rows: registration is the
+  engine's job (§2). `languages/jni/tests.rs` is the model for this layer; extend it rather than
+  starting a new fixture style.
 - **End-to-end, two flowy imports.** The cheapest real test, and it needs no Android or Ghidra
   toolchain. Give the two artifacts *deliberately different* function names — same-named functions
   already unify, so a name collision would make the test pass without the bridge — and assert both a
