@@ -83,12 +83,37 @@ consequences drive the rest of the design, the last three of which the implement
    regression case pins this: one native method called twice, taint in the argument the
    implementation returns in one call and in the argument it drops in the other, so an off-by-one
    flips both assertions at once.
-2. **Caller-side access paths are free; callee-side paths are not.** An `actual_param` vertex
-   carries a `Path`, and such paths reach the engine's path universe automatically. The
-   call-argument side is pinned to the empty path by the rule above, so a callee-side path
-   (`"to": "Argument(0).stack.[1]"`) must be emitted as an explicit assignment pair instead, with
-   the path registered separately. *Unvalidated:* every JNI port is an empty-path formal, so
-   nothing in the tree exercises this yet.
+2. **Model paths register on either side; what the callee side lacks is a fact shape to carry
+   them.** A model port's path is interned and registered no matter which side of the port it sits
+   on: `codegen_summary` resolves both ports through `build_ap_map`, and the index engine harvests
+   *both* path columns of every `summary` row into `model_paths`, which feeds `paths` and the
+   one-level concat against `program_paths` (`index_engine/mod.rs`). Caller-side vertices arrive the
+   same way — `program_paths(p) <-- actual_param(_, _, FlowVertex(_, p))` — as do both endpoints of
+   every `assign`. So there is no "register the path separately" step; a propagation writing
+   `Argument(0).stack.[1]` on either end already puts that path in the analysis path set.
+
+   The real constraint is structural, and it is about what an `actual_param` row can *say* — not
+   about a path being dropped. The rule expands one row into a bidirectional pair: for an actual
+   `x.p`, `call_arg(site, n) = x.p` together with `x.p = call_arg(site, n)`. The pseudo-variable
+   thereby stands for the argument *as a whole*, and every later rule that mentions `call_arg(site,
+   n)` relates back to the original actual vertex in both directions. Its empty path is what makes
+   it the whole vertex, not a truncation of one. Paths do reach the call-argument side at a site —
+   summary instantiation is exactly that, `assign_like(f, call_arg(i, n1), dst_path, call_arg(i,
+   n2), src_path)` — but they arrive from the callee's own summary.
+
+   What a port map saying `"to": "Argument(0).stack.[1]"` asserts is different: that the caller's
+   actual corresponds to a *sub-path* of the callee's parameter rather than to the parameter. An
+   `actual_param` row has no column for that. So a bridge writes the expansion out by hand (§4.4) —
+   the same assignment pair the rule would have generated, with `to_path` where the rule puts the
+   empty path — and gets to choose one direction or both while it is there, where `actual_param` is
+   unconditionally bidirectional.
+
+   One asymmetry does survive, and it is about which bucket a path lands in rather than whether it
+   lands. Summary-carried paths become `model_paths` and so concatenate with every program path;
+   a path introduced through `actual_param`, `assign`, or `facts.paths` becomes a `program_path` and
+   concatenates only with model paths. A callee-side path written on a `bridge` therefore composes
+   one level less than the same path written on a `propagation`. *Unvalidated:* every JNI port is an
+   empty-path formal, so nothing in the tree exercises the bridge side of this.
 3. **Sites must be fresh.** Call-argument pseudo-variables are keyed on the site id, so a bridge
    that reused an existing site's id would alias its argument *n* to that call's argument *n* — a
    spurious bidirectional flow between two unrelated arguments. Every bridge mints a new site id.
@@ -448,7 +473,8 @@ facts.call.push((site.into(), b));
 for (from, to) in ports {                          // plus the implicit globals pair
     facts.actual_param.push((site.into(), to.index, FlowVertex(formal(from.index), from.path)));
     facts.formal_param.push((a, formal(from.index), ByRef));
-    if !from.path.is_empty() { facts.paths.push(from.path); }
+    // No `facts.paths` push: `program_paths(p) <-- actual_param(_, _, FlowVertex(_, p))`
+    // already registers `from.path` (§2, consequence 2).
 }
 ```
 
@@ -463,12 +489,17 @@ quietly dropping arguments.
 original site's existing actual parameters rather than from formals, and the site set is derived
 from the call relation filtered by the caller match.
 
-**Callee-side access paths** cannot go through `actual_param`, whose call-argument side is pinned to
-the empty path (§2). Emit the assignment pair directly —
+**Callee-side access paths** cannot go through `actual_param`, which binds the call argument as a
+whole and has nowhere to name a sub-path of it (§2). Emit the pair its rule would have expanded to,
+with `to_path` in place of the empty path —
 `facts.assign.push((site, FlowVertex(call_arg(site, n), to_path), FlowVertex(from_var, from_path)))`
-and its converse when `direction: both` — and push `to_path` into the fact base's paths. Restrict
-this to *literal* model paths: the program path set feeds a one-level concatenation with model
-paths, and inflating it is costly.
+and its converse when `direction: both`. No accompanying `facts.paths` push: `program_paths` is
+seeded from both endpoints of every `assign`, so `to_path` registers itself. Keep these to *literal*
+model paths anyway — every one of them enlarges the program path set that feeds the one-level
+concatenation with model paths, and that product is what costs. Note the bucket (§2, consequence 2):
+a path arriving this way is a *program* path, so unlike the same path on a `propagation` it will not
+be concatenated with other program paths. If a bridge ever needs that composition, the port belongs
+on a summary, not on an `assign`.
 
 **Source attribution — resolved, and it costs a step.** A synthetic site has no `source_map` entry,
 and the SARIF formatter's step emitter simply returns early for a site with no location: no panic,
@@ -560,9 +591,12 @@ declaration-ordinal, the conflict disappears and the plural is unambiguously the
 
 **Memory of retained match indexes** (§4.2) is unquantified until measured on a real APK + `.so`.
 
-**Callee-side paths and callsite attachment are both unvalidated** (§2, §2.1) — the JNI pass needed
-neither. The Lua example in §3.3 is the first thing that exercises them and should be built early
-enough that a surprise there can still change the design.
+**Callee-side paths on a bridge, and callsite attachment, are both unvalidated** (§2, §2.1) — the
+JNI pass needed neither. Callee-side paths on a *propagation* are routine and well exercised; what
+is untried is carrying one across a bridge, where it has to travel as an `assign` rather than as a
+summary port and lands in the program-path bucket rather than the model-path one. The Lua example in
+§3.3 is the first thing that exercises both, and should be built early enough that a surprise there
+can still change the design.
 
 ## 8. Verification approach
 
@@ -575,8 +609,9 @@ enough that a surprise there can still change the design.
 - **Matching.** A two-`ProgramMatchIndex` fixture asserting the side-A and side-B match sets and the
   resulting pairs directly, without touching the fact base.
 - **Emission.** Given a pair and a port map, assert the exact `call` / `actual_param` /
-  `formal_param` / `paths` rows, including the implicit globals pair, that the site id is fresh, and
-  that no `formal_param` row is emitted for side B. `languages/jni/tests.rs` is the model for this
+  `formal_param` rows — plus the `assign` rows for any callee-side path port — including the
+  implicit globals pair, that the site id is fresh, and that no `formal_param` row is emitted for
+  side B. Assert no redundant `facts.paths` rows: registration is the engine's job (§2). `languages/jni/tests.rs` is the model for this
   layer; extend it rather than starting a new fixture style.
 - **End-to-end, two flowy imports.** The cheapest real test, and it needs no Android or Ghidra
   toolchain. Give the two artifacts *deliberately different* function names — same-named functions
