@@ -299,6 +299,7 @@ fn java_program() -> ProgramInfo {
             )]
             .into_iter()
             .collect(),
+            natives: Vec::new(),
         },
         ..Default::default()
     }

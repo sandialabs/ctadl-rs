@@ -85,6 +85,7 @@ fn java_program() -> ProgramInfo {
         VirtualMethodTable::Java {
             methods,
             hierarchy: Default::default(),
+            natives: Default::default(),
         },
         &[
             JAVA_PROBE,

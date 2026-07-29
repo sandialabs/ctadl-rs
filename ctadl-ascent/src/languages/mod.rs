@@ -1,4 +1,5 @@
 pub mod dex;
+pub mod jni;
 pub mod jvm;
 pub mod lua;
 pub mod pcode;

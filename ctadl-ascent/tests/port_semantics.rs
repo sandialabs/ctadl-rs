@@ -109,6 +109,8 @@ fn flows(case: &str, store: &str, index_model: &str, probe: &str) -> bool {
         // Defaults suppressed. `lua-index.jsonl` models none of the names this program calls,
         // but a case about what is *not* modeled should not also depend on that staying true.
         true,
+        // No Java or native import here, so the JNI bridge has nothing to do either way.
+        false,
         CallResolutionStrategy::Mixed,
         true,
         true,

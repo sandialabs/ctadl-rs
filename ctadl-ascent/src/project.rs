@@ -72,7 +72,11 @@ pub fn init_store_path<P: AsRef<Path>>(override_path: Option<P>) -> Result<(), &
 /// - `4`: the lua VMT gained a `functions` column carrying every function's frontend-parsed
 ///   simple name alongside its qualified name, so model matching reads the simple name instead
 ///   of re-deriving it. Again a `bitcode` wire-format change to `ir-vmt.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "4";
+/// - `5`: the java VMT gained a `natives` column listing methods declared `native`, which are
+///   bodyless and so were invisible to the dex frontend's `methods` column. It is what the JNI
+///   bridge (`languages::jni`) joins against. Again a `bitcode` wire-format change to
+///   `ir-vmt.bitcode`.
+pub const IMPORT_FORMAT_VERSION: &str = "5";
 
 /// Filename of the serialized IR program inside an import directory.
 ///

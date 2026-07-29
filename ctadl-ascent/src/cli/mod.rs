@@ -22,7 +22,7 @@ use crate::facts::FlowVariable;
 use crate::index_engine::{
     IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index_with_config,
 };
-use crate::languages::{dex, jvm, lua, pcode};
+use crate::languages::{dex, jni, jvm, lua, pcode};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
@@ -51,13 +51,15 @@ pub fn import(import: &ArtifactImport) -> Result<(), Error> {
 /// Indexes a project
 /// If summary_projects is provided, loads summaries from those projects and maps them into the current project.
 /// `no_default_models` suppresses the built-in per-language defaults, leaving `models` as the
-/// complete set.
+/// complete set. `no_jni_bridge` suppresses the automatic JNI link between Java `native` stubs and
+/// their native implementations (see [`crate::languages::jni`]).
 #[allow(clippy::too_many_arguments)]
 pub fn index(
     project: &AnalysisProject,
     summary_projects: &[String],
     models: &[std::path::PathBuf],
     no_default_models: bool,
+    no_jni_bridge: bool,
     strategy: CallResolutionStrategy,
     prune_unreachable_cfg_nodes: bool,
     alias_rule: bool,
@@ -67,6 +69,9 @@ pub fn index(
     log::info!("[mem cp] index() start: {:.1} MB", phys_footprint_mb());
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
+    // Collects both halves of every JNI boundary as the imports go by; the link itself can only
+    // happen after the loop, when one `IdMap` holds every program's functions.
+    let mut jni_observer = jni::JniObserver::new();
     for import in project.iter_imports() {
         let import = import?;
         let mut program_info = load_program_info_without_source_info(&import)?;
@@ -74,6 +79,9 @@ pub fn index(
             "[mem cp] loaded IR program (before SSA/codegen): {:.1} MB",
             phys_footprint_mb()
         );
+        if !no_jni_bridge {
+            jni_observer.observe(&program_info, jni::SlotModel::for_language(import.language));
+        }
         let mut models_batch = if no_default_models {
             crate::models::ModelBuilders::new().finish()?
         } else {
@@ -107,6 +115,12 @@ pub fn index(
         log::trace!("summary length: {}", facts.summary.len());
         codegen_summary(models_batch.summary, &mut facts, &mut source_info);
         log::trace!("summary length: {}", facts.summary.len());
+    }
+
+    // Every import's functions are interned by now, which is what the bridge needs to resolve a
+    // Java `native` stub and its `Java_…` implementation to two ids in the same map.
+    if !no_jni_bridge {
+        jni::link(&jni_observer, &mut facts, &mut source_info);
     }
 
     // Load and map summaries from multiple projects if specified

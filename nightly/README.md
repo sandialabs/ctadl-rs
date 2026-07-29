@@ -28,11 +28,13 @@ cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-`--frontend` takes `pcode`, `jvm`, `dex`, or `lua` (comma-separated, or repeated)
-and defaults to all of them. It selects *before* anything runs, so
+`--frontend` takes `pcode`, `jvm`, `dex`, `lua`, or `jni` (comma-separated, or
+repeated) and defaults to all of them. It selects *before* anything runs, so
 `--frontend pcode` never invokes the Java toolchain, `--frontend jvm,dex` never
-starts Ghidra, and `--frontend lua` needs no external toolchain at all. Use it
-with `--filter` to narrow further: `--frontend pcode --filter funcptr`.
+starts Ghidra, and `--frontend lua` needs no external toolchain at all. `jni` is
+the odd one out: its cases build both halves of a JNI boundary, so they need the
+Java toolchain *and* Ghidra. Use it with `--filter` to narrow further:
+`--frontend pcode --filter funcptr`.
 
 > **Note:** the `lua` frontend lowers its `tests/lua/` cases end to end, including
 > table field-sensitivity, varargs, `ipairs`/`pairs` and `table.insert`, and
@@ -59,6 +61,11 @@ they are picked up automatically; no list to edit.
   source-level frontend, SARIF regions carry source lines directly, so
   `expected_lines` are checked against the code-flow `startLine`s with no
   compilation, linemap, or disassembler in the loop.
+- **JNI** — `tests/jni/Foo.java` pairs with its sibling `tests/jni/Foo.c` and the
+  kebab-cased `tests/jni/foo.json`. All three are required. Cases report as
+  `Jni:Foo`. This is the only two-import case kind: the `.java` is imported as a
+  DEX, the `.c` as a pcode shared library, and the two are co-indexed as one
+  project so the JNI bridge has both halves to join.
 
 ## Adding a Java/DEX test
 
@@ -101,6 +108,38 @@ flow is reported (see `Reassignment.java` / `reassignment.json`).
 `expected_lines` entry is found. On macOS, if Ghidra reports no tainted
 instructions the case is **skipped** (cross-platform decompiler differences);
 the strict check runs on Linux/CI.
+
+## Adding a JNI test
+
+1. Write `tests/jni/Foo.java` with a `source()`, a `sink(...)`, and one or more
+   `native` methods, plus `tests/jni/Foo.c` implementing them under their mangled
+   `Java_…` names. Declare the JNI types locally (`typedef void *jstring;` and
+   friends) rather than including `<jni.h>`: the flake ships no NDK, and only the
+   arity and the dataflow shape matter.
+2. Write `tests/jni/foo.json` exactly as a Java/DEX config. Every line number in
+   it refers to the **Java** source.
+
+**Pass criterion (JNI):** the DEX criterion above — a code flow connecting a
+source to a sink, plus `expected_lines` and `unexpected_lines` through the dex
+linemap — with one difference: `unexpected_lines` is checked against the lines the
+code flows actually visited, not the wider set that includes the machine profile.
+For these cases the connected flow *is* the assertion that the bridge fired, since
+the Java half alone cannot carry the taint from the source to the sink. There is
+no macOS self-skip: the criterion is on the Java side and is satisfied on Darwin
+today.
+
+Nothing is asserted about native source lines. SARIF for a multi-import project
+currently renders every result once per import, so a Java result reappears
+carrying an unrelated address in the shared library; asserting on those addresses
+would pin that defect rather than the bridge.
+
+Shape the case so no per-function propagation model could fake it. `JniFlow` is
+the worked example: the taint enters one native function, survives in a native
+global, and leaves through a *different* one, so nothing short of a real link
+across the boundary produces the answer. `JniArgShift` pins the argument shift
+itself — the same instance native is called twice, once with the taint in the
+argument the implementation returns and once with it in the argument the
+implementation drops, so an off-by-one in the port map flips both assertions.
 
 ## Asserting that a line stays clean
 

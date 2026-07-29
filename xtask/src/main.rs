@@ -69,7 +69,7 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let value = args.next().context("--frontend requires a value")?;
                 let names: Vec<&str> = value.split(',').filter(|s| !s.trim().is_empty()).collect();
                 if names.is_empty() {
-                    bail!("--frontend requires at least one of: dex, jvm, pcode");
+                    bail!("--frontend requires at least one of: dex, jvm, pcode, lua, jni");
                 }
                 let selected = frontends.get_or_insert_with(BTreeSet::new);
                 for name in names {
@@ -122,12 +122,14 @@ cargo xtask <task>
 Tasks:
   regression                 Run the source-sink taint regression suite.
     --frontend <f>           Only exercise frontend <f>: `pcode`, `jvm`, `dex`,
-                             or `lua` (default: all). Accepts a comma-separated
-                             list and may be repeated; unselected frontends are
-                             skipped entirely, so their toolchains are not needed.
-                             E.g. `--frontend pcode` runs the C/pcode cases and
-                             the Ghidra checks without any Java toolchain, and
-                             `--frontend lua` runs just the Lua source cases.
+                             `lua`, or `jni` (default: all). Accepts a
+                             comma-separated list and may be repeated; unselected
+                             frontends are skipped entirely, so their toolchains
+                             are not needed. E.g. `--frontend pcode` runs the
+                             C/pcode cases and the Ghidra checks without any Java
+                             toolchain, and `--frontend lua` runs just the Lua
+                             source cases. `jni` is the two-import bridge cases,
+                             which need the Java *and* Ghidra toolchains.
     --filter <name>          Only run cases whose name contains <name>.
                              Composes with --frontend.
     -j, --jobs <n>           Run <n> cases concurrently (default: one per core,

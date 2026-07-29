@@ -20,6 +20,7 @@ use jvm_reader::flow::{CallInfo, CallKind, ConstantValue, DataflowInfo, Location
 use jvm_reader::{ClassFileParser, JarFileParser};
 
 const JVM_ACC_STATIC: u16 = 0x0008;
+const JVM_ACC_NATIVE: u16 = 0x0100;
 
 /// JVM internal names (`java/lang/Object`, `MyInterface`) and type descriptors
 /// (`LMyInterface;`) to the `L...;` symbol form used in MIR and CHA.
@@ -201,6 +202,21 @@ impl Context {
                         JavaSimpleName(method_name.clone().into()),
                         JavaSignature(java_sig.clone().into()),
                         JavaMethod(full_name.clone().into()),
+                    ));
+                }
+                // Native methods are additionally listed in `natives`, the column the JNI
+                // bridge reads. They are already in `methods` above -- this frontend walks
+                // every declared method, code or not -- so the extra row is only there to
+                // carry the staticness the bridge needs to know whether slot 0 is `this`.
+                if enc.access_flags & JVM_ACC_NATIVE != 0
+                    && let VirtualMethodTable::Java { natives, .. } = &mut builders.vmt
+                {
+                    natives.push((
+                        JavaClass(class_name.to_string().into()),
+                        JavaSimpleName(method_name.clone().into()),
+                        JavaSignature(java_sig.clone().into()),
+                        JavaMethod(full_name.clone().into()),
+                        !is_instance,
                     ));
                 }
 

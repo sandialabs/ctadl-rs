@@ -846,7 +846,9 @@ struct ClassHierarchyAnalysis {
 impl ClassHierarchyAnalysis {
     fn new(vmt: &VirtualMethodTable, instantiated_classes: BTreeSet<Symbol>) -> Self {
         match vmt {
-            VirtualMethodTable::Java { methods, hierarchy } => {
+            VirtualMethodTable::Java {
+                methods, hierarchy, ..
+            } => {
                 let method_implemented = methods
                     .iter()
                     .cloned()

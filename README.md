@@ -35,6 +35,23 @@ ctadl index my-app
 ctadl query my-app --models sources-and-sinks.json5 --output results.sarif
 ```
 
+Several artifacts can be indexed together as one project, and an app's Java and
+native halves analyze as a whole when they are:
+
+```bash
+ctadl import app.apk            --name app_dex
+ctadl import -l pcode libapp.so --name app_native
+ctadl index  app app_dex app_native
+```
+
+## Documentation
+
+- [Model generators](docs/model-generators.md) — the declarative language for
+  sources, sinks, and propagation through code CTADL cannot see.
+- [The JNI bridge](docs/jni.md) — how Java `native` methods are linked to their
+  native implementations when both are indexed together.
+- [Debugging](docs/debugging.md).
+
 # Testing
 
 Unit and integration tests run with Cargo:

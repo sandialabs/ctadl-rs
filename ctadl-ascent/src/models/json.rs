@@ -1447,7 +1447,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.validate_predicate(n, inner, SubjectKind::Class);
         // Snapshot (fid, [supertypes]) — `hierarchy[cls]` is `[0]` = superclass, rest = interfaces.
         let entries: Vec<(&'p str, Vec<&'p str>)> = match self.vmt {
-            VirtualMethodTable::Java { methods, hierarchy } => methods
+            VirtualMethodTable::Java {
+                methods, hierarchy, ..
+            } => methods
                 .iter()
                 .map(|(cls, _, _, fid)| {
                     let supers = hierarchy

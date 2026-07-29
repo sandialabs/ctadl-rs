@@ -29,6 +29,11 @@ Model generators let you patch all of this from the outside. A generator is a
 rule: **find** some set of program elements, optionally filter them with
 **where** constraints, and attach a **model** describing their taint behavior.
 
+> A Java `native` method is *not* one of these cases. When the library
+> implementing it is indexed alongside the app, CTADL links the two itself and
+> maps the arguments across the JNI ABI; you do not need a propagation model for
+> it. See [The JNI bridge](jni.md).
+
 ---
 
 ## 2. Where they fit in the pipeline
