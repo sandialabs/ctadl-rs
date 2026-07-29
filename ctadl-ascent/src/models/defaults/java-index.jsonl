@@ -72,7 +72,53 @@
 {"find":"methods","where":[{"constraint":"signature_match","name":"update","parent":"Ljava/security/MessageDigest;"}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0)"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","name":"digest","parent":"Ljava/security/MessageDigest;"}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","name":"setEntity","parent":"Lorg/apache/http/client/methods/HttpPost;"}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0)"}]}}
-{"find":"methods","where":[{"constraint":"signature_match","names":["add"],"parents":["Ljava/util/ArrayList;","Ljava/util/List;"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0).\\[]"}]}}
-{"find":"methods","where":[{"constraint":"signature_match","names":["get"],"parents":["Ljava/util/ArrayList;","Ljava/util/List;"]}],"model":{"propagation":[{"input":"Argument(0).\\[]","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["iterator"],"parents":["Ljava/util/Iterable;","Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/ArrayList;","Ljava/util/LinkedList;","Ljava/util/HashSet;","Ljava/util/TreeSet;"]}],"model":{"propagation":[{"input":"Argument(0).\\[]","output":"Return.\\[]"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","names":["next"],"parents":["Ljava/util/Iterator;"]}],"model":{"propagation":[{"input":"Argument(0).\\[]","output":"Return"}]}}
+// ---- java.util containers: element-level, so writes and reads compose ----
+// A read is `Argument(0).\[] -> Return` and a write is `... -> Argument(0).\[]`, the two
+// halves of one prefix substitution. Mixing a bare read with an element-level write (or the
+// reverse) silently composes to nothing: the write would put taint one level below where the
+// read looks for it.
+// Writers carry BOTH `Argument(1)` and `Argument(2)` because these methods are overloaded on
+// arity -- `add(E)` and `add(int, E)`, `put(K, V)`, `set(int, E)` -- and a generator matches
+// by name, so it sees every overload. `Argument(*)` would cover them too but would also add a
+// self-edge `A(0) -> A(0).\[]`, which deepens a path every time it fires.
+{"find":"methods","where":[{"constraint":"signature_match","names":["get","getOrDefault","remove"],"parents":["Ljava/util/Map;","Ljava/util/HashMap;","Ljava/util/LinkedHashMap;","Ljava/util/TreeMap;","Ljava/util/Hashtable;","Ljava/util/concurrent/ConcurrentHashMap;"]}],"model":{"propagation":[{"input":"Argument(0).\\[]","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["put","putIfAbsent"],"parents":["Ljava/util/Map;","Ljava/util/HashMap;","Ljava/util/LinkedHashMap;","Ljava/util/TreeMap;","Ljava/util/Hashtable;","Ljava/util/concurrent/ConcurrentHashMap;"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0).\\[]"},{"input":"Argument(2)","output":"Argument(0).\\[]"}]}}
+// Views share the map's elements at the same level, so a bare port is exactly right.
+{"find":"methods","where":[{"constraint":"signature_match","names":["keySet","values","entrySet"],"parents":["Ljava/util/Map;","Ljava/util/HashMap;","Ljava/util/LinkedHashMap;","Ljava/util/TreeMap;","Ljava/util/Hashtable;","Ljava/util/concurrent/ConcurrentHashMap;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["getKey","getValue"],"parents":["Ljava/util/Map$Entry;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["get","peek","poll","pop","remove","getFirst","getLast","element"],"parents":["Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/Queue;","Ljava/util/Deque;","Ljava/util/ArrayList;","Ljava/util/LinkedList;","Ljava/util/Vector;","Ljava/util/Stack;","Ljava/util/HashSet;","Ljava/util/TreeSet;","Ljava/util/ArrayDeque;"]}],"model":{"propagation":[{"input":"Argument(0).\\[]","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["add","addAll","push","offer","addFirst","addLast","set"],"parents":["Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/Queue;","Ljava/util/Deque;","Ljava/util/ArrayList;","Ljava/util/LinkedList;","Ljava/util/Vector;","Ljava/util/Stack;","Ljava/util/HashSet;","Ljava/util/TreeSet;","Ljava/util/ArrayDeque;"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0).\\[]"},{"input":"Argument(2)","output":"Argument(0).\\[]"}]}}
+// Bulk views are collections over the same elements: bare, so the element level rides along.
+{"find":"methods","where":[{"constraint":"signature_match","names":["toArray","subList","stream"],"parents":["Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/Queue;","Ljava/util/Deque;","Ljava/util/ArrayList;","Ljava/util/LinkedList;","Ljava/util/Vector;","Ljava/util/Stack;","Ljava/util/HashSet;","Ljava/util/TreeSet;","Ljava/util/ArrayDeque;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["unmodifiableList","unmodifiableMap","unmodifiableSet","unmodifiableCollection","singletonList","singleton","nCopies"],"parents":["Ljava/util/Collections;"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["copyOfRange","stream"],"parents":["Ljava/util/Arrays;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+// ---- text ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["join","copyValueOf","strip","stripLeading","stripTrailing","repeat","intern"],"parents":["Ljava/lang/String;"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["reverse","deleteCharAt","replace","setCharAt","substring"],"parents":["Ljava/lang/StringBuilder;","Ljava/lang/StringBuffer;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"},{"input":"Argument(*)","output":"Argument(0)"}]}}
+// ---- codecs: a decode is as much a propagation as an encode ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["encode","encodeToString","decode"],"parents":["Ljava/util/Base64$Encoder;","Ljava/util/Base64$Decoder;"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["encode","encodeToString","decode","decodeToString"],"parents":["Landroid/util/Base64;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["encode","decode"],"parents":["Ljava/net/URLEncoder;","Ljava/net/URLDecoder;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+// ---- readers, writers, properties ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["next","nextLine","nextInt","nextLong","nextDouble","nextBoolean"],"parents":["Ljava/util/Scanner;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["<init>"],"parents":["Ljava/util/Scanner;"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0)"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["getProperty"],"parents":["Ljava/util/Properties;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["setProperty"],"parents":["Ljava/util/Properties;"]}],"model":{"propagation":[{"input":"Argument(2)","output":"Argument(0)"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["readAllBytes","readNBytes","lines"],"parents":["Ljava/io/InputStream;","Ljava/io/Reader;","Ljava/io/BufferedReader;","Ljava/io/InputStreamReader;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["print","println","printf","format","append"],"parents":["Ljava/io/PrintStream;","Ljava/io/PrintWriter;","Ljava/io/Writer;","Ljava/io/BufferedWriter;"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0)"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["<init>"],"parents":["Ljava/util/zip/GZIPInputStream;","Ljava/util/zip/InflaterInputStream;","Ljava/util/zip/ZipInputStream;"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0)"}]}}
+// ---- serialization ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["get","getJSONObject","getJSONArray","getString","optString","put","<init>"],"parents":["Lorg/json/JSONObject;","Lorg/json/JSONArray;"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"},{"input":"Argument(1)","output":"Argument(0)"},{"input":"Argument(2)","output":"Argument(0)"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["toJson","fromJson"],"parents":["Lcom/google/gson/Gson;"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Return"}]}}
+// ---- misc ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["toString","requireNonNull","requireNonNullElse","requireNonNullElseGet"],"parents":["Ljava/util/Objects;"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["of","ofNullable","get","orElse","orElseGet"],"parents":["Ljava/util/Optional;"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["name"],"parents":["Ljava/lang/Enum;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+// ---- android ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["getStringExtra","getData","getAction"],"parents":["Landroid/content/Intent;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["putExtra"],"parents":["Landroid/content/Intent;"]}],"model":{"propagation":[{"input":"Argument(2)","output":"Argument(0)"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["parse","toString","getQueryParameter","buildUpon","build"],"parents":["Landroid/net/Uri;","Landroid/net/Uri$Builder;"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["getString","getStringSet"],"parents":["Landroid/content/SharedPreferences;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["putString","putStringSet"],"parents":["Landroid/content/SharedPreferences$Editor;"]}],"model":{"propagation":[{"input":"Argument(2)","output":"Argument(0)"}]}}

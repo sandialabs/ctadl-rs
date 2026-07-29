@@ -255,6 +255,41 @@ fn java_collection_generators_name_the_real_array_element() {
     );
 }
 
+/// An access-path escape in a `.jsonl` file needs *two* levels of quoting -- one for JSON, one
+/// for the path grammar -- so `\[]` is written `"\\[]"`. Writing `"\\\\[]"` gets past both the
+/// JSON parser and the path parser and produces a `Symbol` named `\[]`, which matches nothing.
+/// That is a silent failure, and file-generating scripts make it easily.
+///
+/// Checked textually, on the JSON-decoded port, because the semantic check above can only see
+/// generators that matched the toy program; this sees every port in every shipped file.
+#[test]
+fn no_shipped_default_port_is_over_escaped() {
+    for (name, contents) in DEFAULT_MODEL_FILES {
+        for line in String::from_utf8_lossy(contents).lines() {
+            let line = line.trim_start();
+            if line.is_empty() || line.starts_with("//") {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_str(line).expect("valid JSON");
+            let props = value["model"]["propagation"]
+                .as_array()
+                .into_iter()
+                .flatten();
+            for prop in props {
+                for key in ["input", "output"] {
+                    let port = prop[key].as_str().expect("port is a string");
+                    assert!(
+                        !port.contains(r"\\"),
+                        "{name}: port {port:?} is over-escaped -- \
+                         a literal backslash reaches the path grammar and escapes the next \
+                         character, so this names a field nothing emits"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// The defaults are propagation only: CTADL ships no default sources or sinks, and shipping any
 /// would report the cross product of every default source and sink in every program (source and
 /// sink `kind`s do not have to pair).
