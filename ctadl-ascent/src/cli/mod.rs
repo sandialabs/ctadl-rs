@@ -50,10 +50,14 @@ pub fn import(import: &ArtifactImport) -> Result<(), Error> {
 
 /// Indexes a project
 /// If summary_projects is provided, loads summaries from those projects and maps them into the current project.
+/// `no_default_models` suppresses the built-in per-language defaults, leaving `models` as the
+/// complete set.
+#[allow(clippy::too_many_arguments)]
 pub fn index(
     project: &AnalysisProject,
     summary_projects: &[String],
     models: &[std::path::PathBuf],
+    no_default_models: bool,
     strategy: CallResolutionStrategy,
     prune_unreachable_cfg_nodes: bool,
     alias_rule: bool,
@@ -70,7 +74,11 @@ pub fn index(
             "[mem cp] loaded IR program (before SSA/codegen): {:.1} MB",
             phys_footprint_mb()
         );
-        let mut models_batch = crate::models::try_load_default_models(&program_info)?;
+        let mut models_batch = if no_default_models {
+            crate::models::ModelBuilders::new().finish()?
+        } else {
+            crate::models::try_load_default_models(&program_info)?
+        };
         for model_path in models {
             let model = crate::models::try_load_models(&program_info, model_path)?;
             models_batch.union_with(&model)?;

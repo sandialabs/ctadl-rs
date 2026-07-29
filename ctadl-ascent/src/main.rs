@@ -216,6 +216,15 @@ pub struct IndexArgs {
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
+    /// Do not load the built-in default propagation models for the imported language.
+    ///
+    /// CTADL ships one default model file per frontend family (Java, native, Lua) and loads the
+    /// one matching each import. Pass this to index against `--models` alone -- for an A/B
+    /// measurement of what the defaults add, or when a model file is meant to be the complete
+    /// story.
+    #[arg(long)]
+    pub no_default_models: bool,
+
     /// Call resolution strategy: cha, hi, mixed
     #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
     pub strategy: CallResolutionStrategy,
@@ -279,6 +288,11 @@ pub struct GoArgs {
     /// multiple times to load multiple model files.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
+
+    /// Do not load the built-in default propagation models for the imported language.
+    /// See `ctadl index --help`.
+    #[arg(long)]
+    pub no_default_models: bool,
 
     /// One or more artifacts to import in this one-shot flow
     #[arg(required = true)]
@@ -401,6 +415,7 @@ fn main() -> anyhow::Result<()> {
                 progs: imported_names.clone(),
                 summary: vec![],
                 models: args.models.clone(),
+                no_default_models: args.no_default_models,
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
@@ -540,6 +555,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 progs: vec![legacy_name.to_string()],
                 summary: vec![],
                 models: args.models.clone(),
+                no_default_models: false,
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
@@ -651,6 +667,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         &project,
         &args.summary,
         &args.models,
+        args.no_default_models,
         args.strategy,
         args.prune_unreachable_cfg_nodes.unwrap_or(true),
         args.alias_rule.unwrap_or(true),
