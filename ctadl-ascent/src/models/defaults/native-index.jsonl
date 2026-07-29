@@ -1,0 +1,106 @@
+// Default propagation models for native frontends (VirtualMethodTable::Native -- pcode today).
+//
+// Propagation only. CTADL ships no default sources or sinks: `cli::index` uses only the
+// `summary` half of a loaded model batch, so the `sources`/`sinks` entries this file used to
+// carry were parsed, validated, and discarded on every index. Their presence implied CTADL
+// ships default endpoints, which it does not. Three generators here were endpoints and nothing
+// else (`fgets`/`getenv`/... sources, `read`/`fread`/... sources, `system`/`exec*` sinks); they
+// went with the entries.
+//
+// ACCESS PATHS. `.deref` is an ordinary symbol segment -- pcode's spelling for a pointee -- so
+// it behaves as written. `.[<n>]` is a real `PathSegment::Offset` and matches what pcode emits;
+// a field whose *name* begins with `[` would have to be escaped (`.\[...]`), which pcode never
+// needs. A port pair is a PREFIX SUBSTITUTION, not a filter: `Argument(0).deref -> Return`
+// unwraps a level, `Argument(0) -> Return.deref` adds one. See docs/model-generators.md §7 and
+// the fixtures in `tests/tnt/port_*.tnt`.
+//
+// SYMBOL ALIASES. Firmware rarely imports the plain libc name: glibc/uClibc emit `_FORTIFY`
+// wrappers (`__memcpy_chk`, `__strcpy_chk`, ...) and C99-conformance wrappers
+// (`__isoc99_sscanf`), and Mach-O prefixes every C symbol with `_` -- so macOS produces
+// `___strcpy_chk`, with three.
+//
+// They are listed here WITHOUT their leading underscores, because that is the name a model can
+// actually match. The pcode frontend derives a function's VMT simple name with
+// `func_data.name.trim_start_matches('_')` (`languages/pcode/mod.rs`), so `__memcpy_chk`,
+// `___strcpy_chk` and `_strdup` reach the matcher as `memcpy_chk`, `strcpy_chk` and `strdup`.
+// A `names` list spelling the underscores back on matches NOTHING -- not the simple name, which
+// has been stripped, and not the fully-qualified one, which still carries Ghidra's
+// `<EXTERNAL>::…@addr`. `nightly/tests/c/defaultmodels.c` is the regression guard: on a
+// fortifying host (macOS/clang fortifies even at -O0) its `strcpy` arrives as `___strcpy_chk`,
+// and the case passes only because `strcpy_chk` is in the list. On a host that does not
+// fortify it arrives as plain `strcpy` and the case still passes -- so it covers the alias path
+// where it can and never depends on it.
+//
+// Every `_chk` variant takes *extra* size/flag arguments, but every model covering them is
+// positional at index 0/1 or uses `Argument(*)`, so no index arithmetic is needed -- extending
+// the `names` list is the whole fix. Aliases with no home generator are deliberately absent:
+// `printf_chk` and `isoc99_fscanf` would need `printf` and `fscanf` generators, and neither
+// exists (both were endpoint-only, see above).
+//
+// COST. `compute_arg_arity` takes the max over *actual call sites*, so `Argument(*)` on a
+// variadic fans out to the widest call in the program: one 12-argument `snprintf` anywhere makes
+// every `snprintf` summary 12x12 program-wide. The printf and scanf families are the only
+// variadic `Argument(*)` users here; keep it that way. The allocator generator also uses
+// `Argument(*)`, but on a fixed 1-2 argument signature, so its fan-out is bounded.
+//
+// ---- copying ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["strcpy","wcscpy","strncpy","wcsncpy","stpcpy","wcpcpy","stpncpy","wcpncpy","strcat","wcscat","strncat","wcsncat","strcpy_chk","strncpy_chk","stpcpy_chk","stpncpy_chk","strcat_chk","strncat_chk","wcscpy_chk","wcsncpy_chk","wcscat_chk","wcsncat_chk"]}],"model":{"propagation":[{"input":"Argument(1).deref","output":"Argument(0).deref"},{"input":"Argument(1).deref","output":"Return.deref"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["memcpy","memmove","mempcpy","memccpy","bcopy","memcpy_chk","memmove_chk","mempcpy_chk","memccpy_chk"]}],"model":{"propagation":[{"input":"Argument(1).deref","output":"Argument(0).deref"},{"input":"Argument(1).deref","output":"Return.deref"}]}}
+// `strlcpy(dst, src, siz)` / `strlcat(dst, src, siz)`: only `src` is a pointer. The BSD
+// signature has no `Return` buffer either -- it returns the length it tried to create.
+{"find":"methods","where":[{"constraint":"signature_match","names":["strlcpy","strlcat","strlcpy_chk","strlcat_chk"]}],"model":{"propagation":[{"input":"Argument(1).deref","output":"Argument(0).deref"}]}}
+// ---- formatting and parsing ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["sprintf","swprintf","snprintf","vsprintf","vsnprintf","vswprintf","asprintf","vasprintf","sprintf_chk","snprintf_chk","vsprintf_chk","vsnprintf_chk","swprintf_chk","vswprintf_chk","asprintf_chk","vasprintf_chk"]}],"model":{"propagation":[{"input":"Argument(*).deref","output":"Argument(0).deref"},{"input":"Argument(*).deref","output":"Return.deref"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["sscanf","swscanf","vsscanf","vswscanf","isoc99_sscanf","isoc99_swscanf","isoc99_vsscanf","isoc99_vswscanf"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Argument(*).deref"},{"input":"Argument(0).deref","output":"Return.deref"}]}}
+// ---- duplication ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["strdup","strndup","wcsdup"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return.deref"}]}}
+// ---- search: a pointer INTO the argument comes back ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["strchr","strrchr","wcschr","wcsrchr","strpbrk","wcspbrk","strstr","wcsstr","strtok","wcstok","strsep","strcasestr","index","rindex","memchr","memrchr","memmem","rawmemchr"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return.deref"}]}}
+// `strtok_r(str, delim, saveptr)`: the state pointer keeps a pointer into `str`, so the taint
+// has to survive to the next call. `Argument(2).deref.deref` is a two-level shift -- see
+// `tests/tnt/port_two_segment.tnt`.
+{"find":"methods","where":[{"constraint":"signature_match","names":["strtok_r","wcstok_r"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return.deref"},{"input":"Argument(0).deref","output":"Argument(2).deref.deref"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["bsearch","lsearch","lfind"]}],"model":{"propagation":[{"input":"Argument(1).deref","output":"Return.deref"}]}}
+// ---- length and numeric conversion: the RESULT is a scalar, so no `.deref` on the output ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["strlen","wcslen","strnlen","wcsnlen"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["atoi","atol","atoll","atof","strtol","strtoll","strtoul","strtoull","strtof","strtod","strtold","wcstol","wcstoll","wcstoul","wcstoull","wcstof","wcstod","wcstold"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["toupper","tolower","toascii"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+// Byte-order swaps are pure scalar transforms. Firmware parsers are full of them, and dropping
+// taint at one silently ends a flow that a length or offset field is driving.
+{"find":"methods","where":[{"constraint":"signature_match","names":["ntohl","ntohs","ntohll","htonl","htons","htonll","bswap_16","bswap_32","bswap_64"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+// ---- line readers: a `char **` out-parameter, so the destination is two levels deep ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["getline"]}],"model":{"propagation":[{"input":"Argument(2).deref","output":"Argument(0).deref.deref"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["getdelim"]}],"model":{"propagation":[{"input":"Argument(3).deref","output":"Argument(0).deref.deref"}]}}
+// ---- paths ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["basename","dirname"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return.deref"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["realpath","realpath_chk"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Argument(1).deref"},{"input":"Argument(0).deref","output":"Return.deref"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["readlink","readlink_chk"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Argument(1).deref"}]}}
+// `readlinkat(dirfd, path, buf, bufsiz)` -- one argument to the right of `readlink`.
+{"find":"methods","where":[{"constraint":"signature_match","names":["readlinkat","readlinkat_chk"]}],"model":{"propagation":[{"input":"Argument(1).deref","output":"Argument(2).deref"}]}}
+// ---- addresses ----
+// `inet_ntoa(struct in_addr)` takes its argument BY VALUE, so the input port is bare.
+{"find":"methods","where":[{"constraint":"signature_match","names":["inet_ntoa"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return.deref"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["inet_ntop"]}],"model":{"propagation":[{"input":"Argument(1).deref","output":"Argument(2).deref"},{"input":"Argument(1).deref","output":"Return.deref"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["inet_addr","inet_network","inet_aton"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return"},{"input":"Argument(0).deref","output":"Argument(1).deref"}]}}
+// `inet_pton(af, src, dst)` -- one argument to the right of `inet_aton`.
+{"find":"methods","where":[{"constraint":"signature_match","names":["inet_pton"]}],"model":{"propagation":[{"input":"Argument(1).deref","output":"Argument(2).deref"},{"input":"Argument(1).deref","output":"Return"}]}}
+// ---- time ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["strftime","wcsftime","strftime_chk"]}],"model":{"propagation":[{"input":"Argument(3).deref","output":"Argument(0).deref"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["ctime","asctime","ctime_r","asctime_r"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return.deref"}]}}
+// ---- wide / multibyte ----
+{"find":"methods","where":[{"constraint":"signature_match","names":["mbstowcs","wcstombs","mbstowcs_chk","wcstombs_chk"]}],"model":{"propagation":[{"input":"Argument(1).deref","output":"Argument(0).deref"}]}}
+// `mbsrtowcs(dest, &src, len, ps)` -- `src` is a `char **`, one level deeper than `mbstowcs`.
+{"find":"methods","where":[{"constraint":"signature_match","names":["mbsrtowcs","wcsrtombs"]}],"model":{"propagation":[{"input":"Argument(1).deref.deref","output":"Argument(0).deref"}]}}
+// ---- allocation ----
+// `Argument(*) -> Return.deref` is not a claim that the size taints the buffer. It exists to
+// MATERIALIZE `Return.deref` as a vertex, so that a later write through the returned pointer has
+// somewhere to land. Reads as a bug otherwise -- it is not one. `realloc` is separate below
+// because for it the shape *is* wrong.
+{"find":"methods","where":[{"constraint":"signature_match","names":["malloc","calloc","aligned_alloc","valloc","memalign","posix_memalign"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return.deref"}]}}
+// `realloc(ptr, size)` KEEPS the old contents. Modeling it like `malloc` drops them, which ends
+// a flow through every grow-the-buffer loop in a parser.
+{"find":"methods","where":[{"constraint":"signature_match","names":["realloc","reallocarray","reallocf"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return.deref"}]}}
+// ---- deliberately absent ----
+// `qsort`/`heapsort`/`mergesort` used to carry `Argument(0).deref -> Argument(0).deref`, a
+// self-loop that derives nothing: the taint it would propagate is already at the vertex it
+// propagates to. Dropped rather than kept as documentation.

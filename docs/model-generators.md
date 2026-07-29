@@ -47,10 +47,21 @@ ctadl query my-app --models sources-and-sinks.json5 --output results.sarif
 ctadl go my-app /path/to/app.apk --models my-models.json
 ```
 
-CTADL also ships **built-in default models** that are always loaded, e.g. the
-JVM/jadx defaults and the C/pcode defaults
-(`ctadl-ascent/src/languages/{jadx,pcode}/default-index.jsonl`). Your `--models`
-files are unioned on top of these. You can scaffold a starter file with:
+CTADL also ships **built-in default propagation models**, in
+`ctadl-ascent/src/models/defaults/`. Exactly one file is loaded per import,
+chosen by the frontend's method table:
+
+| Frontend | File |
+| --- | --- |
+| dex, apk, jvm, jar | `java-index.jsonl` |
+| pcode | `native-index.jsonl` |
+| lua | `lua-index.jsonl` |
+| flowy | *(none)* |
+
+Your `--models` files are unioned on top of the selected default. Pass
+`--no-default-models` to `ctadl index` or `ctadl go` to suppress it, leaving
+`--models` as the complete set. Note the defaults are **propagation only** —
+CTADL ships no default sources or sinks. You can scaffold a starter file with:
 
 ```bash
 ctadl init-model model.json5
@@ -78,7 +89,11 @@ efficiently. The built-in defaults use this format:
 ```
 
 A JSONL line has exactly the shape of one element of the `model_generators`
-array.
+array. Blank lines and lines starting with `//` are skipped, so a `.jsonl` model
+file can carry commentary; the built-in defaults use this to record why an entry
+is (or deliberately is not) there. Skipped lines do not consume a generator
+index — the index that error messages and `CTADL0004` report counts generators,
+not lines.
 
 ---
 
@@ -414,6 +429,37 @@ at `input` appears at `output`.
 
 > Propagation is **not** supported with `find: callsites` (it's a whole-function
 > summary concept).
+
+#### A port pair is a prefix substitution, not a filter
+
+This is the part that misreads. An `input → output` pair does **not** mean "taint
+sitting exactly at `input` appears exactly at `output`". It means: taint at
+`input_var.p`, for **any** `p` extending the input path, lands at the output path
+followed by whatever was left of `p`. The two paths are a *level shift*.
+
+Take `local u = id(t)`, with taint stored at `t.f`:
+
+| model on `id` | means | taint at `t.f` lands at |
+| --- | --- | --- |
+| `Argument(0)` → `Return` | `u.X ← t.X` | `u.f` — the suffix rides along |
+| `Argument(0).f` → `Return` | `u.X ← t.f.X` | **`u`** — the port *consumed* the `.f` |
+| `Argument(0)` → `Return.f` | `u.f.X ← t.X` | `u.f.f` — the port *added* a level |
+| `Argument(0).f` → `Return.f` | `u.f.X ← t.f.X` | `u.f` — consumed and re-added |
+
+So a longer input path **unwraps**: `Argument(0).f → Return` puts a field's taint
+on the bare returned value, one level *above* where a first reading expects it.
+A longer output path **wraps**. Neither one narrows what the model matches.
+
+The practical consequence is for testing: probe at the level the port *predicts*,
+not at one fixed depth. A fixture that always reads `u.f` scores nothing on rows
+2 and 3 above while the models are doing exactly what they say. The worked matrix
+is `ctadl-ascent/tests/tnt/port_*.tnt` (flowy) and
+`ctadl-ascent/tests/port_semantics.rs` (Lua).
+
+One asymmetry worth knowing: a **sink** port materializes over the paths reachable
+at its vertex, so a sink written `Return` also seeds `Return.f`. Reading a whole
+object observes taint in its fields; a sink port cannot express "the object itself,
+but not its fields".
 
 ### `modes` *(schema-only, not yet implemented)*
 

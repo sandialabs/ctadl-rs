@@ -30,6 +30,7 @@ use crate::facts::TaintDirection;
 use ctadl_ir::ProgramInfo;
 use ctadl_ir::mir;
 use ctadl_ir::mir::PathSegment;
+use ctadl_ir::mir::call::VirtualMethodTable;
 
 pub mod codegen;
 pub mod json;
@@ -40,35 +41,83 @@ pub use json::{EndpointStats, UnmatchedReason};
 #[cfg(test)]
 mod tests;
 
-// TODO load models other than the default and load summary parquet models as well as json
+/// The built-in default model file for each [`VirtualMethodTable`] variant, as
+/// `(name, contents)`. `name` appears in error context and is what [`DEFAULT_MODEL_FILES`]
+/// enumerates for the drift test.
+pub const JAVA_DEFAULT_MODELS: (&str, &[u8]) = (
+    "java-index.jsonl",
+    include_bytes!("defaults/java-index.jsonl"),
+);
+pub const NATIVE_DEFAULT_MODELS: (&str, &[u8]) = (
+    "native-index.jsonl",
+    include_bytes!("defaults/native-index.jsonl"),
+);
+pub const LUA_DEFAULT_MODELS: (&str, &[u8]) = (
+    "lua-index.jsonl",
+    include_bytes!("defaults/lua-index.jsonl"),
+);
+
+/// Every shipped default file, whether or not a given import loads it. Exists so a test can
+/// parse all of them against one program: the loader hard-errors on unknown keys and on
+/// malformed access paths, and a stale default file would otherwise break *every* index of the
+/// language that selects it.
+pub const DEFAULT_MODEL_FILES: &[(&str, &[u8])] = &[
+    JAVA_DEFAULT_MODELS,
+    NATIVE_DEFAULT_MODELS,
+    LUA_DEFAULT_MODELS,
+];
+
+/// Returns the built-in default models for `program_info`, selected by its
+/// [`VirtualMethodTable`] variant.
+///
+/// The VMT is the key rather than [`crate::project::ArtifactLanguage`] because dex and jvm want
+/// the same file and differ only in language, because it keeps `cli::index` from threading the
+/// language down, and because it gives `Unknown` (flowy) the right answer -- nothing -- for
+/// free. Loading every file for every import, as this used to, meant a Lua import ran a full
+/// match pass over 55 Java generators and 14 C ones, contributing nothing.
+// TODO load summary parquet models as well as json
 pub fn try_load_default_models(program_info: &ProgramInfo) -> Result<ModelsBatch, Error> {
     log::trace!("load_models");
-    // Load model_generator built-in models
-    let jadx_default = include_bytes!("../languages/jadx/default-index.jsonl") as &[u8];
-    let rdr = BufReader::new(jadx_default);
-    let mut jadx_models = try_load_jsonl_models(program_info, rdr)
-        .err_context(|| "loading jadx default index models")?;
-
-    let pcode_default = include_bytes!("../languages/pcode/default-index.jsonl") as &[u8];
-    let rdr_pcode = BufReader::new(pcode_default);
-    let pcode_models = try_load_jsonl_models(program_info, rdr_pcode)
-        .err_context(|| "loading pcode default index models")?;
-
-    jadx_models.union_with(&pcode_models)?;
-
-    Ok(jadx_models)
+    let default = match &program_info.vmt {
+        VirtualMethodTable::Java { .. } => Some(JAVA_DEFAULT_MODELS),
+        VirtualMethodTable::Native { .. } => Some(NATIVE_DEFAULT_MODELS),
+        VirtualMethodTable::Lua { .. } => Some(LUA_DEFAULT_MODELS),
+        // flowy, and anything else with no method table: a default model file has nothing to
+        // match against, and shipping one would be a language guess.
+        VirtualMethodTable::Unknown => None,
+    };
+    let Some((name, contents)) = default else {
+        return ModelBuilders::new().finish();
+    };
+    log::debug!("loading default models from {name}");
+    try_load_jsonl_models(program_info, BufReader::new(contents))
+        .err_context(|| format!("loading default index models: {name}"))
 }
 
 /// Load models from a `jsonl` source. `jsonl` allows streaming models one at a time efficiently.
 /// The stream follows the same schema as elements of a `model_generators` array.
+///
+/// Blank lines and lines whose first non-space characters are `//` are skipped, so a model file
+/// can carry the commentary that explains why an entry is (or is not) there. JSON itself has no
+/// comment syntax and `jsonl` has no envelope object to hang one off, so the alternative is a
+/// separate document that drifts. Skipped lines do not consume a generator index: the index
+/// names the *generator*, and it is what `CTADL0004` and the JSON error messages report.
 pub fn try_load_jsonl_models<B: BufRead>(
     program_info: &ProgramInfo,
     rdr: B,
 ) -> Result<ModelsBatch, Error> {
-    let items = rdr.lines().map(|line| {
-        let line = line?;
-        serde_json::from_str(&line).err_context(|| "reading model line")
-    });
+    let items = rdr
+        .lines()
+        .map(|line| -> Result<Option<serde_json::Value>, Error> {
+            let line = line?;
+            let trimmed = line.trim_start();
+            if trimmed.is_empty() || trimmed.starts_with("//") {
+                return Ok(None);
+            }
+            let value = serde_json::from_str(trimmed).err_context(|| "reading model line")?;
+            Ok(Some(value))
+        })
+        .filter_map(Result::transpose);
     try_load_models_from_values(program_info, items)
 }
 

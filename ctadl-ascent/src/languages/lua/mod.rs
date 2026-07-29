@@ -351,6 +351,12 @@ struct Lowerer<'a> {
     /// Count of call sites whose callee could not be resolved to a qualified name, and so fall
     /// back to the path as written (surfaced at import alongside `opaque_alloc_count`).
     unresolved_call_count: usize,
+    /// Every name emitted as a [`CallEdges::Explicit`] target. [`Lowerer::build_vmt`] subtracts
+    /// the names it actually defined to get the import's *externals* — the stdlib and anything
+    /// from a module outside the import — which the VMT needs so models can name them.
+    /// Collected here rather than derived from the finished program because the call lowering is
+    /// the only place that knows the callee text as written.
+    called_names: HashSet<String>,
     /// Virtual method table recovered for this module (set in [`Lowerer::build_vmt`]).
     vmt: VirtualMethodTable,
 
@@ -408,6 +414,7 @@ impl<'a> Lowerer<'a> {
             opaque_classes: HashSet::new(),
             opaque_alloc_count: 0,
             unresolved_call_count: 0,
+            called_names: HashSet::new(),
             vmt: VirtualMethodTable::new_lua(),
             fidx: FunctionIdx::new(0),
             cur_upvalues: HashMap::new(),
@@ -438,11 +445,15 @@ impl<'a> Lowerer<'a> {
             self.unit = unit;
             self.recognize_classes(self.root_node(unit));
         }
-        self.build_vmt();
         for entry in self.funcs.clone() {
             self.unit = entry.unit;
             self.lower_function(&entry)?;
         }
+        // After lowering, not before: the `externals` column is the set of called names minus the
+        // defined ones, and only the call lowering knows what was called. Nothing in lowering
+        // reads `self.vmt`, and every other column comes from the collection/recognition passes
+        // above, which are complete either way.
+        self.build_vmt();
         log::info!(
             "lua: imported {} file(s), {} function(s)",
             self.units.len(),
@@ -995,9 +1006,32 @@ impl<'a> Lowerer<'a> {
             })
             .collect();
 
+        // Externals: every explicitly-called name that no lowered function defines. Registered
+        // under both spellings a Lua library function can be called by -- the fq callee text
+        // (`os.execute`) and its last dotted component (`execute`) -- because method-call syntax
+        // drops the prefix (`s:format(x)` lowers to a call of `format`) while dotted syntax keeps
+        // it. One model generator then covers both. Unlike `functions` above, the simple name is
+        // split off the fq name: an external has no definition site to read it from.
+        //
+        // Sorted because it comes from a `HashSet` and the VMT feeds resolvent order.
+        let defined: HashSet<String> = functions.iter().map(|(_, fq)| fq.to_string()).collect();
+        let mut externals: Vec<(Symbol, Symbol)> = self
+            .called_names
+            .iter()
+            .filter(|name| !defined.contains(name.as_str()))
+            .map(|name| {
+                let simple = name
+                    .rsplit_once('.')
+                    .map_or(name.as_str(), |(_, last)| last);
+                (Symbol::from(simple), Symbol::from(name.as_str()))
+            })
+            .collect();
+        externals.sort_unstable();
+
         self.vmt = VirtualMethodTable::Lua {
             methods,
             functions,
+            externals,
             hierarchy,
         };
     }
@@ -2147,6 +2181,9 @@ impl<'a> Lowerer<'a> {
                 self.unresolved_call_count += 1;
                 log::trace!("lua: unresolved callee `{callee}`");
             }
+            // Whether or not it resolved, this is a name the program calls. `build_vmt` keeps
+            // the ones no definition claims and publishes them as externals.
+            self.called_names.insert(callee.clone());
             CallStyle::DirectCall {
                 call_edges: CallEdges::Explicit(ThinVec::from(vec![callee])),
             }
@@ -2610,6 +2647,17 @@ mod tests {
         }
     }
 
+    /// The VMT's `(simple name, fully-qualified name)` pair for every external.
+    fn vmt_externals(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
+        match vmt {
+            VirtualMethodTable::Lua { externals, .. } => externals
+                .iter()
+                .map(|(simple, fq)| (simple.to_string(), fq.to_string()))
+                .collect(),
+            other => panic!("expected VirtualMethodTable::Lua, got {other:?}"),
+        }
+    }
+
     /// The recovered `subclass -> parent` edges, sorted.
     fn hierarchy_edges(vmt: &VirtualMethodTable) -> Vec<(String, String)> {
         match vmt {
@@ -2720,6 +2768,72 @@ mod tests {
                 .collect::<Vec<_>>(),
             function_names(&info)
         );
+    }
+
+    #[test]
+    fn vmt_carries_called_but_undefined_functions_as_externals() {
+        // `string.format` and `os.execute` are called and never defined; `helper` is both. The
+        // method-call `s:sub(1, 3)` lowers to a call of the bare `sub`, which is why one model
+        // naming `sub` has to cover both spellings.
+        let src = r#"
+            local function helper(x) return x end
+            local function handler(s)
+              local t = s:sub(1, 3)
+              local cmd = string.format("echo %s", helper(t))
+              os.execute(cmd)
+            end
+            return handler
+        "#;
+        let info = import_str(src);
+        assert_eq!(
+            vmt_externals(&info.vmt),
+            vec![
+                ("execute".to_string(), "os.execute".to_string()),
+                ("format".to_string(), "string.format".to_string()),
+                ("sub".to_string(), "sub".to_string()),
+            ],
+            "sorted, and `helper` is defined so it is not an external"
+        );
+        // The simple name of a dotted external is its last component -- there is no definition
+        // site to read one off, unlike `functions`.
+        assert!(
+            !vmt_functions(&info.vmt)
+                .iter()
+                .any(|(_, fq)| fq == "os.execute"),
+            "an external must not also appear as a defined function"
+        );
+    }
+
+    /// The externals column is what makes a Lua propagation model file do anything: before it,
+    /// every match index was built from the lowered definitions only, so a model naming a stdlib
+    /// function matched nothing.
+    #[test]
+    fn a_model_can_name_a_lua_external() {
+        use crate::models::{ModelBuilders, json::ModelGeneratorIngest};
+
+        let info = import_str(r#"local function h(x) return os.getenv(x) end return h"#);
+        for port in ["getenv", "os.getenv"] {
+            let mut builders = ModelBuilders::new();
+            let mut ingest = ModelGeneratorIngest::new(&info, &mut builders);
+            ingest
+                .encode_models(vec![serde_json::json!({
+                    "find": "methods",
+                    "where": [{"constraint": "signature_match", "name": port}],
+                    "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]}
+                })])
+                .unwrap_or_else(|e| panic!("loading a model naming {port}: {e}"));
+            drop(ingest);
+            let batch = builders.finish().expect("finish");
+            assert_eq!(
+                batch
+                    .summary
+                    .iter_summaries()
+                    .map(|(f, ..)| f.to_string())
+                    .collect::<Vec<_>>(),
+                vec!["os.getenv".to_string()],
+                "a model naming `{port}` must summarize the external"
+            );
+        }
     }
 
     #[test]

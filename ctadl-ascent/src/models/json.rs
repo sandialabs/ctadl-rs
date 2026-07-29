@@ -282,7 +282,12 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                     .push(fq);
                 program_method_qualified_ids.entry(fq).or_default().push(fq);
             }
-        } else if let VirtualMethodTable::Lua { functions, .. } = vmt {
+        } else if let VirtualMethodTable::Lua {
+            functions,
+            externals,
+            ..
+        } = vmt
+        {
             // Lua IR names are fully qualified by module (`kong.pdk.request.get_headers`,
             // `direct-flow.source`). Key matching off the simple name as well, so a model can say
             // `^source$` without spelling the module it happens to live in -- the same treatment
@@ -302,6 +307,25 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             // deriving the id from the module: a single file imported as the root itself has an
             // empty module name, so there a function's id and its bare name coincide.
             for (simple, fq) in functions {
+                let simple = simple.as_ref();
+                let fq = fq.as_ref();
+                let keys: &[&str] = if simple == fq { &[fq] } else { &[simple, fq] };
+                for key in keys {
+                    program_method_names.entry(key).or_default().push(fq);
+                    program_method_signatures.entry(key).or_default().push(fq);
+                }
+                program_method_qualified_ids.entry(fq).or_default().push(fq);
+            }
+            // Externals -- called but never defined (the stdlib, and modules outside the import).
+            // Indexed exactly as `functions` above, with the same reason for keeping the fq name
+            // out of the `keys` loop for `qualified-id`: keying it on the bare name would hand
+            // `qualified-id` the collisions it exists to remove. `os.execute` is reachable both
+            // as `execute` (which also covers the method-call spelling `x:execute()`) and as the
+            // fq `os.execute`.
+            //
+            // Externals have no `FunctionData`, so `has_code` / `number_parameters` / `uses_field`
+            // will not match them -- already true of the dex/jvm `ext` entries.
+            for (simple, fq) in externals {
                 let simple = simple.as_ref();
                 let fq = fq.as_ref();
                 let keys: &[&str] = if simple == fq { &[fq] } else { &[simple, fq] };
@@ -340,14 +364,21 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             VirtualMethodTable::Native { methods } => {
                 methods.iter().map(|(_, _, fq, _)| fq.as_ref()).collect()
             }
-            // Every lowered function, class method or not. Before the VMT carried the
-            // `functions` column there was nothing here to enumerate free functions with, so
-            // the universe was empty and a top-level `not` on lua matched *nothing* -- while
-            // `matched_functions(&All)` (the sibling of this set) returned the class methods,
-            // so the two disagreed on the one frontend.
-            VirtualMethodTable::Lua { functions, .. } => {
-                functions.iter().map(|(_, fq)| fq.as_ref()).collect()
-            }
+            // Every lowered function, class method or not, plus the externals. Before the VMT
+            // carried the `functions` column there was nothing here to enumerate free functions
+            // with, so the universe was empty and a top-level `not` on lua matched *nothing* --
+            // while `matched_functions(&All)` (the sibling of this set) returned the class
+            // methods, so the two disagreed on the one frontend. The externals belong here for
+            // the same reason: a top-level `not` should see everything a model can name.
+            VirtualMethodTable::Lua {
+                functions,
+                externals,
+                ..
+            } => functions
+                .iter()
+                .chain(externals.iter())
+                .map(|(_, fq)| fq.as_ref())
+                .collect(),
             VirtualMethodTable::Unknown => UniverseSet::empty(),
         };
 
@@ -2112,10 +2143,18 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
             // The `functions` column, not `methods`: on lua "all" means every function, the
             // same as it does on java and native. Reading `methods` here made a `where`-less
             // generator select only the metatable-recovered class methods and silently skip
-            // every free function.
-            VirtualMethodTable::Lua { functions, .. } => {
-                functions.iter().map(|t| t.1.to_string()).collect()
-            }
+            // every free function. `externals` joins it so this stays the mirror of the
+            // `universe` set built in [`ModelGeneratorIngest::new`] -- the two disagreeing is
+            // exactly the bug the `functions` column fixed.
+            VirtualMethodTable::Lua {
+                functions,
+                externals,
+                ..
+            } => functions
+                .iter()
+                .chain(externals.iter())
+                .map(|t| t.1.to_string())
+                .collect(),
             VirtualMethodTable::Unknown => {
                 // For PCODE (which uses Unknown), we don't have a list of all methods in the VMT
                 // but we should have been able to match them via names/signatures in ModelGeneratorIngest.
