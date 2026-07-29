@@ -314,11 +314,26 @@ fn check_human_profile_paths(
 }
 
 /// Check a flowy program, running the ctadl index and query steps, and print errors.
-pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow::Result<()> {
+pub fn check<P: AsRef<Path>>(
+    file: P,
+    dump_index_graph: Option<&Path>,
+    models: &[std::path::PathBuf],
+) -> anyhow::Result<()> {
     let file = file.as_ref();
     let program = flowy::compile_program(file)?;
     let mut pass_count = 0;
     let mut fail_count = 0;
+
+    // Models are loaded before `codegen_program`, which consumes the `ProgramInfo`. A flowy
+    // import has `VirtualMethodTable::Unknown`, so a generator matches by the IR function name
+    // directly (`ModelGeneratorIngest::new`'s fallback arm) and gets no default models of its
+    // own. That makes flowy the cheapest place to pin what a *model port* means, which is what
+    // `port_semantics/` uses it for.
+    let mut summary = crate::models::ModelBuilders::new().finish()?.summary;
+    for model_path in models {
+        let batch = crate::models::try_load_models(&program.program_info, model_path)?;
+        summary.union_with(&batch.summary)?;
+    }
 
     let mut index_facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -328,6 +343,7 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
         &mut source_info,
         CallResolutionStrategy::Mixed,
     );
+    crate::codegen::models::codegen_summary(summary, &mut index_facts, &mut source_info);
     log::debug!("Function ID to Name mapping:");
     for (id, name) in source_info.sites.functions() {
         log::debug!("{}: {}", id.id, name.0);

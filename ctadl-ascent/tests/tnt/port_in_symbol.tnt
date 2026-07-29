@@ -1,0 +1,27 @@
+// PORT SEMANTICS 2/6 -- a named field on the INPUT side unwraps a level.
+//
+// `Argument(0).f -> Return` maps `t.f.X` to `u.X`. Taint stored at `t.f` therefore lands on BARE
+// `u`, one level ABOVE where a first reading expects it. A fixture that always probes `u.f`
+// scores 0 here and reads as a broken model; it is the model doing exactly what it says.
+//
+// This row is why the plan's original semantics matrix looked like four failures out of six.
+def id(v): 1
+where summaries [return <- v.f]
+{
+start:
+  w = "nothing";
+  return w;
+}
+
+def main() {
+start:
+  t.f = source(Secret);
+  u = id(t);
+  // Predicted: bare u -- the port consumed the `.f`.
+  probe = u;
+  sink(probe, Secret);
+  // NOT u.f. Probing here is the mistake the matrix exists to prevent.
+  deeper = u.f;
+  errsink(deeper, Secret);
+  return;
+}

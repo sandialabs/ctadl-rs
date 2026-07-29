@@ -1,0 +1,24 @@
+// PORT SEMANTICS 3/6 -- a named field on the OUTPUT side adds a level.
+//
+// `Argument(0) -> Return.f` maps `t.X` to `u.f.X`, so taint stored at `t.f` lands at `u.f.f` --
+// one level BELOW where a first reading expects it. The mirror image of `port_in_symbol.tnt`.
+def id(v): 1
+where summaries [return.f <- v]
+{
+start:
+  w = "nothing";
+  return w;
+}
+
+def main() {
+start:
+  t.f = source(Secret);
+  u = id(t);
+  // Predicted: u.f.f -- the port prepended a `.f` to the surviving suffix `.f`.
+  probe = u.f.f;
+  sink(probe, Secret);
+  // NOT u.f.
+  shallow = u.f;
+  errsink(shallow, Secret);
+  return;
+}
