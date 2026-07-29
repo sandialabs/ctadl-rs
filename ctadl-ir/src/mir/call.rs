@@ -195,6 +195,25 @@ pub enum VirtualMethodTable {
         /// same string operation, since a name collision within a module makes the IR name
         /// `<module>.f%1` while the function is still simply named `f`.
         functions: Vec<(Symbol, Symbol)>,
+        /// Functions *called* by the import but defined nowhere in it — the Lua stdlib
+        /// (`os.execute`, `string.format`), and anything from a module outside the import.
+        /// Without this column they are unmodelable: the IR names them correctly at their call
+        /// sites, but every model match index is built from the table, so a model naming
+        /// `execute` (or `qualified-id: "os.execute"`) matched nothing and a Lua propagation
+        /// model file was inert. dex/jvm answer the same question with their `Context::ext`
+        /// entries and pcode with real `<EXTERNAL>::…` thunks.
+        ///
+        /// The columns are as follows:
+        /// - Simple name
+        /// - Fully-qualified name, exactly as the call site spells the callee
+        ///
+        /// Each external is registered under *both* spellings because Lua's two call syntaxes
+        /// produce two different callee names for one library function: `string.format(x)`
+        /// lowers to a call of `string.format`, while `s:format(x)` lowers to a call of the
+        /// bare `format`. Unlike `functions` above, the simple name here is the last dotted
+        /// component of the fq name rather than something read off a definition site — an
+        /// external has no definition site, so splitting the name is the only source available.
+        externals: Vec<(Symbol, Symbol)>,
         /// Subclass -> its `__index` parents (usually one). Mirrors Java `hierarchy`.
         hierarchy: HashMap<Symbol, SmallVec<[Symbol; 2]>>,
     },
@@ -218,6 +237,7 @@ impl VirtualMethodTable {
         VirtualMethodTable::Lua {
             methods: Vec::new(),
             functions: Vec::new(),
+            externals: Vec::new(),
             hierarchy: HashMap::new(),
         }
     }
@@ -250,6 +270,7 @@ impl Display for VirtualMethodTable {
             VirtualMethodTable::Lua {
                 methods,
                 functions,
+                externals,
                 hierarchy,
             } => {
                 writeln!(f, "lua virtual method table")?;
@@ -258,6 +279,9 @@ impl Display for VirtualMethodTable {
                 }
                 for (name, func) in functions {
                     writeln!(f, "{name}: {func}")?;
+                }
+                for (name, func) in externals {
+                    writeln!(f, "{name}: {func} (external)")?;
                 }
                 for (subclass, superclasses) in hierarchy {
                     for superclass in superclasses {
