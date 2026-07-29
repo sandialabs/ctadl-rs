@@ -40,6 +40,8 @@ fn function(name: &str) -> FunctionData {
 const NATIVE_PROBE: &str = "strcpy";
 const LUA_PROBE: &str = "format";
 const JAVA_PROBE: &str = "Ljava/lang/String;->toString()Ljava/lang/String;";
+/// Matches the `List.add` collection generator, whose port names the array element.
+const JAVA_LIST_ADD: &str = "Ljava/util/ArrayList;->add(Ljava/lang/Object;)Z";
 
 fn program(vmt: VirtualMethodTable, names: &[&str]) -> ProgramInfo {
     ProgramInfo {
@@ -71,6 +73,13 @@ fn java_program() -> ProgramInfo {
             JavaSignature("(I)V".into()),
             JavaMethod("Lcom/example/C;->format(I)V".into()),
         ),
+        // A collection write, so the array-element port has something to match.
+        (
+            JavaClass("Ljava/util/ArrayList;".into()),
+            JavaSimpleName("add".into()),
+            JavaSignature("(Ljava/lang/Object;)Z".into()),
+            JavaMethod(JAVA_LIST_ADD.into()),
+        ),
     ];
     program(
         VirtualMethodTable::Java {
@@ -81,6 +90,7 @@ fn java_program() -> ProgramInfo {
             JAVA_PROBE,
             "Lcom/example/C;->strcpy(I)V",
             "Lcom/example/C;->format(I)V",
+            JAVA_LIST_ADD,
         ],
     )
 }
@@ -211,6 +221,38 @@ fn every_shipped_default_file_parses() {
             );
         }
     }
+}
+
+/// The Java collection generators must name the array element the dex/jvm frontends actually
+/// emit -- `PathSegment::Symbol("[]")`, spelled `.\[]` in a port and `"\\[]"` in JSON.
+///
+/// Getting this wrong fails loudly in one direction and silently in the other. Unescaped,
+/// `Argument(0).[]` is `InvalidOffset("")`, a hard load error caught by
+/// `every_shipped_default_file_parses`. But the synthetic `.rep` these generators used to carry
+/// parses fine and simply matches nothing any frontend writes, which is how `List.add` /
+/// `List.get` chains ended up composing only with each other. Only an assertion on the decoded
+/// segment catches a silent regression back to that.
+#[test]
+fn java_collection_generators_name_the_real_array_element() {
+    use ctadl_ir::mir::PathSegment;
+
+    let batch = try_load_default_models(&java_program()).expect("loading default models");
+    let paths: Vec<_> = batch.summary.aps.build_ap_map().into_values().collect();
+    let element = PathSegment::symbol("[]");
+    assert!(
+        paths.iter().any(|p| p.iter().any(|s| *s == element)),
+        "no port in the Java defaults decodes to Symbol(\"[]\"); got {:?}",
+        paths
+            .iter()
+            .map(|p| p.to_dot_string())
+            .collect::<BTreeSet<_>>()
+    );
+    // And nothing still names the synthetic field it replaced.
+    let rep = PathSegment::symbol("rep");
+    assert!(
+        !paths.iter().any(|p| p.iter().any(|s| *s == rep)),
+        "a `.rep` port is back; no frontend emits that field"
+    );
 }
 
 /// The defaults are propagation only: CTADL ships no default sources or sinks, and shipping any

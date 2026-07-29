@@ -1,3 +1,26 @@
+// Default propagation models for the Java frontends (VirtualMethodTable::Java -- dex, apk, jvm,
+// jar). Propagation only; CTADL ships no default sources or sinks.
+//
+// PARENTS. `parent`/`parents` matches the class DECLARED AT THE INVOKE SITE, not the runtime
+// type. A generator listing only the interface misses every call written against a concrete
+// class, and vice versa -- which is why the `iterator` entry below lists eight parents for one
+// method. Every entry here lists the interface AND the common concrete types.
+//
+// POSITIONAL PORTS ONLY. dex and jvm name instance fields differently -- dex wraps the field's
+// `pretty_name`, jvm builds `<Lclass;->field:descriptor>` -- so a named-field port is not
+// portable between the two Java frontends. `Argument(n)`, `Return`, and the array element are.
+//
+// THE ARRAY ELEMENT is `Symbol("[]")` on both dex and jvm, and a port names it `.\[]`, ESCAPED
+// -- in JSON, "Argument(0).\\[]". Unescaped, `[` at segment start introduces an offset, so
+// `Argument(0).[]` is a hard load error (`InvalidOffset("")`) rather than a silent mismatch. The
+// four collection generators at the end of this file used to use a synthetic `.rep` instead,
+// which no frontend emits: `List.add` wrote it and `List.get` read it, so add->get chains
+// composed with each other but never joined a real array write. `[]` is what the frontends
+// actually emit, so they do now.
+//
+// A port pair is a PREFIX SUBSTITUTION, not a filter: `Argument(0).\[] -> Return` unwraps a
+// level, `Argument(1) -> Argument(0).\[]` adds one. See docs/model-generators.md §7 and the
+// fixtures in `tests/tnt/port_*.tnt`.
 {"find":"methods","where":[{"constraint":"signature_match","name":"toString"},{"constraint":"signature","pattern":".*\\(\\)Ljava/lang/String;"}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","name":"toString","parents":["Ljava/lang/String;","Ljava/lang/StringBuffer;","Ljava/lang/StringBuilder;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","name":"append","parents":["Ljava/lang/StringBuffer;","Ljava/lang/StringBuilder;"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"},{"input":"Argument(0)","output":"Argument(0)"},{"input":"Argument(1)","output":"Return"},{"input":"Argument(1)","output":"Argument(0)"}]}}
@@ -49,7 +72,7 @@
 {"find":"methods","where":[{"constraint":"signature_match","name":"update","parent":"Ljava/security/MessageDigest;"}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0)"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","name":"digest","parent":"Ljava/security/MessageDigest;"}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
 {"find":"methods","where":[{"constraint":"signature_match","name":"setEntity","parent":"Lorg/apache/http/client/methods/HttpPost;"}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0)"}]}}
-{"find":"methods","where":[{"constraint":"signature_match","names":["add"],"parents":["Ljava/util/ArrayList;","Ljava/util/List;"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0).rep"}]}}
-{"find":"methods","where":[{"constraint":"signature_match","names":["get"],"parents":["Ljava/util/ArrayList;","Ljava/util/List;"]}],"model":{"propagation":[{"input":"Argument(0).rep","output":"Return"}]}}
-{"find":"methods","where":[{"constraint":"signature_match","names":["iterator"],"parents":["Ljava/util/Iterable;","Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/ArrayList;","Ljava/util/LinkedList;","Ljava/util/HashSet;","Ljava/util/TreeSet;"]}],"model":{"propagation":[{"input":"Argument(0).rep","output":"Return.rep"}]}}
-{"find":"methods","where":[{"constraint":"signature_match","names":["next"],"parents":["Ljava/util/Iterator;"]}],"model":{"propagation":[{"input":"Argument(0).rep","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["add"],"parents":["Ljava/util/ArrayList;","Ljava/util/List;"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0).\\[]"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["get"],"parents":["Ljava/util/ArrayList;","Ljava/util/List;"]}],"model":{"propagation":[{"input":"Argument(0).\\[]","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["iterator"],"parents":["Ljava/util/Iterable;","Ljava/util/Collection;","Ljava/util/List;","Ljava/util/Set;","Ljava/util/ArrayList;","Ljava/util/LinkedList;","Ljava/util/HashSet;","Ljava/util/TreeSet;"]}],"model":{"propagation":[{"input":"Argument(0).\\[]","output":"Return.\\[]"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["next"],"parents":["Ljava/util/Iterator;"]}],"model":{"propagation":[{"input":"Argument(0).\\[]","output":"Return"}]}}
