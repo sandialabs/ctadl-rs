@@ -1,6 +1,6 @@
 # Bridging models - DO-NOT-MERGE
 
-**A model-generator construct that connects callsites in one language to implementations in
+**A model-generator construct that connects callees in one language to implementations in
 another.**
 
 ## 0. Status
@@ -15,7 +15,7 @@ what it left, is what this revision is about.
 | JNI linking, mangling, port map | **shipped**, automatic, `--no-jni-bridge` to disable |
 | Multi-import SARIF attribution | **shipped** — `index_source_map` gained an `import_id` column (`INDEX_FORMAT_VERSION` 3) |
 | Two-import end-to-end regression runner | **shipped** — `cargo xtask regression --frontend jni` |
-| `model.bridge`, `in`, `find: callsites`, callee-side paths | **not started** — this document |
+| `model.bridge`, `in`, callee-side paths | **not started** — this document |
 
 Nothing about the declarative construct was invalidated. Two things about it were: the fixed
 `jni-*` argument shifts it proposed are wrong (§2.3), and the `convention` key they justified is
@@ -55,9 +55,9 @@ from a `--models` file. Everything else is still where §1 started:
 Every one of these is a name mismatch plus an argument correspondence, and every one of them is a
 handful of pairs a user knows and the analysis does not.
 
-**Goal.** A declarative construct that pins a set of callsites/callees on one side, a set of
-implementations on the other, and describes how arguments and returns correspond — expressed in a
-model-generator file, matched with the same constraint language everything else uses.
+**Goal.** A declarative construct that pins a set of callees on one side, a set of implementations
+on the other, and describes how arguments and returns correspond — expressed in a model-generator
+file, matched with the same constraint language everything else uses.
 
 ## 2. Semantics: what a bridge is, at the fact level
 
@@ -72,51 +72,81 @@ into dataflow via two rules:
 
 The two rules meet only at the argument *index* `n`. So:
 
-> A bridge is **one `call` row plus one `actual_param` row per mapped port.**
+> A bridge is **one `call` row, one temporary per mapped callee index, and one `assign` row per
+> port direction** — the temporaries being what the call passes as its actuals.
 
-This is no longer a claim: it is what `jni::emit_bridge` does, and taint crosses a real
-Java-to-C boundary in both directions on the strength of those two relations alone. Five
-consequences drive the rest of the design, the last three of which the implementation discovered.
+The JNI pass validates the degenerate half of this: with every port an empty-path formal it reduces
+to `call` plus one `actual_param` per port, which is what `jni::emit_bridge` emits, and taint
+crosses a real Java-to-C boundary in both directions on the strength of those two relations alone.
+The temporaries are what generalize it to ports that name a sub-path of the callee's parameter
+(consequence 2). Five consequences drive the rest of the design.
 
 1. **The port map is the feature, not a refinement.** A bare `call` edge silently mis-wires any
    pair of functions whose ABIs differ — no error, no flow, no diagnostic. The `JniArgShift`
    regression case pins this: one native method called twice, taint in the argument the
    implementation returns in one call and in the argument it drops in the other, so an off-by-one
    flips both assertions at once.
-2. **Model paths register on either side; what the callee side lacks is a fact shape to carry
-   them.** A model port's path is interned and registered no matter which side of the port it sits
-   on: `codegen_summary` resolves both ports through `build_ap_map`, and the index engine harvests
-   *both* path columns of every `summary` row into `model_paths`, which feeds `paths` and the
-   one-level concat against `program_paths` (`index_engine/mod.rs`). Caller-side vertices arrive the
-   same way — `program_paths(p) <-- actual_param(_, _, FlowVertex(_, p))` — as do both endpoints of
-   every `assign`. So there is no "register the path separately" step; a propagation writing
-   `Argument(0).stack.[1]` on either end already puts that path in the analysis path set.
+2. **A port map is a relabeling; `actual_param` cannot relabel, so the bridge routes through a
+   temporary.** The rule expands one row into a bidirectional pair: for an actual `x.p`,
+   `call_arg(site, n) = x.p` together with `x.p = call_arg(site, n)`. The pseudo-variable thereby
+   stands for the argument *as a whole* — its empty path is what makes it the whole vertex, not a
+   truncation of one — and every later rule that mentions `call_arg(site, n)` relates back to the
+   original actual in both directions. A row has one vertex column and no second path, so it cannot
+   express what `"to": "Argument(0).stack.[1]"` asserts: that the caller's actual corresponds to a
+   *sub-path* of the callee's parameter rather than to the parameter.
 
-   The real constraint is structural, and it is about what an `actual_param` row can *say* — not
-   about a path being dropped. The rule expands one row into a bidirectional pair: for an actual
-   `x.p`, `call_arg(site, n) = x.p` together with `x.p = call_arg(site, n)`. The pseudo-variable
-   thereby stands for the argument *as a whole*, and every later rule that mentions `call_arg(site,
-   n)` relates back to the original actual vertex in both directions. Its empty path is what makes
-   it the whole vertex, not a truncation of one. Paths do reach the call-argument side at a site —
-   summary instantiation is exactly that, `assign_like(f, call_arg(i, n1), dst_path, call_arg(i,
-   n2), src_path)` — but they arrive from the callee's own summary.
+   The construct that does express it is a **temporary** — one local in the caller per mapped callee
+   index, standing for that parameter as the callee sees it. The bridge assigns between the caller's
+   port and a *sub-path of the temporary*, and passes the temporary whole:
 
-   What a port map saying `"to": "Argument(0).stack.[1]"` asserts is different: that the caller's
-   actual corresponds to a *sub-path* of the callee's parameter rather than to the parameter. An
-   `actual_param` row has no column for that. So a bridge writes the expansion out by hand (§4.4) —
-   the same assignment pair the rule would have generated, with `to_path` where the rule puts the
-   empty path — and gets to choose one direction or both while it is there, where `actual_param` is
-   unconditionally bidirectional.
+   ```
+   t_n.to_path      = formal_k.from_path    // direction: in
+   formal_k.from_path = t_n.to_path         // direction: out
+   actual_param(site, n, FlowVertex(t_n, empty))
+   ```
 
-   One asymmetry does survive, and it is about which bucket a path lands in rather than whether it
-   lands. Summary-carried paths become `model_paths` and so concatenate with every program path;
-   a path introduced through `actual_param`, `assign`, or `facts.paths` becomes a `program_path` and
-   concatenates only with model paths. A callee-side path written on a `bridge` therefore composes
-   one level less than the same path written on a `propagation`. *Unvalidated:* every JNI port is an
-   empty-path formal, so nothing in the tree exercises the bridge side of this.
-3. **Sites must be fresh.** Call-argument pseudo-variables are keyed on the site id, so a bridge
-   that reused an existing site's id would alias its argument *n* to that call's argument *n* — a
-   spurious bidirectional flow between two unrelated arguments. Every bridge mints a new site id.
+   Everything downstream is then ordinary. `actual_param` binds `t_n` whole to `call_arg(site, n)`,
+   so summary instantiation — `assign_like(f, call_arg(i, n1), dst_path, call_arg(i, n2), src_path)`
+   — replays `b`'s summary against `t_n`'s sub-paths exactly as it does for any other call, at every
+   caller of the stub, including callers hybrid inlining resolves inside the fixpoint (§2.1). No
+   rule has to know a bridge was involved.
+
+   Three things fall out that a hand-expanded `actual_param` got wrong or could not say:
+
+   - **Ports sharing a callee index stay distinct.** The Lua map (§3.3) puts three ports on callee
+     `Argument(0)`, at `.stack.[1]`, `.stack.[2]` and `.stack.[-1]`. Three `actual_param` rows at
+     index 0 would bind all three caller ports to the one `call_arg(site, 0)` pseudo-variable and
+     alias them to each other, bidirectionally — the same failure consequence 3 mints fresh sites to
+     avoid. One temporary at three sub-paths separates them by field-sensitivity, which is the
+     mechanism that was always meant to do this work.
+   - **`direction` becomes expressible.** `actual_param` is unconditionally bidirectional. A pair of
+     `assign` rows is two independent facts, so `in` / `out` / `both` is just which of them get
+     pushed.
+   - **Nothing is ever concatenated.** Every path the bridge writes is *literal*: `from_path` on the
+     caller's formal, `to_path` on the temporary. The temporary is the seam, so no composite
+     `from_path ++ to_path` need exist in the path set. That is the decisive advantage over the
+     obvious alternative — drop `to_path` from the row and register the concatenation in
+     `facts.paths` so ordinary field propagation carries it. That alternative needs not one
+     composite but the whole family `from_path ++ to_path ++ q` for every `q` the callee's summary
+     adds, which is not a set a bridge can enumerate.
+
+   Registration stays the engine's job. `program_paths` is seeded from both endpoints of every
+   `assign` and from every `actual_param` vertex (`index_engine/mod.rs`), so `from_path` and
+   `to_path` each register themselves. There is no `facts.paths` push anywhere in a bridge.
+
+   One asymmetry survives, and it is about which bucket a path lands in rather than whether it
+   lands. Summary-carried paths become `model_paths` and so concatenate with every program path; a
+   path introduced through `assign` or `actual_param` becomes a `program_path` and concatenates only
+   with model paths. Both of a bridge's paths are program paths, so a callee-side path written on a
+   `bridge` composes one level less than the same path written on a `propagation`. *Unvalidated:*
+   every JNI port is an empty-path formal, so nothing in the tree exercises this (§7).
+3. **Sites must be fresh, and temporaries are keyed on the site.** Call-argument pseudo-variables
+   are keyed on the site id, so a bridge that reused an existing site's id would alias its argument
+   *n* to that call's argument *n* — a spurious bidirectional flow between two unrelated arguments.
+   Every bridge mints a new site id. The temporaries of consequence 2 inherit the same requirement
+   for the same reason: under `one-to-many` cardinality a single caller hosts several bridge sites,
+   and a temporary named only for its callee index would merge their parameters. Name them
+   `(site, index)`.
 4. **Formals are synthesized on both sides.** A bodyless stub has no `formal_param` rows at all —
    the dex frontend sets parameters up only when it finds a code item — and both the `locals`
    seeding rule and the summary rule join on them, so the bridge emits them itself for every mapped
@@ -157,15 +187,29 @@ consequences drive the rest of the design, the last three of which the implement
 
 ### 2.1 Where the edge attaches
 
-Two modes, selected by the generator's `find`:
+**Inside the matched method, and only there.** `find: methods` mints the site *in* the matched
+(bodyless) function. The stub thereby acquires a real summary, and every callsite of it anywhere in
+the program composes with that summary for free — one edge per bridged method, not one per call.
+This is the JNI case, and it is what shipped.
 
-- **`find: methods`** — synthesize the edge *inside the matched (bodyless) method*. The stub thereby
-  acquires a real summary, and every callsite of it anywhere in the program composes with that
-  summary for free. This is the JNI case; it is what shipped, and it is strictly better than
-  touching callsites: one edge per native method, not one per call.
-- **`find: callsites`** — synthesize the edge at each matched call site, mapping from the caller's
-  actual vertices. Needed when there is no stub to hang a summary on: a call through a table field,
-  a `dlsym`'d pointer, the Lua case. Unvalidated — nothing in the tree emits this shape yet.
+An earlier draft offered a second mode, `find: callsites`, synthesizing an edge at each matched call
+site from the caller's own actuals. **It is removed, and it could not have worked.** `call` is an
+EDB relation — it never appears in a rule head — and indirect and virtual dispatch are resolved
+*inside* the fixpoint, through `resolvent` and `context_assign` (`index_engine/mod.rs`). A pass
+running at `apply_bridges` time therefore sees only the statically emitted call rows. The sites a
+callsite bridge would most want are exactly the ones that are not there yet: a call through a table
+field, a `dlsym`'d pointer, a virtual dispatch. It would have bridged the easy sites, missed the
+motivating ones, and reported success — §7's dominant failure mode with a mode of its own.
+
+Attaching in the method has no such hole, because it does not enumerate callers at all: it produces
+a summary, and the fixpoint applies that summary to whatever call sites it later discovers.
+
+Nothing is lost, because the case that motivated callsite mode has a function node to attach to. The
+Lua frontend publishes an **externals** column on `VirtualMethodTable::Lua` — the set of called
+names minus the names the import defined (`languages/lua/mod.rs`) — so a C function bound through a
+`luaL_Reg` table already appears as a matchable, bodyless callee, exactly like a Dex `native`
+method. That is the same prerequisite §4.2 states for any side a bridge matches on, and for Lua it
+is already met.
 
 ### 2.2 Argument correspondence is per-method, not a fixed shift
 
@@ -253,7 +297,7 @@ table, per import). The VMT is the right key for "which shipped file"; `in` is t
 
 ```jsonc
 {
-  "find": "methods",                  // or "callsites"  — side A (the call side)
+  "find": "methods",                  // side A (the call side); the only mode — §2.1
   "in":    { "language": "lua" },
   "where": [ … ],                     // side A match: the existing constraint language, unchanged
   "model": {
@@ -277,8 +321,7 @@ table, per import). The VMT is the right key for "which shipped file"; `in` is t
 **`to` is a match block, not a scope.** It mirrors the existing shape of `forward_call`, whose
 `where` lives inside the model — the precedent for "the second set of matches lives in the model".
 Side A stays in the generator's own `find`/`where`, so every existing matching feature applies to it
-verbatim: `in_function` for callsite mode, `any_of`/`not`, `qualified-id`, and the
-unknown-field/unknown-constraint hard errors.
+verbatim: `any_of`/`not`, `qualified-id`, and the unknown-field/unknown-constraint hard errors.
 
 **`arguments`** entries use the existing `port-spec` grammar (`Argument(n)`, `Return`, plus an
 optional access path), and name *slots*, not declaration order (§2.2). Omitted entirely ⇒ identity
@@ -338,12 +381,14 @@ Note what this example is *not*: a method whose implementation is named by the J
 generator at all. If you find yourself writing one, check the `jni bridge:` line in the `index` log
 first — the method is more likely unresolved or ambiguous than unbridgeable.
 
-**A callsite bridge with callee-side paths (the Lua shape).** No stub exists to attach a summary to,
-and the callee takes its arguments off an interpreter stack rather than positionally:
+**Callee-side paths (the Lua shape).** The callee takes its arguments off an interpreter stack
+rather than positionally, so all three ports land on the same callee parameter at different
+sub-paths. `mylib.add` is matchable as an *external* of the Lua import (§2.1) — a called name the
+import never defined — which is what gives the bridge a method to attach to:
 
 ```jsonc
 {
-  "find": "callsites",
+  "find": "methods",
   "in": { "language": "lua" },
   "where": [{ "constraint": "signature_match", "name": "mylib.add" }],
   "model": { "bridge": {
@@ -361,8 +406,12 @@ and the callee takes its arguments off an interpreter stack rather than position
 The `.stack.[1]` here is an *unescaped* offset on purpose — that is what a native frontend emits. A
 Lua-side `t[1]` would be the escaped `.\[1]` (§2.3).
 
-This example exercises both of the mechanisms the JNI pass left untested: callsite attachment
-(§2.1) and callee-side paths (§2, consequence 2). Expect it to be the harder half of the work.
+Emission gives this bridge one temporary — the callee's `Argument(0)`, the `lua_State *` — written
+at `.stack.[1]` and `.stack.[2]` on the way in and read at `.stack.[-1]` on the way out. That the
+three ports share a callee index and stay unaliased is the whole point of the temporary (§2,
+consequence 2); an `actual_param`-only encoding would have collapsed them and connected the two
+arguments and the return to each other. This is the case to build first: it is the only mechanism
+the JNI pass left untested, and a surprise here should still be able to change the design.
 
 ## 4. Architecture
 
@@ -389,7 +438,6 @@ struct BridgeSpec {
 
 struct SideSpec {
     scope: ProgramScope,                // the `in` block
-    find:  FindMethod,
     where_: Vec<serde_json::Value>,     // raw JSON — handed back to the existing evaluator in §4.3
 }
 
@@ -472,8 +520,9 @@ functions are present, so both sides resolve. Evaluating per import cannot work 
 program's functions do not exist yet, and the failure mode is a silent skip.
 
 Each side is matched by **reusing the existing evaluator**: build a synthetic one-generator value
-`{"find": …, "where": …}` and run it over the `ProgramMatchIndex`es whose scope the side's `in`
-admits. There must not be a second implementation of `where`; that is how `signature_match` ends up
+`{"find": "methods", "where": …}` and run it over the `ProgramMatchIndex`es whose scope the side's
+`in` admits. `find` is a constant here — it is `methods` on both sides (§2.1), so `SideSpec` does
+not carry it and the loader rejects any other value on a generator carrying a `bridge`. There must not be a second implementation of `where`; that is how `signature_match` ends up
 meaning two different things in two places.
 
 The two result sets are then paired per `cardinality`. The report carries per-spec match and pair
@@ -484,50 +533,60 @@ the `(file, generator index)` used by every other loader message.
 
 ### 4.4 Emission
 
-For each pair `(a, b)` of function ids:
-
-**`find: methods` — attach in the stub.** This is `jni::emit_bridge` with a user-supplied port map:
+One shape, for each pair `(a, b)` of function ids, since `find: methods` is the only mode. Read a
+port as *"the caller's `from` vertex is the callee's `to` vertex"*, and the emission as the three
+steps that make that true: name the callee's parameter locally, wire the caller's port to it, pass
+it.
 
 ```rust
 let site = source_info.add_insn_site(a);           // fresh site id — never reuse
 facts.call.push((site.into(), b));
-for (from, to) in ports {                          // plus the implicit globals pair
-    facts.actual_param.push((site.into(), to.index, FlowVertex(formal(from.index), from.path)));
-    facts.formal_param.push((a, formal(from.index), ByRef));
-    facts.formal_param.push((b, formal(to.index), ByRef));
-    // No `facts.paths` push: `program_paths(p) <-- actual_param(_, _, FlowVertex(_, p))`
-    // already registers `from.path` (§2, consequence 2).
+
+// 1. One temporary per distinct *callee* index in the port map, plus the implicit globals pair.
+//    Keyed on (site, index): `one-to-many` cardinality puts several bridge sites in one caller,
+//    and a temporary named only for its index would merge their parameters (§2, consequence 3).
+for n in callee_indices {
+    let t = FlowVariable::local(intern(&format!("$bridge{site}#{n}")));
+    // 3. Pass it. The temporary IS the callee's parameter, so it goes whole.
+    facts.actual_param.push((site.into(), n, FlowVertex(t, Path::empty())));
+    facts.formal_param.push((b, FlowVariable::formal_index(n), ByRef));
+}
+
+// 2. Wire each port to a sub-path of its callee's temporary, one direction per `assign`.
+for port in ports {
+    let caller = FlowVertex(FlowVariable::formal_index(port.from.index), port.from.path);
+    let callee = FlowVertex(temp_for(site, port.to.index), port.to.path);
+    if port.direction.inward()  { facts.assign.push((a, callee.clone(), caller.clone())); }
+    if port.direction.outward() { facts.assign.push((a, caller, callee)); }
+    facts.formal_param.push((a, FlowVariable::formal_index(port.from.index), ByRef));
 }
 ```
 
-The `formal_param` rows matter on **both** sides (§2, consequence 4): either function may declare
-fewer parameters than the port map names — a bodyless stub declares none, a prototype-less binary
-function declares none — and the engine seeds its locals from formals and joins the summary rule on
-them. This mirrors what summary emission already does, for the same reason, and it is why the loop
-above is symmetric.
+No `facts.paths` push anywhere. `program_paths` is seeded from both endpoints of every `assign` and
+from every `actual_param` vertex, so `from_path` and `to_path` register themselves (§2, consequence
+2), and the temporary means no *composite* of the two ever has to be registered at all.
+
+The temporaries need no `formal_param` row: `locals` seeds from formals only, and a temporary is a
+conduit rather than a source. The `formal_param` rows on **both** `a` and `b` do matter (§2,
+consequence 4) — either function may declare fewer parameters than the port map names, a bodyless
+stub declaring none and a prototype-less binary function declaring none — and the engine seeds
+`locals` from formals and joins the summary rule on them. The out-direction assign writing to `a`'s
+*formal* is what makes `a` summarizable, which is in turn what lets every caller of `a`, including
+the ones hybrid inlining resolves later, pick the bridge up (§2.1).
 
 Synthesizing side B's formals does not make an incomplete prototype harmless, so still check `b`'s
 arity against the highest mapped callee index and warn when it falls short, naming both functions
-and both numbers. The difference is what the warning now means: the argument *is* delivered to
-`b`'s `Argument(n)`, but a body the disassembler never connected to that parameter will not carry
-it any further. The warning points at the prototype that needs recovering, rather than reporting a
-fact the bridge declined to emit.
+and both numbers. The argument *is* delivered to `b`'s `Argument(n)`; a body the disassembler never
+connected to that parameter will not carry it further. The warning points at the prototype that
+needs recovering, rather than reporting a fact the bridge declined to emit.
 
-**`find: callsites` — attach at each call.** Identical, except the from-vertices come from the
-original site's existing actual parameters rather than from formals, and the site set is derived
-from the call relation filtered by the caller match.
-
-**Callee-side access paths** cannot go through `actual_param`, which binds the call argument as a
-whole and has nowhere to name a sub-path of it (§2). Emit the pair its rule would have expanded to,
-with `to_path` in place of the empty path —
-`facts.assign.push((site, FlowVertex(call_arg(site, n), to_path), FlowVertex(from_var, from_path)))`
-and its converse when `direction: both`. No accompanying `facts.paths` push: `program_paths` is
-seeded from both endpoints of every `assign`, so `to_path` registers itself. Keep these to *literal*
-model paths anyway — every one of them enlarges the program path set that feeds the one-level
-concatenation with model paths, and that product is what costs. Note the bucket (§2, consequence 2):
-a path arriving this way is a *program* path, so unlike the same path on a `propagation` it will not
-be concatenated with other program paths. If a bridge ever needs that composition, the port belongs
-on a summary, not on an `assign`.
+**The degenerate case is what already ships.** A port with an empty `to_path` and `direction: both`
+— every JNI port — expands to `t_n = formal_k.from_path`, its converse, and the `actual_param`.
+That has the same reachability as the direct `actual_param(site, n, FlowVertex(formal_k,
+from_path))` that `jni::emit_bridge` writes today, one copy-hop longer. Special-case it to emit the
+direct row: it keeps the shipped JNI fact shape byte-identical, which `languages/jni/tests.rs`
+asserts on, and it keeps the common case free of a variable and two rows per port. The general path
+is unaffected either way.
 
 **Source attribution — resolved, and it costs a step.** A synthetic site has no `source_map` entry,
 and the SARIF formatter's step emitter simply returns early for a site with no location: no panic,
@@ -622,31 +681,46 @@ declaration-ordinal, the conflict disappears and the plural is unambiguously the
 
 **Memory of retained match indexes** (§4.2) is unquantified until measured on a real APK + `.so`.
 
-**Callee-side paths on a bridge, and callsite attachment, are both unvalidated** (§2, §2.1) — the
-JNI pass needed neither. Callee-side paths on a *propagation* are routine and well exercised; what
-is untried is carrying one across a bridge, where it has to travel as an `assign` rather than as a
-summary port and lands in the program-path bucket rather than the model-path one. The Lua example in
-§3.3 is the first thing that exercises both, and should be built early enough that a surprise there
-can still change the design.
+**Callee-side paths on a bridge are unvalidated** (§2, consequence 2) — the JNI pass needed none.
+Callee-side paths on a *propagation* are routine and well exercised; what is untried is carrying one
+across a bridge, where it travels as an `assign` onto a temporary and lands in the program-path
+bucket rather than the model-path one. The Lua example in §3.3 is the first thing that exercises it
+and should be built early enough that a surprise there can still change the design.
+
+**A deep callee summary path may not clear the propagation gate on the way out.** Suppose `b`'s
+summary writes `Argument(n).to_path.f` while the bridge's port reads `t_n.to_path`. Propagation
+derives the caller vertex `formal_k.from_path.f` and gates it on `paths(from_path.f)`. `from_path`
+is a program path and `to_path.f` is the model path; `f` *alone* is in neither set, so the one-level
+concat rules (`model_paths × program_paths`) do not obviously produce `from_path.f`. This is not
+bridge-specific — an ordinary modelled call has the same shape — but a non-empty `to_path` is what
+makes it reachable in practice, and it is the kind of gap that manifests as a missing flow rather
+than an error. Write the test before assuming it works.
 
 ## 8. Verification approach
 
 - **Parse/validate, no program needed.** Unknown key at generator level, at `model` level, and
   inside `bridge`; missing `to`; `Argument(*)` in a port map; cardinality violation; empty match
-  under each `on-unmatched` setting. For `in`: `language` and `languages` given together, an empty
+  under each `on-unmatched` setting; and `"find": "callsites"` on a generator carrying a `bridge`,
+  which must be a hard error pointing at §2.1 rather than a silently ignored key. For `in`: `language` and `languages` given together, an empty
   `languages`, an unrecognized `ArtifactLanguage`, and — the one positive case — that
   `{"language": "dex"}` and `{"languages": ["dex"]}` parse to the identical `ProgramScope`, so the
   two spellings cannot drift.
 - **Matching.** A two-`ProgramMatchIndex` fixture asserting the side-A and side-B match sets and the
   resulting pairs directly, without touching the fact base.
 - **Emission.** Given a pair and a port map, assert the exact `call` / `actual_param` /
-  `formal_param` rows — plus the `assign` rows for any callee-side path port — including the
-  implicit globals pair, that the site id is fresh, and that a `formal_param` row is emitted on
-  *both* sides for every mapped port, including ports past the callee's recovered arity (§2,
-  consequence 4). Pair that with a case where the callee's arity is short: the rows are still
-  emitted and the warning still fires. Assert no redundant `facts.paths` rows: registration is the
-  engine's job (§2). `languages/jni/tests.rs` is the model for this layer; extend it rather than
-  starting a new fixture style.
+  `formal_param` / `assign` rows, including the implicit globals pair, that the site id is fresh,
+  and that a `formal_param` row is emitted on *both* sides for every mapped port, including ports
+  past the callee's recovered arity (§2, consequence 4). Pair that with a case where the callee's
+  arity is short: the rows are still emitted and the warning still fires. Assert no `facts.paths`
+  rows at all: registration is the engine's job (§2). `languages/jni/tests.rs` is the model for this
+  layer; extend it rather than starting a new fixture style.
+- **Temporaries, specifically** (§2, consequence 2). Three assertions that no other test implies:
+  that two ports sharing a callee index share *one* temporary and are written at their own
+  sub-paths, so the caller ports do not alias — the §3.3 Lua map is the fixture, and the negative is
+  that taint on `Argument(0)` must not reach `Argument(1)`; that `direction: in` emits one `assign`
+  and not its converse; and that two bridge sites in the same caller get distinct temporaries under
+  `one-to-many` cardinality (§2, consequence 3). Add a JNI-shape case asserting the degenerate
+  collapse leaves `jni::emit_bridge`'s existing rows unchanged.
 - **End-to-end, two flowy imports.** The cheapest real test, and it needs no Android or Ghidra
   toolchain. Give the two artifacts *deliberately different* function names — same-named functions
   already unify, so a name collision would make the test pass without the bridge — and assert both a
@@ -678,8 +752,16 @@ can still change the design.
 - **Model the stub as an indirect call** (callee info + resolvents). Heavier, needs a receiver
   vertex that does not exist, and still offers nowhere to put the port map.
 - **A new relation and inference rule for bridges** (`bridge_call(site, tgt, mapping)` plus a
-  mapping-aware summary-instantiation rule). Cleanest conceptually, and it would give callee-side
-  paths for free — but `call` + `actual_param` already expresses everything except callee-side
-  paths, as JNI now demonstrates end to end, and adding a rule to the main fixpoint carries a cost
-  this does not justify. Revisit if callee-side paths (the Lua case) become the common case rather
-  than the exception.
+  mapping-aware summary-instantiation rule). Cleanest conceptually, and it was the fallback for
+  callee-side paths — but the temporary (§2, consequence 2) gets them out of relations that already
+  exist, and adding a rule to the main fixpoint carries a cost nothing now justifies. The
+  observation that killed it: a mapping-aware rule would be re-deriving, inside the fixpoint, what
+  one local variable and two assignments state directly at fact time.
+- **Drop `to_path` from the row and register the concatenation in `facts.paths`.** Tempting, because
+  summary instantiation *does* deliver the callee's paths into the caller's context at every site
+  without anyone enumerating sites, and the only thing stopping the taint is the propagation gate.
+  It fails on two counts: it means structural sharing (the caller's port *is* the callee's whole
+  parameter, with sub-structure visible through it) rather than relabeling, so several ports on one
+  callee index collapse into one pseudo-variable and alias; and the paths it would have to register
+  are not one composite but the open family `from_path ++ to_path ++ q` over everything the callee's
+  summary adds. The temporary keeps every path literal and needs no registration at all.
