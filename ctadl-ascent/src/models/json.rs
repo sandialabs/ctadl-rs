@@ -15,12 +15,11 @@ use std::sync::OnceLock;
 use hashbrown::hash_map::HashMap;
 use regex::Regex;
 
+use super::match_index::ProgramMatchIndex;
 use super::universe_set::*;
 use super::*;
 use crate::error::Error;
-use ctadl_ir::ProgramInfo;
 use ctadl_ir::mir;
-use ctadl_ir::mir::FunctionData;
 use ctadl_ir::mir::PathSegment;
 use ctadl_ir::mir::StatementKind;
 use ctadl_ir::mir::call::VirtualMethodTable;
@@ -49,29 +48,10 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     /// Which set the currently-executing constraint narrows (see [`CurrentSet`]).
     current_set: CurrentSet,
 
-    vmt: &'p VirtualMethodTable,
-    // maps simple names to fully qualified names
-    program_method_names: HashMap<&'p str, Vec<&'p str>>,
-    // maps parent to fully qualified name
-    program_method_parents: HashMap<&'p str, Vec<&'p str>>,
-    // maps signatures to fully qualified name
-    program_method_signatures: HashMap<&'p str, Vec<&'p str>>,
-    /// Maps a method's fully-qualified id to its fq-name, backing the exact-match
-    /// `qualified-id` constraint. The key is whatever spelling uniquely names the
-    /// method on this frontend: the `JavaMethod` id on jvm/dex, the
-    /// namespace-qualified (but address-free) name on native, the module-qualified
-    /// IR name on lua. Unlike [`Self::program_method_names`] this is never keyed on
-    /// a bare name, so it can disambiguate two same-named methods in different
-    /// namespaces.
-    program_method_qualified_ids: HashMap<&'p str, Vec<&'p str>>,
-    /// fq-name (== `FunctionData.name`) → the function's IR data. Backs the
-    /// `has_code` / `number_parameters` / `uses_field` constraints, which need
-    /// per-function body/parameter/field information.
-    program_functions: HashMap<&'p str, &'p FunctionData>,
-    /// The full set of function fq-names, always [`UniverseSet::Explicit`]. Mirrors
-    /// what [`matched_functions`]`(&All)` enumerates for this frontend, so a
-    /// top-level `not X` can be materialized to `universe \ X`.
-    universe: UniverseSet<&'p str>,
+    /// The program metadata every set-narrowing constraint reads. Borrowed, not built here:
+    /// one struct, one construction path, two users (this visitor and the index-time streaming
+    /// matcher). See [`ProgramMatchIndex`].
+    index: &'p ProgramMatchIndex<'p>,
     /// Isolated sub-evaluation stack. While non-empty, [`Self::target_set_mut`]
     /// resolves to the top entry instead of `methods`/`in_functions`, so a
     /// combinator (`any_of` / `not`) can evaluate an inner constraint against a
@@ -85,6 +65,46 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     /// `CTADL0004` SARIF notification, so a `where` constraint that selects no function is
     /// reported instead of vanishing.
     pub endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats>,
+    /// Generators whose `model` declared an index-time-only construct, counted so a caller
+    /// that cannot act on them (`ctadl query`) can say so once instead of silently dropping
+    /// them. See [`IndexTimeModelCounts`].
+    pub index_time_models: IndexTimeModelCounts,
+}
+
+/// How many generators declared each index-time-only model construct.
+///
+/// A property of the model *file*, not of the program it was matched against, so
+/// [`Self::merge`] takes the max rather than summing: the same file is re-matched once per
+/// import, and summing would multiply the count by the import count.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct IndexTimeModelCounts {
+    /// Generators carrying a `propagation`.
+    pub propagations: usize,
+    /// Generators carrying a `bridge`.
+    pub bridges: usize,
+}
+
+impl IndexTimeModelCounts {
+    pub fn merge(&mut self, other: &Self) {
+        self.propagations = self.propagations.max(other.propagations);
+        self.bridges = self.bridges.max(other.bridges);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.propagations == 0 && self.bridges == 0
+    }
+
+    /// How to name what was ignored, for the one warning a query-time load emits.
+    pub fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        if self.propagations > 0 {
+            parts.push(format!("{} propagation model(s)", self.propagations));
+        }
+        if self.bridges > 0 {
+            parts.push(format!("{} bridging model(s)", self.bridges));
+        }
+        parts.join(" and ")
+    }
 }
 
 /// What Stage 1 did with one generator's port declarations in one direction.
@@ -223,182 +243,61 @@ enum SubjectKind {
 }
 
 impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
-    pub fn new(program_info: &'p ProgramInfo, builder: &'b mut ModelBuilders) -> Self {
-        let vmt = &program_info.vmt;
-        let mut program_method_names: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-        let mut program_method_parents: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-        let mut program_method_signatures: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-        let mut program_method_qualified_ids: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-
-        if let VirtualMethodTable::Java { methods, .. } = vmt {
-            methods
-                .iter()
-                .map(|(_cls, name, _sig, fid)| (name.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| program_method_names.entry(key).or_default().push(val));
-
-            methods
-                .iter()
-                .map(|(cls, _name, _sig, fid)| (cls.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| program_method_parents.entry(key).or_default().push(val));
-
-            methods
-                .iter()
-                .map(|(_cls, _name, sig, fid)| (sig.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| program_method_signatures.entry(key).or_default().push(val));
-
-            // The `JavaMethod` id, e.g. `Lcom/example/Foo;->bar(I)V`. Descriptor-bearing and
-            // stable, but until now only ever a *value* above — never a key — which is what
-            // made exact fully-qualified matching impossible on jvm/dex.
-            methods
-                .iter()
-                .map(|(_cls, _name, _sig, fid)| (fid.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| {
-                    program_method_qualified_ids
-                        .entry(key)
-                        .or_default()
-                        .push(val)
-                });
-        } else if let VirtualMethodTable::Native { methods } = vmt {
-            // Native frontends (pcode, clang) carry, per function, a simple
-            // (un-decorated) name and a best-effort type signature alongside the
-            // fully-qualified IR name. Key matching off the SIMPLE name so a model
-            // pattern like `^system$` resolves even when the IR name is decorated
-            // (e.g. Ghidra's `<EXTERNAL>::system@00101008`). The fully-qualified
-            // name is also kept matchable for models that spell it out verbatim.
-            for (simple, sig, fq, qualified) in methods {
-                let simple = simple.as_ref();
-                let fq = fq.as_ref();
-                program_method_names.entry(simple).or_default().push(fq);
-                program_method_signatures.entry(sig).or_default().push(fq);
-                program_method_names.entry(fq).or_default().push(fq);
-                program_method_signatures.entry(fq).or_default().push(fq);
-                // The namespace-qualified name, e.g. `Foo::bar` or `<EXTERNAL>::system`.
-                // Double-key on the fq id as well, mirroring the names/signatures maps
-                // above, so a model that spells the decorated id out verbatim still
-                // resolves through `qualified-id`.
-                program_method_qualified_ids
-                    .entry(qualified.as_ref())
-                    .or_default()
-                    .push(fq);
-                program_method_qualified_ids.entry(fq).or_default().push(fq);
-            }
-        } else if let VirtualMethodTable::Lua {
-            functions,
-            externals,
-            ..
-        } = vmt
-        {
-            // Lua IR names are fully qualified by module (`kong.pdk.request.get_headers`,
-            // `direct-flow.source`). Key matching off the simple name as well, so a model can say
-            // `^source$` without spelling the module it happens to live in -- the same treatment
-            // the Native arm gives decorated names. Both spellings resolve to the fully-qualified
-            // IR name.
-            //
-            // The simple name is read from the VMT, where the frontend put the name the definition
-            // site actually wrote; it is not re-derived from the fq name here. The two differ when
-            // a module has two functions of one name: the second's IR name is `<module>.f%1`, whose
-            // trailing component is `f%1`, while the function is still simply named `f`.
-            //
-            // A Lua function has exactly ONE name, so unlike the Native arm there is no separate
-            // id column to key `qualified-id` on: the fq name *is* the qualified id, and one entry
-            // covers both roles. Note the `entry(fq)` below sits OUTSIDE the `keys` loop on
-            // purpose -- keying it on `simple` too would hand `qualified-id` exactly the bare-name
-            // collisions it exists to remove (see the field's doc comment). One consequence of
-            // deriving the id from the module: a single file imported as the root itself has an
-            // empty module name, so there a function's id and its bare name coincide.
-            for (simple, fq) in functions {
-                let simple = simple.as_ref();
-                let fq = fq.as_ref();
-                let keys: &[&str] = if simple == fq { &[fq] } else { &[simple, fq] };
-                for key in keys {
-                    program_method_names.entry(key).or_default().push(fq);
-                    program_method_signatures.entry(key).or_default().push(fq);
-                }
-                program_method_qualified_ids.entry(fq).or_default().push(fq);
-            }
-            // Externals -- called but never defined (the stdlib, and modules outside the import).
-            // Indexed exactly as `functions` above, with the same reason for keeping the fq name
-            // out of the `keys` loop for `qualified-id`: keying it on the bare name would hand
-            // `qualified-id` the collisions it exists to remove. `os.execute` is reachable both
-            // as `execute` (which also covers the method-call spelling `x:execute()`) and as the
-            // fq `os.execute`.
-            //
-            // Externals have no `FunctionData`, so `has_code` / `number_parameters` / `uses_field`
-            // will not match them -- already true of the dex/jvm `ext` entries.
-            for (simple, fq) in externals {
-                let simple = simple.as_ref();
-                let fq = fq.as_ref();
-                let keys: &[&str] = if simple == fq { &[fq] } else { &[simple, fq] };
-                for key in keys {
-                    program_method_names.entry(key).or_default().push(fq);
-                    program_method_signatures.entry(key).or_default().push(fq);
-                }
-                program_method_qualified_ids.entry(fq).or_default().push(fq);
-            }
-        } else {
-            // Fallback (Unknown / CplusPlus): use the IR function names directly.
-            for func in &program_info.program.functions.functions {
-                let name = func.name.as_str();
-                program_method_signatures
-                    .entry(name)
-                    .or_default()
-                    .push(name);
-                program_method_names.entry(name).or_default().push(name);
-                program_method_qualified_ids
-                    .entry(name)
-                    .or_default()
-                    .push(name);
-            }
-        }
-        // Index every IR function by its fq-name for the body/parameter/field
-        // constraints (`has_code`, `number_parameters`, `uses_field`).
-        let mut program_functions: HashMap<&'p str, &'p FunctionData> = HashMap::new();
-        for func in &program_info.program.functions.functions {
-            program_functions.entry(func.name.as_str()).or_insert(func);
-        }
-
-        let universe: UniverseSet<&'p str> = match vmt {
-            VirtualMethodTable::Java { methods, .. } => {
-                methods.iter().map(|(_, _, _, fid)| fid.as_ref()).collect()
-            }
-            VirtualMethodTable::Native { methods } => {
-                methods.iter().map(|(_, _, fq, _)| fq.as_ref()).collect()
-            }
-            // Every lowered function, class method or not, plus the externals. Before the VMT
-            // carried the `functions` column there was nothing here to enumerate free functions
-            // with, so the universe was empty and a top-level `not` on lua matched *nothing* --
-            // while `matched_functions(&All)` (the sibling of this set) returned the class
-            // methods, so the two disagreed on the one frontend. The externals belong here for
-            // the same reason: a top-level `not` should see everything a model can name.
-            VirtualMethodTable::Lua {
-                functions,
-                externals,
-                ..
-            } => functions
-                .iter()
-                .chain(externals.iter())
-                .map(|(_, fq)| fq.as_ref())
-                .collect(),
-            VirtualMethodTable::Unknown => UniverseSet::empty(),
-        };
-
-        // constructs index for the program
+    /// Borrows a [`ProgramMatchIndex`] to evaluate against and a [`ModelBuilders`] to emit into.
+    ///
+    /// The index is *not* constructed here on purpose: bridge matching and ordinary matching must
+    /// read the same tables, keyed the same way, or the per-VMT rules (bare name vs qualified id,
+    /// plus Lua's externals column) drift apart between the two.
+    pub fn new(index: &'p ProgramMatchIndex<'p>, builder: &'b mut ModelBuilders) -> Self {
         Self {
             builder,
             find_method: HashMap::new(),
             methods: Vec::new(),
             in_functions: Vec::new(),
             current_set: CurrentSet::Methods,
-            vmt,
-            program_method_names,
-            program_method_parents,
-            program_method_signatures,
-            program_method_qualified_ids,
-            program_functions,
-            universe,
+            index,
             scratch: Vec::new(),
             errors: Vec::new(),
             endpoint_stats: BTreeMap::new(),
+            index_time_models: IndexTimeModelCounts::default(),
+        }
+    }
+
+    /// Evaluates one side of a bridge: the `where` constraints of a synthetic
+    /// `{"find": "methods", "where": …}` generator, returning the fq-names it matched.
+    ///
+    /// This is *the* reuse point. `find` is a constant on both sides of a bridge (§2.1 of the
+    /// design: a bridge attaches inside the matched method), so the caller supplies constraints
+    /// only, and everything else — `any_of`/`not`, `qualified-id`, the unknown-field and
+    /// unknown-constraint hard errors — applies verbatim.
+    ///
+    /// `n` names the generator in any error raised; errors accumulate in [`Self::errors`] as
+    /// usual, and an errored side yields no matches.
+    pub fn match_where(&mut self, n: usize, constraints: &[serde_json::Value]) -> Vec<String> {
+        set_slot(&mut self.methods, n, UniverseSet::all());
+        set_slot(&mut self.in_functions, n, UniverseSet::all());
+        self.current_set = CurrentSet::Methods;
+        self.find_method.insert(n, FindMethod::Methods);
+        for c in constraints {
+            self.visit_where_constraint(n, c);
+        }
+        let matched = self.index.functions_of(&self.methods[n]);
+        // Release the set as `visit_model_generator` does: a match set is live only for the
+        // duration of the generator that produced it.
+        self.methods[n] = UniverseSet::empty();
+        matched
+    }
+
+    /// Takes any errors collected so far, as [`Self::encode_models_from`] does at the end of a
+    /// batch. Lets a caller that drives [`Self::match_where`] directly surface them.
+    pub fn take_errors(&mut self) -> Result<(), Error> {
+        let errors = std::mem::take(&mut self.errors);
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            let mut json_errors = crate::error::JsonModelErrors::default();
+            json_errors.extend(errors);
+            Err(Error::JsonModel(json_errors))
         }
     }
 
@@ -494,7 +393,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
     /// any_of's scratch rather than the top-level method set.
     #[inline]
     fn materialize_target(&mut self, n: usize) {
-        let universe = self.universe.clone();
+        let universe = self.index.universe.clone();
         let target = self.target_set_mut(n);
         if matches!(target, UniverseSet::All) {
             *target = universe;
@@ -737,16 +636,16 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 reason: Some(UnmatchedReason::PortRejected),
             };
         }
-        let callees = matched_functions(&self.methods[n], self.vmt);
+        let callees = matched_functions(&self.methods[n], self.index.vmt);
         let functions = callees.len();
         if !is_callsites {
             for func in callees {
                 // For a `Variable(name)` port, resolve the name to a base `LocalIdx` in *this*
-                // matched function. Copy the `&FunctionData` out first so `self.program_functions`
+                // matched function. Copy the `&FunctionData` out first so `self.index.program_functions`
                 // is not borrowed across the `self.builder` mutable borrow below.
                 let local_index = if tag == FormalIndexTypeTag::Local {
                     let name = var_name.expect("Local port without var_name");
-                    let fd = self.program_functions.get(func.as_str()).copied();
+                    let fd = self.index.program_functions.get(func.as_str()).copied();
                     match fd.and_then(|fd| {
                         fd.locals
                             .iter_enumerated()
@@ -797,7 +696,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         // were rejected above, so `local_index` is always `None` here.)
         let callers: Vec<Option<String>> = match &self.in_functions[n] {
             UniverseSet::All => vec![None],
-            _ => matched_functions(&self.in_functions[n], self.vmt)
+            _ => matched_functions(&self.in_functions[n], self.index.vmt)
                 .into_iter()
                 .map(Some)
                 .collect(),
@@ -871,6 +770,42 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
 impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Entry point. Clear the model_generator set then visit it.
     fn visit_model_generator(&mut self, n: usize, value: &serde_json::Value) {
+        // The generator object's own keys. The JSON schema's `additionalProperties: false` is
+        // an editor-time check only, so without this a misspelled `in` (or `wehre`) is silently
+        // dropped and the generator matches on whatever is left -- which, since the working set
+        // starts as *every* function, can be the whole program.
+        if let Some(obj) = value.as_object() {
+            let mut errors = Vec::new();
+            super::spec::check_keys(
+                obj,
+                n,
+                "model generator",
+                &["find", "where", "model", "in", "on-unmatched"],
+                &mut errors,
+            );
+            for e in errors {
+                self.add_json_error(e);
+            }
+        }
+
+        // `in` scoping. A generator whose scope does not admit this import contributes nothing
+        // to it -- no endpoints, no summaries, no match counts. Parse it even when it does not
+        // admit, so a malformed scope is an error against every artifact rather than only the
+        // ones it happens to name.
+        let mut scope_errors = Vec::new();
+        let scope = super::spec::ProgramScope::parse(value.get("in"), n, &mut scope_errors);
+        let malformed = !scope_errors.is_empty();
+        for e in scope_errors {
+            self.add_json_error(e);
+        }
+        if malformed || !scope.admits(&self.index.scope) {
+            log::trace!(
+                "generator {n} does not apply to {}",
+                self.index.scope.describe()
+            );
+            return;
+        }
+
         // Assign at `n`, don't `Vec::insert` at `n`: insert *shifts* the tail, which is only
         // ever a no-op because generators arrive in index order. Grow-then-assign keeps the
         // slot for generator `n` at index `n` no matter how the caller batches.
@@ -879,6 +814,84 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.current_set = CurrentSet::Methods;
         self.super_model_generator(n, value);
         self.methods[n] = UniverseSet::empty();
+    }
+
+    /// Reports a field the traversal expected to be an array and found otherwise.
+    ///
+    /// The traversal used to `.as_array().unwrap()` on `where`, `propagation`, `sources` and
+    /// `sinks`, so a scalar there **panicked** instead of erroring. A model file is user input.
+    fn report_not_array(&mut self, n: usize, field: &str) {
+        self.add_json_error(crate::error::JsonModelError::FieldNotArray {
+            index: n,
+            field_name: field.to_string(),
+        });
+    }
+
+    /// Validates the `model` object's keys, then visits what it carries.
+    fn visit_model(&mut self, n: usize, value: &serde_json::Value) {
+        // A `model` with no keys at all is legal (a bridge generator's model carries only
+        // `bridge`), but an unrecognized key is not: `propagations` for `propagation` would
+        // otherwise produce a generator that matches and models nothing.
+        if let Some(obj) = value.as_object() {
+            let mut errors = Vec::new();
+            super::spec::check_keys(
+                obj,
+                n,
+                "model",
+                &[
+                    "sources",
+                    "sinks",
+                    "taint",
+                    "propagation",
+                    "modes",
+                    "forward_self",
+                    "bridge",
+                    "access_paths",
+                ],
+                &mut errors,
+            );
+            for e in errors {
+                self.add_json_error(e);
+            }
+        }
+        self.super_model(n, value);
+    }
+
+    /// Records the paths a `model.access_paths` list declares.
+    ///
+    /// These need no matching: they are paths that occur nowhere in the IR, which is the whole
+    /// reason a user has to name them. They reach the indexer's initial path set in phase 2.
+    fn visit_access_paths(&mut self, n: usize, value: &serde_json::Value) {
+        let Some(items) = value.as_array() else {
+            self.report_not_array(n, "access_paths");
+            return;
+        };
+        for item in items {
+            let Some(text) = item.as_str() else {
+                self.add_json_error(crate::error::JsonModelError::FieldNotString {
+                    index: n,
+                    field_name: "access_paths".to_string(),
+                });
+                continue;
+            };
+            match super::spec::parse_declared_access_path(text, n) {
+                Ok(path) => {
+                    self.builder.access_paths.insert(path);
+                }
+                Err(e) => self.add_json_error(e),
+            }
+        }
+    }
+
+    /// Counts a `model.bridge` and otherwise leaves it alone.
+    ///
+    /// A bridge pins matches in two *different* programs, so it cannot be resolved against the
+    /// one program this visitor has: it is scanned and validated before the import loop (see
+    /// [`super::spec::scan_model_files`]) and matched by
+    /// [`super::matches::observe_import`]. Counting it here is what lets a caller that cannot
+    /// act on it -- `ctadl query` -- say so once instead of dropping it in silence.
+    fn visit_bridge(&mut self, _n: usize, _value: &serde_json::Value) {
+        self.index_time_models.bridges += 1;
     }
 
     fn visit_find(&mut self, n: usize, value: &serde_json::Value) {
@@ -967,7 +980,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         .chain(name_iter)
                         .filter_map(|n| {
                             n.as_str().and_then(|name| {
-                                self.program_method_names
+                                self.index.program_method_names
                                     .get(name)
                                     .map(|names| names.iter().copied())
                             })
@@ -1005,7 +1018,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         .chain(parent_iter)
                         .filter_map(|p| {
                             p.as_str().and_then(|parent| {
-                                self.program_method_parents
+                                self.index.program_method_parents
                                     .get(parent)
                                     .map(|parents| parents.iter().copied())
                             })
@@ -1053,7 +1066,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         .chain(id_iter)
                         .filter_map(|v| {
                             v.as_str().and_then(|id| {
-                                self.program_method_qualified_ids
+                                self.index.program_method_qualified_ids
                                     .get(id)
                                     .map(|fids| fids.iter().copied())
                             })
@@ -1110,7 +1123,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             };
 
             let matches: UniverseSet<&'p str> = self
-                .program_method_signatures
+                .index.program_method_signatures
                 .iter()
                 .filter_map(|(sig, fids)| if rx.is_match(sig) { Some(fids) } else { None })
                 .flatten()
@@ -1286,7 +1299,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             }
         };
         let matches: UniverseSet<&'p str> = self
-            .program_method_names
+            .index.program_method_names
             .iter()
             .filter(|(name, _)| rx.is_match(name))
             .flat_map(|(_, fids)| fids.iter().copied())
@@ -1319,7 +1332,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             }
         };
         let matches: UniverseSet<&'p str> = self
-            .program_functions
+            .index.program_functions
             .iter()
             .filter(|(_, func)| func.blocks.is_empty() != want)
             .map(|(fid, _)| *fid)
@@ -1356,7 +1369,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         // `wanted` here means every entry was a non-string or the array was empty; either
         // way, narrow to nothing rather than leaving the set untouched (== matching all).
         let matches: UniverseSet<&'p str> = self
-            .program_functions
+            .index.program_functions
             .iter()
             .filter(|(_, func)| {
                 func.blocks.iter().any(|block| {
@@ -1385,7 +1398,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.validate_predicate(n, inner, SubjectKind::Int);
         // Snapshot (fid, arity) so `target_set_mut` below can take `self` mutably.
         let funcs: Vec<(&'p str, i64)> = self
-            .program_functions
+            .index.program_functions
             .iter()
             .map(|(fid, func)| (*fid, func.num_parameters() as i64))
             .collect();
@@ -1413,7 +1426,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         // of the model file, and reporting it only on Java programs would make the same file
         // load cleanly or fail depending on the artifact.
         self.validate_predicate(n, inner, SubjectKind::Class);
-        let entries: Vec<(&'p str, &'p str)> = match self.vmt {
+        let entries: Vec<(&'p str, &'p str)> = match self.index.vmt {
             VirtualMethodTable::Java { methods, .. } => methods
                 .iter()
                 .map(|(cls, _, _, fid)| (cls.as_ref(), fid.as_ref()))
@@ -1446,7 +1459,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         };
         self.validate_predicate(n, inner, SubjectKind::Class);
         // Snapshot (fid, [supertypes]) — `hierarchy[cls]` is `[0]` = superclass, rest = interfaces.
-        let entries: Vec<(&'p str, Vec<&'p str>)> = match self.vmt {
+        let entries: Vec<(&'p str, Vec<&'p str>)> = match self.index.vmt {
             VirtualMethodTable::Java {
                 methods, hierarchy, ..
             } => methods
@@ -1481,6 +1494,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Sends the methods in `self.methods[n]` to the SummaryBuilder
     fn visit_propagation(&mut self, n: usize, value: &serde_json::Value) {
         self.super_propagation(n, value);
+        // Counted whether or not it matches anything: what a query-time load needs to report is
+        // that the *file* declared an index-time construct.
+        self.index_time_models.propagations += 1;
         // Propagation (summaries) at a callsite is a function-level fact and is not
         // supported for `find: callsites`.
         if let Some(FindMethod::Callsites) = self.find_method.get(&n) {
@@ -1562,7 +1578,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                             });
                             return;
                         }
-                        for func in matched_functions(&self.methods[n], self.vmt) {
+                        for func in matched_functions(&self.methods[n], self.index.vmt) {
                             self.builder.summary.append(
                                 &func,
                                 (output.tag, output.index, &output.ap),
@@ -1761,19 +1777,19 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
 /// port (`tag == Local`); `index` is `Some` only for a positional `Argument(n)` port
 /// (`tag == Index`). Both `var_name` and `ap` borrow from the port `text`.
 #[derive(Debug)]
-struct ParsedPort<'a> {
-    tag: FormalIndexTypeTag,
-    index: Option<i16>,
-    var_name: Option<&'a str>,
+pub(crate) struct ParsedPort<'a> {
+    pub(crate) tag: FormalIndexTypeTag,
+    pub(crate) index: Option<i16>,
+    pub(crate) var_name: Option<&'a str>,
     /// The port's access path, parsed with the canonical grammar. Owned; the lifetime survives
     /// only for `var_name`. A `PathSegment::Offset` here is what lets a port name a real offset
     /// (`Argument(1).[8].deref`), which the previous `Vec<&str>` could not express -- every
     /// segment became a `Symbol` and could never match the offsets pcode emits.
-    ap: Vec<PathSegment>,
+    pub(crate) ap: Vec<PathSegment>,
 }
 
 /// Entry point for parsing propagation inputs and inputs, which are called ports
-fn parse_port(text: &str, index: usize) -> Result<ParsedPort<'_>, crate::error::JsonModelError> {
+pub(crate) fn parse_port(text: &str, index: usize) -> Result<ParsedPort<'_>, crate::error::JsonModelError> {
     // Note the absence of `?` in the two `if let` arms: an early return would skip the
     // index-patching `map_err` below, and the error would name generator 0.
     let parsed = if let Some(m) = variable_regex().captures(text) {
@@ -1874,13 +1890,22 @@ pub trait ModelGeneratorVisitor {
 
     #[inline]
     fn super_model_generators(&mut self, value: &serde_json::Value) {
-        value["model_generators"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .enumerate()
-            .for_each(|(i, m)| self.visit_model_generator(i, m));
+        match value["model_generators"].as_array() {
+            Some(gens) => gens
+                .iter()
+                .enumerate()
+                .for_each(|(i, m)| self.visit_model_generator(i, m)),
+            None => self.report_not_array(0, "model_generators"),
+        }
     }
+
+    /// Called when a field the traversal requires to be an array is something else. The default
+    /// is silence; [`ModelGeneratorIngest`] turns it into a hard error.
+    ///
+    /// This exists because the traversal used to `.as_array().unwrap()`, turning a scalar
+    /// `"where"` in a user-supplied model file into a panic.
+    #[inline]
+    fn report_not_array(&mut self, _n: usize, _field: &str) {}
 
     #[inline]
     fn visit_model_generator(&mut self, n: usize, value: &serde_json::Value) {
@@ -1890,12 +1915,12 @@ pub trait ModelGeneratorVisitor {
     #[inline]
     fn super_model_generator(&mut self, n: usize, model_generator: &serde_json::Value) {
         self.visit_find(n, &model_generator["find"]);
-        model_generator.get("where").into_iter().for_each(|cs| {
-            cs.as_array()
-                .unwrap()
-                .iter()
-                .for_each(|c| self.visit_where_constraint(n, c))
-        });
+        if let Some(cs) = model_generator.get("where") {
+            match cs.as_array() {
+                Some(items) => items.iter().for_each(|c| self.visit_where_constraint(n, c)),
+                None => self.report_not_array(n, "where"),
+            }
+        }
         self.visit_model(n, &model_generator["model"]);
     }
 
@@ -1964,12 +1989,12 @@ pub trait ModelGeneratorVisitor {
 
     #[inline]
     fn super_all_of_constraint(&mut self, n: usize, value: &serde_json::Value) {
-        value.get("inners").into_iter().for_each(|a| {
-            a.as_array()
-                .unwrap()
-                .iter()
-                .for_each(|c| self.visit_where_constraint(n, c))
-        });
+        if let Some(a) = value.get("inners") {
+            match a.as_array() {
+                Some(items) => items.iter().for_each(|c| self.visit_where_constraint(n, c)),
+                None => self.report_not_array(n, "inners"),
+            }
+        }
     }
 
     #[inline]
@@ -1979,12 +2004,12 @@ pub trait ModelGeneratorVisitor {
 
     #[inline]
     fn super_any_of_constraint(&mut self, n: usize, value: &serde_json::Value) {
-        value.get("inners").into_iter().for_each(|a| {
-            a.as_array()
-                .unwrap()
-                .iter()
-                .for_each(|c| self.visit_where_constraint(n, c))
-        });
+        if let Some(a) = value.get("inners") {
+            match a.as_array() {
+                Some(items) => items.iter().for_each(|c| self.visit_where_constraint(n, c)),
+                None => self.report_not_array(n, "inners"),
+            }
+        }
     }
 
     #[inline]
@@ -2081,27 +2106,46 @@ pub trait ModelGeneratorVisitor {
     #[inline]
     fn super_model(&mut self, n: usize, value: &serde_json::Value) {
         if let Some(propagation) = value.get("propagation") {
-            propagation
-                .as_array()
-                .unwrap()
-                .iter()
-                .for_each(|p| self.visit_propagation(n, p));
+            match propagation.as_array() {
+                Some(items) => items.iter().for_each(|p| self.visit_propagation(n, p)),
+                None => self.report_not_array(n, "propagation"),
+            }
         }
         if let Some(sinks) = value.get("sinks") {
-            sinks
-                .as_array()
-                .unwrap()
-                .iter()
-                .for_each(|s| self.visit_sink(n, s));
+            match sinks.as_array() {
+                Some(items) => items.iter().for_each(|s| self.visit_sink(n, s)),
+                None => self.report_not_array(n, "sinks"),
+            }
         }
         if let Some(sources) = value.get("sources") {
-            sources
-                .as_array()
-                .unwrap()
-                .iter()
-                .for_each(|s| self.visit_source(n, s));
+            match sources.as_array() {
+                Some(items) => items.iter().for_each(|s| self.visit_source(n, s)),
+                None => self.report_not_array(n, "sources"),
+            }
+        }
+        if let Some(paths) = value.get("access_paths") {
+            self.visit_access_paths(n, paths);
+        }
+        if let Some(bridge) = value.get("bridge") {
+            self.visit_bridge(n, bridge);
         }
     }
+
+    #[inline]
+    fn visit_access_paths(&mut self, n: usize, value: &serde_json::Value) {
+        self.super_access_paths(n, value)
+    }
+
+    #[inline]
+    fn super_access_paths(&mut self, _n: usize, _value: &serde_json::Value) {}
+
+    #[inline]
+    fn visit_bridge(&mut self, n: usize, value: &serde_json::Value) {
+        self.super_bridge(n, value)
+    }
+
+    #[inline]
+    fn super_bridge(&mut self, _n: usize, _value: &serde_json::Value) {}
 
     #[inline]
     fn visit_propagation(&mut self, n: usize, value: &serde_json::Value) {

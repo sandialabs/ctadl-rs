@@ -1,5 +1,6 @@
 use ctadl_ascent::facts::TaintDirection;
 use ctadl_ascent::models::json::ModelGeneratorIngest;
+use ctadl_ascent::models::{ImportScope, ProgramMatchIndex};
 use ctadl_ascent::models::{ModelBuilders, UnmatchedReason, try_load_models};
 use ctadl_ir::mir::ProgramInfo;
 use std::io::Write;
@@ -20,7 +21,8 @@ fn test_load_models_json() {
     }"#;
     writeln!(file, "{}", json_content).unwrap();
 
-    let result = try_load_models(&program_info, file.path());
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let result = try_load_models(&match_index, file.path());
     assert!(
         result.is_ok(),
         "Failed to load JSON models: {:?}",
@@ -36,7 +38,8 @@ fn test_load_models_jsonl() {
     let jsonl_content = r#"{"find": "methods", "where": [{"constraint": "signature_match", "name": "test"}], "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]}}"#;
     writeln!(file, "{}", jsonl_content).unwrap();
 
-    let result = try_load_models(&program_info, file.path());
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let result = try_load_models(&match_index, file.path());
     assert!(
         result.is_ok(),
         "Failed to load JSONL models: {:?}",
@@ -61,7 +64,8 @@ fn test_load_models_json5() {
     }"#;
     writeln!(file, "{}", json5_content).unwrap();
 
-    let result = try_load_models(&program_info, file.path());
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let result = try_load_models(&match_index, file.path());
     assert!(
         result.is_ok(),
         "Failed to load JSON5 models: {:?}",
@@ -95,7 +99,8 @@ fn test_load_models_across_batch_boundary() {
     )
     .unwrap();
 
-    let batch = try_load_models(&program_info, file.path()).expect("loading models");
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let batch = try_load_models(&match_index, file.path()).expect("loading models");
     let indices: Vec<usize> = batch.endpoint_stats.keys().map(|(i, _)| *i).collect();
     assert_eq!(
         indices.len(),
@@ -141,7 +146,8 @@ s:
         .expect("compiling flowy program")
         .program_info;
     let mut builders = ModelBuilders::new();
-    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut builders);
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut builders);
     let generators = vec![
         // 0: two source ports on one generator, both matching `reader`.
         serde_json::json!({
@@ -317,7 +323,8 @@ fn summary_paths_for(input: &str, output: &str) -> Vec<ctadl_ascent::facts::Path
     use serde_json::json;
     let program_info = native_program_with_f();
     let mut builders = ModelBuilders::new();
-    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut builders);
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut builders);
     let model = json!({
         "find": "methods",
         "where": [{"constraint": "signature_match", "name": "f"}],

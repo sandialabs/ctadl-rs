@@ -4,7 +4,7 @@ Defines a [`ModelBuilders`] in which to express summary and call models.
 */
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::rc::Rc;
@@ -27,16 +27,24 @@ use itertools::izip;
 use crate::error::{Error, ErrorContext};
 use crate::facts;
 use crate::facts::TaintDirection;
-use ctadl_ir::ProgramInfo;
 use ctadl_ir::mir;
 use ctadl_ir::mir::PathSegment;
 use ctadl_ir::mir::call::VirtualMethodTable;
 
 pub mod codegen;
 pub mod json;
+pub mod match_index;
+pub mod matches;
+pub mod spec;
 pub mod universe_set;
 
-pub use json::{EndpointStats, UnmatchedReason};
+pub use json::{EndpointStats, IndexTimeModelCounts, UnmatchedReason};
+pub use match_index::ProgramMatchIndex;
+pub use matches::{BridgeMatches, ProgramModelMatches, PropagationMatch};
+pub use spec::{
+    BridgeSpec, Direction, ImportScope, ModelFileSpecs, PortPair, ProgramScope, Severity, SideSpec,
+    scan_model_files,
+};
 
 #[cfg(test)]
 mod tests;
@@ -67,18 +75,21 @@ pub const DEFAULT_MODEL_FILES: &[(&str, &[u8])] = &[
     LUA_DEFAULT_MODELS,
 ];
 
-/// Returns the built-in default models for `program_info`, selected by its
+/// Returns the built-in default models for the program `index` was built from, selected by its
 /// [`VirtualMethodTable`] variant.
 ///
 /// The VMT is the key rather than [`crate::project::ArtifactLanguage`] because dex and jvm want
-/// the same file and differ only in language, because it keeps `cli::index` from threading the
-/// language down, and because it gives `Unknown` (flowy) the right answer -- nothing -- for
-/// free. Loading every file for every import, as this used to, meant a Lua import ran a full
-/// match pass over 55 Java generators and 14 C ones, contributing nothing.
+/// the same file and differ only in language, and because it gives `Unknown` (flowy) the right
+/// answer -- nothing -- for free. Loading every file for every import, as this used to, meant a
+/// Lua import ran a full match pass over 55 Java generators and 14 C ones, contributing nothing.
+///
+/// This is deliberately *not* how a user's `in` scope is resolved. The VMT is the right key for
+/// "which shipped file"; `in` is the right key for "which import did the user mean", and it can
+/// tell `dex` from `apk` from `jar`, which the VMT variant cannot.
 // TODO load summary parquet models as well as json
-pub fn try_load_default_models(program_info: &ProgramInfo) -> Result<ModelsBatch, Error> {
+pub fn try_load_default_models(index: &ProgramMatchIndex<'_>) -> Result<ModelsBatch, Error> {
     log::trace!("load_models");
-    let default = match &program_info.vmt {
+    let default = match index.vmt() {
         VirtualMethodTable::Java { .. } => Some(JAVA_DEFAULT_MODELS),
         VirtualMethodTable::Native { .. } => Some(NATIVE_DEFAULT_MODELS),
         VirtualMethodTable::Lua { .. } => Some(LUA_DEFAULT_MODELS),
@@ -90,7 +101,7 @@ pub fn try_load_default_models(program_info: &ProgramInfo) -> Result<ModelsBatch
         return ModelBuilders::new().finish();
     };
     log::debug!("loading default models from {name}");
-    try_load_jsonl_models(program_info, BufReader::new(contents))
+    try_load_jsonl_models(index, BufReader::new(contents))
         .err_context(|| format!("loading default index models: {name}"))
 }
 
@@ -103,7 +114,7 @@ pub fn try_load_default_models(program_info: &ProgramInfo) -> Result<ModelsBatch
 /// separate document that drifts. Skipped lines do not consume a generator index: the index
 /// names the *generator*, and it is what `CTADL0004` and the JSON error messages report.
 pub fn try_load_jsonl_models<B: BufRead>(
-    program_info: &ProgramInfo,
+    index: &ProgramMatchIndex<'_>,
     rdr: B,
 ) -> Result<ModelsBatch, Error> {
     let items = rdr
@@ -118,7 +129,7 @@ pub fn try_load_jsonl_models<B: BufRead>(
             Ok(Some(value))
         })
         .filter_map(Result::transpose);
-    try_load_models_from_values(program_info, items)
+    try_load_models_from_values(index, items)
 }
 
 // Load models from a JSON file containing `{ "model_generators": [...] }`.
@@ -126,7 +137,7 @@ pub fn try_load_jsonl_models<B: BufRead>(
 /// The entries in the `model_generators` array are streamed into
 /// `load_models_from_values`, preserving the existing batch‑processing logic.
 pub fn try_load_json_models<P: AsRef<std::path::Path>>(
-    program_info: &ProgramInfo,
+    index: &ProgramMatchIndex<'_>,
     path: P,
 ) -> Result<ModelsBatch, Error> {
     // Open and parse the JSON file
@@ -148,12 +159,12 @@ pub fn try_load_json_models<P: AsRef<std::path::Path>>(
 
     // Stream each entry into the existing loader
     let items = generators.iter().cloned().map(Ok);
-    try_load_models_from_values(program_info, items)
+    try_load_models_from_values(index, items)
 }
 
 /// Load models from a JSON5 file containing `{ "model_generators": [...] }`.
 pub fn try_load_json5_models<P: AsRef<std::path::Path>>(
-    program_info: &ProgramInfo,
+    index: &ProgramMatchIndex<'_>,
     path: P,
 ) -> Result<ModelsBatch, Error> {
     let mut file = File::open(&path)
@@ -177,13 +188,13 @@ pub fn try_load_json5_models<P: AsRef<std::path::Path>>(
 
     // Stream each entry into the existing loader
     let items = generators.iter().cloned().map(Ok);
-    try_load_models_from_values(program_info, items)
+    try_load_models_from_values(index, items)
 }
 
 /// Load models from a file. The file extension is used to decide whether to load as `json`,
 /// `jsonl`, or `json5`.
 pub fn try_load_models<P: AsRef<std::path::Path>>(
-    program_info: &ProgramInfo,
+    index: &ProgramMatchIndex<'_>,
     path: P,
 ) -> Result<ModelsBatch, Error> {
     let path = path.as_ref();
@@ -193,21 +204,21 @@ pub fn try_load_models<P: AsRef<std::path::Path>>(
             let file = File::open(path)
                 .err_context(|| format!("opening model JSONL file: {}", path.display()))?;
             let rdr = BufReader::new(file);
-            try_load_jsonl_models(program_info, rdr)
+            try_load_jsonl_models(index, rdr)
         }
-        Some("json5") => try_load_json5_models(program_info, path),
-        _ => try_load_json_models(program_info, path),
+        Some("json5") => try_load_json5_models(index, path),
+        _ => try_load_json_models(index, path),
     }
 }
 
 /// Load models from a stream of json Values. This processing is batched for efficiency, so the
 /// iterator can be large and lazy.
 pub fn try_load_models_from_values(
-    program_info: &ProgramInfo,
+    index: &ProgramMatchIndex<'_>,
     mut items: impl Iterator<Item = Result<serde_json::Value, Error>>,
 ) -> Result<ModelsBatch, Error> {
     let mut builder = ModelBuilders::new();
-    let mut model_gen = json::ModelGeneratorIngest::new(program_info, &mut builder);
+    let mut model_gen = json::ModelGeneratorIngest::new(index, &mut builder);
     let batch_size = 1024;
     let mut batch: Vec<serde_json::Value> = Vec::with_capacity(batch_size);
 
@@ -237,10 +248,12 @@ pub fn try_load_models_from_values(
     // Taken before `builder.finish()`: `model_gen` holds the `&mut builder` borrow, so this
     // is also what releases it.
     let endpoint_stats = std::mem::take(&mut model_gen.endpoint_stats);
+    let index_time_models = model_gen.index_time_models;
     log::trace!("matched {} summary models", builder.summary.len());
     log::trace!("matched {} source/sink models", builder.endpoint.len());
     let mut encmodels = builder.finish()?;
     encmodels.endpoint_stats = endpoint_stats;
+    encmodels.index_time_models = index_time_models;
     Ok(encmodels)
 }
 
@@ -258,6 +271,13 @@ pub struct ModelsBatch {
     /// conflate generators that share an index. `cli::query` therefore re-keys each file's
     /// stats before unioning, and reads them from there rather than from here.
     pub endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats>,
+    /// Access paths the file *declared* (`model.access_paths`), which need no matching: they
+    /// are paths that occur nowhere in the IR, so nothing else would register them. Index-time
+    /// only; a query-time load carries them and ignores them.
+    pub access_paths: BTreeSet<facts::Path>,
+    /// How many generators declared an index-time-only construct. Lets `ctadl query` say once
+    /// that it is ignoring them instead of dropping them in silence.
+    pub index_time_models: IndexTimeModelCounts,
 }
 
 impl ModelsBatch {
@@ -273,6 +293,8 @@ impl ModelsBatch {
         for (key, stats) in &other.endpoint_stats {
             self.endpoint_stats.entry(*key).or_default().merge(stats);
         }
+        self.access_paths.extend(other.access_paths.iter().copied());
+        self.index_time_models.merge(&other.index_time_models);
         Ok(())
     }
 }
@@ -440,6 +462,9 @@ impl SummaryBatch {
 pub struct ModelBuilders {
     pub summary: SummaryBuilder,
     pub endpoint: EndpointBuilder,
+    /// Access paths declared by `model.access_paths`. Not a builder: a declared path needs no
+    /// matching and no columnar encoding, it just has to reach the indexer's initial path set.
+    pub access_paths: BTreeSet<facts::Path>,
 }
 
 impl Default for ModelBuilders {
@@ -453,6 +478,7 @@ impl ModelBuilders {
         Self {
             summary: SummaryBuilder::new(),
             endpoint: EndpointBuilder::new(),
+            access_paths: BTreeSet::new(),
         }
     }
 
@@ -466,6 +492,8 @@ impl ModelBuilders {
             summary,
             endpoint,
             endpoint_stats: BTreeMap::new(),
+            access_paths: std::mem::take(&mut self.access_paths),
+            index_time_models: IndexTimeModelCounts::default(),
         })
     }
 }

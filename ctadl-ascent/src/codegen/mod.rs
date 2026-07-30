@@ -29,6 +29,7 @@ use ctadl_ir::mir::{call::VirtualMethodTable, visit::Visitor, *};
 mod tests;
 
 pub mod flowy;
+pub mod model_matches;
 pub mod models;
 
 /// Strategy for resolving virtual calls

@@ -687,6 +687,50 @@ pub enum ArtifactLanguage {
     Flowy,
 }
 
+impl ArtifactLanguage {
+    /// Every language, in the order [`Self::name`] documents them. Exists so error messages can
+    /// enumerate the accepted spellings without a second list to keep in sync.
+    pub const ALL: &'static [ArtifactLanguage] = &[
+        ArtifactLanguage::Jvm,
+        ArtifactLanguage::Jar,
+        ArtifactLanguage::Dex,
+        ArtifactLanguage::Apk,
+        ArtifactLanguage::C,
+        ArtifactLanguage::Lua,
+        ArtifactLanguage::Pcode,
+        ArtifactLanguage::Flowy,
+    ];
+
+    /// The lowercase spelling a model generator's `in` block uses. Distinct from the
+    /// [`ctadl_ir::mir::call::VirtualMethodTable`] variant on purpose: the VMT cannot tell `dex`
+    /// from `apk` from `jar`, and `in` must.
+    pub fn name(self) -> &'static str {
+        match self {
+            ArtifactLanguage::Jvm => "jvm",
+            ArtifactLanguage::Jar => "jar",
+            ArtifactLanguage::Dex => "dex",
+            ArtifactLanguage::Apk => "apk",
+            ArtifactLanguage::C => "c",
+            ArtifactLanguage::Lua => "lua",
+            ArtifactLanguage::Pcode => "pcode",
+            ArtifactLanguage::Flowy => "flowy",
+        }
+    }
+
+    /// Inverse of [`Self::name`]. `None` for anything else, which callers report as an error
+    /// rather than silently dropping -- a scope naming a language that does not exist would
+    /// otherwise admit nothing and look like an app with no cross-language flow.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|l| l.name() == name)
+    }
+}
+
+impl std::fmt::Display for ArtifactLanguage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 // XDG_RUNTIME_DIR, if it doesn't exist, requires creating something temporary, and I'd like that
 // to be dropped on program exit, so I just didn't implement it yet.
 

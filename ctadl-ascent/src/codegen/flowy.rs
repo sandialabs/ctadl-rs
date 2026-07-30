@@ -329,11 +329,19 @@ pub fn check<P: AsRef<Path>>(
     // directly (`ModelGeneratorIngest::new`'s fallback arm) and gets no default models of its
     // own. That makes flowy the cheapest place to pin what a *model port* means, which is what
     // `port_semantics/` uses it for.
+    let match_index = crate::models::ProgramMatchIndex::new(
+        &program.program_info,
+        crate::models::ImportScope {
+            language: Some(crate::project::ArtifactLanguage::Flowy),
+            import: None,
+        },
+    );
     let mut summary = crate::models::ModelBuilders::new().finish()?.summary;
     for model_path in models {
-        let batch = crate::models::try_load_models(&program.program_info, model_path)?;
+        let batch = crate::models::try_load_models(&match_index, model_path)?;
         summary.union_with(&batch.summary)?;
     }
+    drop(match_index);
 
     let mut index_facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();

@@ -1062,6 +1062,7 @@ fn variable_port_selects_lowest_ssa_version() {
     use crate::facts::{Function, TaintDirection};
     use crate::models::ModelBuilders;
     use crate::models::json::ModelGeneratorIngest;
+    use crate::models::{ImportScope, ProgramMatchIndex};
     use crate::query_engine::build_query_endpoints;
     use ctadl_ir::ProgramInfo;
     use serde_json::json;
@@ -1089,7 +1090,8 @@ fn variable_port_selects_lowest_ssa_version() {
     };
     let mut mb = ModelBuilders::new();
     {
-        let mut ingest = ModelGeneratorIngest::new(&program_info, &mut mb);
+        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut mb);
         let generator = json!({
             "find": "methods",
             "where": [{"constraint": "name", "pattern": "^f$"}],
@@ -1177,6 +1179,7 @@ fn variable_port_selects_lowest_ssa_version() {
 fn variable_port_resolves_per_matched_function() {
     use crate::models::ModelBuilders;
     use crate::models::json::ModelGeneratorIngest;
+    use crate::models::{ImportScope, ProgramMatchIndex};
     use ctadl_ir::ProgramInfo;
     use serde_json::json;
 
@@ -1221,7 +1224,8 @@ fn variable_port_resolves_per_matched_function() {
     };
     let mut mb = ModelBuilders::new();
     {
-        let mut ingest = ModelGeneratorIngest::new(&program_info, &mut mb);
+        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut mb);
         let generator = json!({
             "find": "methods",
             "where": [{"constraint": "name", "pattern": "^g[0-9]$"}],

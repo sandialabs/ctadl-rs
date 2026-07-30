@@ -530,7 +530,8 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             java,
             native,
             config,
-        } => run_jni(&case.name, java, native, config, worker),
+            bridge,
+        } => run_jni(&case.name, java, native, config, bridge.as_deref(), worker),
     }
 }
 
@@ -1297,6 +1298,7 @@ fn run_jni(
     java: &Path,
     native: &Path,
     config: &Path,
+    bridge: Option<&Path>,
     worker: &Worker,
 ) -> Result<Outcome> {
     for tool in ["javac", "dx"] {
@@ -1393,12 +1395,16 @@ fn run_jni(
             &native_project,
         ],
     )?;
-    run_ctadl_env(
-        &work,
-        &state,
-        env,
-        &["index", &project, &dex_project, &native_project],
-    )?;
+    // With a declarative bridge, the built-in pass is switched off entirely: leaving both on
+    // would double-bridge the pair, giving two sites and duplicated flows, and the case would
+    // pass for the wrong reason.
+    let mut index_args: Vec<&str> = vec!["index", &project, &dex_project, &native_project];
+    let bridge_arg;
+    if let Some(bridge) = bridge {
+        bridge_arg = bridge.to_string_lossy().into_owned();
+        index_args.extend_from_slice(&["--no-jni-bridge", "-m", &bridge_arg]);
+    }
+    run_ctadl_env(&work, &state, env, &index_args)?;
     run_ctadl_env(
         &work,
         &state,

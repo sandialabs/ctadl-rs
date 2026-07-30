@@ -2809,12 +2809,13 @@ mod tests {
     /// function matched nothing.
     #[test]
     fn a_model_can_name_a_lua_external() {
-        use crate::models::{ModelBuilders, json::ModelGeneratorIngest};
+        use crate::models::{ImportScope, ModelBuilders, ProgramMatchIndex, json::ModelGeneratorIngest};
 
         let info = import_str(r#"local function h(x) return os.getenv(x) end return h"#);
         for port in ["getenv", "os.getenv"] {
             let mut builders = ModelBuilders::new();
-            let mut ingest = ModelGeneratorIngest::new(&info, &mut builders);
+            let match_index = ProgramMatchIndex::new(&info, ImportScope::unknown());
+            let mut ingest = ModelGeneratorIngest::new(&match_index, &mut builders);
             ingest
                 .encode_models(vec![serde_json::json!({
                     "find": "methods",

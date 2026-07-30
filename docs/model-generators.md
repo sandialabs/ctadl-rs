@@ -52,6 +52,20 @@ ctadl query my-app --models sources-and-sinks.json5 --output results.sarif
 ctadl go my-app /path/to/app.apk --models my-models.json
 ```
 
+**Which phase consumes what.** The split is not cosmetic; a model given to the wrong command
+does nothing:
+
+| model | consumed by | why |
+| --- | --- | --- |
+| `sources`, `sinks` | `ctadl query` | they define the search, which runs over a finished index |
+| `propagation`, `bridge`, `access_paths` | `ctadl index` | they become facts the index fixpoint consumes, and it is fixed by the time a query runs |
+
+Both commands accept `--models`, and passing one file to both is normal. Each now says out loud
+what it is ignoring rather than dropping it in silence: `ctadl query` warns that it is skipping
+the propagation and bridging models in your file, and `ctadl index` warns that it is skipping
+the source/sink ones. Adding a `bridge` or a `propagation` after indexing means re-running
+`ctadl index`.
+
 CTADL also ships **built-in default propagation models**, in
 `ctadl-ascent/src/models/defaults/`. Exactly one file is loaded per import,
 chosen by the frontend's method table:
@@ -107,10 +121,16 @@ not lines.
 ```jsonc
 {
   "find":  "methods",          // WHAT kind of program element to match
+  "in":    { /* scope */ },    // WHICH IMPORTS to look in (optional)
   "where": [ /* constraints */ ], // WHICH ones (all constraints must hold)
   "model": { /* ... */ }        // HOW to model the matches
 }
 ```
+
+> **Unrecognized keys are a hard error**, here and inside `model` and `bridge`, for the same
+> reason unrecognized *constraints* are (below): the JSON schema's `additionalProperties: false`
+> is checked by your editor, never at load time, so a misspelled key would otherwise be dropped
+> silently and the generator would do something other than what it says.
 
 ### `find` — what to match
 
@@ -125,6 +145,47 @@ not lines.
 > ([`models/json.rs`](../ctadl-ascent/src/models/json.rs)) currently only
 > branches on `methods` and `callsites`; a `find` of `variables` or `fields`
 > raises a parse error today. They're reserved in the schema.
+
+### `in` — which imports
+
+A project can index several artifacts at once — an APK and the `.so` implementing its
+native methods, say. `in` scopes a generator to some of them; omit it and the generator
+applies to every import.
+
+```jsonc
+{ "find": "methods", "in": { "language":  "pcode" },                        "where": [ … ], "model": { … } }
+{ "find": "methods", "in": { "languages": ["jvm", "jar", "dex", "apk"] },   "where": [ … ], "model": { … } }
+{ "find": "methods", "in": { "import":    "app_dex" },                      "where": [ … ], "model": { … } }
+```
+
+| key | meaning |
+| --- | --- |
+| `language` | One artifact language: `jvm`, `jar`, `dex`, `apk`, `c`, `lua`, `pcode`, `flowy`. |
+| `languages` | A non-empty list of them; admits an import whose language is any one. |
+| `import` | The import's name, as given to `ctadl import --name`. |
+
+Keys within one `in` block are ANDed: `{"languages": ["dex","apk"], "import": "app"}` is that
+import, and only if it is one of those two languages. An absent key leaves that dimension
+unconstrained.
+
+`language` is exactly the one-element case of `languages`; both spellings exist because
+`["dex"]` reads worse than `"dex"` for the common case. Giving **both** keys in one block is an
+error rather than a union — a reader cannot tell which was meant — and so is `"languages": []`,
+which would match nothing quietly.
+
+The plural is not sugar. A language *boundary* has a set on each side, not a language: "the
+Java side" is `jvm`/`jar`/`dex`/`apk` and "the native side" is `pcode`. A model scoped to
+`"dex"` matches nothing the day the same app is imported from a `.jar` — no error, just an
+analysis with less in it.
+
+Without `in`, every model file is matched against every import, which is usually harmless (a
+libc name matches nothing in a Dex artifact) and occasionally not (`main`, `read`, and `get`
+exist on more than one side of a boundary). It is also what lets one file carry libc models for
+the binary and framework models for the app.
+
+> This is deliberately *not* how the built-in default model files are selected. Those are keyed
+> on the frontend's method table, which cannot tell `dex` from `apk` from `jar`; `in` can, and
+> that distinction matters because those frontends number parameters differently.
 
 ### `where` — which ones
 
@@ -158,15 +219,18 @@ described below. If `where` is omitted, the rule matches everything of that
 ### `model` — how to model them
 
 A `model` object carries one or more of: `sources`, `sinks`, `taint`,
-`propagation`, `modes`, `forward_call`, `forward_self`. These are covered in
+`propagation`, `modes`, `bridge`, `access_paths`, `forward_self`. These are covered in
 [§7](#7-the-model-what-to-attach).
 
 > **What's actually wired up.** As of this branch the loader consumes
-> **`sources`**, **`sinks`**, and **`propagation`**. `taint`, `modes`,
-> `forward_call`, and `forward_self` are defined in the schema but are **not yet
+> **`sources`**, **`sinks`**, **`propagation`**, **`bridge`**, and **`access_paths`**.
+> `taint`, `modes`, and `forward_self` are defined in the schema but are **not yet
 > implemented** — a model using them parses but has no effect (the lone
 > `forward_self` line in the jadx defaults is currently inert). They're
 > documented below for completeness and forward compatibility.
+>
+> `forward_call` used to be listed here. It was the same-program special case of `bridge`, was
+> never implemented, and has been **removed** from the schema; use `bridge`.
 
 ---
 
@@ -202,6 +266,15 @@ An id that names no function in the program matches nothing (it does not match e
 > and the constraint selects all three. That is usually what you want (they are the
 > same logical callee), but if you need exactly one, spell out the decorated IR id
 > instead. On jvm/dex the id is unique, so this does not arise.
+
+> **On lua, a stdlib or cross-module callee matches by name only.** The Lua frontend publishes
+> an *externals* column — the names an import calls but never defines — so a model, or a
+> `bridge`, can name `os.execute` or a C function bound through a `luaL_Reg` table even though
+> the import contains no body for it. An external has no `FunctionData`, though, so the three
+> constraints that read one — `has_code`, `number_parameters`, `uses_field` — cannot match it.
+> `signature_match` (or `name`) is the supported shape. Note this rules out the otherwise
+> natural `has_code: false` for selecting exactly the bodyless callees. The same is true of the
+> dex/jvm `ext` entries.
 
 > **On lua, do not use `%anonN` ids.** A function with no name of its own — one
 > assigned into a table literal, say `["/acme"] = { POST = function(self) … }` — is
@@ -472,13 +545,157 @@ Analysis directives. Defined value: `["skip-analysis"]` — don't analyze the bo
 of the matched function (rely on the model alone). Not currently consumed by the
 loader.
 
-### `forward_call` *(schema-only, not yet implemented)*
+### `bridge`
 
-Model a *callsite* by forwarding it to another function — useful when a call is
-dispatched dynamically and you want CTADL to treat it as calling a specific
-target. Fields: `receiver` (port of the virtual receiver; omit for a direct
-call) and `where` (constraints selecting the callee). Not currently consumed by
-the loader.
+Connects a callee matched in one program to its implementation in another, with an explicit
+argument correspondence. This is the declarative counterpart of [the JNI bridge](jni.md), for
+the boundaries no built-in pass can see: a Lua script calling a C function registered in a
+`luaL_Reg` table, an implementation bound through `RegisterNatives` rather than by symbol name,
+a call through a table field or a `dlsym`'d pointer.
+
+```jsonc
+{
+  "find":  "methods",                 // side A, the call side; the only mode
+  "in":    { "language": "lua" },
+  "where": [{ "constraint": "signature_match", "name": "mylib.add" }],
+  "model": { "bridge": {
+    "to": {                           // side B, the implementation side
+      "in":    { "language": "pcode" },
+      "where": [{ "constraint": "signature_match", "name": "l_add" }]
+    },
+    "arguments": [                    // the port map
+      { "from": "Argument(0)", "to": "Argument(0).stack.[1]",  "direction": "in"  },
+      { "from": "Argument(1)", "to": "Argument(0).stack.[2]",  "direction": "in"  },
+      { "from": "Return",      "to": "Argument(0).stack.[-1]", "direction": "out" }
+    ]
+  }}
+}
+```
+
+Side A is the generator's own `find`/`where`/`in`, so every matching feature applies to it
+verbatim. Side B's `to` block is a match block of the same shape. `find` must be `methods`: a
+bridge attaches *inside* the matched method, which gives the stub a summary that every call
+site of it composes with — one edge per bridged method, not one per call. (`find: callsites` is
+rejected outright rather than ignored; see the note at the end of this section.)
+
+**`arguments` is the feature, not a refinement.** Read one entry as *"the caller's `from`
+vertex is the callee's `to` vertex"*. Ports use the [port grammar](#6-ports-and-access-paths)
+and name **slots**, not declaration order, so a map is correct only for the frontend the method
+was observed through — Dex numbers parameters by register (a `long` or `double` consumes two)
+while JVM numbers them by argument position. `Argument(*)` is rejected: a wildcard has no
+correspondent on the other side.
+
+Three things are handled for you:
+
+- **Globals** are mapped unconditionally and are not writable. Without them heap flows do not
+  cross the boundary at all — taint in through one function, held in a native global, out
+  through another is the case that fails.
+- **`Return`** means the *normal* return. A Java method's exception return is deliberately
+  never mapped.
+- **Omitting `arguments`** gives the identity mapping over the arity the two sides share, plus
+  `Return`. On a bodyless stub that arity is often zero, so you will get a warning saying only
+  the return and globals cross; write the map.
+
+`direction` is `in` | `out` | `both`, defaulting to `both` — which is how the engine treats an
+ordinary call.
+
+#### Pairing, and saying so when it goes wrong
+
+Every failure mode of a bridge — a `where` that matches nothing, a scope that admits no import,
+a wrong slot, a wrong path escaping — produces an analysis with *fewer flows*, not an error,
+which is indistinguishable from a clean app. Three things push back:
+
+| key | where | default | fires when |
+| --- | --- | --- | --- |
+| `on-unmatched` | the generator | `warn` | side A matched nothing anywhere in the project |
+| `on-unmatched` | the `to` block | `warn` | side A matched, side B matched nothing |
+| `on-ambiguous` | inside `bridge` | `warn` | the pairing is not one-to-one |
+
+All three take `ignore` | `warn` | `error`. There is no `cardinality` key: **every** matched A
+is paired with **every** matched B, so a bridge that matches three callees and two
+implementations emits six. `on-ambiguous` reports that rather than restricting it; set it to
+`ignore` when you know the fan-out is what you want, and narrow the `where` constraints when it
+is not.
+
+"Unmatched" means *not matched anywhere in the project*, not per import: a side that matches in
+one artifact and not another is matched. A scope naming an import that is not in the project
+matches nothing, which is the same condition and gets the same warning.
+
+Reporting on side B is skipped entirely when side A matched nothing — there is no point saying
+the implementation is missing when the thing it would implement is missing too. That is why
+`on-unmatched: "ignore"` on the generator also silences the `to` side.
+
+Finally, `ctadl index` logs a per-generator count line unconditionally, at `info`:
+
+```
+bridge my-models.jsonl:0: 1 from, 1 to, 1 pair(s) bridged
+```
+
+A bridge-only generator declares no endpoint, so it has no entry in the endpoint statistics and
+can never raise `CTADL0004`. This line is the only surface it appears on, and it is the one
+thing that catches a *mis*-paired bridge — wrong slot, wrong path, wrong function matched —
+which warn-on-empty cannot see.
+
+#### Composition past the seam is exact-match only
+
+A bridge routes each port through a temporary standing for the callee's parameter, and every
+path it writes is **literal**: `from` on the caller's formal, `to` on the temporary. That is
+what keeps several ports on one callee index from aliasing each other (the Lua map above puts
+three ports on `Argument(0)`), and it means the paths register themselves — a bridge adds
+nothing to the path set by hand.
+
+What it does *not* do is compose arbitrarily deeply with the callee's own behaviour. A pathful
+port composes with the callee's summary where the summary's endpoint lands on exactly that path
+or on a prefix of it. A summary that lands *deeper* produces a residue path that is in neither
+the program-path nor the model-path bucket, and **the flow is dropped, silently.**
+
+Two consequences worth internalizing:
+
+- The Lua example above has a precondition the syntax does not show: `l_add`'s behaviour must
+  *also* be modelled, by hand-written `propagation` summaries, in the port map's vocabulary at
+  the port map's paths. A native frontend derives offset-only paths, so the *derived* summary
+  of `l_add` can never mention `.stack.[1]`, and `[-1]` (top of stack) has no static offset at
+  all. Without those models the bridge delivers taint to a place nothing reads.
+- When you know the residues the callee's summary produces, declare them with
+  [`access_paths`](#access_paths). That is the escape hatch, and it is the only one.
+
+#### Interaction with the built-in JNI bridge
+
+A user bridge over a pair the [built-in JNI pass](jni.md) also links **double-bridges** it: two
+sites, duplicated flows. If you are writing one for a `Java_…`-named method — which you should
+not normally need to — pass `--no-jni-bridge` to `ctadl index` so exactly one mechanism is in
+play. That is also what makes an A/B measurement between the two meaningful.
+
+#### Index time only
+
+A bridge creates `call` facts, which the index fixpoint consumes, so it takes effect at
+`ctadl index` and **not** at `ctadl query`. Passing one to `query` gets you a warning saying
+so. Adding a native artifact late means re-running `ctadl index`.
+
+> **`find: callsites` with a `bridge` is a load error**, not an ignored key. `call` is an input
+> relation: indirect and virtual dispatch are resolved *inside* the fixpoint, so a pass running
+> at fact time sees only the statically emitted call rows — precisely not the sites (a call
+> through a table field, a `dlsym`'d pointer, a virtual dispatch) a callsite bridge would exist
+> for. It would have bridged the easy sites, missed the motivating ones, and reported success.
+
+### `access_paths`
+
+A list of access paths to register with the indexer, written with the same grammar as a port's
+trailing path:
+
+```jsonc
+{ "find": "methods", "model": { "access_paths": [".next.next.next"] } }
+```
+
+These need no matching — they are paths that occur *nowhere* in the program's own code, which
+is the whole reason a human has to name them. The indexer gates every path-extending
+propagation step on membership in a set built from the paths the program and the models
+mention, so a path nobody writes is a flow that silently does not happen.
+
+The motivating case is composition across a `bridge` (above): the residues a callee's derived
+summary produces are fixpoint *output*, so nothing can enumerate them, but an author who knows
+the callee's shape can declare them here. Three fields deep into a linked list is the other
+one. Use it sparingly: the path set is what bounds the analysis, and every entry widens it.
 
 ### `forward_self` *(schema-only, not yet implemented)*
 
@@ -542,7 +759,9 @@ source/sink at a precise location without over-tainting every call.
 | Summarize a library function CTADL can't see | `methods` | `propagation` (often + `sinks`) |
 | Both taint-through and dangerous (e.g. `strcpy`) | `methods` | `propagation` + `sinks` |
 | Source/sink only in a specific calling context | `callsites` | `sources`/`sinks` + `in_function` |
-| Resolve a dynamic dispatch to a concrete target | `callsites` | `forward_call` *(not yet implemented)* |
+| Join a callee in one artifact to its implementation in another | `methods` | `bridge` |
+| Apply a model to only some of a project's imports | any | `in` (a generator key, not a model key) |
+| Register a composed access path the code never writes | `methods` | `access_paths` |
 | Frameworks that call your override indirectly | `methods` | `forward_self` *(not yet implemented)* |
 | Skip analyzing a body and trust the model | `methods` | `modes: ["skip-analysis"]` *(not yet implemented)* |
 
