@@ -337,6 +337,23 @@ pub fn query(
                 }
             }
         }
+        // Measured against the columnar encoding this replaced, not assumed, by taking the same
+        // checkpoint on both builds. On `com.noto_54.apk` (6.4 MB, 50642 functions) with two
+        // model files matching 6591 endpoints, this reads 291.3 MB; the pre-change build, which
+        // held the same endpoints as an Arrow `EndpointBatch` plus two access-path tables,
+        // reads 291.4 MB. With a realistic 19-endpoint pair it is 289.2 vs 289.8 MB.
+        //
+        // So: not larger, but the saving is *below the resolution of the gauge* at both scales.
+        // Interned names and `Copy` paths make an `EndpointMatch` a few hundred KB for the whole
+        // set, against index tables two orders of magnitude bigger. Memory is not the reason to
+        // prefer the native form; having one representation is.
+        log::info!(
+            "[mem cp] after query model accumulation ({} endpoint match(es), {} propagation \
+             match(es) ignored): {:.1} MB",
+            model_matches.endpoints.len(),
+            model_matches.propagations.len(),
+            crate::index_engine::phys_footprint_mb()
+        );
         if !ignored.is_empty() {
             // Bridges create `call` facts and propagations become summaries; both are consumed
             // by the index fixpoint, which is fixed by the time a query runs. Adding one late
