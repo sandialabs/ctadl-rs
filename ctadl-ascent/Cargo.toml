@@ -70,5 +70,13 @@ test-log = "0.2.19"
 # Building the split APKs of an app bundle (native-only, resource-only) as test fixtures.
 zip = "0.6"
 
+# Structure-level benchmark for the `locals` BYODS store: exact heap bytes (counting global
+# allocator) and wall time as a function of `(F,V)` group size. `harness = false` -- it is a
+# plain `main` that prints a table, not libtest. Not built by `cargo build`, so it does not
+# add a shipped binary. See `locals-trie-benchmark.md`.
+[[bench]]
+name = "locals_trie"
+harness = false
+
 [lints]
 workspace = true

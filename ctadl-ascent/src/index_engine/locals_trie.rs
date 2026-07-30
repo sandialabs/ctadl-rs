@@ -470,9 +470,25 @@ where
             fidx_vs: 0,
             fidx_bytes: hb_bytes(self.fidx.capacity(), sz_fidx_outer),
             elem_sizes: (sz_outer, 0, sz_leaf, sz_fidx_outer, sz_fidx_val),
+            max_group: 0,
+            large_groups: 0,
+            group_hist: Vec::new(),
         };
         for group in self.fwd.values() {
             r.leaf_elems += group.len();
+            r.max_group = r.max_group.max(group.len());
+            // Coarse power-of-two histogram of group sizes: bucket i counts groups whose leaf
+            // count is in `[2^i, 2^(i+1))`. This is what tells a benchmark (or a profile of a
+            // real target) whether the store is the many-tiny-groups regime the `Small` `Vec`
+            // is tuned for or the few-huge-groups regime that promotes to `Large`.
+            let bucket = usize::BITS as usize - 1 - group.len().max(1).leading_zeros() as usize;
+            if r.group_hist.len() <= bucket {
+                r.group_hist.resize(bucket + 1, 0);
+            }
+            r.group_hist[bucket] += 1;
+            if matches!(group, Group::Large(_)) {
+                r.large_groups += 1;
+            }
             match group {
                 Group::Small(vec) => {
                     // Group vec heap buffer: capacity slots of the leaf tuple (no control bytes).
@@ -584,6 +600,14 @@ pub struct HeapReport {
     pub fidx_bytes: usize,
     /// Element sizes `(outer, _unused, leaf, fidx_outer, fidx_val)` for reference.
     pub elem_sizes: (usize, usize, usize, usize, usize),
+    /// Largest single `(F,V)` group, in leaves. The knob that decides whether the `Small` `Vec`
+    /// representation (and its O(group) insert / O(G^2) accumulate) is the right one.
+    pub max_group: usize,
+    /// How many groups exceeded [`GROUP_HASHSET_THRESHOLD`] and promoted to `Group::Large`.
+    pub large_groups: usize,
+    /// Power-of-two histogram of group sizes: `group_hist[i]` counts groups with
+    /// `2^i <= leaves < 2^(i+1)`.
+    pub group_hist: Vec<usize>,
 }
 
 impl std::fmt::Display for HeapReport {
@@ -598,11 +622,21 @@ impl std::fmt::Display for HeapReport {
             }
         };
         let (o, _i, l, fo, fv) = self.elem_sizes;
+        // "0:12 1:3 5:1" == 12 groups of 1 leaf, 3 of 2-3, 1 of 32-63.
+        let hist = self
+            .group_hist
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| **n > 0)
+            .map(|(i, n)| format!("{i}:{n}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         write!(
             f,
             "locals store estimate: total {:.1} MB over {} rows ({:.0} B/row) | \
              fwd {:.1} MB ({:.0}%): {} (F,V) groups, {} (F,V,P) entries, {} leaves | \
              fidx {:.1} MB ({:.0}%): {} funcs, {} V entries | \
+             groups: max {}, large {}, mean {:.2}, log2hist [{}] | \
              elem sizes o={} l={} fo={} fv={} B",
             mb(total),
             self.rows,
@@ -620,6 +654,14 @@ impl std::fmt::Display for HeapReport {
             pct(self.fidx_bytes),
             self.fidx_funcs,
             self.fidx_vs,
+            self.max_group,
+            self.large_groups,
+            if self.fv_groups == 0 {
+                0.0
+            } else {
+                self.leaf_elems as f64 / self.fv_groups as f64
+            },
+            hist,
             o,
             l,
             fo,
