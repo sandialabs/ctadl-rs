@@ -1,5 +1,13 @@
 # `locals_trie` benchmark: baseline time and memory - DO-NOT-MERGE
 
+> **Superseded in part.** §§3–5 measure the group representation that shipped when this was
+> written — a sorted `Vec` per `(F,V)` group, promoted to a `HashSet` past 64 leaves. That has
+> since been replaced by `index_engine::hybrid_set` (`locals-trie-hybrid-ds.md`), so findings 2,
+> 3 and 4 and follow-up 1 describe a structure that no longer exists, and the numbers in §§3–4
+> are the *baseline* the replacement is measured against in **`locals-trie-hybrid-eval.md`**.
+> §1 (the hashbrown 4-bucket minimum, the `hb_bytes` estimator) and §2, §6 still apply as
+> written.
+
 Two-tier benchmark for the `locals` BYODS store
 (`ctadl-ascent/src/index_engine/locals_trie.rs`), plus an answer to the question that
 prompted it: **does hashbrown actually have an 8-bucket minimum?**

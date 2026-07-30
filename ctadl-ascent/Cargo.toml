@@ -78,5 +78,9 @@ zip = "0.6"
 name = "locals_trie"
 harness = false
 
+[[bench]]
+name = "hybrid_set"
+harness = false
+
 [lints]
 workspace = true

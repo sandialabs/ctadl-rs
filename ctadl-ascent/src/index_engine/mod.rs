@@ -53,6 +53,7 @@ use crate::facts::{
 };
 
 pub mod assign_like_trie;
+pub mod hybrid_set;
 pub mod locals_trie;
 pub mod source_info;
 
@@ -106,7 +107,11 @@ pub fn hb_bytes(capacity: usize, elem: usize) -> usize {
     if buckets == 0 {
         return 0;
     }
-    buckets.saturating_mul(elem).next_multiple_of(HB_GROUP_WIDTH) + buckets + HB_GROUP_WIDTH
+    buckets
+        .saturating_mul(elem)
+        .next_multiple_of(HB_GROUP_WIDTH)
+        + buckets
+        + HB_GROUP_WIDTH
 }
 
 #[cfg(test)]

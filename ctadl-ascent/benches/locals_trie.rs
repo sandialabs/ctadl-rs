@@ -1,6 +1,6 @@
 //! Structure-level benchmark for `index_engine::locals_trie`: exact heap bytes and time for the
 //! `locals` store as a function of `(F,V)` **group size** — the one shape parameter the
-//! module's design (sorted `Small` `Vec` vs. promoted `Large` `HashSet`) turns on.
+//! module's design (a linear-probing small set vs. a promoted `hashbrown::HashTable`) turns on.
 //!
 //! Run with:
 //!     cargo bench -p ctadl-ascent --bench locals_trie
@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use ascent::internal::{RelFullIndexWrite, RelIndexMerge, ToRelIndex};
+use ctadl_ascent::index_engine::hybrid_set::HybridSet;
 use ctadl_ascent::index_engine::locals_trie::{LocalsIndCommon, ToFull};
 use ctadl_ascent::index_engine::{HB_GROUP_WIDTH, hb_bytes};
 use rustc_hash::FxHasher;
@@ -127,10 +128,10 @@ type Store = LocalsIndCommon<F, V, P, M, Fp>;
 /// Drive the store the way Ascent's semi-naive loop does: derive this round's leaves into
 /// `new`, then `merge_delta_to_total_new_to_delta` (delta -> total, swap new/delta).
 ///
-/// `rounds` is the knob that exposes the merge cost: `rounds == group_size` is the
-/// pessimal shape the module docs describe (one new leaf per group per iteration, so a
-/// `Small` group's accumulated leaves are re-copied every round => O(G^2) per group);
-/// `rounds == 1` is a single bulk build, i.e. structure cost with the merge cost removed.
+/// `rounds` is the knob that exposes the merge cost: `rounds == group_size` is the pessimal
+/// shape the module docs describe (one new leaf per group per iteration, so every round pays
+/// a merge into every group); `rounds == 1` is a single bulk build, i.e. structure cost with
+/// the merge cost removed.
 fn build(groups: usize, group_size: usize, rounds: usize, paths: usize) -> Run {
     let base = mem_reset();
     let start = Instant::now();
@@ -262,11 +263,14 @@ fn main() {
     // The leaf is the size that matters and it matches production (24 B); the outer key is
     // (F,V) plus the group enum, whose variants are these two.
     println!(
-        "leaf (P,M,Fp) = {} B, key (F,V) = {} B, Small = Vec {} B, Large = HashSet {} B",
+        "leaf (P,M,Fp) = {} B, key (F,V) = {} B, group HybridSet = {} B \
+         (was: Vec {} B | HashSet {} B), outer entry = {} B",
         std::mem::size_of::<(P, M, Fp)>(),
         std::mem::size_of::<(F, V)>(),
+        std::mem::size_of::<HybridSet<(P, M, Fp)>>(),
         std::mem::size_of::<Vec<(P, M, Fp)>>(),
         std::mem::size_of::<hashbrown::HashSet<(P, M, Fp), BuildHasherDefault<FxHasher>>>(),
+        std::mem::size_of::<((F, V), HybridSet<(P, M, Fp)>)>(),
     );
 
     println!(
@@ -304,7 +308,8 @@ fn main() {
     }
 
     // Sweep group size at constant total rows, so time and bytes/row are comparable across
-    // the sweep. 64 is `GROUP_HASHSET_THRESHOLD`: groups above it promote to `Large`.
+    // the sweep. `hybrid_set::SMALL_THRESHOLD` is where a group stops being a linear-probing
+    // table and becomes a `hashbrown::HashTable`.
     const ROWS: usize = 1 << 20;
     let mut rows_out: Vec<String> = Vec::new();
     let header = || {
@@ -365,7 +370,8 @@ fn main() {
     }
 
     println!(
-        "\n== flat sorted Vec (this module) vs. the nested `(F,V)->P->{{(M,Fp)}}` it replaced =="
+        "\n== flat hybrid-set groups (this module) vs. the nested `(F,V)->P->{{(M,Fp)}}` it \
+         replaced =="
     );
     println!(
         "{:>7} {:>9} {:>7} {:>12} {:>8} {:>12} {:>8} {:>12}",
