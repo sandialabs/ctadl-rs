@@ -1,4 +1,4 @@
-# Locals trie hybrid data structure
+# Locals trie hybrid data structure - DO-NOT-MERGE
 
 Implement a custom hybrid data structure to support a Datalog index on a key `K` with associated
 record values `V` -- i.e., like a `Map<K, Set<V>>`. In real workloads, the number of values per `K`
