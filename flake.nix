@@ -236,9 +236,16 @@
                   # stale binary, but the Nix sandbox has no source tree or cargo.
                   # Point it at the ctadl that ships in packages.default instead.
                   export CTADL_BIN="${self.packages.${system}.default}/bin/ctadl"
+                  # The `models:*` checks hold the model files ctadl ships to
+                  # `ctadl-model-generator.schema.json`. Both live in the
+                  # ctadl-ascent crate, outside ./nightly, and this sandbox has
+                  # no source tree, so point xtask at them explicitly or they
+                  # would self-skip here -- which is the one place the drift is
+                  # meant to be caught.
                   ${self.packages.${system}.default}/bin/xtask regression \
                     --jvm-samples ${./jvm-reader/tests/sample} \
-                    --dex-apk ${./xtask/tests/dex/com.noto_54.apk}
+                    --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
+                    --models-dir ${./ctadl-ascent/src/models}
 
                   mkdir -p "$out"
                 '';

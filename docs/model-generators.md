@@ -114,6 +114,11 @@ is (or deliberately is not) there. Skipped lines do not consume a generator
 index — the index that error messages and `CTADL0004` report counts generators,
 not lines.
 
+The regression suite checks every generator in the built-in files against this
+schema (`cargo xtask regression --filter models:`, one report entry per file),
+so the two cannot drift apart: a keyword added to the loader and used in a
+shipped default has to land in the schema as well, or the check fails.
+
 ---
 
 ## 4. Anatomy of a model generator
