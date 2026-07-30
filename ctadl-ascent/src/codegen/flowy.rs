@@ -329,11 +329,22 @@ pub fn check<P: AsRef<Path>>(
     // directly (`ModelGeneratorIngest::new`'s fallback arm) and gets no default models of its
     // own. That makes flowy the cheapest place to pin what a *model port* means, which is what
     // `port_semantics/` uses it for.
-    let mut summary = crate::models::ModelBuilders::new().finish()?.summary;
+    let match_index = crate::models::ProgramMatchIndex::new(
+        &program.program_info,
+        crate::models::ImportScope {
+            language: Some(crate::project::ArtifactLanguage::Flowy),
+            import: None,
+        },
+    );
+    // One accumulator across every model file, and one phase-2 run over it below. A flowy
+    // check has a single program and no import loop, so there is no ordering hazard here --
+    // but `Argument(*)` still expands over `compute_arg_arity` when phase 2 runs, and running
+    // it once is what keeps that the same expansion the index path performs.
+    let mut model_matches = crate::models::ProgramModelMatches::default();
     for model_path in models {
-        let batch = crate::models::try_load_models(&program.program_info, model_path)?;
-        summary.union_with(&batch.summary)?;
+        crate::models::try_load_models(&match_index, model_path, &mut model_matches)?;
     }
+    drop(match_index);
 
     let mut index_facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -343,7 +354,14 @@ pub fn check<P: AsRef<Path>>(
         &mut source_info,
         CallResolutionStrategy::Mixed,
     );
-    crate::codegen::models::codegen_summary(summary, &mut index_facts, &mut source_info);
+    // No bridge specs, so nothing here can raise the model errors phase 2 reports: every one of
+    // them is about pairing two bridge sides.
+    crate::codegen::model_matches::codegen_model_matches(
+        &model_matches,
+        &[],
+        &mut index_facts,
+        &mut source_info,
+    )?;
     log::debug!("Function ID to Name mapping:");
     for (id, name) in source_info.sites.functions() {
         log::debug!("{}: {}", id.id, name.0);

@@ -292,7 +292,7 @@ fn build_invocation(
     }
 
     // CTADL0004: a generator that declared a port and produced no endpoint. The
-    // notification points at the model *file* — `EndpointRow` carries no provenance and
+    // notification points at the model *file* — `EndpointMatch` carries no provenance and
     // serde_json gives no spans, so there is no line/column to point at. Which of the
     // several ways it can produce nothing happened is what `unmatched_message` reports:
     // "matched no function" is only one of them.

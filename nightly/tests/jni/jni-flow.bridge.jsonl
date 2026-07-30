@@ -1,0 +1,30 @@
+// jni-flow.bridge.jsonl -- the JniFlow boundary, joined by hand.
+//
+// The presence of this file makes the regression runner discover a second case,
+// `Jni:JniFlow+bridge`, which indexes the same two artifacts with `--no-jni-bridge` and this
+// model, then makes exactly the claims `jni-flow.json` makes. It is a direct A/B against the
+// built-in pass: if the declarative construct is as expressive as the pass for this boundary,
+// both cases pass identically.
+//
+// `--no-jni-bridge` is not optional. A user bridge over a pair the built-in pass also links
+// double-bridges it -- two sites, duplicated flows -- so the case would pass for the wrong
+// reason.
+//
+// Both natives are STATIC, so the JNI implementation takes `JNIEnv *` at index 0 and the
+// declaring `jclass` at index 1; declared parameter k lands at 2 + k. The Java side is a DEX,
+// which numbers parameters by *register* slot -- for a static method the first declared
+// parameter is slot 0, and neither of these methods has a wide (long/double) parameter, so the
+// slots and the declaration order coincide here. Write these against the artifact you are
+// actually indexing: the same class imported as a `.jar` would number them differently the
+// moment a `long` appeared.
+//
+// The globals pseudo-parameter is mapped unconditionally and is not written here. It is what
+// makes this case work at all: the taint enters `nativeStash`, is held in the native global
+// `g_slot`, and leaves through a *different* function, `nativeFetch`. Nothing in the Java half
+// connects the two.
+
+// nativeStash(String data) -> void. `data` is Java slot 0, native index 2.
+{"find":"methods","in":{"languages":["dex","apk"]},"where":[{"constraint":"signature_match","qualified-id":"LJniFlow;->nativeStash(Ljava/lang/String;)V"}],"model":{"bridge":{"to":{"in":{"language":"pcode"},"where":[{"constraint":"signature_match","name":"Java_JniFlow_nativeStash"}]},"arguments":[{"from":"Argument(0)","to":"Argument(2)"}]}}}
+
+// nativeFetch() -> String. No declared parameters; only the return crosses.
+{"find":"methods","in":{"languages":["dex","apk"]},"where":[{"constraint":"signature_match","qualified-id":"LJniFlow;->nativeFetch()Ljava/lang/String;"}],"model":{"bridge":{"to":{"in":{"language":"pcode"},"where":[{"constraint":"signature_match","name":"Java_JniFlow_nativeFetch"}]},"arguments":[{"from":"Return","to":"Return"}]}}}

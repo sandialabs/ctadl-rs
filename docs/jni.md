@@ -28,6 +28,11 @@ That line is worth reading. A native method that fails to link produces no flow
 *and no error* — the analysis simply comes out quieter than it should. See
 [Diagnostics](#diagnostics).
 
+The *per-method* resolution lines (`jni bridge: <method> -> <symbol>`) are logged at `debug`,
+so a default run does not show them. Run with `RUST_LOG=debug` (or
+`RUST_LOG=ctadl_ascent::languages::jni=debug`) to see which symbol each method resolved to and
+why an unresolved one did not.
+
 ---
 
 ## Which symbol implements which method
@@ -150,6 +155,10 @@ counts, since a Java-only project legitimately has one per `native` declaration.
 To reproduce the pre-bridge behaviour — for an A/B measurement of what the bridge
 contributes — pass `--no-jni-bridge` to `ctadl index` or `ctadl go`.
 
+`--no-jni-bridge` is also what you want when joining a pair *by hand* with a
+[`bridge` model](model-generators.md#bridge). A declarative bridge over a pair this pass
+already links double-bridges it — two sites, duplicated flows — so switch one of the two off.
+
 ---
 
 ## Limitations
@@ -157,7 +166,9 @@ contributes — pass `--no-jni-bridge` to `ctadl index` or `ctadl go`.
 - **`RegisterNatives` is not handled.** Only the standard mangled-symbol
   convention is linked. An implementation bound dynamically through
   `RegisterNatives` needs the contents of a `JNINativeMethod[]` table, which is a
-  separate constant-propagation problem.
+  separate constant-propagation problem. The correspondence is one a human can read out of that
+  table, though, so this is exactly what a hand-written
+  [`bridge` model](model-generators.md#bridge) is for.
 - **`JNIEnv` accessor calls are not modelled.** Real native code reaches its
   arguments through the environment vtable — `(*env)->GetStringUTFChars(env, s,
   0)` — an indirect call whose target CTADL cannot currently resolve, so taint
@@ -181,6 +192,10 @@ contributes — pass `--no-jni-bridge` to `ctadl index` or `ctadl go`.
 
 ## See also
 
+- [`model.bridge`](model-generators.md#bridge) — the declarative construct for the
+  boundaries this pass cannot reach: a `RegisterNatives`-bound implementation, a Lua-to-C
+  `luaL_Reg` entry, a call through a `dlsym`'d pointer. It takes an explicit port map, since
+  nothing derives one for a boundary with no naming convention.
 - [Model generators](model-generators.md) — for the code the bridge cannot reach,
   including the `JNIEnv` accessors above.
 - `ctadl-ascent/src/languages/jni.rs` — the implementation, and the unit tests

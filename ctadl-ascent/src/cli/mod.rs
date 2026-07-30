@@ -14,7 +14,6 @@ use std::path::Path;
 
 use itertools::Itertools;
 
-use crate::codegen::models::codegen_summary;
 use crate::codegen::{CallResolutionStrategy, codegen_program};
 use crate::error::{Error, ErrorContext};
 use crate::facts;
@@ -69,6 +68,19 @@ pub fn index(
     log::info!("[mem cp] index() start: {:.1} MB", phys_footprint_mb());
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
+
+    let file_specs = crate::models::scan_model_files(models)?;
+    // Every matched model, instantiated against the IR being indexed. It persists across the import
+    // loop and is codegen'd after it. Matches are a function of (artifact x models files) while the
+    // import cache is a pure function of the artifact, and persisting them would let `ctadl index
+    // --models a.json` poison the next `ctadl index --models b.json`.
+    let mut model_matches = crate::models::ProgramModelMatches::default();
+    model_matches.bridges.prepare(&file_specs.bridges);
+    // Source/sink models are inert at index time; warn once rather than discarding in silence.
+    // Keyed by file, not counted per (file, import) pair -- declaring an endpoint is a property
+    // of the file, and every file is re-matched once per import.
+    let mut files_declaring_endpoints: BTreeSet<&std::path::PathBuf> = BTreeSet::new();
+
     // Collects both halves of every JNI boundary as the imports go by; the link itself can only
     // happen after the loop, when one `IdMap` holds every program's functions.
     let mut jni_observer = jni::JniObserver::new();
@@ -85,17 +97,30 @@ pub fn index(
         if !no_jni_bridge {
             jni_observer.observe(&program_info, jni::SlotModel::for_language(import.language));
         }
-        let mut models_batch = if no_default_models {
-            crate::models::ModelBuilders::new().finish()?
-        } else {
-            crate::models::try_load_default_models(&program_info)?
-        };
-        for model_path in models {
-            let model = crate::models::try_load_models(&program_info, model_path)?;
-            models_batch.union_with(&model)?;
+
+        // Match this import while its IR is in hand, and retain only the *matches*. The index
+        // and the IR are both dropped before the next import is loaded, which is what keeps
+        // the memory posture streaming rather than "every import's match index resident".
+        {
+            let scope = crate::models::ImportScope::new(import.language, &import.name);
+            let match_index = crate::models::ProgramMatchIndex::new(&program_info, scope);
+            if !no_default_models {
+                crate::models::try_load_default_models(&match_index, &mut model_matches)?;
+            }
+            for model_path in models {
+                let report =
+                    crate::models::try_load_models(&match_index, model_path, &mut model_matches)?;
+                if !report.endpoint_stats.is_empty() {
+                    files_declaring_endpoints.insert(model_path);
+                }
+            }
+            crate::models::matches::observe_import(
+                &match_index,
+                &file_specs.bridges,
+                &mut model_matches,
+            )?;
         }
 
-        log::trace!("summary length: {}", models_batch.summary.num_rows());
         // Delete assigned-but-never-read temporaries, then fuse single-use
         // copy temporaries, both before SSA. Together they cut the statement /
         // variable count that SSA and the datalog fact base pay for. Dead-temp
@@ -115,16 +140,63 @@ pub fn index(
             "[mem cp] after codegen_program (IR dropped, facts built): {:.1} MB",
             phys_footprint_mb()
         );
-        log::trace!("summary length: {}", facts.summary.len());
-        codegen_summary(models_batch.summary, &mut facts, &mut source_info);
-        log::trace!("summary length: {}", facts.summary.len());
     }
+    // Measured, not assumed. Streaming matching retains only the *matches* -- one interned
+    // name plus two (tag, index, path) triples per propagation -- and drops each import's
+    // match index and IR with the import. On a 6.4 MB APK (`com.noto_54.apk`, 1224 propagation
+    // matches from the shipped Java defaults plus a bridge spec) this checkpoint reads the same
+    // 406.7 MB as the `after codegen_program` one immediately before it: the retained matches
+    // are below the resolution of the gauge. Peak physical footprint for that whole run was
+    // 2.27 GB, in `ascent_run`, not here.
+    //
+    // Still unquantified: the APK + `.so` pair, which needs a Ghidra import.
+    log::info!(
+        "[mem cp] after import loop ({} propagation match(es), {} declared path(s), {} bridge \
+         spec(s) retained): {:.1} MB",
+        model_matches.propagations.len(),
+        model_matches.access_paths.len(),
+        file_specs.bridges.len(),
+        phys_footprint_mb()
+    );
 
     // Every import's functions are interned by now, which is what the bridge needs to resolve a
     // Java `native` stub and its `Java_…` implementation to two ids in the same map.
     if !no_jni_bridge {
         jni::link(&jni_observer, &mut facts, &mut source_info);
     }
+
+    let model_report = crate::codegen::model_matches::codegen_model_matches(
+        &model_matches,
+        &file_specs.bridges,
+        &mut facts,
+        &mut source_info,
+    )?;
+    log::info!(
+        "models: {} summary row(s), {} declared access path(s)",
+        model_report.summaries,
+        model_report.declared_paths
+    );
+    // Unconditionally, at info, even when nothing went wrong: a bridge-only generator appears on
+    // no other surface, and this line is what catches the mis-paired case (wrong slot, wrong
+    // path, wrong function matched) that warn-on-empty cannot.
+    for stats in &model_report.bridges {
+        log::info!("bridge {stats}");
+    }
+    if !files_declaring_endpoints.is_empty() {
+        // The mirror of the warning `ctadl query` emits about propagation/bridging models: each
+        // phase silently discarded what the other consumes, and this closes the second half.
+        log::warn!(
+            "{} of the given model file(s) declare source/sink models, which `ctadl index` \
+             ignores -- pass them to `ctadl query` instead: {}",
+            files_declaring_endpoints.len(),
+            files_declaring_endpoints
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    drop(model_matches);
 
     // Load and map summaries from multiple projects if specified
     for summary_project_name in summary_projects {
@@ -215,30 +287,59 @@ pub fn query(
     };
 
     let facts = {
-        let mut models_batch: Option<crate::models::ModelsBatch> = None;
-        for model_path in models {
+        // One accumulator across every (import x model file) pair. Endpoints carry their own
+        // `facts::Path`, so accumulation is an append and there is nothing to renumber.
+        let mut model_matches = crate::models::ProgramModelMatches::default();
+        // Counted across every file and import, and reported once at the end: bridges and
+        // propagations are index-time constructs, and a query that silently drops them looks
+        // exactly like one whose models did nothing.
+        let mut ignored = crate::models::IndexTimeModelCounts::default();
+        // Import outer, model file inner: one `ProgramInfo` decode and one match index per
+        // import, reused across every model file, rather than one of each per (file, import)
+        // pair. The match tables are a function of the program alone.
+        if !models.is_empty() {
             for import in project.iter_imports() {
                 let import = import?;
                 let program_info = load_program_info_without_source_info(&import)?;
-                let s = crate::models::try_load_models(&program_info, model_path)?;
-                // Re-key this file's Stage-1 counts by file *before* the batches are
-                // unioned: `ModelsBatch::union_with` sums by (generator index, direction)
-                // alone, which would conflate two model files that happen to number their
-                // generators the same. Summing over imports is what makes a generator that
-                // is dead against one import but live against another come out live.
-                for ((index, direction), stats) in &s.endpoint_stats {
-                    diagnostics
-                        .generator_stats
-                        .entry((model_path.clone(), *index, *direction))
-                        .or_default()
-                        .merge(stats);
-                }
-                if let Some(ref mut s0) = models_batch {
-                    s0.union_with(&s)?;
-                } else {
-                    models_batch = Some(s);
+                let match_index = crate::models::ProgramMatchIndex::new(
+                    &program_info,
+                    crate::models::ImportScope::new(import.language, &import.name),
+                );
+                for model_path in models {
+                    let report = crate::models::try_load_models(
+                        &match_index,
+                        model_path,
+                        &mut model_matches,
+                    )?;
+                    ignored.merge(&report.index_time_models);
+                    // Re-key this file's Stage-1 counts by file: `ModelLoadReport` is keyed by
+                    // (generator index, direction) alone, which would conflate two model files
+                    // that happen to number their generators the same. Merging over imports is
+                    // what makes a generator that is dead against one import but live against
+                    // another come out live.
+                    for ((index, direction), stats) in &report.endpoint_stats {
+                        diagnostics
+                            .generator_stats
+                            .entry((model_path.clone(), *index, *direction))
+                            .or_default()
+                            .merge(stats);
+                    }
                 }
             }
+        }
+        log::info!(
+            "[mem cp] after query model accumulation ({} endpoint match(es), {} propagation \
+             match(es) ignored): {:.1} MB",
+            model_matches.endpoints.len(),
+            model_matches.propagations.len(),
+            crate::index_engine::phys_footprint_mb()
+        );
+        if !ignored.is_empty() {
+            eprintln!(
+                "Warning: ignoring {} in the given model file(s); they take effect at \
+                 `ctadl index` time, so re-run `ctadl index` with them to use them",
+                ignored.describe()
+            );
         }
         let mut builder = QueryFactsBuilder::default();
         let mut endpoints = Vec::new();
@@ -261,9 +362,12 @@ pub fn query(
         let flowy_sinks = endpoints.len() - flowy_sources;
 
         let mut formal_params = index_facts.formal_param.clone();
-        if let Some(ref batch) = models_batch {
+        // Gated on having something to resolve, not merely on `-m` having been passed: Stage 2
+        // union-finds the whole `assign_like` relation before it touches an endpoint, and a
+        // model-less or flowy-only query must not pay for that.
+        if !model_matches.endpoints.is_empty() {
             let built = query_engine::build_query_endpoints(
-                &batch.endpoint,
+                &model_matches.endpoints,
                 &index_facts,
                 &ids,
                 &index_result.assign_like,

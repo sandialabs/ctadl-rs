@@ -1,11 +1,10 @@
 //! Stage 2 of source/sink matching: map name-based matched elements → `QueryEndpoint`s.
 //!
 //! Stage 1 (`models::json::ModelGeneratorIngest`) matches MIR elements — function
-//! names, signatures, arity, regexes — and emits the name-based columnar
-//! [`EndpointBatch`](crate::models::EndpointBatch)/[`EndpointRow`](crate::models::EndpointRow)
-//! intermediate. Stage 2, here, consumes that intermediate together with the index facts
-//! and resolves it into concrete [`QueryEndpoint`](super::QueryEndpoint)s for the query
-//! engine.
+//! names, signatures, arity, regexes — and emits name-based
+//! [`EndpointMatch`](crate::models::EndpointMatch) rows. Stage 2, here, consumes those rows
+//! together with the index facts and resolves them into concrete
+//! [`QueryEndpoint`](super::QueryEndpoint)s for the query engine.
 //!
 //! This is not a 1:1 conversion. In addition to resolving function names →
 //! [`FunctionId`](crate::facts::FunctionId), it performs two index-dependent expansions:
@@ -38,10 +37,13 @@ pub struct BuiltEndpoints {
     pub unresolved_functions: BTreeSet<String>,
 }
 
-/// Turn the name-based model endpoint table (Stage 1) into resolved, expanded
+/// Turn the name-based matched endpoints (Stage 1) into resolved, expanded
 /// `QueryEndpoint`s (Stage 2). See the module docs for the two expansions performed.
+///
+/// Does real index-wide work before touching a single endpoint (`compute_copy_alias` union-finds
+/// the whole `assign_like` relation), so a caller with no matched endpoints should not call it.
 pub fn build_query_endpoints(
-    batch: &crate::models::EndpointBatch,
+    endpoints: &[crate::models::EndpointMatch],
     facts: &IndexFacts,
     idmap: &facts::IdMap,
     assign_like: &[(
@@ -53,7 +55,6 @@ pub fn build_query_endpoints(
     )],
 ) -> BuiltEndpoints {
     use crate::models::FormalIndexTypeTag;
-    let ap_map = batch.aps.build_ap_map();
     let func_num_params = facts.compute_arg_arity();
 
     // Field access paths that actually occur on each `(function, variable)` vertex
@@ -103,11 +104,11 @@ pub fn build_query_endpoints(
     let mut out_eps = Vec::new();
     let mut out_formals = Vec::new();
     let mut unresolved_functions = BTreeSet::new();
-    for crate::models::EndpointRow {
+    for &crate::models::EndpointMatch {
         function: func_name,
         selector_ty,
         index: idx_opt,
-        path_id,
+        path: ap,
         label: label_str,
         direction,
         wildcard,
@@ -115,11 +116,11 @@ pub fn build_query_endpoints(
         in_function,
         callsite_scoped,
         local_index,
-    } in batch.iter_endpoints()
+    } in endpoints
     {
         // Resolve function name → FunctionId; skip if not present. For a callsite endpoint
         // this is the *callee*.
-        let infunc = match idmap.get_function_id(crate::facts::Function(func_name.into())) {
+        let infunc = match idmap.get_function_id(crate::facts::Function(func_name)) {
             Some(id) => id,
             None => {
                 unresolved_functions.insert(func_name.to_string());
@@ -132,7 +133,7 @@ pub fn build_query_endpoints(
         // callsite can match, so skip the endpoint entirely.
         let caller_filter = if callsite_scoped {
             match in_function {
-                Some(name) => match idmap.get_function_id(crate::facts::Function(name.into())) {
+                Some(name) => match idmap.get_function_id(crate::facts::Function(name)) {
                     Some(id) => Some(id),
                     None => {
                         unresolved_functions.insert(name.to_string());
@@ -208,8 +209,6 @@ pub fn build_query_endpoints(
             }
         };
 
-        let ap: facts::Path = ap_map[&path_id];
-
         // A wildcard sink port denotes the whole subtree beneath `ap` on the sink
         // call's argument: it matches every concrete access path, rooted at that
         // argument, that extends the port. Sinks seed *backward* taint and the
@@ -219,7 +218,7 @@ pub fn build_query_endpoints(
         let expand_wildcard = wildcard && direction == facts::TaintDirection::Backward;
 
         // Build label and direction.
-        let lbl = Label(label_str.into());
+        let lbl = Label(label_str);
 
         for var in vars {
             // Register the model function's formal so taint can cross the call boundary

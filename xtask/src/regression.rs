@@ -26,6 +26,7 @@ use crate::dex;
 use crate::discovery::{self, Frontend, Kind, TestCase};
 use crate::exec;
 use crate::jvm;
+use crate::models;
 use crate::sarif;
 
 /// Historical fallback base address for SARIF that predates the analyzer
@@ -77,6 +78,9 @@ pub struct Options {
     pub tests_dir: Option<PathBuf>,
     pub jvm_samples: Option<PathBuf>,
     pub dex_apk: Option<PathBuf>,
+    /// Directory holding the model generator schema and the model files checked
+    /// against it. `None` auto-detects; see [`resolve_models_dir`].
+    pub models_dir: Option<PathBuf>,
     /// How many cases to run concurrently. `None` picks [`default_jobs`].
     pub jobs: Option<usize>,
     /// Build (and run) the release `ctadl` binary instead of the debug one.
@@ -93,6 +97,7 @@ impl Default for Options {
             tests_dir: None,
             jvm_samples: None,
             dex_apk: None,
+            models_dir: None,
             jobs: None,
             release: false,
         }
@@ -172,6 +177,7 @@ pub fn run(opts: &Options) -> Result<bool> {
     } else {
         None
     };
+    let models_dir = resolve_models_dir(opts.models_dir.as_deref())?;
 
     // Assemble every independent unit of work, in report order. The pool below
     // preserves that order regardless of which worker finishes first.
@@ -192,6 +198,12 @@ pub fn run(opts: &Options) -> Result<bool> {
     if ghidra_selected {
         tasks.push(Task::GhidraProject);
     }
+    // Schema drift check on the model files ctadl ships. It reads three small
+    // files and runs no external tool, so it is never gated on a frontend: the
+    // schema is what users write generators against whatever they analyze.
+    tasks.push(Task::ModelSchema {
+        models: models_dir.as_deref(),
+    });
 
     // More workers than tasks would just create idle scratch homes; no tasks at
     // all means no workers, and the empty report below reports the selection.
@@ -257,6 +269,12 @@ enum Task<'a> {
         samples: &'a Path,
         apk: Option<&'a Path>,
     },
+    /// Hold the shipped model files to the published model generator schema.
+    /// `None` means neither `--models-dir` nor the in-tree default was found,
+    /// which reports as a Skip rather than vanishing from the report.
+    ModelSchema {
+        models: Option<&'a Path>,
+    },
     GhidraProject,
 }
 
@@ -291,6 +309,21 @@ impl Task<'_> {
                     .unwrap_or_else(|err| {
                         vec![("dex".to_string(), Outcome::Fail(format!("{err:#}")))]
                     });
+                retain_filtered(results, opts)
+            }
+            Task::ModelSchema { models } => {
+                let results = match models {
+                    Some(dir) => models::run_checks(dir).unwrap_or_else(|err| {
+                        vec![(
+                            "models:defaults".to_string(),
+                            Outcome::Fail(format!("{err:#}")),
+                        )]
+                    }),
+                    None => vec![(
+                        "models:defaults".to_string(),
+                        Outcome::Skip("model directory not found; pass --models-dir".to_string()),
+                    )],
+                };
                 retain_filtered(results, opts)
             }
             Task::GhidraProject => {
@@ -398,6 +431,28 @@ fn resolve_dex_apk(override_path: Option<&Path>) -> Result<Option<PathBuf>> {
     .map(|p| std::fs::canonicalize(&p))
     .transpose()
     .with_context(|| "failed to canonicalize dex apk path")
+}
+
+/// Locate the models directory: the model generator schema and the built-in
+/// model files that must validate against it. With no override, look where the
+/// crate lives relative to the repo root (`cargo xtask`) or the nightly cwd.
+///
+/// Unlike the other resolvers, nothing produces this directory -- it is checked
+/// into the crate -- so a run that cannot find it is a run against a tree that
+/// does not have it (a Nix check with no source, say), and the check Skips.
+fn resolve_models_dir(override_dir: Option<&Path>) -> Result<Option<PathBuf>> {
+    if let Some(dir) = override_dir {
+        return Ok(Some(std::fs::canonicalize(dir).with_context(|| {
+            format!("failed to canonicalize {}", dir.display())
+        })?));
+    }
+    ["ctadl-ascent/src/models", "../ctadl-ascent/src/models"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_dir())
+        .map(|p| std::fs::canonicalize(&p))
+        .transpose()
+        .with_context(|| "failed to canonicalize models directory")
 }
 
 /// Ensure the executables needed for the selected cases are available.
@@ -530,7 +585,8 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             java,
             native,
             config,
-        } => run_jni(&case.name, java, native, config, worker),
+            bridge,
+        } => run_jni(&case.name, java, native, config, bridge.as_deref(), worker),
     }
 }
 
@@ -1297,6 +1353,7 @@ fn run_jni(
     java: &Path,
     native: &Path,
     config: &Path,
+    bridge: Option<&Path>,
     worker: &Worker,
 ) -> Result<Outcome> {
     for tool in ["javac", "dx"] {
@@ -1393,12 +1450,16 @@ fn run_jni(
             &native_project,
         ],
     )?;
-    run_ctadl_env(
-        &work,
-        &state,
-        env,
-        &["index", &project, &dex_project, &native_project],
-    )?;
+    // With a declarative bridge, the built-in pass is switched off entirely: leaving both on
+    // would double-bridge the pair, giving two sites and duplicated flows, and the case would
+    // pass for the wrong reason.
+    let mut index_args: Vec<&str> = vec!["index", &project, &dex_project, &native_project];
+    let bridge_arg;
+    if let Some(bridge) = bridge {
+        bridge_arg = bridge.to_string_lossy().into_owned();
+        index_args.extend_from_slice(&["--no-jni-bridge", "-m", &bridge_arg]);
+    }
+    run_ctadl_env(&work, &state, env, &index_args)?;
     run_ctadl_env(
         &work,
         &state,

@@ -28,7 +28,7 @@ Two constraints follow from that rule set:
 - The Java stub needs **`formal_param` rows**: the summary rule joins on them and `locals` is seeded
   from them. A Dex `native` method has zero declared parameters (the dex frontend sets parameters up
   only when it finds a code item), so the bridge emits the rows itself, exactly as
-  [`crate::codegen::models::codegen_summary`] does for modelled functions.
+  [`crate::codegen::model_matches::codegen_model_matches`] does for modelled functions.
 
 # Limitations
 

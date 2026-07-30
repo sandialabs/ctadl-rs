@@ -34,6 +34,10 @@ pub enum Kind {
         java: PathBuf,
         native: PathBuf,
         config: PathBuf,
+        /// A declarative bridging model to use *instead of* the built-in JNI pass. When set,
+        /// the case indexes with `--no-jni-bridge -m <this>`, so it asserts exactly what the
+        /// built-in case asserts and the two are a direct A/B.
+        bridge: Option<PathBuf>,
     },
 }
 
@@ -265,8 +269,25 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
                 java: absolute(&entry)?,
                 native: absolute(&native)?,
                 config: absolute(&config)?,
+                bridge: None,
             },
         });
+        // A sibling `<kebab>.bridge.jsonl` turns the case into an A/B: the same two artifacts
+        // and the same claims, joined by a hand-written `model.bridge` under
+        // `--no-jni-bridge` instead of by the built-in pass. If the declarative construct is
+        // as expressive as the pass for this boundary, both cases pass identically.
+        let bridge = jni_dir.join(format!("{kebab}.bridge.jsonl"));
+        if bridge.is_file() {
+            cases.push(TestCase {
+                name: format!("Jni:{stem}+bridge"),
+                kind: Kind::Jni {
+                    java: absolute(&entry)?,
+                    native: absolute(&native)?,
+                    config: absolute(&config)?,
+                    bridge: Some(absolute(&bridge)?),
+                },
+            });
+        }
     }
     Ok(cases)
 }
@@ -313,7 +334,61 @@ fn to_kebab_case(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{to_kebab_case, Frontend};
+    use super::{discover_jni, to_kebab_case, Frontend, Kind};
+
+    /// Every shipped JNI case is discovered, and one that carries a `<kebab>.bridge.jsonl`
+    /// yields a second, declaratively-bridged case beside it.
+    ///
+    /// This is the cheap half of the A/B: the runner itself needs `javac`, `dx`, a C compiler
+    /// and Ghidra, so it only runs in the nightly environment. That the pair is *discovered* --
+    /// and that the two halves make the same claims, since they share a config file -- is
+    /// checkable everywhere.
+    #[test]
+    fn a_bridge_model_beside_a_jni_case_yields_an_ab_pair() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("nightly/tests/jni");
+        if !dir.is_dir() {
+            return;
+        }
+        let cases = discover_jni(&dir).expect("discovering jni cases");
+        let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
+        for stem in ["JniFlow", "JniArgShift"] {
+            assert!(
+                names.contains(&format!("Jni:{stem}").as_str()),
+                "the built-in case is missing: {names:?}"
+            );
+            assert!(
+                names.contains(&format!("Jni:{stem}+bridge").as_str()),
+                "the declarative A/B case is missing: {names:?}"
+            );
+        }
+        // The two halves of a pair differ in exactly one thing: which mechanism joins the
+        // boundary. Same sources, same config, so the same assertions.
+        for stem in ["JniFlow", "JniArgShift"] {
+            let of = |name: String| {
+                cases
+                    .iter()
+                    .find(|c| c.name == name)
+                    .map(|c| match &c.kind {
+                        Kind::Jni {
+                            java,
+                            native,
+                            config,
+                            bridge,
+                        } => (java.clone(), native.clone(), config.clone(), bridge.clone()),
+                        _ => panic!("expected a Jni case for Jni:{stem}"),
+                    })
+                    .unwrap_or_else(|| panic!("no case named Jni:{stem}"))
+            };
+            let (java_a, native_a, config_a, bridge_a) = of(format!("Jni:{stem}"));
+            let (java_b, native_b, config_b, bridge_b) = of(format!("Jni:{stem}+bridge"));
+            assert_eq!((java_a, native_a, config_a), (java_b, native_b, config_b));
+            assert!(bridge_a.is_none(), "the built-in case uses no model");
+            assert!(bridge_b.is_some(), "the A/B case supplies one");
+        }
+    }
 
     #[test]
     fn frontend_parses() {

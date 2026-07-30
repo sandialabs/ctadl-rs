@@ -1,6 +1,7 @@
 use ctadl_ascent::facts::TaintDirection;
 use ctadl_ascent::models::json::ModelGeneratorIngest;
-use ctadl_ascent::models::{ModelBuilders, UnmatchedReason, try_load_models};
+use ctadl_ascent::models::{ImportScope, ProgramMatchIndex};
+use ctadl_ascent::models::{ProgramModelMatches, UnmatchedReason, try_load_models};
 use ctadl_ir::mir::ProgramInfo;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -20,7 +21,9 @@ fn test_load_models_json() {
     }"#;
     writeln!(file, "{}", json_content).unwrap();
 
-    let result = try_load_models(&program_info, file.path());
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut matches = ProgramModelMatches::default();
+    let result = try_load_models(&match_index, file.path(), &mut matches);
     assert!(
         result.is_ok(),
         "Failed to load JSON models: {:?}",
@@ -36,7 +39,9 @@ fn test_load_models_jsonl() {
     let jsonl_content = r#"{"find": "methods", "where": [{"constraint": "signature_match", "name": "test"}], "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]}}"#;
     writeln!(file, "{}", jsonl_content).unwrap();
 
-    let result = try_load_models(&program_info, file.path());
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut matches = ProgramModelMatches::default();
+    let result = try_load_models(&match_index, file.path(), &mut matches);
     assert!(
         result.is_ok(),
         "Failed to load JSONL models: {:?}",
@@ -61,7 +66,9 @@ fn test_load_models_json5() {
     }"#;
     writeln!(file, "{}", json5_content).unwrap();
 
-    let result = try_load_models(&program_info, file.path());
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut matches = ProgramModelMatches::default();
+    let result = try_load_models(&match_index, file.path(), &mut matches);
     assert!(
         result.is_ok(),
         "Failed to load JSON5 models: {:?}",
@@ -95,8 +102,10 @@ fn test_load_models_across_batch_boundary() {
     )
     .unwrap();
 
-    let batch = try_load_models(&program_info, file.path()).expect("loading models");
-    let indices: Vec<usize> = batch.endpoint_stats.keys().map(|(i, _)| *i).collect();
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut matches = ProgramModelMatches::default();
+    let report = try_load_models(&match_index, file.path(), &mut matches).expect("loading models");
+    let indices: Vec<usize> = report.endpoint_stats.keys().map(|(i, _)| *i).collect();
     assert_eq!(
         indices.len(),
         COUNT,
@@ -140,8 +149,9 @@ s:
     let program_info = ctadl_flowy::compile_program_contents("test.tnt", PROGRAM)
         .expect("compiling flowy program")
         .program_info;
-    let mut builders = ModelBuilders::new();
-    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut builders);
+    let mut matches = ProgramModelMatches::default();
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
     let generators = vec![
         // 0: two source ports on one generator, both matching `reader`.
         serde_json::json!({
@@ -280,8 +290,8 @@ fn test_endpoint_stats_merge_across_imports() {
 // docs and the JSON schema have advertised exactly that spelling all along.
 // ---------------------------------------------------------------------------
 
-/// A native (binary-frontend) program with one 2-parameter function `f`.
-fn native_program_with_f() -> ProgramInfo {
+/// A native (binary-frontend) program with one 2-parameter function per name.
+fn native_program(names: &[&str]) -> ProgramInfo {
     use ctadl_ir::mir::call::{
         NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
     };
@@ -289,26 +299,42 @@ fn native_program_with_f() -> ProgramInfo {
         BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
     };
 
-    let mut f = FunctionData::default();
-    f.set_name("f".to_string());
-    f.params.parameters.push(ParameterType::ByVal);
-    f.params.parameters.push(ParameterType::ByVal);
-    let blocks = f.blocks.blocks_mut();
-    let body = blocks.push(BasicBlockData::new(None));
-    blocks[body].extend(vec![Statement::new_kind(StatementKind::Nop)]);
+    let functions: Vec<FunctionData> = names
+        .iter()
+        .map(|name| {
+            let mut f = FunctionData::default();
+            f.set_name((*name).to_string());
+            f.params.parameters.push(ParameterType::ByVal);
+            f.params.parameters.push(ParameterType::ByVal);
+            let blocks = f.blocks.blocks_mut();
+            let body = blocks.push(BasicBlockData::new(None));
+            blocks[body].extend(vec![Statement::new_kind(StatementKind::Nop)]);
+            f
+        })
+        .collect();
 
     ProgramInfo {
         vmt: VirtualMethodTable::Native {
-            methods: vec![(
-                NativeSimpleName("f".into()),
-                NativeSignature("f".into()),
-                NativeFunction("f".into()),
-                NativeQualifiedName("f".into()),
-            )],
+            methods: names
+                .iter()
+                .map(|name| {
+                    (
+                        NativeSimpleName((*name).into()),
+                        NativeSignature((*name).into()),
+                        NativeFunction((*name).into()),
+                        NativeQualifiedName((*name).into()),
+                    )
+                })
+                .collect(),
         },
-        program: Program::new(Functions::new([f])),
+        program: Program::new(Functions::new(functions)),
         ..Default::default()
     }
+}
+
+/// A native (binary-frontend) program with one 2-parameter function `f`.
+fn native_program_with_f() -> ProgramInfo {
+    native_program(&["f"])
 }
 
 /// Loads one propagation generator and returns every access path in the resulting
@@ -316,8 +342,9 @@ fn native_program_with_f() -> ProgramInfo {
 fn summary_paths_for(input: &str, output: &str) -> Vec<ctadl_ascent::facts::Path> {
     use serde_json::json;
     let program_info = native_program_with_f();
-    let mut builders = ModelBuilders::new();
-    let mut ingest = ModelGeneratorIngest::new(&program_info, &mut builders);
+    let mut matches = ProgramModelMatches::default();
+    let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
     let model = json!({
         "find": "methods",
         "where": [{"constraint": "signature_match", "name": "f"}],
@@ -327,12 +354,15 @@ fn summary_paths_for(input: &str, output: &str) -> Vec<ctadl_ascent::facts::Path
         .encode_models(vec![model])
         .unwrap_or_else(|e| panic!("loading {input:?} -> {output:?}: {e}"));
     drop(ingest);
-    let batch = builders.finish().expect("finish");
     assert!(
-        batch.summary.num_rows() > 0,
+        !matches.propagations.is_empty(),
         "generator matched nothing for {input:?} -> {output:?}"
     );
-    let mut paths: Vec<_> = batch.summary.aps.build_ap_map().into_values().collect();
+    let mut paths: Vec<_> = matches
+        .propagations
+        .iter()
+        .flat_map(|p| [p.dst.path, p.src.path])
+        .collect();
     paths.sort();
     paths.dedup();
     paths
@@ -377,4 +407,104 @@ fn escaped_bracketed_port_stays_a_symbol() {
         paths.iter().map(|p| p.to_dot_string()).collect::<Vec<_>>()
     );
     assert_eq!(expected.to_dot_string(), r".\[_elem_]");
+}
+
+// ---------------------------------------------------------------------------
+// An endpoint keeps the access path its own model file declared.
+//
+// `cli::query` accumulates one batch per (import x model file) pair. Accumulating must not
+// let one pair's trailing port path reach another pair's endpoint -- a source or sink that is
+// silently widened, narrowed, or moved is indistinguishable from one the user wrote that way.
+// See `removing-modelbuilders-plan.md` §2 for the two triggers pinned below.
+// ---------------------------------------------------------------------------
+
+/// One model file declaring one source on `func`, whose port carries `path`.
+fn endpoint_model_file(kind: &str, func: &str, port: &str) -> NamedTempFile {
+    let mut file = NamedTempFile::with_suffix(".jsonl").unwrap();
+    writeln!(
+        file,
+        "{}",
+        serde_json::json!({
+            "find": "methods",
+            "where": [{"constraint": "signature_match", "name": func}],
+            "model": {"sources": [{"kind": kind, "port": port}]},
+        })
+    )
+    .unwrap();
+    file.flush().unwrap();
+    file
+}
+
+/// Loads `(program, file)` pairs in the given order, accumulating them the way `cli::query`
+/// does, and returns each matched endpoint's label paired with the access path it resolves to.
+///
+/// Only this accumulation harness is specific to how matches are represented; the fixtures
+/// above and the assertions below are not.
+fn accumulated_endpoint_paths(
+    loads: &[(&ProgramInfo, &std::path::Path)],
+) -> std::collections::BTreeMap<String, ctadl_ascent::facts::Path> {
+    let mut acc = ProgramModelMatches::default();
+    for (program_info, model_path) in loads {
+        let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
+        try_load_models(&match_index, model_path, &mut acc).expect("load");
+    }
+    acc.endpoints
+        .iter()
+        .map(|ep| (ep.label.to_string(), ep.path))
+        .collect()
+}
+
+fn path_of(segments: &[&str]) -> ctadl_ascent::facts::Path {
+    use ctadl_ir::mir::PathSegment;
+    ctadl_ascent::facts::Path::from_accesses(segments.iter().map(|s| PathSegment::symbol(*s)))
+}
+
+/// Trigger 1: two model files, one program. Each file's ports are numbered from zero, so the
+/// second file's path table shadows the first's and file A's source silently acquires file B's
+/// path.
+#[test]
+fn two_model_files_keep_their_own_endpoint_paths() {
+    let program_info = native_program(&["a", "b"]);
+    let file_a = endpoint_model_file("A", "a", "Argument(0).headers");
+    let file_b = endpoint_model_file("B", "b", "Argument(0).body.raw");
+
+    let got = accumulated_endpoint_paths(&[
+        (&program_info, file_a.path()),
+        (&program_info, file_b.path()),
+    ]);
+
+    assert_eq!(got.get("A"), Some(&path_of(&["headers"])));
+    assert_eq!(got.get("B"), Some(&path_of(&["body", "raw"])));
+}
+
+/// Trigger 2: one model file, two imports. Each import matches a different function, so the
+/// same file produces two different append sequences and the same ids bind to different path
+/// tables -- a single file colliding with itself, which is the bridging configuration.
+#[test]
+fn one_model_file_across_two_imports_keeps_its_endpoint_paths() {
+    let mut file = NamedTempFile::with_suffix(".jsonl").unwrap();
+    for (kind, func, port) in [
+        ("A", "a", "Argument(0).headers"),
+        ("B", "b", "Argument(0).body.raw"),
+    ] {
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "signature_match", "name": func}],
+                "model": {"sources": [{"kind": kind, "port": port}]},
+            })
+        )
+        .unwrap();
+    }
+    file.flush().unwrap();
+
+    // Two imports, each containing only one of the two modeled functions.
+    let import_a = native_program(&["a"]);
+    let import_b = native_program(&["b"]);
+    let got = accumulated_endpoint_paths(&[(&import_a, file.path()), (&import_b, file.path())]);
+
+    assert_eq!(got.get("A"), Some(&path_of(&["headers"])));
+    assert_eq!(got.get("B"), Some(&path_of(&["body", "raw"])));
 }

@@ -15,6 +15,7 @@ mod dex;
 mod discovery;
 mod exec;
 mod jvm;
+mod models;
 mod regression;
 mod sarif;
 
@@ -101,6 +102,10 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let path = args.next().context("--dex-apk requires a value")?;
                 opts.dex_apk = Some(PathBuf::from(path));
             }
+            "--models-dir" => {
+                let dir = args.next().context("--models-dir requires a value")?;
+                opts.models_dir = Some(PathBuf::from(dir));
+            }
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -149,6 +154,11 @@ Tasks:
     --dex-apk <path>         Real-world APK to parse in the dex-reader smoke
                              test (default: auto-detect
                              `xtask/tests/dex/com.noto_54.apk`).
+    --models-dir <dir>       Directory holding the model generator schema and
+                             the built-in model files checked against it
+                             (default: auto-detect `ctadl-ascent/src/models`).
+                             The `models:*` checks self-skip when neither the
+                             flag nor the default directory is present.
 "
     );
 }

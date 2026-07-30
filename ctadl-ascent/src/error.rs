@@ -212,6 +212,12 @@ pub enum Error {
     TreeSitterParse(String),
     #[error("JSON model parsing error")]
     JsonModel(#[from] JsonModelErrors),
+    /// A model was well-formed but could not be applied: a bridge side that matched nothing
+    /// under `on-unmatched: error`, or an ambiguous pairing under `on-ambiguous: error`.
+    /// Distinct from [`Error::JsonModel`], which is about the file's *syntax*; this one needs a
+    /// program to detect.
+    #[error("model error: {message}")]
+    Model { message: String },
     #[error(
         "import '{name}' was created by an incompatible version of ctadl \
          (import format {found}, this build expects {expected}); the original \
