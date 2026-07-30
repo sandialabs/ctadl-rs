@@ -26,8 +26,8 @@ use ctadl_ir::mir::PathSegment;
 use ctadl_ir::mir::StatementKind;
 use ctadl_ir::mir::call::VirtualMethodTable;
 
-/// Ingests model_generators and matches them against a program, producing a set of summaries
-/// usable for indexing.
+/// Ingests model_generators and matches them against a program, appending what matched into a
+/// [`ProgramModelMatches`](crate::models::ProgramModelMatches).
 ///
 /// This object indexes the metadata in a useful way so that model_generators can be efficiently
 /// matched. It also implements a visitor for model_generators.

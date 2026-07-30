@@ -1,8 +1,32 @@
-/*! [`ProgramModelMatches`]: every model, instantiated against the IR being indexed.
+/*! [`ProgramModelMatches`]: everything a models file matched, whichever phase consumes it.
 
 As the import loop streams IR past, each import is matched and only the *matches* are retained
-here -- not the match indexes, and not the IR. After the loop, phase 2 of codegen turns this
-structure into facts.
+here -- not the match indexes, and not the IR.
+
+# Which phase consumes what
+
+This is one structure spanning two phases, and each field is consumed by exactly one of them:
+
+- [`ProgramModelMatches::propagations`] -- index time. Phase 2 of codegen
+  ([`crate::codegen::model_matches`]) turns them into `facts.summary` rows.
+- [`ProgramModelMatches::access_paths`] -- index time. Phase 2 seeds them into the initial
+  indexer paths.
+- [`ProgramModelMatches::bridges`] -- index time. Phase 2 pairs the two sides and emits the
+  `call`/`actual_param`/`assign`/`formal_param` rows.
+- [`ProgramModelMatches::endpoints`] -- query time. Stage 2
+  ([`crate::query_engine::build_query_endpoints`]) resolves and expands them into
+  `QueryEndpoint`s.
+
+Each phase therefore ignores the other's half, and both say so rather than dropping them in
+silence: `ctadl index` warns that the given files declare source/sink models it ignores, and
+`ctadl query` warns that they declare propagation/bridging models it ignores (both in
+`cli::mod`). That symmetry is deliberate -- each phase used to discard what the other consumes
+without a word.
+
+The alternative -- a second, sibling structure for the query-time half -- was considered and
+rejected: one matcher pass produces both halves, and splitting its output across two
+accumulators buys nothing but a second thing to thread and document. The cost is paid here, in
+having to say which field belongs to which phase.
 
 Nothing here is written to disk, stored in the VMT, or applied to the IR. Matches are a function
 of (artifact x models files) and the import cache must stay a pure function of the artifact
@@ -172,7 +196,13 @@ impl BridgeMatches {
     }
 }
 
-/// Every model, instantiated against the IR being indexed.
+/// Everything a models file matched, accumulated across every (import x model file) pair.
+///
+/// Accumulation is append-only and its *order* is only required to be deterministic, not
+/// specific: the SARIF writer sorts endpoints into `BTreeSet`s before writing anything, so
+/// insertion order does not reach the output. The natural loop order (import outer, model file
+/// inner, visit order within a file) is deterministic and is what accumulation gets for free;
+/// the one rule is never to route it through unordered iteration.
 #[derive(Clone, Debug, Default)]
 pub struct ProgramModelMatches {
     /// Matched propagation models. Phase 2 turns these into `facts.summary` rows, which is what

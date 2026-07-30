@@ -70,7 +70,8 @@ pub const DEFAULT_MODEL_FILES: &[(&str, &[u8])] = &[
 /// This is deliberately *not* how a user's `in` scope is resolved. The VMT is the right key for
 /// "which shipped file"; `in` is the right key for "which import did the user mean", and it can
 /// tell `dex` from `apk` from `jar`, which the VMT variant cannot.
-// TODO load summary parquet models as well as json, decoding straight to `PropagationMatch`
+// TODO load summary parquet models as well as json. Such a decoder now builds
+// `PropagationMatch`es directly rather than re-deriving them from an Arrow encoding.
 pub fn try_load_default_models(
     index: &ProgramMatchIndex<'_>,
     out: &mut ProgramModelMatches,

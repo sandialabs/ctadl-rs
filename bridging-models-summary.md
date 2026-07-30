@@ -87,9 +87,10 @@ Both arity snapshots (`compute_arg_arity` for `Argument(*)`, `compute_num_params
 arity warning) are taken before this phase pushes a single row, so neither observes its own
 output.
 
-- **Propagations** → `facts.summary`, replicating `codegen_summary`'s expansion exactly:
+- **Propagations** → `facts.summary`, replicating the old `codegen_summary`'s expansion exactly:
   `AnyArgument` fan-out, the `dst == src` skip, and the `formal_param` pushes for both ports.
-  `codegen_summary` itself is now a thin adapter onto this, so there is one implementation.
+  `codegen_summary` was a thin adapter onto this and has since been deleted along with the
+  columnar model encoding (see §5.3), so there is one implementation and one caller path.
 - **Declared access paths** → `facts.paths`. This is the only thing in the whole change that
   pushes a `paths` row.
 - **Bridges** → per pair: a fresh site inside the caller, `call`, one temporary per distinct
@@ -294,7 +295,8 @@ Plan §9 asks the docs to note that the per-method `jni bridge:` line "requires 
 
 ### 5.1 A same-index, different-path propagation cannot be expressed
 
-`codegen_summary`'s `dst == src` skip compares **indices**, not (index, path) pairs. So
+`codegen_propagations`' `dst == src` skip (inherited verbatim from `codegen_summary`) compares
+**indices**, not (index, path) pairs. So
 `{"input": "Argument(0).stack", "output": "Argument(0).out"}` produces no summary row at all —
 silently.
 
@@ -319,12 +321,36 @@ the bridge instead.
 
 ### 5.3 `SummaryBatch::union_with` collides access-path ids
 
+> **Resolved.** See `removing-modelbuilders-plan.md`, implemented on this branch: the columnar
+> model encoding is gone, so there are no access-path ids left to collide. Propagations and
+> endpoints both carry a `facts::Path`, accumulation is `Vec::extend`, and the two triggers
+> below are pinned by tests in `tests/models_loading.rs`
+> (`two_model_files_keep_their_own_endpoint_paths`,
+> `one_model_file_across_two_imports_keeps_its_endpoint_paths`).
+
 `AccessPathBuilder` numbers paths from 0 in every builder, so concatenating two batches makes the
 second batch's summaries resolve their paths through the first's table. This is pre-existing —
 `cli::index` unioned the default batch with each `--models` batch — and the new code sidesteps it
 rather than inheriting it: each file's batch is converted into `ProgramModelMatches` against its
 own path table, and no summary batches are unioned on the index path. `codegen/flowy.rs` still
 unions, and is still exposed for a caller passing two model files.
+
+**The endpoint side has the same bug, unreported until now, and it is the worse half.**
+`EndpointBatch::union_with` concatenates rows without remapping and `build_ap_map` is
+last-writer-wins on duplicate ids, so a source or sink is silently widened, narrowed, or moved
+rather than merely mis-summarized. `cli::query` unions one batch per **(import × model file)
+pair**, which gives it two distinct triggers:
+
+- **Two model files** whose ports carry differently-shaped trailing paths: the first file's
+  endpoints resolve through the second file's table.
+- **One model file matched against two imports.** Each import produces its own match set —
+  different functions exist in each program — so the same file yields different append sequences
+  and the same ids bind to different path tables. A single file whose generators match pathful
+  ports in both a Java import and a native import — the bridging use case — collides with
+  itself.
+
+The only benign configuration is one file × one import (a single batch, nothing unioned), which
+is what has been run to date; that, and not any structural safety, is why this was not observed.
 
 ### 5.4 The bridge warnings work, observably
 
