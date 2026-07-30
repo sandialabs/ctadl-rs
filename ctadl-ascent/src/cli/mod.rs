@@ -69,15 +69,11 @@ pub fn index(
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
 
-    // Specs that need no program are scanned once, before the loop: parsing a bridge needs no
-    // program, hoisting it avoids re-parsing per import, and indexing learns up front whether
-    // any bridge exists at all.
     let file_specs = crate::models::scan_model_files(models)?;
-    // Every matched model, instantiated against the IR being indexed. It persists across the
-    // import loop and is codegen'd after it -- but it is never written to disk and never
-    // applied to the IR. Matches are a function of (artifact x models files) while the import
-    // cache is a pure function of the artifact, and persisting them would let
-    // `ctadl index --models a.json` poison the next `ctadl index --models b.json`.
+    // Every matched model, instantiated against the IR being indexed. It persists across the import
+    // loop and is codegen'd after it. Matches are a function of (artifact x models files) while the
+    // import cache is a pure function of the artifact, and persisting them would let `ctadl index
+    // --models a.json` poison the next `ctadl index --models b.json`.
     let mut model_matches = crate::models::ProgramModelMatches::default();
     model_matches.bridges.prepare(&file_specs.bridges);
     // Source/sink models are inert at index time; warn once rather than discarding in silence.
