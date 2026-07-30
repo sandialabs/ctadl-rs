@@ -140,9 +140,13 @@ fn codegen_propagations(
                 if dst_index == src_index {
                     continue;
                 }
-                facts
-                    .summary
-                    .push((func_id, *dst_index, prop.dst.path, *src_index, prop.src.path));
+                facts.summary.push((
+                    func_id,
+                    *dst_index,
+                    prop.dst.path,
+                    *src_index,
+                    prop.src.path,
+                ));
                 emitted += 1;
             }
         }

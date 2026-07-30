@@ -156,7 +156,11 @@ fn the_degenerate_case_collapses_to_direct_actual_params() {
     let spec = spec_with(vec![
         pair(port(0, ""), port(1, ""), Direction::Both),
         pair(port(1, ""), port(2, ""), Direction::Both),
-        pair(port(RETURN_INDEX, ""), port(RETURN_INDEX, ""), Direction::Both),
+        pair(
+            port(RETURN_INDEX, ""),
+            port(RETURN_INDEX, ""),
+            Direction::Both,
+        ),
     ]);
     run(&spec, &["stub"], &["impl"], &mut facts, &mut source_info);
 
@@ -187,7 +191,10 @@ fn the_degenerate_case_collapses_to_direct_actual_params() {
     );
 
     // Formals on *both* sides, for every mapped port.
-    assert_eq!(formals_of(&facts, stub), vec![GLOBALS_INDEX, RETURN_INDEX, 0, 1]);
+    assert_eq!(
+        formals_of(&facts, stub),
+        vec![GLOBALS_INDEX, RETURN_INDEX, 0, 1]
+    );
     assert_eq!(
         formals_of(&facts, imp),
         vec![GLOBALS_INDEX, RETURN_INDEX, 0, 1, 2]
@@ -195,7 +202,10 @@ fn the_degenerate_case_collapses_to_direct_actual_params() {
 
     // Registration is the engine's job: `program_paths` is seeded from every assign endpoint
     // and every actual_param vertex.
-    assert!(facts.paths.is_empty(), "a bridge pushes no facts.paths rows");
+    assert!(
+        facts.paths.is_empty(),
+        "a bridge pushes no facts.paths rows"
+    );
 }
 
 /// The Lua shape: three ports on one callee parameter at different sub-paths. One temporary,
@@ -206,9 +216,19 @@ fn ports_sharing_a_callee_index_share_one_temporary_and_do_not_alias() {
     let spec = spec_with(vec![
         pair(port(0, ""), port(0, ".stack.[1]"), Direction::In),
         pair(port(1, ""), port(0, ".stack.[2]"), Direction::In),
-        pair(port(RETURN_INDEX, ""), port(0, ".stack.[-1]"), Direction::Out),
+        pair(
+            port(RETURN_INDEX, ""),
+            port(0, ".stack.[-1]"),
+            Direction::Out,
+        ),
     ]);
-    run(&spec, &["mylib.add"], &["l_add"], &mut facts, &mut source_info);
+    run(
+        &spec,
+        &["mylib.add"],
+        &["l_add"],
+        &mut facts,
+        &mut source_info,
+    );
 
     let site = facts.call[0].0;
     // One temporary for callee index 0, passed whole; globals still collapse.
@@ -234,14 +254,8 @@ fn ports_sharing_a_callee_index_share_one_temporary_and_do_not_alias() {
         .map(|(_, dst, src)| (vertex_str(dst), vertex_str(src)))
         .collect();
     let t_name = local_name(t);
-    assert!(rows.contains(&(
-        format!("{t_name}.stack.[1]"),
-        "formal(0)".to_string()
-    )));
-    assert!(rows.contains(&(
-        format!("{t_name}.stack.[2]"),
-        "formal(1)".to_string()
-    )));
+    assert!(rows.contains(&(format!("{t_name}.stack.[1]"), "formal(0)".to_string())));
+    assert!(rows.contains(&(format!("{t_name}.stack.[2]"), "formal(1)".to_string())));
     // ... and the out-direction port is the converse, writing the caller's return formal.
     assert!(rows.contains(&(
         format!("formal({RETURN_INDEX})"),
@@ -389,7 +403,10 @@ fn an_empty_from_side_reports_under_its_own_setting() {
     let mut spec = spec_with(vec![]);
     spec.from.on_unmatched = Severity::Error;
     let err = classify_only(&spec, &[], &["b"]).expect_err("should report");
-    assert!(format!("{err}").contains("'from' side matched no function"), "{err}");
+    assert!(
+        format!("{err}").contains("'from' side matched no function"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -442,7 +459,8 @@ fn model_port(tag: FormalIndexTypeTag, index: Option<i16>) -> ModelPort {
 /// expand fully.
 #[test]
 fn any_argument_expands_over_call_sites_from_every_import() {
-    let (mut facts, mut source_info) = fact_base(&[("caller_a", 0), ("caller_b", 0), ("sprintf", 1)]);
+    let (mut facts, mut source_info) =
+        fact_base(&[("caller_a", 0), ("caller_b", 0), ("sprintf", 1)]);
     let sprintf = id_of(&source_info, "sprintf");
     // Import 1 calls sprintf with 2 arguments; import 2 calls it with 4.
     for (caller, argc) in [("caller_a", 2), ("caller_b", 4)] {

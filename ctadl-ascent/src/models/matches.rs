@@ -232,7 +232,10 @@ pub struct ProgramModelMatches {
 
 impl ProgramModelMatches {
     /// Folds one load's matched propagation models in.
-    pub fn extend_propagations(&mut self, propagations: impl IntoIterator<Item = PropagationMatch>) {
+    pub fn extend_propagations(
+        &mut self,
+        propagations: impl IntoIterator<Item = PropagationMatch>,
+    ) {
         self.propagations.extend(propagations);
     }
 
@@ -320,4 +323,3 @@ pub(crate) fn sample(names: &BTreeSet<facts::Str>, limit: usize) -> String {
         shown.join(", ")
     }
 }
-

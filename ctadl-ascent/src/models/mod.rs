@@ -22,9 +22,7 @@ pub mod universe_set;
 
 pub use json::{EndpointStats, IndexTimeModelCounts, UnmatchedReason};
 pub use match_index::ProgramMatchIndex;
-pub use matches::{
-    BridgeMatches, EndpointMatch, ModelPort, ProgramModelMatches, PropagationMatch,
-};
+pub use matches::{BridgeMatches, EndpointMatch, ModelPort, ProgramModelMatches, PropagationMatch};
 pub use spec::{
     BridgeSpec, Direction, ImportScope, ModelFileSpecs, PortPair, ProgramScope, Severity, SideSpec,
     scan_model_files,

@@ -79,7 +79,10 @@ fn names(set: &std::collections::BTreeSet<ctadl_ascent::facts::Str>) -> Vec<Stri
 }
 
 /// Streams the given imports past the matcher, in order, and returns what it recorded.
-fn stream(specs: &ModelFileSpecs, imports: &[(ArtifactLanguage, &str, ProgramInfo)]) -> ProgramModelMatches {
+fn stream(
+    specs: &ModelFileSpecs,
+    imports: &[(ArtifactLanguage, &str, ProgramInfo)],
+) -> ProgramModelMatches {
     let mut matches = ProgramModelMatches::default();
     matches.bridges.prepare(&specs.bridges);
     for (language, name, program_info) in imports {
@@ -101,8 +104,16 @@ fn matches_each_side_in_the_import_its_scope_admits() {
     let matches = stream(
         &specs,
         &[
-            (ArtifactLanguage::Lua, "app", native_program(&["mylib.add", "other"])),
-            (ArtifactLanguage::Pcode, "lib", native_program(&["l_add", "l_sub"])),
+            (
+                ArtifactLanguage::Lua,
+                "app",
+                native_program(&["mylib.add", "other"]),
+            ),
+            (
+                ArtifactLanguage::Pcode,
+                "lib",
+                native_program(&["l_add", "l_sub"]),
+            ),
         ],
     );
 
@@ -176,7 +187,11 @@ fn a_scope_that_admits_no_import_matches_nothing() {
     let (_f, specs) = specs_of(&[lua_to_pcode_bridge()]);
     let matches = stream(
         &specs,
-        &[(ArtifactLanguage::Dex, "app", native_program(&["mylib.add", "l_add"]))],
+        &[(
+            ArtifactLanguage::Dex,
+            "app",
+            native_program(&["mylib.add", "l_add"]),
+        )],
     );
     let side = matches.bridges.get(0);
     assert!(side.from.is_empty(), "the lua scope admits no dex import");
@@ -199,8 +214,16 @@ fn multiple_matches_on_both_sides_produce_the_full_cross_product() {
     let matches = stream(
         &specs,
         &[
-            (ArtifactLanguage::Dex, "app", native_program(&["exec1", "exec2", "nope"])),
-            (ArtifactLanguage::Pcode, "lib", native_program(&["impl1", "impl2"])),
+            (
+                ArtifactLanguage::Dex,
+                "app",
+                native_program(&["exec1", "exec2", "nope"]),
+            ),
+            (
+                ArtifactLanguage::Pcode,
+                "lib",
+                native_program(&["impl1", "impl2"]),
+            ),
         ],
     );
     let side = matches.bridges.get(0);
@@ -222,7 +245,10 @@ fn a_bad_constraint_on_a_bridge_side_is_a_hard_error() {
     let mut matches = ProgramModelMatches::default();
     matches.bridges.prepare(&specs.bridges);
     let program_info = native_program(&["a"]);
-    let index = ProgramMatchIndex::new(&program_info, ImportScope::new(ArtifactLanguage::Pcode, "lib"));
+    let index = ProgramMatchIndex::new(
+        &program_info,
+        ImportScope::new(ArtifactLanguage::Pcode, "lib"),
+    );
     let err = observe_import(&index, &specs.bridges, &mut matches).expect_err("should fail");
     assert!(format!("{err}").contains("JSON model"), "{err}");
 }

@@ -224,7 +224,8 @@ fn every_shipped_default_file_parses() {
         for (vmt_name, program_info) in &programs {
             let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
             let mut matches = ProgramModelMatches::default();
-            let result = try_load_jsonl_models(&match_index, BufReader::new(*contents), &mut matches);
+            let result =
+                try_load_jsonl_models(&match_index, BufReader::new(*contents), &mut matches);
             assert!(
                 result.is_ok(),
                 "{name} failed to load against a {vmt_name} program: {:?}",

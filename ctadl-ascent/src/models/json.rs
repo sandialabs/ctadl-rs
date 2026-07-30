@@ -990,7 +990,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         .chain(name_iter)
                         .filter_map(|n| {
                             n.as_str().and_then(|name| {
-                                self.index.program_method_names
+                                self.index
+                                    .program_method_names
                                     .get(name)
                                     .map(|names| names.iter().copied())
                             })
@@ -1028,7 +1029,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         .chain(parent_iter)
                         .filter_map(|p| {
                             p.as_str().and_then(|parent| {
-                                self.index.program_method_parents
+                                self.index
+                                    .program_method_parents
                                     .get(parent)
                                     .map(|parents| parents.iter().copied())
                             })
@@ -1076,7 +1078,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         .chain(id_iter)
                         .filter_map(|v| {
                             v.as_str().and_then(|id| {
-                                self.index.program_method_qualified_ids
+                                self.index
+                                    .program_method_qualified_ids
                                     .get(id)
                                     .map(|fids| fids.iter().copied())
                             })
@@ -1133,7 +1136,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             };
 
             let matches: UniverseSet<&'p str> = self
-                .index.program_method_signatures
+                .index
+                .program_method_signatures
                 .iter()
                 .filter_map(|(sig, fids)| if rx.is_match(sig) { Some(fids) } else { None })
                 .flatten()
@@ -1309,7 +1313,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             }
         };
         let matches: UniverseSet<&'p str> = self
-            .index.program_method_names
+            .index
+            .program_method_names
             .iter()
             .filter(|(name, _)| rx.is_match(name))
             .flat_map(|(_, fids)| fids.iter().copied())
@@ -1342,7 +1347,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             }
         };
         let matches: UniverseSet<&'p str> = self
-            .index.program_functions
+            .index
+            .program_functions
             .iter()
             .filter(|(_, func)| func.blocks.is_empty() != want)
             .map(|(fid, _)| *fid)
@@ -1379,7 +1385,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         // `wanted` here means every entry was a non-string or the array was empty; either
         // way, narrow to nothing rather than leaving the set untouched (== matching all).
         let matches: UniverseSet<&'p str> = self
-            .index.program_functions
+            .index
+            .program_functions
             .iter()
             .filter(|(_, func)| {
                 func.blocks.iter().any(|block| {
@@ -1408,7 +1415,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.validate_predicate(n, inner, SubjectKind::Int);
         // Snapshot (fid, arity) so `target_set_mut` below can take `self` mutably.
         let funcs: Vec<(&'p str, i64)> = self
-            .index.program_functions
+            .index
+            .program_functions
             .iter()
             .map(|(fid, func)| (*fid, func.num_parameters() as i64))
             .collect();
@@ -1809,7 +1817,10 @@ pub(crate) struct ParsedPort<'a> {
 }
 
 /// Entry point for parsing propagation inputs and inputs, which are called ports
-pub(crate) fn parse_port(text: &str, index: usize) -> Result<ParsedPort<'_>, crate::error::JsonModelError> {
+pub(crate) fn parse_port(
+    text: &str,
+    index: usize,
+) -> Result<ParsedPort<'_>, crate::error::JsonModelError> {
     // Note the absence of `?` in the two `if let` arms: an early return would skip the
     // index-patching `map_err` below, and the error would name generator 0.
     let parsed = if let Some(m) = variable_regex().captures(text) {

@@ -170,7 +170,13 @@ impl ProgramScope {
             });
             return scope;
         };
-        check_keys(obj, index, "in", &["language", "languages", "import"], errors);
+        check_keys(
+            obj,
+            index,
+            "in",
+            &["language", "languages", "import"],
+            errors,
+        );
 
         // Both spellings in one block is an error rather than a union: a reader cannot tell
         // which was meant, and the schema's `not: {required: [...]}` catches it only in an
@@ -183,8 +189,8 @@ impl ProgramScope {
                     .to_string(),
             });
         }
-        let mut push_language = |v: &serde_json::Value, errors: &mut Vec<JsonModelError>| {
-            match v.as_str() {
+        let mut push_language =
+            |v: &serde_json::Value, errors: &mut Vec<JsonModelError>| match v.as_str() {
                 Some(name) => match ArtifactLanguage::from_name(name) {
                     Some(language) => scope.languages.push(language),
                     None => errors.push(JsonModelError::UnexpectedField {
@@ -200,8 +206,7 @@ impl ProgramScope {
                     index,
                     field_name: "language".to_string(),
                 }),
-            }
-        };
+            };
         if let Some(one) = obj.get("language") {
             push_language(one, errors);
         }
@@ -301,10 +306,12 @@ impl BridgePort {
         index: usize,
         key: &str,
     ) -> Result<BridgePort, JsonModelError> {
-        let text = value.as_str().ok_or_else(|| JsonModelError::FieldNotString {
-            index,
-            field_name: key.to_string(),
-        })?;
+        let text = value
+            .as_str()
+            .ok_or_else(|| JsonModelError::FieldNotString {
+                index,
+                field_name: key.to_string(),
+            })?;
         let port = super::json::parse_port(text, index)?;
         let formal = match port.tag {
             FormalIndexTypeTag::Index => FormalIndex::new(port.index.expect("Index carries one")),
@@ -594,7 +601,13 @@ fn parse_bridge(
     let to = match bridge_obj.get("to") {
         Some(to) => match to.as_object() {
             Some(to_obj) => {
-                check_keys(to_obj, index, "bridge.to", &["in", "where", "on-unmatched"], errors);
+                check_keys(
+                    to_obj,
+                    index,
+                    "bridge.to",
+                    &["in", "where", "on-unmatched"],
+                    errors,
+                );
                 SideSpec {
                     scope: ProgramScope::parse(to.get("in"), index, errors),
                     where_: parse_where(to.get("where"), index, "to.where", errors),
@@ -682,7 +695,13 @@ fn parse_port_pair(
         });
         return None;
     };
-    check_keys(obj, index, "port map entry", &["from", "to", "direction"], errors);
+    check_keys(
+        obj,
+        index,
+        "port map entry",
+        &["from", "to", "direction"],
+        errors,
+    );
     let mut port = |key: &str| match obj.get(key) {
         Some(v) => match BridgePort::parse(v, index, key) {
             Ok(p) => Some(p),

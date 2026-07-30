@@ -127,7 +127,11 @@ fn port_paths_keep_the_offset_symbol_distinction() {
 #[test]
 fn language_is_the_one_element_case_of_languages() {
     let mut errors = Vec::new();
-    let one = ProgramScope::parse(Some(&serde_json::json!({"language": "dex"})), 0, &mut errors);
+    let one = ProgramScope::parse(
+        Some(&serde_json::json!({"language": "dex"})),
+        0,
+        &mut errors,
+    );
     let many = ProgramScope::parse(
         Some(&serde_json::json!({"languages": ["dex"]})),
         0,
@@ -167,7 +171,10 @@ fn an_unknown_language_is_an_error() {
         "model": {"bridge": {"to": {"where": []}}}
     })));
     assert!(msg.contains("not a known artifact language"), "{msg}");
-    assert!(msg.contains("'dex'"), "the message lists the choices: {msg}");
+    assert!(
+        msg.contains("'dex'"),
+        "the message lists the choices: {msg}"
+    );
 }
 
 #[test]
@@ -181,15 +188,14 @@ fn scope_keys_are_anded_and_an_absent_key_is_unconstrained() {
     assert!(errors.is_empty());
     assert!(scope.admits(&ImportScope::new(Dex, "app")));
     assert!(scope.admits(&ImportScope::new(Apk, "app")));
-    assert!(!scope.admits(&ImportScope::new(Jar, "app")), "wrong language");
+    assert!(
+        !scope.admits(&ImportScope::new(Jar, "app")),
+        "wrong language"
+    );
     assert!(!scope.admits(&ImportScope::new(Dex, "lib")), "wrong import");
 
     // Only the import named; every language admitted.
-    let scope = ProgramScope::parse(
-        Some(&serde_json::json!({"import": "app"})),
-        0,
-        &mut errors,
-    );
+    let scope = ProgramScope::parse(Some(&serde_json::json!({"import": "app"})), 0, &mut errors);
     assert!(scope.admits(&ImportScope::new(Lua, "app")));
     assert!(!scope.admits(&ImportScope::new(Lua, "other")));
 }
@@ -200,7 +206,11 @@ fn scope_keys_are_anded_and_an_absent_key_is_unconstrained() {
 fn an_unknown_import_is_admitted_only_by_an_unconstrained_scope() {
     assert!(ProgramScope::default().admits(&ImportScope::unknown()));
     let mut errors = Vec::new();
-    let scope = ProgramScope::parse(Some(&serde_json::json!({"language": "dex"})), 0, &mut errors);
+    let scope = ProgramScope::parse(
+        Some(&serde_json::json!({"language": "dex"})),
+        0,
+        &mut errors,
+    );
     assert!(!scope.admits(&ImportScope::unknown()));
 }
 

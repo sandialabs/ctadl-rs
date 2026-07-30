@@ -104,8 +104,7 @@ fn test_load_models_across_batch_boundary() {
 
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
     let mut matches = ProgramModelMatches::default();
-    let report =
-        try_load_models(&match_index, file.path(), &mut matches).expect("loading models");
+    let report = try_load_models(&match_index, file.path(), &mut matches).expect("loading models");
     let indices: Vec<usize> = report.endpoint_stats.keys().map(|(i, _)| *i).collect();
     assert_eq!(
         indices.len(),
@@ -504,8 +503,7 @@ fn one_model_file_across_two_imports_keeps_its_endpoint_paths() {
     // Two imports, each containing only one of the two modeled functions.
     let import_a = native_program(&["a"]);
     let import_b = native_program(&["b"]);
-    let got =
-        accumulated_endpoint_paths(&[(&import_a, file.path()), (&import_b, file.path())]);
+    let got = accumulated_endpoint_paths(&[(&import_a, file.path()), (&import_b, file.path())]);
 
     assert_eq!(got.get("A"), Some(&path_of(&["headers"])));
     assert_eq!(got.get("B"), Some(&path_of(&["body", "raw"])));
