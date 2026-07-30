@@ -30,7 +30,6 @@ mod tests;
 
 pub mod flowy;
 pub mod model_matches;
-pub mod models;
 
 /// Strategy for resolving virtual calls
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]

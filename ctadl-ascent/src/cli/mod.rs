@@ -109,10 +109,7 @@ pub fn index(
             let scope = crate::models::ImportScope::new(import.language, &import.name);
             let match_index = crate::models::ProgramMatchIndex::new(&program_info, scope);
             let mut record = |batch: &crate::models::ModelsBatch| {
-                // Each file's summaries are converted against their own access-path table.
-                // Concatenating two batches instead would collide their path ids, which start
-                // at 0 in every builder.
-                model_matches.extend_from_summaries(&batch.summary);
+                model_matches.extend_propagations(batch.propagations.iter().copied());
                 model_matches.extend_access_paths(batch.access_paths.iter().copied());
             };
             if !no_default_models {

@@ -2827,9 +2827,9 @@ mod tests {
             let batch = builders.finish().expect("finish");
             assert_eq!(
                 batch
-                    .summary
-                    .iter_summaries()
-                    .map(|(f, ..)| f.to_string())
+                    .propagations
+                    .iter()
+                    .map(|p| p.function.to_string())
                     .collect::<Vec<_>>(),
                 vec!["os.getenv".to_string()],
                 "a model naming `{port}` must summarize the external"

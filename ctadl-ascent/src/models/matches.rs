@@ -23,7 +23,7 @@ use std::collections::BTreeSet;
 use crate::error::Error;
 use crate::facts;
 use crate::models::spec::BridgeSpec;
-use crate::models::{FormalIndexTypeTag, ModelBuilders, SummaryBatch};
+use crate::models::{FormalIndexTypeTag, ModelBuilders};
 
 use super::json::ModelGeneratorIngest;
 use super::match_index::ProgramMatchIndex;
@@ -149,29 +149,9 @@ pub struct ProgramModelMatches {
 }
 
 impl ProgramModelMatches {
-    /// Folds one import's matched propagation models in.
-    ///
-    /// Each [`SummaryBatch`] is converted on its own, against its own access-path table.
-    /// Concatenating two batches instead would collide their access-path ids, which start at 0
-    /// in every builder.
-    pub fn extend_from_summaries(&mut self, batch: &SummaryBatch) {
-        let ap_map = batch.aps.build_ap_map();
-        for (func, dst_tag, dst_index, dst_ap, src_tag, src_index, src_ap) in batch.iter_summaries()
-        {
-            self.propagations.push(PropagationMatch {
-                function: facts::Str::from(func),
-                dst: ModelPort {
-                    tag: dst_tag,
-                    index: dst_index,
-                    path: ap_map[&dst_ap],
-                },
-                src: ModelPort {
-                    tag: src_tag,
-                    index: src_index,
-                    path: ap_map[&src_ap],
-                },
-            });
-        }
+    /// Folds one load's matched propagation models in.
+    pub fn extend_propagations(&mut self, propagations: impl IntoIterator<Item = PropagationMatch>) {
+        self.propagations.extend(propagations);
     }
 
     /// Folds in the access paths one model file declared.

@@ -21,7 +21,6 @@ use arrow::array::{
 use arrow::compute::concat_batches;
 use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaBuilder, SchemaRef};
 use hashbrown::hash_map::HashMap;
-use hashbrown::hash_set::HashSet;
 use itertools::izip;
 
 use crate::error::{Error, ErrorContext};
@@ -249,7 +248,7 @@ pub fn try_load_models_from_values(
     // is also what releases it.
     let endpoint_stats = std::mem::take(&mut model_gen.endpoint_stats);
     let index_time_models = model_gen.index_time_models;
-    log::trace!("matched {} summary models", builder.summary.len());
+    log::trace!("matched {} summary models", builder.propagations.len());
     log::trace!("matched {} source/sink models", builder.endpoint.len());
     let mut encmodels = builder.finish()?;
     encmodels.endpoint_stats = endpoint_stats;
@@ -260,7 +259,8 @@ pub fn try_load_models_from_values(
 /// A batch of encoded models
 #[derive(Debug)]
 pub struct ModelsBatch {
-    pub summary: SummaryBatch,
+    /// Matched propagation models, already in the native form phase 2 consumes.
+    pub propagations: Vec<PropagationMatch>,
     pub endpoint: EndpointBatch,
     /// What Stage 1 did per (generator index, direction) — see
     /// [`json::ModelGeneratorIngest::endpoint_stats`]. Key presence means the generator
@@ -284,7 +284,9 @@ impl ModelsBatch {
     /// Concatenates two `EndpointBatch`s into one.
     /// Returns an error if any inner schemas differ.
     pub fn union_with(&mut self, other: &Self) -> Result<(), Error> {
-        self.summary.union_with(&other.summary)?;
+        // Interned names and `facts::Path`s, so accumulation is a copy -- and, unlike the
+        // endpoint half below, there is nothing left to renumber.
+        self.propagations.extend(other.propagations.iter().copied());
         self.endpoint.union_with(&other.endpoint)?;
         // Merge per key, mirroring `EndpointBatch::union_with`'s row concatenation: the same
         // model file is re-matched once per import, and a generator that is dead against one
@@ -299,324 +301,36 @@ impl ModelsBatch {
     }
 }
 
-#[derive(Debug)]
-pub struct SummaryBatch {
-    /// Table from [`SummaryBuilder`]
-    pub summary: RecordBatch,
-    pub aps: AccessPathBatch,
-}
-
-impl SummaryBatch {
-    pub fn num_rows(&self) -> usize {
-        self.summary.num_rows()
-    }
-
-    /// Concatenates two `SummaryBatch`s into one.
-    /// Returns an error if any inner schemas differ.
-    pub fn union_with(&mut self, other: &Self) -> Result<(), Error> {
-        self.summary = concat_batches(&self.summary.schema(), [&self.summary, &other.summary])?;
-        self.aps.union_with(&other.aps)?;
-        Ok(())
-    }
-
-    /// Removes duplicate rows from this batch and returns a new deduplicated `SummaryBatch`.
-    /// Duplicates are defined by the combination of function name, destination selector/index/path,
-    /// source selector/index/path. The internal access‑path tables are rebuilt to stay consistent.
-    pub fn dedup(&self) -> Result<Self, Error> {
-        // Build map from AP id -> full ordered path components (Vec<String>)
-        let ap_map = self.aps.build_ap_map();
-
-        // Track keys we have already emitted
-        let mut seen: HashSet<(
-            String,
-            u8,
-            Option<i16>,
-            Vec<String>,
-            u8,
-            Option<i16>,
-            Vec<String>,
-        )> = HashSet::new();
-
-        // Builder for the deduped result
-        let mut builder = SummaryBuilder::new();
-
-        for (func, dst_tag, dst_index, dst_ap_id, src_tag, src_index, src_ap_id) in
-            self.iter_summaries()
-        {
-            // Resolve paths for destination and source access‑paths
-            let dst_path = ap_map.get(&dst_ap_id).copied().unwrap_or_default();
-            let src_path = ap_map.get(&src_ap_id).copied().unwrap_or_default();
-
-            // The key is the canonical segment spellings, which distinguish `Symbol("[8]")` from
-            // `Offset(8)` -- as `Vec<String>` did not when every segment was a `Symbol`.
-            let key_of =
-                |p: &facts::Path| -> Vec<String> { p.iter().map(mir::segment_to_string).collect() };
-            let key = (
-                func.to_string(),
-                dst_tag as u8,
-                dst_index,
-                key_of(&dst_path),
-                src_tag as u8,
-                src_index,
-                key_of(&src_path),
-            );
-
-            if !seen.contains(&key) {
-                seen.insert(key);
-                let dst_segs: Vec<PathSegment> = dst_path.iter().cloned().collect();
-                let src_segs: Vec<PathSegment> = src_path.iter().cloned().collect();
-
-                builder.append(
-                    func,
-                    (dst_tag, dst_index, &dst_segs),
-                    (src_tag, src_index, &src_segs),
-                );
-            }
-        }
-
-        builder.finish()
-    }
-
-    /// func, dst, src is the idea
-    pub fn iter_summaries(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            &str,
-            FormalIndexTypeTag,
-            Option<i16>,
-            u64,
-            FormalIndexTypeTag,
-            Option<i16>,
-            u64,
-        ),
-    > {
-        izip![
-            self.summary
-                .column_by_name("function")
-                .unwrap()
-                .as_ref()
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .unwrap()
-                .iter()
-                .map(|s| s.unwrap()),
-            self.summary
-                .column_by_name("dst_selector_ty")
-                .unwrap()
-                .as_ref()
-                .as_any()
-                .downcast_ref::<UInt8Array>()
-                .unwrap()
-                .iter()
-                .map(|u| u.unwrap().into()),
-            self.summary
-                .column_by_name("dst_index")
-                .unwrap()
-                .as_ref()
-                .as_any()
-                .downcast_ref::<Int16Array>()
-                .unwrap()
-                .iter(),
-            self.summary
-                .column_by_name("dst_ap")
-                .unwrap()
-                .as_ref()
-                .as_any()
-                .downcast_ref::<UInt64Array>()
-                .unwrap()
-                .iter()
-                .map(|u| u.unwrap()),
-            self.summary
-                .column_by_name("src_selector_ty")
-                .unwrap()
-                .as_ref()
-                .as_any()
-                .downcast_ref::<UInt8Array>()
-                .unwrap()
-                .iter()
-                .map(|u| u.unwrap().into()),
-            self.summary
-                .column_by_name("src_index")
-                .unwrap()
-                .as_ref()
-                .as_any()
-                .downcast_ref::<Int16Array>()
-                .unwrap()
-                .iter(),
-            self.summary
-                .column_by_name("src_ap")
-                .unwrap()
-                .as_ref()
-                .as_any()
-                .downcast_ref::<UInt64Array>()
-                .unwrap()
-                .iter()
-                .map(|u| u.unwrap()),
-        ]
-    }
-}
-
 /// Main data type
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ModelBuilders {
-    pub summary: SummaryBuilder,
+    /// Matched propagation models. Not a builder: a [`PropagationMatch`] is an interned name
+    /// plus two `(tag, index, facts::Path)` triples, which is what phase 2 reads, so encoding
+    /// it columnar only to decode it again buys nothing.
+    pub propagations: Vec<PropagationMatch>,
     pub endpoint: EndpointBuilder,
     /// Access paths declared by `model.access_paths`. Not a builder: a declared path needs no
     /// matching and no columnar encoding, it just has to reach the indexer's initial path set.
     pub access_paths: BTreeSet<facts::Path>,
 }
 
-impl Default for ModelBuilders {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ModelBuilders {
     pub fn new() -> Self {
-        Self {
-            summary: SummaryBuilder::new(),
-            endpoint: EndpointBuilder::new(),
-            access_paths: BTreeSet::new(),
-        }
+        Self::default()
     }
 
-    /// Finishes both tables. `endpoint_stats` is a Stage-1 matching artifact owned by the
-    /// [`json::ModelGeneratorIngest`] rather than by these builders, so the caller attaches
-    /// it to the returned batch (see [`try_load_models_from_values`]).
+    /// Finishes the endpoint table and moves out everything already native. `endpoint_stats`
+    /// is a Stage-1 matching artifact owned by the [`json::ModelGeneratorIngest`] rather than
+    /// by these builders, so the caller attaches it to the returned batch (see
+    /// [`try_load_models_from_values`]).
     pub fn finish(&mut self) -> Result<ModelsBatch, Error> {
-        let summary = self.summary.finish()?;
         let endpoint = self.endpoint.finish()?;
         Ok(ModelsBatch {
-            summary,
+            propagations: std::mem::take(&mut self.propagations),
             endpoint,
             endpoint_stats: BTreeMap::new(),
             access_paths: std::mem::take(&mut self.access_paths),
             index_time_models: IndexTimeModelCounts::default(),
-        })
-    }
-}
-
-/// Builds function summaries efficiently. A summary is a function together with source and
-/// destination parameter and access path information.
-#[derive(Debug)]
-pub struct SummaryBuilder {
-    func: StringBuilder,
-    dst_index: FormalIndexBuilder,
-    dst_path_id: UInt64Builder,
-    src_index: FormalIndexBuilder,
-    src_path_id: UInt64Builder,
-    ap_len: AccessPathBuilder,
-    ap_fld: Rc<RefCell<AccessPathFieldBuilder>>,
-}
-
-impl Default for SummaryBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SummaryBuilder {
-    pub fn new() -> Self {
-        let ap_fld = Rc::new(RefCell::new(AccessPathFieldBuilder::new()));
-        Self {
-            func: Default::default(),
-            dst_index: FormalIndexBuilder::new("dst_"),
-            dst_path_id: UInt64Builder::new(),
-            src_index: FormalIndexBuilder::new("src_"),
-            src_path_id: UInt64Builder::new(),
-            ap_len: AccessPathBuilder::new("", ap_fld.clone()),
-            ap_fld,
-        }
-    }
-
-    #[inline]
-    pub fn append(
-        &mut self,
-        function: &str,
-        dst: (FormalIndexTypeTag, Option<i16>, &[PathSegment]),
-        src: (FormalIndexTypeTag, Option<i16>, &[PathSegment]),
-    ) {
-        let (dst_ty, dst_index, dst_path) = dst;
-        let (src_ty, src_index, src_path) = src;
-        self.func.append_value(function);
-        self.dst_index.append(dst_ty, dst_index);
-        let dst_path_id = self.ap_len.append(dst_path);
-        self.dst_path_id.append_value(dst_path_id);
-        self.src_index.append(src_ty, src_index);
-        let src_path_id = self.ap_len.append(src_path);
-        self.src_path_id.append_value(src_path_id);
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.func.len()
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.func.is_empty()
-    }
-
-    /// Columns in the schema:
-    /// - function: name of function
-    /// - dst_selector_ty
-    /// - dst_index
-    /// - dst_ap: id of ap into the ap_len table
-    /// - src_selector_ty
-    /// - src_index
-    /// - src_ap
-    #[inline]
-    pub fn finish(&mut self) -> Result<SummaryBatch, Error> {
-        let func = RecordBatch::try_new(
-            Arc::new(Schema::new(Fields::from(vec![Field::new(
-                "func",
-                DataType::Utf8,
-                false,
-            )]))),
-            vec![Arc::new(self.func.finish())],
-        )?;
-        let dst_index = self.dst_index.finish()?;
-        let dst_ap = RecordBatch::try_new(
-            Arc::new(Schema::new(Fields::from(vec![Field::new(
-                "dst_ap",
-                DataType::UInt64,
-                false,
-            )]))),
-            vec![Arc::new(self.dst_path_id.finish())],
-        )?;
-        let src_index = self.src_index.finish()?;
-        let src_ap = RecordBatch::try_new(
-            Arc::new(Schema::new(Fields::from(vec![Field::new(
-                "src_ap",
-                DataType::UInt64,
-                false,
-            )]))),
-            vec![Arc::new(self.src_path_id.finish())],
-        )?;
-        let ap_len = self.ap_len.finish()?;
-        let ap_fld = self.ap_fld.borrow_mut().finish()?;
-        let summary_schema: SchemaRef = {
-            let mut b = SchemaBuilder::new();
-            b.push(Field::new("function", DataType::Utf8, false));
-            b.extend(dst_index.schema_ref().fields().to_vec());
-            b.push(Field::new("dst_ap", DataType::UInt64, false));
-            b.extend(src_index.schema_ref().fields().to_vec());
-            b.push(Field::new("src_ap", DataType::UInt64, false));
-            b.finish().into()
-        };
-        let mut data = Vec::new();
-        data.extend(func.columns().iter().cloned());
-        data.extend(dst_index.columns().iter().cloned());
-        data.extend(dst_ap.columns().iter().cloned());
-        data.extend(src_index.columns().iter().cloned());
-        data.extend(src_ap.columns().iter().cloned());
-        let summary = RecordBatch::try_new(summary_schema.clone(), data)?;
-
-        Ok(SummaryBatch {
-            summary,
-            aps: AccessPathBatch { ap_len, ap_fld },
         })
     }
 }

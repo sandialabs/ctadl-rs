@@ -1578,12 +1578,22 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                             });
                             return;
                         }
+                        let dst = matches::ModelPort {
+                            tag: output.tag,
+                            index: output.index,
+                            path: facts::Path::from_accesses(output.ap.iter().cloned()),
+                        };
+                        let src = matches::ModelPort {
+                            tag: input.tag,
+                            index: input.index,
+                            path: facts::Path::from_accesses(input.ap.iter().cloned()),
+                        };
                         for func in matched_functions(&self.methods[n], self.index.vmt) {
-                            self.builder.summary.append(
-                                &func,
-                                (output.tag, output.index, &output.ap),
-                                (input.tag, input.index, &input.ap),
-                            );
+                            self.builder.propagations.push(PropagationMatch {
+                                function: facts::Str::from(func.as_str()),
+                                dst,
+                                src,
+                            });
                         }
                     }
                     Err(err) => self.add_json_error(err),

@@ -146,9 +146,9 @@ fn summarized(program_info: &ProgramInfo) -> BTreeSet<String> {
     let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
     let batch = try_load_default_models(&match_index).expect("loading default models");
     batch
-        .summary
-        .iter_summaries()
-        .map(|(func, ..)| func.to_string())
+        .propagations
+        .iter()
+        .map(|p| p.function.to_string())
         .collect()
 }
 
@@ -202,7 +202,7 @@ fn unknown_vmt_loads_no_defaults() {
     let program_info = unknown_program();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
     let batch = try_load_default_models(&match_index).expect("loading default models");
-    assert_eq!(batch.summary.num_rows(), 0);
+    assert!(batch.propagations.is_empty());
     assert_eq!(batch.endpoint.endpoints.num_rows(), 0);
 }
 
@@ -247,7 +247,11 @@ fn java_collection_generators_name_the_real_array_element() {
     let program_info = java_program();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
     let batch = try_load_default_models(&match_index).expect("loading default models");
-    let paths: Vec<_> = batch.summary.aps.build_ap_map().into_values().collect();
+    let paths: Vec<_> = batch
+        .propagations
+        .iter()
+        .flat_map(|p| [p.dst.path, p.src.path])
+        .collect();
     let element = PathSegment::symbol("[]");
     assert!(
         paths.iter().any(|p| p.iter().any(|s| *s == element)),
@@ -333,6 +337,6 @@ fn jsonl_comments_are_skipped_without_consuming_an_index() {
     let bare = try_load_jsonl_models(&match_index, BufReader::new(real.as_bytes())).unwrap();
     let commented =
         try_load_jsonl_models(&match_index, BufReader::new(with_comments.as_bytes())).unwrap();
-    assert_eq!(bare.summary.num_rows(), commented.summary.num_rows());
-    assert!(bare.summary.num_rows() > 0);
+    assert_eq!(bare.propagations.len(), commented.propagations.len());
+    assert!(!bare.propagations.is_empty());
 }

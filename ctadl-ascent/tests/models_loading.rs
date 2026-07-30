@@ -352,10 +352,14 @@ fn summary_paths_for(input: &str, output: &str) -> Vec<ctadl_ascent::facts::Path
     drop(ingest);
     let batch = builders.finish().expect("finish");
     assert!(
-        batch.summary.num_rows() > 0,
+        !batch.propagations.is_empty(),
         "generator matched nothing for {input:?} -> {output:?}"
     );
-    let mut paths: Vec<_> = batch.summary.aps.build_ap_map().into_values().collect();
+    let mut paths: Vec<_> = batch
+        .propagations
+        .iter()
+        .flat_map(|p| [p.dst.path, p.src.path])
+        .collect();
     paths.sort();
     paths.dedup();
     paths
