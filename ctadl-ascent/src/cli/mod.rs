@@ -118,9 +118,6 @@ pub fn index(
                     files_declaring_endpoints.insert(model_path);
                 }
             }
-            // Both sides of every bridge, eagerly. Side B's import may arrive before side A's,
-            // so whether `from` matched is unknowable here; the conditionality is applied once
-            // in phase 2 (see `codegen::model_matches::classify`).
             crate::models::matches::observe_import(
                 &match_index,
                 &file_specs.bridges,
@@ -172,9 +169,6 @@ pub fn index(
         jni::link(&jni_observer, &mut facts, &mut source_info);
     }
 
-    // Phase 2 of codegen. It runs here, after *all* the IR, for two reasons: `Argument(*)`
-    // expands over call sites that may span imports, and a bridge cannot resolve either side
-    // until one id map holds every program's functions.
     let model_report = crate::codegen::model_matches::codegen_model_matches(
         &model_matches,
         &file_specs.bridges,
