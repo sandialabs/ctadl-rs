@@ -247,10 +247,11 @@ fn endpoints_under(
 
     let program_info = native_program(&["a", "b"]);
     let index = ProgramMatchIndex::new(&program_info, ImportScope::new(language, import));
-    let batch = try_load_models(&index, file.path()).expect("load");
-    batch
-        .endpoint
-        .iter_endpoints()
+    let mut matches = ProgramModelMatches::default();
+    try_load_models(&index, file.path(), &mut matches).expect("load");
+    matches
+        .endpoints
+        .iter()
         .map(|r| r.function.to_string())
         .collect()
 }
@@ -341,11 +342,10 @@ fn declared_access_paths_survive_loading_and_reach_the_facts() {
         &program_info,
         ImportScope::new(ArtifactLanguage::Pcode, "lib"),
     );
-    let batch = try_load_models(&index, file.path()).expect("load");
-    assert_eq!(batch.access_paths.len(), 2);
-
     let mut matches = ProgramModelMatches::default();
-    matches.extend_access_paths(batch.access_paths.iter().copied());
+    try_load_models(&index, file.path(), &mut matches).expect("load");
+    assert_eq!(matches.access_paths.len(), 2);
+
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
     let report =
@@ -378,7 +378,8 @@ fn a_malformed_declared_access_path_fails_the_load() {
         &program_info,
         ImportScope::new(ArtifactLanguage::Pcode, "lib"),
     );
-    assert!(try_load_models(&index, file.path()).is_err());
+    let mut matches = ProgramModelMatches::default();
+    assert!(try_load_models(&index, file.path(), &mut matches).is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -413,8 +414,9 @@ fn index_time_constructs_are_counted_for_the_query_side_warning() {
         &program_info,
         ImportScope::new(ArtifactLanguage::Pcode, "lib"),
     );
-    let batch = try_load_models(&index, file.path()).expect("load");
-    assert_eq!(batch.index_time_models.propagations, 1);
-    assert_eq!(batch.index_time_models.bridges, 1);
-    assert!(batch.index_time_models.describe().contains("bridging"));
+    let mut matches = ProgramModelMatches::default();
+    let report = try_load_models(&index, file.path(), &mut matches).expect("load");
+    assert_eq!(report.index_time_models.propagations, 1);
+    assert_eq!(report.index_time_models.bridges, 1);
+    assert!(report.index_time_models.describe().contains("bridging"));
 }

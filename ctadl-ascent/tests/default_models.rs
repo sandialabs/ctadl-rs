@@ -9,8 +9,8 @@
 //! *every* index of the language that selects it.
 
 use ctadl_ascent::models::{
-    DEFAULT_MODEL_FILES, ImportScope, ProgramMatchIndex, try_load_default_models,
-    try_load_jsonl_models,
+    DEFAULT_MODEL_FILES, ImportScope, ProgramMatchIndex, ProgramModelMatches,
+    try_load_default_models, try_load_jsonl_models,
 };
 use ctadl_ir::mir::ProgramInfo;
 use ctadl_ir::mir::Symbol;
@@ -144,8 +144,9 @@ fn unknown_program() -> ProgramInfo {
 /// The set of function ids that got at least one summary row out of the defaults.
 fn summarized(program_info: &ProgramInfo) -> BTreeSet<String> {
     let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
-    let batch = try_load_default_models(&match_index).expect("loading default models");
-    batch
+    let mut matches = ProgramModelMatches::default();
+    try_load_default_models(&match_index, &mut matches).expect("loading default models");
+    matches
         .propagations
         .iter()
         .map(|p| p.function.to_string())
@@ -201,9 +202,10 @@ fn lua_import_loads_only_the_lua_defaults() {
 fn unknown_vmt_loads_no_defaults() {
     let program_info = unknown_program();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let batch = try_load_default_models(&match_index).expect("loading default models");
-    assert!(batch.propagations.is_empty());
-    assert_eq!(batch.endpoint.endpoints.num_rows(), 0);
+    let mut matches = ProgramModelMatches::default();
+    try_load_default_models(&match_index, &mut matches).expect("loading default models");
+    assert!(matches.propagations.is_empty());
+    assert!(matches.endpoints.is_empty());
 }
 
 /// The cheap guard against drift. Every shipped file is parsed against a program of each VMT
@@ -221,7 +223,8 @@ fn every_shipped_default_file_parses() {
     for (name, contents) in DEFAULT_MODEL_FILES {
         for (vmt_name, program_info) in &programs {
             let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
-            let result = try_load_jsonl_models(&match_index, BufReader::new(*contents));
+            let mut matches = ProgramModelMatches::default();
+            let result = try_load_jsonl_models(&match_index, BufReader::new(*contents), &mut matches);
             assert!(
                 result.is_ok(),
                 "{name} failed to load against a {vmt_name} program: {:?}",
@@ -246,8 +249,9 @@ fn java_collection_generators_name_the_real_array_element() {
 
     let program_info = java_program();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let batch = try_load_default_models(&match_index).expect("loading default models");
-    let paths: Vec<_> = batch
+    let mut matches = ProgramModelMatches::default();
+    try_load_default_models(&match_index, &mut matches).expect("loading default models");
+    let paths: Vec<_> = matches
         .propagations
         .iter()
         .flat_map(|p| [p.dst.path, p.src.path])
@@ -334,9 +338,15 @@ fn jsonl_comments_are_skipped_without_consuming_an_index() {
     let with_comments = format!("// leading commentary\n\n  // indented\n{real}\n\n");
 
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let bare = try_load_jsonl_models(&match_index, BufReader::new(real.as_bytes())).unwrap();
-    let commented =
-        try_load_jsonl_models(&match_index, BufReader::new(with_comments.as_bytes())).unwrap();
+    let mut bare = ProgramModelMatches::default();
+    try_load_jsonl_models(&match_index, BufReader::new(real.as_bytes()), &mut bare).unwrap();
+    let mut commented = ProgramModelMatches::default();
+    try_load_jsonl_models(
+        &match_index,
+        BufReader::new(with_comments.as_bytes()),
+        &mut commented,
+    )
+    .unwrap();
     assert_eq!(bare.propagations.len(), commented.propagations.len());
     assert!(!bare.propagations.is_empty());
 }

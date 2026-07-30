@@ -1060,7 +1060,7 @@ fn funcptr_array_multistore_flows() {
 #[test_log::test]
 fn variable_port_selects_lowest_ssa_version() {
     use crate::facts::{Function, TaintDirection};
-    use crate::models::ModelBuilders;
+    use crate::models::ProgramModelMatches;
     use crate::models::json::ModelGeneratorIngest;
     use crate::models::{ImportScope, ProgramMatchIndex};
     use crate::query_engine::build_query_endpoints;
@@ -1088,10 +1088,10 @@ fn variable_port_selects_lowest_ssa_version() {
         program: ingest_prog,
         ..Default::default()
     };
-    let mut mb = ModelBuilders::new();
+    let mut matches = ProgramModelMatches::default();
     {
         let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut mb);
+        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
         let generator = json!({
             "find": "methods",
             "where": [{"constraint": "name", "pattern": "^f$"}],
@@ -1099,9 +1099,8 @@ fn variable_port_selects_lowest_ssa_version() {
         });
         ingest.encode_models(vec![generator]).unwrap();
     }
-    let batch = mb.endpoint.finish().unwrap();
     // Stage 1 recorded exactly one endpoint row, tagged `Local`, carrying the base index.
-    let rows: Vec<_> = batch.iter_endpoints().collect();
+    let rows = &matches.endpoints;
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].selector_ty,
@@ -1155,7 +1154,7 @@ fn variable_port_selects_lowest_ssa_version() {
         endpoints: eps,
         formals,
         ..
-    } = build_query_endpoints(&batch, &facts, &source_info.sites, &assign_like);
+    } = build_query_endpoints(&matches.endpoints, &facts, &source_info.sites, &assign_like);
 
     // Exactly one endpoint (not one per version), anchored in f, forward, and — since a local is
     // not a formal — no formal registered.
@@ -1177,7 +1176,7 @@ fn variable_port_selects_lowest_ssa_version() {
 /// (the other matches still emit) rather than failing the whole model.
 #[test_log::test]
 fn variable_port_resolves_per_matched_function() {
-    use crate::models::ModelBuilders;
+    use crate::models::ProgramModelMatches;
     use crate::models::json::ModelGeneratorIngest;
     use crate::models::{ImportScope, ProgramMatchIndex};
     use ctadl_ir::ProgramInfo;
@@ -1222,10 +1221,10 @@ fn variable_port_resolves_per_matched_function() {
         program: prog,
         ..Default::default()
     };
-    let mut mb = ModelBuilders::new();
+    let mut matches = ProgramModelMatches::default();
     {
         let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut mb);
+        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
         let generator = json!({
             "find": "methods",
             "where": [{"constraint": "name", "pattern": "^g[0-9]$"}],
@@ -1234,13 +1233,13 @@ fn variable_port_resolves_per_matched_function() {
         // g3 lacking `buf` is a skip, not an error.
         ingest.encode_models(vec![generator]).unwrap();
     }
-    let batch = mb.endpoint.finish().unwrap();
 
-    let rows: std::collections::BTreeMap<&str, Option<u32>> = batch
-        .iter_endpoints()
+    let rows: std::collections::BTreeMap<&str, Option<u32>> = matches
+        .endpoints
+        .iter()
         .map(|r| {
             assert_eq!(r.selector_ty, crate::models::FormalIndexTypeTag::Local);
-            (r.function, r.local_index)
+            (r.function.as_str(), r.local_index)
         })
         .collect();
     assert_eq!(

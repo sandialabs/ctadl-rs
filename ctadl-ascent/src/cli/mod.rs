@@ -108,20 +108,15 @@ pub fn index(
         {
             let scope = crate::models::ImportScope::new(import.language, &import.name);
             let match_index = crate::models::ProgramMatchIndex::new(&program_info, scope);
-            let mut record = |batch: &crate::models::ModelsBatch| {
-                model_matches.extend_propagations(batch.propagations.iter().copied());
-                model_matches.extend_access_paths(batch.access_paths.iter().copied());
-            };
             if !no_default_models {
-                let defaults = crate::models::try_load_default_models(&match_index)?;
-                record(&defaults);
+                crate::models::try_load_default_models(&match_index, &mut model_matches)?;
             }
             for model_path in models {
-                let batch = crate::models::try_load_models(&match_index, model_path)?;
-                if !batch.endpoint_stats.is_empty() {
+                let report =
+                    crate::models::try_load_models(&match_index, model_path, &mut model_matches)?;
+                if !report.endpoint_stats.is_empty() {
                     files_declaring_endpoints.insert(model_path);
                 }
-                record(&batch);
             }
             // Both sides of every bridge, eagerly. Side B's import may arrive before side A's,
             // so whether `from` matched is unknowable here; the conditionality is applied once
@@ -302,7 +297,9 @@ pub fn query(
     };
 
     let facts = {
-        let mut models_batch: Option<crate::models::ModelsBatch> = None;
+        // One accumulator across every (import x model file) pair. Endpoints carry their own
+        // `facts::Path`, so accumulation is an append and there is nothing to renumber.
+        let mut model_matches = crate::models::ProgramModelMatches::default();
         // Counted across every file and import, and reported once at the end: bridges and
         // propagations are index-time constructs, and a query that silently drops them looks
         // exactly like one whose models did nothing.
@@ -319,24 +316,23 @@ pub fn query(
                     crate::models::ImportScope::new(import.language, &import.name),
                 );
                 for model_path in models {
-                    let s = crate::models::try_load_models(&match_index, model_path)?;
-                    ignored.merge(&s.index_time_models);
-                    // Re-key this file's Stage-1 counts by file *before* the batches are
-                    // unioned: `ModelsBatch::union_with` sums by (generator index, direction)
-                    // alone, which would conflate two model files that happen to number their
-                    // generators the same. Summing over imports is what makes a generator that
-                    // is dead against one import but live against another come out live.
-                    for ((index, direction), stats) in &s.endpoint_stats {
+                    let report = crate::models::try_load_models(
+                        &match_index,
+                        model_path,
+                        &mut model_matches,
+                    )?;
+                    ignored.merge(&report.index_time_models);
+                    // Re-key this file's Stage-1 counts by file: `ModelLoadReport` is keyed by
+                    // (generator index, direction) alone, which would conflate two model files
+                    // that happen to number their generators the same. Merging over imports is
+                    // what makes a generator that is dead against one import but live against
+                    // another come out live.
+                    for ((index, direction), stats) in &report.endpoint_stats {
                         diagnostics
                             .generator_stats
                             .entry((model_path.clone(), *index, *direction))
                             .or_default()
                             .merge(stats);
-                    }
-                    if let Some(ref mut s0) = models_batch {
-                        s0.union_with(&s)?;
-                    } else {
-                        models_batch = Some(s);
                     }
                 }
             }
@@ -373,9 +369,12 @@ pub fn query(
         let flowy_sinks = endpoints.len() - flowy_sources;
 
         let mut formal_params = index_facts.formal_param.clone();
-        if let Some(ref batch) = models_batch {
+        // Gated on having something to resolve, not merely on `-m` having been passed: Stage 2
+        // union-finds the whole `assign_like` relation before it touches an endpoint, and a
+        // model-less or flowy-only query must not pay for that.
+        if !model_matches.endpoints.is_empty() {
             let built = query_engine::build_query_endpoints(
-                &batch.endpoint,
+                &model_matches.endpoints,
                 &index_facts,
                 &ids,
                 &index_result.assign_like,

@@ -1,6 +1,7 @@
 /*! JSON model_generator handling
 
-Handles the translation of `model_generator` format into our [`ModelBuilders`].
+Handles the translation of `model_generator` format into a
+[`ProgramModelMatches`](crate::models::ProgramModelMatches).
 
 The code is architected so that models can be streamed in `jsonl` format.
 To convert a `json` model file into `jsonl`, you can do:
@@ -19,6 +20,7 @@ use super::match_index::ProgramMatchIndex;
 use super::universe_set::*;
 use super::*;
 use crate::error::Error;
+use crate::facts;
 use ctadl_ir::mir;
 use ctadl_ir::mir::PathSegment;
 use ctadl_ir::mir::StatementKind;
@@ -31,12 +33,14 @@ use ctadl_ir::mir::call::VirtualMethodTable;
 /// matched. It also implements a visitor for model_generators.
 ///
 /// **Stage 1** of source/sink matching: match MIR elements (function names, signatures,
-/// arity, regexes) → the name-based columnar
-/// [`EndpointBatch`](crate::models::EndpointBatch) intermediate (see [`Self::emit_endpoints`]).
+/// arity, regexes) → the name-based [`EndpointMatch`](crate::models::EndpointMatch) rows in
+/// `out` (see [`Self::emit_endpoints`]).
 /// [`query_engine::build_query_endpoints`](crate::query_engine::build_query_endpoints) is
-/// Stage 2, which resolves and expands that intermediate into `QueryEndpoint`s.
+/// Stage 2, which resolves and expands those rows into `QueryEndpoint`s.
 pub struct ModelGeneratorIngest<'p, 'b> {
-    builder: &'b mut ModelBuilders,
+    /// Everything this generator matched, appended as it goes. Held mutably for the ingest's
+    /// whole life, so a caller that also needs to write to it must drop the ingest first.
+    out: &'b mut ProgramModelMatches,
     /// Keyed by generator index rather than positional: `find` is optional in the JSON, so a
     /// generator that omits it leaves no entry, and a `Vec` would then misalign every later
     /// generator (it used to panic outright).
@@ -243,14 +247,15 @@ enum SubjectKind {
 }
 
 impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
-    /// Borrows a [`ProgramMatchIndex`] to evaluate against and a [`ModelBuilders`] to emit into.
+    /// Borrows a [`ProgramMatchIndex`] to evaluate against and a [`ProgramModelMatches`] to
+    /// emit into.
     ///
     /// The index is *not* constructed here on purpose: bridge matching and ordinary matching must
     /// read the same tables, keyed the same way, or the per-VMT rules (bare name vs qualified id,
     /// plus Lua's externals column) drift apart between the two.
-    pub fn new(index: &'p ProgramMatchIndex<'p>, builder: &'b mut ModelBuilders) -> Self {
+    pub fn new(index: &'p ProgramMatchIndex<'p>, out: &'b mut ProgramModelMatches) -> Self {
         Self {
-            builder,
+            out,
             find_method: HashMap::new(),
             methods: Vec::new(),
             in_functions: Vec::new(),
@@ -636,13 +641,16 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 reason: Some(UnmatchedReason::PortRejected),
             };
         }
+        // The port's access path, interned once: it is the same for every row this call emits.
+        let path = facts::Path::from_accesses(ap.iter().cloned());
+        let label = facts::Str::from(label);
         let callees = matched_functions(&self.methods[n], self.index.vmt);
         let functions = callees.len();
         if !is_callsites {
             for func in callees {
                 // For a `Variable(name)` port, resolve the name to a base `LocalIdx` in *this*
                 // matched function. Copy the `&FunctionData` out first so `self.index.program_functions`
-                // is not borrowed across the `self.builder` mutable borrow below.
+                // is not borrowed across the `self.out` mutable borrow below.
                 let local_index = if tag == FormalIndexTypeTag::Local {
                     let name = var_name.expect("Local port without var_name");
                     let fd = self.index.program_functions.get(func.as_str()).copied();
@@ -662,18 +670,19 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 } else {
                     None
                 };
-                self.builder.endpoint.append(
-                    &func,
-                    idx,
-                    local_index,
-                    ap,
+                self.out.endpoints.push(EndpointMatch {
+                    function: facts::Str::from(func.as_str()),
+                    selector_ty: idx.0,
+                    index: idx.1,
+                    path,
                     label,
                     direction,
                     wildcard,
                     saturating,
-                    None,
-                    false,
-                );
+                    in_function: None,
+                    callsite_scoped: false,
+                    local_index,
+                });
                 rows += 1;
             }
             // A non-`Local` port appends a row for every matched function, so `rows == 0`
@@ -703,18 +712,19 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         };
         for func in &callees {
             for caller in &callers {
-                self.builder.endpoint.append(
-                    func,
-                    idx,
-                    None,
-                    ap,
+                self.out.endpoints.push(EndpointMatch {
+                    function: facts::Str::from(func.as_str()),
+                    selector_ty: idx.0,
+                    index: idx.1,
+                    path,
                     label,
                     direction,
                     wildcard,
                     saturating,
-                    caller.as_deref(),
-                    true,
-                );
+                    in_function: caller.as_deref().map(facts::Str::from),
+                    callsite_scoped: true,
+                    local_index: None,
+                });
                 rows += 1;
             }
         }
@@ -876,7 +886,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             };
             match super::spec::parse_declared_access_path(text, n) {
                 Ok(path) => {
-                    self.builder.access_paths.insert(path);
+                    self.out.access_paths.insert(path);
                 }
                 Err(e) => self.add_json_error(e),
             }
@@ -1491,7 +1501,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.target_set_mut(n).intersect_with(matched);
     }
 
-    /// Sends the methods in `self.methods[n]` to the SummaryBuilder
+    /// Records one [`PropagationMatch`] per method in `self.methods[n]`
     fn visit_propagation(&mut self, n: usize, value: &serde_json::Value) {
         self.super_propagation(n, value);
         // Counted whether or not it matches anything: what a query-time load needs to report is
@@ -1589,7 +1599,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                             path: facts::Path::from_accesses(input.ap.iter().cloned()),
                         };
                         for func in matched_functions(&self.methods[n], self.index.vmt) {
-                            self.builder.propagations.push(PropagationMatch {
+                            self.out.propagations.push(PropagationMatch {
                                 function: facts::Str::from(func.as_str()),
                                 dst,
                                 src,

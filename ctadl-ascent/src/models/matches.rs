@@ -22,8 +22,9 @@ use std::collections::BTreeSet;
 
 use crate::error::Error;
 use crate::facts;
+use crate::facts::TaintDirection;
+use crate::models::FormalIndexTypeTag;
 use crate::models::spec::BridgeSpec;
-use crate::models::{FormalIndexTypeTag, ModelBuilders};
 
 use super::json::ModelGeneratorIngest;
 use super::match_index::ProgramMatchIndex;
@@ -50,6 +51,50 @@ pub struct PropagationMatch {
     pub function: facts::Str,
     pub dst: ModelPort,
     pub src: ModelPort,
+}
+
+/// One matched source or sink port: everything Stage 1 of source/sink matching knows, with the
+/// names interned and the port's access path resolved.
+///
+/// Stage 2 ([`crate::query_engine::build_query_endpoints`]) turns these into
+/// `QueryEndpoint`s, resolving names to [`crate::facts::FunctionId`]s and performing the two
+/// index-dependent expansions (call-site fan-out and sink wildcard expansion). The split
+/// exists because Stage 1 runs while each import's IR is in hand and Stage 2 needs the index,
+/// which does not exist until every import has been codegen'd.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct EndpointMatch {
+    /// Name of the endpoint function. For a callsite-scoped endpoint this is the callee.
+    pub function: facts::Str,
+    /// Selector type tag for the endpoint variable.
+    pub selector_ty: FormalIndexTypeTag,
+    /// Formal index, when the selector carries one.
+    pub index: Option<i16>,
+    /// The port's access path.
+    pub path: facts::Path,
+    /// Taint label.
+    pub label: facts::Str,
+    /// Forward (source) or backward (sink).
+    pub direction: TaintDirection,
+    /// Sink-only: match any access-path extension of the port (see
+    /// [`crate::facts::Path::is_extension_of`]). Always `false` for sources.
+    pub wildcard: bool,
+    /// Source-only: this source is *saturating* -- the seeded vertex is tainted and reading any
+    /// subfield/offset off it is also tainted, recursively. Always `false` for sinks.
+    pub saturating: bool,
+    /// Callsite-scoped only: the containing (caller) function the endpoint's callsites must sit
+    /// inside. `None` means "any caller". Ignored unless `callsite_scoped` is `true`.
+    pub in_function: Option<facts::Str>,
+    /// `true` when this endpoint is anchored at individual call sites of `function` (from
+    /// `find: callsites`) rather than at the function itself.
+    pub callsite_scoped: bool,
+    /// Base `LocalIdx` for a `Variable(name)` ([`FormalIndexTypeTag::Local`]) port; `None` for
+    /// every other selector.
+    ///
+    /// This field is why an endpoint has to be recorded at all rather than re-derived at query
+    /// time. The name is resolved against the *matched function's* `locals` during Stage 1
+    /// (`json.rs`), and it **cannot** be recovered later: Stage 2 sees only the
+    /// post-`eliminate_dead_temps`/`coalesce_copies` graph, where the name may no longer exist.
+    pub local_index: Option<u32>,
 }
 
 /// The accumulated matches of one bridge spec's two sides, across every import.
@@ -134,6 +179,13 @@ pub struct ProgramModelMatches {
     /// seeds `model_paths` -- so a propagation's paths keep the model-path bucket discipline
     /// that lets them concatenate with every program path.
     pub propagations: Vec<PropagationMatch>,
+    /// Matched source/sink models. `ctadl query` runs Stage 2 over these; `ctadl index` ignores
+    /// them and says so once (see `cli::index`'s "declare source/sink models" warning).
+    ///
+    /// A `Vec` and not a set: `CTADL0100` compares declared ports against *post-fan-out*
+    /// endpoints, so deduplicating here would change a reported number. Two model files that
+    /// match the same port on the same function legitimately contribute two entries.
+    pub endpoints: Vec<EndpointMatch>,
     /// Access paths a *user* declared that occur nowhere in the IR, so nothing else would ever
     /// register them. Phase 2 seeds them into the initial indexer paths.
     ///
@@ -161,7 +213,10 @@ impl ProgramModelMatches {
 
     /// Whether anything was matched at all.
     pub fn is_empty(&self) -> bool {
-        self.propagations.is_empty() && self.access_paths.is_empty() && self.bridges.is_empty()
+        self.propagations.is_empty()
+            && self.endpoints.is_empty()
+            && self.access_paths.is_empty()
+            && self.bridges.is_empty()
     }
 }
 
@@ -179,35 +234,51 @@ pub fn observe_import(
         return Ok(());
     }
     matches.bridges.prepare(specs);
-    let mut builders = ModelBuilders::new();
-    let mut ingest = ModelGeneratorIngest::new(index, &mut builders);
-    for (i, spec) in specs.iter().enumerate() {
-        let side = &mut matches.bridges.sides[i];
-        if spec.from.scope.admits(&index.scope) {
-            let matched = ingest.match_where(spec.index, &spec.from.where_);
-            log::trace!(
-                "bridge {} from side matched {} function(s) in {}",
-                spec.provenance(),
-                matched.len(),
-                index.scope.describe()
-            );
-            side.from.extend(matched.iter().map(|f| facts::Str::from(f.as_str())));
+    // The ingest emits into `matches`, so it holds that borrow for as long as it lives and
+    // `matches.bridges` cannot be written through it. Collect each spec's matched names while
+    // the ingest is alive, release it, then fold. `match_where` already returns an owned
+    // `Vec<String>` per side, so this allocates nothing the old shape did not.
+    let mut matched: Vec<(Vec<String>, Vec<String>)> = Vec::with_capacity(specs.len());
+    let result = {
+        let mut ingest = ModelGeneratorIngest::new(index, matches);
+        for spec in specs {
+            let mut from = Vec::new();
+            let mut to = Vec::new();
+            if spec.from.scope.admits(&index.scope) {
+                from = ingest.match_where(spec.index, &spec.from.where_);
+                log::trace!(
+                    "bridge {} from side matched {} function(s) in {}",
+                    spec.provenance(),
+                    from.len(),
+                    index.scope.describe()
+                );
+            }
+            if spec.to.scope.admits(&index.scope) {
+                to = ingest.match_where(spec.index, &spec.to.where_);
+                log::trace!(
+                    "bridge {} to side matched {} function(s) in {}",
+                    spec.provenance(),
+                    to.len(),
+                    index.scope.describe()
+                );
+            }
+            matched.push((from, to));
         }
-        if spec.to.scope.admits(&index.scope) {
-            let matched = ingest.match_where(spec.index, &spec.to.where_);
-            log::trace!(
-                "bridge {} to side matched {} function(s) in {}",
-                spec.provenance(),
-                matched.len(),
-                index.scope.describe()
-            );
-            side.to.extend(matched.iter().map(|f| facts::Str::from(f.as_str())));
-        }
+        // A malformed constraint on either side is a hard error, exactly as it is anywhere else
+        // in the loader. The bridge's shape was validated before the loop; this catches what
+        // only the evaluator can see.
+        ingest.take_errors()
+    };
+    // Folded in even when the evaluation errored: an errored side yields no matches, and the
+    // sides that did match were already recorded before the error under the old shape.
+    for (i, (from, to)) in matched.into_iter().enumerate() {
+        let side = matches.bridges.side_mut(i);
+        side.from
+            .extend(from.iter().map(|f| facts::Str::from(f.as_str())));
+        side.to
+            .extend(to.iter().map(|f| facts::Str::from(f.as_str())));
     }
-    // A malformed constraint on either side is a hard error, exactly as it is anywhere else in
-    // the loader. The bridge's shape was validated before the loop; this catches what only the
-    // evaluator can see.
-    ingest.take_errors()
+    result
 }
 
 /// The functions a set of matches names, for a diagnostic that has to list a few of them.

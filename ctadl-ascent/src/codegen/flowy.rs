@@ -342,9 +342,7 @@ pub fn check<P: AsRef<Path>>(
     // it once is what keeps that the same expansion the index path performs.
     let mut model_matches = crate::models::ProgramModelMatches::default();
     for model_path in models {
-        let batch = crate::models::try_load_models(&match_index, model_path)?;
-        model_matches.extend_propagations(batch.propagations.iter().copied());
-        model_matches.extend_access_paths(batch.access_paths.iter().copied());
+        crate::models::try_load_models(&match_index, model_path, &mut model_matches)?;
     }
     drop(match_index);
 

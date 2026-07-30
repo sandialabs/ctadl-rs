@@ -1,7 +1,7 @@
 use ctadl_ascent::facts::TaintDirection;
 use ctadl_ascent::models::json::ModelGeneratorIngest;
 use ctadl_ascent::models::{ImportScope, ProgramMatchIndex};
-use ctadl_ascent::models::{ModelBuilders, UnmatchedReason, try_load_models};
+use ctadl_ascent::models::{ProgramModelMatches, UnmatchedReason, try_load_models};
 use ctadl_ir::mir::ProgramInfo;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -22,7 +22,8 @@ fn test_load_models_json() {
     writeln!(file, "{}", json_content).unwrap();
 
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let result = try_load_models(&match_index, file.path());
+    let mut matches = ProgramModelMatches::default();
+    let result = try_load_models(&match_index, file.path(), &mut matches);
     assert!(
         result.is_ok(),
         "Failed to load JSON models: {:?}",
@@ -39,7 +40,8 @@ fn test_load_models_jsonl() {
     writeln!(file, "{}", jsonl_content).unwrap();
 
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let result = try_load_models(&match_index, file.path());
+    let mut matches = ProgramModelMatches::default();
+    let result = try_load_models(&match_index, file.path(), &mut matches);
     assert!(
         result.is_ok(),
         "Failed to load JSONL models: {:?}",
@@ -65,7 +67,8 @@ fn test_load_models_json5() {
     writeln!(file, "{}", json5_content).unwrap();
 
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let result = try_load_models(&match_index, file.path());
+    let mut matches = ProgramModelMatches::default();
+    let result = try_load_models(&match_index, file.path(), &mut matches);
     assert!(
         result.is_ok(),
         "Failed to load JSON5 models: {:?}",
@@ -100,8 +103,10 @@ fn test_load_models_across_batch_boundary() {
     .unwrap();
 
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let batch = try_load_models(&match_index, file.path()).expect("loading models");
-    let indices: Vec<usize> = batch.endpoint_stats.keys().map(|(i, _)| *i).collect();
+    let mut matches = ProgramModelMatches::default();
+    let report =
+        try_load_models(&match_index, file.path(), &mut matches).expect("loading models");
+    let indices: Vec<usize> = report.endpoint_stats.keys().map(|(i, _)| *i).collect();
     assert_eq!(
         indices.len(),
         COUNT,
@@ -145,9 +150,9 @@ s:
     let program_info = ctadl_flowy::compile_program_contents("test.tnt", PROGRAM)
         .expect("compiling flowy program")
         .program_info;
-    let mut builders = ModelBuilders::new();
+    let mut matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut builders);
+    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
     let generators = vec![
         // 0: two source ports on one generator, both matching `reader`.
         serde_json::json!({
@@ -338,9 +343,9 @@ fn native_program_with_f() -> ProgramInfo {
 fn summary_paths_for(input: &str, output: &str) -> Vec<ctadl_ascent::facts::Path> {
     use serde_json::json;
     let program_info = native_program_with_f();
-    let mut builders = ModelBuilders::new();
+    let mut matches = ProgramModelMatches::default();
     let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut builders);
+    let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
     let model = json!({
         "find": "methods",
         "where": [{"constraint": "signature_match", "name": "f"}],
@@ -350,12 +355,11 @@ fn summary_paths_for(input: &str, output: &str) -> Vec<ctadl_ascent::facts::Path
         .encode_models(vec![model])
         .unwrap_or_else(|e| panic!("loading {input:?} -> {output:?}: {e}"));
     drop(ingest);
-    let batch = builders.finish().expect("finish");
     assert!(
-        !batch.propagations.is_empty(),
+        !matches.propagations.is_empty(),
         "generator matched nothing for {input:?} -> {output:?}"
     );
-    let mut paths: Vec<_> = batch
+    let mut paths: Vec<_> = matches
         .propagations
         .iter()
         .flat_map(|p| [p.dst.path, p.src.path])
@@ -440,20 +444,14 @@ fn endpoint_model_file(kind: &str, func: &str, port: &str) -> NamedTempFile {
 fn accumulated_endpoint_paths(
     loads: &[(&ProgramInfo, &std::path::Path)],
 ) -> std::collections::BTreeMap<String, ctadl_ascent::facts::Path> {
-    let mut acc: Option<ctadl_ascent::models::ModelsBatch> = None;
+    let mut acc = ProgramModelMatches::default();
     for (program_info, model_path) in loads {
         let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
-        let batch = try_load_models(&match_index, model_path).expect("load");
-        match acc {
-            Some(ref mut a) => a.union_with(&batch).expect("union"),
-            None => acc = Some(batch),
-        }
+        try_load_models(&match_index, model_path, &mut acc).expect("load");
     }
-    let acc = acc.expect("at least one load");
-    let ap_map = acc.endpoint.aps.build_ap_map();
-    acc.endpoint
-        .iter_endpoints()
-        .map(|row| (row.label.to_string(), ap_map[&row.path_id]))
+    acc.endpoints
+        .iter()
+        .map(|ep| (ep.label.to_string(), ep.path))
         .collect()
 }
 
@@ -466,9 +464,6 @@ fn path_of(segments: &[&str]) -> ctadl_ascent::facts::Path {
 /// second file's path table shadows the first's and file A's source silently acquires file B's
 /// path.
 #[test]
-// Fails until endpoints carry a `facts::Path` instead of an id into a per-file table; see
-// `removing-modelbuilders-plan.md` §2 and step 2 of §4.
-#[ignore = "red until the ap-id encoding is removed (removing-modelbuilders-plan.md §2)"]
 fn two_model_files_keep_their_own_endpoint_paths() {
     let program_info = native_program(&["a", "b"]);
     let file_a = endpoint_model_file("A", "a", "Argument(0).headers");
@@ -487,8 +482,6 @@ fn two_model_files_keep_their_own_endpoint_paths() {
 /// same file produces two different append sequences and the same ids bind to different path
 /// tables -- a single file colliding with itself, which is the bridging configuration.
 #[test]
-// Same cause as above; see `removing-modelbuilders-plan.md` §2.
-#[ignore = "red until the ap-id encoding is removed (removing-modelbuilders-plan.md §2)"]
 fn one_model_file_across_two_imports_keeps_its_endpoint_paths() {
     let mut file = NamedTempFile::with_suffix(".jsonl").unwrap();
     for (kind, func, port) in [
