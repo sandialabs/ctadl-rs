@@ -14,9 +14,13 @@
 //! The earlier design stored `(F,V) -> P -> {(M,Fp)}` as `HashMap<(F,V), HashMap<P,
 //! HashSet<(M,Fp)>>>`. Measured on a representative workload the groups are *tiny* — ~5
 //! leaves per `(F,V)` group spread over ~2 distinct `P` — so the two inner hash levels are
-//! nearly empty: each pays hashbrown's 8-bucket minimum allocation to hold ~2 elements.
-//! That structural slack, not the payload, was ~91% of the store (36k inner maps ≈ 53%,
-//! 70k leaf sets ≈ 38%, only ~13% real data + outer map).
+//! nearly empty: each pays hashbrown's minimum **4**-bucket allocation, plus control bytes, to
+//! hold ~2 elements. That structural slack, not the payload, held most of the store's bytes
+//! (36k inner maps ≈ 53%, 70k leaf sets ≈ 38%, only ~13% real data + outer map). It does not
+//! all come back, though: the flat form pays `P` inline on every leaf where the nested form
+//! shared one `P` per leaf set, so measured against a faithful rebuild of the nested design
+//! over identical data the flat design is 1.1–2.3× smaller, not ~10×
+//! (`locals-trie-benchmark.md` §1).
 //!
 //! We collapse both inner levels into one **sorted `Vec<(P,M,Fp)>` per `(F,V)` group**:
 //!   - one heap allocation per group instead of `1 + (#distinct P)` tiny hash tables;
@@ -59,6 +63,8 @@ use ascent::internal::{
     RelIndexWrite, ToRelIndex,
 };
 use rustc_hash::FxHasher;
+
+use super::hb_bytes;
 
 // The store keys are trusted, program-derived ids, so key on the fast,
 // deterministic `FxHasher` rather than the std collections' DoS-resistant
@@ -401,7 +407,7 @@ where
     /// none / 0_1 / 0_1_2 / existence, and the `0_3_4` view by *scanning*. The vec is kept
     /// sorted so existence is a `binary_search` and `0_1_2` is a `partition_point` range over
     /// the contiguous `P`-run. One heap allocation per group replaces the old nested
-    /// `HashMap<P, HashSet<(M,Fp)>>` (which was ~91% hashbrown slack on tiny groups).
+    /// `HashMap<P, HashSet<(M,Fp)>>` (mostly hashbrown slack on tiny groups).
     fwd: Map<(F, V), Group<P, M, Fp>>,
     /// side-index: F -> set of V present for that function. Lets a `0_3_4` probe restrict its
     /// scan to the flow-variables of the probed function instead of walking every `(F,V)` group
@@ -440,21 +446,11 @@ where
 
     /// Phase-0 instrumentation: estimate the heap bytes held by the forward store vs. the
     /// `fidx` side-index, so we can see *which* structure dominates before optimizing (external
-    /// `phys_footprint` can't attribute bytes to a sub-structure). Estimates are
-    /// allocation-size approximations that include hashbrown load-factor slack; they are for
-    /// *relative* comparison (fwd vs fidx), not exact accounting. O(rows), one pass.
+    /// `phys_footprint` can't attribute bytes to a sub-structure). Hash-table bytes include
+    /// load-factor slack ([`hb_bytes`], exact for these element types); the `Small` group vecs
+    /// are priced from their capacity, so the whole report is an allocation-size accounting
+    /// rather than a payload count. O(rows), one pass.
     pub fn heap_report(&self) -> HeapReport {
-        // hashbrown allocates `buckets` slots (a power of two sized so that 7/8*buckets >=
-        // capacity), each `size_of::<T>()` bytes, plus one control byte per bucket (+ a
-        // group-width mirror). Approximate that from the map's reported `capacity()`.
-        fn hb_bytes(capacity: usize, elem: usize) -> usize {
-            if capacity == 0 {
-                return 0;
-            }
-            let buckets = (capacity * 8).div_ceil(7).next_power_of_two().max(8);
-            buckets * (elem + 1) + 16
-        }
-
         let sz_outer = std::mem::size_of::<((F, V), Group<P, M, Fp>)>();
         let sz_leaf = std::mem::size_of::<(P, M, Fp)>();
         let sz_fidx_outer = std::mem::size_of::<(F, Set<V>)>();

@@ -39,6 +39,7 @@ use ascent::internal::{
     RelIndexWrite, ToRelIndex,
 };
 
+use crate::index_engine::hb_bytes;
 // Reuse the shared helpers from `locals_trie`: the clone-able boxed iterator and the no-op write
 // target for view indices.
 use crate::index_engine::locals_trie::{DynIter, NoopWrite};
@@ -210,13 +211,6 @@ where
     /// saving is visible without an external profiler. Estimates include hashbrown load-factor
     /// slack and are for relative comparison, not exact accounting. One pass over the store.
     pub fn heap_report(&self) -> String {
-        fn hb_bytes(capacity: usize, elem: usize) -> usize {
-            if capacity == 0 {
-                return 0;
-            }
-            let buckets = (capacity * 8).div_ceil(7).next_power_of_two().max(8);
-            buckets * (elem + 1) + 16
-        }
         let sz_key = std::mem::size_of::<(F, Vs)>();
         let sz_leaf = std::mem::size_of::<(Vd, Pd, Ps)>();
         let sz_full = std::mem::size_of::<(F, Vd, Pd, Vs, Ps)>();

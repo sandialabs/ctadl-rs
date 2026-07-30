@@ -11,7 +11,7 @@ Everything below is measured on this machine: Apple M1 Ultra (20 cores, 128 GB),
 
 ## 1. The hashbrown claim: no, the minimum is 4 buckets
 
-The module docs say of the pre-trie nested design:
+The module docs said of the pre-trie nested design (since corrected — see the end of §5):
 
 > the two inner hash levels are nearly empty: each pays hashbrown's 8-bucket minimum
 > allocation to hold ~2 elements.
@@ -36,31 +36,45 @@ dependencies) has the same 4-bucket floor, reached by simpler code with no eleme
 The claim is off by 2× exactly in the size range the sentence is about.
 
 Measured (`cargo bench -p ctadl-ascent --bench locals_trie`, first table — `capacity` is
-hashbrown's own report, so `capacity 3` *is* a 4-bucket table):
+hashbrown's own report, so `capacity 3` *is* a 4-bucket table). `old` is the estimator as it
+shipped; `new` is after the fix described below:
 
-| elem B | n | capacity | real bytes | `hb_bytes` estimate | est/real |
-|---|---|---|---|---|---|
-| 16 = `(M,Fp)`, old leaf set | 1–3 | 3 | 76 | 152 | **2.00** |
-| 24 = `(P,M,Fp)`, this module's leaf | 1–3 | 3 | 108 | 216 | **2.00** |
-| 40 = `(P, HashSet)`, old inner-map entry | 1–3 | 3 | 172 | 344 | **2.00** |
-| 24 | 4–7 | 7 | 208 | 216 | 1.04 |
-| 24 | 8–14 | 14 | 408 | 416 | 1.02 |
-| 24 | 15–28 | 28 | 808 | 816 | 1.01 |
+| elem B | n | capacity | real bytes | old `hb_bytes` | old est/real | new `hb_bytes` |
+|---|---|---|---|---|---|---|
+| 16 = `(M,Fp)`, old leaf set | 1–3 | 3 | 76 | 152 | **2.00** | 76 |
+| 24 = `(P,M,Fp)`, this module's leaf | 1–3 | 3 | 108 | 216 | **2.00** | 108 |
+| 40 = `(P, HashSet)`, old inner-map entry | 1–3 | 3 | 172 | 344 | **2.00** | 172 |
+| 24 | 4–7 | 7 | 208 | 216 | 1.04 | 208 |
+| 24 | 8–14 | 14 | 408 | 416 | 1.02 | 408 |
+| 24 | 15–28 | 28 | 808 | 816 | 1.01 | 808 |
 
 Two consequences:
 
-* The same 8-bucket assumption is baked into shipping instrumentation:
-  `HeapReport::hb_bytes` computes `…next_power_of_two().max(8)`. Every hashbrown table with
-  ≤3 elements is reported at **2× its real size**. In this store that is the `fidx` per-function
-  `Set<V>` for functions with ≤3 flow variables — common in real code. `fidx` is 6–8 % of the
-  store in the runs below, so the whole-store error stays under ~4 %, and for tables above 3
-  elements the formula is accurate to 1–2 % (it models `buckets*(elem+1) + 16`; the truth is
-  `buckets*elem + buckets + Group::WIDTH`, and `Group::WIDTH` is 8 on aarch64, 16 on x86-64
-  SSE2). Dropping `.max(8)` for `.max(4)` would fix it.
-* Byte counts here are aarch64 numbers. On x86-64 add 8 B per table (`Group::WIDTH` 16 vs 8);
-  the *bucket counts* are platform-independent.
+* The same 8-bucket assumption was baked into shipping instrumentation, in three copies:
+  `HeapReport::hb_bytes` (`locals_trie.rs`), its twin in `assign_like_trie.rs`, and a third
+  reproduction in the bench. Each computed `…next_power_of_two().max(8)`, reporting every
+  hashbrown table of ≤3 elements at **2× its real size** — in this store, the `fidx`
+  per-function `Set<V>` for functions with ≤3 flow variables, common in real code. `fidx` is
+  6–8 % of the store in the runs below, so the whole-store error stayed under ~4 %, and above 3
+  elements the formula was accurate to 1–2 % (it modelled `buckets*(elem+1) + 16`; the truth is
+  `buckets*elem + buckets + Group::WIDTH`, with `Group::WIDTH` 8 on aarch64 and 16 on x86-64
+  SSE2).
 
-**The separate claim about magnitude does not hold up either.** The docs attribute ~91 % of the
+  **Fixed.** The three copies are now one shared `index_engine::hb_bytes`, built on
+  `index_engine::hb_buckets` — `(capacity * 8).div_ceil(7).next_power_of_two().max(4)`, the
+  exact inverse of hashbrown's `bucket_mask_to_capacity` — priced with an `HB_GROUP_WIDTH`
+  constant that mirrors hashbrown's own target-feature choice of `Group` rather than hardcoding
+  16. It now reproduces `calculate_layout_for` exactly for any element aligned to at most
+  `Group::WIDTH` (all of ours), so **est/real is 1.00 on every row above**, small tables
+  included. Two unit tests hold it there: one grows real hashbrown tables element by element and
+  asserts `hb_buckets` recovers the bucket count from every `capacity` hashbrown reports (element
+  sizes 1, 2, 8, 16, 24, 40, 48 B — the narrow ones cover hashbrown's minimum-capacity lift);
+  the other pins the 4-bucket floor and its byte figures.
+* Byte counts here are aarch64 numbers. On x86-64 add 8 B per table (`Group::WIDTH` 16 vs 8);
+  the *bucket counts* are platform-independent. The estimator now derives that width from the
+  same cfg hashbrown uses, so it is exact on both.
+
+**The separate claim about magnitude did not hold up either.** The docs attributed ~91 % of the
 old store to structural slack, which reads as a ~10× reduction. Measured against a
 faithfully-rebuilt `Map<(F,V), Map<P, Set<(M,Fp)>>>` over identical data, the flat design is
 **1.1–2.3× smaller**, and at exactly the shape the docs cite (~5 leaves per group over ~2
@@ -78,7 +92,7 @@ distinct `P`) it is **1.42×**:
 The flat design wins, but not by an order of magnitude: it removes the inner tables' slack and
 then pays it back by storing `P` inline on every leaf (24 B/leaf) where the nested form shared
 one `P` across its leaf set. The 91 % figure describes how the *old* structure's bytes were
-divided, not how much the replacement saves.
+divided, not how much the replacement saves. The module doc now says this.
 
 ---
 
@@ -90,6 +104,7 @@ divided, not how much the replacement saves.
 | `scripts/locals-bench.py` | end-to-end harness: generate → `ctadl import` → `ctadl index`, parse time/memory, print a table (also works against a default-storage build, for A/B) |
 | `ctadl-ascent/benches/locals_trie.rs` | structure-level bench: counting global allocator over `LocalsIndCommon` driven exactly as Ascent's semi-naive loop drives it |
 | `HeapReport` additions (`locals_trie.rs`) | `max_group`, `large_groups`, `group_hist` — the store now logs its group-size distribution, which is what lets the harness verify the generator hit its target shape |
+| `hb_buckets` / `hb_bytes` / `HB_GROUP_WIDTH` (`index_engine/mod.rs`) | the fixed, shared hashbrown-size estimator both trie stores and the bench now use, plus its unit tests (§1) |
 
 ```bash
 cargo build --release                                     # the ctadl the harness measures
@@ -153,8 +168,9 @@ Single bulk round (structure cost with the merge cost removed): same bytes excep
 (0.022 s at 8192 vs 0.098 s).
 
 `heap_report()` matches the allocator to **1.00** across the whole sweep, so the estimate
-logged by every real index run is trustworthy at whole-store granularity (the ≤3-element
-overestimate above is real but too small a slice to show here).
+logged by every real index run is trustworthy at whole-store granularity. (It did so before the
+`hb_bytes` fix too: the ≤3-element overestimate was real but too small a slice of these
+configurations to show at this precision. §1's table is where it is visible.)
 
 ### Findings
 
@@ -253,6 +269,18 @@ store-only saving is larger.
 
 ## 5. Suggested follow-ups, in value order
 
+**Done** (items 4 and 5 of the original list, both instrumentation/docs rather than
+representation changes):
+
+* **`hb_bytes` is fixed and deduplicated** — one shared `index_engine::{hb_buckets, hb_bytes,
+  HB_GROUP_WIDTH}` replaces the three `.max(8)` copies, exact against the allocator at every
+  table size, with unit tests against real hashbrown tables (§1).
+* **The module docs are corrected** — `locals_trie`'s "8-bucket minimum" now says 4, and the
+  "~91 % slack" sentence no longer reads as a ~10× win: it states the measured 1.1–2.3× and why
+  the slack does not all come back (`P` is stored inline per leaf in the flat form).
+
+Remaining, in value order:
+
 1. **`shrink_to_fit` `Small` groups once at fixpoint** — recovers 10–40 % of the store on
    non-power-of-two groups (finding 4) for one O(groups) pass. No representation change.
 2. **Free the drained `delta`/`new` outer maps** (`= Map::default()` rather than leaving a
@@ -262,10 +290,6 @@ store-only saving is larger.
    hard 2× on every promoted group's leaves (finding 2). A promoted group that stops growing
    pays forever; re-demoting on a quiet iteration, or promoting on *growth rate* rather than
    size, would keep the merge win without the standing cost.
-4. **Fix `hb_bytes`' `.max(8)` → `.max(4)`** — a 2× overstatement for every ≤3-element table,
-   which on real targets is most `fidx` entries (§1).
-5. **Correct the module docs** — the "8-bucket minimum" sentence and the "~91 % slack" framing
-   both overstate; the measured saving over the nested design is 1.1–2.3× (§1).
 
 ## 6. Methodology notes / limitations
 

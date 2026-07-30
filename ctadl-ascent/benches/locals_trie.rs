@@ -11,8 +11,8 @@
 //! sub-structure, and at the scales a synthetic program reaches, the store is a small slice
 //! of the process. Here a counting global allocator measures *only* what the store
 //! allocates, so bytes/row is ground truth rather than an estimate — which also lets us
-//! check `HeapReport`'s own estimator (accurate to 1% for the whole store; 2× high for any
-//! hashbrown table of ≤3 elements, see `locals-trie-benchmark.md`).
+//! check `HeapReport`'s own estimator (`index_engine::hb_bytes`, whose hash-table term this
+//! bench verifies exactly; see `locals-trie-benchmark.md`).
 //!
 //! Leaf/key types are plain integers chosen to have the same sizes and hashing cost as the
 //! production instantiation (`FunctionId`, `FlowVariable`, `Path`, `FormalIndex`, `Path`):
@@ -26,6 +26,7 @@ use std::time::Instant;
 
 use ascent::internal::{RelFullIndexWrite, RelIndexMerge, ToRelIndex};
 use ctadl_ascent::index_engine::locals_trie::{LocalsIndCommon, ToFull};
+use ctadl_ascent::index_engine::{HB_GROUP_WIDTH, hb_bytes};
 use rustc_hash::FxHasher;
 
 // ---------------------------------------------------------------------------
@@ -218,11 +219,12 @@ fn build_nested(groups: usize, group_size: usize, paths: usize) -> (f64, usize) 
 // hashbrown minimum-allocation probe.
 // ---------------------------------------------------------------------------
 
-/// Exact bytes hashbrown allocates for a `HashSet<T>` holding `n` elements, next to what
-/// `locals_trie`'s own `hb_bytes` estimator predicts. This is what checks the module docs'
-/// claim that a tiny inner table "pays hashbrown's 8-bucket minimum allocation to hold ~2
-/// elements": `capacity` here is hashbrown's own report, and bucket count is
-/// `capacity.next_power_of_two()`-ish, so `capacity == 3` means a **4**-bucket table.
+/// Exact bytes hashbrown allocates for a `HashSet<T>` holding `n` elements, next to what the
+/// shared `hb_bytes` estimator predicts. This is what checked the module docs' claim that a
+/// tiny inner table "pays hashbrown's 8-bucket minimum allocation to hold ~2 elements":
+/// `capacity` here is hashbrown's own report, and bucket count is
+/// `capacity.next_power_of_two()`-ish, so `capacity == 3` means a **4**-bucket table — the
+/// minimum is 4, not 8, which is the error `hb_bytes` used to carry.
 ///
 /// Instantiated below for the three element sizes that matter: 16 B = `(M,Fp)`, the leaf set
 /// of the *old* nested design; 24 B = `(P,M,Fp)`, this module's leaf; 40 B = one
@@ -236,14 +238,8 @@ fn hashbrown_probe<T: Eq + std::hash::Hash + From<u16>>(n: usize) -> (usize, usi
     }
     let bytes = mem_since(base).live;
     let cap = s.capacity();
-    // `HeapReport::hb_bytes`, the estimator inside `locals_trie` (reproduced here so the
-    // bench can print truth next to estimate).
-    let est = if cap == 0 {
-        0
-    } else {
-        let buckets = (cap * 8).div_ceil(7).next_power_of_two().max(8);
-        buckets * (std::mem::size_of::<T>() + 1) + 16
-    };
+    // The production estimator itself, so the table prints truth next to estimate.
+    let est = hb_bytes(cap, std::mem::size_of::<T>());
     drop(s);
     (bytes, cap, est)
 }
@@ -274,12 +270,11 @@ fn main() {
     );
 
     println!(
-        "\n== hashbrown HashSet<T>: real allocation vs. locals_trie's `hb_bytes` estimator =="
+        "\n== hashbrown HashSet<T>: real allocation vs. index_engine's `hb_bytes` estimator =="
     );
     println!(
-        "(capacity 3 == a 4-bucket table; Group::WIDTH here is {}, so a table is \
-              buckets*size + buckets + WIDTH bytes)",
-        if cfg!(target_arch = "aarch64") { 8 } else { 16 }
+        "(capacity 3 == a 4-bucket table; Group::WIDTH here is {HB_GROUP_WIDTH}, so a table is \
+              buckets*size + buckets + WIDTH bytes)"
     );
     println!(
         "{:>7} {:>5} {:>9} {:>8} {:>7} {:>10} {:>9}",

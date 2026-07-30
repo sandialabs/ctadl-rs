@@ -56,6 +56,123 @@ pub mod assign_like_trie;
 pub mod locals_trie;
 pub mod source_info;
 
+/// Width in bytes of hashbrown's SIMD control group. Every table's allocation carries
+/// `Group::WIDTH` trailing control bytes on top of the one per bucket, so the heap estimators
+/// below need it — and hashbrown does not export it. hashbrown picks the implementation by
+/// target feature (`hashbrown-0.16.1/src/control/group/mod.rs`); this mirrors that choice.
+pub const HB_GROUP_WIDTH: usize = if cfg!(all(
+    target_feature = "sse2",
+    any(target_arch = "x86", target_arch = "x86_64"),
+    not(miri)
+)) {
+    16 // sse2
+} else if cfg!(all(
+    target_arch = "aarch64",
+    target_feature = "neon",
+    target_endian = "little",
+    not(miri)
+)) {
+    8 // neon
+} else {
+    std::mem::size_of::<usize>() // generic fallback: Group is a usize
+};
+
+/// Number of buckets hashbrown allocated for a table reporting `capacity` (0 if it has never
+/// allocated).
+///
+/// This inverts hashbrown's `bucket_mask_to_capacity`: a table of `b >= 8` buckets reports
+/// `b / 8 * 7`, holding 12.5% of slots empty, while the smallest table — `b == 4` — reports 3.
+/// So the floor is **4** buckets, not 8. `capacity_to_buckets` does lift the minimum to 8 or 16
+/// buckets for elements narrower than 4 bytes, but that lift is already reflected in the
+/// `capacity` the table reports, so it needs no modelling here.
+pub fn hb_buckets(capacity: usize) -> usize {
+    if capacity == 0 {
+        return 0;
+    }
+    (capacity * 8).div_ceil(7).next_power_of_two().max(4)
+}
+
+/// Estimated heap bytes held by a hashbrown table whose element type is `elem` bytes wide and
+/// whose `capacity()` is `capacity`. Includes load-factor slack, since it prices the buckets
+/// actually allocated rather than the elements stored.
+///
+/// This reproduces hashbrown's `calculate_layout_for` exactly — element slots padded up to the
+/// control alignment, then one control byte per bucket plus a [`HB_GROUP_WIDTH`] mirror — for
+/// any element whose alignment is at most [`HB_GROUP_WIDTH`]. Every type measured through this
+/// is 8-byte-aligned, so the estimate is exact; a more strictly aligned element would allocate
+/// slightly more padding than reported.
+pub fn hb_bytes(capacity: usize, elem: usize) -> usize {
+    let buckets = hb_buckets(capacity);
+    if buckets == 0 {
+        return 0;
+    }
+    buckets.saturating_mul(elem).next_multiple_of(HB_GROUP_WIDTH) + buckets + HB_GROUP_WIDTH
+}
+
+#[cfg(test)]
+mod hb_estimate_tests {
+    use super::{HB_GROUP_WIDTH, hb_buckets, hb_bytes};
+
+    /// hashbrown's own `bucket_mask_to_capacity`, kept next to the inverse it checks.
+    fn capacity_of(buckets: usize) -> usize {
+        if buckets - 1 < 8 {
+            buckets - 1
+        } else {
+            buckets / 8 * 7
+        }
+    }
+
+    /// Grow a real table one element at a time and confirm [`hb_buckets`] recovers the bucket
+    /// count from every `capacity()` hashbrown reports along the way.
+    fn probe<const N: usize>(count: u32) {
+        let mut set: hashbrown::HashSet<[u8; N]> = hashbrown::HashSet::new();
+        assert_eq!(hb_buckets(set.capacity()), 0, "unallocated table, N={N}");
+        assert_eq!(hb_bytes(set.capacity(), N), 0, "unallocated table, N={N}");
+        for i in 0..count {
+            let mut elem = [0u8; N];
+            let k = N.min(4);
+            elem[..k].copy_from_slice(&i.to_le_bytes()[..k]);
+            set.insert(elem);
+            let buckets = hb_buckets(set.capacity());
+            assert!(
+                buckets.is_power_of_two() && buckets >= 4,
+                "N={N} i={i}: {buckets} buckets is not a power of two >= 4"
+            );
+            assert_eq!(
+                capacity_of(buckets),
+                set.capacity(),
+                "N={N} i={i}: derived {buckets} buckets, but hashbrown reports capacity {}",
+                set.capacity()
+            );
+        }
+    }
+
+    #[test]
+    fn buckets_invert_reported_capacity() {
+        probe::<1>(200); // narrow elements: hashbrown lifts the minimum table size
+        probe::<2>(200);
+        probe::<8>(300);
+        probe::<16>(300); // (M,Fp), the old nested design's leaf
+        probe::<24>(300); // (P,M,Fp), the locals_trie leaf
+        probe::<40>(300); // (P, HashSet<(M,Fp)>), the old inner-map entry
+        probe::<48>(300); // ((F,V), Group), the locals_trie outer entry
+    }
+
+    #[test]
+    fn small_tables_hold_four_buckets_not_eight() {
+        // The reported capacities a real table steps through, and their bucket counts.
+        assert_eq!(hb_buckets(3), 4);
+        assert_eq!(hb_buckets(7), 8);
+        assert_eq!(hb_buckets(14), 16);
+        assert_eq!(hb_buckets(28), 32);
+        // A 24 B leaf in the smallest table: 4 slots, 4 control bytes, one group mirror. The
+        // old `.max(8)` floor priced this at 8 buckets, i.e. 2x its real size.
+        assert_eq!(hb_bytes(3, 24), 4 * 24 + 4 + HB_GROUP_WIDTH);
+        assert_eq!(hb_bytes(7, 24), 8 * 24 + 8 + HB_GROUP_WIDTH);
+        assert_eq!(hb_bytes(14, 24), 16 * 24 + 16 + HB_GROUP_WIDTH);
+    }
+}
+
 /// An assignment statement. The order is destination vertex then source vertex.
 pub type AssignFlow = (PackedInsnSiteId, FlowVertex, FlowVertex);
 pub type FunctionSummary = (FunctionId, FormalIndex, Path, FormalIndex, Path);
