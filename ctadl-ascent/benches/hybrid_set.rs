@@ -10,14 +10,18 @@
 //!     cargo bench -p ctadl-ascent --bench hybrid_set
 //!     cargo bench -p ctadl-ascent --bench hybrid_set -- --tsv   # machine-readable
 //!
-//! Four representations, all holding the production leaf `(Path, FormalIndex, Path)` = 24 B:
+//! Five representations, all holding the production leaf `(Path, FormalIndex, Path)` = 24 B:
 //!
-//! | column   | representation                                                            |
-//! |----------|---------------------------------------------------------------------------|
-//! | `hybrid` | [`HybridSet`]: linear probing under `SMALL_THRESHOLD`, `HashTable` above  |
-//! | `vec64`  | the shipped predecessor: sorted `Vec` under 64 elements, `HashSet` above   |
-//! | `vec32`  | the same, thresholded at 32 — isolates representation from threshold       |
-//! | `hash`   | `hashbrown::HashSet` at every size, i.e. no hybrid at all                  |
+//! | column   | representation                                                             |
+//! |----------|----------------------------------------------------------------------------|
+//! | `hybrid` | [`HybridSet`]: linear probing under `SMALL_THRESHOLD`, Swiss probing above  |
+//! | `swiss`  | the same structure with `SMALL = 0` — this crate's own hashbrown model      |
+//! | `vec64`  | the shipped predecessor: sorted `Vec` under 64 elements, `HashSet` above    |
+//! | `vec32`  | the same, thresholded at 32 — isolates representation from threshold        |
+//! | `hash`   | `hashbrown::HashSet` at every size, i.e. no hybrid at all                   |
+//!
+//! `swiss` against `hash` is the A/B that answers "is the hand-written table as good as the
+//! library one?"; `hybrid` against both is what the store actually pays.
 //!
 //! Every number is measured over `TOTAL` elements spread across `TOTAL / n` separate sets, so
 //! the per-element figures are comparable across the sweep and the per-set overhead (which is
@@ -29,7 +33,7 @@ use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use ctadl_ascent::index_engine::hybrid_set::{HybridSet, SMALL_THRESHOLD};
+use ctadl_ascent::index_engine::hybrid_set::{DefaultHashBuilder, HybridSet, SMALL_THRESHOLD};
 use rustc_hash::FxHasher;
 
 // ---------------------------------------------------------------------------
@@ -130,6 +134,45 @@ impl Bag for HybridSet<Leaf> {
     #[inline]
     fn len(&self) -> usize {
         HybridSet::len(self)
+    }
+}
+
+/// The hand-written Swiss table on its own, used at every size — the direct A/B against the
+/// `hash` column.
+///
+/// This is the *same* structure as the `hybrid` column with its threshold set to zero, which is
+/// what "never small" means: there is no separate Swiss table type to measure, because the
+/// hybrid is one structure rather than an enum over two. Setting `SMALL = 0` removes the small
+/// regime at compile time, so this column times exactly the Swiss half of it.
+type SwissSet = HybridSet<Leaf, DefaultHashBuilder, 0>;
+
+#[derive(Default)]
+struct Swiss(SwissSet);
+
+impl Bag for Swiss {
+    const NAME: &'static str = "swiss";
+    #[inline]
+    fn insert(&mut self, value: Leaf) -> bool {
+        self.0.insert(value)
+    }
+    #[inline]
+    fn contains(&self, value: &Leaf) -> bool {
+        self.0.contains(value)
+    }
+    #[inline]
+    fn merge(&mut self, other: Self) -> usize {
+        // Deliberately the same shape as the `hash` column's merge — insert `other`'s elements
+        // one at a time, with no swap of the larger side — so the two columns differ only in the
+        // table underneath.
+        let before = self.0.len();
+        for value in other.0 {
+            self.insert(value);
+        }
+        self.0.len() - before
+    }
+    #[inline]
+    fn len(&self) -> usize {
+        self.0.len()
     }
 }
 
@@ -509,8 +552,10 @@ fn main() {
         SMALL_THRESHOLD
     );
     println!(
-        "struct sizes: HybridSet {} B | sorted-Vec-then-HashSet {} B | HashSet {} B | Vec {} B",
+        "struct sizes: HybridSet {} B | HybridSet<SMALL=0> {} B | sorted-Vec-then-HashSet {} B | \
+         HashSet {} B | Vec {} B",
         std::mem::size_of::<HybridSet<Leaf>>(),
+        std::mem::size_of::<SwissSet>(),
         std::mem::size_of::<SortedThenHash<64>>(),
         std::mem::size_of::<Set<Leaf>>(),
         std::mem::size_of::<Vec<Leaf>>(),
@@ -570,6 +615,7 @@ fn main() {
             <HybridSet<Leaf> as Bag>::NAME,
             measure::<HybridSet<Leaf>>(n, paths),
         );
+        line(<Swiss as Bag>::NAME, measure::<Swiss>(n, paths));
         line(
             <SortedThenHash<64> as Bag>::NAME,
             measure::<SortedThenHash<64>>(n, paths),

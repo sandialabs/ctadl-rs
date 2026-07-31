@@ -1,6 +1,6 @@
 //! Structure-level benchmark for `index_engine::locals_trie`: exact heap bytes and time for the
 //! `locals` store as a function of `(F,V)` **group size** — the one shape parameter the
-//! module's design (a linear-probing small set vs. a promoted `hashbrown::HashTable`) turns on.
+//! module's design (a linear-probing small set vs. a promoted Swiss table) turns on.
 //!
 //! Run with:
 //!     cargo bench -p ctadl-ascent --bench locals_trie
@@ -261,7 +261,7 @@ fn main() {
     // Ignore criterion-style flags cargo passes through (`--bench`, `--save-baseline`, ...).
 
     // The leaf is the size that matters and it matches production (24 B); the outer key is
-    // (F,V) plus the group enum, whose variants are these two.
+    // (F,V) plus the group, which is one structure covering both of the representations below.
     println!(
         "leaf (P,M,Fp) = {} B, key (F,V) = {} B, group HybridSet = {} B \
          (was: Vec {} B | HashSet {} B), outer entry = {} B",
@@ -309,7 +309,7 @@ fn main() {
 
     // Sweep group size at constant total rows, so time and bytes/row are comparable across
     // the sweep. `hybrid_set::SMALL_THRESHOLD` is where a group stops being a linear-probing
-    // table and becomes a `hashbrown::HashTable`.
+    // table and becomes a Swiss table.
     const ROWS: usize = 1 << 20;
     let mut rows_out: Vec<String> = Vec::new();
     let header = || {

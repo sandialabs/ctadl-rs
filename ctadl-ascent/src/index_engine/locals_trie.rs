@@ -24,8 +24,10 @@
 //!
 //! We collapse both inner levels into one **[`HybridSet`] of `(P,M,Fp)` per `(F,V)` group**:
 //!   - one heap allocation per group instead of `1 + (#distinct P)` tiny hash tables;
-//!   - leaves packed 24 B each with no per-element control bytes (the small representation
-//!     keeps its occupancy map in a `u64` inline in the group, not on the heap);
+//!   - leaves packed 24 B each with no per-element control bytes (the small representation's
+//!     whole occupancy map is a single `u64` word beside the slots);
+//!   - the group itself is two words — it is one structure that changes regime with its size,
+//!     not an enum over two representations — so the outer map entry is 32 B, not 40;
 //!   - existence is a probe, not a scan, at every group size.
 //!
 //! ## Large groups
@@ -35,10 +37,12 @@
 //! representation whose delta->total merge re-copies the whole accumulated group makes
 //! building a group of size `G` cost O(G^2) — the dominant cost on such inputs (profiled at
 //! ~55% of index time; see memory-investigation.md §7/§8). So a group that grows past
-//! [`SMALL_THRESHOLD`] becomes a `hashbrown::HashTable`, where the merge is
-//! O(delta) (insert only the new leaves). Below the threshold it is a linear-probing table
-//! whose allocation is exactly its element slots — see [`super::hybrid_set`] for why that is the
-//! right small representation and how the transition is made cheap.
+//! [`SMALL_THRESHOLD`] switches to Swiss probing (this crate's own table, see
+//! [`super::hybrid_set::swiss`]), where the merge is O(delta) (insert only the new leaves).
+//! Below the threshold it probes linearly over an allocation that is its element slots plus one
+//! occupancy word. The switch is a change of regime *within* one structure, not a change of
+//! type — see [`super::hybrid_set`] for why that is the right small representation, why it is not
+//! an enum, and how the transition is made cheap.
 //!
 //! The forward map `(F,V) -> [ (P,M,Fp) ]` serves `none`, `0_1`, `0_1_2`, existence, and
 //! iteration. The `0_3_4` view is *derived* by scanning (as before) rather than
@@ -76,12 +80,13 @@ type Set<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 // A single `(F,V)` group's leaves.
 // ---------------------------------------------------------------------------
 
-/// The leaves of one `(F,V)` group. A [`HybridSet`]: a linear-probing table whose allocation is
-/// exactly its element slots while the group holds at most [`SMALL_THRESHOLD`] leaves — which is
+/// The leaves of one `(F,V)` group. A [`HybridSet`]: a two-word structure that probes linearly
+/// over its bare element slots while the group holds at most [`SMALL_THRESHOLD`] leaves — which is
 /// the overwhelmingly common case, since 77–100 % of the groups in a measured store hold exactly
-/// *one* leaf (`locals-trie-hybrid-eval.md` §4) — and a `hashbrown::HashTable` above that, so the
+/// *one* leaf (`locals-trie-hybrid-eval.md` §4) — and switches to Swiss probing above that, so the
 /// per-iteration delta->total merge stays O(delta) instead of re-copying the whole accumulated
-/// group each round.
+/// group each round. Being two words rather than three is worth 8 B on *every* entry of the
+/// forward map, promoted or not.
 type Group<P, M, Fp> = HybridSet<(P, M, Fp)>;
 
 // ---------------------------------------------------------------------------
@@ -341,7 +346,7 @@ pub struct HeapReport {
     /// Largest single `(F,V)` group, in leaves. The knob that decides whether the `Small` `Vec`
     /// representation (and its O(group) insert / O(G^2) accumulate) is the right one.
     pub max_group: usize,
-    /// How many groups exceeded [`SMALL_THRESHOLD`] and became `hashbrown` tables.
+    /// How many groups exceeded [`SMALL_THRESHOLD`] and switched to Swiss probing.
     pub large_groups: usize,
     /// Power-of-two histogram of group sizes: `group_hist[i]` counts groups with
     /// `2^i <= leaves < 2^(i+1)`.

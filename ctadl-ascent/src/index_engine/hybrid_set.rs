@@ -1,66 +1,73 @@
 //! A set that changes representation with its size: a **linear-probing** open-addressed table
-//! while it is small, a [`hashbrown::HashTable`] once it is large.
+//! while it is small, a **Swiss table** once it is large — and *one* structure either way, not an
+//! enum over two.
 //!
 //! This is the `Set<V>` half of the `Map<K, Set<V>>` a Datalog index on `K` needs (see
 //! `locals-trie-hybrid-ds.md`). In the workloads that motivate it the number of values per key
 //! varies over four orders of magnitude — most keys hold a couple of values, a few hold
 //! thousands — and no single representation is right for both ends:
 //!
-//! * A `hashbrown` table is wrong for 2 elements. Its bucket count is a power of two held at
-//!   ≤ 87.5 % load, so it rounds a 2-element set up to a 4-bucket table and adds one control
-//!   byte per bucket plus a `Group::WIDTH` mirror: 108 B to hold 48 B of payload
-//!   (`locals-trie-benchmark.md` §1). Multiplied by the ~400 k tiny sets a real index holds,
-//!   that slack *is* the store.
+//! * A Swiss table is wrong for 2 elements. Its bucket count is a power of two held at
+//!   ≤ 87.5 % load, so it rounds a 2-element set up to a whole group of buckets and adds one
+//!   control byte per bucket plus a group mirror: 108 B (hashbrown) or 216 B (the table here,
+//!   whose floor is one 8-bucket group) to hold 48 B of payload. Multiplied by the ~400 k tiny
+//!   sets a real index holds, that slack *is* the store.
 //! * A linear scan is wrong for 10 000 elements, and so is anything that re-copies the whole
 //!   set when a delta is merged into it — that is what made large groups quadratic to build.
 //!
-//! So: [`HybridSet`] is a [`Probe`] table up to [`SMALL_THRESHOLD`] elements and a
-//! [`hashbrown::HashTable`] above it.
+//! So a [`HybridSet`] probes linearly up to [`SMALL_THRESHOLD`] elements and switches to Swiss
+//! probing above it. The spec asks for that upper representation to be written here rather than
+//! taken from a library, so [`swiss`] is a from-scratch SwissTable — control bytes, word-parallel
+//! group scans, hashbrown's sizing rules — described in its own module docs, including the three
+//! places it deliberately parts company with hashbrown.
 //!
-//! ## The small representation
+//! ## Not an enum
 //!
-//! Open addressing with linear probing over `slots.len()` slots (a power of two, so the bucket
-//! index is a mask), and — the one unusual choice — **the occupancy map is a `u64` bitmask
-//! stored inline in the struct** rather than a byte per slot on the heap:
+//! The switch is **not** a tagged union. [`raw::RawTable`] is a single structure whose four
+//! fields mean one thing below the threshold and another above it, with the regime read off the
+//! capacity it already has to store:
 //!
 //! ```text
-//! occupied: 0b0010_1001          slots: [ x | _ | _ | y | _ | z | _ | _ ]
+//!   HybridSet = { ptr, cap, len } + hasher (zero-sized by default) = 16 bytes
+//!
+//!   small (cap <= 64):           large (cap > 64):
+//!   [ T3 T2 T1 T0 ][ u64 ]       [ .. T1 T0 ][ ctrl bytes | mirror ]
+//!                   ^ptr                      ^ptr
+//!   1 occupancy bit per slot     1 control byte per bucket
+//!
+//!   is_large()  =  cap > SMALL_THRESHOLD
 //! ```
 //!
-//! That buys three things a byte-per-slot control array does not:
+//! Both regimes keep their metadata at `ptr` and their elements below it, so one allocation
+//! routine, one element addressing rule, one `Drop`, one `Clone`, one growth path and one
+//! iterator serve both. `len` and `capacity` do not branch at all. `raw`'s module docs give the
+//! full argument; the short version is that the enum this replaces cost a discriminant on every
+//! access, two of every impl, and 8 bytes on **every** entry of the enclosing map whether or not
+//! that entry ever grew past two elements.
 //!
-//! 1. **No per-element metadata on the heap.** A small set's allocation is exactly
-//!    `slots * size_of::<T>()` — no control bytes, no group mirror — and `slots` starts at
-//!    **one** and doubles, so a singleton set costs one element and a 2-element set costs two.
-//!    That matters because in the distribution this exists for, most sets are that small.
-//! 2. **Probing tests a register, not memory.** The empty/occupied check is a bit test on a
-//!    value already in a register; only a hit touches the heap. For a set that fits in a couple
-//!    of cache lines this is the whole lookup cost.
-//! 3. **Iteration is `trailing_zeros`,** so iterating a sparse table costs O(elements), not
-//!    O(slots) — which matters because every read view of the index iterates groups.
+//! ## Choosing the threshold
 //!
-//! The bitmask is what caps [`SMALL_THRESHOLD`] at 64 ([`MAX_SMALL_THRESHOLD`]), which is also
-//! the value in use: measured end to end, the threshold is a pure memory knob, because the 2×
-//! step a set takes when it promotes is paid by every set that crosses, and lowering the
-//! threshold only moves more sets across it (`locals-trie-hybrid-eval.md` §5).
+//! [`SMALL_THRESHOLD`] is the default of the `SMALL` const parameter, not a hard-wired constant,
+//! so a measurement can sweep it (`locals-trie-hybrid-eval.md` §6 does, at 16 / 32 / 64) without
+//! editing the structure — and `SMALL = 0` gives a pure Swiss table, which is the A/B the
+//! `hybrid_set` bench runs against `hashbrown`.
 //!
-//! Because nothing is ever removed from a Datalog index, there are no tombstones: a probe
-//! sequence stops at the first empty slot, and the table is allowed to fill *completely*
-//! before it grows. A full small table degenerates to a linear scan of its slots, which at these
-//! sizes is the same worst case a packed array would have had — but it means the small
-//! representation never pays load-factor slack, only `Vec`-style doubling slack. It is the one
-//! place the design is measurably worse than either alternative: a *miss* against a completely
-//! full table costs ~24 ns at 32 slots against ~5 ns for a sorted `Vec` or a `hashbrown` table
-//! (`locals-trie-hybrid-eval.md` §2, finding 4).
+//! Promotion is a hard ~2× on the bytes a set spends per element — a Swiss table holds a 24 B
+//! element in a power-of-two bucket array at ≤ 87.5 % load, ~50 B/element, against the probe
+//! table's 24 — and, without removals, a set that crosses never comes back. So the threshold
+//! chooses how much of the size distribution pays that step, and it should sit *above* the bulk
+//! of it. Measured at 16 / 32 / 64 on the `locals` workloads, 64 is the best of the three: it
+//! keeps 33–64-element sets at 24 B/element, worth 14 % of the whole store where such sets occur,
+//! at no measurable time cost.
 //!
 //! ## Transitioning
 //!
-//! The threshold crossing is one pass over at most [`SMALL_THRESHOLD`] elements:
-//! [`hashbrown::HashTable::with_capacity`] sized for the known final element count (so the new
-//! table never rehashes while being filled), elements **moved** out of the small buffer rather
-//! than cloned, and the small buffer freed as soon as it is empty. Nothing else is touched:
-//! the transition is local to one set, never walks the enclosing map, and never happens twice
-//! for the same set (without removals a set's size only grows).
+//! The threshold crossing is one pass over at most [`SMALL_THRESHOLD`] elements into a table
+//! sized for the known final element count (so the new table never rehashes while being filled),
+//! with elements **moved** out of the small buffer rather than cloned. It is the same
+//! `rebuild` that ordinary growth uses — see [`raw`]. Nothing else is touched: the transition is
+//! local to one set, never walks the enclosing map, and never happens twice for the same set
+//! (without removals a set's size only grows).
 //!
 //! [`HybridSet::merge`] gets the same treatment from the other direction: the union of two sets
 //! is commutative, so it inserts the *smaller* side into the larger, making a merge cost
@@ -68,335 +75,59 @@
 
 use std::fmt;
 use std::hash::{BuildHasher, BuildHasherDefault, Hash};
-use std::mem::MaybeUninit;
 
-use hashbrown::HashTable;
-use hashbrown::hash_table;
 use rustc_hash::FxHasher;
 
-use super::hb_bytes;
+pub mod raw;
+pub mod swiss;
+
+pub use raw::{IntoIter, Iter, MAX_SMALL_THRESHOLD};
+
+use raw::RawTable;
 
 /// Default hasher: the store keys are trusted, program-derived ids, so hash on the fast,
 /// deterministic `FxHasher` rather than the std collections' DoS-resistant SipHash.
 pub type DefaultHashBuilder = BuildHasherDefault<FxHasher>;
 
-/// Element count at which a set switches from the linear-probing [`Probe`] table to
-/// [`hashbrown::HashTable`]. A set holding this many elements is still `Probe`; the element
-/// that would make it `SMALL_THRESHOLD + 1` promotes it.
+/// Default element count at which a set switches from linear probing to Swiss probing. A set
+/// holding this many elements is still a probe table; the element that would make it
+/// `SMALL_THRESHOLD + 1` promotes it.
 ///
-/// Promotion is a hard ~2× on the bytes a set spends per element — a `hashbrown` table holds a
-/// 24 B element in a power-of-two bucket array at ≤ 87.5 % load, ~50 B/element, against the
-/// probe table's 24 — and, without removals, a set that crosses never comes back. So this
-/// constant chooses how much of the size distribution pays that step, and it should sit *above*
-/// the bulk of it. Measured at 16 / 32 / 64 on the `locals` workloads, 64 is the best of the
-/// three: it keeps 33–64-element sets at 24 B/element, worth 14 % of the whole store where such
-/// sets occur, at no measurable time cost (`locals-trie-hybrid-eval.md` §5).
+/// See the module docs for why 64. It must be 0 or a power of two no greater than
+/// [`MAX_SMALL_THRESHOLD`], which [`raw::RawTable`] asserts at compile time.
 pub const SMALL_THRESHOLD: usize = 64;
 
-/// The largest [`SMALL_THRESHOLD`] the inline `u64` occupancy bitmask can describe.
-pub const MAX_SMALL_THRESHOLD: usize = u64::BITS as usize;
-
-const _: () = assert!(
-    SMALL_THRESHOLD >= 1 && SMALL_THRESHOLD <= MAX_SMALL_THRESHOLD,
-    "SMALL_THRESHOLD must fit the u64 occupancy bitmask"
-);
-
-/// Most slots the small table will ever allocate. If [`SMALL_THRESHOLD`] is not a power of two
-/// the last growth overshoots it, exactly as a `Vec` would.
-const SMALL_SLOTS_MAX: usize = SMALL_THRESHOLD.next_power_of_two();
-
-/// First non-zero slot count.
+/// A set of `T` that is a linear-probing table while it holds at most `SMALL` elements and a
+/// Swiss table above that, in one 16-byte structure. See the module docs.
 ///
-/// **One**, not `Vec`'s minimum-non-zero-capacity of 4. A probe table has no reason to hold
-/// spare slots — a 1-slot table is simply a table whose probe sequence has one stop — and in
-/// the distribution this set exists for, most sets never hold more than two elements. Starting
-/// at 4 would round every one of those up to 96 B of leaves to hold 24; starting at 1 makes a
-/// singleton set cost exactly its element. The price is one extra doubling (1, 2, 4, 8, ...) for
-/// sets that do grow, which is O(n) work amortized and allocator traffic that only the growing
-/// minority pays.
-const SMALL_SLOTS_MIN: usize = 1;
-
-// ---------------------------------------------------------------------------
-// The small representation: linear-probing table with an inline occupancy bitmask.
-// ---------------------------------------------------------------------------
-
-/// Where a probe sequence ended.
-enum Probed {
-    /// The element is at this slot.
-    Found(usize),
-    /// The element is absent; this empty slot is where it belongs.
-    Vacant(usize),
-    /// The element is absent and every slot is occupied.
-    Full,
-}
-
-/// Open-addressed, linear-probing table of at most [`MAX_SMALL_THRESHOLD`] elements.
-///
-/// # Invariants
-///
-/// * `slots.len()` is either 0 or a power of two in `SMALL_SLOTS_MIN..=SMALL_SLOTS_MAX`.
-/// * Bit `i` of `occupied` is set **iff** `slots[i]` holds an initialized `T`. Bits at or above
-///   `slots.len()` are always clear.
-///
-/// Every `unsafe` block below is justified by the second invariant alone.
-struct Probe<T> {
-    slots: Box<[MaybeUninit<T>]>,
-    occupied: u64,
-}
-
-impl<T> Probe<T> {
-    fn new() -> Self {
-        Self {
-            // Does not allocate.
-            slots: Vec::new().into_boxed_slice(),
-            occupied: 0,
-        }
-    }
-
-    /// A table with room for `slots` elements (rounded up to a power of two, clamped to the
-    /// small representation's range).
-    fn with_slots(slots: usize) -> Self {
-        let slots = slot_count_for(slots);
-        if slots == 0 {
-            return Self::new();
-        }
-        Self {
-            slots: Box::new_uninit_slice(slots),
-            occupied: 0,
-        }
-    }
-
-    #[inline]
-    fn len(&self) -> usize {
-        self.occupied.count_ones() as usize
-    }
-
-    #[inline]
-    fn capacity(&self) -> usize {
-        self.slots.len()
-    }
-
-    #[inline]
-    fn is_full(&self) -> bool {
-        self.len() == self.capacity()
-    }
-
-    /// Walk the probe sequence for `hash` once, reporting where the element is or where it would
-    /// go. One pass serves both `contains` and `insert`.
-    ///
-    /// Linear probing from `hash`, stopping at the first empty slot — sound because elements are
-    /// never removed, so no tombstone can hide a later match. The `for` bound also makes a
-    /// completely full table terminate, as [`Probed::Full`].
-    #[inline]
-    fn probe(&self, hash: u64, mut eq: impl FnMut(&T) -> bool) -> Probed {
-        let n = self.slots.len();
-        if n == 0 {
-            return Probed::Full;
-        }
-        let mask = n - 1;
-        let mut i = (hash as usize) & mask;
-        for _ in 0..n {
-            if self.occupied & (1u64 << i) == 0 {
-                return Probed::Vacant(i);
-            }
-            // SAFETY: bit `i` is set, so `slots[i]` is initialized.
-            if eq(unsafe { self.slots[i].assume_init_ref() }) {
-                return Probed::Found(i);
-            }
-            i = (i + 1) & mask;
-        }
-        Probed::Full
-    }
-
-    #[inline]
-    fn find(&self, hash: u64, eq: impl FnMut(&T) -> bool) -> Option<usize> {
-        match self.probe(hash, eq) {
-            Probed::Found(i) => Some(i),
-            _ => None,
-        }
-    }
-
-    /// Fill a slot [`Probed::Vacant`] reported.
-    #[inline]
-    fn fill(&mut self, index: usize, value: T) {
-        debug_assert!(self.occupied & (1u64 << index) == 0, "slot is occupied");
-        self.slots[index].write(value);
-        self.occupied |= 1u64 << index;
-    }
-
-    /// Insert an element known to be absent. The table must not be full.
-    #[inline]
-    fn insert_unique(&mut self, hash: u64, value: T) {
-        debug_assert!(!self.is_full(), "insert_unique into a full Probe");
-        let mask = self.slots.len() - 1;
-        let mut i = (hash as usize) & mask;
-        while self.occupied & (1u64 << i) != 0 {
-            i = (i + 1) & mask;
-        }
-        self.fill(i, value);
-    }
-
-    /// Move one arbitrary element out, or `None` when empty. Used by growth, promotion and
-    /// `into_iter`; leaves the slot buffer allocated.
-    #[inline]
-    fn pop(&mut self) -> Option<T> {
-        if self.occupied == 0 {
-            return None;
-        }
-        let i = self.occupied.trailing_zeros() as usize;
-        self.occupied &= !(1u64 << i);
-        // SAFETY: bit `i` was set, so `slots[i]` was initialized; clearing the bit first makes
-        // this the only read of that element (`Drop` and `find` both skip clear bits).
-        Some(unsafe { self.slots[i].assume_init_read() })
-    }
-
-    /// Rehash into a table of `new_slots` slots. The old buffer is freed on return.
-    fn resize(&mut self, new_slots: usize, hash_of: impl Fn(&T) -> u64) {
-        debug_assert!(new_slots > self.len());
-        let mut fresh = Self::with_slots(new_slots);
-        while let Some(value) = self.pop() {
-            let hash = hash_of(&value);
-            fresh.insert_unique(hash, value);
-        }
-        *self = fresh;
-    }
-
-    #[inline]
-    fn iter(&self) -> ProbeIter<'_, T> {
-        ProbeIter {
-            slots: &self.slots,
-            bits: self.occupied,
-        }
-    }
-}
-
-impl<T> Drop for Probe<T> {
-    fn drop(&mut self) {
-        if std::mem::needs_drop::<T>() {
-            let mut bits = self.occupied;
-            while bits != 0 {
-                let i = bits.trailing_zeros() as usize;
-                bits &= bits - 1;
-                // SAFETY: bit `i` is set, so `slots[i]` is initialized, and each index is
-                // visited once.
-                unsafe { self.slots[i].assume_init_drop() }
-            }
-        }
-    }
-}
-
-impl<T: Clone> Clone for Probe<T> {
-    fn clone(&self) -> Self {
-        // Cloning slot-for-slot keeps every element on its own probe sequence, so the copy is
-        // O(elements) with no hashing at all.
-        let mut slots = Box::new_uninit_slice(self.slots.len());
-        let mut bits = self.occupied;
-        while bits != 0 {
-            let i = bits.trailing_zeros() as usize;
-            bits &= bits - 1;
-            // SAFETY: bit `i` is set, so `slots[i]` is initialized.
-            slots[i].write(unsafe { self.slots[i].assume_init_ref() }.clone());
-        }
-        // Note: a panic in `T::clone` leaks the elements written so far (a `Box<[MaybeUninit<T>]>`
-        // drops nothing). No unsoundness, and the element types used here do not panic.
-        Self {
-            slots,
-            occupied: self.occupied,
-        }
-    }
-}
-
-/// Iterator over a [`Probe`] table's elements, in slot order. Costs O(elements), not O(slots).
-struct ProbeIter<'a, T> {
-    slots: &'a [MaybeUninit<T>],
-    bits: u64,
-}
-
-impl<'a, T> Iterator for ProbeIter<'a, T> {
-    type Item = &'a T;
-    #[inline]
-    fn next(&mut self) -> Option<&'a T> {
-        if self.bits == 0 {
-            return None;
-        }
-        let i = self.bits.trailing_zeros() as usize;
-        self.bits &= self.bits - 1;
-        // SAFETY: bit `i` was set in the source table's `occupied`, so `slots[i]` is
-        // initialized and stays so for `'a` (the iterator holds a shared borrow).
-        Some(unsafe { self.slots[i].assume_init_ref() })
-    }
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = self.bits.count_ones() as usize;
-        (n, Some(n))
-    }
-}
-
-impl<T> ExactSizeIterator for ProbeIter<'_, T> {}
-
-impl<T> Clone for ProbeIter<'_, T> {
-    fn clone(&self) -> Self {
-        Self {
-            slots: self.slots,
-            bits: self.bits,
-        }
-    }
-}
-
-/// Slots to allocate to hold `n` elements in the small representation: a power of two, at least
-/// [`SMALL_SLOTS_MIN`], at most [`SMALL_SLOTS_MAX`]. Load factor is allowed to reach 1.0, so
-/// this rounds up only to the power of two, not past it.
-#[inline]
-fn slot_count_for(n: usize) -> usize {
-    if n == 0 {
-        0
-    } else {
-        n.next_power_of_two()
-            .clamp(SMALL_SLOTS_MIN, SMALL_SLOTS_MAX)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// The hybrid set.
-// ---------------------------------------------------------------------------
-
-/// A set of `T` that is a linear-probing table while it holds at most [`SMALL_THRESHOLD`]
-/// elements and a [`hashbrown::HashTable`] above that. See the module docs.
-pub struct HybridSet<T, S = DefaultHashBuilder> {
-    repr: Repr<T>,
+/// `SMALL` exists so the threshold can be swept by a benchmark; `0` means "always a Swiss table".
+pub struct HybridSet<T, S = DefaultHashBuilder, const SMALL: usize = SMALL_THRESHOLD> {
+    table: RawTable<T, SMALL>,
     /// Zero-sized for the default hasher, so it costs nothing per set.
     hasher: S,
 }
 
-enum Repr<T> {
-    Small(Probe<T>),
-    Large(HashTable<T>),
-}
-
-impl<T, S: Default> Default for HybridSet<T, S> {
+impl<T, S: Default, const SMALL: usize> Default for HybridSet<T, S, SMALL> {
     fn default() -> Self {
         Self {
-            repr: Repr::Small(Probe::new()),
+            table: RawTable::new(),
             hasher: S::default(),
         }
     }
 }
 
-impl<T, S: Default> HybridSet<T, S> {
+impl<T, S: Default, const SMALL: usize> HybridSet<T, S, SMALL> {
     /// An empty set. Does not allocate.
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl<T, S> HybridSet<T, S> {
-    /// Number of elements.
+impl<T, S, const SMALL: usize> HybridSet<T, S, SMALL> {
+    /// Number of elements. Does not branch on the representation.
     #[inline]
     pub fn len(&self) -> usize {
-        match &self.repr {
-            Repr::Small(p) => p.len(),
-            Repr::Large(t) => t.len(),
-        }
+        self.table.len()
     }
 
     #[inline]
@@ -408,59 +139,44 @@ impl<T, S> HybridSet<T, S> {
     /// representation this is the allocated slot count (load factor may reach 1.0).
     #[inline]
     pub fn capacity(&self) -> usize {
-        match &self.repr {
-            Repr::Small(p) => p.capacity(),
-            Repr::Large(t) => t.capacity(),
-        }
+        self.table.capacity()
     }
 
-    /// Whether this set has crossed [`SMALL_THRESHOLD`] and is now a `hashbrown` table.
+    /// Whether this set has crossed `SMALL` and is now a Swiss table.
     #[inline]
     pub fn is_large(&self) -> bool {
-        matches!(self.repr, Repr::Large(_))
+        self.table.is_large()
     }
 
     /// Elements, in unspecified order.
     #[inline]
-    pub fn iter(&self) -> Iter<'_, T> {
-        Iter {
-            inner: match &self.repr {
-                Repr::Small(p) => IterInner::Small(p.iter()),
-                Repr::Large(t) => IterInner::Large(t.iter()),
-            },
-        }
+    pub fn iter(&self) -> Iter<'_, T, SMALL> {
+        self.table.iter()
     }
 
-    /// Heap bytes this set holds, including whatever slack the representation carries: exactly
-    /// `slots * size_of::<T>()` while small (no per-element metadata at all), and hashbrown's
-    /// own layout — buckets, control bytes and group mirror — once large.
+    /// Heap bytes this set holds, including whatever slack the representation carries: the
+    /// element slots plus one 8-byte occupancy word while small, and the Swiss layout — buckets,
+    /// control bytes and group mirror — once large.
     ///
-    /// Used by the index's `heap_report`; [`super::hb_bytes`] is exact for these element types,
-    /// so this is an allocation-size accounting rather than a payload count.
+    /// Both terms are the allocation the set actually made, not an estimate: unlike the
+    /// [`super::hb_bytes`] model of hashbrown's layout that the enclosing map still needs, this
+    /// structure computes its own layout, so it can simply report it.
     pub fn heap_bytes(&self) -> usize {
-        match &self.repr {
-            Repr::Small(p) => p.capacity() * std::mem::size_of::<T>(),
-            Repr::Large(t) => hb_bytes(t.capacity(), std::mem::size_of::<T>()),
-        }
+        self.table.heap_bytes()
     }
 }
 
-impl<T, S> HybridSet<T, S>
+impl<T, S, const SMALL: usize> HybridSet<T, S, SMALL>
 where
     T: Hash + Eq,
     S: BuildHasher + Default,
 {
-    /// An empty set sized for `capacity` elements: a small table if that fits under the
-    /// threshold, a `hashbrown` table straight away if it does not. Lets a caller that knows
-    /// the final size skip the transition entirely.
+    /// An empty set sized for `capacity` elements: a probe table if that fits under the
+    /// threshold, a Swiss table straight away if it does not. Lets a caller that knows the final
+    /// size skip the transition entirely.
     pub fn with_capacity(capacity: usize) -> Self {
-        let repr = if capacity > SMALL_THRESHOLD {
-            Repr::Large(HashTable::with_capacity(capacity))
-        } else {
-            Repr::Small(Probe::with_slots(capacity))
-        };
         Self {
-            repr,
+            table: RawTable::with_capacity(capacity),
             hasher: S::default(),
         }
     }
@@ -473,64 +189,15 @@ where
     #[inline]
     pub fn contains(&self, value: &T) -> bool {
         let hash = self.hash(value);
-        match &self.repr {
-            Repr::Small(p) => p.find(hash, |x| x == value).is_some(),
-            Repr::Large(t) => t.find(hash, |x| x == value).is_some(),
-        }
+        self.table.find(hash, |x| x == value).is_some()
     }
 
     /// Insert `value`; returns whether it was newly added.
+    #[inline]
     pub fn insert(&mut self, value: T) -> bool {
-        let Self { repr, hasher } = self;
+        let Self { table, hasher } = self;
         let hash = hasher.hash_one(&value);
-        match repr {
-            Repr::Small(p) => {
-                // Bind the probe result so the `eq` closure -- which borrows `value` -- is
-                // dropped before `value` is moved into the table.
-                let probed = p.probe(hash, |x| *x == value);
-                match probed {
-                    Probed::Found(_) => false,
-                    Probed::Vacant(i) => {
-                        p.fill(i, value);
-                        true
-                    }
-                    // Absent, and there is nowhere to put it: either grow or change
-                    // representation.
-                    Probed::Full => {
-                        if p.len() >= SMALL_THRESHOLD {
-                            // Crossing the threshold: build the `hashbrown` table at its final
-                            // size so filling it never rehashes, then add the element that
-                            // triggered the move.
-                            let final_len = p.len() + 1;
-                            let mut table = promote(p, final_len, hasher);
-                            let _ = table.insert_unique(hash, value, |x| hasher.hash_one(x));
-                            *repr = Repr::Large(table);
-                        } else {
-                            let new_slots = if p.capacity() == 0 {
-                                SMALL_SLOTS_MIN
-                            } else {
-                                p.capacity() * 2
-                            };
-                            p.resize(new_slots, |x| hasher.hash_one(x));
-                            p.insert_unique(hash, value);
-                        }
-                        true
-                    }
-                }
-            }
-            Repr::Large(t) => {
-                // Bind the entry so the `eq` closure -- which borrows `value` -- is dropped
-                // before the arm that moves `value` into the table.
-                let entry = t.entry(hash, |x| *x == value, |x| hasher.hash_one(x));
-                match entry {
-                    hash_table::Entry::Occupied(_) => false,
-                    hash_table::Entry::Vacant(e) => {
-                        e.insert(value);
-                        true
-                    }
-                }
-            }
-        }
+        table.insert(hash, value, |x| hasher.hash_one(x))
     }
 
     /// Make room for `additional` more elements, changing representation up front if that many
@@ -540,18 +207,8 @@ where
     /// overlap is unknown) should not use this: over-reserving here permanently promotes a set
     /// that might have stayed small. [`Self::merge`] deliberately does not call it.
     pub fn reserve(&mut self, additional: usize) {
-        let Self { repr, hasher } = self;
-        match repr {
-            Repr::Small(p) => {
-                let want = p.len() + additional;
-                if want > SMALL_THRESHOLD {
-                    *repr = Repr::Large(promote(p, want, hasher));
-                } else if want > p.capacity() {
-                    p.resize(slot_count_for(want), |x| hasher.hash_one(x));
-                }
-            }
-            Repr::Large(t) => t.reserve(additional, |x| hasher.hash_one(x)),
-        }
+        let Self { table, hasher } = self;
+        table.reserve(additional, |x| hasher.hash_one(x));
     }
 
     /// Union `other` into `self`; returns how many elements were **newly added to `self`**.
@@ -581,40 +238,20 @@ where
     }
 }
 
-/// Move a small table's elements into a right-sized `hashbrown` table, leaving it empty (its
-/// buffer is freed when the caller overwrites the `Repr`).
-fn promote<T: Hash + Eq, S: BuildHasher>(
-    p: &mut Probe<T>,
-    capacity: usize,
-    hasher: &S,
-) -> HashTable<T> {
-    let mut table = HashTable::with_capacity(capacity);
-    while let Some(value) = p.pop() {
-        let hash = hasher.hash_one(&value);
-        // Elements come from a set, so they are distinct; `with_capacity` above means the
-        // rehash closure is never called.
-        let _ = table.insert_unique(hash, value, |x| hasher.hash_one(x));
-    }
-    table
-}
-
-impl<T, S> Clone for HybridSet<T, S>
+impl<T, S, const SMALL: usize> Clone for HybridSet<T, S, SMALL>
 where
     T: Clone,
     S: Clone,
 {
     fn clone(&self) -> Self {
         Self {
-            repr: match &self.repr {
-                Repr::Small(p) => Repr::Small(p.clone()),
-                Repr::Large(t) => Repr::Large(t.clone()),
-            },
+            table: self.table.clone(),
             hasher: self.hasher.clone(),
         }
     }
 }
 
-impl<T, S> Extend<T> for HybridSet<T, S>
+impl<T, S, const SMALL: usize> Extend<T> for HybridSet<T, S, SMALL>
 where
     T: Hash + Eq,
     S: BuildHasher + Default,
@@ -626,7 +263,7 @@ where
     }
 }
 
-impl<T, S> FromIterator<T> for HybridSet<T, S>
+impl<T, S, const SMALL: usize> FromIterator<T> for HybridSet<T, S, SMALL>
 where
     T: Hash + Eq,
     S: BuildHasher + Default,
@@ -641,102 +278,25 @@ where
     }
 }
 
-impl<T: fmt::Debug, S> fmt::Debug for HybridSet<T, S> {
+impl<T: fmt::Debug, S, const SMALL: usize> fmt::Debug for HybridSet<T, S, SMALL> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_set().entries(self.iter()).finish()
     }
 }
 
-/// Shared-borrow iterator over a [`HybridSet`], in unspecified order.
-pub struct Iter<'a, T> {
-    inner: IterInner<'a, T>,
-}
-
-enum IterInner<'a, T> {
-    Small(ProbeIter<'a, T>),
-    Large(hash_table::Iter<'a, T>),
-}
-
-impl<'a, T> Iterator for Iter<'a, T> {
+impl<'a, T, S, const SMALL: usize> IntoIterator for &'a HybridSet<T, S, SMALL> {
     type Item = &'a T;
-    #[inline]
-    fn next(&mut self) -> Option<&'a T> {
-        match &mut self.inner {
-            IterInner::Small(i) => i.next(),
-            IterInner::Large(i) => i.next(),
-        }
-    }
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        match &self.inner {
-            IterInner::Small(i) => i.size_hint(),
-            IterInner::Large(i) => i.size_hint(),
-        }
-    }
-}
-
-impl<T> ExactSizeIterator for Iter<'_, T> {}
-
-impl<T> Clone for Iter<'_, T> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: match &self.inner {
-                IterInner::Small(i) => IterInner::Small(i.clone()),
-                IterInner::Large(i) => IterInner::Large(i.clone()),
-            },
-        }
-    }
-}
-
-impl<'a, T, S> IntoIterator for &'a HybridSet<T, S> {
-    type Item = &'a T;
-    type IntoIter = Iter<'a, T>;
-    fn into_iter(self) -> Iter<'a, T> {
+    type IntoIter = Iter<'a, T, SMALL>;
+    fn into_iter(self) -> Iter<'a, T, SMALL> {
         self.iter()
     }
 }
 
-/// Owning iterator over a [`HybridSet`], in unspecified order.
-pub struct IntoIter<T> {
-    inner: IntoIterInner<T>,
-}
-
-enum IntoIterInner<T> {
-    Small(Probe<T>),
-    Large(hash_table::IntoIter<T>),
-}
-
-impl<T> Iterator for IntoIter<T> {
+impl<T, S, const SMALL: usize> IntoIterator for HybridSet<T, S, SMALL> {
     type Item = T;
-    #[inline]
-    fn next(&mut self) -> Option<T> {
-        match &mut self.inner {
-            IntoIterInner::Small(p) => p.pop(),
-            IntoIterInner::Large(i) => i.next(),
-        }
-    }
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = match &self.inner {
-            IntoIterInner::Small(p) => p.len(),
-            IntoIterInner::Large(i) => return i.size_hint(),
-        };
-        (n, Some(n))
-    }
-}
-
-impl<T> ExactSizeIterator for IntoIter<T> {}
-
-impl<T, S> IntoIterator for HybridSet<T, S> {
-    type Item = T;
-    type IntoIter = IntoIter<T>;
-    fn into_iter(self) -> IntoIter<T> {
-        IntoIter {
-            inner: match self.repr {
-                Repr::Small(p) => IntoIterInner::Small(p),
-                Repr::Large(t) => IntoIterInner::Large(t.into_iter()),
-            },
-        }
+    type IntoIter = IntoIter<T, SMALL>;
+    fn into_iter(self) -> IntoIter<T, SMALL> {
+        self.table.into_iter()
     }
 }
 
@@ -744,11 +304,18 @@ impl<T, S> IntoIterator for HybridSet<T, S> {
 mod tests {
     use std::cell::RefCell;
     use std::collections::BTreeSet;
+    use std::hash::{BuildHasher, Hash};
     use std::rc::Rc;
 
-    use super::{HybridSet, SMALL_THRESHOLD, slot_count_for};
+    use super::super::{hb_buckets, hb_bytes};
+    use super::raw::slot_count_for;
+    use super::{DefaultHashBuilder, HybridSet, SMALL_THRESHOLD};
 
     type Set = HybridSet<u64>;
+
+    /// The same structure with the small regime switched off: a pure Swiss table, which is what
+    /// the hashbrown-parity tests below measure.
+    type Swiss<T> = HybridSet<T, DefaultHashBuilder, 0>;
 
     /// Cheap deterministic pseudo-random sequence (no `rand` dependency).
     fn lcg(seed: u64) -> impl FnMut() -> u64 {
@@ -789,6 +356,40 @@ mod tests {
         assert!(set.capacity() >= set.len());
     }
 
+    /// The same, against a set that is a Swiss table at every size.
+    fn swiss_model_check(values: &[u64]) {
+        let mut set = Swiss::new();
+        let mut model = BTreeSet::new();
+        for (i, &v) in values.iter().enumerate() {
+            assert_eq!(set.insert(v), model.insert(v), "insert {v} at step {i}");
+            assert_eq!(set.len(), model.len(), "len after {i} inserts");
+            assert!(set.is_large() || model.is_empty(), "must never be small");
+            assert!(
+                set.len() <= set.capacity(),
+                "step {i}: {} elements in a table with capacity {}",
+                set.len(),
+                set.capacity()
+            );
+        }
+        for v in &model {
+            assert!(set.contains(v), "{v} was inserted but is not found");
+        }
+        assert_eq!(
+            set.iter().copied().collect::<BTreeSet<_>>(),
+            model,
+            "iteration must yield exactly the elements"
+        );
+        let cloned = set.clone();
+        for v in &model {
+            assert!(cloned.contains(v), "{v} is missing from the clone");
+        }
+        assert_eq!(
+            set.into_iter().collect::<BTreeSet<_>>(),
+            model,
+            "into_iter must yield exactly the elements"
+        );
+    }
+
     #[test]
     fn matches_a_set_model_across_the_threshold() {
         model_check(&[]);
@@ -796,7 +397,7 @@ mod tests {
         model_check(&[7, 7, 7]);
         // Dense low values: probe sequences wrap and collide constantly.
         model_check(&(0..100u64).collect::<Vec<_>>());
-        // Every element hashes to the same slot in a power-of-two table would be ideal; the
+        // Every element hashing to the same slot in a power-of-two table would be ideal; the
         // multiples below at least share low bits after FxHash mixing.
         model_check(&(0..80u64).map(|i| i * 64).collect::<Vec<_>>());
         // Exactly at / around the threshold, which is where representation flips.
@@ -816,6 +417,26 @@ mod tests {
         }
     }
 
+    /// The large regime on its own, exercised from empty — the path an ordinary `HybridSet`
+    /// only reaches after promotion, so it needs its own coverage at small sizes.
+    #[test]
+    fn matches_a_set_model_with_no_small_regime() {
+        swiss_model_check(&[]);
+        swiss_model_check(&[7, 7, 7]);
+        swiss_model_check(&(0..300u64).collect::<Vec<_>>());
+        // Values whose low bits collide after mixing: heavy probing.
+        swiss_model_check(&(0..200u64).map(|i| i * 4096).collect::<Vec<_>>());
+        // Every size across the first few growth steps.
+        for n in 0..40u64 {
+            swiss_model_check(&(0..n).collect::<Vec<_>>());
+        }
+        let mut next = lcg(0x5eed);
+        for len in [7usize, 8, 9, 56, 57, 1000] {
+            let values: Vec<u64> = (0..len).map(|_| next() % (len as u64 * 2)).collect();
+            swiss_model_check(&values);
+        }
+    }
+
     #[test]
     fn absent_elements_are_not_found_at_every_size() {
         // A full small table has no empty slot to stop a probe at, so the "not present" answer
@@ -826,6 +447,22 @@ mod tests {
             for absent in n..n + 8 {
                 assert!(!set.contains(&absent), "n={n}: {absent} must be absent");
             }
+        }
+        // And the same for a table that is Swiss at every size.
+        for n in 0..=200u64 {
+            let mut set: Swiss<u64> = Swiss::new();
+            for i in 0..n {
+                set.insert(i * 3);
+            }
+            for i in 0..n {
+                assert!(set.contains(&(i * 3)), "n={n}: {} must be present", i * 3);
+                assert!(
+                    !set.contains(&(i * 3 + 1)),
+                    "n={n}: {} must be absent",
+                    i * 3 + 1
+                );
+            }
+            assert!(!set.contains(&u64::MAX));
         }
     }
 
@@ -862,9 +499,9 @@ mod tests {
     }
 
     #[test]
-    fn small_representation_allocates_only_element_slots() {
-        // The point of the inline occupancy bitmask: a small set's heap cost is exactly its
-        // slots, with no control bytes. Slot counts follow `Vec`-style doubling from 4.
+    fn small_representation_allocates_only_slots_and_one_word() {
+        // The point of the bitmask: a small set's heap cost is its slots plus a single 8-byte
+        // occupancy word, with no per-element control bytes. Slot counts double from 1.
         for (n, slots) in [
             (0usize, 0usize),
             (1, 1),
@@ -878,16 +515,52 @@ mod tests {
         ] {
             let set: Set = (0..n as u64).collect();
             assert_eq!(set.capacity(), slots, "n={n}");
+            let expected = if slots == 0 {
+                0
+            } else {
+                slots * std::mem::size_of::<u64>() + std::mem::size_of::<u64>()
+            };
             assert_eq!(
                 set.heap_bytes(),
-                slots * std::mem::size_of::<u64>(),
-                "n={n}: heap bytes must be exactly the slots"
+                expected,
+                "n={n}: heap bytes must be the slots plus the occupancy word"
             );
             assert!(!set.is_large(), "n={n} must stay small");
         }
-        assert_eq!(slot_count_for(0), 0);
-        assert_eq!(slot_count_for(1), 1);
-        assert_eq!(slot_count_for(33), SMALL_THRESHOLD.next_power_of_two());
+        assert_eq!(slot_count_for(0, SMALL_THRESHOLD), 0);
+        assert_eq!(slot_count_for(1, SMALL_THRESHOLD), 1);
+        assert_eq!(slot_count_for(33, SMALL_THRESHOLD), 64);
+        assert_eq!(slot_count_for(1000, SMALL_THRESHOLD), SMALL_THRESHOLD);
+        assert_eq!(slot_count_for(4, 0), 0, "a zero threshold is never small");
+    }
+
+    /// The point of the exercise: once large, bucket counts must be hashbrown's, at every size a
+    /// real hashbrown table steps through — except below one group, where this table starts at 8
+    /// buckets rather than 4.
+    #[test]
+    fn bucket_counts_track_hashbrown() {
+        let mut theirs: hashbrown::HashSet<u64, DefaultHashBuilder> = hashbrown::HashSet::default();
+        let mut ours: Swiss<u64> = Swiss::new();
+        assert_eq!(ours.capacity(), 0, "an unallocated table holds nothing");
+        for i in 0..2000u64 {
+            theirs.insert(i);
+            ours.insert(i);
+            let hb = hb_buckets(theirs.capacity());
+            if hb < super::swiss::GROUP_WIDTH {
+                // hashbrown's 4-bucket table, which this deliberately does not have.
+                continue;
+            }
+            // The allocation is hashbrown's byte for byte, wherever hashbrown's group is also
+            // 8 bytes wide.
+            if super::super::HB_GROUP_WIDTH == super::swiss::GROUP_WIDTH {
+                assert_eq!(
+                    ours.heap_bytes(),
+                    hb_bytes(theirs.capacity(), std::mem::size_of::<u64>()),
+                    "after {} elements: allocation size differs",
+                    i + 1
+                );
+            }
+        }
     }
 
     #[test]
@@ -903,6 +576,17 @@ mod tests {
             assert!(large.insert(i));
         }
         assert_eq!(large.len(), 100);
+
+        // Sizing up front must also mean no further growth.
+        for capacity in [1usize, 7, 8, 100, 1000] {
+            let mut set: Set = Set::with_capacity(capacity);
+            let cap = set.capacity();
+            assert!(cap >= capacity);
+            for i in 0..capacity as u64 {
+                set.insert(i);
+            }
+            assert_eq!(set.capacity(), cap, "capacity {capacity} grew anyway");
+        }
     }
 
     #[test]
@@ -911,12 +595,30 @@ mod tests {
         assert_eq!(set.capacity(), 4);
         set.reserve(SMALL_THRESHOLD - 4);
         assert!(!set.is_large());
-        assert_eq!(set.capacity(), SMALL_THRESHOLD.next_power_of_two());
+        assert_eq!(set.capacity(), SMALL_THRESHOLD);
         assert_eq!(set.len(), 4);
         set.reserve(SMALL_THRESHOLD);
         assert!(set.is_large());
         assert_eq!(set.len(), 4, "reserve must not disturb the contents");
         for i in 0..4 {
+            assert!(set.contains(&i));
+        }
+        // A reserve that is already satisfied must not rebuild.
+        let cap = set.capacity();
+        set.reserve(1);
+        assert_eq!(set.capacity(), cap);
+
+        // ... and a large reserve must actually hold.
+        let mut set: Set = (0..10).collect();
+        set.reserve(500);
+        let cap = set.capacity();
+        assert!(cap >= 510);
+        for i in 10..510u64 {
+            set.insert(i);
+        }
+        assert_eq!(set.capacity(), cap, "reserve did not hold");
+        assert_eq!(set.len(), 510);
+        for i in 0..510u64 {
             assert!(set.contains(&i));
         }
     }
@@ -933,7 +635,7 @@ mod tests {
             }
         }
         impl Eq for Counted {}
-        impl std::hash::Hash for Counted {
+        impl Hash for Counted {
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
                 self.0.hash(state)
             }
@@ -971,21 +673,38 @@ mod tests {
         }
 
         // Same, but the set is consumed by `into_iter` and the yielded elements are dropped by
-        // the caller — the un-yielded remainder must still be dropped exactly once.
-        let log = Rc::new(RefCell::new(Vec::new()));
-        {
-            let mut set: HybridSet<Counted> = HybridSet::new();
-            for i in 0..10 {
-                set.insert(Counted(i, log.clone()));
+        // the caller — the un-yielded remainder must still be dropped exactly once. Run on both
+        // sides of the threshold.
+        for n in [10u64, 50, 200] {
+            let log = Rc::new(RefCell::new(Vec::new()));
+            {
+                let mut set: HybridSet<Counted> = HybridSet::new();
+                for i in 0..n {
+                    set.insert(Counted(i, log.clone()));
+                }
+                let mut it = set.into_iter();
+                for _ in 0..7 {
+                    drop(it.next());
+                }
+                // `it` (holding the rest) is dropped here.
             }
-            let mut it = set.into_iter();
-            drop(it.next());
-            drop(it.next());
-            // `it` (holding 8 elements) is dropped here.
+            let mut all = log.borrow().clone();
+            all.sort_unstable();
+            assert_eq!(all, (0..n).collect::<Vec<_>>(), "n={n}");
         }
-        let mut all = log.borrow().clone();
-        all.sort_unstable();
-        assert_eq!(all, (0..10).collect::<Vec<_>>());
+    }
+
+    /// The set is two words wide, whatever it holds: a pointer to one allocation whose metadata
+    /// it points at and whose elements lie below, plus a slot/bucket count and an element count.
+    /// Eight bytes narrower than the enum this replaced, on every entry of the enclosing map.
+    #[test]
+    fn set_is_two_words() {
+        let word = std::mem::size_of::<usize>();
+        assert_eq!(std::mem::size_of::<HybridSet<(u64, i16, u64)>>(), 2 * word);
+        assert_eq!(std::mem::size_of::<HybridSet<u64>>(), 2 * word);
+        assert_eq!(std::mem::size_of::<HybridSet<[u8; 40]>>(), 2 * word);
+        // And the threshold is a type parameter, not a second layout.
+        assert_eq!(std::mem::size_of::<Swiss<u64>>(), 2 * word);
     }
 
     /// The representation switch must not change what the set holds, at the exact boundary.
@@ -1005,5 +724,60 @@ mod tests {
         // No rehash happened while filling the promoted table: it was sized for exactly the
         // elements it received.
         assert!(set.capacity() >= set.len());
+    }
+
+    /// A non-default threshold must behave the same way, at its own boundary — the const
+    /// parameter is a knob, not a special case.
+    #[test]
+    fn other_thresholds_switch_at_their_own_boundary() {
+        fn check<const SMALL: usize>() {
+            let mut set: HybridSet<u64, DefaultHashBuilder, SMALL> = HybridSet::new();
+            let mut model = BTreeSet::new();
+            for i in 0..(SMALL as u64 * 4 + 8) {
+                let v = i * 13 + 5;
+                assert_eq!(set.insert(v), model.insert(v));
+                assert_eq!(set.len(), model.len());
+                assert_eq!(
+                    set.is_large(),
+                    model.len() > SMALL,
+                    "SMALL={SMALL}, len={}",
+                    model.len()
+                );
+            }
+            for v in &model {
+                assert!(set.contains(v), "SMALL={SMALL}: {v} missing");
+            }
+            assert_eq!(set.iter().copied().collect::<BTreeSet<_>>(), model);
+        }
+        check::<0>();
+        check::<1>();
+        check::<2>();
+        check::<8>();
+        check::<16>();
+        check::<32>();
+        check::<64>();
+    }
+
+    /// Hashing is the enclosing set's job, and it must be the *same* hasher the table was built
+    /// with after every rebuild — a promotion that rehashed with a different seed would lose
+    /// elements silently.
+    #[test]
+    fn a_stateful_hasher_survives_promotion() {
+        #[derive(Clone, Default)]
+        struct Seeded;
+        impl BuildHasher for Seeded {
+            type Hasher = std::collections::hash_map::DefaultHasher;
+            fn build_hasher(&self) -> Self::Hasher {
+                std::collections::hash_map::DefaultHasher::new()
+            }
+        }
+        let mut set: HybridSet<u64, Seeded> = HybridSet::new();
+        for i in 0..500u64 {
+            set.insert(i);
+        }
+        for i in 0..500u64 {
+            assert!(set.contains(&i), "{i} lost across a rebuild");
+        }
+        assert_eq!(set.len(), 500);
     }
 }

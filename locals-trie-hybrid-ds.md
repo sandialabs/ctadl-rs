@@ -10,7 +10,8 @@ into the corresponding keys in `a`.
 Let's focus on the `Set<V>` for now. I want a new data structure that behaves like a set but:
 
 - Below a threshold of number of records, behaves like a linear probe hashtable
-- Above the threshold, is implemented like a `hashbrown::HashTable`
-- The initial threshold should be 32
+- Above the threshold, is implemented like a `hashbrown::HashTable`. Do not actually use the
+  HashTable type or any built in hashtable. Implement a custom one that is modeled after hashbrown.
+- The initial threshold should be 64
 
 The data structure should be organized so that transitioning the threshold is efficient.
