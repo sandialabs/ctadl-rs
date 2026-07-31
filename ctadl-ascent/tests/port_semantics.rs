@@ -121,7 +121,7 @@ fn flows(case: &str, store: &str, index_model: &str, probe: &str) -> bool {
 
     let import =
         ArtifactImport::try_create(case, ArtifactLanguage::Lua, &src).expect("import args");
-    cli::import(&import).expect("importing lua");
+    cli::import(&import, cli::ImportOptions::default()).expect("importing lua");
     let project = AnalysisProject::try_create(case, &[case.to_string()]).expect("project");
     cli::index(
         &project,

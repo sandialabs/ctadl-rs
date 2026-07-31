@@ -97,7 +97,7 @@ fn import_pair(case: &str, lib_text: &str) -> (String, String) {
         std::fs::write(&src, text).expect("writing lua source");
         let import =
             ArtifactImport::try_create(&name, ArtifactLanguage::Lua, &src).expect("import args");
-        cli::import(&import).expect("importing lua");
+        cli::import(&import, cli::ImportOptions::default()).expect("importing lua");
         names.push(name);
     }
     (names[0].clone(), names[1].clone())

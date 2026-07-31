@@ -7,13 +7,12 @@ CTADL (Compositional Taint Analysis in Datalog) is a static taint analyzer. CTAD
 
 ## Usage
 
-The typical pipeline is **import → index → query**. Each stage stores its output
-under a project name so later stages can pick it up. Use `ctadl <command> --help`
-for the full, current set of flags.
+The typical pipeline is **import → index → query**. Use `ctadl <command> --help` for the full,
+current set of flags.
 
 | Command | What it does |
 | --- | --- |
-| `import` | Import a single artifact (`.dex`, `.jar`, `.class`, APK, directory of `.c` files, Ghidra pcode, Flowy) into the store. For pcode (`-l pcode`), the artifact may be a binary, an existing Ghidra project (`<name>.gpr`), or a Ghidra Server URL (`ghidra://…`). |
+| `import` | Import a single artifact (`.dex`, `.jar`, `.class`, APK, directory of `.c` files, Ghidra pcode, Flowy) into the store. |
 | `index` | Index one or more imported programs into an analysis project, resolving calls and building SSA. Can load prior summaries and propagation models. |
 | `query` | Run a taint-analysis query over an indexed project and write results as SARIF. |
 | `go` | One-shot convenience: import, index, and query in a single invocation. |
@@ -35,11 +34,17 @@ ctadl index my-app
 ctadl query my-app --models sources-and-sinks.json5 --output results.sarif
 ```
 
-Several artifacts can be indexed together as one project, and an app's Java and
-native halves analyze as a whole when they are:
+### Import
+
+An APK also imports the native libraries packaged in it (`--no-native-libs`, `--native-abi` to
+control). For pcode (`-l pcode`), the artifact may be a binary, an existing Ghidra project
+(`<name>.gpr`), or a Ghidra Server URL (`ghidra://…`). 
+
+An app's Java and native halves analyze as a whole using [the JNI bridge](docs/jni.md). When the
+halves are separate files, import each and name both:
 
 ```bash
-ctadl import app.apk            --name app_dex
+ctadl import app.dex            --name app_dex
 ctadl import -l pcode libapp.so --name app_native
 ctadl index  app app_dex app_native
 ```

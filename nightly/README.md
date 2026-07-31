@@ -67,6 +67,20 @@ they are picked up automatically; no list to edit.
   DEX, the `.c` as a pcode shared library, and the two are co-indexed as one
   project so the JNI bridge has both halves to join.
 
+  Each pair also yields two packaging variants, which make exactly the same
+  claims — so the set is a direct A/B on the importer alone:
+
+  - `Jni:Foo+apk` packages both halves into one APK and imports it once, the way
+    an ordinary Android app ships. It passes only if the APK importer finds,
+    extracts, and disassembles `lib/<abi>` for itself.
+  - `Jni:Foo+split-apks` packages each half into an APK of its own and imports
+    both, the way an app bundle (or an XAPK download) ships. The native APK has
+    no `classes*.dex` in it at all.
+
+  A sibling `foo.bridge.jsonl` adds a third variant, `Jni:Foo+bridge`, which
+  joins the boundary with a declarative model under `--no-jni-bridge` instead of
+  the built-in pass.
+
 ## Adding a Java/DEX test
 
 1. Write `tests/java/Foo.java` with a `source()` and a `sink(...)` (see the

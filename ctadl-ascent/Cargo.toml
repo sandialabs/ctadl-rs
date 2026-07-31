@@ -67,6 +67,8 @@ immortal = { path = "../immortal" }
 
 [dev-dependencies]
 test-log = "0.2.19"
+# Building the split APKs of an app bundle (native-only, resource-only) as test fixtures.
+zip = "0.6"
 
 [lints]
 workspace = true

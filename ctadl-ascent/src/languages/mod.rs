@@ -1,3 +1,4 @@
+pub mod apk_native;
 pub mod dex;
 pub mod jni;
 pub mod jvm;
