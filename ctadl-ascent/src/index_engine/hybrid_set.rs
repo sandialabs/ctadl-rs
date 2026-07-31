@@ -159,8 +159,8 @@ impl<T, S, const SMALL: usize> HybridSet<T, S, SMALL> {
     /// control bytes and group mirror — once large.
     ///
     /// Both terms are the allocation the set actually made, not an estimate: unlike the
-    /// [`super::hb_bytes`] model of hashbrown's layout that the enclosing map still needs, this
-    /// structure computes its own layout, so it can simply report it.
+    /// [`super::locals_trie::hb_bytes`] model of hashbrown's layout that the enclosing map still
+    /// needs, this structure computes its own layout, so it can simply report it.
     pub fn heap_bytes(&self) -> usize {
         self.table.heap_bytes()
     }
@@ -307,7 +307,7 @@ mod tests {
     use std::hash::{BuildHasher, Hash};
     use std::rc::Rc;
 
-    use super::super::{hb_buckets, hb_bytes};
+    use super::super::locals_trie::{HB_GROUP_WIDTH, hb_buckets, hb_bytes};
     use super::raw::slot_count_for;
     use super::{DefaultHashBuilder, HybridSet, SMALL_THRESHOLD};
 
@@ -552,7 +552,7 @@ mod tests {
             }
             // The allocation is hashbrown's byte for byte, wherever hashbrown's group is also
             // 8 bytes wide.
-            if super::super::HB_GROUP_WIDTH == super::swiss::GROUP_WIDTH {
+            if HB_GROUP_WIDTH == super::swiss::GROUP_WIDTH {
                 assert_eq!(
                     ours.heap_bytes(),
                     hb_bytes(theirs.capacity(), std::mem::size_of::<u64>()),

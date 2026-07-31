@@ -324,8 +324,8 @@ impl<T, const SMALL: usize> RawTable<T, SMALL> {
     /// large.
     ///
     /// This is the allocation the table actually made, not an estimate: unlike the
-    /// [`super::super::hb_bytes`] model of hashbrown's layout that the enclosing map still needs,
-    /// this structure computes its own layout, so it can simply report it.
+    /// [`super::super::locals_trie::hb_bytes`] model of hashbrown's layout that the enclosing map
+    /// still needs, this structure computes its own layout, so it can simply report it.
     pub fn heap_bytes(&self) -> usize {
         if self.cap == 0 {
             0

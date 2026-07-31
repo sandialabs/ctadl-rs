@@ -19,8 +19,7 @@
 //! (36k inner maps ≈ 53%, 70k leaf sets ≈ 38%, only ~13% real data + outer map). It does not
 //! all come back, though: the flat form pays `P` inline on every leaf where the nested form
 //! shared one `P` per leaf set, so measured against a faithful rebuild of the nested design
-//! over identical data the flat design is 1.1–2.3× smaller, not ~10×
-//! (`locals-trie-benchmark.md` §5).
+//! over identical data the flat design is 1.1–2.3× smaller, not ~10×.
 //!
 //! We collapse both inner levels into one **[`HybridSet`] of `(P,M,Fp)` per `(F,V)` group**:
 //!   - one heap allocation per group instead of `1 + (#distinct P)` tiny hash tables;
@@ -67,7 +66,6 @@ use ascent::internal::{
 };
 use rustc_hash::FxHasher;
 
-use super::hb_bytes;
 use super::hybrid_set::{HybridSet, SMALL_THRESHOLD};
 
 // The store keys are trusted, program-derived ids, so key on the fast,
@@ -75,6 +73,73 @@ use super::hybrid_set::{HybridSet, SMALL_THRESHOLD};
 // SipHash.
 type Map<K, V> = hashbrown::HashMap<K, V, BuildHasherDefault<FxHasher>>;
 type Set<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
+
+// ---------------------------------------------------------------------------
+// Sizing hashbrown's own tables, for [`HeapReport`].
+// ---------------------------------------------------------------------------
+//
+// The store's leaves live in `HybridSet`s, which report their own bytes, but the maps holding
+// those sets are hashbrown's and hashbrown reports only `capacity()`. These three items turn
+// that into bytes. They live here because this store is what they were written for and what
+// the counting-allocator bench validates them against; `assign_like_trie` and `hybrid_set`'s
+// tests use them from here.
+
+/// Width in bytes of hashbrown's SIMD control group. Every table's allocation carries
+/// `Group::WIDTH` trailing control bytes on top of the one per bucket, so the heap estimators
+/// below need it — and hashbrown does not export it. hashbrown picks the implementation by
+/// target feature (`hashbrown-0.16.1/src/control/group/mod.rs`); this mirrors that choice.
+pub const HB_GROUP_WIDTH: usize = if cfg!(all(
+    target_feature = "sse2",
+    any(target_arch = "x86", target_arch = "x86_64"),
+    not(miri)
+)) {
+    16 // sse2
+} else if cfg!(all(
+    target_arch = "aarch64",
+    target_feature = "neon",
+    target_endian = "little",
+    not(miri)
+)) {
+    8 // neon
+} else {
+    std::mem::size_of::<usize>() // generic fallback: Group is a usize
+};
+
+/// Number of buckets hashbrown allocated for a table reporting `capacity` (0 if it has never
+/// allocated).
+///
+/// This inverts hashbrown's `bucket_mask_to_capacity`: a table of `b >= 8` buckets reports
+/// `b / 8 * 7`, holding 12.5% of slots empty, while the smallest table — `b == 4` — reports 3.
+/// So the floor is **4** buckets, not 8. `capacity_to_buckets` does lift the minimum to 8 or 16
+/// buckets for elements narrower than 4 bytes, but that lift is already reflected in the
+/// `capacity` the table reports, so it needs no modelling here.
+pub fn hb_buckets(capacity: usize) -> usize {
+    if capacity == 0 {
+        return 0;
+    }
+    (capacity * 8).div_ceil(7).next_power_of_two().max(4)
+}
+
+/// Estimated heap bytes held by a hashbrown table whose element type is `elem` bytes wide and
+/// whose `capacity()` is `capacity`. Includes load-factor slack, since it prices the buckets
+/// actually allocated rather than the elements stored.
+///
+/// This reproduces hashbrown's `calculate_layout_for` exactly — element slots padded up to the
+/// control alignment, then one control byte per bucket plus a [`HB_GROUP_WIDTH`] mirror — for
+/// any element whose alignment is at most [`HB_GROUP_WIDTH`]. Every type measured through this
+/// is 8-byte-aligned, so the estimate is exact; a more strictly aligned element would allocate
+/// slightly more padding than reported.
+pub fn hb_bytes(capacity: usize, elem: usize) -> usize {
+    let buckets = hb_buckets(capacity);
+    if buckets == 0 {
+        return 0;
+    }
+    buckets
+        .saturating_mul(elem)
+        .next_multiple_of(HB_GROUP_WIDTH)
+        + buckets
+        + HB_GROUP_WIDTH
+}
 
 // ---------------------------------------------------------------------------
 // A single `(F,V)` group's leaves.

@@ -322,26 +322,6 @@ impl Bag for SortedThenHash<64> {
     }
 }
 
-impl Bag for SortedThenHash<32> {
-    const NAME: &'static str = "vec32";
-    #[inline]
-    fn insert(&mut self, value: Leaf) -> bool {
-        sth_insert::<32>(self, value)
-    }
-    #[inline]
-    fn contains(&self, value: &Leaf) -> bool {
-        sth_contains::<32>(self, value)
-    }
-    #[inline]
-    fn merge(&mut self, other: Self) -> usize {
-        sth_merge::<32>(self, other)
-    }
-    #[inline]
-    fn len(&self) -> usize {
-        sth_len::<32>(self)
-    }
-}
-
 fn sth_len<const T: usize>(s: &SortedThenHash<T>) -> usize {
     match s {
         SortedThenHash::Small(v) => v.len(),
@@ -619,10 +599,6 @@ fn main() {
         line(
             <SortedThenHash<64> as Bag>::NAME,
             measure::<SortedThenHash<64>>(n, paths),
-        );
-        line(
-            <SortedThenHash<32> as Bag>::NAME,
-            measure::<SortedThenHash<32>>(n, paths),
         );
         line(<Set<Leaf> as Bag>::NAME, measure::<Set<Leaf>>(n, paths));
         if row_no + 1 < sizes.len() {

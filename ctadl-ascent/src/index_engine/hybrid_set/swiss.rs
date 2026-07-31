@@ -27,9 +27,9 @@
 //!   `Bucket::from_base_index` does, so one pointer describes the whole table.
 //! * **Sizing.** `buckets = (capacity * 8 / 7).next_power_of_two()`, and a table of `b` buckets
 //!   holds `b / 8 * 7` elements — hashbrown's `capacity_to_buckets` / `bucket_mask_to_capacity`.
-//!   The bucket counts therefore agree with [`super::super::hb_buckets`] at every size a set
-//!   actually reaches, which a unit test pins against a real `hashbrown::HashSet` grown element
-//!   by element.
+//!   The bucket counts therefore agree with [`super::super::locals_trie::hb_buckets`] at every
+//!   size a set actually reaches, which a unit test pins against a real `hashbrown::HashSet`
+//!   grown element by element.
 //! * **Probing.** Quadratic probing over *groups* with triangular numbers
 //!   (`pos += GROUP_WIDTH * i`), which visits every group exactly once on a power-of-two table.
 //! * **h1/h2.** The bucket index comes from the low bits of the hash, the control byte from the

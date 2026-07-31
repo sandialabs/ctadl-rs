@@ -11,8 +11,10 @@
 //! sub-structure, and at the scales a synthetic program reaches, the store is a small slice
 //! of the process. Here a counting global allocator measures *only* what the store
 //! allocates, so bytes/row is ground truth rather than an estimate — which also lets us
-//! check `HeapReport`'s own estimator (`index_engine::hb_bytes`, whose hash-table term this
-//! bench verifies exactly; see `locals-trie-benchmark.md`).
+//! check `HeapReport`'s own estimator against it: the `est/real` column below is
+//! `locals_trie::hb_bytes`'s whole-store prediction over the counting allocator's truth. (The
+//! only per-table check left on `hb_bytes` is `hybrid_set`'s `bucket_counts_track_hashbrown`,
+//! which covers 8 B elements in tables of 8 buckets or more; see `locals-trie-benchmark.md` §8.)
 //!
 //! Leaf/key types are plain integers chosen to have the same sizes and hashing cost as the
 //! production instantiation (`FunctionId`, `FlowVariable`, `Path`, `FormalIndex`, `Path`):
@@ -27,7 +29,6 @@ use std::time::Instant;
 use ascent::internal::{RelFullIndexWrite, RelIndexMerge, ToRelIndex};
 use ctadl_ascent::index_engine::hybrid_set::HybridSet;
 use ctadl_ascent::index_engine::locals_trie::{LocalsIndCommon, ToFull};
-use ctadl_ascent::index_engine::{HB_GROUP_WIDTH, hb_bytes};
 use rustc_hash::FxHasher;
 
 // ---------------------------------------------------------------------------
@@ -186,82 +187,12 @@ fn build(groups: usize, group_size: usize, rounds: usize, paths: usize) -> Run {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The pre-trie design, for a like-for-like memory comparison.
-// ---------------------------------------------------------------------------
-
-/// The nested representation `locals_trie` replaced: `(F,V) -> P -> {(M,Fp)}`, i.e. two inner
-/// hash levels per group. Built over the identical synthetic data as [`build`] so the ratio of
-/// live bytes is the actual saving from collapsing both inner levels into one sorted `Vec`
-/// (the module docs claim structural slack was ~91% of that store).
-fn build_nested(groups: usize, group_size: usize, paths: usize) -> (f64, usize) {
-    type Map<K, V> = hashbrown::HashMap<K, V, BuildHasherDefault<FxHasher>>;
-    type Set<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
-    let base = mem_reset();
-    let start = Instant::now();
-    let mut fwd: Map<(F, V), Map<P, Set<(M, Fp)>>> = Map::default();
-    for g in 0..groups {
-        let (f, v) = ((g / 64) as F, g as V);
-        for i in 0..group_size {
-            fwd.entry((f, v))
-                .or_default()
-                .entry((i % paths) as P)
-                .or_default()
-                .insert(((i / paths) as M, i as Fp));
-        }
-    }
-    let secs = start.elapsed().as_secs_f64();
-    let live = mem_since(base).live;
-    drop(fwd);
-    (secs, live)
-}
-
-// ---------------------------------------------------------------------------
-// hashbrown minimum-allocation probe.
-// ---------------------------------------------------------------------------
-
-/// Exact bytes hashbrown allocates for a `HashSet<T>` holding `n` elements, next to what the
-/// shared `hb_bytes` estimator predicts. This is what checked the module docs' claim that a
-/// tiny inner table "pays hashbrown's 8-bucket minimum allocation to hold ~2 elements":
-/// `capacity` here is hashbrown's own report, and bucket count is
-/// `capacity.next_power_of_two()`-ish, so `capacity == 3` means a **4**-bucket table — the
-/// minimum is 4, not 8, which is the error `hb_bytes` used to carry.
-///
-/// Instantiated below for the three element sizes that matter: 16 B = `(M,Fp)`, the leaf set
-/// of the *old* nested design; 24 B = `(P,M,Fp)`, this module's leaf; 40 B = one
-/// `(P, HashSet<(M,Fp)>)` entry of the old design's inner map.
-fn hashbrown_probe<T: Eq + std::hash::Hash + From<u16>>(n: usize) -> (usize, usize, usize) {
-    type Set<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
-    let base = mem_reset();
-    let mut s = Set::<T>::default();
-    for i in 0..n {
-        s.insert(T::from(i as u16));
-    }
-    let bytes = mem_since(base).live;
-    let cap = s.capacity();
-    // The production estimator itself, so the table prints truth next to estimate.
-    let est = hb_bytes(cap, std::mem::size_of::<T>());
-    drop(s);
-    (bytes, cap, est)
-}
-
-/// `n`-byte hashable stand-in so [`hashbrown_probe`] can be run at a chosen element size.
-#[derive(PartialEq, Eq, Hash)]
-struct Elem<const N: usize>([u8; N]);
-impl<const N: usize> From<u16> for Elem<N> {
-    fn from(v: u16) -> Self {
-        let mut a = [0u8; N];
-        a[..2].copy_from_slice(&v.to_le_bytes());
-        Self(a)
-    }
-}
-
 fn main() {
     let tsv = std::env::args().any(|a| a == "--tsv");
     // Ignore criterion-style flags cargo passes through (`--bench`, `--save-baseline`, ...).
 
     // The leaf is the size that matters and it matches production (24 B); the outer key is
-    // (F,V) plus the group, which is one structure covering both of the representations below.
+    // (F,V) plus the group.
     println!(
         "leaf (P,M,Fp) = {} B, key (F,V) = {} B, group HybridSet = {} B \
          (was: Vec {} B | HashSet {} B), outer entry = {} B",
@@ -272,40 +203,6 @@ fn main() {
         std::mem::size_of::<hashbrown::HashSet<(P, M, Fp), BuildHasherDefault<FxHasher>>>(),
         std::mem::size_of::<((F, V), HybridSet<(P, M, Fp)>)>(),
     );
-
-    println!(
-        "\n== hashbrown HashSet<T>: real allocation vs. index_engine's `hb_bytes` estimator =="
-    );
-    println!(
-        "(capacity 3 == a 4-bucket table; Group::WIDTH here is {HB_GROUP_WIDTH}, so a table is \
-              buckets*size + buckets + WIDTH bytes)"
-    );
-    println!(
-        "{:>7} {:>5} {:>9} {:>8} {:>7} {:>10} {:>9}",
-        "elem B", "n", "capacity", "real B", "B/elem", "hb_bytes", "est/real"
-    );
-    for n in [0usize, 1, 2, 3, 4, 5, 7, 8, 14, 15, 16, 32] {
-        for (size, probe) in [
-            (
-                16usize,
-                hashbrown_probe::<Elem<16>> as fn(usize) -> (usize, usize, usize),
-            ),
-            (24, hashbrown_probe::<Elem<24>>),
-            (40, hashbrown_probe::<Elem<40>>),
-        ] {
-            let (bytes, cap, est) = probe(n);
-            let per = if n == 0 { 0.0 } else { bytes as f64 / n as f64 };
-            let ratio = if bytes == 0 {
-                0.0
-            } else {
-                est as f64 / bytes as f64
-            };
-            println!("{size:>7} {n:>5} {cap:>9} {bytes:>8} {per:>7.1} {est:>10} {ratio:>9.2}");
-            if tsv {
-                println!("DATA\thashbrown\t{size}\t{n}\t{cap}\t{bytes}\t{est}");
-            }
-        }
-    }
 
     // Sweep group size at constant total rows, so time and bytes/row are comparable across
     // the sweep. `hybrid_set::SMALL_THRESHOLD` is where a group stops being a linear-probing
@@ -367,43 +264,6 @@ fn main() {
         let groups = ROWS / group_size;
         let r = build(groups, group_size, 1, 1.max(group_size / 4));
         line("bulk", group_size, groups, &r);
-    }
-
-    println!(
-        "\n== flat hybrid-set groups (this module) vs. the nested `(F,V)->P->{{(M,Fp)}}` it \
-         replaced =="
-    );
-    println!(
-        "{:>7} {:>9} {:>7} {:>12} {:>8} {:>12} {:>8} {:>12}",
-        "group", "groups", "paths", "nested B", "B/row", "flat B", "B/row", "nested/flat"
-    );
-    // The first rows are the shape the module docs cite as measured on a real workload: ~5
-    // leaves per `(F,V)` group spread over ~2 distinct `P`, which is what the "each inner
-    // level pays hashbrown's 8-bucket minimum" claim is about.
-    let shapes: Vec<(usize, usize)> = [(2, 1), (5, 2), (5, 1), (10, 2), (20, 4), (64, 16)]
-        .into_iter()
-        .chain((7..=MAX_LG).map(|lg| (1usize << lg, 1usize << (lg - 2))))
-        .collect();
-    for (group_size, paths) in shapes {
-        let groups = (ROWS / group_size).max(1);
-        let (nsecs, nested) = build_nested(groups, group_size, paths);
-        let r = build(groups, group_size, 1, paths);
-        let rows = groups * group_size;
-        println!(
-            "{:>7} {:>9} {:>7} {:>12} {:>8.1} {:>12} {:>8.1} {:>12.2}",
-            group_size,
-            groups,
-            paths,
-            nested,
-            nested as f64 / rows as f64,
-            r.live_total,
-            r.live_total as f64 / rows as f64,
-            nested as f64 / r.live_total as f64,
-        );
-        rows_out.push(format!(
-            "DATA\tnested\t{group_size}\t{groups}\t{rows}\t{nested}\t{}\t{nsecs:.4}",
-            r.live_total
-        ));
     }
 
     if tsv {

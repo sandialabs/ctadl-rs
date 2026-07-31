@@ -101,16 +101,16 @@ their store estimates differ only by the estimator fix.
 | `ctadl-ascent/src/index_engine/hybrid_set.rs` | `HybridSet<T, S>` — the set; 13 unit tests |
 | `ctadl-ascent/src/index_engine/hybrid_set/raw.rs` | `RawTable<T>` — the one structure both regimes share |
 | `ctadl-ascent/src/index_engine/hybrid_set/swiss.rs` | the from-scratch Swiss table's probing/sizing rules; 3 unit tests |
-| `ctadl-ascent/src/index_engine/mod.rs` | `hb_buckets` / `hb_bytes` / `HB_GROUP_WIDTH` — the shared, exact hashbrown-size estimator (§8) + 2 unit tests |
+| `ctadl-ascent/src/index_engine/locals_trie.rs` | `hb_buckets` / `hb_bytes` / `HB_GROUP_WIDTH` — the shared, exact hashbrown-size estimator (§8) |
 | `ctadl-ascent/benches/hybrid_set.rs` | **tier 0** — five set representations under a counting allocator |
 | `ctadl-ascent/benches/locals_trie.rs` | **tier 1** — the whole store, driven as Ascent drives it, under a counting allocator |
 | `scripts/gen-locals-bench.py` | generates Flowy (`.tnt`) programs with a chosen `(F,V)` group size, path count and function count |
 | `scripts/locals-bench.py` | **tier 2** — generate → `ctadl import` → `ctadl index`, parsing store bytes, fixpoint time, peak footprint and peak RSS |
 | `HeapReport` additions | `max_group`, `large_groups`, `group_hist` — the store logs its own group-size distribution, which is how the harness verifies the generator hit its target shape |
 
-`cargo test -p ctadl-ascent --lib` is green in both profiles (200 tests, 20 of them in
-`index_engine`: 13 for `HybridSet`, 3 for the Swiss layer, 2 for the estimator, 2 for the store's
-views), and `cargo clippy --all-targets -p ctadl-ascent` is clean under the workspace's
+`cargo test -p ctadl-ascent --lib` is green in both profiles (198 tests, 18 of them in
+`index_engine`: 13 for `HybridSet`, 3 for the Swiss layer, 2 for the store's views), and
+`cargo clippy --all-targets -p ctadl-ascent` is clean under the workspace's
 `undocumented_unsafe_blocks = "deny"`.
 
 ```bash
@@ -294,27 +294,6 @@ estimate logged by every real index run is trustworthy at whole-store granularit
    hashbrown table. Whatever the widest iteration reached is held to the end. This is untouched
    by the branch and is the largest single item left (§10).
 
-### The nested design this replaced
-
-The module's forerunner stored `(F,V) -> P -> {(M,Fp)}` as `Map<(F,V), Map<P, Set<(M,Fp)>>>`. The
-bench rebuilds it faithfully over identical data, so the "flat beats nested" claim in the module
-docs has a number:
-
-| group size | paths | nested B/row | flat B/row | nested/flat |
-|---|---|---|---|---|
-| 2 | 1 | 173.0 | 70.7 | **2.45** |
-| **5** | **2** | **77.1** | **52.0** | **1.48** |
-| 10 | 2 | 52.1 | 45.2 | 1.15 |
-| 20 | 4 | 48.7 | 41.8 | 1.16 |
-| 64 | 16 | 58.2 | 25.5 | **2.28** |
-| 1024 | 256 | 56.6 | 50.1 | 1.13 |
-
-At the shape the module docs cite as measured on a real workload — ~5 leaves per group over ~2
-distinct `P` — the flat form is **1.48×** smaller, and across the sweep **1.13–2.45×**. It is not
-the order of magnitude an older version of the docs implied: flattening removes the inner tables'
-slack and then pays some of it back by storing `P` inline on every leaf where the nested form
-shared one `P` across a leaf set.
-
 ---
 
 ## 6. Tier 2 — end to end, `ctadl index` on generated programs
@@ -478,7 +457,7 @@ binaries and dilutes the ratio, so §6's store figures are the ones to quote for
 
 ## 8. The `hb_bytes` estimator, and hashbrown's minimum table
 
-Both `heap_report()`s price their enclosing hashbrown maps with `index_engine::hb_bytes`. Before
+Both `heap_report()`s price their enclosing hashbrown maps with `locals_trie::hb_bytes`. Before
 this branch that estimator was wrong in a way worth recording, because the module docs repeated
 its error as a design justification.
 
@@ -505,18 +484,6 @@ An element of 16/24/40 B lands on `min_cap = 3` → a **4**-bucket table. 8 buck
 4–7 elements, 16 at 8–14. hashbrown 0.14.5 (also in the lock file, via other dependencies) has
 the same floor. The claim was off by 2× exactly in the size range the sentence is about.
 
-Measured this session by the tier-1 bench (`capacity` is hashbrown's own report, so `capacity 3`
-*is* a 4-bucket table). `old` is the estimator main still ships; `new` is this branch's:
-
-| elem B | n | capacity | real B | new `hb_bytes` | new est/real | old `hb_bytes` | old est/real |
-|---|---|---|---|---|---|---|---|
-| 16 = `(M,Fp)`, the old leaf set | 1–3 | 3 | 76 | 76 | **1.00** | 152 | **2.00** |
-| 24 = `(P,M,Fp)`, this module's leaf | 1–3 | 3 | 108 | 108 | **1.00** | 216 | **2.00** |
-| 40 = `(P, HashSet)`, the old inner-map entry | 1–3 | 3 | 172 | 172 | **1.00** | 344 | **2.00** |
-| 24 | 4–7 | 7 | 208 | 208 | 1.00 | 216 | 1.04 |
-| 24 | 8–14 | 14 | 408 | 408 | 1.00 | 416 | 1.02 |
-| 24 | 15–28 | 28 | 808 | 808 | 1.00 | 816 | 1.01 |
-
 The 8-bucket assumption was baked into shipping instrumentation in three copies —
 `HeapReport::hb_bytes` in `locals_trie.rs`, its twin in `assign_like_trie.rs`, and a third in the
 bench — each computing `…next_power_of_two().max(8)` and so reporting every hashbrown table of
@@ -526,16 +493,22 @@ whole-store error stayed under ~4 %; above 3 elements the old formula was accura
 (it modelled `buckets*(elem+1) + 16`; the truth is `buckets*elem + buckets + Group::WIDTH`, with
 `Group::WIDTH` 8 on aarch64 and 16 on x86-64 SSE2).
 
-**Fixed on this branch.** The three copies are one shared `index_engine::hb_bytes` over
-`index_engine::hb_buckets` — `(capacity * 8).div_ceil(7).next_power_of_two().max(4)`, the exact
+**Fixed on this branch.** The three copies are one shared `locals_trie::hb_bytes` over
+`locals_trie::hb_buckets` — `(capacity * 8).div_ceil(7).next_power_of_two().max(4)`, the exact
 inverse of hashbrown's `bucket_mask_to_capacity` — priced with an `HB_GROUP_WIDTH` constant that
 mirrors hashbrown's own target-feature choice of `Group` rather than hardcoding 16. It reproduces
 `calculate_layout_for` exactly for any element aligned to at most `Group::WIDTH` (all of ours),
-so **est/real is 1.00 on every row above**, small tables included, and 1.00 against the counting
-allocator for the whole store at every group size in §5. Two unit tests hold it there: one grows
-real hashbrown tables element by element and asserts `hb_buckets` recovers the bucket count from
-every `capacity` hashbrown reports (element sizes 1, 2, 8, 16, 24, 40, 48 B — the narrow ones
-cover hashbrown's minimum-capacity lift); the other pins the 4-bucket floor and its byte figures.
+small tables included, and is 1.00 against the counting allocator for the whole store at every
+group size in §5.
+
+**Its test coverage is now partial.** `hybrid_set`'s `bucket_counts_track_hashbrown` grows a real
+`hashbrown::HashSet` to 2000 elements and asserts `hb_bytes` agrees with the allocation at every
+capacity it steps through — but only for 8 B elements and only for tables of 8 buckets or more,
+since that test's subject is the Swiss table and the Swiss table has no 4-bucket regime. **The
+4-bucket floor, which is the whole subject of this section, has no test.** Two that pinned it
+directly, and the bench that printed estimate against real allocation at each element size, were
+both removed after this session. The claim above rests on the hashbrown source read and on the
+whole-store `est/real` of 1.00 in §5.
 
 Two consequences for reading the rest of this document:
 

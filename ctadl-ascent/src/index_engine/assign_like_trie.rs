@@ -39,7 +39,7 @@ use ascent::internal::{
     RelIndexWrite, ToRelIndex,
 };
 
-use crate::index_engine::hb_bytes;
+use crate::index_engine::locals_trie::hb_bytes;
 // Reuse the shared helpers from `locals_trie`: the clone-able boxed iterator and the no-op write
 // target for view indices.
 use crate::index_engine::locals_trie::{DynIter, NoopWrite};
