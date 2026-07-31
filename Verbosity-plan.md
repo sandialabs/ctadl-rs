@@ -1,4 +1,4 @@
-# ctadl logging design
+# ctadl logging design - DO-NOT-MERGE
 
 Command output goes to stdout or files and is never affected by RUST_LOG. Progress, status,
 diagnostics go through the "log" crate on stderr, except for the result of the final error of the
