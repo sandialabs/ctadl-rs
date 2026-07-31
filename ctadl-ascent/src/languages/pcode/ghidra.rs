@@ -3,13 +3,21 @@ use flate2::Compression;
 use flate2::write::GzEncoder;
 use rayon::prelude::*;
 use std::env;
-use std::fs;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus, Stdio};
 
 const MAXMEM: &str = "40G";
 const LAUNCH_MODE: &str = "fg";
 const VMARG_LIST: &str = "-XX:ParallelGCThreads=4 -XX:CICompilerCount=4 ";
+
+/// Name of the file, inside the import directory, that captures everything Ghidra
+/// writes to its stdout/stderr. See [`run_and_log`].
+const GHIDRA_LOG_NAME: &str = "ghidra.log";
+
+/// How many trailing log lines to quote when Ghidra fails, so the error is
+/// actionable without the user having to go open the log.
+const GHIDRA_LOG_TAIL_LINES: usize = 20;
 
 /// The Ghidra program source that [`ExportPcode.java`](../../../../pcode-reader/ExportPcode.java)
 /// runs against.
@@ -221,14 +229,19 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
         .arg("-scriptPath")
         .arg(&script_path);
 
-    log::info!("Running Ghidra: {:?}", command);
+    let log_path = output_dir.join(GHIDRA_LOG_NAME);
 
-    let status = command.status()?;
+    log::info!("Running Ghidra: {:?}", command);
+    log::info!("Ghidra console output -> {}", log_path.display());
+
+    let status = run_and_log(&mut command, &log_path)?;
 
     if !status.success() {
         return Err(Error::PcodeConversion(format!(
-            "Ghidra analyzeHeadless failed with status: {}",
-            status
+            "Ghidra analyzeHeadless failed with status: {}\nGhidra output is in {}\n{}",
+            status,
+            log_path.display(),
+            log_tail(&log_path)
         )));
     }
 
@@ -238,12 +251,47 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
     // confusing "missing fact file" error while reading the (absent) facts.
     if fs::read_dir(&facts_dir)?.next().is_none() {
         return Err(Error::PcodeConversion(format!(
-            "Ghidra produced no pcode facts in {} — check the Ghidra output above for an import error",
-            facts_dir.display()
+            "Ghidra produced no pcode facts in {} — check {} for an import error\n{}",
+            facts_dir.display(),
+            log_path.display(),
+            log_tail(&log_path)
         )));
     }
 
     Ok(())
+}
+
+/// Runs `command` to completion with its stdout and stderr redirected into
+/// `log_path` instead of the terminal.
+fn run_and_log(command: &mut Command, log_path: &Path) -> Result<ExitStatus, Error> {
+    let log_file = File::create(log_path)?;
+    let status = command
+        .stdout(Stdio::from(log_file.try_clone()?))
+        .stderr(Stdio::from(log_file))
+        .status()?;
+    Ok(status)
+}
+
+/// The last [`GHIDRA_LOG_TAIL_LINES`] lines of `log_path`, formatted for
+/// inclusion in an error message. Best-effort: an unreadable or empty log yields
+/// an empty string rather than masking the failure being reported.
+fn log_tail(log_path: &Path) -> String {
+    let Ok(contents) = fs::read(log_path) else {
+        return String::new();
+    };
+    let text = String::from_utf8_lossy(&contents);
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    let start = lines.len().saturating_sub(GHIDRA_LOG_TAIL_LINES);
+    let mut out = format!("last {} line(s) of Ghidra output:\n", lines.len() - start);
+    for line in &lines[start..] {
+        out.push_str("  ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 /// Gzip every `*.facts` file in `facts_dir` in place, replacing it with a

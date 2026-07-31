@@ -87,6 +87,24 @@ SELECT
 
 # Pcode
 
+## Ghidra output
+
+A headless Ghidra run prints thousands of lines of analyzer progress. None of it
+goes to your terminal by default; it is captured verbatim, both streams
+interleaved, in
+
+```
+~/.local/state/ctadl/imports/<name>/ghidra.log
+```
+
+The child writes it there directly, so `tail -f` on it follows a running import.
+An APK's native libraries are each their own sub-import
+(`<parent>__<abi>__<stem>`), so each gets its own `ghidra.log`.
+
+When Ghidra fails, or succeeds but exports no facts, the error names that path and
+quotes the last 20 lines, so a failed import points you at the log without your
+having to know it exists.
+
 ## Duckdb
 
 Print high PCode in Duckdb:
