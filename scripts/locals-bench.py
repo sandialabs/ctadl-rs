@@ -100,6 +100,14 @@ HEAP_RE = re.compile(
     r"fidx ([\d.]+) MB \((\d+)%\): (\d+) funcs, (\d+) V entries \| "
     r"groups: max (\d+), large (\d+), mean ([\d.]+), log2hist \[([^\]]*)\]"
 )
+# A build from before this branch (e.g. `main`) logs the same line without the `groups:` shape
+# suffix, which `HeapReport` grew here. Parse it too, so `main` itself can be measured; note its
+# `hb_bytes` predates the fix in `locals-trie-benchmark.md` §8 and so overcounts small tables.
+LEGACY_HEAP_RE = re.compile(
+    r"locals store estimate: total ([\d.]+) MB over (\d+) rows \(([\d.]+) B/row\) \| "
+    r"fwd ([\d.]+) MB \((\d+)%\): (\d+) \(F,V\) groups, (\d+) \(F,V,P\) entries, (\d+) leaves \| "
+    r"fidx ([\d.]+) MB \((\d+)%\): (\d+) funcs, (\d+) V entries"
+)
 INCREASE_RE = re.compile(r"relation increase: locals: (\d+),.*?reached \((\d+)/\d+\)")
 SCC_RE = re.compile(r"scc (\d+): iterations: (\d+), time: ([\d.]+)(ns|µs|ms|s)\b")
 MEMCP_BEFORE_RE = re.compile(r"about to enter ascent_run: ([\d.-]+) MB")
@@ -124,6 +132,15 @@ def parse_log(log):
             "fidx_mb": float(g[8]), "funcs": int(g[10]),
             "max_group": int(g[12]), "large": int(g[13]), "mean_group": float(g[14]),
             "hist": g[15],
+        }
+    elif LEGACY_HEAP_RE.search(log):
+        g = LEGACY_HEAP_RE.search(log).groups()
+        rec = {
+            "store_mb": float(g[0]), "rows": int(g[1]), "b_per_row": float(g[2]),
+            "fwd_mb": float(g[3]), "groups": int(g[5]), "p_entries": int(g[6]),
+            "fidx_mb": float(g[8]), "funcs": int(g[10]),
+            "max_group": 0, "large": 0,
+            "mean_group": int(g[7]) / int(g[5]) if int(g[5]) else 0.0, "hist": "",
         }
     else:
         m = INCREASE_RE.search(log)

@@ -3,7 +3,7 @@
 //! enum over two.
 //!
 //! This is the `Set<V>` half of the `Map<K, Set<V>>` a Datalog index on `K` needs (see
-//! `locals-trie-hybrid-ds.md`). In the workloads that motivate it the number of values per key
+//! `locals-trie-benchmark.md` §1). In the workloads that motivate it the number of values per key
 //! varies over four orders of magnitude — most keys hold a couple of values, a few hold
 //! thousands — and no single representation is right for both ends:
 //!
@@ -48,7 +48,7 @@
 //! ## Choosing the threshold
 //!
 //! [`SMALL_THRESHOLD`] is the default of the `SMALL` const parameter, not a hard-wired constant,
-//! so a measurement can sweep it (`locals-trie-hybrid-eval.md` §6 does, at 16 / 32 / 64) without
+//! so a measurement can sweep it (`locals-trie-benchmark.md` §9 argues the value) without
 //! editing the structure — and `SMALL = 0` gives a pure Swiss table, which is the A/B the
 //! `hybrid_set` bench runs against `hashbrown`.
 //!

@@ -106,7 +106,7 @@ type Leaf = (u64, i16, u64);
 
 type Set<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 
-/// The set operations an index needs of its value collection (`locals-trie-hybrid-ds.md`).
+/// The set operations an index needs of its value collection (`locals-trie-benchmark.md` §1).
 trait Bag: Default {
     /// Displayed name.
     const NAME: &'static str;
@@ -454,7 +454,7 @@ struct Row {
 }
 
 /// Deltas merged in to build one set, mirroring the ~6 semi-naive iterations a real fixpoint
-/// takes (`locals-trie-benchmark.md` §4). Held constant across `n` so the merge column measures
+/// takes (`locals-trie-benchmark.md` §6). Held constant across `n` so the merge column measures
 /// merge cost per element rather than a varying number of merges.
 const ROUNDS: usize = 8;
 

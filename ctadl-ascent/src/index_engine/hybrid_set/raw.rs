@@ -69,7 +69,7 @@
 //! pays load-factor slack, only `Vec`-style doubling slack. It is the one place the design is
 //! measurably worse than either alternative: a *miss* against a completely full table costs
 //! ~19 ns at 32 slots and ~40 at 64, against ~2.5 ns for a sorted `Vec` or a `hashbrown` table
-//! (`locals-trie-hybrid-eval.md` §3 finding 6, §10.1 finding 16).
+//! (`locals-trie-benchmark.md` §4 finding 4).
 //!
 //! # Transitioning
 //!

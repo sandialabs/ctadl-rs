@@ -20,7 +20,7 @@
 //! all come back, though: the flat form pays `P` inline on every leaf where the nested form
 //! shared one `P` per leaf set, so measured against a faithful rebuild of the nested design
 //! over identical data the flat design is 1.1–2.3× smaller, not ~10×
-//! (`locals-trie-benchmark.md` §1).
+//! (`locals-trie-benchmark.md` §5).
 //!
 //! We collapse both inner levels into one **[`HybridSet`] of `(P,M,Fp)` per `(F,V)` group**:
 //!   - one heap allocation per group instead of `1 + (#distinct P)` tiny hash tables;
@@ -82,8 +82,8 @@ type Set<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 
 /// The leaves of one `(F,V)` group. A [`HybridSet`]: a two-word structure that probes linearly
 /// over its bare element slots while the group holds at most [`SMALL_THRESHOLD`] leaves — which is
-/// the overwhelmingly common case, since 77–100 % of the groups in a measured store hold exactly
-/// *one* leaf (`locals-trie-hybrid-eval.md` §4) — and switches to Swiss probing above that, so the
+/// the overwhelmingly common case, since 67–100 % of the groups in a measured store hold exactly
+/// *one* leaf (`locals-trie-benchmark.md` §6) — and switches to Swiss probing above that, so the
 /// per-iteration delta->total merge stays O(delta) instead of re-copying the whole accumulated
 /// group each round. Being two words rather than three is worth 8 B on *every* entry of the
 /// forward map, promoted or not.
@@ -751,7 +751,7 @@ where
         // with it the caller's whole join — off the table for a `P` the group does not hold;
         // without it a miss would hand the planner a `Some` it has to drive to exhaustion. The
         // scan is O(group), it short-circuits on the first match, and the median group is a
-        // single leaf (`locals-trie-hybrid-eval.md` §4, finding 9).
+        // single leaf (`locals-trie-benchmark.md` §6).
         if !group.iter().any(|(pp, _, _)| *pp == p) {
             return None;
         }
