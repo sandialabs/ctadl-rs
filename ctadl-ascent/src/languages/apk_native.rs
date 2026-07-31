@@ -175,6 +175,19 @@ pub fn import_native_libs(
         );
         return Ok(Vec::new());
     }
+    // Name them: each becomes its own sub-import, and this is what tells the user which
+    // parts were parsed out of the APK before the (slow) disassembly of each begins.
+    log::info!(
+        "{}: {} native librar{} found for {}: {}",
+        apk_path.display(),
+        libs.len(),
+        if libs.len() == 1 { "y" } else { "ies" },
+        abi,
+        libs.iter()
+            .map(|(e, _)| e.file_name.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
     // The APK is not needed past this point and can be tens of megabytes.
     drop(apk_bytes);
 

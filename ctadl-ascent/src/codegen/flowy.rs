@@ -83,7 +83,7 @@ fn index_check_summaries(
                 FlowSpec::FlowPresent => {
                     if !index_result.summary.contains(&record) {
                         fail_count += 1;
-                        println!(
+                        log::warn!(
                             "Function {func_name} required summary flow is absent: {flow_spec}"
                         );
                     } else {
@@ -93,7 +93,7 @@ fn index_check_summaries(
                 FlowSpec::FlowAbsent => {
                     if index_result.summary.contains(&record) {
                         fail_count += 1;
-                        println!(
+                        log::warn!(
                             "Function {func_name} forbidden summary flow is present: {flow_spec}"
                         );
                     } else {
@@ -175,7 +175,7 @@ fn query_check_endpoints(
                 FlowSpec::FlowPresent => {
                     if !present {
                         fail_count += 1;
-                        println!("Required endpoint not found: {}", fx_endpoint.reversed());
+                        log::warn!("Required endpoint not found: {}", fx_endpoint.reversed());
                     } else {
                         pass_count += 1;
                     }
@@ -183,7 +183,7 @@ fn query_check_endpoints(
                 FlowSpec::FlowAbsent => {
                     if present {
                         fail_count += 1;
-                        println!("Forbidden endpoint is present: {}", fx_endpoint.reversed());
+                        log::warn!("Forbidden endpoint is present: {}", fx_endpoint.reversed());
                     } else {
                         pass_count += 1;
                     }
@@ -283,7 +283,7 @@ fn check_human_profile_paths(
                             pass_count += 1;
                         } else {
                             fail_count += 1;
-                            println!(
+                            log::warn!(
                                 "Human profile: expected {expected} path(s) for {kind} endpoint \
                                  but found {path_hits}: {endpoint}"
                             );
@@ -292,7 +292,7 @@ fn check_human_profile_paths(
                         pass_count += 1;
                     } else {
                         fail_count += 1;
-                        println!(
+                        log::warn!(
                             "Human profile: no path found for required {kind} endpoint: {endpoint}"
                         );
                     }
@@ -300,7 +300,7 @@ fn check_human_profile_paths(
                 FlowSpec::FlowAbsent => {
                     if on_path {
                         fail_count += 1;
-                        println!(
+                        log::warn!(
                             "Human profile: forbidden {kind} endpoint appears on a path: {endpoint}"
                         );
                     } else {
@@ -394,7 +394,7 @@ pub fn check<P: AsRef<Path>>(
             &mut file,
         )
         .err_context(|| "rendering index graph")?;
-        eprintln!("Wrote index graph to '{}'", dot_path.display());
+        log::info!("Wrote index graph to '{}'", dot_path.display());
     }
 
     let (ipass, ifail) = index_check_summaries(

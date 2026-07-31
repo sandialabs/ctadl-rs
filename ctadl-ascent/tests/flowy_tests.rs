@@ -19,7 +19,8 @@ fn tnt_test<P: AsRef<std::path::Path>>(filename: P) -> anyhow::Result<()> {
         .map(|_| ())
         .with_context(|| {
             format!(
-            "Running test {}. Run 'cargo test -- --nocapture' to see full output. Run 'cargo run -p ctadl-ascent --example flowy --' on the file to run individual test case",
+            "Running test {}. The per-check failures are logged at `warn`, and this test binary installs no logger, so run the case on its own to see them: 'RUST_LOG=warn cargo run -p ctadl-ascent --example flowy -- {}'",
+            filename.display(),
             filename.display()
         )
         })

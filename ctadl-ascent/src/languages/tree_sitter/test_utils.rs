@@ -74,8 +74,8 @@ pub(crate) fn program_from_file<P: AsRef<std::path::Path>>(filename: P) -> Resul
 
 /* Common output for when tests fail. */
 pub(crate) fn check_fail_str(prog_str: &str, msg: &str) {
-    log::error!("TEST FAIL: {msg}");
-    log::error!("\t{prog_str}");
+    log::warn!("TEST FAIL: {msg}");
+    log::warn!("\t{prog_str}");
 }
 
 pub(crate) fn check_fail(prog: &Program, msg: &str) {
@@ -277,7 +277,7 @@ pub(crate) fn debug_output_blocks(prog: &Program) {
         return;
     };
     for (idx, block) in fun.blocks.iter().enumerate() {
-        log::info!("BLOCK {}: {}", idx, block);
+        log::debug!("BLOCK {}: {}", idx, block);
     }
 }
 

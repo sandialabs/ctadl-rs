@@ -68,7 +68,7 @@ pub fn propagate_copies(program: &mut Program) {
     for (_, f) in program.functions.iter_enumerated_mut() {
         removed += propagate_copies_function(f);
     }
-    log::info!("copy_prop: removed {removed} copy/trivial-phi statement(s)");
+    log::debug!("copy_prop: removed {removed} copy/trivial-phi statement(s)");
 }
 
 /// The alias relation being solved: `parent[v]` is the value `v` was found

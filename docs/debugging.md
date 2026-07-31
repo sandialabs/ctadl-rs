@@ -1,3 +1,44 @@
+# Logging
+
+`RUST_LOG` is the only verbosity knob, in both directions. There is no `-q` flag and no
+`-v` flag.
+
+| Want                                   | Run                          |
+| -------------------------------------- | ---------------------------- |
+| More: internals, per-item detail       | `RUST_LOG=warn,ctadl=debug`  |
+| Even more                              | `RUST_LOG=warn,ctadl=trace`  |
+| Default: phase status plus warnings    | *(unset)*                    |
+| Less: warnings only, no status         | `RUST_LOG=warn`              |
+| One module only                        | `RUST_LOG=warn,ctadl_ascent::languages::jni=debug` |
+
+Keep the leading `warn,` in each of these. `RUST_LOG=debug` on its own turns *every*
+dependency up to `debug` too, which buries CTADL's own output under datafusion's and
+Ghidra's; `warn,ctadl=debug` raises this project alone and leaves everything else at
+`warn`. The `ctadl` prefix matches every crate here whose name starts with it
+(`ctadl-ascent`, `ctadl-ir`, `ctadl-flowy`), which is what the default filter
+(`warn,ctadl=info`) selects as well.
+
+What goes where:
+
+- **stdout** is command *output* -- the `inspect` listing, the `--dump-ir` /
+  bitcode dumps, the parquet record dump. `RUST_LOG` never affects it, so
+  `ctadl inspect | jq` keeps working at any verbosity.
+- **stderr** is progress, status and warnings, all through the `log` crate, plus the
+  final error if the program fails.
+- At `info` and `warn` the format is bare -- no timestamp, no module path -- because it
+  is meant to be read while a run goes by. A warning is printed under a `Warning:`
+  heading. At `debug` and `trace` the timestamp and module path come back, because
+  those are read while debugging.
+- `error` has no producers by design: a failure propagates up through `Result` and is
+  printed once, by `anyhow`, at the top. An `ERROR` line in the output is a bug -- it
+  should have been a `log::warn!` or a propagated error.
+
+Roughly, a default run says one thing per phase and a few things per artifact and
+sub-import; it does not scale with the size of the program being analyzed. Anything
+that scales with functions, call sites or relation rows is at `debug` or below.
+
+# Inspecting an index with duckdb
+
 ```
 cd ~/.local/state/ctadl/projects/backflash/index && duckdb
 ```
