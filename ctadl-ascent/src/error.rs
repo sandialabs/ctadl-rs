@@ -218,6 +218,11 @@ pub enum Error {
     /// program to detect.
     #[error("model error: {message}")]
     Model { message: String },
+    /// The artifact was read fine and simply held no code -- a split APK carrying only
+    /// resources, say. Distinct from a decoding error: nothing is malformed, there is
+    /// just nothing here to analyze, and the message says where to look instead.
+    #[error("nothing to import: {message}")]
+    NothingToImport { message: String },
     #[error(
         "import '{name}' was created by an incompatible version of ctadl \
          (import format {found}, this build expects {expected}); the original \

@@ -100,7 +100,7 @@ fn query_two_import_project(case: &str, profile: SarifProfile) -> Value {
             std::fs::write(&src, text).expect("writing lua source");
             let import = ArtifactImport::try_create(&name, ArtifactLanguage::Lua, &src)
                 .expect("import args");
-            cli::import(&import).expect("importing lua");
+            cli::import(&import, cli::ImportOptions::default()).expect("importing lua");
             name
         })
         .collect();

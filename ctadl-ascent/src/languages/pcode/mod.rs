@@ -22,6 +22,11 @@ mod ghidra;
 /// This is hardcoded for now, but should be read from the facts
 const WORD_SIZE: i64 = 8;
 
+/// True when Ghidra is available to lower a binary to pcode. See [`ghidra::available`].
+pub fn ghidra_available() -> bool {
+    ghidra::available()
+}
+
 /// Import pcode facts from an artifact by running Ghidra and then converting the facts
 pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.artifact_path;
@@ -1103,7 +1108,13 @@ impl Context {
             (None, Some(idx_c)) => {
                 let mut ap = self.get_lvalue(base_vn, vnode_facts, locals)?;
                 let s_val = size_const.unwrap_or(1);
-                ap.push_offset(idx_c * s_val);
+                // PTRADD is `base + index * size` in the pointer's own width, so the
+                // product wraps on the machine and has to wrap here. Constant
+                // propagation happily hands back a huge index (a folded pointer, a
+                // sentinel like -1), and `*` panics on overflow in a debug build --
+                // which is a crashed import, not a wrong offset. libtmessages.49.so out
+                // of Telegram's arm64 split APK does exactly this.
+                ap.push_offset(idx_c.wrapping_mul(s_val));
                 let mut stmts = Vec::new();
                 let src = Exp::access_path(self.load_ap(&mut stmts, ap, locals));
                 self.push_assign_or_store(&mut stmts, outputs[0].clone(), src, locals);

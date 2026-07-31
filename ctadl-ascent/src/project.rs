@@ -165,6 +165,13 @@ pub struct ArtifactImport {
     /// not yet completed.
     #[serde(default)]
     pub hash: Option<String>,
+    /// Names of imports derived from this one: the native libraries extracted out of
+    /// an APK and lowered through the pcode frontend (see
+    /// [`crate::languages::apk_native`]). A project naming this import co-indexes
+    /// these too, which is what lets the JNI bridge see both halves of the boundary
+    /// from a single `ctadl import app.apk`. Empty for every other language.
+    #[serde(default)]
+    pub sub_imports: Vec<String>,
 }
 
 impl ArtifactImport {
@@ -199,6 +206,7 @@ impl ArtifactImport {
             version: IMPORT_FORMAT_VERSION.to_string(),
             image_base: None,
             hash: None,
+            sub_imports: Vec::new(),
         };
         result.save()?;
         Ok(result)
@@ -440,13 +448,28 @@ impl AnalysisProject {
         let dir = canonicalize(&path)
             .map_err(Error::Io)
             .err_context(|| format!("in canonicalize project dir: {}", path.display()))?;
-        // Dedup import names (order-preserving): `index` co-indexes every argument, so a
-        // repeated program name (e.g. `index amuled amuled`) would codegen its facts twice and
-        // inflate every relation. Indexing the same import twice is never meaningful.
+        // Expand each name to itself followed by its sub-imports, then dedup
+        // (order-preserving): `index` co-indexes every argument, so a repeated program name
+        // (e.g. `index amuled amuled`) would codegen its facts twice and inflate every
+        // relation. Indexing the same import twice is never meaningful.
+        //
+        // The expansion is what makes `ctadl import app.apk && ctadl index p app` pull in the
+        // APK's native libraries: naming the APK names everything imported out of it. Parent
+        // first, so `cli::index`'s per-import source-span scoping stays in import order.
+        //
+        // A name with no loadable config passes through unchanged rather than erroring --
+        // a project may legitimately be created before (or without) its imports, and
+        // `cli::index` has its own preflight gates that report that properly.
         let mut seen = std::collections::HashSet::new();
         let imports: Vec<String> = import_names
             .iter()
-            .map(|s| s.as_ref().to_owned())
+            .flat_map(|s| {
+                let name = s.as_ref().to_owned();
+                let subs = ArtifactImport::load_by_name(&name)
+                    .map(|import| import.sub_imports)
+                    .unwrap_or_default();
+                std::iter::once(name).chain(subs)
+            })
             .filter(|n| seen.insert(n.clone()))
             .collect();
         let result = Self {

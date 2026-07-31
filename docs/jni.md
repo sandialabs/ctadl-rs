@@ -11,11 +11,26 @@ alongside native code, CTADL joins each `native` method to the `Java_…` functi
 implementing it and maps the arguments across the JNI ABI, so taint flows in both
 directions. It runs automatically; there is nothing to write.
 
+An APK already contains both halves, so importing one imports both:
+
 ```bash
-ctadl import app.apk           --name app_dex
-ctadl import -l pcode libapp.so --name app_native
-ctadl index  app app_dex app_native      # <- the bridge fires here
+ctadl import app.apk                     # Dex, plus every lib/<abi> library in it
+ctadl index  app app                     # <- the bridge fires here
 ctadl query  app -m models.json5 -o results.sarif
+```
+
+`ctadl import` extracts the `.so` files under `lib/<abi>/`, disassembles each
+through the pcode frontend, and imports it as its own program named
+`<apk>__<abi>__<lib>`. Those names are recorded on the APK's import, so naming
+the APK in `ctadl index` co-indexes them — there is nothing extra to type. See
+[Native libraries inside an APK](#native-libraries-inside-an-apk).
+
+When the two halves are separate files, import them separately and co-index:
+
+```bash
+ctadl import app.dex            --name app_dex
+ctadl import -l pcode libapp.so --name app_native
+ctadl index  app app_dex app_native
 ```
 
 The `index` run logs what it did at `info` level:
@@ -32,6 +47,85 @@ The *per-method* resolution lines (`jni bridge: <method> -> <symbol>`) are logge
 so a default run does not show them. Run with `RUST_LOG=debug` (or
 `RUST_LOG=ctadl_ascent::languages::jni=debug`) to see which symbol each method resolved to and
 why an unresolved one did not.
+
+---
+
+## Native libraries inside an APK
+
+`ctadl import app.apk` imports the `.so` files packaged inside it, one program
+each, so the bridge has a native half to join without you unzipping anything.
+
+```
+$ ctadl import app.apk
+[INFO] app.apk: importing native libraries for arm64-v8a (ignoring armeabi-v7a, x86_64; pass --native-abi to choose)
+[INFO] app.apk: 2 native libraries ready (2 imported, 0 reused, 0 failed)
+$ ctadl index app app
+[INFO] jni bridge: 14 native method(s): 12 linked, 1 unresolved, 1 ambiguous
+```
+
+Each library becomes an import named `<apk>__<abi>__<lib>` — above, that is
+`app__arm64-v8a__libcrypto` and friends. The names are recorded on the APK's own
+import, and `ctadl index` expands them, so naming the APK indexes everything that
+came out of it. Naming a library explicitly is allowed and does not index it
+twice.
+
+**One ABI, not all of them.** An APK usually ships the same library built for
+several ABIs. They are copies of one program, so importing more than one would
+cost a full disassembly per copy *and* leave several functions carrying each
+`Java_…` symbol — which the bridge can only report as ambiguous, and skip. CTADL
+imports the first available of `arm64-v8a`, `armeabi-v7a`, `armeabi`, `x86_64`,
+`x86`; pass `--native-abi <abi>` to choose another.
+
+**It is never fatal.** Disassembly needs Ghidra, which is a heavy dependency and a
+slow step — minutes per library. If Ghidra is not found, or a library fails to
+disassemble, CTADL warns and imports the Dex half anyway:
+
+```
+[WARN] app.apk: skipping 2 arm64-v8a native libraries -- Ghidra was not found, so they
+       cannot be disassembled. Set GHIDRA_HOME or put `ghidra` on PATH to analyze them;
+       the Dex half of this APK is imported either way.
+```
+
+The cost of that is quiet output, not wrong output: the native methods simply go
+unlinked, which the `jni bridge:` counts report. Pass `--no-native-libs` to skip
+them deliberately, and `--skip-existing` to reuse the libraries of an unchanged
+APK on a re-import rather than disassembling them again.
+
+Only `lib/<abi>/*.so` is searched, and each entry is checked for an object-file
+magic before it is handed to the disassembler. A library the app ships elsewhere
+(in `assets/`, to extract and `dlopen` at runtime) is not found; import it
+separately with `-l pcode`.
+
+### Split APKs (XAPK / app bundles)
+
+An app distributed as an Android App Bundle does not arrive as one APK. It arrives
+as several — a base APK holding the Dex, a `config.<abi>.apk` per ABI holding that
+ABI's `lib/` directory, and `config.<lang>.apk` / `config.<density>.apk` holding
+resources. XAPK downloads (APKPure and the like) are exactly this set, zipped
+together. So the Java and native halves land in *different files*, and a
+`config.<abi>.apk` has no `classes*.dex` in it at all.
+
+Import them as what they are: each APK on its own, then one project over both.
+
+```bash
+ctadl import Telegram/org.telegram.messenger.apk --name tg_dex
+ctadl import Telegram/config.arm64_v8a.apk       --name tg_native
+ctadl index  tg tg_dex tg_native                 # <- the bridge fires here
+```
+
+`tg_native` has an empty Java half and one sub-import per library, so naming it
+pulls in `tg_native__arm64-v8a__libtmessages.49` and the rest. Because the two
+halves are ordinary co-indexed imports, the bridge joins them exactly as it does
+within a single APK.
+
+The resource-only splits have no code in either language, and importing one is an
+error rather than an empty program:
+
+```
+$ ctadl import Telegram/config.en.apk
+Error: nothing to import: '…/config.en.apk' has no classes*.dex entries and no
+native libraries under lib/<abi>/. …
+```
 
 ---
 
@@ -175,6 +269,12 @@ already links double-bridges it — two sites, duplicated flows — so switch on
   stops there. The bridge delivers the argument to the native function correctly;
   propagating *through* the accessors additionally needs a default model for the
   `JNINativeInterface` functions and a way to resolve the vtable.
+- **A library extracted from an APK is located by its extracted path.** SARIF
+  results in the native half name the copy CTADL wrote under the store's
+  `imports/<apk>/native/<abi>/`, not `app.apk!lib/<abi>/libfoo.so`. The addresses
+  are right and the file is byte-identical to the one in the APK; only the path is
+  indirect. Locating a result *inside* an archive would need source-info to
+  understand intra-archive paths.
 - **Index time only.** Like `propagation` models, the bridge creates facts the
   index fixpoint consumes, so `ctadl query --models` cannot introduce one after
   the fact. Re-run `ctadl index` if you add the native artifact later.

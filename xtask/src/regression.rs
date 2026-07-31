@@ -23,7 +23,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::assertions;
 use crate::dex;
-use crate::discovery::{self, Frontend, Kind, TestCase};
+use crate::discovery::{self, Frontend, Kind, Packaging, TestCase};
 use crate::exec;
 use crate::jvm;
 use crate::models;
@@ -586,7 +586,16 @@ fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
             native,
             config,
             bridge,
-        } => run_jni(&case.name, java, native, config, bridge.as_deref(), worker),
+            packaging,
+        } => run_jni(
+            &case.name,
+            java,
+            native,
+            config,
+            bridge.as_deref(),
+            *packaging,
+            worker,
+        ),
     }
 }
 
@@ -889,6 +898,40 @@ fn dex_arg(dex: &Path) -> String {
 
 fn jar_arg(jar: &Path) -> String {
     jar.to_string_lossy().into_owned()
+}
+
+fn file_name_of(path: &Path) -> Result<&str> {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .with_context(|| format!("path has no usable file name: {}", path.display()))
+}
+
+/// Writes a minimal APK: a ZIP whose entries are `(entry name, file on disk)` pairs.
+///
+/// Enough for the importer, which only reads the central directory and decompresses the
+/// entries it recognizes -- it does not care about a manifest, signatures, or alignment.
+fn write_apk(dest: &Path, entries: &[(&str, &Path)]) -> Result<()> {
+    use std::io::Write;
+
+    let file = std::fs::File::create(dest)
+        .with_context(|| format!("failed to create {}", dest.display()))?;
+    let mut writer = zip::ZipWriter::new(file);
+    let options =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for (entry_name, source) in entries {
+        let bytes = std::fs::read(source)
+            .with_context(|| format!("failed to read {}", source.display()))?;
+        writer
+            .start_file(*entry_name, options)
+            .with_context(|| format!("failed to start APK entry {entry_name}"))?;
+        writer
+            .write_all(&bytes)
+            .with_context(|| format!("failed to write APK entry {entry_name}"))?;
+    }
+    writer
+        .finish()
+        .with_context(|| format!("failed to finish {}", dest.display()))?;
+    Ok(())
 }
 
 /// Path to the `ctadl` binary that [`build_ctadl`] produced. Set exactly once by
@@ -1354,6 +1397,7 @@ fn run_jni(
     native: &Path,
     config: &Path,
     bridge: Option<&Path>,
+    packaging: Packaging,
     worker: &Worker,
 ) -> Result<Outcome> {
     for tool in ["javac", "dx"] {
@@ -1422,8 +1466,9 @@ fn run_jni(
         .arg(&lib);
     exec::run_checked(compile, &cc)?;
 
-    // Two imports, one project. `ctadl index <project> <prog>...` takes the
-    // programs to co-index positionally.
+    // `ctadl index <project> <prog>...` takes the programs to co-index positionally.
+    // Two imports for `Separate` and `SplitApks`; `SingleApk` imports once and relies on
+    // the APK importer to produce the native sub-import and on the project to pick it up.
     let dex_project = format!("{class}_dex");
     let native_project = format!("{class}_native");
     let project = format!("{class}_jni");
@@ -1431,29 +1476,73 @@ fn run_jni(
     let machine_sarif = work.join(format!("{class}_machine.sarif"));
     let env = &worker.ghidra_env;
 
-    run_ctadl_env(
-        &work,
-        &state,
-        env,
-        &["import", "--name", &dex_project, &dex_arg(&dex)],
-    )?;
-    run_ctadl_env(
-        &work,
-        &state,
-        env,
-        &[
-            "import",
-            "-l",
-            "pcode",
-            &lib.to_string_lossy(),
-            "-n",
-            &native_project,
-        ],
-    )?;
+    // The ABI directory is a label, not a claim about the host: what matters is that the
+    // importer finds `lib/<abi>/*.so`, and Ghidra disassembles whatever architecture the
+    // library actually is.
+    let lib_entry = format!("lib/arm64-v8a/{}", file_name_of(&lib)?);
+    match packaging {
+        Packaging::SingleApk => {
+            // Both artifacts in one APK, the way an ordinary Android app ships them.
+            let packaged = work.join(format!("{class}.apk"));
+            write_apk(&packaged, &[("classes.dex", &dex), (&lib_entry, &lib)])?;
+            run_ctadl_env(
+                &work,
+                &state,
+                env,
+                &[
+                    "import",
+                    "--name",
+                    &dex_project,
+                    &packaged.to_string_lossy(),
+                ],
+            )?;
+        }
+        Packaging::SplitApks => {
+            // One APK each, the way an app bundle ships them. The native one has no
+            // `classes*.dex` at all -- that is the whole point of the variant.
+            let base = work.join(format!("{class}.apk"));
+            let split = work.join(format!("{class}.config.arm64_v8a.apk"));
+            write_apk(&base, &[("classes.dex", &dex)])?;
+            write_apk(&split, &[(&lib_entry, &lib)])?;
+            for (name, apk) in [(&dex_project, &base), (&native_project, &split)] {
+                run_ctadl_env(
+                    &work,
+                    &state,
+                    env,
+                    &["import", "--name", name, &apk.to_string_lossy()],
+                )?;
+            }
+        }
+        Packaging::Separate => {
+            run_ctadl_env(
+                &work,
+                &state,
+                env,
+                &["import", "--name", &dex_project, &dex_arg(&dex)],
+            )?;
+            run_ctadl_env(
+                &work,
+                &state,
+                env,
+                &[
+                    "import",
+                    "-l",
+                    "pcode",
+                    &lib.to_string_lossy(),
+                    "-n",
+                    &native_project,
+                ],
+            )?;
+        }
+    }
     // With a declarative bridge, the built-in pass is switched off entirely: leaving both on
     // would double-bridge the pair, giving two sites and duplicated flows, and the case would
     // pass for the wrong reason.
-    let mut index_args: Vec<&str> = vec!["index", &project, &dex_project, &native_project];
+    let mut index_args: Vec<&str> = vec!["index", &project, &dex_project];
+    if packaging != Packaging::SingleApk {
+        // `SplitApks` names the native APK, whose own sub-import carries the library.
+        index_args.push(&native_project);
+    }
     let bridge_arg;
     if let Some(bridge) = bridge {
         bridge_arg = bridge.to_string_lossy().into_owned();

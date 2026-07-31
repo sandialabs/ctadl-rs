@@ -21,7 +21,7 @@ use crate::facts::FlowVariable;
 use crate::index_engine::{
     IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index_with_config,
 };
-use crate::languages::{dex, jni, jvm, lua, pcode};
+use crate::languages::{apk_native, dex, jni, jvm, lua, pcode};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
@@ -29,12 +29,80 @@ use ctadl_ir::graph::is_connected;
 use ctadl_ir::ssa;
 use ctadl_ir::{ProgramInfo, encode};
 
+/// How to perform one import, beyond the artifact and its language.
+///
+/// Every field only matters to an APK, which is the one artifact that imports *other*
+/// artifacts out of itself (its native libraries; see [`apk_native`]).
+/// [`Default`] is the plain behavior: import everything, reuse nothing.
+#[derive(Debug, Clone, Copy)]
+pub struct ImportOptions<'a> {
+    /// Reuse an existing sub-import whose stored artifact hash still matches instead of
+    /// redoing it. The parent artifact's own skip check lives in `main`; this is what
+    /// carries the flag down to the sub-imports, where the saving (a disassembly run
+    /// each) is much larger.
+    pub skip_existing: bool,
+    /// Import the native libraries packaged inside an APK. On by default.
+    pub native_libs: bool,
+    /// Import this ABI's libraries rather than the preferred one. See
+    /// [`dex_reader::apk::ABI_PREFERENCE`].
+    pub native_abi: Option<&'a str>,
+}
+
+impl Default for ImportOptions<'_> {
+    fn default() -> Self {
+        Self {
+            skip_existing: false,
+            native_libs: true,
+            native_abi: None,
+        }
+    }
+}
+
 // Imports a program for an artifact into the store
-pub fn import(import: &ArtifactImport) -> Result<(), Error> {
+pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Error> {
     use ArtifactLanguage::*;
     let program_info = match &import.language {
         Dex => dex::import_dex(&import.artifact_path)?,
-        Apk => dex::import_apk(&import.artifact_path)?,
+        Apk => {
+            // Dex first: it is cheap and it is what fails fast on an APK that is not one,
+            // before any native library is extracted or handed to Ghidra.
+            let dex::ApkImport {
+                program_info,
+                dex_count,
+            } = dex::import_apk(&import.artifact_path)?;
+            // A split APK out of an app bundle has no Dex of its own; its libraries are
+            // the whole import. Decided before extracting anything so an APK that has
+            // neither half fails immediately, and so the reason is the APK's contents
+            // rather than whatever `import_native_libs` happened to be able to do with
+            // them (it returns no sub-imports when Ghidra is missing, too).
+            if dex_count == 0 {
+                apk_native::require_native_libs(&import.artifact_path)?;
+                if opts.native_libs {
+                    log::info!(
+                        "{}: no classes*.dex entries; importing as a native-only split APK",
+                        import.artifact_path.display(),
+                    );
+                } else {
+                    // Not an error -- the user asked for this -- but the result is an
+                    // import with nothing in it, which is worth saying out loud.
+                    log::warn!(
+                        "{}: no classes*.dex entries and --no-native-libs was passed, so this \
+                         import will be empty",
+                        import.artifact_path.display(),
+                    );
+                }
+            }
+            let sub_imports = apk_native::import_native_libs(import, opts)?;
+            if !sub_imports.is_empty() {
+                // Reload rather than saving `import` back: a sub-import may have rewritten
+                // the parent's config in the meantime, and the caller reloads after this
+                // to pick these names up.
+                let mut updated = ArtifactImport::load_by_name(&import.name)?;
+                updated.sub_imports = sub_imports;
+                updated.save()?;
+            }
+            program_info
+        }
         Jar => jvm::import_jar(&import.artifact_path)?,
         Jvm => jvm::import_class(&import.artifact_path)?,
         Pcode => pcode::import_pcode(import)?,
@@ -149,7 +217,11 @@ pub fn index(
     // are below the resolution of the gauge. Peak physical footprint for that whole run was
     // 2.27 GB, in `ascent_run`, not here.
     //
-    // Still unquantified: the APK + `.so` pair, which needs a Ghidra import.
+    // Still unquantified: the APK + `.so` pair. It is no longer an exotic shape -- importing
+    // an APK now imports its native libraries as pcode sub-imports (see
+    // [`crate::languages::apk_native`]), so a project naming one APK routinely walks several
+    // programs here -- but the loop drops each import's IR before loading the next, so the
+    // posture is per-import peak rather than the sum.
     log::info!(
         "[mem cp] after import loop ({} propagation match(es), {} declared path(s), {} bridge \
          spec(s) retained): {:.1} MB",

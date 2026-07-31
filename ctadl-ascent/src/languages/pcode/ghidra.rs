@@ -294,6 +294,18 @@ fn compress_one_fact_file(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// True when a Ghidra install can be located and it has an `analyzeHeadless`.
+///
+/// Purely a probe: it touches nothing and starts nothing. A caller that would
+/// otherwise do expensive setup (extracting native libraries out of an APK, say)
+/// asks first, so a machine without Ghidra degrades to a warning instead of doing
+/// the work and then failing.
+pub(crate) fn available() -> bool {
+    find_ghidra_base()
+        .and_then(|base| find_analyze_headless(&base))
+        .is_ok()
+}
+
 fn find_ghidra_base() -> Result<PathBuf, Error> {
     if let Ok(ghidra_home) = env::var("GHIDRA_HOME") {
         return Ok(PathBuf::from(ghidra_home));

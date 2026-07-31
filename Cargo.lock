@@ -1346,6 +1346,7 @@ dependencies = [
  "trie",
  "url",
  "which",
+ "zip 0.6.6",
 ]
 
 [[package]]
@@ -5163,6 +5164,7 @@ dependencies = [
  "jvm-reader",
  "serde",
  "serde_json",
+ "zip 0.6.6",
 ]
 
 [[package]]

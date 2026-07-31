@@ -153,6 +153,22 @@ pub struct ImportArgs {
     /// changed.
     #[arg(long)]
     pub skip_existing: bool,
+
+    /// Do not import the native libraries packaged inside an APK.
+    ///
+    /// By default, importing an APK also disassembles the `.so` files under
+    /// `lib/<abi>/` and imports each as its own program, so that Java `native`
+    /// methods link to their implementations. Pass this to import only the Dex.
+    #[arg(long)]
+    pub no_native_libs: bool,
+
+    /// Import an APK's native libraries for this ABI (e.g. armeabi-v7a).
+    ///
+    /// An APK usually ships the same library built for several ABIs; they are copies
+    /// of one program, so only one is imported. The default picks the first available
+    /// of arm64-v8a, armeabi-v7a, armeabi, x86_64, x86.
+    #[arg(long, value_name = "ABI")]
+    pub native_abi: Option<String>,
 }
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
@@ -345,6 +361,16 @@ pub struct GoArgs {
     /// step of this one-shot flow.
     #[arg(long)]
     pub skip_existing: bool,
+
+    /// Do not import the native libraries packaged inside an APK.
+    /// See `ctadl import --help`.
+    #[arg(long)]
+    pub no_native_libs: bool,
+
+    /// Import an APK's native libraries for this ABI (e.g. armeabi-v7a).
+    /// See `ctadl import --help`.
+    #[arg(long, value_name = "ABI")]
+    pub native_abi: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -415,6 +441,8 @@ fn main() -> anyhow::Result<()> {
                     name: None,
                     language: args.language,
                     skip_existing: args.skip_existing,
+                    no_native_libs: args.no_native_libs,
+                    native_abi: args.native_abi.clone(),
                 };
                 eprintln!("Importing '{}'...", artifact.display());
                 let name = import_artifact_to_store(&import_args).with_context(|| {
@@ -561,6 +589,9 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 name: Some(legacy_name.to_string()),
                 language: ImportLanguage::Pcode,
                 skip_existing: false,
+                // Not an APK: this legacy path imports a directory of pcode facts.
+                no_native_libs: false,
+                native_abi: None,
             };
             import_artifact_to_store(&import_args)?;
 
@@ -652,7 +683,14 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
 
     // Create the import
     let config = project::ArtifactImport::try_create(name, language, path)?;
-    cli::import(&config)?;
+    cli::import(
+        &config,
+        cli::ImportOptions {
+            skip_existing: args.skip_existing,
+            native_libs: !args.no_native_libs,
+            native_abi: args.native_abi.as_deref(),
+        },
+    )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote
     // (e.g. the pcode importer records `image_base`), then record the artifact's
     // content hash (and path) so a later `--skip-existing` import can tell the import

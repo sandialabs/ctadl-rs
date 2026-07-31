@@ -38,7 +38,25 @@ pub enum Kind {
         /// the case indexes with `--no-jni-bridge -m <this>`, so it asserts exactly what the
         /// built-in case asserts and the two are a direct A/B.
         bridge: Option<PathBuf>,
+        /// How the two artifacts reach `ctadl import`. Every packaging asserts exactly the
+        /// same thing, so the set is a direct A/B on the importer alone.
+        packaging: Packaging,
     },
+}
+
+/// How a [`Kind::Jni`] case hands its two halves to `ctadl import`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Packaging {
+    /// Import the DEX and the shared library as two separate artifacts. The baseline.
+    Separate,
+    /// Package both into one APK and import it once, as an ordinary Android app ships.
+    /// Exercises the APK importer finding, extracting, and disassembling `lib/<abi>`.
+    SingleApk,
+    /// Package each into an APK of its own -- a base APK holding the DEX and a
+    /// `config.<abi>.apk` holding only the library -- and import both. This is how an
+    /// Android App Bundle is distributed, and what an XAPK download unpacks to: the
+    /// native half arrives in an APK with no `classes*.dex` in it at all.
+    SplitApks,
 }
 
 impl Kind {
@@ -270,6 +288,33 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
                 native: absolute(&native)?,
                 config: absolute(&config)?,
                 bridge: None,
+                packaging: Packaging::Separate,
+            },
+        });
+        // The same two artifacts and the same claims, but packaged the way a real
+        // Android app ships them and imported with one command. If the APK importer
+        // finds and disassembles `lib/<abi>` correctly, both cases pass identically.
+        cases.push(TestCase {
+            name: format!("Jni:{stem}+apk"),
+            kind: Kind::Jni {
+                java: absolute(&entry)?,
+                native: absolute(&native)?,
+                config: absolute(&config)?,
+                bridge: None,
+                packaging: Packaging::SingleApk,
+            },
+        });
+        // And the way an app *bundle* ships them: two APKs, the native one carrying no
+        // DEX at all. Same claims again, so this is an A/B on whether a DEX-less APK
+        // imports and co-indexes like any other native half.
+        cases.push(TestCase {
+            name: format!("Jni:{stem}+split-apks"),
+            kind: Kind::Jni {
+                java: absolute(&entry)?,
+                native: absolute(&native)?,
+                config: absolute(&config)?,
+                bridge: None,
+                packaging: Packaging::SplitApks,
             },
         });
         // A sibling `<kebab>.bridge.jsonl` turns the case into an A/B: the same two artifacts
@@ -285,6 +330,7 @@ fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
                     native: absolute(&native)?,
                     config: absolute(&config)?,
                     bridge: Some(absolute(&bridge)?),
+                    packaging: Packaging::Separate,
                 },
             });
         }
@@ -334,7 +380,7 @@ fn to_kebab_case(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{discover_jni, to_kebab_case, Frontend, Kind};
+    use super::{discover_jni, to_kebab_case, Frontend, Kind, Packaging};
 
     /// Every shipped JNI case is discovered, and one that carries a `<kebab>.bridge.jsonl`
     /// yields a second, declaratively-bridged case beside it.
@@ -363,11 +409,21 @@ mod tests {
                 names.contains(&format!("Jni:{stem}+bridge").as_str()),
                 "the declarative A/B case is missing: {names:?}"
             );
+            assert!(
+                names.contains(&format!("Jni:{stem}+apk").as_str()),
+                "the APK-packaged A/B case is missing: {names:?}"
+            );
+            assert!(
+                names.contains(&format!("Jni:{stem}+split-apks").as_str()),
+                "the split-APK A/B case is missing: {names:?}"
+            );
         }
-        // The two halves of a pair differ in exactly one thing: which mechanism joins the
-        // boundary. Same sources, same config, so the same assertions.
+        // The variants of each case differ in exactly one thing: which mechanism joins
+        // the boundary, or how the artifacts are packaged. Same sources, same config, so
+        // the same assertions.
         for stem in ["JniFlow", "JniArgShift"] {
-            let of = |name: String| {
+            let of = |suffix: &str| {
+                let name = format!("Jni:{stem}{suffix}");
                 cases
                     .iter()
                     .find(|c| c.name == name)
@@ -377,16 +433,39 @@ mod tests {
                             native,
                             config,
                             bridge,
-                        } => (java.clone(), native.clone(), config.clone(), bridge.clone()),
-                        _ => panic!("expected a Jni case for Jni:{stem}"),
+                            packaging,
+                        } => (
+                            (java.clone(), native.clone(), config.clone()),
+                            bridge.clone(),
+                            *packaging,
+                        ),
+                        _ => panic!("expected a Jni case for {name}"),
                     })
-                    .unwrap_or_else(|| panic!("no case named Jni:{stem}"))
+                    .unwrap_or_else(|| panic!("no case named {name}"))
             };
-            let (java_a, native_a, config_a, bridge_a) = of(format!("Jni:{stem}"));
-            let (java_b, native_b, config_b, bridge_b) = of(format!("Jni:{stem}+bridge"));
-            assert_eq!((java_a, native_a, config_a), (java_b, native_b, config_b));
-            assert!(bridge_a.is_none(), "the built-in case uses no model");
-            assert!(bridge_b.is_some(), "the A/B case supplies one");
+            let (artifacts, bridge, packaging) = of("");
+            assert!(bridge.is_none(), "the built-in case uses no model");
+            assert_eq!(packaging, Packaging::Separate);
+
+            // Only the mechanism differs.
+            let (ab_artifacts, ab_bridge, ab_packaging) = of("+bridge");
+            assert_eq!(artifacts, ab_artifacts);
+            assert!(ab_bridge.is_some(), "the A/B case supplies one");
+            assert_eq!(ab_packaging, Packaging::Separate);
+
+            // Only the packaging differs; both use the built-in bridge.
+            for (suffix, expected) in [
+                ("+apk", Packaging::SingleApk),
+                ("+split-apks", Packaging::SplitApks),
+            ] {
+                let (packaged_artifacts, packaged_bridge, packaged) = of(suffix);
+                assert_eq!(artifacts, packaged_artifacts);
+                assert!(
+                    packaged_bridge.is_none(),
+                    "{suffix} uses the built-in bridge"
+                );
+                assert_eq!(packaged, expected);
+            }
         }
     }
 
