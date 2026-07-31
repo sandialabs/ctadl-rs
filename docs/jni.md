@@ -44,9 +44,9 @@ That line is worth reading. A native method that fails to link produces no flow
 [Diagnostics](#diagnostics).
 
 The *per-method* resolution lines (`jni bridge: <method> -> <symbol>`) are logged at `debug`,
-so a default run does not show them. Run with `RUST_LOG=debug` (or
-`RUST_LOG=ctadl_ascent::languages::jni=debug`) to see which symbol each method resolved to and
-why an unresolved one did not.
+so a default run does not show them. Run with `RUST_LOG=warn,ctadl=debug` (or
+`RUST_LOG=warn,ctadl_ascent::languages::jni=debug`) to see which symbol each method resolved to
+and why an unresolved one did not. See [Logging](debugging.md#logging).
 
 ---
 

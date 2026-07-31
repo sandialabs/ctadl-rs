@@ -825,7 +825,7 @@ impl<'a> Context<'a> {
         }
 
         //walked off a compound_statement
-        log::info!("EOCS linking blocks: ");
+        log::debug!("EOCS linking blocks: ");
         link_blocks(program, &scope_view, scope_view_meowsers, true)?;
 
         Ok(())
@@ -1227,7 +1227,7 @@ impl<'a> Context<'a> {
             {
                 varkind = VarKind::Local
             } else {
-                log::info!("Implicit Global bourn: {}", name);
+                log::debug!("Implicit Global bourn: {}", name);
                 varkind = VarKind::Global;
             }
         }
@@ -1514,7 +1514,7 @@ impl<'a> Context<'a> {
         match operator.kind() {
             "==" | "<=" | ">=" => {
                 //todo: what are all of these?
-                log::info!("Not assigning for comparison operators");
+                log::debug!("Not assigning for comparison operators");
             }
             _ => {
                 self.add_assign_to_program(
@@ -1651,7 +1651,7 @@ impl<'a> Context<'a> {
         let var = access_path.base.variable.clone();
         let style = match &*var {
             Variable::Local(name) => {
-                log::info!(
+                log::debug!(
                     "This is an Indirect LOCAL call: {}",
                     program[scope_view.fidx].locals.name(*name)
                 );
@@ -1665,7 +1665,7 @@ impl<'a> Context<'a> {
                 }
             }
             Variable::Param(idx) => {
-                log::info!("This is an Indirect PARAMETER call: {}", idx.get());
+                log::debug!("This is an Indirect PARAMETER call: {}", idx.get());
                 let callee = self.emit_loads(program, scope_view, access_path);
                 CallStyle::FuncPtrCall {
                     callee,
@@ -2012,7 +2012,7 @@ pub fn debug_print_tree(
     };
 
     // 3. Print the current node
-    log::info!("{}|-- {}{}", indent, field_prefix, node.kind());
+    log::debug!("{}|-- {}{}", indent, field_prefix, node.kind());
 
     if let Some(dl) = depth_limit
         && depth >= dl

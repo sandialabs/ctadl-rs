@@ -454,11 +454,9 @@ impl<'a> Lowerer<'a> {
         // reads `self.vmt`, and every other column comes from the collection/recognition passes
         // above, which are complete either way.
         self.build_vmt();
-        log::info!(
-            "lua: imported {} file(s), {} function(s)",
-            self.units.len(),
-            self.program.functions.functions.len()
-        );
+        // The parts a Lua import is made of. The function count is reported once, for every
+        // language, by `crate::cli::import`.
+        log::info!("lua: parsed {} .lua file(s)", self.units.len());
         if self.opaque_alloc_count > 0 {
             log::warn!(
                 "lua: {} construction site(s) had an unresolved metatable; instances fall back to name-based dispatch",

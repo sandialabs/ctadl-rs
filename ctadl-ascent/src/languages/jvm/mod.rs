@@ -55,6 +55,11 @@ pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
     let mut ctx = Context::new();
     let mut builders = Builders::new();
 
+    log::info!(
+        "{}: {} class file(s)",
+        file.display(),
+        parser.class_parsers().len()
+    );
     for (sub_artifact_id, parser) in parser.class_parsers().iter().enumerate() {
         let key = ArtifactKey {
             path: file.to_string_lossy().to_string(),

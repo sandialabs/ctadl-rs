@@ -221,7 +221,7 @@ impl ArtifactImport {
         let path = self.config_path();
         let file = File::create(&path)?;
         serde_json::to_writer(file, &self)?;
-        log::info!(
+        log::debug!(
             "wrote import configuration to '{}'",
             path::absolute(&path)?.display()
         );
@@ -602,7 +602,7 @@ impl AnalysisProject {
         let path = self.config_path();
         let file = File::create(&path)?;
         serde_json::to_writer(file, &self)?;
-        log::info!(
+        log::debug!(
             "wrote project configuration to '{}'",
             path::absolute(&path)?.display()
         );

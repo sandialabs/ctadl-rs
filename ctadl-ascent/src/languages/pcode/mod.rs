@@ -928,7 +928,7 @@ impl Context {
             "PTRADD" => self.handle_ptradd(pcode, vnode_facts, locals),
             _ => {
                 // For now, treat unknown operations as no-ops
-                log::warn!("Unsupported pcode mnemonic: {}", pcode.mnemonic);
+                log_once::warn_once!("Unsupported pcode mnemonic: {}", pcode.mnemonic);
                 Ok(vec![Statement::new_kind(StatementKind::Nop)])
             }
         }
@@ -1003,7 +1003,7 @@ impl Context {
                     Exp::ObjectRef(CallObject::FunctionPtr(func_name.into())),
                     locals,
                 );
-                log::warn!("Found a function pointer, yay");
+                log::debug!("Found a function pointer, yay");
                 return Ok(stmts);
             } else {
                 let src = self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr);

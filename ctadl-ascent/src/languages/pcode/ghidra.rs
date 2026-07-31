@@ -231,8 +231,11 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
 
     let log_path = output_dir.join(GHIDRA_LOG_NAME);
 
-    log::info!("Running Ghidra: {:?}", command);
-    log::info!("Ghidra console output -> {}", log_path.display());
+    log::info!(
+        "running Ghidra to disassemble; console output -> {}",
+        log_path.display()
+    );
+    log::debug!("Ghidra command: {:?}", command);
 
     let status = run_and_log(&mut command, &log_path)?;
 

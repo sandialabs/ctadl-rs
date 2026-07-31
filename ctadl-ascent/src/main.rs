@@ -425,8 +425,8 @@ fn main() -> anyhow::Result<()> {
                         .ok_or_else(|| anyhow::anyhow!("error converting filename to string"))?
                         .to_string();
                     if args.artifacts.len() > 1 {
-                        eprintln!(
-                            "Warning: no project name given (-n); using '{}' inferred from the first artifact",
+                        log::warn!(
+                            "no project name given (-n); using '{}' inferred from the first artifact",
                             inferred
                         );
                     }
@@ -444,14 +444,12 @@ fn main() -> anyhow::Result<()> {
                     no_native_libs: args.no_native_libs,
                     native_abi: args.native_abi.clone(),
                 };
-                eprintln!("Importing '{}'...", artifact.display());
                 let name = import_artifact_to_store(&import_args).with_context(|| {
                     format!("importing artifact from: '{}'", artifact.display())
                 })?;
                 imported_names.push(name);
             }
 
-            eprintln!("Indexing...");
             index_artifacts_to_store(&IndexArgs {
                 name: name.clone(),
                 progs: imported_names.clone(),
@@ -466,7 +464,6 @@ fn main() -> anyhow::Result<()> {
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
-            eprintln!("Querying...");
             query_project(&QueryArgs {
                 name: name.clone(),
                 models: args.models.clone(),
@@ -566,7 +563,7 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
         }"#;
 
     std::fs::write(&args.output, template)?;
-    eprintln!("Wrote template model file to '{}'", args.output.display());
+    log::info!("Wrote template model file to '{}'", args.output.display());
     Ok(())
 }
 
@@ -581,7 +578,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
 
     match &args.cmd {
         LegacyPcodeSubcommand::Index(index_args) => {
-            eprintln!("Legacy Index: facts='{}'", index_args.facts_path.display());
+            log::info!("Legacy Index: facts='{}'", index_args.facts_path.display());
 
             // 1. Import pcode facts
             let import_args = ImportArgs {
@@ -611,15 +608,15 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
             index_artifacts_to_store(&index_args)?;
         }
         LegacyPcodeSubcommand::Query(query_args) => {
-            eprintln!("Legacy Query: file='{}'", query_args.query_file.display());
+            log::info!("Legacy Query: file='{}'", query_args.query_file.display());
             if let Some(dir) = query_args.compute_slices {
-                eprintln!(
-                    "  (Note: --compute-slices {:?} is currently ignored and controlled by the query file)",
+                log::warn!(
+                    "--compute-slices {:?} is currently ignored; the direction is controlled by the query file",
                     dir
                 );
             }
             if query_args.no_compile_analysis {
-                eprintln!("  (Note: --no-compile-analysis is currently ignored)");
+                log::warn!("--no-compile-analysis is currently ignored");
             }
 
             let mut models = args.models.clone();
