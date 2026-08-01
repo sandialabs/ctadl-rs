@@ -1,0 +1,1 @@
+{"sha256": "686f65f0faa51178ca07528965869f177a90a868070b7be435c97fb17bbe5d96", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/GS348Tv1_V1.0.0.43/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 15.8, "peak_fp_mb": 895.6, "nfind": 0, "findings": []}

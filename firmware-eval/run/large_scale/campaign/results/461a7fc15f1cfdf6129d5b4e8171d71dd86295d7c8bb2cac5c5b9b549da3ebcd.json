@@ -1,0 +1,1 @@
+{"sha256": "461a7fc15f1cfdf6129d5b4e8171d71dd86295d7c8bb2cac5c5b9b549da3ebcd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D6100_V1.0.0.63_0.0.63/fs/usr/sbin/mkfs.jffs2", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1280.6, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "31ca805b62e35fbd6085f23ab5ffccd1bfe0ebf077e5ae8cdbe4d78496d0a7fc", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR9600_1.0.4.205530_prod/fs/usr/sbin/wpa_supplicant", "status": "no_findings", "exit_code": 0, "wall_s": 194.6, "peak_fp_mb": 8281.5, "nfind": 0, "findings": []}

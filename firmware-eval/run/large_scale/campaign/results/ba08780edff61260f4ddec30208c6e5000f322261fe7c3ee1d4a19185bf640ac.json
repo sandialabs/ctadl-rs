@@ -1,0 +1,1 @@
+{"sha256": "ba08780edff61260f4ddec30208c6e5000f322261fe7c3ee1d4a19185bf640ac", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DSN_3200_10_FIRMWARE_2.9.2.9/fs/sbin/init", "status": "ok", "exit_code": 0, "wall_s": 19.2, "peak_fp_mb": 1010.2, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4212824}]}

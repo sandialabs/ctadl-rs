@@ -1,0 +1,1 @@
+{"sha256": "8ce7e0a8052e338493c1386b9a50ac2ee16a80674df09641cbd11a78801d2376", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E5600_1.1.0.26_prod/fs/usr/sbin/odhcp6c", "status": "ok", "exit_code": 0, "wall_s": 25.8, "peak_fp_mb": 1236.8, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ARGV", "sink_callsite": 4226032}]}

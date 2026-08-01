@@ -1,0 +1,1 @@
+{"sha256": "2596e7d50d34c2fd72ee61231a684215d49536d00fccb31c54728096f5a5fc50", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/F5D8230v1_UK_1.01.03/fs/usr/sbin/iperf", "status": "no_findings", "exit_code": 0, "wall_s": 32.4, "peak_fp_mb": 1403.2, "nfind": 0, "findings": []}

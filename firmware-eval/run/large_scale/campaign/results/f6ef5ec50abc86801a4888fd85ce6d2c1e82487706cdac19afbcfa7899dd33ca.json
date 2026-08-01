@@ -1,0 +1,1 @@
+{"sha256": "f6ef5ec50abc86801a4888fd85ce6d2c1e82487706cdac19afbcfa7899dd33ca", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C1900_US__V2.0_220524/fs/usr/sbin/samba_multicall", "status": "timeout", "exit_code": null, "wall_s": 603.0, "peak_fp_mb": 10611.6, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "718d2a12bdd20641ced003fbb41b73ed8dcceb5b038044ba7116fd50b0fdb61b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7350_EU__V4_220606/fs/sbin/halt.sysvinit", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 872.2, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "324f524b65222ccbbd6f4ae0989e0e874a8bae103c324d0b8456785c0ad28ba0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC56S_300438251638/fs/usr/sbin/wred", "status": "timeout", "exit_code": null, "wall_s": 600.3, "peak_fp_mb": 2013.1, "nfind": 0, "findings": []}

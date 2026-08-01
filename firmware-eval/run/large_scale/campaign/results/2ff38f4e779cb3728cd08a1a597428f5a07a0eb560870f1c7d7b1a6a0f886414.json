@@ -1,0 +1,1 @@
+{"sha256": "2ff38f4e779cb3728cd08a1a597428f5a07a0eb560870f1c7d7b1a6a0f886414", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/A27v1FirmwareV16031711/fs/bin/dhcps", "status": "ok", "exit_code": 0, "wall_s": 41.5, "peak_fp_mb": 1828.5, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "FILE", "sink_callsite": 4233252}]}

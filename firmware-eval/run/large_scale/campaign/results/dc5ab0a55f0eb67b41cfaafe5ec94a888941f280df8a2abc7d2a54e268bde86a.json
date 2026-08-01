@@ -1,0 +1,1 @@
+{"sha256": "dc5ab0a55f0eb67b41cfaafe5ec94a888941f280df8a2abc7d2a54e268bde86a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/MBR1516_V1.2.2.84_BM/fs/usr/sbin/swresetd", "status": "no_findings", "exit_code": 0, "wall_s": 12.7, "peak_fp_mb": 755.4, "nfind": 0, "findings": []}

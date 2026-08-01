@@ -1,0 +1,1 @@
+{"sha256": "07135b189b8d93002158796de03da37682825b33f08aea98bc49b4ac2e40bcc9", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_R600VPN_UN_v4_4.0.4_Build_20200313/fs/usr/sbin/conntrack", "status": "no_findings", "exit_code": 0, "wall_s": 28.9, "peak_fp_mb": 997.3, "nfind": 0, "findings": []}

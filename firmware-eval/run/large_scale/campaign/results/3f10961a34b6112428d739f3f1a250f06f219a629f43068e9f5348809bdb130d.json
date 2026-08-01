@@ -1,0 +1,1 @@
+{"sha256": "3f10961a34b6112428d739f3f1a250f06f219a629f43068e9f5348809bdb130d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_MR400_EU_V1_181112/fs/usr/bin/racoon", "status": "ok", "exit_code": 0, "wall_s": 321.0, "peak_fp_mb": 4146.8, "nfind": 1, "findings": [{"sink_func": "execve", "source_class": "NETWORK", "sink_callsite": 4242056}]}

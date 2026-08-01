@@ -1,0 +1,1 @@
+{"sha256": "6c2a35fb61a38200318eacc8f2e7bb6f57a8d3d7558e6e100efeeb049a1d8bcf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA7430_1.0.1.209812_prod/fs/usr/sbin/rdt", "status": "ok", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1417.1, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NVRAM", "sink_callsite": 4217732}]}

@@ -1,0 +1,1 @@
+{"sha256": "aeac93e1830a439634112ec136757f23a29d1067724b8d36d68c056155c9bf82", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX6200_V1.0.3.94_1.1.128/fs/usr/local/samba/smbd", "status": "timeout", "exit_code": null, "wall_s": 601.9, "peak_fp_mb": 4242.1, "nfind": 0, "findings": []}

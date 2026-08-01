@@ -1,0 +1,1 @@
+{"sha256": "7638e44959ad5384d7c16fdc76faa2cb601a60234b8b801679f0eaa7564cd743", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_RE4100W_v1.0.03.002_20171228/fs/sbin/wget", "status": "no_findings", "exit_code": 0, "wall_s": 120.6, "peak_fp_mb": 7351.3, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "5a966bc1eb848f37f50a18aba8cec4417912c5fb58df0b9028b737ed890d0122", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7000_V1.0.1.112_1.0.196/fs/usr/bin/dbus-daemon", "status": "no_findings", "exit_code": 0, "wall_s": 29.2, "peak_fp_mb": 1923.6, "nfind": 0, "findings": []}

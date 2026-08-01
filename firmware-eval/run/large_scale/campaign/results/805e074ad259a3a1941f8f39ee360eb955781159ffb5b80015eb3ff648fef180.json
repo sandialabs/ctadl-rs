@@ -1,0 +1,1 @@
+{"sha256": "805e074ad259a3a1941f8f39ee360eb955781159ffb5b80015eb3ff648fef180", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DSN_3200_10_FIRMWARE_2.9.2.9/fs/usr/bin/vmstat", "status": "no_findings", "exit_code": 0, "wall_s": 15.8, "peak_fp_mb": 859.1, "nfind": 0, "findings": []}

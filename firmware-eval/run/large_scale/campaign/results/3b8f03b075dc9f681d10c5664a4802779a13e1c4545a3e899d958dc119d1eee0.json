@@ -1,0 +1,1 @@
+{"sha256": "3b8f03b075dc9f681d10c5664a4802779a13e1c4545a3e899d958dc119d1eee0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8900_V1.0.5.42/fs/sbin/mkfs.xfs", "status": "no_findings", "exit_code": 0, "wall_s": 83.5, "peak_fp_mb": 3056.2, "nfind": 0, "findings": []}

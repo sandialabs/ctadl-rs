@@ -1,0 +1,1 @@
+{"sha256": "3a127b05b092b53ca85e951ddfc31d1d798605f75bede72c82f0ed74e8f3438f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/FVS318Gv2_V4.3.5_3/fs/usr/bin/memtester", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 884.8, "nfind": 0, "findings": []}

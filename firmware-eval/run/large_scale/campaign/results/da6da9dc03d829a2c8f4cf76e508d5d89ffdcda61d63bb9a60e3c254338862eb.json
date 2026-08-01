@@ -1,0 +1,1 @@
+{"sha256": "da6da9dc03d829a2c8f4cf76e508d5d89ffdcda61d63bb9a60e3c254338862eb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_MR200_EU_V5.20_210226/fs/sbin/fsck.ext4", "status": "ok", "exit_code": 0, "wall_s": 41.9, "peak_fp_mb": 1868.2, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "ARGV", "sink_callsite": 4315308}]}

@@ -1,0 +1,1 @@
+{"sha256": "29747c4440257476e1ee8737d8586e7d9913b3ba6b64e700b63e99cbea71d7f8", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TEW_WLC100P_v1_2.08b01_/fs/sbin/autofw", "status": "ok", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 884.9, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4209924}]}

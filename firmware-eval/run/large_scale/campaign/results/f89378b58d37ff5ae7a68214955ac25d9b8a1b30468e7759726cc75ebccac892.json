@@ -1,0 +1,1 @@
+{"sha256": "f89378b58d37ff5ae7a68214955ac25d9b8a1b30468e7759726cc75ebccac892", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6100_V1.0.1.28/fs/usr/sbin/ripngd", "status": "no_findings", "exit_code": 0, "wall_s": 32.4, "peak_fp_mb": 1195.5, "nfind": 0, "findings": []}

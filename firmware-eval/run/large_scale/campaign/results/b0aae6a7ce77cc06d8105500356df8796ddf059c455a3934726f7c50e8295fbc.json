@@ -1,0 +1,1 @@
+{"sha256": "b0aae6a7ce77cc06d8105500356df8796ddf059c455a3934726f7c50e8295fbc", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/V12v1FirmwareV56116/fs/bin/racoon", "status": "ok", "exit_code": 0, "wall_s": 536.6, "peak_fp_mb": 4208.9, "nfind": 1, "findings": [{"sink_func": "execve", "source_class": "ARGV", "sink_callsite": 4248740}]}

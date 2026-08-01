@@ -1,0 +1,1 @@
+{"sha256": "334f4382eb492198d9e76f3672fbe653d47a43f6e0d616473ea032eba2f5283a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/NBG6617_V1.00_ABCT.6_C0/fs/usr/sbin/dropbear", "status": "ok", "exit_code": 0, "wall_s": 32.0, "peak_fp_mb": 1432.3, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4250528}]}

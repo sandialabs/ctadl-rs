@@ -1,0 +1,1 @@
+{"sha256": "5be1de73d48e24e0779fc4c993e09c8c22c3adf1ce3b70e3095f116f4167a742", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D3600_V1.0.0.76_1.0.1/fs/userfs/bin/openssl", "status": "no_findings", "exit_code": 0, "wall_s": 289.7, "peak_fp_mb": 6072.8, "nfind": 0, "findings": []}

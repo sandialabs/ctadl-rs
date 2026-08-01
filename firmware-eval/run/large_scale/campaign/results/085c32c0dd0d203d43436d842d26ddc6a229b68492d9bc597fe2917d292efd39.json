@@ -1,0 +1,1 @@
+{"sha256": "085c32c0dd0d203d43436d842d26ddc6a229b68492d9bc597fe2917d292efd39", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E4200_1.0.06.003_US_20140520_code/fs/sbin/chkntfs", "status": "no_findings", "exit_code": 0, "wall_s": 90.0, "peak_fp_mb": 3344.0, "nfind": 0, "findings": []}

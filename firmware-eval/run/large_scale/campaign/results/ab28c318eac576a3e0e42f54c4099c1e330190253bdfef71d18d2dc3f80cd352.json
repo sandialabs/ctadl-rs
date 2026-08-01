@@ -1,0 +1,1 @@
+{"sha256": "ab28c318eac576a3e0e42f54c4099c1e330190253bdfef71d18d2dc3f80cd352", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC2900_300438648260/fs/usr/sbin/ahs", "status": "ok", "exit_code": 0, "wall_s": 19.6, "peak_fp_mb": 1375.4, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4210356}]}

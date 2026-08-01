@@ -1,0 +1,1 @@
+{"sha256": "57fcf05b4bd22c716a7f37d9013c4c5098ce60933b5233aa50c7ef9b9df15cd5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/AC2100_V1.2.0.92/fs/usr/sbin/mkfs.ubifs", "status": "no_findings", "exit_code": 0, "wall_s": 26.1, "peak_fp_mb": 1248.3, "nfind": 0, "findings": []}

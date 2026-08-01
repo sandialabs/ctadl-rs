@@ -1,0 +1,1 @@
+{"sha256": "b03effdff27f30b0011bd088fae47d3999646c097210fe99c54b01ab3cb6e0a3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_600_REVB_v2.06/fs/usr/sbin/sendmail", "status": "no_findings", "exit_code": 0, "wall_s": 32.3, "peak_fp_mb": 1484.2, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "e840c676a3a8df4882dc8ce2cf34ea841399b0e9d356184eb49a7562ac64f3b0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7700_V1.0.0.226/fs/usr/sbin/nanddump", "status": "no_findings", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 1105.2, "nfind": 0, "findings": []}

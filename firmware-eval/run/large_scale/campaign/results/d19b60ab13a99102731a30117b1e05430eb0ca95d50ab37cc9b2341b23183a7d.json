@@ -1,0 +1,1 @@
+{"sha256": "d19b60ab13a99102731a30117b1e05430eb0ca95d50ab37cc9b2341b23183a7d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D7000v2_V1.0.0.82_1.0.1/fs/usr/sbin/email", "status": "ok", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1385.1, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NVRAM", "sink_callsite": 4200300}]}

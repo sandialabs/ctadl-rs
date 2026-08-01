@@ -1,0 +1,1 @@
+{"sha256": "bf03bc74cef49921fd18d2203fc4ece89d6e3c17e4d506b4b73a387cd24331d8", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6400_V1.0.1.78_1.0.50/fs/usr/sbin/dnsRedirectReplyd", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 704.4, "nfind": 0, "findings": []}

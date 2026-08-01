@@ -1,0 +1,1 @@
+{"sha256": "54f4f478f3531e857959f0e0599d2f299dba670bd6e5de43f5cce446a3e7cded", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/A27v1FirmwareV16031711/fs/bin/taskset", "status": "ok", "exit_code": 0, "wall_s": 16.0, "peak_fp_mb": 971.8, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "ARGV", "sink_callsite": 4197704}]}

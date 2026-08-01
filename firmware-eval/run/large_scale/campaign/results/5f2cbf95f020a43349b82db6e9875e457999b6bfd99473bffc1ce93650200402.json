@@ -1,0 +1,1 @@
+{"sha256": "5f2cbf95f020a43349b82db6e9875e457999b6bfd99473bffc1ce93650200402", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C50_US__V2_160801_1472173209786e/fs/usr/bin/wpa_supplicant", "status": "no_findings", "exit_code": 0, "wall_s": 32.5, "peak_fp_mb": 1946.9, "nfind": 0, "findings": []}

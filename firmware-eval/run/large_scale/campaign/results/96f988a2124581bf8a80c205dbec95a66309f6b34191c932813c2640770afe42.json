@@ -1,0 +1,1 @@
+{"sha256": "96f988a2124581bf8a80c205dbec95a66309f6b34191c932813c2640770afe42", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/AP200_EU_V1_161110/fs/usr/sbin/hostapd_cli", "status": "ok", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 983.0, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NETWORK", "sink_callsite": 4200996}]}

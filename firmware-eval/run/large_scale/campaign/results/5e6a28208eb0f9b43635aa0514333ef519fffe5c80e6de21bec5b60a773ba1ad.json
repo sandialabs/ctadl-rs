@@ -1,0 +1,1 @@
+{"sha256": "5e6a28208eb0f9b43635aa0514333ef519fffe5c80e6de21bec5b60a773ba1ad", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E800_v1.0.01.004_US_20130731/fs/usr/sbin/l2tpd", "status": "no_findings", "exit_code": 0, "wall_s": 23.0, "peak_fp_mb": 1030.5, "nfind": 0, "findings": []}

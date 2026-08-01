@@ -1,0 +1,1 @@
+{"sha256": "b82b1e64e389af5ca5a78cac48568294e035b5aacf8823fecf023cbae9de9414", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/GS316EP_GS316EPP_V1.0.3.4/fs/usr/bin/memtester", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 737.2, "nfind": 0, "findings": []}

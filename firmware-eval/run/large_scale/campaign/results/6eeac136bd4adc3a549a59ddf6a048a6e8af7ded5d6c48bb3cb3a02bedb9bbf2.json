@@ -1,0 +1,1 @@
+{"sha256": "6eeac136bd4adc3a549a59ddf6a048a6e8af7ded5d6c48bb3cb3a02bedb9bbf2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TWG_431BR_v1_1.0.14_/fs/sbin/lighttpd", "status": "ok", "exit_code": 0, "wall_s": 42.6, "peak_fp_mb": 2466.5, "nfind": 1, "findings": [{"sink_func": "execve", "source_class": "ENV", "sink_callsite": 4341456}]}

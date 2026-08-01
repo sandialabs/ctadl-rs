@@ -1,0 +1,1 @@
+{"sha256": "cbadf859a645217ca7ffc762102657af9538bd3bb6e775171fe706d610c68e24", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_WRT32X_1.0.180404.58/fs/usr/sbin/pptpctrl", "status": "ok", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 1335.9, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4203812}]}

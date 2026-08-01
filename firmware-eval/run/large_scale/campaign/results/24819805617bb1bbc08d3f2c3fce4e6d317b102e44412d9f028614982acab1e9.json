@@ -1,0 +1,1 @@
+{"sha256": "24819805617bb1bbc08d3f2c3fce4e6d317b102e44412d9f028614982acab1e9", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX5300_1.1.12.210066_prod/fs/usr/sbin/conntrack", "status": "no_findings", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 1343.8, "nfind": 0, "findings": []}

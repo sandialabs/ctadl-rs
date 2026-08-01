@@ -1,0 +1,1 @@
+{"sha256": "afda4f9966f5de5cb1c2f21d2b14b214bfd2344a34c7c199cada0d11f6d5f98f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/WBS210_UN_V2.0_2.2.1_Build_190620/fs/sbin/sar", "status": "no_findings", "exit_code": 0, "wall_s": 22.4, "peak_fp_mb": 1280.1, "nfind": 0, "findings": []}

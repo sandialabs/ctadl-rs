@@ -1,0 +1,1 @@
+{"sha256": "dce9e8281e6e9efacc03427069c4ccd44115df7078b5250e983cb2eafe9ae38a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7100LG_V1.0.0.78_1.0.6/fs/usr/sbin/socat", "status": "no_findings", "exit_code": 0, "wall_s": 29.3, "peak_fp_mb": 1675.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "900525e47a0bf16c6b59c9033d31919f1c1a421c6f1c525dae6ecd2f9a6790ef", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/sbin/vmstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1039.5, "nfind": 0, "findings": []}

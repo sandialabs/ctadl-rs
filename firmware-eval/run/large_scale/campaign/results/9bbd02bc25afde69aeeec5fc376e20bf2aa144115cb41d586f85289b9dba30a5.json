@@ -1,0 +1,1 @@
+{"sha256": "9bbd02bc25afde69aeeec5fc376e20bf2aa144115cb41d586f85289b9dba30a5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAXE450_V1.0.12.96/fs/usr/sbin/tfmeter", "status": "ok", "exit_code": 0, "wall_s": 16.4, "peak_fp_mb": 1294.9, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NVRAM", "sink_callsite": 4215840}]}

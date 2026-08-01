@@ -1,0 +1,1 @@
+{"sha256": "ba75d3ca02c3ec6e4d31ae496ba0d50a08ac7146cf5e93adbb631fde7377c2b4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/F5D8230v1_UK_1.01.03/fs/usr/sbin/netfilter_log", "status": "no_findings", "exit_code": 0, "wall_s": 13.1, "peak_fp_mb": 741.8, "nfind": 0, "findings": []}

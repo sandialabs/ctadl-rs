@@ -1,0 +1,1 @@
+{"sha256": "bb4b4853c08afc43845ea10d2a21bcc68b8ca48971343d19966b266f68e7717a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA8300_1.1.6.209797_prod/fs/usr/sbin/athdiag", "status": "ok", "exit_code": 0, "wall_s": 57.4, "peak_fp_mb": 1873.4, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4231460}]}

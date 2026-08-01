@@ -1,0 +1,1 @@
+{"sha256": "b8e94066c862c34be104fb26f698d9e649cebafc450ebc466835f3d9433acff8", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA7500v3_3.0.1.207964_prod/fs/usr/sbin/rdt", "status": "ok", "exit_code": 0, "wall_s": 19.5, "peak_fp_mb": 1399.1, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NVRAM", "sink_callsite": 4217732}]}

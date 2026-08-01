@@ -1,0 +1,1 @@
+{"sha256": "05b97437fd656afad3aa396ba92ccddc55c9b89bb5eccf1590966ab1403507ae", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D7800_FW_V1.0.1.68/fs/usr/sbin/noip2", "status": "ok", "exit_code": 0, "wall_s": 19.7, "peak_fp_mb": 1430.6, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4210380}]}

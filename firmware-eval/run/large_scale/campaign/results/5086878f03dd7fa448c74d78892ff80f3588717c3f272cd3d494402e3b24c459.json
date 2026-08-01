@@ -1,0 +1,1 @@
+{"sha256": "5086878f03dd7fa448c74d78892ff80f3588717c3f272cd3d494402e3b24c459", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7300_EX6400_V1.0.2.164/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 19.6, "peak_fp_mb": 974.6, "nfind": 0, "findings": []}

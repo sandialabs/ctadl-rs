@@ -1,0 +1,1 @@
+{"sha256": "88c891b609ce415419113efef6298da2de05b8fe49741f5013ad8c915f770a38", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7300_EX6400_V1.0.2.164/fs/usr/sbin/ethtool", "status": "no_findings", "exit_code": 0, "wall_s": 29.1, "peak_fp_mb": 1468.7, "nfind": 0, "findings": []}

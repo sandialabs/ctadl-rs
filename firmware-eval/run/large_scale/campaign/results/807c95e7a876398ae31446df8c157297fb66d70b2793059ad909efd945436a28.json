@@ -1,0 +1,1 @@
+{"sha256": "807c95e7a876398ae31446df8c157297fb66d70b2793059ad909efd945436a28", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/BR200_FW_V5.10.0.5/fs/usr/bin/hd-idle", "status": "ok", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 620.9, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4199612}]}

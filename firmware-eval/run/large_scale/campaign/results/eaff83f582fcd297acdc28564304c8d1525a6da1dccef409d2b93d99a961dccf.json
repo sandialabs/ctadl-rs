@@ -1,0 +1,1 @@
+{"sha256": "eaff83f582fcd297acdc28564304c8d1525a6da1dccef409d2b93d99a961dccf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/W301A_V3.3.4j/fs/bin/httpd", "status": "ok", "exit_code": 0, "wall_s": 32.6, "peak_fp_mb": 1572.6, "nfind": 1, "findings": [{"sink_func": "<EXTERNAL>::popen@0043a1f0", "source_class": "FILE", "sink_callsite": 4346896}]}

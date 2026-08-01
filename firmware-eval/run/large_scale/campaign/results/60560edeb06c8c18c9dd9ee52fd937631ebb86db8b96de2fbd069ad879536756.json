@@ -1,0 +1,1 @@
+{"sha256": "60560edeb06c8c18c9dd9ee52fd937631ebb86db8b96de2fbd069ad879536756", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DSN_5000_10_FIRMWARE_2.9.2.9/fs/sbin/shutdown", "status": "ok", "exit_code": 0, "wall_s": 12.7, "peak_fp_mb": 939.6, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ARGV", "sink_callsite": 4199176}]}

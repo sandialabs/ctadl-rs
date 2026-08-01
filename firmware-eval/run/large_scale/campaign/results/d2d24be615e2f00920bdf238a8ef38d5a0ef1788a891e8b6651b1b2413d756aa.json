@@ -1,0 +1,1 @@
+{"sha256": "d2d24be615e2f00920bdf238a8ef38d5a0ef1788a891e8b6651b1b2413d756aa", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6120_V1.0.0.84/fs/usr/sbin/auto_force_upgrade_fw", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1093.0, "nfind": 0, "findings": []}

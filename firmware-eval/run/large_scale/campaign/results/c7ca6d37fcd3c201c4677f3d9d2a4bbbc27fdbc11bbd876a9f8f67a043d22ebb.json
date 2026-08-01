@@ -1,0 +1,1 @@
+{"sha256": "c7ca6d37fcd3c201c4677f3d9d2a4bbbc27fdbc11bbd876a9f8f67a043d22ebb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/XR700_V1.0.1.50/fs/usr/sbin/conntrackd", "status": "no_findings", "exit_code": 0, "wall_s": 50.6, "peak_fp_mb": 1426.8, "nfind": 0, "findings": []}

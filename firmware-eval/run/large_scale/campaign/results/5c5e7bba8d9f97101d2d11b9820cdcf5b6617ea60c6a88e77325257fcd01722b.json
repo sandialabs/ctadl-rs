@@ -1,0 +1,1 @@
+{"sha256": "5c5e7bba8d9f97101d2d11b9820cdcf5b6617ea60c6a88e77325257fcd01722b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/US_E101V2.0br_V1.10.0.1_en_TDE01/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 19.5, "peak_fp_mb": 1022.6, "nfind": 0, "findings": []}

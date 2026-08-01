@@ -1,0 +1,1 @@
+{"sha256": "4375f111ab920ea17853712e26f7e9dda1f5fa9b522709287cd0c4e09dfa02d3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX6200v2_V1.0.1.90/fs/usr/sbin/wrapd", "status": "ok", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1472.4, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NETWORK", "sink_callsite": 4206340}]}

@@ -1,0 +1,1 @@
+{"sha256": "fd41d186748c63b1d94fe61cc0d8422febc50f49ca42f8a0236cd67b2c2cdd60", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_D5_V2_150731/fs/sbin/strace", "status": "no_findings", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 1653.3, "nfind": 0, "findings": []}

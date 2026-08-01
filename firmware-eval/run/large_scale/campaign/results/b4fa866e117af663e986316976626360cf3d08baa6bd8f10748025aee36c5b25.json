@@ -1,0 +1,1 @@
+{"sha256": "b4fa866e117af663e986316976626360cf3d08baa6bd8f10748025aee36c5b25", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/JNR3000_V1.1.0.29_1.0.1/fs/usr/sbin/lsof", "status": "timeout", "exit_code": null, "wall_s": 603.3, "peak_fp_mb": 9902.2, "nfind": 0, "findings": []}

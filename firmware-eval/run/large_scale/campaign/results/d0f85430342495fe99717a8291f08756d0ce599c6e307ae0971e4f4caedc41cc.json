@@ -1,0 +1,1 @@
+{"sha256": "d0f85430342495fe99717a8291f08756d0ce599c6e307ae0971e4f4caedc41cc", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DSN_3200_10_FIRMWARE_2.9.2.9/fs/sbin/modprobe", "status": "no_findings", "exit_code": 0, "wall_s": 16.5, "peak_fp_mb": 891.4, "nfind": 0, "findings": []}

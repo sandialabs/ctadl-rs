@@ -1,0 +1,1 @@
+{"sha256": "59e44591b81d91f369c0c0b9d2d2bcc0b0e45a1d3e69f001ef08fc29bdd3fe9d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/NBG6617_V1.00_ABCT.6_C0/fs/www/cgi-bin/photobak", "status": "ok", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 855.5, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ENV", "sink_callsite": 4202120}]}

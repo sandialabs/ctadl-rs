@@ -1,0 +1,1 @@
+{"sha256": "e6b353a1c2440b721a351610c4f0324c121712ee1a89d8a7907be0286add6de0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DES_3226L_REVB_FIRMWARE_1.4.2.0/fs/usr/bin/gdbserver", "status": "no_findings", "exit_code": 0, "wall_s": 28.9, "peak_fp_mb": 962.8, "nfind": 0, "findings": []}

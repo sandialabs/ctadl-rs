@@ -1,0 +1,1 @@
+{"sha256": "f0a7d81d65a62f721c69bc5cacc2d1dd80007803f5425f7bf3cc38e17cd34466", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC1900P_300438432738/fs/usr/sbin/smbd", "status": "timeout", "exit_code": null, "wall_s": 601.6, "peak_fp_mb": 4977.9, "nfind": 0, "findings": []}

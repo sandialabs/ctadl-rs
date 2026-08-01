@@ -1,0 +1,1 @@
+{"sha256": "cdacab8c92ea5c15c31435ee8736be32c50ddc68db2d987e61d37dd2cd80b84e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/FVS318Gv2_V4.3.5_3/fs/usr/sbin/ethtool", "status": "no_findings", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1329.3, "nfind": 0, "findings": []}

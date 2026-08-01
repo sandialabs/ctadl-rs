@@ -1,0 +1,1 @@
+{"sha256": "e39509cc2e8d9a262e5e32b331575e42532d8c50ecf4081d520ce0f9132f4cea", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/sbin/hostapd_cli", "status": "no_findings", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1302.0, "nfind": 0, "findings": []}

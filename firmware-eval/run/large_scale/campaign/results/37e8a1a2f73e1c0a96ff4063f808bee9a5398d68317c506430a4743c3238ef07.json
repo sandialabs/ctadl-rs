@@ -1,0 +1,1 @@
+{"sha256": "37e8a1a2f73e1c0a96ff4063f808bee9a5398d68317c506430a4743c3238ef07", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDR3400v3_V1.0.1.44_1.0.71/fs/usr/sbin/swresetd", "status": "no_findings", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 779.0, "nfind": 0, "findings": []}

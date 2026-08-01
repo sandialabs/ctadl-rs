@@ -1,0 +1,1 @@
+{"sha256": "5ac19c7ebc8d99ab978420355e28540e0afc4e410775486b8f0e2c92e77922e2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7000_V1.0.11.136_10.2.120/fs/usr/sbin/zip", "status": "timeout", "exit_code": null, "wall_s": 603.1, "peak_fp_mb": 8026.9, "nfind": 0, "findings": []}

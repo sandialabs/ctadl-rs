@@ -1,5 +1,5 @@
 // =============================================================================
-// CTADL taint model: command injection in Linux firmware
+// CTADL taint model: command injection in Linux firmware - DO-NOT-MERGE
 // =============================================================================
 //
 // This model mirrors the source/sink set of Operation Mango so that CTADL and
@@ -41,7 +41,7 @@
 //  (If a CTADL build is ever changed to require kind-matching and you get zero
 //   flows, collapse every source `kind` below to `command_injection`.)
 //
-ate// Matching / anchoring
+// Matching / anchoring
 // --------------------
 //  We match with `constraint: "name"` -- a regex against the function's *short
 //  name* -- anchored with ^(...)$ to mirror Mango's exact-name semantics and

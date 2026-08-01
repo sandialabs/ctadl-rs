@@ -1,0 +1,1 @@
+{"sha256": "114dcac63d413e7afb609065ccf5845d0a72e3e2ab82cdc710e81ac50d2b618e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6900_V1.0.2.26_10.0.45/fs/usr/local/sbin/openssl", "status": "no_findings", "exit_code": 0, "wall_s": 86.0, "peak_fp_mb": 3015.7, "nfind": 0, "findings": []}

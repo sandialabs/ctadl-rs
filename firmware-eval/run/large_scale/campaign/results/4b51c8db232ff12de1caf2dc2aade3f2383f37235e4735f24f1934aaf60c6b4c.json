@@ -1,0 +1,1 @@
+{"sha256": "4b51c8db232ff12de1caf2dc2aade3f2383f37235e4735f24f1934aaf60c6b4c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TEW_825DAP_v1_2.01B03_/fs/usr/sbin/dhcp6c", "status": "ok", "exit_code": 0, "wall_s": 35.9, "peak_fp_mb": 2282.5, "nfind": 1, "findings": [{"sink_func": "execve", "source_class": "FILE", "sink_callsite": 4274284}]}

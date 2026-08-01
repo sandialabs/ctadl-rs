@@ -1,0 +1,1 @@
+{"sha256": "37555b951140e4d77b99da5307d525f69c3fb14c5eae78e0052244f775269cb2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC55U_300438252236/fs/usr/sbin/lighttpd", "status": "ok", "exit_code": 0, "wall_s": 36.6, "peak_fp_mb": 2004.0, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4360728}]}

@@ -1,0 +1,1 @@
+{"sha256": "a23a1433c435a02d9a432bb554d4f535199d1456981c86815c250fdf20ec9d9d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DNS_120_FIRMWARE_1.18/fs/usr/sbin/do_reboot", "status": "no_findings", "exit_code": 0, "wall_s": 13.0, "peak_fp_mb": 729.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "ce4ad6404c08496817a5fd54d72f42985b37befb5cd2666adab7ce6b967f227e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_AX50_V1_220526/fs/usr/bin/keyiv_generator", "status": "ok", "exit_code": 0, "wall_s": 12.7, "peak_fp_mb": 632.0, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4196924}]}

@@ -1,0 +1,1 @@
+{"sha256": "1bf97f542a7e8f83588aa82e501d29b40b93919f1df2ac63be02f7f92e80c70e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DAP_2690_REVB_FIRMWARE_v3.20RC106/fs/usr/sbin/openssl", "status": "no_findings", "exit_code": 0, "wall_s": 299.3, "peak_fp_mb": 6308.8, "nfind": 0, "findings": []}

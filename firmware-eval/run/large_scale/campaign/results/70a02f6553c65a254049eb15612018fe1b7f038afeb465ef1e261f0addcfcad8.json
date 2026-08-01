@@ -1,0 +1,1 @@
+{"sha256": "70a02f6553c65a254049eb15612018fe1b7f038afeb465ef1e261f0addcfcad8", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DGND3300_Firmware_Version_1.1.00.41__North_America_/fs/usr/sbin/lsof", "status": "timeout", "exit_code": null, "wall_s": 600.8, "peak_fp_mb": 10154.6, "nfind": 0, "findings": []}

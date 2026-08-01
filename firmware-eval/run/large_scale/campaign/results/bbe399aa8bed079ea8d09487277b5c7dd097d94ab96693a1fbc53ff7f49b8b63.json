@@ -1,0 +1,1 @@
+{"sha256": "bbe399aa8bed079ea8d09487277b5c7dd097d94ab96693a1fbc53ff7f49b8b63", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_685_FIRMWARE_2.00/fs/usr/sbin/openssl", "status": "no_findings", "exit_code": 0, "wall_s": 95.2, "peak_fp_mb": 3458.0, "nfind": 0, "findings": []}

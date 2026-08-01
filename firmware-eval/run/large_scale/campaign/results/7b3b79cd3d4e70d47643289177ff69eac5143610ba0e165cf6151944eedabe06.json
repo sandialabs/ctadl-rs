@@ -1,0 +1,1 @@
+{"sha256": "7b3b79cd3d4e70d47643289177ff69eac5143610ba0e165cf6151944eedabe06", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA2700_1.1.40.189581_prod/fs/usr/sbin/ipv4_firewall", "status": "no_findings", "exit_code": 0, "wall_s": 22.6, "peak_fp_mb": 1140.3, "nfind": 0, "findings": []}

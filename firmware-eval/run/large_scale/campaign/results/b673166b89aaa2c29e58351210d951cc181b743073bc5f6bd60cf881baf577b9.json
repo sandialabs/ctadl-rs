@@ -1,0 +1,1 @@
+{"sha256": "b673166b89aaa2c29e58351210d951cc181b743073bc5f6bd60cf881baf577b9", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/CAP1200_EU_v1_181012/fs/usr/sbin/athdiag", "status": "ok", "exit_code": 0, "wall_s": 28.7, "peak_fp_mb": 1375.4, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4198800}]}

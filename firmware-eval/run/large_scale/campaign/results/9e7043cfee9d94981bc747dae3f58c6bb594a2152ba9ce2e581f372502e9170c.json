@@ -1,0 +1,1 @@
+{"sha256": "9e7043cfee9d94981bc747dae3f58c6bb594a2152ba9ce2e581f372502e9170c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Deco_M4_V2_1.5.4_220113/fs/usr/bin/client_mgmt", "status": "ok", "exit_code": 0, "wall_s": 22.5, "peak_fp_mb": 1284.7, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4239672}]}

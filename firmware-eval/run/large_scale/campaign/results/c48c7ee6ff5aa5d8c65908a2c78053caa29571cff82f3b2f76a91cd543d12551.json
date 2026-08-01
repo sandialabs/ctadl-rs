@@ -1,0 +1,1 @@
+{"sha256": "c48c7ee6ff5aa5d8c65908a2c78053caa29571cff82f3b2f76a91cd543d12551", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_BRT_AC828_300438270348/fs/usr/sbin/mkntfs", "status": "timeout", "exit_code": null, "wall_s": 600.8, "peak_fp_mb": 2297.8, "nfind": 0, "findings": []}

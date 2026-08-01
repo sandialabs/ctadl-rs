@@ -1,0 +1,1 @@
+{"sha256": "aa4b71ecb1f3c1deed577b5e7a6aa5d7cf2dacd28e78c228a73f03c30184208a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7350_EU_V5_20200330/fs/sbin/vipw.shadow", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 1150.8, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ENV", "sink_callsite": 4202216}]}

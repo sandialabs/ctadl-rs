@@ -1,0 +1,1 @@
+{"sha256": "5d8ad39b4c3797983ec2dee3f2ca037aa888cade990c0c1dbc851cec632be308", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAX35_V1.0.5.104_1.0.1/fs/usr/sbin/ntpclient", "status": "ok", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1342.2, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4202416}]}

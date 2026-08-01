@@ -1,0 +1,1 @@
+{"sha256": "f506d68cd67de4773c77dbb25c439de86c528ca6f91f0804e55fbf02b9dcb632", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/MS510TXM_MS510TXUP_1.0.5.10/fs/bin/InsightCli", "status": "ok", "exit_code": 0, "wall_s": 13.0, "peak_fp_mb": 866.6, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4199776}]}

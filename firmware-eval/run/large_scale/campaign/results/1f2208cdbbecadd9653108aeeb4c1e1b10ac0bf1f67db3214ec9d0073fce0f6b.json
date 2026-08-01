@@ -1,0 +1,1 @@
+{"sha256": "1f2208cdbbecadd9653108aeeb4c1e1b10ac0bf1f67db3214ec9d0073fce0f6b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/AD7200_EU_US__V2.0_210430/fs/usr/sbin/dropbear", "status": "ok", "exit_code": 0, "wall_s": 32.8, "peak_fp_mb": 1649.7, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4251296}]}

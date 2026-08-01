@@ -1,0 +1,1 @@
+{"sha256": "7c989b29166a75dfd56cea226243390c18196ddbeb6a5533987a3728d18a07e0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_G31_1012/fs/bin/iapp", "status": "ok", "exit_code": 0, "wall_s": 23.0, "peak_fp_mb": 832.6, "nfind": 1, "findings": [{"sink_func": "<EXTERNAL>::system@00400be0", "source_class": "FILE", "sink_callsite": 4199724}]}

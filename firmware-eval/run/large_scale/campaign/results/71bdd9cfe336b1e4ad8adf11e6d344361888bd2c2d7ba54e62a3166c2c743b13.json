@@ -1,0 +1,1 @@
+{"sha256": "71bdd9cfe336b1e4ad8adf11e6d344361888bd2c2d7ba54e62a3166c2c743b13", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C4000_EU_V3_191026/fs/usr/sbin/bsd", "status": "ok", "exit_code": 0, "wall_s": 31.6, "peak_fp_mb": 1418.0, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NVRAM", "sink_callsite": 4202236}]}

@@ -1,0 +1,1 @@
+{"sha256": "bd34757069081ed5e88482d2f1fa60eca6b21282b8674792a569405df709bd90", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBR10_V2.7.4.24/fs/usr/sbin/noip2", "status": "ok", "exit_code": 0, "wall_s": 16.4, "peak_fp_mb": 1166.0, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4216876}]}

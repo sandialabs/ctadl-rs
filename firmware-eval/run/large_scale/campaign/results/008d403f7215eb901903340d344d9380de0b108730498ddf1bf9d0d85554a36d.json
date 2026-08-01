@@ -1,0 +1,1 @@
+{"sha256": "008d403f7215eb901903340d344d9380de0b108730498ddf1bf9d0d85554a36d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX5300_1.1.12.210066_prod/fs/usr/sbin/hostapd_cli", "status": "no_findings", "exit_code": 0, "wall_s": 19.1, "peak_fp_mb": 1435.0, "nfind": 0, "findings": []}

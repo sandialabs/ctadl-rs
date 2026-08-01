@@ -1,0 +1,1 @@
+{"sha256": "bba9221db191d1a68c2ac98ebd3a09391794f99d46f1617d78167bd3f86119c4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_MR400_EU_V2_190307/fs/usr/sbin/conntrackd", "status": "no_findings", "exit_code": 0, "wall_s": 47.5, "peak_fp_mb": 1393.8, "nfind": 0, "findings": []}

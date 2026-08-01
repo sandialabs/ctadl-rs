@@ -1,0 +1,1 @@
+{"sha256": "97c3869a5b6263a96865f5826a7a3c7c77cabceb5cf702f081cd474c05d605d9", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/AC2100_V1.2.0.92/fs/usr/sbin/httpd_watchdog", "status": "no_findings", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 681.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "e3533b065af9e11723092c805ef286419fc1fcba8d760deda5b912961e586329", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBS50Y_V2.7.2.102/fs/usr/sbin/dhcp6c", "status": "ok", "exit_code": 0, "wall_s": 41.7, "peak_fp_mb": 1507.9, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4204884}]}

@@ -1,0 +1,1 @@
+{"sha256": "5ba8beecb773ed955a840754946ae5ab7a279628db9baf258efbc5f57e552863", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/BR200_FW_V5.10.0.5/fs/usr/bin/mqtt-agent", "status": "ok", "exit_code": 0, "wall_s": 81.3, "peak_fp_mb": 1576.6, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4225332}]}

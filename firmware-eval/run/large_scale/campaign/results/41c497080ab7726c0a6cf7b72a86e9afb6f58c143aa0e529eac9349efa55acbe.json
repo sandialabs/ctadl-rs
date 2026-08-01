@@ -1,0 +1,1 @@
+{"sha256": "41c497080ab7726c0a6cf7b72a86e9afb6f58c143aa0e529eac9349efa55acbe", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/BR200_FW_V5.10.0.5/fs/usr/bin/vpncloud_agent", "status": "ok", "exit_code": 0, "wall_s": 85.1, "peak_fp_mb": 1585.4, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4246344}]}

@@ -1,0 +1,1 @@
+{"sha256": "2c78072c0c81ca78376451e0206ca20b4cfd7e832f823a8d6d019bc14aede100", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/NBG6604_V1.00_ABIR.3_C0/fs/usr/bin/reg", "status": "ok", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 800.2, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4196524}]}

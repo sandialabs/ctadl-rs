@@ -1,0 +1,1 @@
+{"sha256": "7d1a752618e8048f9a67944af4647a9b21a4158b168d1129ffdea28ce7186358", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/PR2000_V1.0.0.30_1.0.1/fs/usr/sbin/syslogd", "status": "no_findings", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1259.2, "nfind": 0, "findings": []}

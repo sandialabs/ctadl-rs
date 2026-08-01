@@ -1,0 +1,1 @@
+{"sha256": "de21e3345119fcd3d5c4619d34d9c4b03741b86bdc7f7296d18f0cf17383a55e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX8500_1.0.11.208937_prod/fs/usr/sbin/ipv4_firewall", "status": "no_findings", "exit_code": 0, "wall_s": 22.4, "peak_fp_mb": 1367.5, "nfind": 0, "findings": []}

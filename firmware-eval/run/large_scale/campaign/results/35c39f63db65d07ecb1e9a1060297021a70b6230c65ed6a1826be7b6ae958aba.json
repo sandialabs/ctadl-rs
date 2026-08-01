@@ -1,0 +1,1 @@
+{"sha256": "35c39f63db65d07ecb1e9a1060297021a70b6230c65ed6a1826be7b6ae958aba", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/SXR30_signed_V4.2.3.102/fs/usr/bin/zip", "status": "timeout", "exit_code": null, "wall_s": 601.7, "peak_fp_mb": 8257.6, "nfind": 0, "findings": []}

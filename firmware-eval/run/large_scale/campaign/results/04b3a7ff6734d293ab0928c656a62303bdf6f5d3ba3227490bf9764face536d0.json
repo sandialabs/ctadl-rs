@@ -1,0 +1,1 @@
+{"sha256": "04b3a7ff6734d293ab0928c656a62303bdf6f5d3ba3227490bf9764face536d0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/ARMOR_Z2__NBG6817__V1.00_ABCS.8_C0/fs/usr/bin/redis-server", "status": "timeout", "exit_code": null, "wall_s": 602.3, "peak_fp_mb": 4244.5, "nfind": 0, "findings": []}

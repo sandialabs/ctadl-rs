@@ -1,0 +1,1 @@
+{"sha256": "338ab562f8f0b13633f5c3986a244e4308bd73089d71c813661c4f9893dc6f90", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA6350V2_2.1.2.184309_prod/fs/usr/sbin/set_nvram_defaults", "status": "no_findings", "exit_code": 0, "wall_s": 13.0, "peak_fp_mb": 724.0, "nfind": 0, "findings": []}

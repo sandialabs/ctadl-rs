@@ -1,0 +1,1 @@
+{"sha256": "441c26abeb6489a4be94abe953c960a48fe0f8bbcf2a0ac416dfe9d0c72d30f2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E1550_1.0.03.002_US_20120201_code/fs/sbin/mkdosfs", "status": "no_findings", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1374.2, "nfind": 0, "findings": []}

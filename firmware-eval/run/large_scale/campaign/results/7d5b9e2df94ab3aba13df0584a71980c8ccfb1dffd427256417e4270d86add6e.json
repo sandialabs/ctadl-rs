@@ -1,0 +1,1 @@
+{"sha256": "7d5b9e2df94ab3aba13df0584a71980c8ccfb1dffd427256417e4270d86add6e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E5600_1.1.0.26_prod/fs/usr/sbin/ubiupdatevol", "status": "no_findings", "exit_code": 0, "wall_s": 16.0, "peak_fp_mb": 819.6, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "1cb5e1fadb93ce2cf5d5293e5e0197747d876d2c82e00d4c698c8776799b40ed", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/US_G103V1.0la_V1.0.0.5_EN_TDE01/fs/sbin/hotplug2", "status": "ok", "exit_code": 0, "wall_s": 19.8, "peak_fp_mb": 1018.1, "nfind": 1, "findings": [{"sink_func": "execlp", "source_class": "ARGV", "sink_callsite": 4200696}]}

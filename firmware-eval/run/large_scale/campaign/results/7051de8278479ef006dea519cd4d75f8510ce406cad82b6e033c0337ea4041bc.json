@@ -1,0 +1,1 @@
+{"sha256": "7051de8278479ef006dea519cd4d75f8510ce406cad82b6e033c0337ea4041bc", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_AX50_V1_220526/fs/sbin/hotplug2", "status": "ok", "exit_code": 0, "wall_s": 19.8, "peak_fp_mb": 810.8, "nfind": 1, "findings": [{"sink_func": "execlp", "source_class": "ARGV", "sink_callsite": 4199688}]}

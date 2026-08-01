@@ -1,0 +1,1 @@
+{"sha256": "ae900f4870769f308b3d6e3f674502e0994c6805026f16b509a62fe3e39b7e97", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/sbin/dhclient", "status": "ok", "exit_code": 0, "wall_s": 362.6, "peak_fp_mb": 18312.4, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "ENV", "sink_callsite": 4352252}]}

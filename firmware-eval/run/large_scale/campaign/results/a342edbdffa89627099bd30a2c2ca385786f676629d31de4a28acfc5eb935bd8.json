@@ -1,0 +1,1 @@
+{"sha256": "a342edbdffa89627099bd30a2c2ca385786f676629d31de4a28acfc5eb935bd8", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/NBG6604_V1.00_ABIR.3_C0/fs/sbin/askfirst", "status": "ok", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 719.4, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "ARGV", "sink_callsite": 4196548}]}

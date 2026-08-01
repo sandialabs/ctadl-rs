@@ -1,0 +1,1 @@
+{"sha256": "f5e4806d25220e05e5e87130f7c29ec87df85d9c9796a7b90559b6c18214cffb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX8500_1.0.11.208937_prod/fs/usr/sbin/ipv6_firewall", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1146.5, "nfind": 0, "findings": []}

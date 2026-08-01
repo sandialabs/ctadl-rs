@@ -1,0 +1,1 @@
+{"sha256": "ce52e8171b1d93dab6b82842b5bb7d7ea9e7a425f0fcbc3954dd460201202ff3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA9300_1.1.9.183697_prod/fs/usr/sbin/bridge_firewall", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 961.6, "nfind": 0, "findings": []}

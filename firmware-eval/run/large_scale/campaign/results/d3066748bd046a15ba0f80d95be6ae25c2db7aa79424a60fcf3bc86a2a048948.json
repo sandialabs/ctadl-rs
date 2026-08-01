@@ -1,0 +1,1 @@
+{"sha256": "d3066748bd046a15ba0f80d95be6ae25c2db7aa79424a60fcf3bc86a2a048948", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_A7_US__V5_220714/fs/usr/sbin/ntpd", "status": "no_findings", "exit_code": 0, "wall_s": 15.9, "peak_fp_mb": 610.4, "nfind": 0, "findings": []}

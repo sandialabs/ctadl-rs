@@ -1,0 +1,1 @@
+{"sha256": "20f13d774e61bd025df790f6b6cb082dd8866ea2f7bf95eb5c37f26781c71818", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_AX11000_EU__V1_210719/fs/sbin/bsd", "status": "ok", "exit_code": 0, "wall_s": 41.1, "peak_fp_mb": 1588.6, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NVRAM", "sink_callsite": 4205528}]}

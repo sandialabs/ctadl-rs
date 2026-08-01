@@ -1,0 +1,1 @@
+{"sha256": "10a6558e338cceb6c1a8396ba3fca58e657e7fea460216eb92fa52cb685e947f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/usr/sbin/syncWifiCalibration", "status": "ok", "exit_code": 0, "wall_s": 13.0, "peak_fp_mb": 809.9, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NVRAM", "sink_callsite": 4196708}]}

@@ -1,0 +1,1 @@
+{"sha256": "8768ddb1e03db24abc7c5cca299b63e92d2f3ab644b8cb8152070b12e8958890", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E2500_3.0.05.002_20180914/fs/usr/sbin/tftpd", "status": "no_findings", "exit_code": 0, "wall_s": 22.7, "peak_fp_mb": 1066.3, "nfind": 0, "findings": []}

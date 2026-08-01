@@ -1,0 +1,1 @@
+{"sha256": "7440cbc46360f487af10a1c97fd12eadb284a56bf603f74e3f4ae69c4c892d53", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_MR6400_EU_V5_201207/fs/usr/sbin/conntrackd", "status": "no_findings", "exit_code": 0, "wall_s": 44.1, "peak_fp_mb": 1362.4, "nfind": 0, "findings": []}

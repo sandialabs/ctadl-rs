@@ -1,0 +1,1 @@
+{"sha256": "00cc85b1862582faca823fa751d5e4cf16ae93ad85412a9dda590b0fe1e45aa3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA7250_1.0.1.209812_prod/fs/bin/lspci", "status": "timeout", "exit_code": null, "wall_s": 600.6, "peak_fp_mb": 2290.1, "nfind": 0, "findings": []}

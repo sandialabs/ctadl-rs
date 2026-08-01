@@ -1,0 +1,1 @@
+{"sha256": "1d85177a945f1c39e6a32df9e972868186b5ad9372124ea2bc035683de8be0d2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WN3100RP_V1.0.0.20_1.0.22/fs/usr/sbin/swresetd", "status": "no_findings", "exit_code": 0, "wall_s": 13.1, "peak_fp_mb": 771.5, "nfind": 0, "findings": []}

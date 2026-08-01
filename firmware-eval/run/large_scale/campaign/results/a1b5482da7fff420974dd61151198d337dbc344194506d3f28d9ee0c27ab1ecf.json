@@ -1,0 +1,1 @@
+{"sha256": "a1b5482da7fff420974dd61151198d337dbc344194506d3f28d9ee0c27ab1ecf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_WAP610N_v1.0.05.002_20140321/fs/usr/bin/vmstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.5, "peak_fp_mb": 1206.4, "nfind": 0, "findings": []}

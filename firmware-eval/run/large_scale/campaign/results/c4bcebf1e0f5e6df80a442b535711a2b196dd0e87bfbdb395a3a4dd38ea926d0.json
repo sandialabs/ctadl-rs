@@ -1,0 +1,1 @@
+{"sha256": "c4bcebf1e0f5e6df80a442b535711a2b196dd0e87bfbdb395a3a4dd38ea926d0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA6200_1.1.41.188556_prod/fs/usr/sbin/conntrack", "status": "no_findings", "exit_code": 0, "wall_s": 16.0, "peak_fp_mb": 1309.9, "nfind": 0, "findings": []}

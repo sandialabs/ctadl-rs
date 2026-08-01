@@ -1,0 +1,1 @@
+{"sha256": "af3444e1d1d7d26ab1441edd6830cfad5a6f361b964c6ceafb731e2e874d9e65", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DGS_1210_10P_ME_REVB_FIRMWARE_v7.03B011_HOTFIX/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 965.3, "nfind": 0, "findings": []}

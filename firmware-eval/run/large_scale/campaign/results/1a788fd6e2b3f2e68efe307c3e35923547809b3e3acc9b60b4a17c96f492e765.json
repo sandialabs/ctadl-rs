@@ -1,0 +1,1 @@
+{"sha256": "1a788fd6e2b3f2e68efe307c3e35923547809b3e3acc9b60b4a17c96f492e765", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC1300Gplus_300438252504/fs/usr/sbin/mkntfs", "status": "timeout", "exit_code": null, "wall_s": 600.7, "peak_fp_mb": 2769.0, "nfind": 0, "findings": []}

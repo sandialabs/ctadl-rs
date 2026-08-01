@@ -1,0 +1,1 @@
+{"sha256": "983e6e033df3fef2d7e25d6690afd494f09d515f4814709b9039916566b17072", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7200_EU__V3_211117/fs/usr/sbin/lighttpd", "status": "ok", "exit_code": 0, "wall_s": 29.1, "peak_fp_mb": 1615.6, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4275888}]}

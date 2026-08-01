@@ -1,0 +1,1 @@
+{"sha256": "61be5f1fe21f66ba6f2e7a7429dd6f2dd2c5d8e1e58efdd6ec04cefe09ce2c35", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_605_REVC_FIRMWARE_PATCH_3.04.B01_WW/fs/bin/setfirewall", "status": "timeout", "exit_code": null, "wall_s": 602.1, "peak_fp_mb": 1648.4, "nfind": 0, "findings": []}

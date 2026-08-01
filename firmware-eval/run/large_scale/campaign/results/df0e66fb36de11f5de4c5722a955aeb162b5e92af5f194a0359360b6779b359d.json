@@ -1,0 +1,1 @@
+{"sha256": "df0e66fb36de11f5de4c5722a955aeb162b5e92af5f194a0359360b6779b359d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/A27v1FirmwareV16031711/fs/bin/igmpproxy", "status": "ok", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1084.7, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NETWORK", "sink_callsite": 4206040}]}

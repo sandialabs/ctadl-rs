@@ -1,0 +1,1 @@
+{"sha256": "7cd2dd70580c5ab6e477a72f9c386cb52b73162f8d7af9a5d21f03dc97aa67cd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D6100_V1.0.0.63_0.0.63/fs/sbin/hostapd_cli", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 1264.9, "nfind": 0, "findings": []}

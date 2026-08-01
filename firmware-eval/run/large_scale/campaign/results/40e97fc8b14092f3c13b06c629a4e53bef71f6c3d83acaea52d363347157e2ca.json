@@ -1,0 +1,1 @@
+{"sha256": "40e97fc8b14092f3c13b06c629a4e53bef71f6c3d83acaea52d363347157e2ca", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/AD7200_EU_US__V2.0_210430/fs/usr/sbin/pptpctrl", "status": "ok", "exit_code": 0, "wall_s": 19.1, "peak_fp_mb": 839.4, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4202520}]}

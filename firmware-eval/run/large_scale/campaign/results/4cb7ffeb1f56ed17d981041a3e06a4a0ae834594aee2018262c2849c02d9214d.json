@@ -1,0 +1,1 @@
+{"sha256": "4cb7ffeb1f56ed17d981041a3e06a4a0ae834594aee2018262c2849c02d9214d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6220_V1.1.0.114/fs/usr/sbin/dbus-daemon", "status": "no_findings", "exit_code": 0, "wall_s": 58.5, "peak_fp_mb": 2328.7, "nfind": 0, "findings": []}

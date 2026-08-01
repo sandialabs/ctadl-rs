@@ -1,0 +1,1 @@
+{"sha256": "6eeb71d509f514c7d0f8b8137bc6bdbe699308cba5235bb474821569418487cb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC2900_300438648260/fs/usr/sbin/pptpctrl", "status": "ok", "exit_code": 0, "wall_s": 15.8, "peak_fp_mb": 1031.4, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4200912}]}

@@ -1,0 +1,1 @@
+{"sha256": "d535a3f832852d71d061f5c9013e1e29d7c26d16bc1e717353910edc70bc1f15", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/AC50_UN_v120190527/fs/usr/sbin/dnsq", "status": "ok", "exit_code": 0, "wall_s": 19.6, "peak_fp_mb": 717.3, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "ARGV", "sink_callsite": 4198964}]}

@@ -1,0 +1,1 @@
+{"sha256": "8b7bbb8fc10643a759c50d5aa8a94455c69fe19e875914c3922df18e9b7b8aec", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_GX90_EU__V1_220228/fs/sbin/bcm_flasher", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 881.2, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4197432}]}

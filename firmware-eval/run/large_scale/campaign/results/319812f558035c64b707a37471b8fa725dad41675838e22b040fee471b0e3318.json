@@ -1,0 +1,1 @@
+{"sha256": "319812f558035c64b707a37471b8fa725dad41675838e22b040fee471b0e3318", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/CPE605_UN__v1.0_20201028/fs/sbin/sar", "status": "no_findings", "exit_code": 0, "wall_s": 22.5, "peak_fp_mb": 1450.1, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "5052a23cf34c9f387487f7d737cd91d7ea75c2261cc65739dd3e4821584e6d54", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX6150v2_EX6100v2_V1.0.1.108/fs/usr/lib/dbus-1/dbus-daemon-launch-helper", "status": "no_findings", "exit_code": 0, "wall_s": 45.5, "peak_fp_mb": 1665.0, "nfind": 0, "findings": []}

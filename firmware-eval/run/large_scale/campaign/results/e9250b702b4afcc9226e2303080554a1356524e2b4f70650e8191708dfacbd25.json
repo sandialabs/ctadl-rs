@@ -1,0 +1,1 @@
+{"sha256": "e9250b702b4afcc9226e2303080554a1356524e2b4f70650e8191708dfacbd25", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA2700_1.1.40.189581_prod/fs/usr/sbin/pppd", "status": "no_findings", "exit_code": 0, "wall_s": 120.5, "peak_fp_mb": 3771.6, "nfind": 0, "findings": []}

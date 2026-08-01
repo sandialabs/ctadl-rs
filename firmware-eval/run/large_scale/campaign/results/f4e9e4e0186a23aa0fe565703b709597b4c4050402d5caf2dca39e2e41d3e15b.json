@@ -1,0 +1,1 @@
+{"sha256": "f4e9e4e0186a23aa0fe565703b709597b4c4050402d5caf2dca39e2e41d3e15b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/US_G103V1.0la_V1.0.0.5_EN_TDE01/fs/usr/sbin/i2cset", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 779.0, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "85228c98abe5468cca2465f09abfdcd9fd222aa16db2360941c9f1f6101f5074", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDAP360_V3.7.11.4/fs/usr/sbin/iptables", "status": "no_findings", "exit_code": 0, "wall_s": 83.2, "peak_fp_mb": 1445.0, "nfind": 0, "findings": []}

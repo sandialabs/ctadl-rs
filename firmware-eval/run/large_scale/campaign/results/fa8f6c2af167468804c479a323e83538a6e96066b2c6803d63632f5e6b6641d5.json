@@ -1,0 +1,1 @@
+{"sha256": "fa8f6c2af167468804c479a323e83538a6e96066b2c6803d63632f5e6b6641d5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC1200E_300438010931/fs/usr/sbin/smbd", "status": "timeout", "exit_code": null, "wall_s": 601.6, "peak_fp_mb": 6356.8, "nfind": 0, "findings": []}

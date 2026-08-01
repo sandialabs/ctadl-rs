@@ -1,0 +1,1 @@
+{"sha256": "5e47bec8ac6e928fa2d0766ab3dcfc3ef0ba650b89e15e0d60e1daf5959798e7", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7300_EX6400_V1.0.2.164/fs/usr/sbin/logrotate", "status": "no_findings", "exit_code": 0, "wall_s": 25.7, "peak_fp_mb": 1349.4, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "ec66007099b3d4bfbdef441fa3387c801edc2cc273ae41f2eb108da1f9b605bf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAXE450_V1.0.12.96/fs/bin/strace", "status": "ok", "exit_code": 0, "wall_s": 57.9, "peak_fp_mb": 1947.4, "nfind": 1, "findings": [{"sink_func": "execve", "source_class": "ENV", "sink_callsite": 4207912}]}

@@ -1,0 +1,1 @@
+{"sha256": "a6e5b8a51f747d4b04357b49772a16bea72ad5ab8be8c4ba8bc888d1423a6ce3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D7000v2_V1.0.0.82_1.0.1/fs/opt/xagent/xagent", "status": "ok", "exit_code": 0, "wall_s": 19.1, "peak_fp_mb": 1322.0, "nfind": 1, "findings": [{"sink_func": "execlp", "source_class": "NVRAM", "sink_callsite": 4224652}]}

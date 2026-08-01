@@ -1,0 +1,1 @@
+{"sha256": "f039c3c3fad12cedb4ff231610c35cbea3f875be6469c2ea7ea370c2d46dff4a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/wnr612v2_V1.0.0.3_1.0.2/fs/usr/sbin/wpa_supplicant", "status": "no_findings", "exit_code": 0, "wall_s": 52.2, "peak_fp_mb": 2106.4, "nfind": 0, "findings": []}

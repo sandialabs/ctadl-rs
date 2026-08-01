@@ -1,0 +1,1 @@
+{"sha256": "a0a6fb91805c9a8ab2b713cee774882943acbd5169ddf2bb0cc2436d2aa04ea2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/US_N80_W568Rbr_V1.0.1.17_6610_TDE/fs/usr/sbin/smbd", "status": "timeout", "exit_code": null, "wall_s": 600.7, "peak_fp_mb": 14572.2, "nfind": 0, "findings": []}

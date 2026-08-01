@@ -1,0 +1,1 @@
+{"sha256": "626141137eb99edb78a09be55a74adcdb91a129fcb0791d5132b3b98885f3ea4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_R480T_UN_v9_9.0.3_Build_20200313/fs/usr/bin/openssl", "status": "no_findings", "exit_code": 0, "wall_s": 499.0, "peak_fp_mb": 18405.6, "nfind": 0, "findings": []}

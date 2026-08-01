@@ -1,0 +1,1 @@
+{"sha256": "b0922d911886ff6c39f00d5eb3c9f57598ac777343a959b2ee3f72c318f4cd50", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/RE305_V1_181026/fs/usr/bin/sar", "status": "no_findings", "exit_code": 0, "wall_s": 25.8, "peak_fp_mb": 1296.0, "nfind": 0, "findings": []}

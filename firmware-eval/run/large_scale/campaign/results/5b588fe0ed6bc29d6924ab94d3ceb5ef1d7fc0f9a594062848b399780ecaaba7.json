@@ -1,0 +1,1 @@
+{"sha256": "5b588fe0ed6bc29d6924ab94d3ceb5ef1d7fc0f9a594062848b399780ecaaba7", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/GSM421xxx_MSM4214_XSM4216F_V13.0.4.13/fs/usr/sbin/e2fsck", "status": "no_findings", "exit_code": 0, "wall_s": 38.2, "peak_fp_mb": 1874.7, "nfind": 0, "findings": []}

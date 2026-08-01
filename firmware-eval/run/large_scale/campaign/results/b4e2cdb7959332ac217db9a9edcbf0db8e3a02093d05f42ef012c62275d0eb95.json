@@ -1,0 +1,1 @@
+{"sha256": "b4e2cdb7959332ac217db9a9edcbf0db8e3a02093d05f42ef012c62275d0eb95", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/sbin/dumpe2fs", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 1101.6, "nfind": 0, "findings": []}

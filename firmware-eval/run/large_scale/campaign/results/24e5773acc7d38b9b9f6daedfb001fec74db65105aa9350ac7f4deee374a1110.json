@@ -1,0 +1,1 @@
+{"sha256": "24e5773acc7d38b9b9f6daedfb001fec74db65105aa9350ac7f4deee374a1110", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DCS_3010_REVA_FIRMWARE_1.12.18/fs/sbin/tune2fs", "status": "no_findings", "exit_code": 0, "wall_s": 86.9, "peak_fp_mb": 3562.3, "nfind": 0, "findings": []}

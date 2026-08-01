@@ -1,0 +1,1 @@
+{"sha256": "02bd268edae6c017b9adc8da04ded1bc732870b1d555fddf282204e98f10922b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/MultyX_WSQ50__V2.00_ABKJ.5_C0/fs/usr/sbin/gw6c", "status": "ok", "exit_code": 0, "wall_s": 36.1, "peak_fp_mb": 1565.3, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4245888}]}

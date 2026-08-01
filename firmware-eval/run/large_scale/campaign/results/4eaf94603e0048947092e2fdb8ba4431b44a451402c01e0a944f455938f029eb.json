@@ -1,0 +1,1 @@
+{"sha256": "4eaf94603e0048947092e2fdb8ba4431b44a451402c01e0a944f455938f029eb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/BR200_FW_V5.10.0.5/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 15.8, "peak_fp_mb": 833.7, "nfind": 0, "findings": []}

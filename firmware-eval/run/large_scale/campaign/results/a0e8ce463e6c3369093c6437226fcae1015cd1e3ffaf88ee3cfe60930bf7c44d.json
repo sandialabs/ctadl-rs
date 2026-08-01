@@ -1,0 +1,1 @@
+{"sha256": "a0e8ce463e6c3369093c6437226fcae1015cd1e3ffaf88ee3cfe60930bf7c44d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_WL_330gE_2020/fs/usr/sbin/iptables-restore", "status": "no_findings", "exit_code": 0, "wall_s": 19.5, "peak_fp_mb": 918.8, "nfind": 0, "findings": []}

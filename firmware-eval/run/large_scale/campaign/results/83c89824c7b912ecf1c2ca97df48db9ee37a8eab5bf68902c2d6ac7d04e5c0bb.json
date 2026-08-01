@@ -1,0 +1,1 @@
+{"sha256": "83c89824c7b912ecf1c2ca97df48db9ee37a8eab5bf68902c2d6ac7d04e5c0bb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7300_EX6400_V1.0.2.164/fs/usr/bin/hd-idle", "status": "ok", "exit_code": 0, "wall_s": 19.9, "peak_fp_mb": 848.1, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4200432}]}

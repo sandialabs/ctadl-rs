@@ -1,0 +1,1 @@
+{"sha256": "afdc5836242f3fc58b5be76a626e8c0c169cc9963a034249457aa1078b2bfb8d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E2100L_1.0.05.004_20120308_code/fs/sbin/mkdosfs", "status": "no_findings", "exit_code": 0, "wall_s": 18.9, "peak_fp_mb": 895.8, "nfind": 0, "findings": []}

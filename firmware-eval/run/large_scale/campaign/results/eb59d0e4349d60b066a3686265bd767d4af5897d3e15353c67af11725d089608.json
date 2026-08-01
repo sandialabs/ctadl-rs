@@ -1,0 +1,1 @@
+{"sha256": "eb59d0e4349d60b066a3686265bd767d4af5897d3e15353c67af11725d089608", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/BR200_FW_V5.10.0.5/fs/usr/bin/monitor-agent", "status": "ok", "exit_code": 0, "wall_s": 78.1, "peak_fp_mb": 1656.2, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4244376}]}

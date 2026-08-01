@@ -1,0 +1,1 @@
+{"sha256": "f0d0fcc11b5822192b44cb4e5a4f8f9c97bd824feebb91c6feec29b45351709f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6400_V1.0.1.78_1.0.50/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.4, "peak_fp_mb": 1304.4, "nfind": 0, "findings": []}

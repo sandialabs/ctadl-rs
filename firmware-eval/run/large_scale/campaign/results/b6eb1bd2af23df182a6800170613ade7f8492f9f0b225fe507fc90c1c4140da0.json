@@ -1,0 +1,1 @@
+{"sha256": "b6eb1bd2af23df182a6800170613ade7f8492f9f0b225fe507fc90c1c4140da0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7310_EU_V2_181220/fs/sbin/adbd", "status": "ok", "exit_code": 0, "wall_s": 22.5, "peak_fp_mb": 1427.6, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4242468}]}

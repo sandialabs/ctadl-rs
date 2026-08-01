@@ -1,0 +1,1 @@
+{"sha256": "b44fdd752b4e3320a526bce0249ab4fc6e57b428d6977e2c12adc997f3cc9203", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX5300_1.1.12.210066_prod/fs/usr/sbin/mosquitto_sub", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1336.0, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "420bd21e1247276e4a08dc26f6c584674dcf5f7486b63bb04bd79de2ef282945", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7200_EU_V2_201020/fs/usr/bin/wlanmgr", "status": "ok", "exit_code": 0, "wall_s": 22.5, "peak_fp_mb": 1703.6, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4276716}]}

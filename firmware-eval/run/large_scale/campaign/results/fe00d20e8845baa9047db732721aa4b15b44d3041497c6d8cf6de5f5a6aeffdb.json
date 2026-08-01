@@ -1,0 +1,1 @@
+{"sha256": "fe00d20e8845baa9047db732721aa4b15b44d3041497c6d8cf6de5f5a6aeffdb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/XR700_V1.0.1.50/fs/usr/sbin/proftpd", "status": "timeout", "exit_code": null, "wall_s": 600.7, "peak_fp_mb": 5285.1, "nfind": 0, "findings": []}

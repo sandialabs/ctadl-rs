@@ -1,0 +1,1 @@
+{"sha256": "1edecc31a38dd0941f470c269eb9caa88a534d41ab1a071f5b46d42581f993ff", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/CPE520_UN_V2_180117/fs/usr/bin/uclited", "status": "oom", "exit_code": null, "wall_s": 493.5, "peak_fp_mb": 25496.4, "nfind": 0, "findings": []}

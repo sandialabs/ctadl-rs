@@ -1,0 +1,1 @@
+{"sha256": "bd13a2e7d9ee54a63f47968ab58087618e2863fcf736b148c0851800e5ba74ea", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/sbin/dbus-daemon", "status": "no_findings", "exit_code": 0, "wall_s": 22.8, "peak_fp_mb": 1393.5, "nfind": 0, "findings": []}

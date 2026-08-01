@@ -1,0 +1,1 @@
+{"sha256": "9c3ad8e501774fbaa82dff1b4679f360c89ecf8e65fdc5a22e04a2d019d96aeb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WC9500_V6.5.5.24/fs/usr/bin/mkfs.jffs2", "status": "no_findings", "exit_code": 0, "wall_s": 25.5, "peak_fp_mb": 1412.5, "nfind": 0, "findings": []}

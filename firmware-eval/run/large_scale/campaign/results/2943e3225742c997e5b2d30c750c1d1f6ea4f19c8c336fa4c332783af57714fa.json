@@ -1,0 +1,1 @@
+{"sha256": "2943e3225742c997e5b2d30c750c1d1f6ea4f19c8c336fa4c332783af57714fa", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WC7500_V6.5.5.24/fs/wnc/sbin/ntpd", "status": "no_findings", "exit_code": 0, "wall_s": 96.7, "peak_fp_mb": 1149.1, "nfind": 0, "findings": []}

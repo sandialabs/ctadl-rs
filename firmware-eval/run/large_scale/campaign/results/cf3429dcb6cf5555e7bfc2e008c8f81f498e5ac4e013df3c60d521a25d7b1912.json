@@ -1,0 +1,1 @@
+{"sha256": "cf3429dcb6cf5555e7bfc2e008c8f81f498e5ac4e013df3c60d521a25d7b1912", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_N10_9017/fs/usr/sbin/iptables-restore", "status": "no_findings", "exit_code": 0, "wall_s": 22.8, "peak_fp_mb": 1005.0, "nfind": 0, "findings": []}

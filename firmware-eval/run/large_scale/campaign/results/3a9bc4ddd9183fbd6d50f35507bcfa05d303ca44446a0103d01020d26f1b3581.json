@@ -1,0 +1,1 @@
+{"sha256": "3a9bc4ddd9183fbd6d50f35507bcfa05d303ca44446a0103d01020d26f1b3581", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/OC200_UN__v2_2.7.7_20221206/fs/usr/bin/strace", "status": "no_findings", "exit_code": 0, "wall_s": 29.6, "peak_fp_mb": 1722.1, "nfind": 0, "findings": []}

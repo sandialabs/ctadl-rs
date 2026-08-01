@@ -1,0 +1,1 @@
+{"sha256": "25b9ea8b013a075b5cb6b5ad0c37a10ebce8e722afc2ac9b3f38e9a4a6f4bc31", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/EAP120_EU_V1_171109/fs/usr/bin/capwap", "status": "timeout", "exit_code": null, "wall_s": 600.8, "peak_fp_mb": 3581.9, "nfind": 0, "findings": []}

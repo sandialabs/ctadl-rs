@@ -1,0 +1,1 @@
+{"sha256": "a52bf1c0b9b30cf6831afa30e89f7df6de7747f708500878c12614d9c947d5d5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7650_EU_V1_180808/fs/sbin/halt.sysvinit", "status": "no_findings", "exit_code": 0, "wall_s": 13.1, "peak_fp_mb": 1071.7, "nfind": 0, "findings": []}

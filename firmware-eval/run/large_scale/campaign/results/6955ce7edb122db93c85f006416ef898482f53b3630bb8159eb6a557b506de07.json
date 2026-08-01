@@ -1,0 +1,1 @@
+{"sha256": "6955ce7edb122db93c85f006416ef898482f53b3630bb8159eb6a557b506de07", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DM200_V1.0.0.66/fs/usr/sbin/nohup", "status": "ok", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 603.7, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "ARGV", "sink_callsite": 4196412}]}

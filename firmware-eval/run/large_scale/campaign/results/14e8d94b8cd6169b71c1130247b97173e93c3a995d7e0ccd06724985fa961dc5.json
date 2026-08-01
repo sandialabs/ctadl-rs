@@ -1,0 +1,1 @@
+{"sha256": "14e8d94b8cd6169b71c1130247b97173e93c3a995d7e0ccd06724985fa961dc5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WAC124_V1.0.4.9/fs/usr/sbin/smbpasswd", "status": "no_findings", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1233.1, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "fb7eeae09480010dc417c00c1bda23232a02143976764ea8d334119db12741cf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WC7500_V6.5.5.24/fs/wnc/bin/appliance_mgr_cli", "status": "ok", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1003.2, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4201926}]}

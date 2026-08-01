@@ -1,0 +1,1 @@
+{"sha256": "aaff63cd5854fe4992d1d209718b3d02f9d495bd3b85a2364f41057fea803aad", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/sbin/tune2fs", "status": "no_findings", "exit_code": 0, "wall_s": 37.8, "peak_fp_mb": 1798.6, "nfind": 0, "findings": []}

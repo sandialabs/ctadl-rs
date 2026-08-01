@@ -1,0 +1,1 @@
+{"sha256": "78a6efa10fddb5f6621a7c589009cfaf78619859f1d6feeaeab51693d44d4e75", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR9600_1.0.4.205530_prod/fs/usr/sbin/mosquitto_rr", "status": "no_findings", "exit_code": 0, "wall_s": 19.0, "peak_fp_mb": 1161.3, "nfind": 0, "findings": []}

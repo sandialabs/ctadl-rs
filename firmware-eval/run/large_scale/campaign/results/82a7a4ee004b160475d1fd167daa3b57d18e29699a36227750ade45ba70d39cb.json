@@ -1,0 +1,1 @@
+{"sha256": "82a7a4ee004b160475d1fd167daa3b57d18e29699a36227750ade45ba70d39cb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX8500_1.0.11.208937_prod/fs/bin/dbus-send", "status": "no_findings", "exit_code": 0, "wall_s": 16.0, "peak_fp_mb": 930.7, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "8ec95a990248e67e7149424e415fb51bba2540ba468fd1a35c1eccec35690887", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/NBG6604_V1.00_ABIR.3_C0/fs/usr/sbin/lighttpd", "status": "ok", "exit_code": 0, "wall_s": 33.6, "peak_fp_mb": 1681.1, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4276176}]}

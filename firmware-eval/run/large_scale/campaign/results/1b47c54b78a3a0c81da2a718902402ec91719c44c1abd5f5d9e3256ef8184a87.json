@@ -1,0 +1,1 @@
+{"sha256": "1b47c54b78a3a0c81da2a718902402ec91719c44c1abd5f5d9e3256ef8184a87", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC1500G_PLUS_300438252482/fs/usr/sbin/phddns", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 926.4, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4221896}]}

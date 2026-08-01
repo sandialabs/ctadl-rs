@@ -1,0 +1,1 @@
+{"sha256": "5a77281dae6bb18780b8949ec4938b6db41d8cbddc1aa08173869396a50f55fc", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/RE500X_V1_210611/fs/usr/bin/client_mgmt", "status": "ok", "exit_code": 0, "wall_s": 16.3, "peak_fp_mb": 1116.8, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4204652}]}

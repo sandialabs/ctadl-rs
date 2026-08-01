@@ -1,0 +1,1 @@
+{"sha256": "dd21fa770077d2b8e8b751b06d49cc8d6da6b62074d9e49a0fe4f499fa80ffa1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6120_V1.0.0.84/fs/usr/sbin/openssl", "status": "no_findings", "exit_code": 0, "wall_s": 531.6, "peak_fp_mb": 8619.6, "nfind": 0, "findings": []}

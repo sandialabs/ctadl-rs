@@ -1,0 +1,1 @@
+{"sha256": "d88a54c969fb46d0836c476504f67e49008f4bb842cc9e68fc3bec6859e02f2f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TEW_WLC100_v1_2.08b01_/fs/usr/bin/strace", "status": "ok", "exit_code": 0, "wall_s": 29.2, "peak_fp_mb": 1517.6, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ENV", "sink_callsite": 4201848}]}

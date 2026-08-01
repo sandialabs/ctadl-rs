@@ -1,0 +1,1 @@
+{"sha256": "4cec4a44d2144b5501db6ad1fd4f2989b7c776c3445f715520c64498f4ba577b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6220_V1.1.0.114/fs/usr/sbin/mkfs.ubifs", "status": "no_findings", "exit_code": 0, "wall_s": 25.8, "peak_fp_mb": 1489.4, "nfind": 0, "findings": []}

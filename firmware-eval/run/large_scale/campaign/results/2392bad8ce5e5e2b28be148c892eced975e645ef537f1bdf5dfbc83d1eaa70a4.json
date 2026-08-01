@@ -1,0 +1,1 @@
+{"sha256": "2392bad8ce5e5e2b28be148c892eced975e645ef537f1bdf5dfbc83d1eaa70a4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_LAPAC1200_LAPAC1750_1.1.03.000/fs/sbin/iwlist", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1164.3, "nfind": 0, "findings": []}

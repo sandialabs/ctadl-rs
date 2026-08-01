@@ -1,0 +1,1 @@
+{"sha256": "a9c7fc26d2d48ca43c58854a17e1a5f8a0398234e23e575cb4e288ee8b138dc0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR20_V2.6.5.20/fs/usr/sbin/openvpn", "status": "no_findings", "exit_code": 0, "wall_s": 110.3, "peak_fp_mb": 4685.5, "nfind": 0, "findings": []}

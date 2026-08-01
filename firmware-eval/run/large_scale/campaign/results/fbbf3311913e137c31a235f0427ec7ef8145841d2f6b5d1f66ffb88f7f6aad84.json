@@ -1,0 +1,1 @@
+{"sha256": "fbbf3311913e137c31a235f0427ec7ef8145841d2f6b5d1f66ffb88f7f6aad84", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8300_V1.0.2.158_1.0.105/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.0, "peak_fp_mb": 1280.0, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "526106f18d29cff4f44f996c4fff58ccf3c9bdb9e5192ecb5e8ee5fec00c1bbd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAX35_V1.0.5.104_1.0.1/fs/usr/sbin/odhcp6c", "status": "ok", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1477.8, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ARGV", "sink_callsite": 4225144}]}

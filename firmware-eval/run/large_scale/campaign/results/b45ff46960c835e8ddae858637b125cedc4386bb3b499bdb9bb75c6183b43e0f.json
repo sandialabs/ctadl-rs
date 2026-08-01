@@ -1,0 +1,1 @@
+{"sha256": "b45ff46960c835e8ddae858637b125cedc4386bb3b499bdb9bb75c6183b43e0f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DAP_1320_REVA_FIRMWARE_PATCH_v1.23B01_BETA/fs/sbin/dhcp6c", "status": "timeout", "exit_code": null, "wall_s": 602.6, "peak_fp_mb": 2790.0, "nfind": 0, "findings": []}

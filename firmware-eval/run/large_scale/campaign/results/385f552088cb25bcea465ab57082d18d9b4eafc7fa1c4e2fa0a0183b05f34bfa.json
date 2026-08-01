@@ -1,0 +1,1 @@
+{"sha256": "385f552088cb25bcea465ab57082d18d9b4eafc7fa1c4e2fa0a0183b05f34bfa", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDR3700v5_V1.1.0.54_1.0.1/fs/usr/sbin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.3, "peak_fp_mb": 1326.8, "nfind": 0, "findings": []}

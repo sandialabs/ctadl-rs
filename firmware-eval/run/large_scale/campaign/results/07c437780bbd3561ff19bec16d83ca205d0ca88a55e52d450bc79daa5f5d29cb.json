@@ -1,0 +1,1 @@
+{"sha256": "07c437780bbd3561ff19bec16d83ca205d0ca88a55e52d450bc79daa5f5d29cb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_RE4100W_v1.0.03.002_20171228/fs/sbin/memtester", "status": "no_findings", "exit_code": 0, "wall_s": 19.2, "peak_fp_mb": 768.2, "nfind": 0, "findings": []}

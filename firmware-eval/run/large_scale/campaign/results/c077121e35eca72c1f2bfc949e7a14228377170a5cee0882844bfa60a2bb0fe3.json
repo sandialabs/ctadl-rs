@@ -1,0 +1,1 @@
+{"sha256": "c077121e35eca72c1f2bfc949e7a14228377170a5cee0882844bfa60a2bb0fe3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_WHW03_1.1.19.209880_prod/fs/usr/sbin/zbapitest", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 974.6, "nfind": 0, "findings": []}

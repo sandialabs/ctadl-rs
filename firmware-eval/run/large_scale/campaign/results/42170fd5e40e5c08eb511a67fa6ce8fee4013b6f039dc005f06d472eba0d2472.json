@@ -1,0 +1,1 @@
+{"sha256": "42170fd5e40e5c08eb511a67fa6ce8fee4013b6f039dc005f06d472eba0d2472", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TX_6610_V2_140603/fs/usr/bin/telnetd", "status": "no_findings", "exit_code": 0, "wall_s": 260.9, "peak_fp_mb": 1858.3, "nfind": 0, "findings": []}

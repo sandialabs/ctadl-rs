@@ -1,0 +1,1 @@
+{"sha256": "e2e39c2b4699c9539dbaa86d952a70259b9315f2a4e3baf460060f1793d41168", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR9600_1.0.4.205530_prod/fs/usr/bin/lldpd", "status": "no_findings", "exit_code": 0, "wall_s": 25.8, "peak_fp_mb": 1470.0, "nfind": 0, "findings": []}

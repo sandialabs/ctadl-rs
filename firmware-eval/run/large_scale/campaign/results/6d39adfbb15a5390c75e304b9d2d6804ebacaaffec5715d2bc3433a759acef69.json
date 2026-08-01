@@ -1,0 +1,1 @@
+{"sha256": "6d39adfbb15a5390c75e304b9d2d6804ebacaaffec5715d2bc3433a759acef69", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8900_V1.0.5.42/fs/usr/sbin/inotifywait", "status": "no_findings", "exit_code": 0, "wall_s": 16.4, "peak_fp_mb": 786.5, "nfind": 0, "findings": []}

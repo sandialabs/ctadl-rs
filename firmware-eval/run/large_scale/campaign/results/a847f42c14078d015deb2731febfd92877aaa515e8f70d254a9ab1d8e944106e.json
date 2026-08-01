@@ -1,0 +1,1 @@
+{"sha256": "a847f42c14078d015deb2731febfd92877aaa515e8f70d254a9ab1d8e944106e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/V12v1FirmwareV56116/fs/bin/igmpproxy", "status": "ok", "exit_code": 0, "wall_s": 23.1, "peak_fp_mb": 1344.9, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ARGV", "sink_callsite": 4218696}]}

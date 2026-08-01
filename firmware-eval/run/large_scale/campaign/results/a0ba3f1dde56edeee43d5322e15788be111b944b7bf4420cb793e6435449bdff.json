@@ -1,0 +1,1 @@
+{"sha256": "a0ba3f1dde56edeee43d5322e15788be111b944b7bf4420cb793e6435449bdff", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/FVS318Gv2_V4.3.5_3/fs/usr/bin/vmstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1260.3, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "9fbdecb2e7ba311d2acd76555324f3910c0b964fbd21340224f8f56b11020c78", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6250_V1.0.4.48_10.1.30/fs/usr/sbin/swresetd", "status": "no_findings", "exit_code": 0, "wall_s": 9.4, "peak_fp_mb": 864.0, "nfind": 0, "findings": []}

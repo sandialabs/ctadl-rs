@@ -1,0 +1,1 @@
+{"sha256": "d61c8c42d836c2dfe987b557cd6d2f32b27c8052107b332cd42f09189ca36bd6", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBS50Y_V2.7.2.102/fs/usr/sbin/net-wall", "status": "no_findings", "exit_code": 0, "wall_s": 25.6, "peak_fp_mb": 1683.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "25675d0da5b99c87f43a92b0fdd48795cc337e86357b3f4e57b55e70fc57e4fa", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DSN_5000_10_FIRMWARE_2.9.2.9/fs/sbin/mke2fs", "status": "no_findings", "exit_code": 0, "wall_s": 19.2, "peak_fp_mb": 1382.5, "nfind": 0, "findings": []}

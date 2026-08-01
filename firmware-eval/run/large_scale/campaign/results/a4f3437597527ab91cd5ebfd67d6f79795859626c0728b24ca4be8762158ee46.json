@@ -1,0 +1,1 @@
+{"sha256": "a4f3437597527ab91cd5ebfd67d6f79795859626c0728b24ca4be8762158ee46", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX5300_1.1.12.210066_prod/fs/usr/sbin/mkfs.jffs2", "status": "no_findings", "exit_code": 0, "wall_s": 68.8, "peak_fp_mb": 1447.1, "nfind": 0, "findings": []}

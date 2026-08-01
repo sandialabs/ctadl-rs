@@ -1,0 +1,1 @@
+{"sha256": "61741e3ff296d1411b90007d979fc5f3b51293d7e49dfaa9df5edc43ab8c0d24", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E5600_1.1.0.26_prod/fs/usr/bin/busycat", "status": "ok", "exit_code": 0, "wall_s": 29.0, "peak_fp_mb": 1293.7, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4225200}]}

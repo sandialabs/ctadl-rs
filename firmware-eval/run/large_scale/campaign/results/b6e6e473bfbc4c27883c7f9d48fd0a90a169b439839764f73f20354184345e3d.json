@@ -1,0 +1,1 @@
+{"sha256": "b6e6e473bfbc4c27883c7f9d48fd0a90a169b439839764f73f20354184345e3d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8900_V1.0.5.42/fs/usr/sbin/proftpd", "status": "no_findings", "exit_code": 0, "wall_s": 584.1, "peak_fp_mb": 5288.8, "nfind": 0, "findings": []}

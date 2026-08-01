@@ -1,0 +1,1 @@
+{"sha256": "4fb2c696705f9ccb9473d91766d3dec5f0d0dd37b195b3d2c84b3cb23eecea9c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR8300_1.1.10.210186_prod/fs/usr/sbin/pppd", "status": "ok", "exit_code": 0, "wall_s": 54.8, "peak_fp_mb": 1531.1, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4228064}]}

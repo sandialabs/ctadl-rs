@@ -1,0 +1,1 @@
+{"sha256": "18e3202eb65d646019901997e1d8168077fb1d208a1934a5129de6a84abefa3e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR8300_1.1.10.210186_prod/fs/usr/sbin/wpa_cli", "status": "no_findings", "exit_code": 0, "wall_s": 19.5, "peak_fp_mb": 1362.9, "nfind": 0, "findings": []}

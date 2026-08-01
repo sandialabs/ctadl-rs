@@ -1,0 +1,1 @@
+{"sha256": "79ee0526bc4e670c1877b9bc625b1fbcee6c848bffd52f71efe064ae2996bdbb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX5300_1.1.12.210066_prod/fs/sbin/dnsmasq", "status": "timeout", "exit_code": null, "wall_s": 601.0, "peak_fp_mb": 4515.7, "nfind": 0, "findings": []}

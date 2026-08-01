@@ -1,0 +1,1 @@
+{"sha256": "a431027b01aa151644d80b2eaa6192dcd6d53f52c31b30c45e04e619c4f9ad83", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAX29_V1.0.10.94_3/fs/bin/inadyn", "status": "ok", "exit_code": 0, "wall_s": 22.8, "peak_fp_mb": 1409.3, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4220004}]}

@@ -1,0 +1,1 @@
+{"sha256": "88661f47d6eb34779e8306f40aac63f53e62df8a697b086e410eabbe8f826565", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDRMACv2_V1.0.0.20/fs/usr/sbin/proftpd", "status": "timeout", "exit_code": null, "wall_s": 601.5, "peak_fp_mb": 5325.6, "nfind": 0, "findings": []}

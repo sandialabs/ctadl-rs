@@ -1,0 +1,1 @@
+{"sha256": "801c061afb5c930341b1b8c66fd16868060c2f2e20cdd750b906dee55eaa498b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC52U_30043808497/fs/sbin/write_smb_conf", "status": "no_findings", "exit_code": 0, "wall_s": 13.0, "peak_fp_mb": 802.6, "nfind": 0, "findings": []}

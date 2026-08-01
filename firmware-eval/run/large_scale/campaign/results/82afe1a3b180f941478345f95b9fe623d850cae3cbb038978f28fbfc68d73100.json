@@ -1,0 +1,1 @@
+{"sha256": "82afe1a3b180f941478345f95b9fe623d850cae3cbb038978f28fbfc68d73100", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_MR400_EU_V1_181112/fs/usr/bin/ebtables", "status": "ok", "exit_code": 0, "wall_s": 29.1, "peak_fp_mb": 1486.5, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "FILE", "sink_callsite": 4309700}]}

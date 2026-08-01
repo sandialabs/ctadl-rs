@@ -1,0 +1,1 @@
+{"sha256": "95b938aedfc9326d61edf03d5418d2713f5836a37021fa24cce5c03957ce5416", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/XR700_V1.0.1.50/fs/usr/sbin/dhcp6c", "status": "ok", "exit_code": 0, "wall_s": 47.7, "peak_fp_mb": 1685.7, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4204628}]}

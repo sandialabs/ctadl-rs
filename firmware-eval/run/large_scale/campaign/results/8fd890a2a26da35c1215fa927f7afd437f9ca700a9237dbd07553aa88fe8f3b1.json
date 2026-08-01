@@ -1,0 +1,1 @@
+{"sha256": "8fd890a2a26da35c1215fa927f7afd437f9ca700a9237dbd07553aa88fe8f3b1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/sbin/led-extender-5G", "status": "ok", "exit_code": 0, "wall_s": 12.7, "peak_fp_mb": 913.5, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4198828}]}

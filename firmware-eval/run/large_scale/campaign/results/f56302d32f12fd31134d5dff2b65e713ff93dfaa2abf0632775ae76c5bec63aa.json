@@ -1,0 +1,1 @@
+{"sha256": "f56302d32f12fd31134d5dff2b65e713ff93dfaa2abf0632775ae76c5bec63aa", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_MR6400_EU_V4_190521/fs/sbin/shutdown.sysvinit", "status": "no_findings", "exit_code": 0, "wall_s": 15.8, "peak_fp_mb": 981.2, "nfind": 0, "findings": []}

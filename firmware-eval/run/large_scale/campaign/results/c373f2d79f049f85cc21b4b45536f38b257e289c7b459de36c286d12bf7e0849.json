@@ -1,0 +1,1 @@
+{"sha256": "c373f2d79f049f85cc21b4b45536f38b257e289c7b459de36c286d12bf7e0849", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/MultyX_WSQ50__V2.00_ABKJ.5_C0/fs/usr/sbin/lighttpd", "status": "ok", "exit_code": 0, "wall_s": 37.1, "peak_fp_mb": 1674.7, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4267944}]}

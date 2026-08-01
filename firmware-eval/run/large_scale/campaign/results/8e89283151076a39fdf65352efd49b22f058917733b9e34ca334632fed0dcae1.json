@@ -1,0 +1,1 @@
+{"sha256": "8e89283151076a39fdf65352efd49b22f058917733b9e34ca334632fed0dcae1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6400_V1.0.1.78_1.0.50/fs/usr/bin/dbus-daemon", "status": "no_findings", "exit_code": 0, "wall_s": 51.2, "peak_fp_mb": 2220.3, "nfind": 0, "findings": []}

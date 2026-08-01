@@ -1,0 +1,1 @@
+{"sha256": "7f50a6fe03790440ec036eb07f9d24e8d78ef3e6ae016263629903eadea57b4a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R4500_V1.0.0.4_1.0.3/fs/usr/sbin/swresetd", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 842.2, "nfind": 0, "findings": []}

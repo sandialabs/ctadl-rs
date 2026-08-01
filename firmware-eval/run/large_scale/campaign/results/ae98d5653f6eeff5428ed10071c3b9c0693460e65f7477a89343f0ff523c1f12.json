@@ -1,0 +1,1 @@
+{"sha256": "ae98d5653f6eeff5428ed10071c3b9c0693460e65f7477a89343f0ff523c1f12", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7300_EX6400_V1.0.2.164/fs/usr/sbin/detwan", "status": "ok", "exit_code": 0, "wall_s": 22.3, "peak_fp_mb": 1035.0, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4204340}]}

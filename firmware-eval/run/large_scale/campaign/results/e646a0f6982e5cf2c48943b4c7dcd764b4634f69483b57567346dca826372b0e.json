@@ -1,0 +1,1 @@
+{"sha256": "e646a0f6982e5cf2c48943b4c7dcd764b4634f69483b57567346dca826372b0e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WN2500RP_V1.0.0.30_1.0.58/fs/usr/sbin/swresetd", "status": "no_findings", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 810.7, "nfind": 0, "findings": []}

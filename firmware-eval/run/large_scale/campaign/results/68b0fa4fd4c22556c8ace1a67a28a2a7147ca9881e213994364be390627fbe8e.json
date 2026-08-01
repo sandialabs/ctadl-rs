@@ -1,0 +1,1 @@
+{"sha256": "68b0fa4fd4c22556c8ace1a67a28a2a7147ca9881e213994364be390627fbe8e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBR50_V2.7.5.4/fs/usr/bin/vtysh", "status": "ok", "exit_code": 0, "wall_s": 16.0, "peak_fp_mb": 1485.8, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "ENV", "sink_callsite": 4209508}]}

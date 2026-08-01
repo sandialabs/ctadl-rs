@@ -1,0 +1,1 @@
+{"sha256": "3862eca263b8948bbd894ae831f48bb88a51d3c0d97ee979e7f8b652680033dc", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7800_V1.0.2.92/fs/usr/sbin/nanddump", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1068.0, "nfind": 0, "findings": []}

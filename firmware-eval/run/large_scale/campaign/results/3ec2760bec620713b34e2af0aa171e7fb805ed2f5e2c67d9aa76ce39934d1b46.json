@@ -1,0 +1,1 @@
+{"sha256": "3ec2760bec620713b34e2af0aa171e7fb805ed2f5e2c67d9aa76ce39934d1b46", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAXE450_V1.0.12.96/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1346.4, "nfind": 0, "findings": []}

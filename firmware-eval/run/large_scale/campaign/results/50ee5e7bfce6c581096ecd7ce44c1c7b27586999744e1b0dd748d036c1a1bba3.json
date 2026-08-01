@@ -1,0 +1,1 @@
+{"sha256": "50ee5e7bfce6c581096ecd7ce44c1c7b27586999744e1b0dd748d036c1a1bba3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6260_V1.1.0.88/fs/usr/sbin/syslogd", "status": "no_findings", "exit_code": 0, "wall_s": 15.9, "peak_fp_mb": 782.7, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "72da892eb7b6902dc5b8607383a0afde8524ac227b988ff0e5cd36bdef93fa7c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/usr/bin/ceventc", "status": "ok", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 865.3, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NVRAM", "sink_callsite": 4201936}]}

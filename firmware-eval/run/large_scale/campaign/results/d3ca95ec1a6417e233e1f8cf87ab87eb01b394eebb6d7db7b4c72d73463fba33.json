@@ -1,0 +1,1 @@
+{"sha256": "d3ca95ec1a6417e233e1f8cf87ab87eb01b394eebb6d7db7b4c72d73463fba33", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR9600_1.0.4.205530_prod/fs/usr/sbin/conntrack", "status": "no_findings", "exit_code": 0, "wall_s": 22.4, "peak_fp_mb": 1289.1, "nfind": 0, "findings": []}

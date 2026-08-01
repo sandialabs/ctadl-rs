@@ -1,0 +1,1 @@
+{"sha256": "e4a9b1e7f125e4adb32949fed8df6dd45e6f0e4c6632f698450777aebf7ee190", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR9600_1.0.4.205530_prod/fs/sbin/dnsmasq", "status": "timeout", "exit_code": null, "wall_s": 601.2, "peak_fp_mb": 4404.8, "nfind": 0, "findings": []}

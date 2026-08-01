@@ -1,0 +1,1 @@
+{"sha256": "d6d0ae5d1648ad7cf30beec3eaa9c12d262042eab8ff613b4ef4bdb3f8975279", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDR4500v2_V1.0.0.72_1.0.45/fs/usr/sbin/swresetd", "status": "no_findings", "exit_code": 0, "wall_s": 13.0, "peak_fp_mb": 821.4, "nfind": 0, "findings": []}

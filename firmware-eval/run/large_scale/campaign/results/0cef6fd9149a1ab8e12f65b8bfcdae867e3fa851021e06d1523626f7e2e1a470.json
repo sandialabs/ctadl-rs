@@ -1,0 +1,1 @@
+{"sha256": "0cef6fd9149a1ab8e12f65b8bfcdae867e3fa851021e06d1523626f7e2e1a470", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7300_EX6400_V1.0.2.164/fs/sbin/xfs_growfs", "status": "no_findings", "exit_code": 0, "wall_s": 59.7, "peak_fp_mb": 1709.6, "nfind": 0, "findings": []}

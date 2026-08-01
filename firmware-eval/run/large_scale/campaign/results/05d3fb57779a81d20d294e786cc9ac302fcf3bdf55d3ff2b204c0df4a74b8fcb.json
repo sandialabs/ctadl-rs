@@ -1,0 +1,1 @@
+{"sha256": "05d3fb57779a81d20d294e786cc9ac302fcf3bdf55d3ff2b204c0df4a74b8fcb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC2900_300438648260/fs/usr/sbin/bsd", "status": "ok", "exit_code": 0, "wall_s": 35.6, "peak_fp_mb": 2132.6, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NVRAM", "sink_callsite": 4205784}]}

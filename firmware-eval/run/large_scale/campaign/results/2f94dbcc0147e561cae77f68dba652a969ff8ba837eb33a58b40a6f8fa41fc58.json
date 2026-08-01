@@ -1,0 +1,1 @@
+{"sha256": "2f94dbcc0147e561cae77f68dba652a969ff8ba837eb33a58b40a6f8fa41fc58", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/US_G103V1.0la_V1.0.0.5_EN_TDE01/fs/sbin/fw3", "status": "ok", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 1469.7, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4243568}]}

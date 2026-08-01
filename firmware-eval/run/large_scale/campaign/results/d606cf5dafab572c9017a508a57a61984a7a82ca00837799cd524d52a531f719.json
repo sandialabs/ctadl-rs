@@ -1,0 +1,1 @@
+{"sha256": "d606cf5dafab572c9017a508a57a61984a7a82ca00837799cd524d52a531f719", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/AC50_UN_v1_171129/fs/usr/bin/ldd", "status": "ok", "exit_code": 0, "wall_s": 16.0, "peak_fp_mb": 738.1, "nfind": 1, "findings": [{"sink_func": "execle", "source_class": "ARGV", "sink_callsite": 4200860}]}

@@ -1,0 +1,1 @@
+{"sha256": "1ea655c7afc5831918659633a08b7c9b7bb2333941e725bc0f12d087b13be34e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_MR6400_EU_V4_190521/fs/sbin/init.sysvinit", "status": "ok", "exit_code": 0, "wall_s": 22.4, "peak_fp_mb": 1291.9, "nfind": 1, "findings": [{"sink_func": "execle", "source_class": "ENV", "sink_callsite": 4211008}]}

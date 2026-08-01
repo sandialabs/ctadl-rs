@@ -1,0 +1,1 @@
+{"sha256": "479a03f1e6adfe45baa2f2f89709d4e8fd3b29edce75829b80928cc11c7b15e0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6900P_V1.3.3.154_10.1.86/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.3, "peak_fp_mb": 1385.8, "nfind": 0, "findings": []}

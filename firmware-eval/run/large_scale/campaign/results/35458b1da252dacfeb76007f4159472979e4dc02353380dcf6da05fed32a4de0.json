@@ -1,0 +1,1 @@
+{"sha256": "35458b1da252dacfeb76007f4159472979e4dc02353380dcf6da05fed32a4de0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E5600_1.1.0.26_prod/fs/usr/sbin/lighttpd", "status": "ok", "exit_code": 0, "wall_s": 32.8, "peak_fp_mb": 1593.5, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4266896}]}

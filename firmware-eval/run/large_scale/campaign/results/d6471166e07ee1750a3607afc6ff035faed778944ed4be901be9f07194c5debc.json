@@ -1,0 +1,1 @@
+{"sha256": "d6471166e07ee1750a3607afc6ff035faed778944ed4be901be9f07194c5debc", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E3000_1.0.06.002_US_20140409_code/fs/usr/sbin/ip6tables-restore", "status": "no_findings", "exit_code": 0, "wall_s": 19.5, "peak_fp_mb": 1071.1, "nfind": 0, "findings": []}

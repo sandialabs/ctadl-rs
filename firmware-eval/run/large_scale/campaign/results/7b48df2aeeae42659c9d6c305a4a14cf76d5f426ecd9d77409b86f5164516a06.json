@@ -1,0 +1,1 @@
+{"sha256": "7b48df2aeeae42659c9d6c305a4a14cf76d5f426ecd9d77409b86f5164516a06", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAX35_V1.0.5.104_1.0.1/fs/etc/preinit.d/scapi_utils.sh", "status": "no_findings", "exit_code": 0, "wall_s": 25.7, "peak_fp_mb": 1130.1, "nfind": 0, "findings": []}

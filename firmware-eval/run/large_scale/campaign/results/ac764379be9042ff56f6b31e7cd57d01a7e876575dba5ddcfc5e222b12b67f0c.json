@@ -1,0 +1,1 @@
+{"sha256": "ac764379be9042ff56f6b31e7cd57d01a7e876575dba5ddcfc5e222b12b67f0c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA9500v2_EA9500S_2.1.1.186574_prod/fs/usr/sbin/set_nvram_defaults", "status": "no_findings", "exit_code": 0, "wall_s": 12.7, "peak_fp_mb": 740.6, "nfind": 0, "findings": []}

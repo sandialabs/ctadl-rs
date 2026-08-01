@@ -1,0 +1,1 @@
+{"sha256": "7e458ca69054e73f25d574b56a3c6e79612a4717425580ff137f8aa8ed75ed26", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_WA1201_EU_US__V2_220103/fs/usr/sbin/dnsmasq", "status": "ok", "exit_code": 0, "wall_s": 175.3, "peak_fp_mb": 6358.9, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4254500}]}

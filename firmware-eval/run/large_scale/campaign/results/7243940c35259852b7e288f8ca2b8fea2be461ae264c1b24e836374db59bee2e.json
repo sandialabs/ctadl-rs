@@ -1,0 +1,1 @@
+{"sha256": "7243940c35259852b7e288f8ca2b8fea2be461ae264c1b24e836374db59bee2e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AX1800HP_v300438668539/fs/usr/sbin/phddns", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 1026.5, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4220440}]}

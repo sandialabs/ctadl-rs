@@ -1,0 +1,1 @@
+{"sha256": "61cd22b4336f70341391fb74d3a1aa0e4104f6c81a4e195d3e8178e432eff517", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA6350v4_4.0.4.207984_prod/fs/usr/sbin/mkfs.jffs2", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 853.8, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "726b5b87d41b43a97dc0184fbac50f5c04a0d7e0e3cc030e451c1495708bafb1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_MR6400_EU_V4_190521/fs/usr/bin/qmi_simple_ril_test", "status": "no_findings", "exit_code": 0, "wall_s": 22.8, "peak_fp_mb": 1330.6, "nfind": 0, "findings": []}

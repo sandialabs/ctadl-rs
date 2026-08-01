@@ -1,0 +1,1 @@
+{"sha256": "dc2f67c71e7acad389bcd8dc3bb45ac9608d61e45497bdc31fe6441a7a339950", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA7250_1.0.1.209812_prod/fs/sbin/parted", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1382.9, "nfind": 0, "findings": []}

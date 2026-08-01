@@ -1,0 +1,1 @@
+{"sha256": "fbed91b6310b9c1fc6f75ce888af03895e8dcda822d6c4a97c135c267caeb851", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/sbin/udhcpd", "status": "ok", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 924.3, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4209376}]}

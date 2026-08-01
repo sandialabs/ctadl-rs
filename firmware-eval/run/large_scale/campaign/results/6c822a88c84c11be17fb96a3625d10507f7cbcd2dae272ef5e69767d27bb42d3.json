@@ -1,0 +1,1 @@
+{"sha256": "6c822a88c84c11be17fb96a3625d10507f7cbcd2dae272ef5e69767d27bb42d3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 886.6, "nfind": 0, "findings": []}

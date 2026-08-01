@@ -1,0 +1,1 @@
+{"sha256": "a4ec3418f57d300fbbf05b22a6b5270b6d7482628f7bccfb27dccb65a4f51046", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/RT_AC1750_B1_3.0.0.4_385_20433_g3f7796b/fs/usr/sbin/wred", "status": "timeout", "exit_code": null, "wall_s": 601.6, "peak_fp_mb": 2427.6, "nfind": 0, "findings": []}

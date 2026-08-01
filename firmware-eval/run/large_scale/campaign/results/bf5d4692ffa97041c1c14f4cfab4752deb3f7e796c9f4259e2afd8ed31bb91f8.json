@@ -1,0 +1,1 @@
+{"sha256": "bf5d4692ffa97041c1c14f4cfab4752deb3f7e796c9f4259e2afd8ed31bb91f8", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_WRT32X_1.0.180404.58/fs/usr/sbin/hostapd_cli", "status": "no_findings", "exit_code": 0, "wall_s": 19.5, "peak_fp_mb": 1341.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "2f868ea9604b37fbfea3e1e2acdd5c45d9f9c4b862051a2c269778691ccbc839", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WC7500_V6.5.5.24/fs/wnc/usr/sbin/logrotate", "status": "ok", "exit_code": 0, "wall_s": 90.2, "peak_fp_mb": 3827.5, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4210717}]}

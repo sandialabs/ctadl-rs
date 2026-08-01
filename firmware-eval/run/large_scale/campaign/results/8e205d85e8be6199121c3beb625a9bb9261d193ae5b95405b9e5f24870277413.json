@@ -1,0 +1,1 @@
+{"sha256": "8e205d85e8be6199121c3beb625a9bb9261d193ae5b95405b9e5f24870277413", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8900_V1.0.5.42/fs/usr/sbin/dbus-daemon", "status": "no_findings", "exit_code": 0, "wall_s": 63.9, "peak_fp_mb": 2049.4, "nfind": 0, "findings": []}

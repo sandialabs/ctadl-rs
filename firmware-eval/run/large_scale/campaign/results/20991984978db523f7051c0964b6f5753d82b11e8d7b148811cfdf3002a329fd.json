@@ -1,0 +1,1 @@
+{"sha256": "20991984978db523f7051c0964b6f5753d82b11e8d7b148811cfdf3002a329fd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/AD7200_EU_US__V2.0_210430/fs/usr/sbin/vpn_mgmt", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 719.5, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "ARGV", "sink_callsite": 4197172}]}

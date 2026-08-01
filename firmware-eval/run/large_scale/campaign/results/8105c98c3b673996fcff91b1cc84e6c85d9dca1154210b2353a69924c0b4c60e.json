@@ -1,0 +1,1 @@
+{"sha256": "8105c98c3b673996fcff91b1cc84e6c85d9dca1154210b2353a69924c0b4c60e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7300_EU_V3_181220/fs/usr/bin/qmi_simple_ril_test", "status": "no_findings", "exit_code": 0, "wall_s": 22.4, "peak_fp_mb": 1385.1, "nfind": 0, "findings": []}

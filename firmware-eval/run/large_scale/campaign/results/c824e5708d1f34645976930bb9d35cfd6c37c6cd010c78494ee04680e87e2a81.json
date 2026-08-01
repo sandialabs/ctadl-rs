@@ -1,0 +1,1 @@
+{"sha256": "c824e5708d1f34645976930bb9d35cfd6c37c6cd010c78494ee04680e87e2a81", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNR1000v3_V1.0.2.78_60.0.96NA/fs/usr/sbin/arp_check", "status": "no_findings", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 782.0, "nfind": 0, "findings": []}

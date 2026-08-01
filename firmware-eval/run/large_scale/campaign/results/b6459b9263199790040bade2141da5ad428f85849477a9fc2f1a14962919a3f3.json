@@ -1,0 +1,1 @@
+{"sha256": "b6459b9263199790040bade2141da5ad428f85849477a9fc2f1a14962919a3f3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_820LW_REVB_FIRMWARE_PATCH_2.03.B01_TC/fs/usr/sbin/openssl", "status": "no_findings", "exit_code": 0, "wall_s": 346.1, "peak_fp_mb": 17686.6, "nfind": 0, "findings": []}

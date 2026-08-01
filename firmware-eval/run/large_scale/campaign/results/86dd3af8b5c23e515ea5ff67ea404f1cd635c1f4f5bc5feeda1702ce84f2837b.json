@@ -1,0 +1,1 @@
+{"sha256": "86dd3af8b5c23e515ea5ff67ea404f1cd635c1f4f5bc5feeda1702ce84f2837b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8900_V1.0.5.42/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1060.1, "nfind": 0, "findings": []}

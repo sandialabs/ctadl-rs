@@ -1,0 +1,1 @@
+{"sha256": "6daced99132488fd8855abb5c24f32789b97963691d6ce7874ffd7d7b15951de", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6200_V1.0.1.58_1.0.44/fs/usr/local/samba/smbd", "status": "timeout", "exit_code": null, "wall_s": 602.9, "peak_fp_mb": 7289.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "b0e6616d9e3f4954facfa9fd0db02425591c378bcc831c02b4d7ebbb9dae9cad", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7300_EX6400_V1.0.2.164/fs/usr/sbin/avahi-daemon", "status": "no_findings", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 1364.7, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "3ae23a92dd8b57aa0d9e3cd768d32ff07889f5f9fe2bf1ab5d4a41bef0acc9cd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_MR600_EU__V2_220105/fs/sbin/vipw.shadow", "status": "ok", "exit_code": 0, "wall_s": 12.7, "peak_fp_mb": 1102.7, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ENV", "sink_callsite": 4200312}]}

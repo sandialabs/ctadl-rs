@@ -1,0 +1,1 @@
+{"sha256": "b0b05465079dbef30e4555b52061d4a0ad10b12d3defa84b19aec9194d2488ad", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/XR300_V1.0.3.78_10.3.58/fs/usr/sbin/conntrack", "status": "no_findings", "exit_code": 0, "wall_s": 16.4, "peak_fp_mb": 1239.1, "nfind": 0, "findings": []}

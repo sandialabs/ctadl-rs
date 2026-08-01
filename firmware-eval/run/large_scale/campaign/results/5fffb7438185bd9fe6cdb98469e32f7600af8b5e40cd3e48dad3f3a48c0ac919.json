@@ -1,0 +1,1 @@
+{"sha256": "5fffb7438185bd9fe6cdb98469e32f7600af8b5e40cd3e48dad3f3a48c0ac919", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/sbin/net-scan", "status": "ok", "exit_code": 0, "wall_s": 19.1, "peak_fp_mb": 945.3, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4233332}]}

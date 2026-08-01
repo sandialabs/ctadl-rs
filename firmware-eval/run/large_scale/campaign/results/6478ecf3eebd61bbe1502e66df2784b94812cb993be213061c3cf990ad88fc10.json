@@ -1,0 +1,1 @@
+{"sha256": "6478ecf3eebd61bbe1502e66df2784b94812cb993be213061c3cf990ad88fc10", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX8000_V1.0.1.240/fs/usr/sbin/cryptsetup", "status": "no_findings", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 1426.2, "nfind": 0, "findings": []}

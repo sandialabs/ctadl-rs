@@ -1,0 +1,1 @@
+{"sha256": "e9f50ea9593e04765cb36c9c4498bc6e38d0e849a442761612b4d39464688a01", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D7800_FW_V1.0.1.68/fs/usr/sbin/dnsmasq", "status": "ok", "exit_code": 0, "wall_s": 37.8, "peak_fp_mb": 1434.3, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "FILE", "sink_callsite": 4277828}]}

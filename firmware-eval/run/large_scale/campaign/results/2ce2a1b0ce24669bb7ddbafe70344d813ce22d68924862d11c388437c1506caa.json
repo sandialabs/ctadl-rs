@@ -1,0 +1,1 @@
+{"sha256": "2ce2a1b0ce24669bb7ddbafe70344d813ce22d68924862d11c388437c1506caa", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DWM_311_FIRMWARE_v4.1.2.2_38639N/fs/usr/sbin/dnsmasq", "status": "oom", "exit_code": null, "wall_s": 440.6, "peak_fp_mb": 25334.4, "nfind": 0, "findings": []}

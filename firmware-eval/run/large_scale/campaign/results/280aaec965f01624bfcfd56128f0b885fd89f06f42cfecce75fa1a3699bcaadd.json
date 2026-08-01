@@ -1,0 +1,1 @@
+{"sha256": "280aaec965f01624bfcfd56128f0b885fd89f06f42cfecce75fa1a3699bcaadd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D8500_V1.0.3.60_1.0.1/fs/usr/sbin/afpd", "status": "no_findings", "exit_code": 0, "wall_s": 58.6, "peak_fp_mb": 2607.0, "nfind": 0, "findings": []}

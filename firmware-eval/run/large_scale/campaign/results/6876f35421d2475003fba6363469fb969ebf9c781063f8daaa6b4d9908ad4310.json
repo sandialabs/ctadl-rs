@@ -1,0 +1,1 @@
+{"sha256": "6876f35421d2475003fba6363469fb969ebf9c781063f8daaa6b4d9908ad4310", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDR3300v2_Initial_Firmware_Version_1.0.0.26/fs/usr/sbin/swresetd", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 813.2, "nfind": 0, "findings": []}

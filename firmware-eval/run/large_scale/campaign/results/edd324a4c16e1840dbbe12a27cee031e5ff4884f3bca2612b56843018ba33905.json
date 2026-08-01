@@ -1,0 +1,1 @@
+{"sha256": "edd324a4c16e1840dbbe12a27cee031e5ff4884f3bca2612b56843018ba33905", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C2300_EU_V1_220114/fs/sbin/agetty", "status": "ok", "exit_code": 0, "wall_s": 19.2, "peak_fp_mb": 1161.6, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "FILE", "sink_callsite": 4207376}]}

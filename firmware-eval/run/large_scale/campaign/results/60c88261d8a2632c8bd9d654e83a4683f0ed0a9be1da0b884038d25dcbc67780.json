@@ -1,0 +1,1 @@
+{"sha256": "60c88261d8a2632c8bd9d654e83a4683f0ed0a9be1da0b884038d25dcbc67780", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_M20_v1.0.05.005_201604022/fs/usr/sbin/tftpd", "status": "no_findings", "exit_code": 0, "wall_s": 19.8, "peak_fp_mb": 1001.2, "nfind": 0, "findings": []}

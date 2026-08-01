@@ -1,0 +1,1 @@
+{"sha256": "aa11b903234736fddc3ada2703565de5c54fdfc8ac2bcc2591331c383c115f68", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_818LW_REVB_FIRMWARE_PATCH_2.06B01/fs/sbin/smbd", "status": "timeout", "exit_code": null, "wall_s": 601.7, "peak_fp_mb": 11205.6, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "d464faa0521b07a91eb72e728679cf7c387f1f8dc9f1d3cdecd2b7bfbbf9251e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7850_V1.0.5.84_10.1.84/fs/usr/sbin/speedtest", "status": "no_findings", "exit_code": 0, "wall_s": 13.1, "peak_fp_mb": 886.0, "nfind": 0, "findings": []}

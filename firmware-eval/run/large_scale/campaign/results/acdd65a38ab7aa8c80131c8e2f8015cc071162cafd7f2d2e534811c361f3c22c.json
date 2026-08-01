@@ -1,0 +1,1 @@
+{"sha256": "acdd65a38ab7aa8c80131c8e2f8015cc071162cafd7f2d2e534811c361f3c22c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C5_UN_V2_150515/fs/usr/sbin/vsftpd", "status": "no_findings", "exit_code": 0, "wall_s": 25.8, "peak_fp_mb": 1589.1, "nfind": 0, "findings": []}

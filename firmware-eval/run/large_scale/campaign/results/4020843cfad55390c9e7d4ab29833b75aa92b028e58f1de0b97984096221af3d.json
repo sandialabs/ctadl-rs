@@ -1,0 +1,1 @@
+{"sha256": "4020843cfad55390c9e7d4ab29833b75aa92b028e58f1de0b97984096221af3d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7200_EU_V2_201020/fs/sbin/vipw.shadow", "status": "ok", "exit_code": 0, "wall_s": 16.3, "peak_fp_mb": 1363.5, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ENV", "sink_callsite": 4202216}]}

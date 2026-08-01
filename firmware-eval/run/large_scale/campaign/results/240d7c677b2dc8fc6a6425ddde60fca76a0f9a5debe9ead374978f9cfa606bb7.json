@@ -1,0 +1,1 @@
+{"sha256": "240d7c677b2dc8fc6a6425ddde60fca76a0f9a5debe9ead374978f9cfa606bb7", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7310_EU_V2_181220/fs/usr/sbin/conntrackd", "status": "no_findings", "exit_code": 0, "wall_s": 47.5, "peak_fp_mb": 1467.9, "nfind": 0, "findings": []}

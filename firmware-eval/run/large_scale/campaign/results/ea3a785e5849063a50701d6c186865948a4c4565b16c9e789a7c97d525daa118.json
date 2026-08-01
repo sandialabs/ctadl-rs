@@ -1,0 +1,1 @@
+{"sha256": "ea3a785e5849063a50701d6c186865948a4c4565b16c9e789a7c97d525daa118", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/GS324Tv1_GS324TPv1_V1.0.0.43/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 1200.1, "nfind": 0, "findings": []}

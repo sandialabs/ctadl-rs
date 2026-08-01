@@ -1,0 +1,1 @@
+{"sha256": "d5a78b9ff49bf654b1036a188529621e1b471fb8a534d2dea967cf2c17d96bb3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/bin/hd-idle", "status": "ok", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 922.0, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4199844}]}

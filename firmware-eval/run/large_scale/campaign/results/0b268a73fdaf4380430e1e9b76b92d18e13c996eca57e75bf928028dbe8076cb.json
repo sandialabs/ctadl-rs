@@ -1,0 +1,1 @@
+{"sha256": "0b268a73fdaf4380430e1e9b76b92d18e13c996eca57e75bf928028dbe8076cb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA6200_1.1.41.188556_prod/fs/sbin/dnsmasq", "status": "timeout", "exit_code": null, "wall_s": 600.2, "peak_fp_mb": 2267.8, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "1aa2aa3ce87b1bffc1ddac21e8ca2916589f6e5c87fb442715ca6470b9ad23ab", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D7000v2_V1.0.0.82_1.0.1/fs/bin/tclsh", "status": "ok", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 1321.8, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "ENV", "sink_callsite": 4275328}]}

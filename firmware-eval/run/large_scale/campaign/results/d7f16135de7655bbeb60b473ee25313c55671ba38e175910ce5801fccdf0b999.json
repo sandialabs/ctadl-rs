@@ -1,0 +1,1 @@
+{"sha256": "d7f16135de7655bbeb60b473ee25313c55671ba38e175910ce5801fccdf0b999", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/sbin/athdiag", "status": "ok", "exit_code": 0, "wall_s": 60.3, "peak_fp_mb": 1858.5, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4229720}]}

@@ -1,0 +1,1 @@
+{"sha256": "cf3b3d978ee433073cb265095bb99535572218a35ae6588433853f7084d7c351", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C4000_EU_V3_191026/fs/usr/sbin/rftest", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 1134.2, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4200408}]}

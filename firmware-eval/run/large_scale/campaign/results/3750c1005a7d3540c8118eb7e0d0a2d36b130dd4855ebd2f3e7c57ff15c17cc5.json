@@ -1,0 +1,1 @@
+{"sha256": "3750c1005a7d3540c8118eb7e0d0a2d36b130dd4855ebd2f3e7c57ff15c17cc5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/RE500X_V1_210611/fs/usr/sbin/dropbear", "status": "ok", "exit_code": 0, "wall_s": 35.5, "peak_fp_mb": 1968.4, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4269424}]}

@@ -1,0 +1,1 @@
+{"sha256": "0e028e458a40d456c9081f74abfa32243e3a9a569b22761113ce443ad22662bf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C59_EU__V2_220117/fs/usr/sbin/pptpctrl", "status": "ok", "exit_code": 0, "wall_s": 22.7, "peak_fp_mb": 724.3, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4201948}]}

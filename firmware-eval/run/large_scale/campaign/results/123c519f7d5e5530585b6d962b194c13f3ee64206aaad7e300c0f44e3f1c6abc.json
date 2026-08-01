@@ -1,0 +1,1 @@
+{"sha256": "123c519f7d5e5530585b6d962b194c13f3ee64206aaad7e300c0f44e3f1c6abc", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6100_V1.0.1.28/fs/usr/sbin/ntpst", "status": "no_findings", "exit_code": 0, "wall_s": 13.0, "peak_fp_mb": 763.5, "nfind": 0, "findings": []}

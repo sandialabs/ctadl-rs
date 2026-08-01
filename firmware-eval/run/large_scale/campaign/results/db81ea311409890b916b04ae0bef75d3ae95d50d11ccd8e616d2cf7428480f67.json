@@ -1,0 +1,1 @@
+{"sha256": "db81ea311409890b916b04ae0bef75d3ae95d50d11ccd8e616d2cf7428480f67", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_WPA8630P_EU_UK_V2.1_171117/fs/sbin/hostapd", "status": "ok", "exit_code": 0, "wall_s": 302.0, "peak_fp_mb": 3560.3, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4692472}]}

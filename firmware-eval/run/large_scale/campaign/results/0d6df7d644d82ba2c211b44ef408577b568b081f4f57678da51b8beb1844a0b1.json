@@ -1,0 +1,1 @@
+{"sha256": "0d6df7d644d82ba2c211b44ef408577b568b081f4f57678da51b8beb1844a0b1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/US_D152_BRV1_V2.2.1_en_td/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1300.7, "nfind": 0, "findings": []}

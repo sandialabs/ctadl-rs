@@ -1,0 +1,1 @@
+{"sha256": "7aeeeeb6f2933c5ba480d4123d74f7dd4c2916323e1d9cb3c03bf0798e0cc5da", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E2500_3.0.05.002_20180914/fs/sbin/fsutil", "status": "no_findings", "exit_code": 0, "wall_s": 267.6, "peak_fp_mb": 12933.6, "nfind": 0, "findings": []}

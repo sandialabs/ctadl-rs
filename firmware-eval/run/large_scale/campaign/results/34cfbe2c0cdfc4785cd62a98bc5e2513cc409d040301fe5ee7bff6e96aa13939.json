@@ -1,0 +1,1 @@
+{"sha256": "34cfbe2c0cdfc4785cd62a98bc5e2513cc409d040301fe5ee7bff6e96aa13939", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WN2000RPTv2_V1.1.0.12/fs/usr/sbin/wpa_supplicant", "status": "no_findings", "exit_code": 0, "wall_s": 55.4, "peak_fp_mb": 2254.4, "nfind": 0, "findings": []}

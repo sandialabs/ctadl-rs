@@ -1,0 +1,1 @@
+{"sha256": "8d2dac427eda83b82fdbcb5bab4e196b24c469eec9433d39956fd9926c76dc92", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_WRT54GL_4.30.18.006_US_20160108/fs/usr/sbin/tftpd", "status": "no_findings", "exit_code": 0, "wall_s": 32.4, "peak_fp_mb": 929.0, "nfind": 0, "findings": []}

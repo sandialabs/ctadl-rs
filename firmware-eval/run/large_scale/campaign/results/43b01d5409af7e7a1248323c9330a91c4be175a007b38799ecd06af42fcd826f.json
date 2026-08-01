@@ -1,0 +1,1 @@
+{"sha256": "43b01d5409af7e7a1248323c9330a91c4be175a007b38799ecd06af42fcd826f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/BR200_FW_V5.10.0.5/fs/usr/sbin/e2fsck", "status": "ok", "exit_code": 0, "wall_s": 38.7, "peak_fp_mb": 1581.5, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "ARGV", "sink_callsite": 4298808}]}

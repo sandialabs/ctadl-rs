@@ -1,0 +1,1 @@
+{"sha256": "ec271c10f7fab56b824489a8e7d12d9b121bd9f0d29193169b530dd073117303", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/COVR_3902_REVA_ROUTER_FIRMWARE_v1.01B05/fs/sbin/smbd", "status": "timeout", "exit_code": null, "wall_s": 602.0, "peak_fp_mb": 5613.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "abd13737385bf72ae35841a227c7b89ff3e6f1a3b337b0eb4101901840bf197a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E5600_1.1.0.26_prod/fs/sbin/netifd", "status": "ok", "exit_code": 0, "wall_s": 29.3, "peak_fp_mb": 1490.7, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "ARGV", "sink_callsite": 4205852}]}

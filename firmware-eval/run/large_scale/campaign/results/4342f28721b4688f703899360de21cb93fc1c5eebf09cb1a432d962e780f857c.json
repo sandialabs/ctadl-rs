@@ -1,0 +1,1 @@
+{"sha256": "4342f28721b4688f703899360de21cb93fc1c5eebf09cb1a432d962e780f857c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/usr/bin/shred.coreutils", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1093.5, "nfind": 0, "findings": []}

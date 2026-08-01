@@ -1,0 +1,1 @@
+{"sha256": "3f1d0f082922627f8231461937dc97c8442668fa8cdee43899c89e273e9f68a5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DGN2000_V1.3.16.0/fs/usr/sbin/syslogd", "status": "no_findings", "exit_code": 0, "wall_s": 16.3, "peak_fp_mb": 753.6, "nfind": 0, "findings": []}

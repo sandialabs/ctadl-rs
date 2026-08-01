@@ -1,0 +1,1 @@
+{"sha256": "1724102612bf6569a5f9867c75567d6548526080a5651060720caae77feadce2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/NVR1008H_UN_V2_211019/fs/usr/sbin/netlinkd", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 898.3, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NETWORK", "sink_callsite": 4197662}]}

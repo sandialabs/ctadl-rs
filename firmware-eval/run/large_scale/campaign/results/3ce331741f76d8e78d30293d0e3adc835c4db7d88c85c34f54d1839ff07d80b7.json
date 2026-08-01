@@ -1,0 +1,1 @@
+{"sha256": "3ce331741f76d8e78d30293d0e3adc835c4db7d88c85c34f54d1839ff07d80b7", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/COVR_2600R_Firmware_v101b05_0911_BFdisabled/fs/usr/sbin/openssl", "status": "no_findings", "exit_code": 0, "wall_s": 120.1, "peak_fp_mb": 3766.8, "nfind": 0, "findings": []}

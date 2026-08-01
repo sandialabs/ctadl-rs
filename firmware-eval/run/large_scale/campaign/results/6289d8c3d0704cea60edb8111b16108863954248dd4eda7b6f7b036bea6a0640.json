@@ -1,0 +1,1 @@
+{"sha256": "6289d8c3d0704cea60edb8111b16108863954248dd4eda7b6f7b036bea6a0640", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/JWNR2000v2_WNR1500_V1.0.0.11_1.0.1/fs/usr/sbin/iptables", "status": "no_findings", "exit_code": 0, "wall_s": 44.8, "peak_fp_mb": 1549.1, "nfind": 0, "findings": []}

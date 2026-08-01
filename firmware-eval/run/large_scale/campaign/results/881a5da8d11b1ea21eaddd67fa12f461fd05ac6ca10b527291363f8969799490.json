@@ -1,0 +1,1 @@
+{"sha256": "881a5da8d11b1ea21eaddd67fa12f461fd05ac6ca10b527291363f8969799490", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/linux_lzma_DIR_604M_150227/fs/usr/sbin/pptpd", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 935.9, "nfind": 0, "findings": []}

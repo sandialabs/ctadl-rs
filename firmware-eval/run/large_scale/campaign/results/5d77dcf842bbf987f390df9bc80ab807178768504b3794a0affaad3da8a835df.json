@@ -1,0 +1,1 @@
+{"sha256": "5d77dcf842bbf987f390df9bc80ab807178768504b3794a0affaad3da8a835df", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDR3700v5_V1.1.0.54_1.0.1/fs/usr/sbin/mkfs.ubifs", "status": "no_findings", "exit_code": 0, "wall_s": 25.7, "peak_fp_mb": 1130.1, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "6566558fab06e65f18aa2e6f47e4c2aa8c3ed4ddf60714710d4c64b16940f0b1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E1200_2.0.11.001_US_20180910/fs/usr/sbin/igmpxmld", "status": "no_findings", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 813.5, "nfind": 0, "findings": []}

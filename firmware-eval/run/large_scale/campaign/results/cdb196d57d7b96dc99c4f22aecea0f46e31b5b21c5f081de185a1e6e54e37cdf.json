@@ -1,0 +1,1 @@
+{"sha256": "cdb196d57d7b96dc99c4f22aecea0f46e31b5b21c5f081de185a1e6e54e37cdf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/US_F452V1.0BR_V1.0.0.3_en_8097_TD/fs/usr/sbin/smbd", "status": "timeout", "exit_code": null, "wall_s": 600.6, "peak_fp_mb": 6338.5, "nfind": 0, "findings": []}

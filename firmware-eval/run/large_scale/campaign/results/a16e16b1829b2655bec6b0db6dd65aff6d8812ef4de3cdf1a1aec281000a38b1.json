@@ -1,0 +1,1 @@
+{"sha256": "a16e16b1829b2655bec6b0db6dd65aff6d8812ef4de3cdf1a1aec281000a38b1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6220_V1.1.0.114/fs/usr/sbin/lsof", "status": "no_findings", "exit_code": 0, "wall_s": 396.7, "peak_fp_mb": 4626.6, "nfind": 0, "findings": []}

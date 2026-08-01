@@ -1,0 +1,1 @@
+{"sha256": "ce8087932a25878a78ee8a6fe1c8d5a06abdd4253ec4ab38e19565145e66a01d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WAC124_V1.0.4.9/fs/usr/sbin/lsof", "status": "no_findings", "exit_code": 0, "wall_s": 402.9, "peak_fp_mb": 4621.2, "nfind": 0, "findings": []}

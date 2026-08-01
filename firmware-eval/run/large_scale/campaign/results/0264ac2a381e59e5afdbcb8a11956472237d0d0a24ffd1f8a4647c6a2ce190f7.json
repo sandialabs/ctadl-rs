@@ -1,0 +1,1 @@
+{"sha256": "0264ac2a381e59e5afdbcb8a11956472237d0d0a24ffd1f8a4647c6a2ce190f7", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/SXR80_signed_V4.2.3.102/fs/opt/netgear/usr/bin/xagent", "status": "no_findings", "exit_code": 0, "wall_s": 22.6, "peak_fp_mb": 1583.3, "nfind": 0, "findings": []}

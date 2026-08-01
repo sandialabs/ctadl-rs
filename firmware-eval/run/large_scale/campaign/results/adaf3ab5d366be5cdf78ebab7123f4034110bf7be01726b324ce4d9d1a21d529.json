@@ -1,0 +1,1 @@
+{"sha256": "adaf3ab5d366be5cdf78ebab7123f4034110bf7be01726b324ce4d9d1a21d529", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/SRR60_V2.7.2.102/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1197.3, "nfind": 0, "findings": []}

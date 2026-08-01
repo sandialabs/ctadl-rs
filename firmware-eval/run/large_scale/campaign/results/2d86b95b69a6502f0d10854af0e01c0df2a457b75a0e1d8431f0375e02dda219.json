@@ -1,0 +1,1 @@
+{"sha256": "2d86b95b69a6502f0d10854af0e01c0df2a457b75a0e1d8431f0375e02dda219", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7500_V1.0.0.130/fs/usr/sbin/qcsapi_sockrpc_static", "status": "no_findings", "exit_code": 0, "wall_s": 58.3, "peak_fp_mb": 1888.0, "nfind": 0, "findings": []}

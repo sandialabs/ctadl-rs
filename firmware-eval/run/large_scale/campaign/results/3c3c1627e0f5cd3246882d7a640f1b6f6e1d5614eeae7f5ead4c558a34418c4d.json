@@ -1,0 +1,1 @@
+{"sha256": "3c3c1627e0f5cd3246882d7a640f1b6f6e1d5614eeae7f5ead4c558a34418c4d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8900_V1.0.5.42/fs/usr/sbin/dhcp6c", "status": "ok", "exit_code": 0, "wall_s": 47.6, "peak_fp_mb": 1717.9, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4204628}]}

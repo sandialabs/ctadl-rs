@@ -1,0 +1,1 @@
+{"sha256": "fb2e7111bf330013f4668c8b828e2df4a1fb0a50d34306609bf7600f090b1a49", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/GSM4230xx_GSM4248xx_V13.0.4.13/fs/usr/bin/lrz", "status": "ok", "exit_code": 0, "wall_s": 22.3, "peak_fp_mb": 1172.9, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4218128}]}

@@ -1,0 +1,1 @@
+{"sha256": "5b57f08641f49181d7ecd65a197f2904df2b70b61e4e51dd60650292601a9da4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/XR700_V1.0.1.50/fs/usr/bin/hd-idle", "status": "ok", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 807.2, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4199684}]}

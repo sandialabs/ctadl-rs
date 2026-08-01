@@ -1,0 +1,1 @@
+{"sha256": "f5e27ca6c711622579c6a696bf12e8fc36969d6aa0873ff5423548687899d407", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TD_W8970_V1_140613/fs/usr/bin/iptables", "status": "timeout", "exit_code": null, "wall_s": 601.3, "peak_fp_mb": 1900.7, "nfind": 0, "findings": []}

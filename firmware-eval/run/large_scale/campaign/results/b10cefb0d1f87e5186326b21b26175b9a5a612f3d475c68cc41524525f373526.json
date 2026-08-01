@@ -1,0 +1,1 @@
+{"sha256": "b10cefb0d1f87e5186326b21b26175b9a5a612f3d475c68cc41524525f373526", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AX1800U_300438668526/fs/sbin/tr069", "status": "ok", "exit_code": 0, "wall_s": 66.6, "peak_fp_mb": 1950.8, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NVRAM", "sink_callsite": 4354956}]}

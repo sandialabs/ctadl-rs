@@ -1,0 +1,1 @@
+{"sha256": "5227765bb41c55781d8c95e5ea76389ee15c89c0ff9c43904b97fadf58b8a095", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/US_N60_BCM_V2.0.4.1_EN/fs/usr/sbin/smbpasswd", "status": "no_findings", "exit_code": 0, "wall_s": 59.0, "peak_fp_mb": 2098.3, "nfind": 0, "findings": []}

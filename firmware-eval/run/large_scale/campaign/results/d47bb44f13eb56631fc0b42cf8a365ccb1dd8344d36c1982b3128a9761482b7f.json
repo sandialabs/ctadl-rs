@@ -1,0 +1,1 @@
+{"sha256": "d47bb44f13eb56631fc0b42cf8a365ccb1dd8344d36c1982b3128a9761482b7f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA6350_1.0.5.182871_prod/fs/usr/sbin/ipv4_firewall", "status": "no_findings", "exit_code": 0, "wall_s": 19.2, "peak_fp_mb": 1294.6, "nfind": 0, "findings": []}

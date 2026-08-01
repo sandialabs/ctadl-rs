@@ -1,0 +1,1 @@
+{"sha256": "35fa079e2d1b34a778b5e042b40144a2193cdddfcbb5c053420ec172a01aca3a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/GS348Tv1_V1.0.0.43/fs/usr/bin/i2cset", "status": "no_findings", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 928.7, "nfind": 0, "findings": []}

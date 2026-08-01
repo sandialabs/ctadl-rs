@@ -1,0 +1,1 @@
+{"sha256": "5a3affdca5eb063ae329753b10af3b159a00b529df262107382753ac0a38d3f7", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA9400_1.0.3.181249_prod/fs/usr/sbin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 22.5, "peak_fp_mb": 1207.9, "nfind": 0, "findings": []}

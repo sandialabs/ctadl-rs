@@ -1,0 +1,1 @@
+{"sha256": "38a555633d16ed0b01841eb4dabd9be5fe11b7e35973d7650e71600f3b60f42c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/sbin/mke2fs", "status": "no_findings", "exit_code": 0, "wall_s": 47.6, "peak_fp_mb": 1834.0, "nfind": 0, "findings": []}

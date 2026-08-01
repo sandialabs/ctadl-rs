@@ -1,0 +1,1 @@
+{"sha256": "f1cf02391b799ed11dc379f66e9348838a4981b3cd105c8e55d77d87c68cf62e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/EAP225_EU_V3.20_5.0.7_Build_20211026/fs/sbin/wpa_cli", "status": "no_findings", "exit_code": 0, "wall_s": 19.2, "peak_fp_mb": 1506.3, "nfind": 0, "findings": []}

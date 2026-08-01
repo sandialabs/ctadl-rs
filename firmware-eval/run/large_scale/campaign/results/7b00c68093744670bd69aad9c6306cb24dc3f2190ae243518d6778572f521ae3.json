@@ -1,0 +1,1 @@
+{"sha256": "7b00c68093744670bd69aad9c6306cb24dc3f2190ae243518d6778572f521ae3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E5600_1.1.0.26_prod/fs/usr/sbin/logrotate", "status": "ok", "exit_code": 0, "wall_s": 25.7, "peak_fp_mb": 1386.6, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4223912}]}

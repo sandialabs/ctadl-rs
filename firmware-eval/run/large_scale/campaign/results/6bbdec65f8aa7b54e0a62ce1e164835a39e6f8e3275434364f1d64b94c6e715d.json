@@ -1,0 +1,1 @@
+{"sha256": "6bbdec65f8aa7b54e0a62ce1e164835a39e6f8e3275434364f1d64b94c6e715d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7000_V1.0.11.136_10.2.120/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 15.9, "peak_fp_mb": 1273.6, "nfind": 0, "findings": []}

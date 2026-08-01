@@ -1,0 +1,1 @@
+{"sha256": "cc81795f873ea156c7aa6f00bf0df0b03b951fd2550c64b68810f82862d22c3e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D6100_V1.0.0.63_0.0.63/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 15.9, "peak_fp_mb": 896.3, "nfind": 0, "findings": []}

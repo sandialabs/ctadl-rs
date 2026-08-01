@@ -1,0 +1,1 @@
+{"sha256": "a5f0530549b623f7fd62c2b285d0e423d45a655caf8e6cf255b15d1afbab0806", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Deco_M3W_V1_1.0.7/fs/sbin/block", "status": "ok", "exit_code": 0, "wall_s": 19.6, "peak_fp_mb": 885.4, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ARGV", "sink_callsite": 4205944}]}

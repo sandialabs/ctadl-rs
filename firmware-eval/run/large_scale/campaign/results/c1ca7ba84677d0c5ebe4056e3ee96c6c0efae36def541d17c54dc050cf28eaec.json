@@ -1,0 +1,1 @@
+{"sha256": "c1ca7ba84677d0c5ebe4056e3ee96c6c0efae36def541d17c54dc050cf28eaec", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDR3800_V1.0.0.52/fs/usr/sbin/inetd", "status": "no_findings", "exit_code": 0, "wall_s": 12.7, "peak_fp_mb": 685.3, "nfind": 0, "findings": []}

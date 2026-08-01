@@ -1,0 +1,1 @@
+{"sha256": "2244cce24c473a11a0dd5a0c8096b589f8b9d9d88db7fca7f4b493d0a0ad94cc", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DHP_W306AV_FIRMWARE_1.0.1/fs/usr/bin/check_plc_firmware", "status": "no_findings", "exit_code": 0, "wall_s": 9.5, "peak_fp_mb": 716.4, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "e6fc697b232e26c9b241375e233511f3743ea368f36e405dc3ae2ecc9d69c535", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6120_V1.0.0.84/fs/usr/sbin/smbpasswd", "status": "no_findings", "exit_code": 0, "wall_s": 16.4, "peak_fp_mb": 894.2, "nfind": 0, "findings": []}

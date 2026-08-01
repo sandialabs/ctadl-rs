@@ -1,0 +1,1 @@
+{"sha256": "d2b7d7a02c0acfa4d7f6ad53156986087cd1e27e2bc6fdedab505e507de7aeec", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WC7600_V6.5.5.24/fs/usr/bin/strace", "status": "ok", "exit_code": 0, "wall_s": 69.1, "peak_fp_mb": 5533.4, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ENV", "sink_callsite": 4209377}]}

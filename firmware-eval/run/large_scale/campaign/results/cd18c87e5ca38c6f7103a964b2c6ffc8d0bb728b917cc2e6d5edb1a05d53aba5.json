@@ -1,0 +1,1 @@
+{"sha256": "cd18c87e5ca38c6f7103a964b2c6ffc8d0bb728b917cc2e6d5edb1a05d53aba5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7500_V1.0.0.130/fs/usr/sbin/hostapd_cli", "status": "no_findings", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 1301.3, "nfind": 0, "findings": []}

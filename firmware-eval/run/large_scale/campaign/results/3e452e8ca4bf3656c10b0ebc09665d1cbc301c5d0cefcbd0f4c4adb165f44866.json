@@ -1,0 +1,1 @@
+{"sha256": "3e452e8ca4bf3656c10b0ebc09665d1cbc301c5d0cefcbd0f4c4adb165f44866", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/NBG6617_V1.00_ABCT.6_C0/fs/usr/sbin/gw6c", "status": "ok", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 1578.8, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4247628}]}

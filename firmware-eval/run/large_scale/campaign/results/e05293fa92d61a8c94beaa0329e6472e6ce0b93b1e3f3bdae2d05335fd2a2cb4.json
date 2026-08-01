@@ -1,0 +1,1 @@
+{"sha256": "e05293fa92d61a8c94beaa0329e6472e6ce0b93b1e3f3bdae2d05335fd2a2cb4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNAP210_V2.1.6_firmware/fs/usr/sbin/iptables-save", "status": "no_findings", "exit_code": 0, "wall_s": 61.7, "peak_fp_mb": 1402.6, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "1458aad00cf2f7e1067527ec2fc63c0e14ca49327449e0b0e3670fc9610818b3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WND930_V2.1.5/fs/usr/sbin/iptables-save", "status": "no_findings", "exit_code": 0, "wall_s": 54.7, "peak_fp_mb": 1268.7, "nfind": 0, "findings": []}

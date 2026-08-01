@@ -1,0 +1,1 @@
+{"sha256": "5bfd36a5197e302a4281186efd335d07ed83f4ca2ab62a315009c16db198fae7", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7800_V1.0.2.92/fs/usr/sbin/mke2fs", "status": "no_findings", "exit_code": 0, "wall_s": 25.4, "peak_fp_mb": 1545.3, "nfind": 0, "findings": []}

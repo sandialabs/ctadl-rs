@@ -1,0 +1,1 @@
+{"sha256": "385f5589b4cf27744c74f0f8b83d683a7b16e7c87e14f5e6cbf90a85f12eeb9c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA9300_1.1.9.183697_prod/fs/sbin/mkdosfs", "status": "no_findings", "exit_code": 0, "wall_s": 53.9, "peak_fp_mb": 1422.6, "nfind": 0, "findings": []}

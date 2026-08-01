@@ -1,0 +1,1 @@
+{"sha256": "27b406ae6432ec6e8bfdf7c906d9f63af16c299270f04b3f18df72290e4b85be", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DM200_V1.0.0.66/fs/usr/sbin/dhcp6c", "status": "ok", "exit_code": 0, "wall_s": 41.5, "peak_fp_mb": 1656.7, "nfind": 1, "findings": [{"sink_func": "execve", "source_class": "ARGV", "sink_callsite": 4263032}]}

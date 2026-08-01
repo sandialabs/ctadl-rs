@@ -1,0 +1,1 @@
+{"sha256": "f928efea6f377b2e061100614ee62e0fc4093bc160b9e7addf717eaa1b4a9582", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/JR6150_R6050_V1.0.1.26_1.0.1/fs/usr/sbin/lsof", "status": "timeout", "exit_code": null, "wall_s": 600.8, "peak_fp_mb": 9749.5, "nfind": 0, "findings": []}

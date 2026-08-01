@@ -1,0 +1,1 @@
+{"sha256": "7e8cba01dec60c1c72385221455c724416d04c4472a1be275e065739a9f31fc3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7300_V1.0.0.74_1.0.29/fs/usr/sbin/afpd", "status": "no_findings", "exit_code": 0, "wall_s": 55.1, "peak_fp_mb": 2271.4, "nfind": 0, "findings": []}

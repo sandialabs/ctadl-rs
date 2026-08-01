@@ -1,0 +1,1 @@
+{"sha256": "32f8046a1e3ed33b05a6a470edfaf7df5f9ec38258de9d87307e414a7f78db57", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_865L_REVA_FIRMWARE_PATCH_1.20B01_20180809/fs/usr/sbin/iwconfig", "status": "no_findings", "exit_code": 0, "wall_s": 16.0, "peak_fp_mb": 1009.7, "nfind": 0, "findings": []}

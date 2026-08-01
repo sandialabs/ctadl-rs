@@ -1,0 +1,1 @@
+{"sha256": "c15ed277e7f70c9e231d88f2f172be1976704903a48a00c5065542e2f889aa7a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AX54HP_300438668525/fs/usr/sbin/networkmap", "status": "ok", "exit_code": 0, "wall_s": 54.3, "peak_fp_mb": 1548.4, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NVRAM", "sink_callsite": 4247268}]}

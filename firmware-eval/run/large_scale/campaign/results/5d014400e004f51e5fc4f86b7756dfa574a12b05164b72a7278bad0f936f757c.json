@@ -1,0 +1,1 @@
+{"sha256": "5d014400e004f51e5fc4f86b7756dfa574a12b05164b72a7278bad0f936f757c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C1900_US__V2.0_220524/fs/usr/sbin/conntrackd", "status": "no_findings", "exit_code": 0, "wall_s": 41.5, "peak_fp_mb": 1437.1, "nfind": 0, "findings": []}

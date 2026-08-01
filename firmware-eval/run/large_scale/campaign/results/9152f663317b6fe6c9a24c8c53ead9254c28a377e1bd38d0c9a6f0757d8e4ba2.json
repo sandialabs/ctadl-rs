@@ -1,0 +1,1 @@
+{"sha256": "9152f663317b6fe6c9a24c8c53ead9254c28a377e1bd38d0c9a6f0757d8e4ba2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAX35_V1.0.5.104_1.0.1/fs/usr/sbin/conntrack", "status": "no_findings", "exit_code": 0, "wall_s": 22.9, "peak_fp_mb": 1327.2, "nfind": 0, "findings": []}

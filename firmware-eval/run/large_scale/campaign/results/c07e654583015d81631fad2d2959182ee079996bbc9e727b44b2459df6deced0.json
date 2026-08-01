@@ -1,0 +1,1 @@
+{"sha256": "c07e654583015d81631fad2d2959182ee079996bbc9e727b44b2459df6deced0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/MultyPlus_WSQ60__V2.00_ABND.3_C0/fs/bin/RA_status", "status": "ok", "exit_code": 0, "wall_s": 16.6, "peak_fp_mb": 753.8, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4197516}]}

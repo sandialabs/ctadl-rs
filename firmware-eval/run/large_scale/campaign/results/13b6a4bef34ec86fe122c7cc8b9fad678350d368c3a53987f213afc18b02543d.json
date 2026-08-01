@@ -1,0 +1,1 @@
+{"sha256": "13b6a4bef34ec86fe122c7cc8b9fad678350d368c3a53987f213afc18b02543d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6700_V1.0.2.26_10.0.61/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.0, "peak_fp_mb": 1357.9, "nfind": 0, "findings": []}

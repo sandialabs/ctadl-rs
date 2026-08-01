@@ -1,0 +1,1 @@
+{"sha256": "873c93cfad3e3fac70b68cde7daa52fa2602999bfaf512a036b22baa4acc2c9e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7650_EU_V1_180808/fs/sbin/adbd", "status": "ok", "exit_code": 0, "wall_s": 19.5, "peak_fp_mb": 1408.7, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4242532}]}

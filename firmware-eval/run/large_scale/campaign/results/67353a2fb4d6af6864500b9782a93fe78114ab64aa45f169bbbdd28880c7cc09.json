@@ -1,0 +1,1 @@
+{"sha256": "67353a2fb4d6af6864500b9782a93fe78114ab64aa45f169bbbdd28880c7cc09", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/BR200_FW_V5.10.0.5/fs/usr/sbin/dnsmasq", "status": "ok", "exit_code": 0, "wall_s": 47.5, "peak_fp_mb": 1800.3, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "FILE", "sink_callsite": 4283372}]}

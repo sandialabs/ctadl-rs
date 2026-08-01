@@ -1,0 +1,1 @@
+{"sha256": "64bc93d578d68e5af47d67c293f23af2c85a68423eaca56e10e4a209fc2794e3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR8300_1.1.10.210186_prod/fs/usr/sbin/conntrack_parse", "status": "no_findings", "exit_code": 0, "wall_s": 19.1, "peak_fp_mb": 1002.9, "nfind": 0, "findings": []}

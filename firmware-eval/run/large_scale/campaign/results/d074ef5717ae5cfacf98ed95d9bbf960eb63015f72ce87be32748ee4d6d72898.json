@@ -1,0 +1,1 @@
+{"sha256": "d074ef5717ae5cfacf98ed95d9bbf960eb63015f72ce87be32748ee4d6d72898", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX5300_1.1.12.210066_prod/fs/sbin/ebtablesd", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 930.2, "nfind": 0, "findings": []}

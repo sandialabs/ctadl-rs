@@ -1,0 +1,1 @@
+{"sha256": "8d6ef343613d44aa67f962e9ba34c04c5acf47495ba3e97be637c8ebdaaa6f9a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7500v2_V1.0.3.50/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 22.4, "peak_fp_mb": 1048.8, "nfind": 0, "findings": []}

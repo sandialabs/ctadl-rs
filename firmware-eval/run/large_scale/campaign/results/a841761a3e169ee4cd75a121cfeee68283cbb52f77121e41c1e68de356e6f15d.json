@@ -1,0 +1,1 @@
+{"sha256": "a841761a3e169ee4cd75a121cfeee68283cbb52f77121e41c1e68de356e6f15d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/f5d8632_4_v1000_ww_1.00.06/fs/usr/sbin/ntp", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 710.5, "nfind": 0, "findings": []}

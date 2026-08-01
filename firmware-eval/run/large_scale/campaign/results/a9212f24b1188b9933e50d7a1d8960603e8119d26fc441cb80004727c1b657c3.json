@@ -1,0 +1,1 @@
+{"sha256": "a9212f24b1188b9933e50d7a1d8960603e8119d26fc441cb80004727c1b657c3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6120_V1.0.0.84/fs/usr/sbin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 989.1, "nfind": 0, "findings": []}

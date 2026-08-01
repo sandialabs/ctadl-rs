@@ -1,0 +1,1 @@
+{"sha256": "18be51acecf1ae9f654d05469abd77840f491d7ee8969b13882cdc28f2272aa3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC1750_B1_300438649703/fs/sbin/write_smb_conf", "status": "no_findings", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1036.5, "nfind": 0, "findings": []}

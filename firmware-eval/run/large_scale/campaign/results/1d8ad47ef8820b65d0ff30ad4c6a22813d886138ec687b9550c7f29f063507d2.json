@@ -1,0 +1,1 @@
+{"sha256": "1d8ad47ef8820b65d0ff30ad4c6a22813d886138ec687b9550c7f29f063507d2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/SRC60_V2.7.2.102/fs/sbin/udhcpd", "status": "ok", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1308.5, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4209284}]}

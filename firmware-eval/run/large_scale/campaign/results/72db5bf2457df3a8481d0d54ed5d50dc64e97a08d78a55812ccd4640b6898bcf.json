@@ -1,0 +1,1 @@
+{"sha256": "72db5bf2457df3a8481d0d54ed5d50dc64e97a08d78a55812ccd4640b6898bcf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D3600_V1.0.0.76_1.0.1/fs/userfs/bin/smbpasswd", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1392.9, "nfind": 0, "findings": []}

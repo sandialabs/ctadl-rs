@@ -1,0 +1,1 @@
+{"sha256": "b5095a516190329e8d0c8da1a9212a7b0af418bd9c39b1b36b6b8a210a73ffb9", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA6350v4_4.0.4.207984_prod/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1056.2, "nfind": 0, "findings": []}

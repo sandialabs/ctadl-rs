@@ -1,0 +1,1 @@
+{"sha256": "ef8ca4961a877f1ce9fa9556ef36e5813d4e441d6c273211a60624ad4ad8e659", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_BLUECAVE_300438446630/fs/usr/sbin/nt_center", "status": "ok", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 785.7, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4201840}]}

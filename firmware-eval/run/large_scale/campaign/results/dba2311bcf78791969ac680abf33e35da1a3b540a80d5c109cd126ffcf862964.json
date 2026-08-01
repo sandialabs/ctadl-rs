@@ -1,0 +1,1 @@
+{"sha256": "dba2311bcf78791969ac680abf33e35da1a3b540a80d5c109cd126ffcf862964", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WC7600v2_V6.5.5.24/fs/libexec/ssh-pkcs11-helper", "status": "ok", "exit_code": 0, "wall_s": 26.0, "peak_fp_mb": 1493.7, "nfind": 1, "findings": [{"sink_func": "execlp", "source_class": "ENV", "sink_callsite": 4225021}]}

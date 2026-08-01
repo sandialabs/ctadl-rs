@@ -1,0 +1,1 @@
+{"sha256": "11996549e7177de113be66cfe92fc1647f3cc88804e5af857a5be09f4e504146", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_AX11000_EU__V1_210719/fs/usr/sbin/cal_cbr", "status": "ok", "exit_code": 0, "wall_s": 16.0, "peak_fp_mb": 940.2, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4198812}]}

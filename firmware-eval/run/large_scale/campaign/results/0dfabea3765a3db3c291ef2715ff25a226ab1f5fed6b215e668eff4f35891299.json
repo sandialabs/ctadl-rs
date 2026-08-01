@@ -1,0 +1,1 @@
+{"sha256": "0dfabea3765a3db3c291ef2715ff25a226ab1f5fed6b215e668eff4f35891299", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_MR200_EU_V5.20_210226/fs/sbin/shutdown.sysvinit", "status": "no_findings", "exit_code": 0, "wall_s": 15.9, "peak_fp_mb": 1033.7, "nfind": 0, "findings": []}

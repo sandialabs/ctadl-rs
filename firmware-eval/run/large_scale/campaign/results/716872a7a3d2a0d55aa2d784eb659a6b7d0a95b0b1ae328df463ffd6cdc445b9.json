@@ -1,0 +1,1 @@
+{"sha256": "716872a7a3d2a0d55aa2d784eb659a6b7d0a95b0b1ae328df463ffd6cdc445b9", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/SXR30_signed_V4.2.3.102/fs/opt/netgear/usr/bin/insight-cli", "status": "no_findings", "exit_code": 0, "wall_s": 13.0, "peak_fp_mb": 925.1, "nfind": 0, "findings": []}

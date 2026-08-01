@@ -1,0 +1,1 @@
+{"sha256": "81e1b3519097625d12a5ab9565794c67991463e5feeb82f16609fc1b5c281e3b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA6500_1.1.29.162351_prod/fs/sbin/parted", "status": "no_findings", "exit_code": 0, "wall_s": 32.6, "peak_fp_mb": 1497.4, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "acc470f36841acbbb00c5e551f3b5e08abab3a12a1a1fea63fffe24ff0d374ba", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/F9K1113v2_WW_2.03.40/fs/usr/bin/vmstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1273.3, "nfind": 0, "findings": []}

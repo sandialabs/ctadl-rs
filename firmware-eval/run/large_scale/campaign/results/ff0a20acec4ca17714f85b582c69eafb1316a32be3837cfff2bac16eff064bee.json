@@ -1,0 +1,1 @@
+{"sha256": "ff0a20acec4ca17714f85b582c69eafb1316a32be3837cfff2bac16eff064bee", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX5300_1.1.12.210066_prod/fs/usr/sbin/ipv6_firewall", "status": "no_findings", "exit_code": 0, "wall_s": 16.4, "peak_fp_mb": 1144.7, "nfind": 0, "findings": []}

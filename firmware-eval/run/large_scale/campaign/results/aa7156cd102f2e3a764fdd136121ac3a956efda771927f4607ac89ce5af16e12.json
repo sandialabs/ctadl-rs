@@ -1,0 +1,1 @@
+{"sha256": "aa7156cd102f2e3a764fdd136121ac3a956efda771927f4607ac89ce5af16e12", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_AX50_V1_220526/fs/usr/sbin/nrd", "status": "ok", "exit_code": 0, "wall_s": 32.5, "peak_fp_mb": 1484.1, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4309296}]}

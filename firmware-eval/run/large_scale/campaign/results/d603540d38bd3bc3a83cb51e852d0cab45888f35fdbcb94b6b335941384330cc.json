@@ -1,0 +1,1 @@
+{"sha256": "d603540d38bd3bc3a83cb51e852d0cab45888f35fdbcb94b6b335941384330cc", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8000_V1.0.4.84_10.1.84/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 1414.6, "nfind": 0, "findings": []}

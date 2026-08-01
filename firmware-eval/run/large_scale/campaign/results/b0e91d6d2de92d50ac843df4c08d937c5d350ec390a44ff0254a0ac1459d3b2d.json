@@ -1,0 +1,1 @@
+{"sha256": "b0e91d6d2de92d50ac843df4c08d937c5d350ec390a44ff0254a0ac1459d3b2d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNR3500L_V1.2.2.48_35.0.55NA/fs/usr/sbin/dhcp6c", "status": "timeout", "exit_code": null, "wall_s": 600.2, "peak_fp_mb": 2811.9, "nfind": 0, "findings": []}

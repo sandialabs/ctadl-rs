@@ -1,0 +1,1 @@
+{"sha256": "543ce743e9e88732ebc01af2ffa428ee174ba9128c5a658d5883410028a39900", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/F5D8230v1_UK_1.01.03/fs/usr/sbin/iptables", "status": "no_findings", "exit_code": 0, "wall_s": 22.7, "peak_fp_mb": 1007.7, "nfind": 0, "findings": []}

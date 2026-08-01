@@ -1,0 +1,1 @@
+{"sha256": "680196e549f9d2084246cb588a5de4b328ddb883672b6fd4d192b77c80bfcb18", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC1750_B1_300438649703/fs/usr/sbin/samba_multicall", "status": "timeout", "exit_code": null, "wall_s": 600.9, "peak_fp_mb": 7564.0, "nfind": 0, "findings": []}

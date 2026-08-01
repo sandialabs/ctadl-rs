@@ -1,0 +1,1 @@
+{"sha256": "4cc6f09c9af0e0a082813c24885a3ed05741bd4b459c73b72f523a34368d2945", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_AX50_V1_220526/fs/usr/sbin/usbshare", "status": "ok", "exit_code": 0, "wall_s": 40.0, "peak_fp_mb": 1503.2, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "ARGV", "sink_callsite": 4222712}]}

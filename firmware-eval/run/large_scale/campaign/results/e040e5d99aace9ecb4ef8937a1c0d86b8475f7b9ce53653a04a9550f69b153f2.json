@@ -1,0 +1,1 @@
+{"sha256": "e040e5d99aace9ecb4ef8937a1c0d86b8475f7b9ce53653a04a9550f69b153f2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6100_V1.0.1.28/fs/usr/sbin/wpa_supplicant", "status": "no_findings", "exit_code": 0, "wall_s": 80.5, "peak_fp_mb": 3499.8, "nfind": 0, "findings": []}

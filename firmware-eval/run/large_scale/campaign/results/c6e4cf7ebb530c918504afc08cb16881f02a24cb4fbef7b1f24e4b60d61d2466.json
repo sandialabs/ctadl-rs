@@ -1,0 +1,1 @@
+{"sha256": "c6e4cf7ebb530c918504afc08cb16881f02a24cb4fbef7b1f24e4b60d61d2466", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR20_V2.6.5.20/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 15.7, "peak_fp_mb": 1104.5, "nfind": 0, "findings": []}

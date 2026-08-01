@@ -1,0 +1,1 @@
+{"sha256": "afcaf898395076d69e822c24791233e5fe8d2da1edd6d85bfe9c09a3a6c461ce", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC1200Gplus_300438252272/fs/sbin/write_smb_conf", "status": "no_findings", "exit_code": 0, "wall_s": 16.0, "peak_fp_mb": 787.4, "nfind": 0, "findings": []}

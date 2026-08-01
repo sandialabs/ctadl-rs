@@ -1,0 +1,1 @@
+{"sha256": "c86fd62fae23d3bbf16fb87aaa6884056e3b57d681bf1f6fbd9093be5d03ab7b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAX29_V1.0.10.94_3/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1352.2, "nfind": 0, "findings": []}

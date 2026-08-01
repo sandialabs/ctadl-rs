@@ -1,0 +1,1 @@
+{"sha256": "c623720a5309703557fd39c0fae57e323a828510fc888c776de18f36fc1fd1c2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/FVS318Gv2_V4.3.5_3/fs/sbin/mkfs.cramfs", "status": "no_findings", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 987.0, "nfind": 0, "findings": []}

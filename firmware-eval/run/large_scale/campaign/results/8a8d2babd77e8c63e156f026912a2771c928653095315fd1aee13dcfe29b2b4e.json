@@ -1,0 +1,1 @@
+{"sha256": "8a8d2babd77e8c63e156f026912a2771c928653095315fd1aee13dcfe29b2b4e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA4500V3_3.1.7.181919_prod/fs/usr/sbin/conntrack", "status": "no_findings", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 922.4, "nfind": 0, "findings": []}

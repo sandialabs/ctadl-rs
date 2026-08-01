@@ -1,0 +1,1 @@
+{"sha256": "f6d56d2d96142bdf5d1129c76cffe8c01f78f42b7cccb4a0bedc01eec6758fd4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6220_V1.1.0.114/fs/usr/sbin/openssl", "status": "no_findings", "exit_code": 0, "wall_s": 510.6, "peak_fp_mb": 8790.4, "nfind": 0, "findings": []}

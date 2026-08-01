@@ -1,0 +1,1 @@
+{"sha256": "88e8d47335437702b16d740e18b5ac2600995ef120dd8131b1a53450b591ba95", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/sbin/agetty", "status": "ok", "exit_code": 0, "wall_s": 25.6, "peak_fp_mb": 1057.3, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "FILE", "sink_callsite": 4208928}]}

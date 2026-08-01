@@ -1,0 +1,1 @@
+{"sha256": "fa622db681590be2f70bf97032f3a9b9d62cc235809cff42ce598653fb380f74", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 15.8, "peak_fp_mb": 1341.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "95b6ad38e4602687ffed39cffb4e876eab358d072674dfd70406b654bbb04f11", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7300_EU_V3_181220/fs/usr/sbin/conntrackd", "status": "no_findings", "exit_code": 0, "wall_s": 47.6, "peak_fp_mb": 1364.3, "nfind": 0, "findings": []}

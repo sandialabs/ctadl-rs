@@ -1,0 +1,1 @@
+{"sha256": "df21b4f1c83e53c6c8053c66039acd0b985797f01a5cc689b9d6bbb25300837b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_BLUECAVE_300438446630/fs/usr/bin/taskset", "status": "ok", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 703.6, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "ARGV", "sink_callsite": 4198056}]}

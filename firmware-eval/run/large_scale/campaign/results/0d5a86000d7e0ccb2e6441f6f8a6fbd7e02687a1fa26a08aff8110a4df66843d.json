@@ -1,0 +1,1 @@
+{"sha256": "0d5a86000d7e0ccb2e6441f6f8a6fbd7e02687a1fa26a08aff8110a4df66843d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/usr/bin/debug_monitor", "status": "ok", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1014.4, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4204236}]}

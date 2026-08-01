@@ -1,0 +1,1 @@
+{"sha256": "264535f95cc6ba60ddc49d3c4aaa208f44d877c3a850d56fc1c9fd300cdb77ba", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/AC50_UN_v120190527/fs/usr/bin/strace", "status": "no_findings", "exit_code": 0, "wall_s": 32.4, "peak_fp_mb": 1560.0, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "924340a50fd75ff109d570f03c5c8281db78c49b16fdca19a8b8da4df706092f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBS50Y_V2.7.2.102/fs/usr/sbin/athdiag", "status": "ok", "exit_code": 0, "wall_s": 53.9, "peak_fp_mb": 2217.1, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4229720}]}

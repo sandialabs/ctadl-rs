@@ -1,0 +1,1 @@
+{"sha256": "0d4e19f21e8d597e8681debc8cde1eafb1d1126d882aae7d43a4104b33e00092", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7310_EU_V2_181220/fs/sbin/shutdown.sysvinit", "status": "no_findings", "exit_code": 0, "wall_s": 16.6, "peak_fp_mb": 1135.4, "nfind": 0, "findings": []}

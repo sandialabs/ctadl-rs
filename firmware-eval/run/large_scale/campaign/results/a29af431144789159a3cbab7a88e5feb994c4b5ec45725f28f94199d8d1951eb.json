@@ -1,0 +1,1 @@
+{"sha256": "a29af431144789159a3cbab7a88e5feb994c4b5ec45725f28f94199d8d1951eb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WG103_V2.2.5_firmware/fs/usr/sbin/ethtool", "status": "no_findings", "exit_code": 0, "wall_s": 22.8, "peak_fp_mb": 1217.0, "nfind": 0, "findings": []}

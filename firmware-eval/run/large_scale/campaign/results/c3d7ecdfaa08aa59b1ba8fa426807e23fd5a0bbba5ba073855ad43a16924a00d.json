@@ -1,0 +1,1 @@
+{"sha256": "c3d7ecdfaa08aa59b1ba8fa426807e23fd5a0bbba5ba073855ad43a16924a00d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C5400X_EU_JP_US_V1_180904/fs/usr/sbin/conntrackd", "status": "no_findings", "exit_code": 0, "wall_s": 57.0, "peak_fp_mb": 1416.3, "nfind": 0, "findings": []}

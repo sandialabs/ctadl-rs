@@ -1,0 +1,1 @@
+{"sha256": "4e0c348b158241af1d40d4e02d6cece42df6b2a46c4338d4f4e3ceb0874f1fb3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WG103_V2.2.5_firmware/fs/usr/sbin/iptables-restore", "status": "no_findings", "exit_code": 0, "wall_s": 58.0, "peak_fp_mb": 1491.2, "nfind": 0, "findings": []}

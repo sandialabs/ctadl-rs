@@ -1,0 +1,1 @@
+{"sha256": "6d61d32e5fc97fa6a2595e97d3d12791487381e07b963aebf2344c0f9d1876c4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/RE600X_V1_210618/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1360.4, "nfind": 0, "findings": []}

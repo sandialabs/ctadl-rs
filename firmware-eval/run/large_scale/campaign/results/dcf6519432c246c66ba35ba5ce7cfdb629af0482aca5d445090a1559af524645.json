@@ -1,0 +1,1 @@
+{"sha256": "dcf6519432c246c66ba35ba5ce7cfdb629af0482aca5d445090a1559af524645", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBR50_V2.7.5.4/fs/usr/sbin/net-scan", "status": "ok", "exit_code": 0, "wall_s": 16.6, "peak_fp_mb": 1375.9, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4233548}]}

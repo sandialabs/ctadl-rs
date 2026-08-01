@@ -1,0 +1,1 @@
+{"sha256": "c487f140dbf575c1c383665156d4aee4a25e15a6b5f1bf8ffe35e8f52b4e2e70", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6260_V1.1.0.88/fs/usr/sbin/dbus-daemon", "status": "no_findings", "exit_code": 0, "wall_s": 58.7, "peak_fp_mb": 2268.5, "nfind": 0, "findings": []}

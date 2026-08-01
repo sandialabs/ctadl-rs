@@ -1,0 +1,1 @@
+{"sha256": "5856bd4b8465b4a7d1fbaf05c600a71d9b486a78969afbdd8a9d32ce30199dfe", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DSN_5000_10_FIRMWARE_2.9.2.9/fs/usr/bin/vmstat", "status": "no_findings", "exit_code": 0, "wall_s": 19.5, "peak_fp_mb": 908.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "b63ee92323524ecd175677b6aa80e337af704ef80efa1d6d4c8ac7eb7feaa447", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_MR6500v_EU_V1.20_210812/fs/sbin/dumpe2fs", "status": "no_findings", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 1052.6, "nfind": 0, "findings": []}

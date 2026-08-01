@@ -1,0 +1,1 @@
+{"sha256": "c7be31f528c772e41f4a05007c208c05740921bcd9f33c454dd0fec0402fea6a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/bin/circlev2/shares/usr/bin/dnsmasq", "status": "timeout", "exit_code": null, "wall_s": 600.3, "peak_fp_mb": 4501.6, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "8d1a06a87ddf8e569b0c25ab673cc483034e2b4470a5a6234b00a31e7d9e28c3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/JNR3000_V1.1.0.29_1.0.1/fs/usr/sbin/syslogd", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 933.2, "nfind": 0, "findings": []}

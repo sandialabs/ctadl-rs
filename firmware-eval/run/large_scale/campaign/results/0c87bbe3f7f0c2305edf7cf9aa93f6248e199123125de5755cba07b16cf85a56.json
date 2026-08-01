@@ -1,0 +1,1 @@
+{"sha256": "0c87bbe3f7f0c2305edf7cf9aa93f6248e199123125de5755cba07b16cf85a56", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6100_V1.0.1.28/fs/usr/sbin/tune2fs", "status": "no_findings", "exit_code": 0, "wall_s": 22.4, "peak_fp_mb": 1464.4, "nfind": 0, "findings": []}

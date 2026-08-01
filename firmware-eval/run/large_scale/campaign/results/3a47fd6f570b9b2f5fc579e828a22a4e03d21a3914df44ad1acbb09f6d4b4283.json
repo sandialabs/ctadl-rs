@@ -1,0 +1,1 @@
+{"sha256": "3a47fd6f570b9b2f5fc579e828a22a4e03d21a3914df44ad1acbb09f6d4b4283", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C2600_UN_V1_170306/fs/usr/sbin/dropbear", "status": "ok", "exit_code": 0, "wall_s": 35.6, "peak_fp_mb": 1548.0, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4251296}]}

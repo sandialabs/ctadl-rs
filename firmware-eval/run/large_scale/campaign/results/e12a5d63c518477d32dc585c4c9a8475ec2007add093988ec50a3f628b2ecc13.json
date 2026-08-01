@@ -1,0 +1,1 @@
+{"sha256": "e12a5d63c518477d32dc585c4c9a8475ec2007add093988ec50a3f628b2ecc13", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/NBG_418N_1.00_AADZ.3_C0/fs/usr/sbin/iptables-restore", "status": "no_findings", "exit_code": 0, "wall_s": 70.6, "peak_fp_mb": 1757.8, "nfind": 0, "findings": []}

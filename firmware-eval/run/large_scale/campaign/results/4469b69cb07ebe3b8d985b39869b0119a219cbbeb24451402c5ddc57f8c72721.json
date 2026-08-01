@@ -1,0 +1,1 @@
+{"sha256": "4469b69cb07ebe3b8d985b39869b0119a219cbbeb24451402c5ddc57f8c72721", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_WRT32X_1.0.180404.58/fs/usr/sbin/openvpn", "status": "no_findings", "exit_code": 0, "wall_s": 88.9, "peak_fp_mb": 3939.7, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "8d2c15383adb424b863bccbbaebfa262ed3537af3cba50f293df13a58c1bad3d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Deco_M4_V3_1.5.0_210414/fs/usr/bin/pivot", "status": "ok", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 762.5, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4198560}]}

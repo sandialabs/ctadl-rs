@@ -1,0 +1,1 @@
+{"sha256": "49d14d570d1939b4cb37eeb06663e85a00fbd1670027ca94b10ef6fc744419f1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7300_EX6400_V1.0.2.164/fs/usr/sbin/utelnetd", "status": "ok", "exit_code": 0, "wall_s": 15.9, "peak_fp_mb": 765.8, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "FILE", "sink_callsite": 4201516}]}

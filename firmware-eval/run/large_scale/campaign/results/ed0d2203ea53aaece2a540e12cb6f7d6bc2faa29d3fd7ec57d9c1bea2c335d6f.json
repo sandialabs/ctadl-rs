@@ -1,0 +1,1 @@
+{"sha256": "ed0d2203ea53aaece2a540e12cb6f7d6bc2faa29d3fd7ec57d9c1bea2c335d6f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_WHW03_2.1.19.209783_prod/fs/usr/sbin/lighttpd", "status": "ok", "exit_code": 0, "wall_s": 25.8, "peak_fp_mb": 1671.4, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4276024}]}

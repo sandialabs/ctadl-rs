@@ -1,0 +1,1 @@
+{"sha256": "9b78623f556c9155906f7aac839bb464a1b7fead6ea7ba25473a8754c0c71a4a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7500_V1.0.0.130/fs/usr/sbin/dnsmasq", "status": "ok", "exit_code": 0, "wall_s": 38.1, "peak_fp_mb": 1478.1, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "FILE", "sink_callsite": 4277060}]}

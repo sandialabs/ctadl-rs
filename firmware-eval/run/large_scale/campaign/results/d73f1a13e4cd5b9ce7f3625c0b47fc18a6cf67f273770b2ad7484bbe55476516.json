@@ -1,0 +1,1 @@
+{"sha256": "d73f1a13e4cd5b9ce7f3625c0b47fc18a6cf67f273770b2ad7484bbe55476516", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/EAP120_EU_V1_171109/fs/usr/sbin/snmpd", "status": "no_findings", "exit_code": 0, "wall_s": 120.5, "peak_fp_mb": 3799.5, "nfind": 0, "findings": []}

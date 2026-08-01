@@ -1,0 +1,1 @@
+{"sha256": "2bf25b1907f00f627438d40f984c111f2296291b1135abd226b88164a0d68ee9", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/sbin/sulogin.util-linux", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 1170.0, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4208808}]}

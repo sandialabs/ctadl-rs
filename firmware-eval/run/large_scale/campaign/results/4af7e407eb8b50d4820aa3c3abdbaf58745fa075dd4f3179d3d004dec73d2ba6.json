@@ -1,0 +1,1 @@
+{"sha256": "4af7e407eb8b50d4820aa3c3abdbaf58745fa075dd4f3179d3d004dec73d2ba6", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBS50Y_V2.7.2.102/fs/usr/bin/hd-idle", "status": "ok", "exit_code": 0, "wall_s": 12.7, "peak_fp_mb": 1008.2, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4199844}]}

@@ -1,0 +1,1 @@
+{"sha256": "c414d394c546f0915c583f51d4593026cfa6ad71a3b2a6fd47250955f04c8f47", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_GX90_EU__V1_220228/fs/usr/sbin/cal_cbr", "status": "ok", "exit_code": 0, "wall_s": 12.6, "peak_fp_mb": 967.2, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4199184}]}

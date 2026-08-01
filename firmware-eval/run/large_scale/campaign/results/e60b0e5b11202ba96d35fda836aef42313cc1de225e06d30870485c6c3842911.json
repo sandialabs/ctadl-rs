@@ -1,0 +1,1 @@
+{"sha256": "e60b0e5b11202ba96d35fda836aef42313cc1de225e06d30870485c6c3842911", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/WRE6602_V1.00_ABKK.3_C0/fs/bin/zyxel_xmpp_client", "status": "ok", "exit_code": 0, "wall_s": 19.8, "peak_fp_mb": 1431.7, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "ARGV", "sink_callsite": 4212776}]}

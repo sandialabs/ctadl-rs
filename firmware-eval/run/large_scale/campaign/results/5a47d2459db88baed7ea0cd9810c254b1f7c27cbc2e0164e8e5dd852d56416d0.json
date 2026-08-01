@@ -1,0 +1,1 @@
+{"sha256": "5a47d2459db88baed7ea0cd9810c254b1f7c27cbc2e0164e8e5dd852d56416d0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBS50Y_V2.7.2.102/fs/usr/sbin/mke2fs", "status": "no_findings", "exit_code": 0, "wall_s": 38.3, "peak_fp_mb": 2397.1, "nfind": 0, "findings": []}

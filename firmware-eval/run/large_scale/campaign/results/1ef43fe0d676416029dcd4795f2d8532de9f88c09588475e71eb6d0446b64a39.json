@@ -1,0 +1,1 @@
+{"sha256": "1ef43fe0d676416029dcd4795f2d8532de9f88c09588475e71eb6d0446b64a39", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA4500V3_3.1.7.181919_prod/fs/usr/sbin/mkfs.jffs2", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1122.2, "nfind": 0, "findings": []}

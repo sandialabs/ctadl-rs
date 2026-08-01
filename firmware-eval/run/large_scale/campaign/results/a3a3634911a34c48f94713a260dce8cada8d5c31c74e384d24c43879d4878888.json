@@ -1,0 +1,1 @@
+{"sha256": "a3a3634911a34c48f94713a260dce8cada8d5c31c74e384d24c43879d4878888", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DWM_311_FIRMWARE_v4.1.2.2_38639N/fs/usr/sbin/i2cset", "status": "no_findings", "exit_code": 0, "wall_s": 12.7, "peak_fp_mb": 884.3, "nfind": 0, "findings": []}

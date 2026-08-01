@@ -1,0 +1,1 @@
+{"sha256": "492be7f6d1afebca4306dfd5d16deb5ebf355abdf9d11505e370abe1061a4529", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_AX50_V1_220526/fs/usr/sbin/conntrack", "status": "no_findings", "exit_code": 0, "wall_s": 35.5, "peak_fp_mb": 1074.0, "nfind": 0, "findings": []}

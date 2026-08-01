@@ -1,0 +1,1 @@
+{"sha256": "10fc192cdc6b06b61eea9a1b098be6620e7825c7a397f36de9c0868857b2b3bd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_WRT32X_1.0.180404.58/fs/usr/sbin/dropbear", "status": "ok", "exit_code": 0, "wall_s": 38.7, "peak_fp_mb": 1752.7, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4261900}]}

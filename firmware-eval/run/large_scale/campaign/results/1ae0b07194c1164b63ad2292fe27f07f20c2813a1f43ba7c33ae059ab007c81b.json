@@ -1,0 +1,1 @@
+{"sha256": "1ae0b07194c1164b63ad2292fe27f07f20c2813a1f43ba7c33ae059ab007c81b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR9600_1.0.4.205530_prod/fs/usr/sbin/lighttpd", "status": "ok", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 1627.9, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4276016}]}

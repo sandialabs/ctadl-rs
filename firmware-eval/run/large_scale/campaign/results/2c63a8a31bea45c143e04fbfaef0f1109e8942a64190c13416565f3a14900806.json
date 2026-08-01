@@ -1,0 +1,1 @@
+{"sha256": "2c63a8a31bea45c143e04fbfaef0f1109e8942a64190c13416565f3a14900806", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7310_EU_V2_181220/fs/usr/bin/ftmdaemon", "status": "ok", "exit_code": 0, "wall_s": 16.3, "peak_fp_mb": 1235.2, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4210672}]}

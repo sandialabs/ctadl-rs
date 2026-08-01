@@ -1,0 +1,1 @@
+{"sha256": "dafd359786f29142db7e54b5210ad3d178d21ba9fd6651bf9f94d922e7aaad8a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBR50_V2.7.5.4/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.3, "peak_fp_mb": 1287.0, "nfind": 0, "findings": []}

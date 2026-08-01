@@ -1,0 +1,1 @@
+{"sha256": "a57047a6dd071a578964b40c7c79fb5d891417fe676e1dad5b01a346fecea1d2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_MR400_EU_V2_190307/fs/usr/sbin/chpasswd.shadow", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1341.5, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "8e68eb829d49b6fbc3d08944441855ccbc8f898df4ea237f563c14026c67966f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/NG8800_12.4.3.5_1_4/fs/usr/bin/memtester", "status": "no_findings", "exit_code": 0, "wall_s": 19.8, "peak_fp_mb": 753.7, "nfind": 0, "findings": []}

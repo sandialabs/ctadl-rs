@@ -1,0 +1,1 @@
+{"sha256": "b09bc8d5747d67d736ee1581ccd4935ba893041bf84c2eb023b7f7629f474f56", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7300_EU_V3_181220/fs/usr/sbin/chpasswd.shadow", "status": "no_findings", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1275.8, "nfind": 0, "findings": []}

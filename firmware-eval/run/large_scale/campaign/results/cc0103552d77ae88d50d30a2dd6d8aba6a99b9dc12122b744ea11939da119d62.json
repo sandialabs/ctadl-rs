@@ -1,0 +1,1 @@
+{"sha256": "cc0103552d77ae88d50d30a2dd6d8aba6a99b9dc12122b744ea11939da119d62", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_865L_REVA_FIRMWARE_PATCH_1.20B01_20180809/fs/usr/sbin/dnsmasq", "status": "timeout", "exit_code": null, "wall_s": 601.8, "peak_fp_mb": 11548.1, "nfind": 0, "findings": []}

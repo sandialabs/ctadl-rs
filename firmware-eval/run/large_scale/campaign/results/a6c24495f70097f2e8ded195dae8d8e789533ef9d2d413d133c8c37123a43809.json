@@ -1,0 +1,1 @@
+{"sha256": "a6c24495f70097f2e8ded195dae8d8e789533ef9d2d413d133c8c37123a43809", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_820LW_REVB_FIRMWARE_PATCH_2.03.B01_TC/fs/sbin/mke2fs", "status": "no_findings", "exit_code": 0, "wall_s": 47.5, "peak_fp_mb": 2324.5, "nfind": 0, "findings": []}

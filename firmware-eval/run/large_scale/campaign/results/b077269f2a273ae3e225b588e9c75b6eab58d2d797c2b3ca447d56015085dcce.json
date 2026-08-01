@@ -1,0 +1,1 @@
+{"sha256": "b077269f2a273ae3e225b588e9c75b6eab58d2d797c2b3ca447d56015085dcce", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_645_REVA_FIRMWARE_PATCH_1.06.B01/fs/usr/sbin/sendmail", "status": "no_findings", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 1548.8, "nfind": 0, "findings": []}

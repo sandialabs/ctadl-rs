@@ -1,0 +1,1 @@
+{"sha256": "25a868264b007cd230c383f3926c44fe94572872c4f0d1e5d3584c75d9a70279", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/SXR80_signed_V4.2.3.102/fs/opt/netgear/usr/bin/insight-brokerd", "status": "no_findings", "exit_code": 0, "wall_s": 22.5, "peak_fp_mb": 1530.2, "nfind": 0, "findings": []}

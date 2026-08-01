@@ -1,0 +1,1 @@
+{"sha256": "9c51a3900f4e3ecf9e564617b5f2c55f0ca723f6926ef68b11be2fea1830052c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_BLUECAVE_300438446630/fs/usr/sbin/read_img", "status": "ok", "exit_code": 0, "wall_s": 19.5, "peak_fp_mb": 701.5, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4197180}]}

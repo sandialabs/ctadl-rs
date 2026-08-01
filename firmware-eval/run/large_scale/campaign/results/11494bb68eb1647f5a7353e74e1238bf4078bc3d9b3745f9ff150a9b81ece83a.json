@@ -1,0 +1,1 @@
+{"sha256": "11494bb68eb1647f5a7353e74e1238bf4078bc3d9b3745f9ff150a9b81ece83a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TWG_431BR_v1_1.0.14_/fs/sbin/mke2fs", "status": "ok", "exit_code": 0, "wall_s": 50.8, "peak_fp_mb": 1526.5, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "ARGV", "sink_callsite": 4213520}]}

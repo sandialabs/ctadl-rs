@@ -1,0 +1,1 @@
+{"sha256": "3b6bc34fc24fdb6eb7e45cbb7083708f60f9a23a18e958972077c0347337a56a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC2900_300438648260/fs/usr/sbin/samba_multicall", "status": "timeout", "exit_code": null, "wall_s": 600.3, "peak_fp_mb": 8262.5, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "ec8e8a81f7c9076b63b4d75a3993c8ca4978903d6b50e64e0c61a1fbdec765bc", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Deco_M3W_V1_1.0.7/fs/usr/bin/strace", "status": "ok", "exit_code": 0, "wall_s": 38.8, "peak_fp_mb": 1518.6, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ENV", "sink_callsite": 4206908}]}

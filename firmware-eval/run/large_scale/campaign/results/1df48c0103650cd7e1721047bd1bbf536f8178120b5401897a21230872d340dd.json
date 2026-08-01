@@ -1,0 +1,1 @@
+{"sha256": "1df48c0103650cd7e1721047bd1bbf536f8178120b5401897a21230872d340dd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA7250_1.0.1.209812_prod/fs/usr/sbin/pppd", "status": "ok", "exit_code": 0, "wall_s": 107.0, "peak_fp_mb": 2209.2, "nfind": 1, "findings": [{"sink_func": "execve", "source_class": "FILE", "sink_callsite": 4240944}]}

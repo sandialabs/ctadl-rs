@@ -1,0 +1,1 @@
+{"sha256": "9d23f2dcfedecfcb63052c2f0bf68c83c5aeae9a2aca4189d377d3f232cb81f5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DCS_3010_REVA_FIRMWARE_1.12.18/fs/sbin/fsck.ext2", "status": "ok", "exit_code": 0, "wall_s": 38.3, "peak_fp_mb": 2019.4, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "ARGV", "sink_callsite": 4297998}]}

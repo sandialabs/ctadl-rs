@@ -1,0 +1,1 @@
+{"sha256": "c20b413b6c15c5f8a492ac9eb3c63eed146c8dc42856cdf48af18afc2e1ee68e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7800_V1.0.2.92/fs/usr/lib/dbus-1/dbus-daemon-launch-helper", "status": "no_findings", "exit_code": 0, "wall_s": 41.3, "peak_fp_mb": 1755.5, "nfind": 0, "findings": []}

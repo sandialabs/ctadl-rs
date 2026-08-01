@@ -1,0 +1,1 @@
+{"sha256": "2b773bda73324389750959ec346c04c6600a0aaab55e9ff59a17718db8d8b7b8", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAXE450_V1.0.12.96/fs/usr/sbin/debug_monitor", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 920.0, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4202532}]}

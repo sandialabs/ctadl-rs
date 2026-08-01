@@ -1,0 +1,1 @@
+{"sha256": "21c2e90a649244943324c7df8fd407ce6e254a1e2e7a703fc45f445e79525f1b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TEW_824DRU_v1_1.04b01_/fs/sbin/KC_FTP", "status": "ok", "exit_code": 0, "wall_s": 19.2, "peak_fp_mb": 1477.3, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4225880}]}

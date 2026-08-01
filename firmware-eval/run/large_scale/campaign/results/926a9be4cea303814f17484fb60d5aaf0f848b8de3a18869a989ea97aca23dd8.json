@@ -1,0 +1,1 @@
+{"sha256": "926a9be4cea303814f17484fb60d5aaf0f848b8de3a18869a989ea97aca23dd8", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7500v2_V1.0.3.50/fs/sbin/traffic_meter", "status": "ok", "exit_code": 0, "wall_s": 16.3, "peak_fp_mb": 1438.2, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4224284}]}

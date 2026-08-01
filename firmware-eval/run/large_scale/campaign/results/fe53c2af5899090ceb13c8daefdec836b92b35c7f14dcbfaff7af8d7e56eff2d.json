@@ -1,0 +1,1 @@
+{"sha256": "fe53c2af5899090ceb13c8daefdec836b92b35c7f14dcbfaff7af8d7e56eff2d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DG834GV_Firmware_Version_1.02.42/fs/usr/sbin/iptables", "status": "no_findings", "exit_code": 0, "wall_s": 22.6, "peak_fp_mb": 1132.7, "nfind": 0, "findings": []}

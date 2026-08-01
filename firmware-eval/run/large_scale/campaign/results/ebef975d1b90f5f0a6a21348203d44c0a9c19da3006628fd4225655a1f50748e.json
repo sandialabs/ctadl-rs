@@ -1,0 +1,1 @@
+{"sha256": "ebef975d1b90f5f0a6a21348203d44c0a9c19da3006628fd4225655a1f50748e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/MBR1200_Firmware_Version_1.2.2.53WW/fs/usr/sbin/dhcp6c", "status": "timeout", "exit_code": null, "wall_s": 600.3, "peak_fp_mb": 2532.4, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "dfe7c00c70cc802a1b8e5153bde8c0299739774fa437113f97298381d5faf3b8", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX5300_1.1.12.210066_prod/fs/etc/registration.d/82_ddd_arp_agent", "status": "no_findings", "exit_code": 0, "wall_s": 12.7, "peak_fp_mb": 712.8, "nfind": 0, "findings": []}

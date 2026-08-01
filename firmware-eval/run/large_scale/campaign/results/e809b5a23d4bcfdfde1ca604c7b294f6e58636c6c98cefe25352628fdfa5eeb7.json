@@ -1,0 +1,1 @@
+{"sha256": "e809b5a23d4bcfdfde1ca604c7b294f6e58636c6c98cefe25352628fdfa5eeb7", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/usr/bin/mailx", "status": "ok", "exit_code": 0, "wall_s": 149.9, "peak_fp_mb": 3069.5, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ENV", "sink_callsite": 4399260}]}

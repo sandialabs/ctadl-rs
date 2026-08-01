@@ -1,0 +1,1 @@
+{"sha256": "aa3b7adf8c4b0d689da9e66e696c4ede80e0589fbd621b58f5623f8cece535f1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6120_V1.0.0.84/fs/usr/sbin/lsof", "status": "no_findings", "exit_code": 0, "wall_s": 413.1, "peak_fp_mb": 4797.7, "nfind": 0, "findings": []}

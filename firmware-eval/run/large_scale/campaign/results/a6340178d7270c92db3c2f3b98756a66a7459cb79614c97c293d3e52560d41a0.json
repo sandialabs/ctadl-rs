@@ -1,0 +1,1 @@
+{"sha256": "a6340178d7270c92db3c2f3b98756a66a7459cb79614c97c293d3e52560d41a0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E5600_1.1.0.26_prod/fs/usr/sbin/lighttpd-angel", "status": "no_findings", "exit_code": 0, "wall_s": 16.4, "peak_fp_mb": 715.8, "nfind": 0, "findings": []}

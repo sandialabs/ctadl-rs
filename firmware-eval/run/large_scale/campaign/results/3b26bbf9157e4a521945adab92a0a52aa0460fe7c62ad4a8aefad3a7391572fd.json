@@ -1,0 +1,1 @@
+{"sha256": "3b26bbf9157e4a521945adab92a0a52aa0460fe7c62ad4a8aefad3a7391572fd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/VIGI_NVR1016H_UN_V1_210825/fs/usr/bin/dsd", "status": "ok", "exit_code": 0, "wall_s": 53.2, "peak_fp_mb": 2430.7, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4442756}]}

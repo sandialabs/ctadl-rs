@@ -1,0 +1,1 @@
+{"sha256": "d27a772f5a97ab766da7279a0302ddcf215981995a8cb27ec531c0368d60f49a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAXE450_V1.0.12.96/fs/usr/sbin/hostapd", "status": "ok", "exit_code": 0, "wall_s": 256.3, "peak_fp_mb": 10672.0, "nfind": 1, "findings": [{"sink_func": "execlp", "source_class": "FILE", "sink_callsite": 4768236}]}

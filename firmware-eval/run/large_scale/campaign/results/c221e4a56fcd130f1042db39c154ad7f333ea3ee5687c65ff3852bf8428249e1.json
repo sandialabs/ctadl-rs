@@ -1,0 +1,1 @@
+{"sha256": "c221e4a56fcd130f1042db39c154ad7f333ea3ee5687c65ff3852bf8428249e1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/A27v1FirmwareV16031711/fs/bin/hostapd_cli", "status": "ok", "exit_code": 0, "wall_s": 23.1, "peak_fp_mb": 1356.0, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ARGV", "sink_callsite": 4217368}]}

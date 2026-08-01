@@ -1,0 +1,1 @@
+{"sha256": "61c7dc988243d44386b576cc28a14d8cd5092eef3c5847d78ac0da57aa6e6c40", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR8300_1.1.10.210186_prod/fs/bin/dbus-send", "status": "no_findings", "exit_code": 0, "wall_s": 16.0, "peak_fp_mb": 978.3, "nfind": 0, "findings": []}

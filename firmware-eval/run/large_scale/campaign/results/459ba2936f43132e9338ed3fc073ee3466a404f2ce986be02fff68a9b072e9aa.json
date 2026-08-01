@@ -1,0 +1,1 @@
+{"sha256": "459ba2936f43132e9338ed3fc073ee3466a404f2ce986be02fff68a9b072e9aa", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX6200v2_V1.0.1.90/fs/usr/bin/openssl", "status": "no_findings", "exit_code": 0, "wall_s": 104.9, "peak_fp_mb": 3322.1, "nfind": 0, "findings": []}

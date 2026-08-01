@@ -1,0 +1,1 @@
+{"sha256": "2097e6c0040f1531de2a63acff7d90a9bc0a209795114665902a6b0205a5f74f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/WRE6602_V1.00_ABKK.3_C0/fs/www/cgi-bin/zapi", "status": "ok", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 716.0, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ENV", "sink_callsite": 4200224}]}

@@ -1,0 +1,1 @@
+{"sha256": "703222f710a43a0c16ff7600d9b403e56e264556cbc67889113d3460ab9f8bdf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DSN_5000_10_FIRMWARE_2.9.2.9/fs/sbin/agetty", "status": "ok", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 842.9, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ARGV", "sink_callsite": 4199104}]}

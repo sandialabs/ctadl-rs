@@ -1,0 +1,1 @@
+{"sha256": "04561ae03ef53adee111cd85cab2161cad2c15f745e8a1f06f2ed58ab76f3458", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBS50Y_V2.7.2.102/fs/sbin/udhcpd", "status": "ok", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1332.9, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4209284}]}

@@ -1,0 +1,1 @@
+{"sha256": "93e44e4f4d475fdd262708a646b19ba7329fb59ede08fe9042f6baef3c547b9b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E5600_1.1.0.26_prod/fs/usr/bin/strace", "status": "no_findings", "exit_code": 0, "wall_s": 41.3, "peak_fp_mb": 1530.0, "nfind": 0, "findings": []}

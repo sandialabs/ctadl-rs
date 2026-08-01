@@ -1,0 +1,1 @@
+{"sha256": "7e98c3f207f0b53daf63954c658c9b0a6b73e8ac5d868a613d333c82c7231145", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Deco_M4_V3_1.5.0_210414/fs/usr/bin/smartipd", "status": "ok", "exit_code": 0, "wall_s": 29.0, "peak_fp_mb": 1381.4, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4226488}]}

@@ -1,0 +1,1 @@
+{"sha256": "45e69dc167ae0591c4db77f146cf8da0a15cb6eea9d82fe7628433d3789ff778", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WC7500_V6.5.5.24/fs/usr/sbin/ethtool", "status": "no_findings", "exit_code": 0, "wall_s": 48.4, "peak_fp_mb": 1770.3, "nfind": 0, "findings": []}

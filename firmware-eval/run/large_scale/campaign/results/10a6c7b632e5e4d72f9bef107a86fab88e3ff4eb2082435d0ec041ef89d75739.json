@@ -1,0 +1,1 @@
+{"sha256": "10a6c7b632e5e4d72f9bef107a86fab88e3ff4eb2082435d0ec041ef89d75739", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/A27v1FirmwareV16031711/fs/bin/phddns", "status": "ok", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1116.8, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4219440}]}

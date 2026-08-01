@@ -1,0 +1,1 @@
+{"sha256": "7818f6d9dfbd83dc99be4082891666d89474c4f88b918cfb6141222cb1f432bc", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/NTV350_v2.0.0.10/fs/usr/sbin/mkdosfs", "status": "no_findings", "exit_code": 0, "wall_s": 25.7, "peak_fp_mb": 1618.0, "nfind": 0, "findings": []}

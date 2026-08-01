@@ -1,0 +1,1 @@
+{"sha256": "b0419761db5db8e65a63cedaccc15c57276c5b4faca8fe61239120964ed791ab", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/GS728TX_GS728TXP_GS752TX_GS752TXP_V6.6.4.28/fs/usr/bin/wget", "status": "timeout", "exit_code": null, "wall_s": 600.1, "peak_fp_mb": 4963.3, "nfind": 0, "findings": []}

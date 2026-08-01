@@ -1,0 +1,1 @@
+{"sha256": "029c530ee7b5eaf1f52a63ef842665e85546f693333fe02841b684abe6a1e16c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/M7300_EU_V3_181220/fs/sbin/shutdown.sysvinit", "status": "no_findings", "exit_code": 0, "wall_s": 16.4, "peak_fp_mb": 1040.2, "nfind": 0, "findings": []}

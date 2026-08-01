@@ -1,0 +1,1 @@
+{"sha256": "a48a563a31ab354c3ec1ceba7618bf91960d1d75f50510f2698899cc94a63a1e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/usr/bin/uptime.coreutils", "status": "no_findings", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1198.0, "nfind": 0, "findings": []}

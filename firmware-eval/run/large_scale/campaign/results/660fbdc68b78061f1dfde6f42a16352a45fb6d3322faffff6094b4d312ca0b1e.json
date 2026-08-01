@@ -1,0 +1,1 @@
+{"sha256": "660fbdc68b78061f1dfde6f42a16352a45fb6d3322faffff6094b4d312ca0b1e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/SXR80_signed_V4.2.3.102/fs/usr/sbin/EnableTrafficRedirect", "status": "no_findings", "exit_code": 0, "wall_s": 9.4, "peak_fp_mb": 775.6, "nfind": 0, "findings": []}

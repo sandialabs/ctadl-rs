@@ -1,0 +1,1 @@
+{"sha256": "17cc4eeb568a581a730bf50b905d0cbe946b2c7386315bd9375e51af02913817", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC66U_300438250470/fs/usr/sbin/openssl", "status": "timeout", "exit_code": null, "wall_s": 600.5, "peak_fp_mb": 21883.2, "nfind": 0, "findings": []}

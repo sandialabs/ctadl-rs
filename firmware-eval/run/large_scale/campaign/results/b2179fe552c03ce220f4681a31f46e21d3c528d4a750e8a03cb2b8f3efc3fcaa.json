@@ -1,0 +1,1 @@
+{"sha256": "b2179fe552c03ce220f4681a31f46e21d3c528d4a750e8a03cb2b8f3efc3fcaa", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TEW_824DRU_v1_1.04b01_/fs/usr/sbin/uhttpd", "status": "ok", "exit_code": 0, "wall_s": 16.5, "peak_fp_mb": 1402.7, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4223200}]}

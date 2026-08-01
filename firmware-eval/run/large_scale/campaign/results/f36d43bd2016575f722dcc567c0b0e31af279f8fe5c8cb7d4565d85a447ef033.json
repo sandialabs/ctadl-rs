@@ -1,0 +1,1 @@
+{"sha256": "f36d43bd2016575f722dcc567c0b0e31af279f8fe5c8cb7d4565d85a447ef033", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/FVS318Gv2_V4.3.5_3/fs/sbin/fsck.ext4dev", "status": "no_findings", "exit_code": 0, "wall_s": 35.5, "peak_fp_mb": 1980.4, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "7e28fa0d44f0f76d691ea27171a8a4d30f6c27a689745595a090b824bfaa64db", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DGN3500_V1.1.00.37NA/fs/usr/sbin/lsof", "status": "timeout", "exit_code": null, "wall_s": 600.3, "peak_fp_mb": 11545.6, "nfind": 0, "findings": []}

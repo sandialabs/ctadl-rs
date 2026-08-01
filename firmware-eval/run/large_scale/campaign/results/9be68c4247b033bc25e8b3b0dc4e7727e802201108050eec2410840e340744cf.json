@@ -1,0 +1,1 @@
+{"sha256": "9be68c4247b033bc25e8b3b0dc4e7727e802201108050eec2410840e340744cf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DG632_Firmware_Version_3.6.0C_38_from_3.6.x_to_this_version_/fs/sbin/iptables", "status": "no_findings", "exit_code": 0, "wall_s": 25.8, "peak_fp_mb": 1070.7, "nfind": 0, "findings": []}

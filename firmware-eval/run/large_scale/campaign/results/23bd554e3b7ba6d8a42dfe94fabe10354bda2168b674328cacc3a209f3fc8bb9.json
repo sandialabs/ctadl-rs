@@ -1,0 +1,1 @@
+{"sha256": "23bd554e3b7ba6d8a42dfe94fabe10354bda2168b674328cacc3a209f3fc8bb9", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/usr/bin/setsid.util-linux", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 862.8, "nfind": 0, "findings": []}

@@ -1,0 +1,84 @@
+{
+  "vendors": {
+    "ZyXEL": {
+      "images": 20,
+      "firmxbin_exec": 1418,
+      "firmxbin_exec_sink": 758,
+      "uniq_exec": 1113,
+      "uniq_exec_sink": 604,
+      "shared_obj_skipped": 1269
+    },
+    "asus": {
+      "images": 157,
+      "firmxbin_exec": 12798,
+      "firmxbin_exec_sink": 7167,
+      "uniq_exec": 3624,
+      "uniq_exec_sink": 2256,
+      "shared_obj_skipped": 21971
+    },
+    "belkin": {
+      "images": 62,
+      "firmxbin_exec": 3576,
+      "firmxbin_exec_sink": 2171,
+      "uniq_exec": 1856,
+      "uniq_exec_sink": 1249,
+      "shared_obj_skipped": 4312
+    },
+    "dlink": {
+      "images": 312,
+      "firmxbin_exec": 19118,
+      "firmxbin_exec_sink": 11376,
+      "uniq_exec": 9777,
+      "uniq_exec_sink": 6428,
+      "shared_obj_skipped": 14662
+    },
+    "linksys": {
+      "images": 67,
+      "firmxbin_exec": 8561,
+      "firmxbin_exec_sink": 3971,
+      "uniq_exec": 4640,
+      "uniq_exec_sink": 2312,
+      "shared_obj_skipped": 10184
+    },
+    "netgear": {
+      "images": 303,
+      "firmxbin_exec": 27851,
+      "firmxbin_exec_sink": 16672,
+      "uniq_exec": 13486,
+      "uniq_exec_sink": 8506,
+      "shared_obj_skipped": 29539
+    },
+    "tenda": {
+      "images": 104,
+      "firmxbin_exec": 4695,
+      "firmxbin_exec_sink": 2522,
+      "uniq_exec": 2540,
+      "uniq_exec_sink": 1549,
+      "shared_obj_skipped": 4375
+    },
+    "tplink": {
+      "images": 484,
+      "firmxbin_exec": 29701,
+      "firmxbin_exec_sink": 14683,
+      "uniq_exec": 12826,
+      "uniq_exec_sink": 7208,
+      "shared_obj_skipped": 30098
+    },
+    "trendnet": {
+      "images": 175,
+      "firmxbin_exec": 7238,
+      "firmxbin_exec_sink": 4203,
+      "uniq_exec": 4510,
+      "uniq_exec_sink": 2740,
+      "shared_obj_skipped": 6666
+    }
+  },
+  "totals": {
+    "images": 1684,
+    "firmxbin_exec": 114956,
+    "firmxbin_exec_sink": 63523,
+    "uniq_exec_global": 53087,
+    "uniq_exec_sink_global": 32311,
+    "files_scanned": 1735752
+  }
+}

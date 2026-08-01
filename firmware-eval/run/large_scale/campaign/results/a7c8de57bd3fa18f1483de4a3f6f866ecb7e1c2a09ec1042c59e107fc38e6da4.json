@@ -1,0 +1,1 @@
+{"sha256": "a7c8de57bd3fa18f1483de4a3f6f866ecb7e1c2a09ec1042c59e107fc38e6da4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6400_V1.0.1.78_1.0.50/fs/usr/sbin/lld2test", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1200.4, "nfind": 0, "findings": []}

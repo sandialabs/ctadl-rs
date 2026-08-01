@@ -1,0 +1,1 @@
+{"sha256": "b099d419c020e2cba2bd0d46e436a64aa1477a44e93528bedbcfdcc0bd1bac7a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDR3700v4_V1.0.2.102/fs/usr/sbin/wpa_supplicant", "status": "no_findings", "exit_code": 0, "wall_s": 67.2, "peak_fp_mb": 2161.8, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "c152a450ff73a97485d4bca918b02d81e156dd9e0115eda80fadf6c9ec58917a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DCS_3010_REVA_FIRMWARE_1.12.18/fs/usr/sbin/lsof", "status": "no_findings", "exit_code": 0, "wall_s": 481.8, "peak_fp_mb": 8876.8, "nfind": 0, "findings": []}

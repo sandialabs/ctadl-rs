@@ -1,0 +1,1 @@
+{"sha256": "4537ed38c7ce2c59636a71704490732c35505e264b1a41789ff1205b9ae4d77f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/sbin/dhcp6c", "status": "ok", "exit_code": 0, "wall_s": 38.5, "peak_fp_mb": 1303.3, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4204884}]}

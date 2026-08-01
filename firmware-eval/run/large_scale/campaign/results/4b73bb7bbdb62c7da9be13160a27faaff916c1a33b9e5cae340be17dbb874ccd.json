@@ -1,0 +1,1 @@
+{"sha256": "4b73bb7bbdb62c7da9be13160a27faaff916c1a33b9e5cae340be17dbb874ccd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX6150_V1.0.0.46_1.0.76/fs/usr/sbin/swresetd", "status": "no_findings", "exit_code": 0, "wall_s": 22.6, "peak_fp_mb": 759.4, "nfind": 0, "findings": []}

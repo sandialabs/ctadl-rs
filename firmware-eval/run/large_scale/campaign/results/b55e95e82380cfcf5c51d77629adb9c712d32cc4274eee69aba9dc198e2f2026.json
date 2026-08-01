@@ -1,0 +1,1 @@
+{"sha256": "b55e95e82380cfcf5c51d77629adb9c712d32cc4274eee69aba9dc198e2f2026", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7800_V1.0.2.92/fs/usr/sbin/samba_multicall", "status": "timeout", "exit_code": null, "wall_s": 601.1, "peak_fp_mb": 15105.9, "nfind": 0, "findings": []}

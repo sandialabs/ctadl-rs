@@ -1,0 +1,1 @@
+{"sha256": "9240e93c0cb71987fcd77b06c298a65c69ef4a75e22730b9674494ddb1e894ba", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AX1800HP_v300438668539/fs/usr/sbin/pptpctrl", "status": "ok", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 718.0, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4201732}]}

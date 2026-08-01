@@ -1,0 +1,1 @@
+{"sha256": "af349af1420671fd30158ceeeccc333fd6186bbbfe766f8b7c76b536c4e113ca", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDR3700v2_WNDR37AVv2_V1.0.1.14/fs/usr/sbin/proftpd", "status": "timeout", "exit_code": null, "wall_s": 600.6, "peak_fp_mb": 5741.9, "nfind": 0, "findings": []}

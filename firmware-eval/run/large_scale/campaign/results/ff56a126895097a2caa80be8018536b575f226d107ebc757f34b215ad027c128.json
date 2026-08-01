@@ -1,0 +1,1 @@
+{"sha256": "ff56a126895097a2caa80be8018536b575f226d107ebc757f34b215ad027c128", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_R470T_UN_v6_6.0.4_Build_20200313/fs/usr/sbin/conntrack", "status": "no_findings", "exit_code": 0, "wall_s": 29.6, "peak_fp_mb": 1180.5, "nfind": 0, "findings": []}

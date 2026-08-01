@@ -1,0 +1,1 @@
+{"sha256": "88fa8186a9bcf051d97363671844d3611853d133fa31ada1c4000249c25d4c88", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C60_EU_V3_201231/fs/usr/sbin/dnsmasq", "status": "ok", "exit_code": 0, "wall_s": 189.9, "peak_fp_mb": 6199.0, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4254340}]}

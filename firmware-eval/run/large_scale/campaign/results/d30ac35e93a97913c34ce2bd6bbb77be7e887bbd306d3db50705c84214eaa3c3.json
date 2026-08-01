@@ -1,0 +1,1 @@
+{"sha256": "d30ac35e93a97913c34ce2bd6bbb77be7e887bbd306d3db50705c84214eaa3c3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DSN_5000_10_FIRMWARE_2.9.2.9/fs/usr/sbin/xinetd-ipv4", "status": "no_findings", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 1472.6, "nfind": 0, "findings": []}

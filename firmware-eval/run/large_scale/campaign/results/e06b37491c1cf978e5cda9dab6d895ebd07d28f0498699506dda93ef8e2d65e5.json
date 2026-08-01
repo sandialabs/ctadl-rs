@@ -1,0 +1,1 @@
+{"sha256": "e06b37491c1cf978e5cda9dab6d895ebd07d28f0498699506dda93ef8e2d65e5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TD_W8980B_V1_150512/fs/usr/bin/smbd", "status": "timeout", "exit_code": null, "wall_s": 600.1, "peak_fp_mb": 3711.4, "nfind": 0, "findings": []}

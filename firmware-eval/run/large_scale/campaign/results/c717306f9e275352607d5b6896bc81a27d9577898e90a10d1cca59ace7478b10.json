@@ -1,0 +1,1 @@
+{"sha256": "c717306f9e275352607d5b6896bc81a27d9577898e90a10d1cca59ace7478b10", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WC7500_V6.5.5.24/fs/sbin/insmod", "status": "ok", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 1041.1, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "ARGV", "sink_callsite": 4197659}]}

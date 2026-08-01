@@ -1,0 +1,1 @@
+{"sha256": "72129f4cb7c61fac08c471ddc3b6355523104850ace921f4cdecd32f45f76ff8", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7000_V1.0.1.112_1.0.196/fs/usr/local/samba/smbd", "status": "no_findings", "exit_code": 0, "wall_s": 19.2, "peak_fp_mb": 1405.0, "nfind": 0, "findings": []}

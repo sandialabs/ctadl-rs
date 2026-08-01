@@ -1,0 +1,1 @@
+{"sha256": "ccfeb53ce38f2e75ea59fb6b83d881e5cbaf2c7530e9bfaf5e3aaa0bcd6aa27f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DG834GV_v2_Firmware_Version_2.02.42/fs/sbin/syslogd", "status": "no_findings", "exit_code": 0, "wall_s": 15.9, "peak_fp_mb": 790.4, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "04d911bc7115bb5c0e81c3de7a1654876dc38a1a03580e6a1dc4a3c18a043f31", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA8300_1.1.6.209797_prod/fs/sbin/ethtool", "status": "no_findings", "exit_code": 0, "wall_s": 28.4, "peak_fp_mb": 1659.0, "nfind": 0, "findings": []}

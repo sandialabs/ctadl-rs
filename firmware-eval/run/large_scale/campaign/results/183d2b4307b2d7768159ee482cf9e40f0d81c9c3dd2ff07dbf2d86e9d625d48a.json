@@ -1,0 +1,1 @@
+{"sha256": "183d2b4307b2d7768159ee482cf9e40f0d81c9c3dd2ff07dbf2d86e9d625d48a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/SXR80_signed_V4.2.3.102/fs/usr/sbin/dnsmasq", "status": "timeout", "exit_code": null, "wall_s": 601.3, "peak_fp_mb": 3822.7, "nfind": 0, "findings": []}

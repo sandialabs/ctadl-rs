@@ -1,0 +1,1 @@
+{"sha256": "be89ffdbaa28ba1c336d61491bfb65652a278fa71fa8a7b31aa7aeb4e69ededd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_BLUECAVE_300438446630/fs/usr/sbin/protect_srv", "status": "ok", "exit_code": 0, "wall_s": 19.9, "peak_fp_mb": 1000.1, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NVRAM", "sink_callsite": 4205232}]}

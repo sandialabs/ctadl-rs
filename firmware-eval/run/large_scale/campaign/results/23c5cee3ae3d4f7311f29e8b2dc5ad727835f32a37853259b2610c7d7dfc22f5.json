@@ -1,0 +1,1 @@
+{"sha256": "23c5cee3ae3d4f7311f29e8b2dc5ad727835f32a37853259b2610c7d7dfc22f5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E5600_1.1.0.26_prod/fs/usr/sbin/conntrackd", "status": "no_findings", "exit_code": 0, "wall_s": 91.0, "peak_fp_mb": 1661.0, "nfind": 0, "findings": []}

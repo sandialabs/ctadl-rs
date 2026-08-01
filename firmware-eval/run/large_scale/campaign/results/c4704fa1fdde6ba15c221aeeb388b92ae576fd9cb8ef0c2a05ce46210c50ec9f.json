@@ -1,0 +1,1 @@
+{"sha256": "c4704fa1fdde6ba15c221aeeb388b92ae576fd9cb8ef0c2a05ce46210c50ec9f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Deco_M5_1.6.0_220525/fs/usr/bin/iot-wifi-center", "status": "ok", "exit_code": 0, "wall_s": 22.9, "peak_fp_mb": 1363.1, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4209788}]}

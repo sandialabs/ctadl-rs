@@ -1,0 +1,1 @@
+{"sha256": "dc099915b61cbd65ae6f7cb3cd75974a2529f977178568d8daef7e357caca253", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/MultyX_WSQ50__V2.00_ABKJ.5_C0/fs/www/cgi-bin/zapi", "status": "ok", "exit_code": 0, "wall_s": 22.7, "peak_fp_mb": 781.2, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ENV", "sink_callsite": 4199304}]}

@@ -1,0 +1,1 @@
+{"sha256": "b43a92eec46ab7d8f67db22aab926f2e17139dbee8d1228fbbe5a684fde04d82", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DCS_6004L_REVA_FIRMWARE_1.04.31_WW/fs/usr/sbin/lsof", "status": "timeout", "exit_code": null, "wall_s": 602.8, "peak_fp_mb": 10431.4, "nfind": 0, "findings": []}

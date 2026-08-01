@@ -1,0 +1,1 @@
+{"sha256": "ce092bbd71eb67c4608c325f219784e8cae77822567c72c9bf97706b48335f95", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WC7500_V6.5.5.24/fs/wnc/bin/json_cli", "status": "ok", "exit_code": 0, "wall_s": 29.4, "peak_fp_mb": 1524.3, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4401783}]}

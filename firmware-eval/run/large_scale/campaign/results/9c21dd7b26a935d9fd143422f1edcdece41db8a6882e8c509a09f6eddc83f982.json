@@ -1,0 +1,1 @@
+{"sha256": "9c21dd7b26a935d9fd143422f1edcdece41db8a6882e8c509a09f6eddc83f982", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6100_V1.0.1.28/fs/usr/sbin/parted", "status": "no_findings", "exit_code": 0, "wall_s": 22.9, "peak_fp_mb": 1193.0, "nfind": 0, "findings": []}

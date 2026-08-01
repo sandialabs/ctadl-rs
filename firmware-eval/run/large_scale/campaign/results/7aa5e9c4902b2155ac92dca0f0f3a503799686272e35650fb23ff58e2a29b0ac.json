@@ -1,0 +1,1 @@
+{"sha256": "7aa5e9c4902b2155ac92dca0f0f3a503799686272e35650fb23ff58e2a29b0ac", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/sbin/fdisk.util-linux", "status": "no_findings", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 964.9, "nfind": 0, "findings": []}

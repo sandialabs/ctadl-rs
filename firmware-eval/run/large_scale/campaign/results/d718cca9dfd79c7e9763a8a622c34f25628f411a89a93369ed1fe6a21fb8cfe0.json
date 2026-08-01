@@ -1,0 +1,1 @@
+{"sha256": "d718cca9dfd79c7e9763a8a622c34f25628f411a89a93369ed1fe6a21fb8cfe0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/SRC60_V2.7.2.102/fs/sbin/lacpd", "status": "ok", "exit_code": 0, "wall_s": 19.1, "peak_fp_mb": 1332.2, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4256392}]}

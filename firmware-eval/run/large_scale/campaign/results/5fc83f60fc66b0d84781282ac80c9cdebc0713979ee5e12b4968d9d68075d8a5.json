@@ -1,0 +1,1 @@
+{"sha256": "5fc83f60fc66b0d84781282ac80c9cdebc0713979ee5e12b4968d9d68075d8a5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX5300_1.1.12.210066_prod/fs/usr/sbin/pppd", "status": "ok", "exit_code": 0, "wall_s": 57.7, "peak_fp_mb": 1827.4, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4228008}]}

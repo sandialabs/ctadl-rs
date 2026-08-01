@@ -1,0 +1,1 @@
+{"sha256": "3c4818a2e5a76c0a15c01e63a55c6c1272785abf779730fcc75a1c4bf832ba3b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/opt/leafp2p/leafp2p", "status": "ok", "exit_code": 0, "wall_s": 158.0, "peak_fp_mb": 3851.4, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4218786}]}

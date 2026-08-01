@@ -1,0 +1,1 @@
+{"sha256": "104a3d620024993d0b6ae1f6f6b52636f83af7ea3f4c86cf0f298c77e3b1e7da", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7300_EX6400_V1.0.2.164/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1000.4, "nfind": 0, "findings": []}

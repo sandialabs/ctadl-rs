@@ -1,0 +1,1 @@
+{"sha256": "224ab4486be035746195544893e9bd0c6f36491abb9f24b55a4753319f4a2f7d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_BLUECAVE_300438446630/fs/usr/sbin/ez-ipupdate", "status": "ok", "exit_code": 0, "wall_s": 48.1, "peak_fp_mb": 1538.5, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ARGV", "sink_callsite": 4236872}]}

@@ -1,0 +1,1 @@
+{"sha256": "3b52b795b4c33de7ada0917873f7b70314be4d241e6a68db66acb0d686a61f91", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBS50Y_V2.7.2.102/fs/usr/sbin/net-scan", "status": "ok", "exit_code": 0, "wall_s": 19.0, "peak_fp_mb": 1320.8, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4234360}]}

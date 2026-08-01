@@ -1,0 +1,1 @@
+{"sha256": "4225641e9b6caf8d6b4e80b983f9b386d8e39bba639c5b1dbc5fd0d3e558a849", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8900_V1.0.5.42/fs/usr/sbin/setpci", "status": "no_findings", "exit_code": 0, "wall_s": 22.5, "peak_fp_mb": 1300.0, "nfind": 0, "findings": []}

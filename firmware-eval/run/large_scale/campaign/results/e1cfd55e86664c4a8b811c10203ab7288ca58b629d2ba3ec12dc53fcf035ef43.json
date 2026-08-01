@@ -1,0 +1,1 @@
+{"sha256": "e1cfd55e86664c4a8b811c10203ab7288ca58b629d2ba3ec12dc53fcf035ef43", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/WRE6602_V1.00_ABKK.3_C0/fs/bin/routed", "status": "ok", "exit_code": 0, "wall_s": 29.7, "peak_fp_mb": 983.7, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ARGV", "sink_callsite": 4207788}]}

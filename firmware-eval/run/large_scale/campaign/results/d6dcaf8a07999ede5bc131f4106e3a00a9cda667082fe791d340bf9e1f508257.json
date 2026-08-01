@@ -1,0 +1,1 @@
+{"sha256": "d6dcaf8a07999ede5bc131f4106e3a00a9cda667082fe791d340bf9e1f508257", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR9600_1.0.4.205530_prod/fs/usr/sbin/hostapd_cli", "status": "no_findings", "exit_code": 0, "wall_s": 22.2, "peak_fp_mb": 1234.8, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "b5ddbc05cd389dd602fccbac2e1eb4f731ae331815749cc53a11eeade4aa5228", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_ACRH26_300438251199/fs/usr/sbin/mkfs.ubifs", "status": "no_findings", "exit_code": 0, "wall_s": 29.3, "peak_fp_mb": 1451.4, "nfind": 0, "findings": []}

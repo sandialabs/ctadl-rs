@@ -1,0 +1,1 @@
+{"sha256": "d227d9320ffd4da63dbfe6f0529a6028e0e1dcaae3009a21d090c1eb47ea0369", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_WPA8631P_EU__V3_220330/fs/usr/bin/pivot", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 930.6, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4199172}]}

@@ -1,0 +1,1 @@
+{"sha256": "94f980f35babe29fa554d4854d9a9ab95f74ba0904e572241499da478ae45e57", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E1200_2.0.11.001_US_20180910/fs/usr/sbin/dnsmasq", "status": "timeout", "exit_code": null, "wall_s": 601.5, "peak_fp_mb": 5944.6, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "e2eee43bc967de0f32387013b063ee1d9f668fb374090519533f2cfc16116cce", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/ARMOR_Z2__NBG6817__V1.00_ABCS.8_C0/fs/sbin/mdadm", "status": "ok", "exit_code": 0, "wall_s": 82.5, "peak_fp_mb": 4944.6, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "FILE", "sink_callsite": 4321692}]}

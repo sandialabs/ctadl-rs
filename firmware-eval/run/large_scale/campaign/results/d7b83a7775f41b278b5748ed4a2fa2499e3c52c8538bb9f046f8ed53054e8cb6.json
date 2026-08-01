@@ -1,0 +1,1 @@
+{"sha256": "d7b83a7775f41b278b5748ed4a2fa2499e3c52c8538bb9f046f8ed53054e8cb6", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC55UHP_300438252236/fs/usr/sbin/networkmap", "status": "ok", "exit_code": 0, "wall_s": 16.3, "peak_fp_mb": 1237.6, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4213016}]}

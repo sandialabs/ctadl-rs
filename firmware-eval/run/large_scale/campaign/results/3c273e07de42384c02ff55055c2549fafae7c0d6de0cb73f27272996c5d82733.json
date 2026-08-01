@@ -1,0 +1,1 @@
+{"sha256": "3c273e07de42384c02ff55055c2549fafae7c0d6de0cb73f27272996c5d82733", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/GSM421xxx_MSM4214_XSM4216F_V13.0.4.13/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 1332.0, "nfind": 0, "findings": []}

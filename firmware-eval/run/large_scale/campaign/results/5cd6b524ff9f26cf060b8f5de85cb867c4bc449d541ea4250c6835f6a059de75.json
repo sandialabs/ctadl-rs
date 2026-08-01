@@ -1,0 +1,1 @@
+{"sha256": "5cd6b524ff9f26cf060b8f5de85cb867c4bc449d541ea4250c6835f6a059de75", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDR3800_V1.0.0.52/fs/usr/sbin/proftpd", "status": "timeout", "exit_code": null, "wall_s": 601.8, "peak_fp_mb": 5548.2, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "0e8717af8669f97e6f011156c5bd9c482a15f84093dece79ec936d993029cb18", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_MR6400_EU_V4_190521/fs/usr/sbin/chpasswd.shadow", "status": "no_findings", "exit_code": 0, "wall_s": 16.5, "peak_fp_mb": 1210.8, "nfind": 0, "findings": []}

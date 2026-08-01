@@ -1,0 +1,1 @@
+{"sha256": "075b0be13bcb28832839d1c57b9cfaf2d435c04e96d319377f3814396d5547e6", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX7300_EX6400_V1.0.2.164/fs/usr/sbin/hostapd", "status": "ok", "exit_code": 0, "wall_s": 139.2, "peak_fp_mb": 9142.4, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4310408}]}

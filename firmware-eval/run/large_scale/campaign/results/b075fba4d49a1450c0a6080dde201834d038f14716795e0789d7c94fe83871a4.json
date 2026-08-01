@@ -1,0 +1,1 @@
+{"sha256": "b075fba4d49a1450c0a6080dde201834d038f14716795e0789d7c94fe83871a4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC1500G_PLUS_300438252482/fs/usr/sbin/samba_multicall", "status": "timeout", "exit_code": null, "wall_s": 600.2, "peak_fp_mb": 6811.3, "nfind": 0, "findings": []}

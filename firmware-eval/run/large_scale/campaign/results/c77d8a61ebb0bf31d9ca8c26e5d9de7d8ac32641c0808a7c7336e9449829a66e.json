@@ -1,0 +1,1 @@
+{"sha256": "c77d8a61ebb0bf31d9ca8c26e5d9de7d8ac32641c0808a7c7336e9449829a66e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_WL500gpv2_3044_TW/fs/usr/sbin/iptables-restore", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 862.8, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "0e6babb5f939ca5ef5e887a8389a891522556b2c36eb68fc0e537fbc8c544f80", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_825_REVC_FIRMWARE_PATCH_3.01.B12/fs/sbin/dnsmasq", "status": "timeout", "exit_code": null, "wall_s": 602.0, "peak_fp_mb": 1715.0, "nfind": 0, "findings": []}

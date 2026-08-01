@@ -1,0 +1,1 @@
+{"sha256": "a1e4c11642a54b923ee662ad57b3ee36b261bf9361c8ef1089b92a249ac3c5fe", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DWM_311_FIRMWARE_v4.1.2.2_38639N/fs/usr/bin/sudo", "status": "ok", "exit_code": 0, "wall_s": 142.9, "peak_fp_mb": 4028.0, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4261204}]}

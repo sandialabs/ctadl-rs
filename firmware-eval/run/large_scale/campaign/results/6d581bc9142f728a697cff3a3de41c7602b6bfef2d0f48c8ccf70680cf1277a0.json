@@ -1,0 +1,1 @@
+{"sha256": "6d581bc9142f728a697cff3a3de41c7602b6bfef2d0f48c8ccf70680cf1277a0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/WRE6602_V1.00_ABKK.3_C0/fs/bin/udhcpd", "status": "ok", "exit_code": 0, "wall_s": 26.0, "peak_fp_mb": 951.9, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4210788}]}

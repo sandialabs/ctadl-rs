@@ -1,0 +1,1 @@
+{"sha256": "3ba98ae74b835d07e67c3653e5c77cb783082d2eb400dadfb4ee9c61611d74bf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_WRT32X_1.0.180404.58/fs/usr/sbin/uhttpd", "status": "no_findings", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 1375.0, "nfind": 0, "findings": []}

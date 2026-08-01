@@ -1,0 +1,1 @@
+{"sha256": "ab19775f42690e993039e914181e32c114cb609d63c1eb6d6443ac4be0f333d9", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_WPA8631P_EU__V3_220330/fs/usr/bin/wifi", "status": "ok", "exit_code": 0, "wall_s": 19.7, "peak_fp_mb": 1450.6, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4231820}]}

@@ -1,0 +1,1 @@
+{"sha256": "e16f78ecace653c9f4c3c55c1f62b169f4b1577c8e95c24e301fa240fd318900", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D7000v2_V1.0.0.82_1.0.1/fs/usr/bin/socat", "status": "no_findings", "exit_code": 0, "wall_s": 32.0, "peak_fp_mb": 1605.6, "nfind": 0, "findings": []}

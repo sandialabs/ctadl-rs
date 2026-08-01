@@ -1,0 +1,1 @@
+{"sha256": "9947ca1aec3651723cf44eb00b5bd0c7979b6ad02b908e7fe720f5f40fce5ba6", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8900_V1.0.5.42/fs/usr/sbin/net-wall", "status": "no_findings", "exit_code": 0, "wall_s": 45.0, "peak_fp_mb": 1426.2, "nfind": 0, "findings": []}

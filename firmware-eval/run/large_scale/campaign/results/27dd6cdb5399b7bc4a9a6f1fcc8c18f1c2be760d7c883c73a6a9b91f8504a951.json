@@ -1,0 +1,1 @@
+{"sha256": "27dd6cdb5399b7bc4a9a6f1fcc8c18f1c2be760d7c883c73a6a9b91f8504a951", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_BLUECAVE_300438446630/fs/usr/sbin/nt_actMail", "status": "ok", "exit_code": 0, "wall_s": 22.8, "peak_fp_mb": 1160.0, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4210804}]}

@@ -1,0 +1,1 @@
+{"sha256": "b1a224a1211439bba5ea44f78ac08a5c27f977e21e869a12bffbadfc0c9cda6c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_BLUECAVE_300438446630/fs/usr/sbin/lighttpd", "status": "ok", "exit_code": 0, "wall_s": 45.7, "peak_fp_mb": 1964.5, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4355872}]}

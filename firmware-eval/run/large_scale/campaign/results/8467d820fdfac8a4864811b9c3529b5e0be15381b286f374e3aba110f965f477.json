@@ -1,0 +1,1 @@
+{"sha256": "8467d820fdfac8a4864811b9c3529b5e0be15381b286f374e3aba110f965f477", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_N12E_20039/fs/bin/routed", "status": "ok", "exit_code": 0, "wall_s": 23.1, "peak_fp_mb": 941.8, "nfind": 1, "findings": [{"sink_func": "<EXTERNAL>::execv@0040b480", "source_class": "ARGV", "sink_callsite": 4212464}]}

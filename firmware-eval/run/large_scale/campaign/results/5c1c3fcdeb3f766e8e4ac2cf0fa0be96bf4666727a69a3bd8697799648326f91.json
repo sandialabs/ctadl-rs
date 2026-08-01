@@ -1,0 +1,1 @@
+{"sha256": "5c1c3fcdeb3f766e8e4ac2cf0fa0be96bf4666727a69a3bd8697799648326f91", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7500v2_V1.0.3.50/fs/usr/sbin/noip2", "status": "ok", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 976.9, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4210380}]}

@@ -1,0 +1,1 @@
+{"sha256": "9e9befdf8e57faeae6f1ceeef8aa81e6f77e6acbffe2346c0bd260ceb38f5729", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D7800_FW_V1.0.1.68/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.3, "peak_fp_mb": 967.3, "nfind": 0, "findings": []}

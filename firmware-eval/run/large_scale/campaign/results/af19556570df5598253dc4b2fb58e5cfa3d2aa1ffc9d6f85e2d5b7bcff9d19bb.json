@@ -1,0 +1,1 @@
+{"sha256": "af19556570df5598253dc4b2fb58e5cfa3d2aa1ffc9d6f85e2d5b7bcff9d19bb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6200v2_V1.0.3.12_10.1.11/fs/usr/sbin/zip", "status": "timeout", "exit_code": null, "wall_s": 600.9, "peak_fp_mb": 7950.8, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "00237e3b12d37a522205b6a5072247f1eccb7b4a9d0761bdb663f556c239330d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 15.8, "peak_fp_mb": 1225.6, "nfind": 0, "findings": []}

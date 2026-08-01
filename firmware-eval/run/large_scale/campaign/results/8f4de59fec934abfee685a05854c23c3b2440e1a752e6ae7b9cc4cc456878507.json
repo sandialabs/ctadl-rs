@@ -1,0 +1,1 @@
+{"sha256": "8f4de59fec934abfee685a05854c23c3b2440e1a752e6ae7b9cc4cc456878507", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/201141513362919/fs/bin/cfm", "status": "ok", "exit_code": 0, "wall_s": 94.4, "peak_fp_mb": 4864.9, "nfind": 1, "findings": [{"sink_func": "<EXTERNAL>::system@0047bb00", "source_class": "FILE", "sink_callsite": 4331996}]}

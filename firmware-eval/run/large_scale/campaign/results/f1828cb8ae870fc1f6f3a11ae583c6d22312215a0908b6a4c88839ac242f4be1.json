@@ -1,0 +1,1 @@
+{"sha256": "f1828cb8ae870fc1f6f3a11ae583c6d22312215a0908b6a4c88839ac242f4be1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC87U_300438250702/fs/usr/sbin/wget", "status": "no_findings", "exit_code": 0, "wall_s": 113.9, "peak_fp_mb": 3300.0, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "474436b81775ad7ce8713907c1aab6035468313d5d01280fa7e59b50df0c6fc0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/EAP320_EU_V1_V2_1.4.0_Build_20180925/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1215.2, "nfind": 0, "findings": []}

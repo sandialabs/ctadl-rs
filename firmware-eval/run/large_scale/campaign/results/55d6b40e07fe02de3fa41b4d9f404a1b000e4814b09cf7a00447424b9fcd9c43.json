@@ -1,0 +1,1 @@
+{"sha256": "55d6b40e07fe02de3fa41b4d9f404a1b000e4814b09cf7a00447424b9fcd9c43", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/RX9Prov1FirmwareV22030210/fs/usr/bin/phddns", "status": "ok", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 964.6, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4205576}]}

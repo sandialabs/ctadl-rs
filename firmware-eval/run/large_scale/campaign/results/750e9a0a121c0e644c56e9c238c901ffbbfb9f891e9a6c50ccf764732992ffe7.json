@@ -1,0 +1,1 @@
+{"sha256": "750e9a0a121c0e644c56e9c238c901ffbbfb9f891e9a6c50ccf764732992ffe7", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_R600VPN_UN_v4_4.0.4_Build_20200313/fs/usr/sbin/ipset", "status": "no_findings", "exit_code": 0, "wall_s": 26.3, "peak_fp_mb": 1365.1, "nfind": 0, "findings": []}

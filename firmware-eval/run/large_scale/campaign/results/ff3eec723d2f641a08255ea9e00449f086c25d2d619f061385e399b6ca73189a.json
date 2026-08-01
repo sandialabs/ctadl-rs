@@ -1,0 +1,1 @@
+{"sha256": "ff3eec723d2f641a08255ea9e00449f086c25d2d619f061385e399b6ca73189a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7800_V1.0.2.92/fs/usr/sbin/ripngd", "status": "no_findings", "exit_code": 0, "wall_s": 22.7, "peak_fp_mb": 1307.3, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "fa22a7876a5ecd0a92dcc108f9b51f584115015b97ca041c05df14223ab8e249", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DC112A_V1.0.0.64_1.0.64/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.4, "peak_fp_mb": 1293.1, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "c967d98a6e2928ad59e7dc2b0eff6c2f0184cb0fbbe8fbdf458a7df25cc4a039", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_AX50_V1_220526/fs/opt/lantiq/usr/sbin/fapi_wave_recoveryd", "status": "no_findings", "exit_code": 0, "wall_s": 16.4, "peak_fp_mb": 634.5, "nfind": 0, "findings": []}

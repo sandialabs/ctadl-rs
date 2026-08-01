@@ -1,0 +1,1 @@
+{"sha256": "e8ac6f7406fc25f59a5bf4058a7e194e5c3ee505b832c548f68f70f8cf5f7b20", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DGN2200_V1.0.0.60_7.0.57/fs/usr/sbin/swresetd", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 991.3, "nfind": 0, "findings": []}

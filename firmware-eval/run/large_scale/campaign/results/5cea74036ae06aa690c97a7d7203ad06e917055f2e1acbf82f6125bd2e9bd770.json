@@ -1,0 +1,1 @@
+{"sha256": "5cea74036ae06aa690c97a7d7203ad06e917055f2e1acbf82f6125bd2e9bd770", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA4500V3_3.1.7.181919_prod/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1383.7, "nfind": 0, "findings": []}

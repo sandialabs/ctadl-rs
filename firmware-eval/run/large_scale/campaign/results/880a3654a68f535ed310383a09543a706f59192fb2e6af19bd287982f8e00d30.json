@@ -1,0 +1,1 @@
+{"sha256": "880a3654a68f535ed310383a09543a706f59192fb2e6af19bd287982f8e00d30", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA8300_1.1.6.209797_prod/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 15.8, "peak_fp_mb": 1304.8, "nfind": 0, "findings": []}

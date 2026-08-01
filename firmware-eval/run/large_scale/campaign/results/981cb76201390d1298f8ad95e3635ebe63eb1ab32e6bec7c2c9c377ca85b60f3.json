@@ -1,0 +1,1 @@
+{"sha256": "981cb76201390d1298f8ad95e3635ebe63eb1ab32e6bec7c2c9c377ca85b60f3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/XR450_V2.3.2.134/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 13.1, "peak_fp_mb": 1090.1, "nfind": 0, "findings": []}

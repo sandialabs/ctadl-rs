@@ -1,0 +1,1 @@
+{"sha256": "a53744448f1f152a321665219e6fc080e31b97079e5290bf57a2158523b314ea", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_A9_EU__V6_210315/fs/usr/sbin/vpn_mgmt", "status": "ok", "exit_code": 0, "wall_s": 12.7, "peak_fp_mb": 686.1, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "ARGV", "sink_callsite": 4198056}]}

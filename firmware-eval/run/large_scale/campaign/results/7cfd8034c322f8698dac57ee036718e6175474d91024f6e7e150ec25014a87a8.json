@@ -1,0 +1,1 @@
+{"sha256": "7cfd8034c322f8698dac57ee036718e6175474d91024f6e7e150ec25014a87a8", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_WL_520gu_70145_RU/fs/usr/sbin/iptables-restore", "status": "no_findings", "exit_code": 0, "wall_s": 19.6, "peak_fp_mb": 945.1, "nfind": 0, "findings": []}

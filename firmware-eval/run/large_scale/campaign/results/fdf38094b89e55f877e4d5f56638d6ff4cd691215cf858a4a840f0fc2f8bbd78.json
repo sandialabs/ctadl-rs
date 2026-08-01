@@ -1,0 +1,1 @@
+{"sha256": "fdf38094b89e55f877e4d5f56638d6ff4cd691215cf858a4a840f0fc2f8bbd78", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TEW_822DRE_v1_v2_1.03B02_/fs/bin/udhcpd", "status": "ok", "exit_code": 0, "wall_s": 23.0, "peak_fp_mb": 1275.1, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4210984}]}

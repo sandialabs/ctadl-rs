@@ -1,0 +1,1 @@
+{"sha256": "3f1bf59de6d94bc5426480d9274fcec2972f0d82bb9dc6dd69d66bf4820c7736", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAX35_V1.0.5.104_1.0.1/fs/usr/sbin/proftpd", "status": "timeout", "exit_code": null, "wall_s": 600.9, "peak_fp_mb": 7686.1, "nfind": 0, "findings": []}

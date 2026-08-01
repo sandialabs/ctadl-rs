@@ -1,0 +1,1 @@
+{"sha256": "82b51838da0272b673053ce8b2a37b347f787777c1b9958c58cb2607f8e1f2ca", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_N10U_30043763754/fs/usr/sbin/smbd", "status": "timeout", "exit_code": null, "wall_s": 602.1, "peak_fp_mb": 6316.5, "nfind": 0, "findings": []}

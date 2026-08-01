@@ -1,0 +1,1 @@
+{"sha256": "864f98825bac0fda1a1776afd29e3ff9207499bb2fd348886420bb867a8d53f2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBS50Y_V2.7.2.102/fs/sbin/led-extender-5G", "status": "ok", "exit_code": 0, "wall_s": 15.8, "peak_fp_mb": 722.2, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4198804}]}

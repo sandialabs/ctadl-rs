@@ -1,0 +1,1 @@
+{"sha256": "732258b80eef433a7a5a225e32fd67c642a8dabd340b1d3ecd850500e7f8085c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/US_AC10UV1.0RTL_V15.03.06.49_multi_TDE01/fs/sbin/modprobe", "status": "timeout", "exit_code": null, "wall_s": 602.3, "peak_fp_mb": 3796.2, "nfind": 0, "findings": []}

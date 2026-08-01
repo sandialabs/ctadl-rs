@@ -1,0 +1,1 @@
+{"sha256": "0057f7a7fcc1a550c61146987ca8222cfaf01614769d3909381e1db50d61d9cd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/SRC60_V2.7.2.102/fs/sbin/button-util", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 759.1, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4195740}]}

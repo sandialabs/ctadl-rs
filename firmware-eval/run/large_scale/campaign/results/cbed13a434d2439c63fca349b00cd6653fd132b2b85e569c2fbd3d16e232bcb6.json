@@ -1,0 +1,1 @@
+{"sha256": "cbed13a434d2439c63fca349b00cd6653fd132b2b85e569c2fbd3d16e232bcb6", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_M10_2.0.05.001_20160426/fs/usr/local/samba/sbin/nmbd", "status": "no_findings", "exit_code": 0, "wall_s": 64.9, "peak_fp_mb": 2107.5, "nfind": 0, "findings": []}

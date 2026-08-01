@@ -1,0 +1,1 @@
+{"sha256": "eb099b96eb3d2b169feaa31c51c4afbd4fd89495303f867ff8b7bdf5003cea80", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Deco_M4_V3_1.5.0_210414/fs/usr/sbin/conntrackd", "status": "no_findings", "exit_code": 0, "wall_s": 59.9, "peak_fp_mb": 1424.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "1cd36b7be575291df70324bd60b93afaca19bab55cf0750aa81968562b4df94d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_BLUECAVE_300438446630/fs/bin/hostapd_cli", "status": "ok", "exit_code": 0, "wall_s": 42.8, "peak_fp_mb": 1416.5, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ARGV", "sink_callsite": 4235500}]}

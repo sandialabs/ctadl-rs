@@ -1,0 +1,1 @@
+{"sha256": "aa43a398e9565138fd8f220fe18d6b00ac69d9311e5e0e85b054784c8a0244cd", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/CPE210_V3.20_2.2.5_Build20230213/fs/sbin/wpa_supplicant", "status": "no_findings", "exit_code": 0, "wall_s": 48.6, "peak_fp_mb": 2301.1, "nfind": 0, "findings": []}

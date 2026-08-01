@@ -1,0 +1,1 @@
+{"sha256": "a9fe7247ce3a941f3a9b2104663e9964bb0dbd17e78890a316d44d5e9c062df1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDR4300v2_V1.0.0.60_BETA/fs/usr/sbin/net-wall", "status": "no_findings", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 1534.2, "nfind": 0, "findings": []}

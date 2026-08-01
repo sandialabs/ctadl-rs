@@ -1,0 +1,1 @@
+{"sha256": "aa29c605455fd7f5a22f0f59a48a9d06adc01cc7a87fc9ece9eed5dd4a542916", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/usr/sbin/nanddump", "status": "no_findings", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 1240.6, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "c088bbc79902e0dfa67bae7c3112a02035c3a1048bc1f2400b349ce11cac288e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6220_V1.1.0.114/fs/usr/sbin/afpd", "status": "no_findings", "exit_code": 0, "wall_s": 96.4, "peak_fp_mb": 2506.7, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "ddaf8225e66a3eb6dcca6231b107caf4259c6f19d15442ce9d99a69074ea967d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/GSM4230xx_GSM4248xx_V13.0.4.13/fs/usr/sbin/nandwrite", "status": "no_findings", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1273.3, "nfind": 0, "findings": []}

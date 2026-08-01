@@ -1,0 +1,1 @@
+{"sha256": "eac01aeb672d3c4646dfaa41c50114b93a3392a30f0144cc075872816d328f20", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R6020_V1.0.0.54/fs/usr/sbin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 1326.1, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "fb21e0394735ce12cb02e8896f86b42a05513b810342704c861829db1c323764", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Deco_M4_V3_1.5.0_210414/fs/usr/sbin/dropbear", "status": "ok", "exit_code": 0, "wall_s": 45.2, "peak_fp_mb": 1752.7, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4260420}]}

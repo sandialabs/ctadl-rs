@@ -1,0 +1,1 @@
+{"sha256": "a6ed49f49af7709840b733c8ed4f0839ff1e38bd3926fe7a84e1109566b3d4d4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AX1800HP_v300438668539/fs/usr/sbin/email", "status": "ok", "exit_code": 0, "wall_s": 16.4, "peak_fp_mb": 982.5, "nfind": 1, "findings": [{"sink_func": "execlp", "source_class": "ENV", "sink_callsite": 4209780}]}

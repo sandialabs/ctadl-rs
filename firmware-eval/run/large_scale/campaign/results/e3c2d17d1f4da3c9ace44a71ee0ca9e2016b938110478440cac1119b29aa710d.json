@@ -1,0 +1,1 @@
+{"sha256": "e3c2d17d1f4da3c9ace44a71ee0ca9e2016b938110478440cac1119b29aa710d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX6200v2_V1.0.1.90/fs/sbin/button-util", "status": "ok", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 680.3, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4195680}]}

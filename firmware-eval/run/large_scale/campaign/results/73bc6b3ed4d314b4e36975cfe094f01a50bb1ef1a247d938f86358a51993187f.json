@@ -1,0 +1,1 @@
+{"sha256": "73bc6b3ed4d314b4e36975cfe094f01a50bb1ef1a247d938f86358a51993187f", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/sbin/logrotate", "status": "no_findings", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1333.0, "nfind": 0, "findings": []}

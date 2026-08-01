@@ -1,0 +1,1 @@
+{"sha256": "4fa3febe86ed04317bf12a9eaabf2d5095b394a30f8a68765b27049c01d66f7b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8900_V1.0.5.42/fs/usr/sbin/file_notify", "status": "ok", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 691.0, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4197640}]}

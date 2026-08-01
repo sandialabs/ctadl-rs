@@ -1,0 +1,1 @@
+{"sha256": "9bf5f11f1a2ff3df7162813a958f1c581f4e33f64b5d2b2a69a4021acc064f9d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/BR200_FW_V5.10.0.5/fs/sbin/mkfs.xfs", "status": "no_findings", "exit_code": 0, "wall_s": 108.2, "peak_fp_mb": 5296.1, "nfind": 0, "findings": []}

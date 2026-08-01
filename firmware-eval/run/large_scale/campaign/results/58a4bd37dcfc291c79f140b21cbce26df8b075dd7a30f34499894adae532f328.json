@@ -1,0 +1,1 @@
+{"sha256": "58a4bd37dcfc291c79f140b21cbce26df8b075dd7a30f34499894adae532f328", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC2900_300438648260/fs/usr/sbin/nt_actMail", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 793.1, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4209668}]}

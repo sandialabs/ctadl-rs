@@ -1,0 +1,1 @@
+{"sha256": "302808ab8dfd933e4bb9784051b67d9fecfc2d8c23d855dc5ed969d3ec0c6f69", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC56R_300438251641/fs/usr/sbin/wget", "status": "no_findings", "exit_code": 0, "wall_s": 111.1, "peak_fp_mb": 3334.0, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "1f643320cacc62fe5b7648c30769cf10a8bbd1b7b5cbc2bdfd9eb7827d53aa4a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/NBG6617_V1.00_ABCT.6_C0/fs/usr/sbin/zy1905", "status": "ok", "exit_code": 0, "wall_s": 59.8, "peak_fp_mb": 2124.4, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NETWORK", "sink_callsite": 4285100}]}

@@ -1,0 +1,1 @@
+{"sha256": "a880dcea3c9731815e1d39dfbe6c72820fb966c5dd140e274cdcfdd9c10dd3ba", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA7250_1.0.1.209812_prod/fs/usr/sbin/ipv6_firewall", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 982.3, "nfind": 0, "findings": []}

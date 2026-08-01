@@ -1,0 +1,1 @@
+{"sha256": "7923f7f7cf71396bf623a8cd8527af7a4b32c0eeff9aedaa0c83de8d5d4b0f29", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/f5d9230_4v3_uk_3.01.53/fs/bin/pppd", "status": "ok", "exit_code": 0, "wall_s": 44.8, "peak_fp_mb": 2022.4, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ARGV", "sink_callsite": 4210708}]}

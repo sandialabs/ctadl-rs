@@ -1,0 +1,1 @@
+{"sha256": "16b0c312ef835b2ecf3495de3a4daaa6f5fd47cc85f66ecb42d294226757ebd2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/AC2100_V1.2.0.92/fs/usr/sbin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1405.8, "nfind": 0, "findings": []}

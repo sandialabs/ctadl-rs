@@ -1,0 +1,1 @@
+{"sha256": "a092ba9e7ae63aa6d04a2b735f5e29f13b64a4c0f30f8da6a22b163c0aa3bc93", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Deco_M4_V3_1.5.0_210414/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 1211.4, "nfind": 0, "findings": []}

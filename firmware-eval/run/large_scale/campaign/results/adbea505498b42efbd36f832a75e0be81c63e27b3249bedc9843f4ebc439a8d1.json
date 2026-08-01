@@ -1,0 +1,1 @@
+{"sha256": "adbea505498b42efbd36f832a75e0be81c63e27b3249bedc9843f4ebc439a8d1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX6150v2_EX6100v2_V1.0.1.108/fs/sbin/jffs2reset", "status": "no_findings", "exit_code": 0, "wall_s": 13.0, "peak_fp_mb": 751.5, "nfind": 0, "findings": []}

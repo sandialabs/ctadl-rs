@@ -1,0 +1,1 @@
+{"sha256": "03ae5977129f6c9744fbeb37d7a39588ced90907e083e7f5caddd3669af2c3b3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C20_150831/fs/usr/bin/smbd", "status": "timeout", "exit_code": null, "wall_s": 603.0, "peak_fp_mb": 8513.8, "nfind": 0, "findings": []}

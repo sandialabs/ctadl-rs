@@ -1,0 +1,1 @@
+{"sha256": "1341b6d97e47a8124fc59de87c2d237f266d7bf8c74d013c762d980cfee4dca1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TEW_825DAP_v1_2.01B03_/fs/usr/sbin/rdnssd", "status": "ok", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 944.8, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4204744}]}

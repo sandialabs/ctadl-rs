@@ -1,0 +1,1 @@
+{"sha256": "057089c72dc56310fede92fc661ae437c82ba59d7beb76b12ac24e5b1392bf12", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/usr/sbin/chroot.coreutils", "status": "ok", "exit_code": 0, "wall_s": 15.8, "peak_fp_mb": 1024.7, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "ENV", "sink_callsite": 4197360}]}

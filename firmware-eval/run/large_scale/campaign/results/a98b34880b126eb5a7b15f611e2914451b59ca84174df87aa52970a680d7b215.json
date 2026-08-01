@@ -1,0 +1,1 @@
+{"sha256": "a98b34880b126eb5a7b15f611e2914451b59ca84174df87aa52970a680d7b215", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/sbin/noip2", "status": "ok", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1300.3, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4216876}]}

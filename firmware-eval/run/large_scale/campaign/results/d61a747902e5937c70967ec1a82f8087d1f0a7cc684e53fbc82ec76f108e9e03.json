@@ -1,0 +1,1 @@
+{"sha256": "d61a747902e5937c70967ec1a82f8087d1f0a7cc684e53fbc82ec76f108e9e03", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/JNR3210_V1.1.0.30_1.0.2/fs/usr/sbin/lsof", "status": "timeout", "exit_code": null, "wall_s": 600.6, "peak_fp_mb": 8975.2, "nfind": 0, "findings": []}

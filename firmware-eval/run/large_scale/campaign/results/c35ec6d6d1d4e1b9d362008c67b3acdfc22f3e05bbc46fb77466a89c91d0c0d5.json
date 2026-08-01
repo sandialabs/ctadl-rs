@@ -1,0 +1,1 @@
+{"sha256": "c35ec6d6d1d4e1b9d362008c67b3acdfc22f3e05bbc46fb77466a89c91d0c0d5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DM111Pv2_V2.00.31/fs/usr/sbin/syslogd", "status": "no_findings", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 815.1, "nfind": 0, "findings": []}

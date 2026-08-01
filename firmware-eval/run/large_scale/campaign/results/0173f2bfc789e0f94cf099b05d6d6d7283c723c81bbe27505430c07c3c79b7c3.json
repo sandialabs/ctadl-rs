@@ -1,0 +1,1 @@
+{"sha256": "0173f2bfc789e0f94cf099b05d6d6d7283c723c81bbe27505430c07c3c79b7c3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_WRT32X_1.0.180404.58/fs/usr/bin/lsblk", "status": "no_findings", "exit_code": 0, "wall_s": 22.6, "peak_fp_mb": 1338.9, "nfind": 0, "findings": []}

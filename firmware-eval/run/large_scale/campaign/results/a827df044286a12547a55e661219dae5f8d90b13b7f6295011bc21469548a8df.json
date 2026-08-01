@@ -1,0 +1,1 @@
+{"sha256": "a827df044286a12547a55e661219dae5f8d90b13b7f6295011bc21469548a8df", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBS50Y_V2.7.2.102/fs/usr/sbin/dbus-daemon", "status": "no_findings", "exit_code": 0, "wall_s": 29.4, "peak_fp_mb": 1733.6, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "a96828229adae38cf49fe33f348a0321894c76a97d84f5082c65cb6a421282f4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E3000_1.0.06.002_US_20140409_code/fs/sbin/mkdosfs", "status": "no_findings", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 960.8, "nfind": 0, "findings": []}

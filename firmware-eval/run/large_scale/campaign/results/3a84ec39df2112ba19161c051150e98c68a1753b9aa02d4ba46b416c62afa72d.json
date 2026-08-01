@@ -1,0 +1,1 @@
+{"sha256": "3a84ec39df2112ba19161c051150e98c68a1753b9aa02d4ba46b416c62afa72d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D7000v2_V1.0.0.82_1.0.1/fs/usr/sbin/iked", "status": "ok", "exit_code": 0, "wall_s": 89.4, "peak_fp_mb": 2834.1, "nfind": 1, "findings": [{"sink_func": "execve", "source_class": "ARGV", "sink_callsite": 4303168}]}

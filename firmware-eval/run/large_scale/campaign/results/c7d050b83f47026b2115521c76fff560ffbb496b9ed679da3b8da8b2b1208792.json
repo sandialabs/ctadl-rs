@@ -1,0 +1,1 @@
+{"sha256": "c7d050b83f47026b2115521c76fff560ffbb496b9ed679da3b8da8b2b1208792", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/WRE6602_V1.00_ABKK.3_C0/fs/bin/lighttpd", "status": "ok", "exit_code": 0, "wall_s": 36.2, "peak_fp_mb": 1772.6, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4303428}]}

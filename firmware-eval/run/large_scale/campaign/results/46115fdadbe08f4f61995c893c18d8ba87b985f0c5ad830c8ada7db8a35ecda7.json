@@ -1,0 +1,1 @@
+{"sha256": "46115fdadbe08f4f61995c893c18d8ba87b985f0c5ad830c8ada7db8a35ecda7", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TEW_755AP_v1_1.13B01_/fs/sbin/cdp", "status": "ok", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1441.6, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4244296}]}

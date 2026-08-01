@@ -1,0 +1,1 @@
+{"sha256": "a37049e083f3f8af1c55578fc088dfa08e9625e00f6d610f861fb2341d06cd64", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_AX10_EU__V1.20_220117/fs/sbin/agetty", "status": "ok", "exit_code": 0, "wall_s": 15.8, "peak_fp_mb": 1050.0, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "FILE", "sink_callsite": 4207328}]}

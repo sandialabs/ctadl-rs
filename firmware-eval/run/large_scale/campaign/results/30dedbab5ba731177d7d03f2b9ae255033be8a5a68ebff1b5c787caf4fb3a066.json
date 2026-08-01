@@ -1,0 +1,1 @@
+{"sha256": "30dedbab5ba731177d7d03f2b9ae255033be8a5a68ebff1b5c787caf4fb3a066", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAX29_V1.0.10.94_3/fs/bin/pucfu", "status": "ok", "exit_code": 0, "wall_s": 13.0, "peak_fp_mb": 910.4, "nfind": 1, "findings": [{"sink_func": "popen", "source_class": "FILE", "sink_callsite": 4198984}]}

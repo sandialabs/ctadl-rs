@@ -1,0 +1,1 @@
+{"sha256": "339aff24129fa68417c0fe558aa42136aea012bd0f5c45e847bd93d3b62251fb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/sbin/quectel-CM", "status": "ok", "exit_code": 0, "wall_s": 25.9, "peak_fp_mb": 1508.1, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4311216}]}

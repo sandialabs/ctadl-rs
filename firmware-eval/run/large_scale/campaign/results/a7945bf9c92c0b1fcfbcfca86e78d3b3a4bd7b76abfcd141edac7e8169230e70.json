@@ -1,0 +1,1 @@
+{"sha256": "a7945bf9c92c0b1fcfbcfca86e78d3b3a4bd7b76abfcd141edac7e8169230e70", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/JR6150_R6050_V1.0.1.26_1.0.1/fs/usr/sbin/smbpasswd", "status": "no_findings", "exit_code": 0, "wall_s": 22.8, "peak_fp_mb": 793.7, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "f4ae183ab701b29fe97ae7feeea48d68d3898782e576d5a9d4d9e643aac58e6e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/AC2100_V1.2.0.92/fs/usr/sbin/dbus-daemon", "status": "no_findings", "exit_code": 0, "wall_s": 62.1, "peak_fp_mb": 2197.9, "nfind": 0, "findings": []}

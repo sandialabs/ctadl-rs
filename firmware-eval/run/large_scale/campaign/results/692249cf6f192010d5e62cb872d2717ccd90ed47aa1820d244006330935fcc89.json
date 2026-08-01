@@ -1,0 +1,1 @@
+{"sha256": "692249cf6f192010d5e62cb872d2717ccd90ed47aa1820d244006330935fcc89", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/usr/bin/tar", "status": "ok", "exit_code": 0, "wall_s": 227.7, "peak_fp_mb": 3060.5, "nfind": 1, "findings": [{"sink_func": "execlp", "source_class": "ENV", "sink_callsite": 4310660}]}

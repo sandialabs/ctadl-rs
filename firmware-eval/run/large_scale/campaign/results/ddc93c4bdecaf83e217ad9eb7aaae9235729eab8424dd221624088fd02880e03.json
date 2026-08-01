@@ -1,0 +1,1 @@
+{"sha256": "ddc93c4bdecaf83e217ad9eb7aaae9235729eab8424dd221624088fd02880e03", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E5600_1.1.0.26_prod/fs/usr/sbin/memtester", "status": "no_findings", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 706.8, "nfind": 0, "findings": []}

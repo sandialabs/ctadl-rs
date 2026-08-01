@@ -1,0 +1,1 @@
+{"sha256": "54d17c40e75324953481e4d5a75d19a9eb0ed82c1d9ad920123057bddaed224e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_600_REVB_FIRMWARE_PATCH_v2.18_J1MD/fs/usr/sbin/gpiod", "status": "no_findings", "exit_code": 0, "wall_s": 15.9, "peak_fp_mb": 837.6, "nfind": 0, "findings": []}

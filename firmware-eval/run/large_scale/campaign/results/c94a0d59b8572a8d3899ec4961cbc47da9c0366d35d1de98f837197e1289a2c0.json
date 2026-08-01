@@ -1,0 +1,1 @@
+{"sha256": "c94a0d59b8572a8d3899ec4961cbc47da9c0366d35d1de98f837197e1289a2c0", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBR40_V2.7.4.24/fs/usr/bin/sar", "status": "no_findings", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1335.0, "nfind": 0, "findings": []}

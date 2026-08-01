@@ -1,0 +1,1 @@
+{"sha256": "6bba0b210ae6a7b3bee4d21fab941bf9313a6f59fe1608da38726aed8fc788c2", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNR2000v5_V1.0.0.80/fs/usr/sbin/ripngd", "status": "no_findings", "exit_code": 0, "wall_s": 36.1, "peak_fp_mb": 1518.4, "nfind": 0, "findings": []}

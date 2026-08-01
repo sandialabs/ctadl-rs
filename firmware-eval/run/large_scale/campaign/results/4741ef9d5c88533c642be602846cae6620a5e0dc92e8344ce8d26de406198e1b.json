@@ -1,0 +1,1 @@
+{"sha256": "4741ef9d5c88533c642be602846cae6620a5e0dc92e8344ce8d26de406198e1b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/NBG6617_V1.00_ABCT.6_C0/fs/usr/bin/EmappS", "status": "ok", "exit_code": 0, "wall_s": 33.6, "peak_fp_mb": 1394.1, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4251076}]}

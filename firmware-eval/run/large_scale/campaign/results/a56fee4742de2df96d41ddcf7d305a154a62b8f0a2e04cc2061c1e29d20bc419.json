@@ -1,0 +1,1 @@
+{"sha256": "a56fee4742de2df96d41ddcf7d305a154a62b8f0a2e04cc2061c1e29d20bc419", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/LBR1020_V2.6.3.58/fs/sbin/button-util", "status": "ok", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 862.0, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4195740}]}

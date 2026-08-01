@@ -1,0 +1,1 @@
+{"sha256": "9ec3e668cc0c872220b0e5bf697822320410f68c486d72529f261e335718ae91", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC1300G_PLUS_V3_300438621649/fs/usr/sbin/samba_multicall", "status": "timeout", "exit_code": null, "wall_s": 602.0, "peak_fp_mb": 7826.1, "nfind": 0, "findings": []}

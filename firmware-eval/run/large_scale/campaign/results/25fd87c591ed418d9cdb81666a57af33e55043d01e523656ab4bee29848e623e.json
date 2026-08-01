@@ -1,0 +1,1 @@
+{"sha256": "25fd87c591ed418d9cdb81666a57af33e55043d01e523656ab4bee29848e623e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/CAX80_V2.1.3.5/fs/sbin/ip.iproute2", "status": "no_findings", "exit_code": 0, "wall_s": 57.5, "peak_fp_mb": 2963.2, "nfind": 0, "findings": []}

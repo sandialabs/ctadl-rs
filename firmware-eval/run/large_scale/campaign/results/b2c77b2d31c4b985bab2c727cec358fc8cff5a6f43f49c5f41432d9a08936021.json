@@ -1,0 +1,1 @@
+{"sha256": "b2c77b2d31c4b985bab2c727cec358fc8cff5a6f43f49c5f41432d9a08936021", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/SXR80_signed_V4.2.3.102/fs/opt/netgear/usr/bin/ookla-insight", "status": "timeout", "exit_code": null, "wall_s": 601.4, "peak_fp_mb": 16015.2, "nfind": 0, "findings": []}

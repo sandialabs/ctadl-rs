@@ -1,0 +1,1 @@
+{"sha256": "c48aee1be7690fc2e9299331eafe23759b866c309a270e83036997c65d17125e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/D8500_V1.0.3.60_1.0.1/fs/usr/local/sbin/openssl", "status": "no_findings", "exit_code": 0, "wall_s": 380.6, "peak_fp_mb": 11782.4, "nfind": 0, "findings": []}

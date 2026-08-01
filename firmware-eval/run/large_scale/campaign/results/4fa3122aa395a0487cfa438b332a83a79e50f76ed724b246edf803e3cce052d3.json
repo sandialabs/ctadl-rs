@@ -1,0 +1,1 @@
+{"sha256": "4fa3122aa395a0487cfa438b332a83a79e50f76ed724b246edf803e3cce052d3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E5600_1.1.0.26_prod/fs/sbin/jffs2reset", "status": "no_findings", "exit_code": 0, "wall_s": 19.4, "peak_fp_mb": 662.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "c299fba562d936bc3985fb2b74147b24464b4ddedbff649b70914f6990a685d4", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR9600_1.0.4.205530_prod/fs/usr/sbin/set_nvram_defaults", "status": "no_findings", "exit_code": 0, "wall_s": 12.9, "peak_fp_mb": 947.0, "nfind": 0, "findings": []}

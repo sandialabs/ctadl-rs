@@ -1,0 +1,1 @@
+{"sha256": "36dbab7d23db7829b72f24f4386deaaad152c309346f6e3310e3b4cc6a258ec5", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DC112A_V1.0.0.64_1.0.64/fs/usr/sbin/unzip", "status": "timeout", "exit_code": null, "wall_s": 601.1, "peak_fp_mb": 4557.5, "nfind": 0, "findings": []}

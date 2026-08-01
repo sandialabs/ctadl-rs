@@ -1,0 +1,1 @@
+{"sha256": "ae93d8715b21eaffd95360cbae7a7e1900cd052776c85100c2665579d7ab3cc6", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX8000_V1.0.1.240/fs/sbin/button-util", "status": "ok", "exit_code": 0, "wall_s": 13.0, "peak_fp_mb": 723.8, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "FILE", "sink_callsite": 4195752}]}

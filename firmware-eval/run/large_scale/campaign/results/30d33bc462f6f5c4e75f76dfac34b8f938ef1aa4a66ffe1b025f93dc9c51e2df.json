@@ -1,0 +1,1 @@
+{"sha256": "30d33bc462f6f5c4e75f76dfac34b8f938ef1aa4a66ffe1b025f93dc9c51e2df", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/V12v1FirmwareV56116/fs/bin/telnetd", "status": "ok", "exit_code": 0, "wall_s": 19.2, "peak_fp_mb": 1121.3, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4204096}]}

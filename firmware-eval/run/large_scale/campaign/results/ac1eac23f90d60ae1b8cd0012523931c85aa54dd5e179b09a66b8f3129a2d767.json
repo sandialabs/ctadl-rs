@@ -1,0 +1,1 @@
+{"sha256": "ac1eac23f90d60ae1b8cd0012523931c85aa54dd5e179b09a66b8f3129a2d767", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNDR3700v3_V1.0.0.42_1.0.33/fs/usr/sbin/dnsmasq", "status": "no_findings", "exit_code": 0, "wall_s": 31.7, "peak_fp_mb": 1564.7, "nfind": 0, "findings": []}

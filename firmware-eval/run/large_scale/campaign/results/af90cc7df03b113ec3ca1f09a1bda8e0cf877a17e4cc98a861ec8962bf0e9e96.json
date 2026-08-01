@@ -1,0 +1,1 @@
+{"sha256": "af90cc7df03b113ec3ca1f09a1bda8e0cf877a17e4cc98a861ec8962bf0e9e96", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MX5300_1.1.12.210066_prod/fs/sbin/parted", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1340.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "7db60c93e40fb2ed148bcd41d8b4589096f1a84a37cb28be679ce4adabb8840d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DM200_V1.0.0.66/fs/usr/sbin/ripngd", "status": "no_findings", "exit_code": 0, "wall_s": 29.3, "peak_fp_mb": 1449.1, "nfind": 0, "findings": []}

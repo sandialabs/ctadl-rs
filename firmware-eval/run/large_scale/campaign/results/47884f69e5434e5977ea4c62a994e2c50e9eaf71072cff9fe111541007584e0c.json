@@ -1,0 +1,1 @@
+{"sha256": "47884f69e5434e5977ea4c62a994e2c50e9eaf71072cff9fe111541007584e0c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC1500G_PLUS_300438252482/fs/usr/sbin/email", "status": "ok", "exit_code": 0, "wall_s": 19.2, "peak_fp_mb": 1400.8, "nfind": 1, "findings": [{"sink_func": "execlp", "source_class": "ENV", "sink_callsite": 4218292}]}

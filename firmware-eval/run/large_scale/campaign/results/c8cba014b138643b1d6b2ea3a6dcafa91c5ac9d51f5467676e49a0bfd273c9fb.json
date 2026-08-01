@@ -1,0 +1,1 @@
+{"sha256": "c8cba014b138643b1d6b2ea3a6dcafa91c5ac9d51f5467676e49a0bfd273c9fb", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/Deco_M4_V4_230201/fs/usr/bin/mpstat", "status": "no_findings", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1294.0, "nfind": 0, "findings": []}

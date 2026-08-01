@@ -1,0 +1,1 @@
+{"sha256": "5b1b8a33fda33afa5f3f94d63953e0ea7cdc228948afd5df68a628e3765c5d1c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WC7600v2_V6.5.5.24/fs/wnc/usr/sbin/lighttpd-angel", "status": "no_findings", "exit_code": 0, "wall_s": 18.9, "peak_fp_mb": 851.4, "nfind": 0, "findings": []}

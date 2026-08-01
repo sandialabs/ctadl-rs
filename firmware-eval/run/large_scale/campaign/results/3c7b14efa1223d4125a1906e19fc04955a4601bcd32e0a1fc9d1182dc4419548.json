@@ -1,0 +1,1 @@
+{"sha256": "3c7b14efa1223d4125a1906e19fc04955a4601bcd32e0a1fc9d1182dc4419548", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/F5D8235v2_WW_2.01.09/fs/sbin/mkdosfs", "status": "no_findings", "exit_code": 0, "wall_s": 25.8, "peak_fp_mb": 981.7, "nfind": 0, "findings": []}

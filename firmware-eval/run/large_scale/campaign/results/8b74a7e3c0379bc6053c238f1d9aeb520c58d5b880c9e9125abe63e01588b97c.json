@@ -1,0 +1,1 @@
+{"sha256": "8b74a7e3c0379bc6053c238f1d9aeb520c58d5b880c9e9125abe63e01588b97c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBS50Y_V2.7.2.102/fs/usr/bin/strace", "status": "ok", "exit_code": 0, "wall_s": 28.9, "peak_fp_mb": 1331.2, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ENV", "sink_callsite": 4201356}]}

@@ -1,0 +1,1 @@
+{"sha256": "243007dcca7070c95bd63496737b9434f112d29ea873425bf16f227574b9e11a", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA8300_1.1.6.209797_prod/fs/usr/sbin/lighttpd", "status": "ok", "exit_code": 0, "wall_s": 29.5, "peak_fp_mb": 1699.5, "nfind": 1, "findings": [{"sink_func": "execl", "source_class": "ENV", "sink_callsite": 4276024}]}

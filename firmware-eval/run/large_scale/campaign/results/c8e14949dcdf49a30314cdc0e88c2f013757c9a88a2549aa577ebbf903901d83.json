@@ -1,0 +1,1 @@
+{"sha256": "c8e14949dcdf49a30314cdc0e88c2f013757c9a88a2549aa577ebbf903901d83", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/EAP225_EU_V3.20_5.0.7_Build_20211026/fs/usr/bin/gpiod", "status": "no_findings", "exit_code": 0, "wall_s": 12.8, "peak_fp_mb": 729.6, "nfind": 0, "findings": []}

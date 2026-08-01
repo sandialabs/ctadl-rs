@@ -1,0 +1,1 @@
+{"sha256": "553d8f237186f3d7a127eefba07b4088ddc44f953d8af287b3429017c264b92e", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_WRT32X_1.0.180404.58/fs/usr/sbin/ethtool", "status": "no_findings", "exit_code": 0, "wall_s": 22.6, "peak_fp_mb": 1334.5, "nfind": 0, "findings": []}

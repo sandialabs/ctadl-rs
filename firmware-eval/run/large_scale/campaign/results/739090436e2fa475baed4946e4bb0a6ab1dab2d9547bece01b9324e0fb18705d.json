@@ -1,0 +1,1 @@
+{"sha256": "739090436e2fa475baed4946e4bb0a6ab1dab2d9547bece01b9324e0fb18705d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WNAP210V2_V3.7.11.4/fs/usr/local/bin/qos_delete_qdiscs", "status": "no_findings", "exit_code": 0, "wall_s": 16.2, "peak_fp_mb": 1287.5, "nfind": 0, "findings": []}

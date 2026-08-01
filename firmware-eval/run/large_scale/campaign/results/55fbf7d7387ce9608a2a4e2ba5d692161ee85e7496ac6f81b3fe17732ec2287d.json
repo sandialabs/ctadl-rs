@@ -1,0 +1,1 @@
+{"sha256": "55fbf7d7387ce9608a2a4e2ba5d692161ee85e7496ac6f81b3fe17732ec2287d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_BLUECAVE_300438446630/fs/usr/sbin/wpa_cli", "status": "ok", "exit_code": 0, "wall_s": 19.5, "peak_fp_mb": 921.5, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "ARGV", "sink_callsite": 4203960}]}

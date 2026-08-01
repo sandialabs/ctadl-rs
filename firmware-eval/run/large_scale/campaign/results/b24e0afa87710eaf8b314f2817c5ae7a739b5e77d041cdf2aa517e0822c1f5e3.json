@@ -1,0 +1,1 @@
+{"sha256": "b24e0afa87710eaf8b314f2817c5ae7a739b5e77d041cdf2aa517e0822c1f5e3", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WAC124_V1.0.4.9/fs/usr/sbin/dbus-daemon", "status": "no_findings", "exit_code": 0, "wall_s": 52.2, "peak_fp_mb": 2303.9, "nfind": 0, "findings": []}

@@ -1,0 +1,1 @@
+{"sha256": "b0910b15e5f940bb97b3c60ae670b9530ac2c985b0914e746cfd110dd683743b", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8900_V1.0.5.42/fs/usr/sbin/detwan", "status": "ok", "exit_code": 0, "wall_s": 19.7, "peak_fp_mb": 1229.6, "nfind": 1, "findings": [{"sink_func": "system", "source_class": "NETWORK", "sink_callsite": 4212828}]}

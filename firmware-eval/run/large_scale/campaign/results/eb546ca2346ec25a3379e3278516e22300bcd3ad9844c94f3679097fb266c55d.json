@@ -1,0 +1,1 @@
+{"sha256": "eb546ca2346ec25a3379e3278516e22300bcd3ad9844c94f3679097fb266c55d", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAX35_V1.0.5.104_1.0.1/fs/sbin/rpcd", "status": "ok", "exit_code": 0, "wall_s": 16.1, "peak_fp_mb": 1387.8, "nfind": 1, "findings": [{"sink_func": "execv", "source_class": "ARGV", "sink_callsite": 4202184}]}

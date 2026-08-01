@@ -1,0 +1,1 @@
+{"sha256": "2c8faa91fe468fb6d3a5cd2916592beeb08a91d27dfc1f6afecd687500cced5c", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_WA850RE_V3_220615_RC/fs/usr/bin/ntp_client", "status": "no_findings", "exit_code": 0, "wall_s": 13.0, "peak_fp_mb": 831.1, "nfind": 0, "findings": []}

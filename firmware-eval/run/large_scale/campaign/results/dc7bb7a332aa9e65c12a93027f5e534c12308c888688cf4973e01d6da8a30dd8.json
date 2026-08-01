@@ -1,0 +1,1 @@
+{"sha256": "dc7bb7a332aa9e65c12a93027f5e534c12308c888688cf4973e01d6da8a30dd8", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_ER6020_UN_v2_2.0.3_Build_20200623/fs/usr/sbin/conntrack", "status": "no_findings", "exit_code": 0, "wall_s": 19.5, "peak_fp_mb": 1237.6, "nfind": 0, "findings": []}

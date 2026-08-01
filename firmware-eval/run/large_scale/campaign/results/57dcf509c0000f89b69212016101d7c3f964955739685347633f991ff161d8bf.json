@@ -1,0 +1,1 @@
+{"sha256": "57dcf509c0000f89b69212016101d7c3f964955739685347633f991ff161d8bf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TEW_755AP_v1_1.13B01_/fs/usr/sbin/dhcp6c", "status": "ok", "exit_code": 0, "wall_s": 36.2, "peak_fp_mb": 1921.6, "nfind": 1, "findings": [{"sink_func": "execve", "source_class": "FILE", "sink_callsite": 4274284}]}

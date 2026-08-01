@@ -1,0 +1,1 @@
+{"sha256": "27c01fefda1d188331616b242ca1fd9ff3390bee36fea25b9a831ffacaede8a1", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_A7_EU__V5_210519/fs/usr/sbin/pptpctrl", "status": "ok", "exit_code": 0, "wall_s": 22.7, "peak_fp_mb": 1099.0, "nfind": 1, "findings": [{"sink_func": "execvp", "source_class": "FILE", "sink_callsite": 4203740}]}

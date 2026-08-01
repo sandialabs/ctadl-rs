@@ -1,0 +1,1 @@
+{"sha256": "54d18808fe4b64965769a6b22b4ea00ccb3bf8c7ae9f3f2690b9b654d4743cbf", "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX8000_V1.0.1.240/fs/usr/bin/sar", "status": "no_findings", "exit_code": 0, "wall_s": 19.3, "peak_fp_mb": 1364.5, "nfind": 0, "findings": []}
