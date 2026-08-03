@@ -1,4 +1,4 @@
 {
-  "_comment": "Baseline snapshot: TaintBench finding IDs ctadl currently detects via a connected source->sink path. Both findings' source (Cursor.getString) and sinks (SQLiteDatabase.insert/update) are recognized as endpoints, but ctadl connects neither: the labelled flows cross Intent IPC, JSON serialize/deserialize, and async network callbacks that the analysis does not track end-to-end. Baseline is therefore empty; if ctadl later connects one, the check reports it as an improvement to fold in here. See ../../README.md.",
-  "matched_finding_ids": []
+  "_comment": "Baseline snapshot: TaintBench finding IDs ctadl currently detects via a connected source->sink path. Both flows (Cursor.getString -> SQLiteDatabase.insert/update) connect. They did not under the datalog closure engine; the demand-driven search regime (the default since the query-engine switch) finds them. See ../../README.md.",
+  "matched_finding_ids": [1, 2]
 }
