@@ -367,11 +367,15 @@ port must match:
 | Frontend | Array element segment | Port spelling |
 | --- | --- | --- |
 | dex, jvm | `Symbol("[]")` | `Argument(0).\[]` — JSON `"Argument(0).\\[]"` |
-| lua, C (tree-sitter) | `Symbol("[_elem_]")`, and `Symbol("[3]")` for a literal index | `Argument(0).\[_elem_]`, `Argument(0).\[3]` |
+| lua | `Symbol("[_elem_]")`, and `Symbol("[3]")` for a literal index | `Argument(0).\[_elem_]`, `Argument(0).\[3]` |
+| C (tree-sitter) | `Symbol("[]")` after a real `Offset` for a literal index (none for `[0]`); `Symbol("[_elem_]")` when the index is not constant | `Argument(0).[3].\[]`, `Argument(0).\[]`, `Argument(0).\[_elem_]` |
 | pcode | a real `Offset` | `Argument(0).[8]` |
 
-Note the pcode row is the only one where `.[n]` (unescaped) is right; on lua and
-the tree-sitter C frontend a source-level `t[3]` is the *symbol* `[3]`, not offset 3.
+Note that lua is the one row where a source-level `t[3]` is the *symbol* `[3]`
+rather than offset 3. The C frontend splits a subscript the way pcode does —
+`a[3]` is `*(a + 3)`, so the index is a real offset and `[]` is the element read
+or written at that address — which is what lets an element address (`&a[1]`)
+compose with a callee's own index.
 
 There is no wildcard segment. `.*` is a field literally named `*`, and `.[*]` is a
 load error — use the sink-side `wildcard` flag or a `saturating` source instead.

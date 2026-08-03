@@ -25,8 +25,20 @@
 //!
 //! ## Non constant subscript indices
 //!
-//! We do not handle x.y[n].yada   x.y[1] makes a variable named [1] but [n] doesn't make [n]...
-//! TODO what does denbuen says about this?
+//! A subscript is lowered as the pointer arithmetic it is: `a[3]` is the address `a.[3]` plus
+//! the element field `[]` (see [`ELEM_FIELD`]). A non-constant index has no offset to name, so
+//! `a[n]` becomes the sentinel field [`UNKNOWN_ELEM_FIELD`] on the base address -- it
+//! may-aliases `a[0]` (`facts::subscripts_may_alias`), but *not* a nonzero constant index, so
+//! a write through `a[n]` is not observed at a read of `a[2]`. That is the remaining half of
+//! the F5 gap.
+//!
+//! ## Addresses of struct members
+//!
+//! [`Context::flatten_address_of`] can form the address of an array element (`&a[1]`), because
+//! an address in the IR is a base variable plus numeric offsets. A member address (`&s.f`) has
+//! no such spelling -- it would need `f`'s byte offset, which this frontend, having no type
+//! information, cannot compute -- so `&s.f` falls back to the value-copy model and a callee's
+//! write through that pointer is dropped.
 //!
 //!
 //! ## Pointer references feel the same a values
@@ -418,6 +430,93 @@ struct FunctionName<'a>(&'a str);
 /// single access path (union members alias -- they occupy the same storage). The `$` keeps it
 /// out of the C identifier space, so it can never collide with a real source-level field.
 const UNION_FIELD: &str = "$union";
+
+/// Field name for the *memory* an array/pointer element access names. A subscript is pointer
+/// arithmetic followed by a dereference (`a[N]` is `*(a + N)`), so it lowers to two segments:
+/// the constant index becomes a pointer-arithmetic `Offset(N)` on the *address*, and this
+/// symbol is the field read or written at that address -- `a[3]` is the path `a.[3].\[]`.
+///
+/// Splitting the two is what makes element addresses composable. Offsets are summed when paths
+/// meet (`facts::Path::from_accesses`), so an address formed by `&a[1]` (`a.[1]`) that a callee
+/// writes at `.[1].\[]` lands on `a.[2].\[]` -- the same path a caller's `a[2]` reads. A single
+/// symbolic `[N]` field, which is what this frontend used to emit, cannot compose that way: no
+/// arithmetic relates `Symbol("[1]")` to `Symbol("[2]")`. The name matches the `[]` element
+/// field the dex and jvm frontends emit, and the shape matches the pcode frontend's
+/// `base.[off].deref`.
+const ELEM_FIELD: &str = "[]";
+
+/// Element field for a subscript whose index is not a compile-time constant (`a[n]`). The
+/// frontend cannot name the offset, so it emits this sentinel *instead of* an
+/// `Offset` + [`ELEM_FIELD`] pair, i.e. it approximates the unknown index by the base address.
+/// `facts::subscripts_may_alias` treats it as may-aliasing [`ELEM_FIELD`], so a write through
+/// `a[n]` is still observed at a read of `a[0]` (and vice versa). It does *not* alias a nonzero
+/// constant index: `a[n] = v` is not observed at `a[2]`. See the module-level "Non constant
+/// subscript indices" note.
+const UNKNOWN_ELEM_FIELD: &str = "[_elem_]";
+
+/// True for the two synthetic fields a subscript lowers to ([`ELEM_FIELD`],
+/// [`UNKNOWN_ELEM_FIELD`]) -- the memory at an element address, as opposed to a struct member.
+/// Taking the address of such an access (`&a[i]`) drops this field, leaving the address itself.
+fn is_element_field(seg: &PathSegment) -> bool {
+    matches!(seg, PathSegment::Symbol(s) if &**s == ELEM_FIELD || &**s == UNKNOWN_ELEM_FIELD)
+}
+
+/// The compile-time value of a lowered subscript index, if it has one. Only an integer literal
+/// counts: [`Context::flatten_expr`] lowers every constant to its source text (`Exp::Str`), so
+/// this is where `a[0x10]`, `a[3u]` and `a[3]` become the same offset and `a['c']`, `a["s"]`,
+/// `a[n]` become none. C integer suffixes (`u`, `l`, and their combinations) are dropped; a
+/// negative index is a real (if unusual) offset and is kept.
+fn constant_index(exp: &Exp) -> Option<i64> {
+    let Exp::Str(text) = exp else {
+        return None;
+    };
+    let text = text.trim();
+    let digits = text.trim_end_matches(['u', 'U', 'l', 'L']);
+    let (radix, digits) = match digits.strip_prefix(['-', '+']) {
+        // Sign is re-attached below by parsing the whole (suffix-stripped) text in base 10.
+        Some(_) => (10, digits),
+        None => match digits.get(..2) {
+            Some("0x") | Some("0X") => (16, &digits[2..]),
+            Some("0b") | Some("0B") => (2, &digits[2..]),
+            _ => (10, digits),
+        },
+    };
+    i64::from_str_radix(digits, radix).ok()
+}
+
+/// The location a dereference of `pointee` names, for a pointer bound by address-of
+/// (`Context::addr_alias`). An interior element address (`p = &x[1]` binds the address `x.[1]`)
+/// is dereferenced by reading the element field there, so `*p` is `x.[1].\[]`. A pointee that is
+/// a bare variable (`p = &x`) has no address path: CTADL models it as the variable itself (the
+/// value-copy model), so there is nothing to add and this returns `None`.
+fn deref_of_pointee(pointee: &AccessPath) -> Option<RawPath> {
+    if pointee.path.is_empty() {
+        return None;
+    }
+    let mut fields: ThinVec<PathSegment> = pointee
+        .path
+        .fields
+        .iter()
+        .cloned()
+        .map(PathSegment::from)
+        .collect();
+    fields.push(PathSegment::symbol(ELEM_FIELD));
+    Some(RawPath::new(pointee.variable_ref.clone(), fields))
+}
+
+/// Appends the path segments a subscript contributes: a pointer-arithmetic offset for a constant
+/// index (elided when it is zero -- `a[0]` *is* `*a`, and the analysis drops `Offset(0)` anyway)
+/// followed by the element field. See [`ELEM_FIELD`].
+fn push_element(fields: &mut ThinVec<PathSegment>, index: Option<i64>) {
+    match index {
+        Some(0) => fields.push(PathSegment::symbol(ELEM_FIELD)),
+        Some(n) => {
+            fields.push(PathSegment::offset(n));
+            fields.push(PathSegment::symbol(ELEM_FIELD));
+        }
+        None => fields.push(PathSegment::symbol(UNKNOWN_ELEM_FIELD)),
+    }
+}
 
 #[derive(Debug, Default)]
 struct Context<'a> {
@@ -1043,12 +1142,12 @@ impl<'a> Context<'a> {
         self.lower_initializer_list(source, program, scope_view, &base_ap, init_list)
     }
 
-    /// Walk the elements of an `initializer_list`, storing each into a successive
-    /// synthetic index field `[i]` of `base_ap` -- the same `[N]` field shape a
-    /// constant-index subscript read (`a[0]`) resolves to (see `flatten_subscript`), so
-    /// taint deposited here is later observed at the read. Positional struct fields reuse
-    /// the same `[i]` synthesis (no type info to recover member names). Nested aggregates
-    /// (`{{..},{..}}`) recurse, extending the base path by the outer index.
+    /// Walk the elements of an `initializer_list`, storing each into a successive element of
+    /// `base_ap` -- the same offset + `[]` field shape a constant-index subscript read (`a[0]`)
+    /// resolves to (see `push_element` and `flatten_subscript`), so taint deposited here is
+    /// later observed at the read. Positional struct fields reuse the same element synthesis (no
+    /// type info to recover member names). Nested aggregates (`{{..},{..}}`) recurse, extending
+    /// the base path by the outer index.
     fn lower_initializer_list(
         &mut self,
         source: &'a str,
@@ -1063,8 +1162,8 @@ impl<'a> Context<'a> {
             if !elem.is_named() {
                 continue; // skip the `{`, `,`, `}` tokens
             }
-            // Pick this element's target sub-field + its value node.
-            let (field, value_node) = if elem.kind() == "initializer_pair" {
+            // Pick this element's target sub-path + its value node.
+            let (fields, value_node) = if elem.kind() == "initializer_pair" {
                 // Designated: `.member = e` or `[n] = e`.
                 let designator = elem
                     .child_by_field_name("designator")
@@ -1073,22 +1172,29 @@ impl<'a> Context<'a> {
                     .child_by_field_name("value")
                     .expect("initializer_pair always has a value");
                 let dtext = to_str(&designator, source);
-                let field = if let Some(member) = dtext.strip_prefix('.') {
+                let mut fields = ThinVec::new();
+                if let Some(member) = dtext.strip_prefix('.') {
                     // `.a` -> Symbol("a"), matching how a `.a` field read is lowered.
-                    PathSegment::symbol(member.trim())
+                    fields.push(PathSegment::symbol(member.trim()));
                 } else {
-                    // `[n]` array designator -> the same `[n]` symbol a subscript read uses.
-                    PathSegment::symbol(dtext.trim())
-                };
-                (field, value)
+                    // `[n]` array designator -> the same offset + element field a subscript
+                    // read of that index resolves to.
+                    let index = dtext.trim().trim_start_matches('[').trim_end_matches(']');
+                    push_element(
+                        &mut fields,
+                        constant_index(&Exp::Str(ArcIntern::<str>::from(index))),
+                    );
+                }
+                (fields, value)
             } else {
-                // Positional element -> successive `[i]`.
-                let field = PathSegment::symbol(format!("[{idx}]"));
+                // Positional element -> successive indices.
+                let mut fields = ThinVec::new();
+                push_element(&mut fields, Some(idx as i64));
                 idx += 1;
-                (field, elem)
+                (fields, elem)
             };
             let mut elem_ap = base_ap.clone();
-            elem_ap.fields.push(field);
+            elem_ap.fields.extend(fields);
             if value_node.kind() == "initializer_list" {
                 self.lower_initializer_list(source, program, scope_view, &elem_ap, value_node)?;
             } else {
@@ -2428,8 +2534,9 @@ impl<'a> Context<'a> {
             // is sound for reads but drops writes through a pointer (F3). For a dereference
             // whose operand is a plain variable with a known same-block address-of alias
             // (`p = &x`), resolve `*p` to the pointee `x` so a store `*p = v` becomes a real
-            // write to `x` (and a load `y = *p` reads the current `x`). Everything else --
-            // `&x`, a dereference of a non-aliased/compound operand -- keeps the pass-through.
+            // write to `x` (and a load `y = *p` reads the current `x`). `&a[i]` forms the
+            // element's address (see `flatten_address_of`). Everything else -- `&x`, `&s.f`,
+            // a dereference of a non-aliased/compound operand -- keeps the pass-through.
             "pointer_expression" => {
                 let arg = node
                     .child_by_field_name("argument")
@@ -2437,6 +2544,11 @@ impl<'a> Context<'a> {
                 let is_deref = node
                     .child_by_field_name("operator")
                     .is_some_and(|op| to_str(&op, source) == "*");
+                if !is_deref
+                    && let Some(addr) = self.flatten_address_of(program, arg, source, scope_view)?
+                {
+                    return Ok(Exp::access_path(addr));
+                }
                 let arg_exp = self.flatten_expr(program, arg, source, scope_view)?;
                 // A plain local pointer is an `Exp::Variable`; a pathless access path also names
                 // a bare pointer. Either can carry a same-block address-of alias.
@@ -2452,7 +2564,14 @@ impl<'a> Context<'a> {
                     && let Some((pointee, blk)) = self.addr_alias.get(&ptr_ref)
                     && *blk == scope_view.blidx
                 {
-                    return Ok(Exp::access_path(pointee.clone()));
+                    let pointee = pointee.clone();
+                    // A pointee that is a bare variable *is* the value (the pass-through model);
+                    // one that is an interior address (`p = &x[1]` binds `x.[1]`) names memory,
+                    // so reading `*p` loads the element field at that address.
+                    return match deref_of_pointee(&pointee) {
+                        Some(ap) => Ok(Exp::access_path(self.emit_loads(program, scope_view, ap))),
+                        None => Ok(Exp::access_path(pointee)),
+                    };
                 }
                 Ok(arg_exp)
             }
@@ -3072,12 +3191,22 @@ impl<'a> Context<'a> {
             // expressible as an operand, so a compound op's second operand is dropped here
             // (matching the prior behavior for field stores). Any intermediate dereferences are
             // materialized as loads by `store_access_path`.
+            //
+            // A store must end in a symbolic field: a target that is a pure *address*
+            // (offsets only, e.g. the pointee of `p = &x[1]` reached through `*p = v`) names
+            // memory, so terminate it with the element field, exactly as the pcode frontend
+            // terminates an offset-only address with `.deref`. Without this the write would
+            // trip `assign_or_store`'s "storing to an offset address with no field" assertion.
+            let mut fields = target.fields.clone();
+            if fields.iter().all(PathSegment::is_offset) {
+                fields.push(PathSegment::symbol(ELEM_FIELD));
+            }
             let mut stmts = Vec::new();
             let allocator = &mut self.allocator;
             let locals = &mut program[scope_view.fidx].locals;
             ctadl_ir::mir::store_access_path(
                 target.base.clone(),
-                target.fields.iter().cloned(),
+                fields,
                 val_exp.clone(),
                 &mut stmts,
                 || VariableRef::new_local_idx(locals.get_or_intern(&allocator.next_temp())),
@@ -3086,6 +3215,51 @@ impl<'a> Context<'a> {
                 s.source_info = self.cur_span;
                 program[scope_view.fidx].blocks[scope_view.blidx].push_back(s);
             }
+        }
+    }
+
+    /// Lowers `&e` to the *address* of the location `e` names, or `None` when this frontend has
+    /// no way to name that address (the caller then falls back to the historical value-copy
+    /// model, which lowers `&e` to a read of `e`).
+    ///
+    /// An address in the IR is a base variable plus pointer-arithmetic offsets, so the addresses
+    /// that *are* nameable are exactly the element accesses: `&a[1]` is `a.[1]`, the same address
+    /// a subscript computes before reading its element field. Forming it -- rather than loading
+    /// the element -- is what preserves pointer identity across a call: a callee that stores at
+    /// `.[1].\[]` through the parameter writes `a.[2].\[]`, which is where the caller's `a[2]`
+    /// reads (offsets are summed when the paths meet). Loading the element instead hands the
+    /// callee a *copy*, and the write is lost.
+    ///
+    /// Not nameable, and so left to the value model: `&x` (a whole variable, which is already its
+    /// own address in this IR -- the pass-through in `flatten_expr` handles it), and `&s.f`, whose
+    /// address would need the byte offset of a struct member that this frontend, having no type
+    /// information, cannot compute; it names members symbolically instead.
+    fn flatten_address_of(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        source: &'a str,
+        scope_view: &ScopeView,
+    ) -> Result<Option<AccessPath>, Error> {
+        match node.kind() {
+            "parenthesized_expression" => {
+                let inner = node.child(1).expect("missing inner expr");
+                self.flatten_address_of(program, inner, source, scope_view)
+            }
+            "subscript_expression" => {
+                let mut ap = self.flatten_lvalue(program, node, source, scope_view)?;
+                // Drop the element field: the address is everything up to the dereference it
+                // performs. Whatever symbolic fields remain in the prefix (`&s.a[1]`, `&a[1][2]`)
+                // are still real dereferences, so `emit_loads` materializes them and returns the
+                // residual base + offsets -- the address. (`flatten_lvalue` of a subscript always
+                // ends in an element field, so the pop only fails if that ever stops holding.)
+                match ap.fields.pop() {
+                    Some(seg) if is_element_field(&seg) => {}
+                    _ => return Ok(None),
+                }
+                Ok(Some(self.emit_loads(program, scope_view, ap)))
+            }
+            _ => Ok(None),
         }
     }
 
@@ -3148,13 +3322,10 @@ impl<'a> Context<'a> {
                     source,
                     scope_view,
                 )?;
-                let s = if let Exp::Str(esp) = &index {
-                    format!("[{}]", esp)
-                } else {
-                    "[_elem_]".to_string()
-                };
+                // `a[N]` is `*(a + N)`: the index is pointer arithmetic on the address and the
+                // element itself is a field read/written there (see `ELEM_FIELD`).
                 let mut ap = base;
-                ap.fields.push(PathSegment::symbol(s));
+                push_element(&mut ap.fields, constant_index(&index));
                 Ok(ap)
             }
             "parenthesized_expression" | "parenthesized_declarator" => {
@@ -3171,20 +3342,16 @@ impl<'a> Context<'a> {
                 let ptr = self.flatten_lvalue(program, arg, source, scope_view)?;
                 // A store through `*p` where `p` has a known same-block address-of alias
                 // (`p = &x`) targets the pointee `x` directly (F3), so the write is observed at
-                // reads of `x`. Mirrors the read path in `flatten_expr`.
+                // reads of `x`. Mirrors the read path in `flatten_expr`, including the element
+                // field an interior pointee (`p = &x[1]`) needs to name its memory.
                 if is_deref
                     && ptr.is_pathless()
                     && let Some((pointee, blk)) = self.addr_alias.get(&ptr.base)
                     && *blk == scope_view.blidx
                 {
-                    let fields = pointee
-                        .path
-                        .fields
-                        .iter()
-                        .cloned()
-                        .map(PathSegment::from)
-                        .collect();
-                    return Ok(RawPath::new(pointee.variable_ref.clone(), fields));
+                    return Ok(deref_of_pointee(pointee).unwrap_or_else(|| {
+                        RawPath::new(pointee.variable_ref.clone(), ThinVec::new())
+                    }));
                 }
                 Ok(ptr)
             }

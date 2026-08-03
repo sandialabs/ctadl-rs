@@ -1393,11 +1393,12 @@ pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<tailshare::Seq<mir::Path
             let adjust = an - pn;
             Some(ap_seq.map_head(|_| PathSegment::Offset(Offset(adjust))))
         }
-        // A non-constant array subscript lowers to the field symbol `[_elem_]` (see the
-        // tree-sitter frontend's `flatten_subscript`); at runtime it can index any element,
-        // so it may-aliases every concrete `[N]` sibling. Treat `[_elem_]` and a concrete
-        // bracketed index as matching (in either position), so a write/read through one is
-        // observed at the other (the F5 soundness gap). Two *distinct constant* indices
+        // A non-constant array subscript lowers to the field symbol `[_elem_]` (see the lua and
+        // tree-sitter C frontends); at runtime it can index any element, so it may-aliases every
+        // concrete bracketed sibling -- lua's `[N]`, and the C frontend's element field `[]`,
+        // which is what an index-0 (offset-free) element access is. Treat `[_elem_]` and a
+        // concrete bracketed index as matching (in either position), so a write/read through one
+        // is observed at the other (the F5 soundness gap). Two *distinct constant* indices
         // (`[0]` vs `[1]`) are never `[_elem_]`, so this arm does not fire and their
         // disjointness -- sound precision -- is preserved.
         (PathSegment::Symbol(a), PathSegment::Symbol(p)) if subscripts_may_alias(a, p) => {

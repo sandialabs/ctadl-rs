@@ -1,5 +1,5 @@
 use ctadl_ir::ParameterType::{ByRef, ByVal};
-use ctadl_ir::{StatementKind, Variable};
+use ctadl_ir::{Exp, StatementKind, Variable};
 
 use crate::languages::tree_sitter::test_utils::*;
 
@@ -636,12 +636,11 @@ fn if_then_while_cfg() {
 
 #[test_log::test]
 fn subscript_access_paths() {
-    // A constant array subscript, read and written (`x = f[3];` and `f[4] = x;`). The subscript
-    // becomes a `PathSegment::Symbol("[N]")` — a *symbol whose name contains brackets*, not a
-    // numeric offset — so in the DSL it is written with the bracket escaped, `f.\[3]`. Spelled
-    // `f.[3]` it would be `Offset(3)`, which is a different path and is not what this frontend
-    // emits. The read is `assign @p2 = f.\[3]`, and the write lowers to an `update` of `f` at
-    // `.\[4]`. (`int x` is @p2.)
+    // A constant array subscript, read and written (`x = f[3];` and `f[4] = x;`). A subscript is
+    // `*(f + N)`, so it lowers to two segments: the index is a numeric `Offset(N)` on the address
+    // -- written `.[3]`, unescaped -- and the element itself is the symbolic field `[]`, whose
+    // leading bracket *is* escaped (`.\[]`) because it is a symbol name, not an offset. The read
+    // is a load of `f.[3].\[]` and the write a store at `f.[4].\[]`. (`int x` is @p2.)
     let src = r"
         int brackets_simple(Donkey v, Burro* b, int x, int y) {
             int f = 1;
@@ -649,8 +648,140 @@ fn subscript_access_paths() {
             f[4] = x;
         }";
     let prog = program_from_string(src).0;
-    check_loads(&prog, r"f.\[3]"); // x = f[3]  (read lowers to a load of f.\[3])
-    check_assign_or_update(&prog, r"f.\[4]", ["@p2"], None); // f[4] = x  (store)
+    check_loads(&prog, r"f.[3].\[]"); // x = f[3]  (read lowers to a load of f.[3].\[])
+    check_assign_or_update(&prog, r"f.[4].\[]", ["@p2"], None); // f[4] = x  (store)
+}
+
+#[test_log::test]
+fn address_of_element_forms_an_address() {
+    // `&x[1]` is the *address* of an element, so it lowers to the access path `x.[1]` -- a base
+    // variable plus pointer arithmetic -- and is passed as such. It must NOT lower to a load of
+    // `x.[1].\[]`: that hands the callee a copy of the element's value, and any write the callee
+    // makes through the pointer is lost (the pointer identity is gone before access paths are
+    // involved at all). The load-bearing assertions are that the argument carries the offset and
+    // that the element is never read.
+    let src = r"
+        void transfer(int *a, int b);
+        void f(int s) {
+            int x[3];
+            transfer(&x[1], s);
+        }";
+    let prog = program_from_string(src).0;
+    let args = call_args(&prog, "f", "transfer");
+    let Exp::AccessPath(addr) = &args[0] else {
+        panic!(
+            "`&x[1]` should be an address access path, got {:?}\n{prog}",
+            args[0]
+        )
+    };
+    assert_eq!(addr.variable_ref, local_ref(&prog, "f", "x"));
+    let offsets: Vec<i64> = addr.path.iter().map(|f| f.offset().0).collect();
+    assert_eq!(offsets, vec![1], "`&x[1]` is `x` at offset 1\n{prog}");
+    assert!(
+        !statements_of(&prog).any(|s| matches!(s.kind, StatementKind::Load { .. })),
+        "taking an element's address must not load the element\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn address_of_element_zero_is_the_base_address() {
+    // `&a[0]` is `a` itself: index 0 contributes no offset (`Offset(0)` is the identity on
+    // addresses), so the address is the bare base -- the same bare variable the pass-through
+    // gives for `&a`. Pinned because the offset-eliding branch of `push_element` is the one that
+    // has to agree with what a later `a[0]` read resolves to.
+    let src = r"
+        void take(int *p);
+        void f() {
+            int a[3];
+            take(&a[0]);
+        }";
+    let prog = program_from_string(src).0;
+    let args = call_args(&prog, "f", "take");
+    assert_eq!(
+        args[0],
+        Exp::Variable(local_ref(&prog, "f", "a")),
+        "`&a[0]` is the base address, with no offset\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn address_of_element_composes_with_callee_index() {
+    // The point of forming the address: element offsets compose across a call. `transfer` writes
+    // its parameter's element 1 (`a[1] = b`, a store at `.[1].\[]`); the caller passes `&x[1]`
+    // (the address `x.[1]`), so the write lands on `x.[2].\[]` -- offsets are summed where the
+    // paths meet -- which is exactly where a `x[2]` read resolves. This is `tests/c/xfer.c` in
+    // miniature (`test_cli_query_c_sources_and_sinks` runs the same shape end to end).
+    let flows = r"
+        void transfer(int *a, int b) { a[1] = b; }
+        int f(int s) {
+            int x[3];
+            transfer(&x[1], s);
+            return x[2];
+        }";
+    let (summary, si) = get_summary(program_from_string(flows).0).unwrap();
+    check_returns_param_in(&summary, &si, "f", 0, "");
+
+    // ...and the arithmetic is real arithmetic, not an array-blind collapse: the same call does
+    // not taint the element it started from. `x[1]` is where the *address* points, but the callee
+    // writes one element past it.
+    let precise = r"
+        void transfer(int *a, int b) { a[1] = b; }
+        int f(int s) {
+            int x[3];
+            transfer(&x[1], s);
+            return x[1];
+        }";
+    let (summary, si) = get_summary(program_from_string(precise).0).unwrap();
+    check_does_not_return_param_in(&summary, &si, "f", 0, "");
+}
+
+#[test_log::test]
+fn store_through_element_address_alias_flows() {
+    // An element address bound to a pointer and written through it: `p = &x[1]` records the
+    // pointee `x.[1]` in the must-points-to map, so `*p = s` is a store at `x.[1].\[]` -- the
+    // element field terminates an address that is otherwise offsets-only -- and a later `x[1]`
+    // read observes it. Before `&x[1]` formed an address, `p` held a *copy* of the element and
+    // the write was dropped.
+    let src = r"
+        int f(int s) {
+            int x[3];
+            int *p = &x[1];
+            *p = s;
+            return x[1];
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn address_of_struct_member_keeps_value_model() {
+    // `&s.f` has no address in this IR: naming it would need `f`'s byte offset, which the
+    // frontend cannot compute without type information (it names members symbolically instead).
+    // So address-of falls back to the historical value model and passes the member's *value*.
+    // Pinned as the documented limitation next to `address_of_element_forms_an_address`: the
+    // argument is a plain (pathless) value, and a callee's write through that pointer is lost.
+    let src = r"
+        void take(int *p);
+        void f(Thing s) {
+            take(&s.f);
+        }";
+    let prog = program_from_string(src).0;
+    let args = call_args(&prog, "f", "take");
+    assert!(
+        matches!(&args[0], Exp::Variable(_)),
+        "`&s.f` has no address spelling, so it must stay a loaded value, got {:?}\n{prog}",
+        args[0]
+    );
+    // ...and that value comes from a load of the member. (`check_loads` wants a single-function
+    // program; a call site always has at least two, so scan `f`'s statements directly.)
+    let f = function_named(&prog, "f").expect("f is defined");
+    assert!(
+        f.blocks
+            .iter()
+            .flat_map(|b| b.statements.iter())
+            .any(|s| matches!(&s.kind, StatementKind::Load { field, .. } if field.as_str() == "f")),
+        "expected a load of the member `f`\n{prog}"
+    );
 }
 
 #[test_log::test]
@@ -1219,11 +1350,12 @@ fn taint_flows_through_funcptr_in_struct() {
 
 #[test_log::test]
 fn aggregate_initializer_list_lowers_to_element_stores() {
-    // An aggregate brace initializer (`int a[2] = { s, 0 }`) lowers to per-element stores
-    // into synthetic index fields `a.[i]` -- the same `.[N]` field shape a constant-index
-    // subscript read resolves to (see `subscript_access_paths`), so taint deposited in the
-    // initializer is observed at a later `a[0]` read. Previously the `initializer_list`
-    // reached `flatten_expr`'s catch-all and failed ingestion (ERR 78).
+    // An aggregate brace initializer (`int a[2] = { s, 0 }`) lowers to per-element stores at
+    // successive element addresses -- the same offset + `[]` field shape a constant-index
+    // subscript resolves to (see `subscript_access_paths`), so taint deposited in the
+    // initializer is observed at a later `a[0]` read. Element 0 carries no offset segment
+    // (`a[0]` is `*a`), element 1 carries `.[1]`. Previously the `initializer_list` reached
+    // `flatten_expr`'s catch-all and failed ingestion (ERR 78).
     let src = r"
         int f() {
             int s = source();
@@ -1231,18 +1363,18 @@ fn aggregate_initializer_list_lowers_to_element_stores() {
             return a[0];
         }";
     let prog = program_from_string(src).0;
-    check_assign_or_update(&prog, r"a.\[0]", ["s"], None); // a[0] <- s
-    check_assign_or_update(&prog, r"a.\[1]", ["#0"], None); // a[1] <- 0
+    check_assign_or_update(&prog, r"a.\[]", ["s"], None); // a[0] <- s
+    check_assign_or_update(&prog, r"a.[1].\[]", ["#0"], None); // a[1] <- 0
 }
 
 #[test_log::test]
 fn nested_aggregate_initializer_lowers_recursively() {
     // A nested aggregate (`int m[2][2] = {{s,0},{0,0}}`) recurses, extending the base path by
-    // the outer index so the tainted element lands at `m[0][0]`. Access paths are offset-only,
-    // so a two-symbol write (`m.\[0].\[0]`) decomposes through an intermediate load: the outer
-    // `[0]` is loaded (`t = load m.\[0]`) and the inner tainted element is stored into it
-    // (`store t.\[0] := s`). Both halves are asserted below. The subscript is a *symbol* field,
-    // not an offset, so it is written and rendered with the bracket escaped (`.\[0]`).
+    // the outer index so the tainted element lands at `m[0][0]`. A load/store field is a single
+    // symbol, so a two-element write (`m.\[].\[]`) decomposes through an intermediate load: the
+    // outer element is loaded (`t = load m.\[]`) and the inner tainted element is stored into it
+    // (`store t.\[] := s`). Both halves are asserted below. `[]` is the element *field* (a symbol),
+    // so its leading bracket is escaped; index 0 contributes no offset segment.
     let src = r"
         int f() {
             int s = source();
@@ -1251,12 +1383,12 @@ fn nested_aggregate_initializer_lowers_recursively() {
         }";
     let prog = program_from_string(src).0;
     let dump = format!("{prog}");
-    check_loads(&prog, r"m.\[0]"); // the outer index is loaded to address the inner element
+    check_loads(&prog, r"m.\[]"); // the outer element is loaded to address the inner one
     // The dump renders locals as `%L{idx}`, so resolve `s` to its interned rendering.
     let s = local_render(&prog, "f", "s");
     assert!(
-        dump.contains(&format!(r".\[0] := {s}")),
-        "nested tainted element should store `{s}` (= `s`) into a `.\\[0]` field:\n{dump}"
+        dump.contains(&format!(r".\[] := {s}")),
+        "nested tainted element should store `{s}` (= `s`) into a `.\\[]` field:\n{dump}"
     );
 }
 
@@ -1637,22 +1769,23 @@ fn unary_ops_blend_through() {
 #[test_log::test]
 fn constant_index_field_precision() {
     // Constant subscripts are distinct field paths: writing `src` into `v.a[0]` must NOT leak to a read
-    // of `v.a[1]`. Subscripts lower to `FieldAccess::Symbol("[N]")`, so `[0]` and `[1]` are different
-    // segments -- the array-index analogue of `field_non_interference`. The load-bearing assertion is
-    // that src (p1) does not reach the return through the distinct index.
+    // of `v.a[1]`. A subscript lowers to a numeric `Offset(N)` on the address plus the element field
+    // `[]`, so `[0]` and `[1]` differ in that offset -- the array-index analogue of
+    // `field_non_interference`. The load-bearing assertion is that src (p1) does not reach the return
+    // through the distinct index.
     //
-    // NB the escaped brackets in the path strings: the summary stores a subscript as the literal
-    // `Symbol("[0]")`, but `facts::Path`'s parser reads an unescaped `[0]` as a real `Offset(0)` (the
-    // Symbol-vs-Offset divergence noted in this dir's CLAUDE.md). Escaping (`\[0\]`) forces the parser
-    // to emit a Symbol, matching what the frontend actually lowered.
+    // NB the two spellings of a bracket in the path strings: `.[1]` is an *offset*, written plain,
+    // while the element field is the *symbol* `[]`, whose leading bracket must be escaped (`.\[]`)
+    // or the parser would read it as a malformed offset. Index 0 contributes no offset segment at
+    // all -- `a[0]` is `*a`, and `Offset(0)` is the identity on addresses.
     let src = r"
         int f(Thing v, int src) {
             v.a[0] = src;
             return v.a[1];
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_flow(&s, 1, "", 0, r".a.\[0\]"); // src -> v.a[0]
-    check_returns_param(&s, 0, r".a.\[1\]"); // v.a[1] -> return
+    check_flow(&s, 1, "", 0, r".a.\[]"); // src -> v.a[0]
+    check_returns_param(&s, 0, r".a.[1].\[]"); // v.a[1] -> return
     check_does_not_return_param(&s, 1, ""); // src (into a[0]) does NOT reach the a[1] return
 }
 
@@ -1728,13 +1861,16 @@ fn post_increment_value_is_operand() {
 
 #[test_log::test]
 fn nonconstant_subscript_may_alias_constant() {
-    // A non-constant subscript is sound only if it may-alias every concrete index: writing `a[n]` and
-    // reading `a[0]` should carry taint, because `n` could be 0. The frontend instead lowers `a[n]` to
-    // `Symbol("[_elem_]")` and `a[0]` to `Symbol("[0]")` and treats them as disjoint paths, so src does
-    // NOT reach the return -- unsound. (The doc anticipated an array-blind *collapse*; the reality is a
-    // separate `[_elem_]` slot that never merges with constant indices.) Asserting the intended flow
-    // documents the gap. Contrast `constant_index_field_precision`, where keeping two *constant*
-    // indices distinct is the correct, precise answer.
+    // A non-constant subscript is sound only if it may-aliases every concrete index: writing `a[n]` and
+    // reading `a[0]` must carry taint, because `n` could be 0. `a[n]` lowers to `Symbol("[_elem_]")`
+    // (no offset to name) and `a[0]` to the element field `Symbol("[]")` (index 0 contributes no
+    // offset), and `facts::subscripts_may_alias` treats the two as aliases, so the flow survives.
+    //
+    // Only index 0 is covered: `a[n] = src; return a[2]` does NOT flow, because `a[2]` is the
+    // *two*-segment path `.[2].\[]` and no rule relates the unknown-index sentinel to an offset.
+    // That half of the F5 gap is documented in the module header and pinned in
+    // `nonconstant_subscript_misses_nonzero_constant`. Contrast `constant_index_field_precision`,
+    // where keeping two *constant* indices distinct is the correct, precise answer.
     let src = r"
         int f(int *a, int src, int n) {
             a[n] = src;
@@ -1742,6 +1878,23 @@ fn nonconstant_subscript_may_alias_constant() {
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     check_returns_param(&s, 1, "");
+}
+
+#[test_log::test]
+fn nonconstant_subscript_misses_nonzero_constant() {
+    // The other half of `nonconstant_subscript_may_alias_constant`, and a real unsoundness: `n`
+    // could be 2, so `a[n] = src` should be observed at `a[2]`. It is not. `a[n]` has no offset
+    // to name, so it is the one-segment path `.\[_elem_]`, while `a[2]` is `.[2].\[]`; the
+    // may-alias rule relates the sentinel to a *sibling field symbol*, and nothing relates it to
+    // a pointer-arithmetic offset. Closing this needs a wildcard offset in the path model, not a
+    // frontend change. Asserted negatively so the day it starts flowing, this test says so.
+    let src = r"
+        int f(int *a, int src, int n) {
+            a[n] = src;
+            return a[2];
+        }";
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_does_not_return_param(&s, 1, "");
 }
 
 #[test_log::test]
