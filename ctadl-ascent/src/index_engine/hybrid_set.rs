@@ -1,31 +1,31 @@
-//! A set that changes representation with its size: a **linear-probing** open-addressed table
-//! while it is small, a **Swiss table** once it is large — and *one* structure either way, not an
-//! enum over two.
+//! A set that changes representation as it grows. While it is small it is a **linear-probing**
+//! open-addressed table; once it is large it is a **Swiss table**. Either way it stays *one*
+//! structure, not an enum over two.
 //!
-//! This is the `Set<V>` half of the `Map<K, Set<V>>` a Datalog index on `K` needs (see
-//! `locals-trie-benchmark.md` §1). In the workloads that motivate it the number of values per key
-//! varies over four orders of magnitude — most keys hold a couple of values, a few hold
-//! thousands — and no single representation is right for both ends:
+//! A Datalog index on `K` needs a `Map<K, Set<V>>` (see `locals-trie-benchmark.md` §1). This is
+//! the `Set<V>` half of that. In the workloads that motivate it, the number of values per key
+//! spans four orders of magnitude: most keys hold a couple of values, and a few hold thousands.
+//! No single representation is right for both ends.
 //!
-//! * A Swiss table is wrong for 2 elements. Its bucket count is a power of two held at
-//!   ≤ 87.5 % load, so it rounds a 2-element set up to a whole group of buckets and adds one
-//!   control byte per bucket plus a group mirror: 108 B (hashbrown) or 216 B (the table here,
-//!   whose floor is one 8-bucket group) to hold 48 B of payload. Multiplied by the ~400 k tiny
-//!   sets a real index holds, that slack *is* the store.
-//! * A linear scan is wrong for 10 000 elements, and so is anything that re-copies the whole
-//!   set when a delta is merged into it — that is what made large groups quadratic to build.
+//! * A Swiss table is wrong for 2 elements. Its bucket count is a power of two, held at 87.5%
+//!   load or less. So it rounds a 2-element set up to a whole group of buckets, then adds one
+//!   control byte per bucket plus a group mirror. That comes to 108 B in hashbrown, or 216 B in
+//!   the table here, whose floor is one 8-bucket group, to hold 48 B of payload. A real index
+//!   holds about 400k such tiny sets, and at that multiple the slack *is* the store.
+//! * A linear scan is wrong for 10 000 elements. So is anything that re-copies the whole set
+//!   when a delta is merged into it. That is what made large groups quadratic to build.
 //!
-//! So a [`HybridSet`] probes linearly up to [`SMALL_THRESHOLD`] elements and switches to Swiss
-//! probing above it. The spec asks for that upper representation to be written here rather than
-//! taken from a library, so [`swiss`] is a from-scratch SwissTable — control bytes, word-parallel
-//! group scans, hashbrown's sizing rules — described in its own module docs, including the three
-//! places it deliberately parts company with hashbrown.
+//! So a [`HybridSet`] probes linearly up to [`SMALL_THRESHOLD`] elements, and switches to Swiss
+//! probing above that. The spec asks us to write the upper representation here rather than take
+//! it from a library. [`swiss`] is therefore a SwissTable built from scratch, with control
+//! bytes, word-parallel group scans, and hashbrown's sizing rules. Its own module docs describe
+//! it, including the three places where it deliberately parts company with hashbrown.
 //!
 //! ## Not an enum
 //!
-//! The switch is **not** a tagged union. [`raw::RawTable`] is a single structure whose four
-//! fields mean one thing below the threshold and another above it, with the regime read off the
-//! capacity it already has to store:
+//! The switch is **not** a tagged union. [`raw::RawTable`] is a single structure. Its four
+//! fields mean one thing below the threshold and another above it, and it reads the regime off
+//! the capacity it already has to store:
 //!
 //! ```text
 //!   HybridSet = { ptr, cap, len } + hasher (zero-sized by default) = 16 bytes
@@ -38,40 +38,41 @@
 //!   is_large()  =  cap > SMALL_THRESHOLD
 //! ```
 //!
-//! Both regimes keep their metadata at `ptr` and their elements below it, so one allocation
-//! routine, one element addressing rule, one `Drop`, one `Clone`, one growth path and one
-//! iterator serve both. `len` and `capacity` do not branch at all. `raw`'s module docs give the
-//! full argument; the short version is that the enum this replaces cost a discriminant on every
-//! access, two of every impl, and 8 bytes on **every** entry of the enclosing map whether or not
-//! that entry ever grew past two elements.
+//! Both regimes keep their metadata at `ptr` and their elements below it. So one allocation
+//! routine, one element addressing rule, one `Drop`, one `Clone`, one growth path, and one
+//! iterator serve both, and `len` and `capacity` do not branch at all. `raw`'s module docs give
+//! the full argument. The short version is that the enum this replaces cost a discriminant on
+//! every access, two of every impl, and 8 bytes on **every** entry of the enclosing map, whether
+//! or not that entry ever grew past two elements.
 //!
 //! ## Choosing the threshold
 //!
-//! [`SMALL_THRESHOLD`] is the default of the `SMALL` const parameter, not a hard-wired constant,
-//! so a measurement can sweep it (`locals-trie-benchmark.md` §9 argues the value) without
-//! editing the structure — and `SMALL = 0` gives a pure Swiss table, which is the A/B the
+//! [`SMALL_THRESHOLD`] is not hard-wired. It is the default of the `SMALL` const parameter, so a
+//! measurement can sweep it without editing the structure; `locals-trie-benchmark.md` §9 argues
+//! for the value we chose. Setting `SMALL = 0` gives a pure Swiss table, which is the A/B the
 //! `hybrid_set` bench runs against `hashbrown`.
 //!
-//! Promotion is a hard ~2× on the bytes a set spends per element — a Swiss table holds a 24 B
-//! element in a power-of-two bucket array at ≤ 87.5 % load, ~50 B/element, against the probe
-//! table's 24 — and, without removals, a set that crosses never comes back. So the threshold
-//! chooses how much of the size distribution pays that step, and it should sit *above* the bulk
-//! of it. Measured at 16 / 32 / 64 on the `locals` workloads, 64 is the best of the three: it
-//! keeps 33–64-element sets at 24 B/element, worth 14 % of the whole store where such sets occur,
-//! at no measurable time cost.
+//! Promotion roughly doubles the bytes a set spends per element. A Swiss table holds a 24 B
+//! element in a power-of-two bucket array at 87.5% load or less, which comes to about 50 B per
+//! element, against the probe table's 24 B. Without removals, a set that crosses the threshold
+//! never comes back. The threshold therefore decides how much of the size distribution pays that
+//! step, and it should sit *above* the bulk of the distribution. We measured 16, 32, and 64 on
+//! the `locals` workloads. 64 is the best of the three: it keeps 33-to-64-element sets at 24 B
+//! per element, worth 14% of the whole store where such sets occur, and it costs no measurable
+//! time.
 //!
 //! ## Transitioning
 //!
-//! The threshold crossing is one pass over at most [`SMALL_THRESHOLD`] elements into a table
-//! sized for the known final element count (so the new table never rehashes while being filled),
-//! with elements **moved** out of the small buffer rather than cloned. It is the same
-//! `rebuild` that ordinary growth uses — see [`raw`]. Nothing else is touched: the transition is
-//! local to one set, never walks the enclosing map, and never happens twice for the same set
-//! (without removals a set's size only grows).
+//! Crossing the threshold takes one pass over at most [`SMALL_THRESHOLD`] elements. We size the
+//! new table for the final element count, which we already know, so it never rehashes while
+//! being filled, and we **move** elements out of the small buffer rather than clone them. This
+//! is the same `rebuild` that ordinary growth uses; see [`raw`]. Nothing else is touched. The
+//! transition stays local to one set, never walks the enclosing map, and never happens twice for
+//! the same set, because without removals a set's size only grows.
 //!
-//! [`HybridSet::merge`] gets the same treatment from the other direction: the union of two sets
-//! is commutative, so it inserts the *smaller* side into the larger, making a merge cost
-//! O(min(|a|, |b|)) lookups regardless of which side the caller passed as `self`.
+//! [`HybridSet::merge`] gets the same treatment from the other direction. The union of two sets
+//! is commutative, so `merge` inserts the *smaller* side into the larger. A merge therefore
+//! costs O(min(|a|, |b|)) lookups, whichever side the caller passed as `self`.
 
 use std::fmt;
 use std::hash::{BuildHasher, BuildHasherDefault, Hash};
@@ -85,22 +86,23 @@ pub use raw::{IntoIter, Iter, MAX_SMALL_THRESHOLD};
 
 use raw::RawTable;
 
-/// Default hasher: the store keys are trusted, program-derived ids, so hash on the fast,
-/// deterministic `FxHasher` rather than the std collections' DoS-resistant SipHash.
+/// The default hasher. The store keys are trusted ids derived from the program, so we hash them
+/// with the fast, deterministic `FxHasher` instead of the DoS-resistant SipHash the std
+/// collections use.
 pub type DefaultHashBuilder = BuildHasherDefault<FxHasher>;
 
-/// Default element count at which a set switches from linear probing to Swiss probing. A set
-/// holding this many elements is still a probe table; the element that would make it
-/// `SMALL_THRESHOLD + 1` promotes it.
+/// The default element count at which a set switches from linear probing to Swiss probing. A set
+/// holding exactly this many elements is still a probe table. The element that would take it to
+/// `SMALL_THRESHOLD + 1` is what promotes it.
 ///
-/// See the module docs for why 64. It must be 0 or a power of two no greater than
-/// [`MAX_SMALL_THRESHOLD`], which [`raw::RawTable`] asserts at compile time.
+/// See the module docs for why we chose 64. The value must be 0, or a power of two no greater
+/// than [`MAX_SMALL_THRESHOLD`]. [`raw::RawTable`] asserts that at compile time.
 pub const SMALL_THRESHOLD: usize = 64;
 
-/// A set of `T` that is a linear-probing table while it holds at most `SMALL` elements and a
-/// Swiss table above that, in one 16-byte structure. See the module docs.
+/// A set of `T` in one 16-byte structure. It is a linear-probing table while it holds at most
+/// `SMALL` elements, and a Swiss table above that. See the module docs.
 ///
-/// `SMALL` exists so the threshold can be swept by a benchmark; `0` means "always a Swiss table".
+/// `SMALL` exists so that a benchmark can sweep the threshold. `0` means "always a Swiss table".
 pub struct HybridSet<T, S = DefaultHashBuilder, const SMALL: usize = SMALL_THRESHOLD> {
     table: RawTable<T, SMALL>,
     /// Zero-sized for the default hasher, so it costs nothing per set.
@@ -135,8 +137,9 @@ impl<T, S, const SMALL: usize> HybridSet<T, S, SMALL> {
         self.len() == 0
     }
 
-    /// Elements this set can hold before it grows or changes representation. For the small
-    /// representation this is the allocated slot count (load factor may reach 1.0).
+    /// How many elements this set can hold before it grows or changes representation. In the
+    /// small representation that is the allocated slot count, because the load factor may reach
+    /// 1.0.
     #[inline]
     pub fn capacity(&self) -> usize {
         self.table.capacity()
@@ -154,13 +157,13 @@ impl<T, S, const SMALL: usize> HybridSet<T, S, SMALL> {
         self.table.iter()
     }
 
-    /// Heap bytes this set holds, including whatever slack the representation carries: the
-    /// element slots plus one 8-byte occupancy word while small, and the Swiss layout — buckets,
-    /// control bytes and group mirror — once large.
+    /// Heap bytes this set holds, including whatever slack its representation carries. While the
+    /// set is small that is the element slots plus one 8-byte occupancy word. Once it is large
+    /// it is the Swiss layout: buckets, control bytes, and the group mirror.
     ///
-    /// Both terms are the allocation the set actually made, not an estimate: unlike the
-    /// [`super::locals_trie::hb_bytes`] model of hashbrown's layout that the enclosing map still
-    /// needs, this structure computes its own layout, so it can simply report it.
+    /// Either way this is the allocation the set actually made, not an estimate. The enclosing
+    /// map still needs [`super::locals_trie::hb_bytes`] to model hashbrown's layout, but this
+    /// structure computes its own layout, so it can simply report it.
     pub fn heap_bytes(&self) -> usize {
         self.table.heap_bytes()
     }
@@ -171,9 +174,9 @@ where
     T: Hash + Eq,
     S: BuildHasher + Default,
 {
-    /// An empty set sized for `capacity` elements: a probe table if that fits under the
-    /// threshold, a Swiss table straight away if it does not. Lets a caller that knows the final
-    /// size skip the transition entirely.
+    /// An empty set sized for `capacity` elements. It is a probe table if that many elements fit
+    /// under the threshold, and a Swiss table straight away if they do not. A caller that knows
+    /// the final size can use this to skip the transition entirely.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             table: RawTable::with_capacity(capacity),
@@ -192,7 +195,7 @@ where
         self.table.find(hash, |x| x == value).is_some()
     }
 
-    /// Insert `value`; returns whether it was newly added.
+    /// Insert `value`. Returns whether it was newly added.
     #[inline]
     pub fn insert(&mut self, value: T) -> bool {
         let Self { table, hasher } = self;
@@ -200,23 +203,23 @@ where
         table.insert(hash, value, |x| hasher.hash_one(x))
     }
 
-    /// Make room for `additional` more elements, changing representation up front if that many
-    /// more elements could not fit in the small one.
+    /// Make room for `additional` more elements. If that many more would not fit in the small
+    /// representation, this changes representation up front.
     ///
-    /// Callers that only have an *upper bound* on the additional count (a union, say, whose
-    /// overlap is unknown) should not use this: over-reserving here permanently promotes a set
-    /// that might have stayed small. [`Self::merge`] deliberately does not call it.
+    /// Do not use this if you only have an *upper bound* on the additional count, as you would
+    /// for a union whose overlap is unknown. Over-reserving here permanently promotes a set that
+    /// might have stayed small. [`Self::merge`] deliberately does not call it.
     pub fn reserve(&mut self, additional: usize) {
         let Self { table, hasher } = self;
         table.reserve(additional, |x| hasher.hash_one(x));
     }
 
-    /// Union `other` into `self`; returns how many elements were **newly added to `self`**.
+    /// Union `other` into `self`. Returns how many elements were **newly added to `self`**.
     ///
-    /// Cost is O(min(|self|, |other|)) lookups: a union is commutative, so if `other` is the
-    /// bigger side the two are swapped and the smaller one is inserted into it. That is what
-    /// keeps a delta→total merge proportional to the delta rather than to the accumulated
-    /// total, whichever way round the caller has them.
+    /// This costs O(min(|self|, |other|)) lookups. A union is commutative, so if `other` is the
+    /// bigger side we swap the two and insert the smaller one into it. That is what keeps a
+    /// delta->total merge proportional to the delta rather than to the accumulated total,
+    /// whichever way round the caller has them.
     pub fn merge(&mut self, mut other: Self) -> usize {
         if other.is_empty() {
             return 0;
@@ -232,8 +235,8 @@ where
         for value in other {
             self.insert(value);
         }
-        // `self` now holds the union either way; `before` is the size of the set the caller
-        // passed as `self`, which is what "newly added to self" is measured against.
+        // Either way, `self` now holds the union. `before` is the size of the set the caller
+        // passed as `self`, which is what we measure "newly added to self" against.
         self.len() - before
     }
 }
@@ -270,8 +273,8 @@ where
 {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let iter = iter.into_iter();
-        // The lower bound is a count of elements *before* dedup, so it is only a hint; sizing
-        // to it avoids the transition when the caller knows the set is already large.
+        // The lower bound counts elements *before* dedup, so it is only a hint. Sizing to it
+        // avoids the transition when the caller knows the set is already large.
         let mut set = Self::with_capacity(iter.size_hint().0);
         set.extend(iter);
         set
@@ -313,11 +316,11 @@ mod tests {
 
     type Set = HybridSet<u64>;
 
-    /// The same structure with the small regime switched off: a pure Swiss table, which is what
-    /// the hashbrown-parity tests below measure.
+    /// The same structure with the small regime switched off, giving a pure Swiss table. That is
+    /// what the hashbrown-parity tests below measure.
     type Swiss<T> = HybridSet<T, DefaultHashBuilder, 0>;
 
-    /// Cheap deterministic pseudo-random sequence (no `rand` dependency).
+    /// A cheap, deterministic pseudo-random sequence, so we need no `rand` dependency.
     fn lcg(seed: u64) -> impl FnMut() -> u64 {
         let mut s = seed;
         move || {
@@ -328,8 +331,9 @@ mod tests {
         }
     }
 
-    /// Every element inserted is findable, every element not inserted is not, and the size and
-    /// the iteration agree with a `BTreeSet` built from the same inserts.
+    /// Checks that we can find every element we inserted, that we cannot find any element we did
+    /// not, and that the size and the iteration agree with a `BTreeSet` built from the same
+    /// inserts.
     fn model_check(values: &[u64]) {
         let mut set = Set::new();
         let mut model = BTreeSet::new();
@@ -356,7 +360,7 @@ mod tests {
         assert!(set.capacity() >= set.len());
     }
 
-    /// The same, against a set that is a Swiss table at every size.
+    /// The same checks, against a set that is a Swiss table at every size.
     fn swiss_model_check(values: &[u64]) {
         let mut set = Swiss::new();
         let mut model = BTreeSet::new();
@@ -395,12 +399,12 @@ mod tests {
         model_check(&[]);
         model_check(&[7]);
         model_check(&[7, 7, 7]);
-        // Dense low values: probe sequences wrap and collide constantly.
+        // Dense low values, so probe sequences wrap and collide constantly.
         model_check(&(0..100u64).collect::<Vec<_>>());
-        // Every element hashing to the same slot in a power-of-two table would be ideal; the
+        // Ideally every element would hash to the same slot in a power-of-two table. The
         // multiples below at least share low bits after FxHash mixing.
         model_check(&(0..80u64).map(|i| i * 64).collect::<Vec<_>>());
-        // Exactly at / around the threshold, which is where representation flips.
+        // At the threshold and on either side of it, where the representation flips.
         for n in [
             SMALL_THRESHOLD - 1,
             SMALL_THRESHOLD,
@@ -417,14 +421,14 @@ mod tests {
         }
     }
 
-    /// The large regime on its own, exercised from empty — the path an ordinary `HybridSet`
-    /// only reaches after promotion, so it needs its own coverage at small sizes.
+    /// Exercises the large regime on its own, starting from empty. An ordinary `HybridSet`
+    /// reaches this path only after promotion, so it needs its own coverage at small sizes.
     #[test]
     fn matches_a_set_model_with_no_small_regime() {
         swiss_model_check(&[]);
         swiss_model_check(&[7, 7, 7]);
         swiss_model_check(&(0..300u64).collect::<Vec<_>>());
-        // Values whose low bits collide after mixing: heavy probing.
+        // Values whose low bits collide after mixing, which forces heavy probing.
         swiss_model_check(&(0..200u64).map(|i| i * 4096).collect::<Vec<_>>());
         // Every size across the first few growth steps.
         for n in 0..40u64 {
@@ -439,8 +443,9 @@ mod tests {
 
     #[test]
     fn absent_elements_are_not_found_at_every_size() {
-        // A full small table has no empty slot to stop a probe at, so the "not present" answer
-        // has to come from the bounded scan. Check it at every size up to and past promotion.
+        // A full small table has no empty slot for a probe to stop at, so the "not present"
+        // answer has to come from the bounded scan. Check that at every size up to promotion
+        // and past it.
         for n in 0..=(SMALL_THRESHOLD + 4) as u64 {
             let set: Set = (0..n).collect();
             assert_eq!(set.len() as u64, n);
@@ -448,7 +453,7 @@ mod tests {
                 assert!(!set.contains(&absent), "n={n}: {absent} must be absent");
             }
         }
-        // And the same for a table that is Swiss at every size.
+        // Now the same, for a table that is Swiss at every size.
         for n in 0..=200u64 {
             let mut set: Swiss<u64> = Swiss::new();
             for i in 0..n {
@@ -500,8 +505,8 @@ mod tests {
 
     #[test]
     fn small_representation_allocates_only_slots_and_one_word() {
-        // The point of the bitmask: a small set's heap cost is its slots plus a single 8-byte
-        // occupancy word, with no per-element control bytes. Slot counts double from 1.
+        // This is what the bitmask buys us. A small set's heap cost is its slots plus a single
+        // 8-byte occupancy word, with no per-element control bytes. Slot counts double from 1.
         for (n, slots) in [
             (0usize, 0usize),
             (1, 1),
@@ -534,9 +539,9 @@ mod tests {
         assert_eq!(slot_count_for(4, 0), 0, "a zero threshold is never small");
     }
 
-    /// The point of the exercise: once large, bucket counts must be hashbrown's, at every size a
-    /// real hashbrown table steps through — except below one group, where this table starts at 8
-    /// buckets rather than 4.
+    /// This is what the exercise is for. Once the table is large, its bucket counts must be
+    /// hashbrown's, at every size a real hashbrown table steps through. The one exception is
+    /// below a single group, where this table starts at 8 buckets rather than 4.
     #[test]
     fn bucket_counts_track_hashbrown() {
         let mut theirs: hashbrown::HashSet<u64, DefaultHashBuilder> = hashbrown::HashSet::default();
@@ -547,11 +552,11 @@ mod tests {
             ours.insert(i);
             let hb = hb_buckets(theirs.capacity());
             if hb < super::swiss::GROUP_WIDTH {
-                // hashbrown's 4-bucket table, which this deliberately does not have.
+                // This is hashbrown's 4-bucket table, which we deliberately do not have.
                 continue;
             }
-            // The allocation is hashbrown's byte for byte, wherever hashbrown's group is also
-            // 8 bytes wide.
+            // Wherever hashbrown's group is also 8 bytes wide, our allocation matches
+            // hashbrown's byte for byte.
             if HB_GROUP_WIDTH == super::swiss::GROUP_WIDTH {
                 assert_eq!(
                     ours.heap_bytes(),
@@ -570,7 +575,7 @@ mod tests {
         let large: Set = Set::with_capacity(SMALL_THRESHOLD + 1);
         assert!(large.is_large(), "sized past the threshold, start large");
         assert!(large.capacity() > SMALL_THRESHOLD);
-        // ... and stays usable and correct.
+        // It must also stay usable and correct.
         let mut large = large;
         for i in 0..100 {
             assert!(large.insert(i));
@@ -608,7 +613,7 @@ mod tests {
         set.reserve(1);
         assert_eq!(set.capacity(), cap);
 
-        // ... and a large reserve must actually hold.
+        // A large reserve must hold too.
         let mut set: Set = (0..10).collect();
         set.reserve(500);
         let cap = set.capacity();
@@ -623,8 +628,9 @@ mod tests {
         }
     }
 
-    /// Elements with a destructor must be dropped exactly once, from either representation and
-    /// through every path that moves them (growth, promotion, `into_iter`, drop).
+    /// Elements with a destructor must be dropped exactly once. That holds for either
+    /// representation, and through every path that moves them: growth, promotion, `into_iter`,
+    /// and drop.
     #[test]
     fn drops_each_element_exactly_once() {
         #[derive(Clone)]
@@ -651,12 +657,12 @@ mod tests {
             {
                 let mut set: HybridSet<Counted> = HybridSet::new();
                 for i in 0..n {
-                    // Insert each value twice: the duplicate is dropped immediately.
+                    // Insert each value twice. The set drops the duplicate immediately.
                     set.insert(Counted(i, log.clone()));
                     set.insert(Counted(i, log.clone()));
                 }
                 assert_eq!(set.len() as u64, n);
-                // The duplicates, and nothing else, have been dropped so far.
+                // So far the set has dropped the duplicates and nothing else.
                 let mut so_far = log.borrow().clone();
                 so_far.sort_unstable();
                 assert_eq!(
@@ -672,9 +678,9 @@ mod tests {
             assert_eq!(all, expected, "n={n}: every element dropped exactly once");
         }
 
-        // Same, but the set is consumed by `into_iter` and the yielded elements are dropped by
-        // the caller — the un-yielded remainder must still be dropped exactly once. Run on both
-        // sides of the threshold.
+        // The same again, but `into_iter` consumes the set and the caller drops the elements it
+        // yields. The remainder, which the iterator never yielded, must still be dropped exactly
+        // once. We run this on both sides of the threshold.
         for n in [10u64, 50, 200] {
             let log = Rc::new(RefCell::new(Vec::new()));
             {
@@ -686,7 +692,7 @@ mod tests {
                 for _ in 0..7 {
                     drop(it.next());
                 }
-                // `it` (holding the rest) is dropped here.
+                // `it` still holds the rest, and is dropped here.
             }
             let mut all = log.borrow().clone();
             all.sort_unstable();
@@ -694,16 +700,17 @@ mod tests {
         }
     }
 
-    /// The set is two words wide, whatever it holds: a pointer to one allocation whose metadata
-    /// it points at and whose elements lie below, plus a slot/bucket count and an element count.
-    /// Eight bytes narrower than the enum this replaced, on every entry of the enclosing map.
+    /// The set is two words wide, whatever it holds. Those two words are a pointer into one
+    /// allocation, at its metadata, with its elements lying below, and a packed slot-or-bucket
+    /// count and element count. That is 8 bytes narrower than the enum it replaced, on every
+    /// entry of the enclosing map.
     #[test]
     fn set_is_two_words() {
         let word = std::mem::size_of::<usize>();
         assert_eq!(std::mem::size_of::<HybridSet<(u64, i16, u64)>>(), 2 * word);
         assert_eq!(std::mem::size_of::<HybridSet<u64>>(), 2 * word);
         assert_eq!(std::mem::size_of::<HybridSet<[u8; 40]>>(), 2 * word);
-        // And the threshold is a type parameter, not a second layout.
+        // The threshold is a type parameter, not a second layout.
         assert_eq!(std::mem::size_of::<Swiss<u64>>(), 2 * word);
     }
 
@@ -721,13 +728,13 @@ mod tests {
         let mut expected = before;
         expected.insert(9999);
         assert_eq!(set.iter().copied().collect::<BTreeSet<_>>(), expected);
-        // No rehash happened while filling the promoted table: it was sized for exactly the
+        // Filling the promoted table caused no rehash, because we sized it for exactly the
         // elements it received.
         assert!(set.capacity() >= set.len());
     }
 
-    /// A non-default threshold must behave the same way, at its own boundary — the const
-    /// parameter is a knob, not a special case.
+    /// A non-default threshold must behave the same way at its own boundary. The const parameter
+    /// is a knob, not a special case.
     #[test]
     fn other_thresholds_switch_at_their_own_boundary() {
         fn check<const SMALL: usize>() {
@@ -758,9 +765,9 @@ mod tests {
         check::<64>();
     }
 
-    /// Hashing is the enclosing set's job, and it must be the *same* hasher the table was built
-    /// with after every rebuild — a promotion that rehashed with a different seed would lose
-    /// elements silently.
+    /// Hashing is the enclosing set's job. After every rebuild it must still use the *same*
+    /// hasher the table was built with. A promotion that rehashed with a different seed would
+    /// lose elements silently.
     #[test]
     fn a_stateful_hasher_survives_promotion() {
         #[derive(Clone, Default)]
