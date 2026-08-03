@@ -1,6 +1,7 @@
 /*! JSON model_generator handling
 
-Handles the translation of `model_generator` format into our [`ModelBuilders`].
+Handles the translation of `model_generator` format into a
+[`ProgramModelMatches`](crate::models::ProgramModelMatches).
 
 The code is architected so that models can be streamed in `jsonl` format.
 To convert a `json` model file into `jsonl`, you can do:
@@ -15,27 +16,31 @@ use std::sync::OnceLock;
 use hashbrown::hash_map::HashMap;
 use regex::Regex;
 
+use super::match_index::ProgramMatchIndex;
 use super::universe_set::*;
 use super::*;
 use crate::error::Error;
-use ctadl_ir::ProgramInfo;
-use ctadl_ir::mir::FunctionData;
+use crate::facts;
+use ctadl_ir::mir;
+use ctadl_ir::mir::PathSegment;
 use ctadl_ir::mir::StatementKind;
 use ctadl_ir::mir::call::VirtualMethodTable;
 
-/// Ingests model_generators and matches them against a program, producing a set of summaries
-/// usable for indexing.
+/// Ingests model_generators and matches them against a program, appending what matched into a
+/// [`ProgramModelMatches`](crate::models::ProgramModelMatches).
 ///
 /// This object indexes the metadata in a useful way so that model_generators can be efficiently
 /// matched. It also implements a visitor for model_generators.
 ///
 /// **Stage 1** of source/sink matching: match MIR elements (function names, signatures,
-/// arity, regexes) → the name-based columnar
-/// [`EndpointBatch`](crate::models::EndpointBatch) intermediate (see [`Self::emit_endpoints`]).
+/// arity, regexes) → the name-based [`EndpointMatch`](crate::models::EndpointMatch) rows in
+/// `out` (see [`Self::emit_endpoints`]).
 /// [`query_engine::build_query_endpoints`](crate::query_engine::build_query_endpoints) is
-/// Stage 2, which resolves and expands that intermediate into `QueryEndpoint`s.
+/// Stage 2, which resolves and expands those rows into `QueryEndpoint`s.
 pub struct ModelGeneratorIngest<'p, 'b> {
-    builder: &'b mut ModelBuilders,
+    /// Everything this generator matched, appended as it goes. Held mutably for the ingest's
+    /// whole life, so a caller that also needs to write to it must drop the ingest first.
+    out: &'b mut ProgramModelMatches,
     /// Keyed by generator index rather than positional: `find` is optional in the JSON, so a
     /// generator that omits it leaves no entry, and a `Vec` would then misalign every later
     /// generator (it used to panic outright).
@@ -47,21 +52,10 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     /// Which set the currently-executing constraint narrows (see [`CurrentSet`]).
     current_set: CurrentSet,
 
-    vmt: &'p VirtualMethodTable,
-    // maps simple names to fully qualified names
-    program_method_names: HashMap<&'p str, Vec<&'p str>>,
-    // maps parent to fully qualified name
-    program_method_parents: HashMap<&'p str, Vec<&'p str>>,
-    // maps signatures to fully qualified name
-    program_method_signatures: HashMap<&'p str, Vec<&'p str>>,
-    /// fq-name (== `FunctionData.name`) → the function's IR data. Backs the
-    /// `has_code` / `number_parameters` / `uses_field` constraints, which need
-    /// per-function body/parameter/field information.
-    program_functions: HashMap<&'p str, &'p FunctionData>,
-    /// The full set of function fq-names, always [`UniverseSet::Explicit`]. Mirrors
-    /// what [`matched_functions`]`(&All)` enumerates for this frontend, so a
-    /// top-level `not X` can be materialized to `universe \ X`.
-    universe: UniverseSet<&'p str>,
+    /// The program metadata every set-narrowing constraint reads. Borrowed, not built here:
+    /// one struct, one construction path, two users (this visitor and the index-time streaming
+    /// matcher). See [`ProgramMatchIndex`].
+    index: &'p ProgramMatchIndex<'p>,
     /// Isolated sub-evaluation stack. While non-empty, [`Self::target_set_mut`]
     /// resolves to the top entry instead of `methods`/`in_functions`, so a
     /// combinator (`any_of` / `not`) can evaluate an inner constraint against a
@@ -75,6 +69,46 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     /// `CTADL0004` SARIF notification, so a `where` constraint that selects no function is
     /// reported instead of vanishing.
     pub endpoint_stats: BTreeMap<(usize, TaintDirection), EndpointStats>,
+    /// Generators whose `model` declared an index-time-only construct, counted so a caller
+    /// that cannot act on them (`ctadl query`) can say so once instead of silently dropping
+    /// them. See [`IndexTimeModelCounts`].
+    pub index_time_models: IndexTimeModelCounts,
+}
+
+/// How many generators declared each index-time-only model construct.
+///
+/// A property of the model *file*, not of the program it was matched against, so
+/// [`Self::merge`] takes the max rather than summing: the same file is re-matched once per
+/// import, and summing would multiply the count by the import count.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct IndexTimeModelCounts {
+    /// Generators carrying a `propagation`.
+    pub propagations: usize,
+    /// Generators carrying a `bridge`.
+    pub bridges: usize,
+}
+
+impl IndexTimeModelCounts {
+    pub fn merge(&mut self, other: &Self) {
+        self.propagations = self.propagations.max(other.propagations);
+        self.bridges = self.bridges.max(other.bridges);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.propagations == 0 && self.bridges == 0
+    }
+
+    /// How to name what was ignored, for the one warning a query-time load emits.
+    pub fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        if self.propagations > 0 {
+            parts.push(format!("{} propagation model(s)", self.propagations));
+        }
+        if self.bridges > 0 {
+            parts.push(format!("{} bridging model(s)", self.bridges));
+        }
+        parts.join(" and ")
+    }
 }
 
 /// What Stage 1 did with one generator's port declarations in one direction.
@@ -134,21 +168,25 @@ static ARGUMENT_REGEX: OnceLock<Regex> = OnceLock::new();
 static RETURN_REGEX: OnceLock<Regex> = OnceLock::new();
 static VARIABLE_REGEX: OnceLock<Regex> = OnceLock::new();
 
+// All three are anchored. Unanchored, `Return(.*)?` matched "MyReturnType", which was silently
+// accepted as a `Return` port with access path `Type`; likewise any text could surround an
+// `Argument(n)`. A non-match now falls through to the existing `InvalidArgumentFormat`.
+
 #[inline]
 fn argument_regex() -> &'static Regex {
-    ARGUMENT_REGEX.get_or_init(|| Regex::new(r#"Argument\((\d+|[*])\)(.*)?"#).unwrap())
+    ARGUMENT_REGEX.get_or_init(|| Regex::new(r#"^Argument\((\d+|[*])\)(.*)$"#).unwrap())
 }
 
 #[inline]
 fn return_regex() -> &'static Regex {
-    RETURN_REGEX.get_or_init(|| Regex::new(r#"Return(.*)?"#).unwrap())
+    RETURN_REGEX.get_or_init(|| Regex::new(r#"^Return(.*)$"#).unwrap())
 }
 
 #[inline]
 fn variable_regex() -> &'static Regex {
     // `Variable(name)` selects a source/sink port by the local's source name, with an
     // optional trailing access path (`Variable(buf).headers`).
-    VARIABLE_REGEX.get_or_init(|| Regex::new(r#"Variable\(([^)]+)\)(.*)?"#).unwrap())
+    VARIABLE_REGEX.get_or_init(|| Regex::new(r#"^Variable\(([^)]+)\)(.*)$"#).unwrap())
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -197,93 +235,142 @@ enum Subject<'a> {
     Class(&'a str),
 }
 
+/// Which [`Subject`] variant a predicate tree will be evaluated against.
+///
+/// The kind is fixed before evaluation begins and is what makes
+/// [`ModelGeneratorIngest::validate_predicate`] possible: every authoring error a predicate
+/// can have is a function of its shape plus this, never of the subject's value.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum SubjectKind {
+    Int,
+    Class,
+}
+
 impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
-    pub fn new(program_info: &'p ProgramInfo, builder: &'b mut ModelBuilders) -> Self {
-        let vmt = &program_info.vmt;
-        let mut program_method_names: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-        let mut program_method_parents: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-        let mut program_method_signatures: HashMap<&'p str, Vec<&'p str>> = HashMap::new();
-
-        if let VirtualMethodTable::Java { methods, .. } = vmt {
-            methods
-                .iter()
-                .map(|(_cls, name, _sig, fid)| (name.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| program_method_names.entry(key).or_default().push(val));
-
-            methods
-                .iter()
-                .map(|(cls, _name, _sig, fid)| (cls.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| program_method_parents.entry(key).or_default().push(val));
-
-            methods
-                .iter()
-                .map(|(_cls, _name, sig, fid)| (sig.as_ref(), fid.as_ref()))
-                .for_each(|(key, val)| program_method_signatures.entry(key).or_default().push(val));
-        } else if let VirtualMethodTable::Native { methods } = vmt {
-            // Native frontends (pcode, clang) carry, per function, a simple
-            // (un-decorated) name and a best-effort type signature alongside the
-            // fully-qualified IR name. Key matching off the SIMPLE name so a model
-            // pattern like `^system$` resolves even when the IR name is decorated
-            // (e.g. Ghidra's `<EXTERNAL>::system@00101008`). The fully-qualified
-            // name is also kept matchable for models that spell it out verbatim.
-            for (simple, sig, fq) in methods {
-                let simple = simple.as_ref();
-                let fq = fq.as_ref();
-                program_method_names.entry(simple).or_default().push(fq);
-                program_method_signatures.entry(sig).or_default().push(fq);
-                program_method_names.entry(fq).or_default().push(fq);
-                program_method_signatures.entry(fq).or_default().push(fq);
-            }
-        } else {
-            // Fallback (Unknown / CplusPlus): use the IR function names directly.
-            for func in &program_info.program.functions.functions {
-                let name = func.name.as_str();
-                program_method_signatures
-                    .entry(name)
-                    .or_default()
-                    .push(name);
-                program_method_names.entry(name).or_default().push(name);
-            }
-        }
-        // Index every IR function by its fq-name for the body/parameter/field
-        // constraints (`has_code`, `number_parameters`, `uses_field`).
-        let mut program_functions: HashMap<&'p str, &'p FunctionData> = HashMap::new();
-        for func in &program_info.program.functions.functions {
-            program_functions.entry(func.name.as_str()).or_insert(func);
-        }
-
-        let universe: UniverseSet<&'p str> = match vmt {
-            VirtualMethodTable::Java { methods, .. } => {
-                methods.iter().map(|(_, _, _, fid)| fid.as_ref()).collect()
-            }
-            VirtualMethodTable::Native { methods } => {
-                methods.iter().map(|(_, _, fq)| fq.as_ref()).collect()
-            }
-            VirtualMethodTable::Unknown | VirtualMethodTable::CplusPlus => UniverseSet::empty(),
-        };
-
-        // constructs index for the program
+    /// Borrows a [`ProgramMatchIndex`] to evaluate against and a [`ProgramModelMatches`] to
+    /// emit into.
+    ///
+    /// The index is *not* constructed here on purpose: bridge matching and ordinary matching must
+    /// read the same tables, keyed the same way, or the per-VMT rules (bare name vs qualified id,
+    /// plus Lua's externals column) drift apart between the two.
+    pub fn new(index: &'p ProgramMatchIndex<'p>, out: &'b mut ProgramModelMatches) -> Self {
         Self {
-            builder,
+            out,
             find_method: HashMap::new(),
             methods: Vec::new(),
             in_functions: Vec::new(),
             current_set: CurrentSet::Methods,
-            vmt,
-            program_method_names,
-            program_method_parents,
-            program_method_signatures,
-            program_functions,
-            universe,
+            index,
             scratch: Vec::new(),
             errors: Vec::new(),
             endpoint_stats: BTreeMap::new(),
+            index_time_models: IndexTimeModelCounts::default(),
+        }
+    }
+
+    /// Evaluates one side of a bridge: the `where` constraints of a synthetic
+    /// `{"find": "methods", "where": …}` generator, returning the fq-names it matched.
+    ///
+    /// This is *the* reuse point. `find` is a constant on both sides of a bridge (§2.1 of the
+    /// design: a bridge attaches inside the matched method), so the caller supplies constraints
+    /// only, and everything else — `any_of`/`not`, `qualified-id`, the unknown-field and
+    /// unknown-constraint hard errors — applies verbatim.
+    ///
+    /// `n` names the generator in any error raised; errors accumulate in [`Self::errors`] as
+    /// usual, and an errored side yields no matches.
+    pub fn match_where(&mut self, n: usize, constraints: &[serde_json::Value]) -> Vec<String> {
+        set_slot(&mut self.methods, n, UniverseSet::all());
+        set_slot(&mut self.in_functions, n, UniverseSet::all());
+        self.current_set = CurrentSet::Methods;
+        self.find_method.insert(n, FindMethod::Methods);
+        for c in constraints {
+            self.visit_where_constraint(n, c);
+        }
+        let matched = self.index.functions_of(&self.methods[n]);
+        // Release the set as `visit_model_generator` does: a match set is live only for the
+        // duration of the generator that produced it.
+        self.methods[n] = UniverseSet::empty();
+        matched
+    }
+
+    /// Takes any errors collected so far, as [`Self::encode_models_from`] does at the end of a
+    /// batch. Lets a caller that drives [`Self::match_where`] directly surface them.
+    pub fn take_errors(&mut self) -> Result<(), Error> {
+        let errors = std::mem::take(&mut self.errors);
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            let mut json_errors = crate::error::JsonModelErrors::default();
+            json_errors.extend(errors);
+            Err(Error::JsonModel(json_errors))
         }
     }
 
     /// Add a JSON parsing error to the collection
     fn add_json_error(&mut self, error: crate::error::JsonModelError) {
         self.errors.push(error);
+    }
+
+    /// Validates the key set of a leaf constraint object: every key must be one the visitor
+    /// actually honors, and at least one honored key must be present.
+    ///
+    /// A constraint the loader cannot act on is *not* harmless. The working set starts as
+    /// [`UniverseSet::all`] (see [`Self::visit_model_generator`]), so a constraint that
+    /// narrows nothing leaves the generator matching **every function in the program** — a
+    /// model meant to mark one method as a source silently becomes a global source, and
+    /// `CTADL0004` only reports generators that matched *nothing*. Erroring only on "no
+    /// honored key" would still let `{"constraint": "signature_match", "name": "x",
+    /// "extends": "Y"}` drop `extends` on the floor, so the unknown-key half is the
+    /// important one: it mirrors the schema's `additionalProperties: false` and makes key
+    /// removals self-enforcing.
+    ///
+    /// `constraint` — the discriminator itself — is the only structural key; nothing in the
+    /// `super_*` traversal injects or wraps anything, so the object seen here is verbatim
+    /// from the model file.
+    ///
+    /// Returns false if anything was reported, so callers can skip the set math.
+    fn check_constraint_keys(
+        &mut self,
+        n: usize,
+        value: &serde_json::Value,
+        honored: &[&str],
+    ) -> bool {
+        // `visit_where_constraint` already rejected anything without a string `constraint`
+        // discriminator, so a non-object cannot reach a leaf visitor.
+        let Some(obj) = value.as_object() else {
+            return false;
+        };
+        let kind = obj
+            .get("constraint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<missing>");
+        let expected = honored
+            .iter()
+            .map(|h| format!("'{h}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut ok = true;
+        for key in obj.keys() {
+            if key == "constraint" || honored.contains(&key.as_str()) {
+                continue;
+            }
+            self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                index: n,
+                field_name: key.clone(),
+                message: format!(
+                    "not a recognized field of the '{kind}' constraint; expected one of {expected}"
+                ),
+            });
+            ok = false;
+        }
+        if !honored.iter().any(|h| obj.contains_key(*h)) {
+            self.add_json_error(crate::error::JsonModelError::MissingField {
+                index: n,
+                field_name: honored.join("' / '"),
+            });
+            ok = false;
+        }
+        ok
     }
 
     /// The universe set that set-narrowing constraints currently intersect.
@@ -311,7 +398,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
     /// any_of's scratch rather than the top-level method set.
     #[inline]
     fn materialize_target(&mut self, n: usize) {
-        let universe = self.universe.clone();
+        let universe = self.index.universe.clone();
         let target = self.target_set_mut(n);
         if matches!(target, UniverseSet::All) {
             *target = universe;
@@ -324,61 +411,36 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
     /// `parent`, and `extends` bind their `inner` to a specific integer (arity) or class name
     /// rather than to the function working set. Combinators (`any_of`/`all_of`/`not`) are handled
     /// at the boolean level. A constraint that does not apply to the subject (e.g. an integer
-    /// comparison on a class, or a `name` match on an integer) is a hard authoring error
-    /// (`UnexpectedConstraint`) and evaluates to `false`.
-    fn eval_predicate(&mut self, n: usize, c: &serde_json::Value, subj: Subject<'_>) -> bool {
+    /// comparison on a class, or a `name` match on an integer) evaluates to `false`.
+    ///
+    /// **This function reports no errors.** It runs once per candidate — per function arity,
+    /// per class, and for `extends` inside a short-circuiting `any` over supertypes — so
+    /// reporting from here emitted one copy of the same authoring error per candidate
+    /// (thousands of identical lines on a real program, a count that depended on
+    /// short-circuiting for `extends`) and reported *nothing at all* when the candidate list
+    /// was empty, e.g. `parent` on a non-Java program. Every such error is a property of the
+    /// constraint's shape and the subject's kind, both fixed before the loop starts, so
+    /// [`Self::validate_predicate`] is the single reporter and runs exactly once.
+    fn eval_predicate(&self, c: &serde_json::Value, subj: Subject<'_>) -> bool {
         match c["constraint"].as_str() {
             Some("any_of") => match c.get("inners").and_then(|v| v.as_array()) {
-                Some(inners) => inners
-                    .iter()
-                    .any(|inner| self.eval_predicate(n, inner, subj)),
-                None => {
-                    self.add_json_error(crate::error::JsonModelError::FieldNotArray {
-                        index: n,
-                        field_name: "inners".to_string(),
-                    });
-                    false
-                }
+                Some(inners) => inners.iter().any(|inner| self.eval_predicate(inner, subj)),
+                None => false,
             },
             Some("all_of") => match c.get("inners").and_then(|v| v.as_array()) {
-                Some(inners) => inners
-                    .iter()
-                    .all(|inner| self.eval_predicate(n, inner, subj)),
-                None => {
-                    self.add_json_error(crate::error::JsonModelError::FieldNotArray {
-                        index: n,
-                        field_name: "inners".to_string(),
-                    });
-                    false
-                }
+                Some(inners) => inners.iter().all(|inner| self.eval_predicate(inner, subj)),
+                None => false,
             },
             Some("not") => match c.get("inner") {
-                Some(inner) => !self.eval_predicate(n, inner, subj),
-                None => {
-                    self.add_json_error(crate::error::JsonModelError::MissingField {
-                        index: n,
-                        field_name: "inner".to_string(),
-                    });
-                    false
-                }
+                Some(inner) => !self.eval_predicate(inner, subj),
+                None => false,
             },
             Some(op @ ("<" | "<=" | ">" | ">=" | "!=" | "==")) => {
                 let Subject::Int(lhs) = subj else {
-                    self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
-                        index: n,
-                        constraint_type: op.to_string(),
-                    });
                     return false;
                 };
-                let rhs = match c.get("value").and_then(|v| v.as_i64()) {
-                    Some(v) => v,
-                    None => {
-                        self.add_json_error(crate::error::JsonModelError::InvalidInteger {
-                            index: n,
-                            source: "".parse::<i64>().unwrap_err(),
-                        });
-                        return false;
-                    }
+                let Some(rhs) = c.get("value").and_then(|v| v.as_i64()) else {
+                    return false;
                 };
                 match op {
                     "<" => lhs < rhs,
@@ -392,40 +454,15 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             }
             Some("name") => {
                 let Subject::Class(cls) = subj else {
-                    self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
-                        index: n,
-                        constraint_type: "name".to_string(),
-                    });
                     return false;
                 };
-                let pattern = match c.get("pattern").and_then(|v| v.as_str()) {
-                    Some(p) => p,
-                    None => {
-                        self.add_json_error(crate::error::JsonModelError::FieldNotString {
-                            index: n,
-                            field_name: "pattern".to_string(),
-                        });
-                        return false;
-                    }
+                let Some(pattern) = c.get("pattern").and_then(|v| v.as_str()) else {
+                    return false;
                 };
-                match Regex::new(pattern) {
-                    Ok(rx) => rx.is_match(cls),
-                    Err(source) => {
-                        self.add_json_error(crate::error::JsonModelError::InvalidRegex {
-                            index: n,
-                            pattern: pattern.to_string(),
-                            source,
-                        });
-                        false
-                    }
-                }
+                Regex::new(pattern).is_ok_and(|rx| rx.is_match(cls))
             }
             Some("signature_match") => {
                 let Subject::Class(cls) = subj else {
-                    self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
-                        index: n,
-                        constraint_type: "signature_match".to_string(),
-                    });
                     return false;
                 };
                 // Equality of the class name against `name`/`names`.
@@ -439,20 +476,102 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                     .is_some_and(|names| names.iter().filter_map(|v| v.as_str()).any(|s| s == cls));
                 name_matches || names_match
             }
+            Some(_) | None => false,
+        }
+    }
+
+    /// Structural validation of a predicate tree — the `inner` of `number_parameters`,
+    /// `parent`, and `extends` — run exactly once, before evaluation.
+    ///
+    /// This is the sole reporter for that tree; see [`Self::eval_predicate`] for why the
+    /// evaluator itself stays silent. The arms mirror the evaluator's one-for-one, so a
+    /// predicate that passes here can still evaluate to `false`, but never for a reason the
+    /// model author would want to hear about.
+    fn validate_predicate(&mut self, n: usize, c: &serde_json::Value, kind: SubjectKind) {
+        match c["constraint"].as_str() {
+            Some("any_of" | "all_of") => match c.get("inners").and_then(|v| v.as_array()) {
+                Some(inners) => {
+                    for inner in inners {
+                        self.validate_predicate(n, inner, kind);
+                    }
+                }
+                None => self.add_json_error(crate::error::JsonModelError::FieldNotArray {
+                    index: n,
+                    field_name: "inners".to_string(),
+                }),
+            },
+            Some("not") => match c.get("inner") {
+                Some(inner) => self.validate_predicate(n, inner, kind),
+                None => self.add_json_error(crate::error::JsonModelError::MissingField {
+                    index: n,
+                    field_name: "inner".to_string(),
+                }),
+            },
+            Some(op @ ("<" | "<=" | ">" | ">=" | "!=" | "==")) => {
+                if kind != SubjectKind::Int {
+                    self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
+                        index: n,
+                        constraint_type: op.to_string(),
+                    });
+                    return;
+                }
+                if c.get("value").and_then(|v| v.as_i64()).is_none() {
+                    self.add_json_error(crate::error::JsonModelError::InvalidInteger {
+                        index: n,
+                        source: "".parse::<i64>().unwrap_err(),
+                    });
+                    return;
+                }
+                self.check_constraint_keys(n, c, &["value"]);
+            }
+            Some("name") => {
+                if kind != SubjectKind::Class {
+                    self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
+                        index: n,
+                        constraint_type: "name".to_string(),
+                    });
+                    return;
+                }
+                let Some(pattern) = c.get("pattern").and_then(|v| v.as_str()) else {
+                    self.add_json_error(crate::error::JsonModelError::FieldNotString {
+                        index: n,
+                        field_name: "pattern".to_string(),
+                    });
+                    return;
+                };
+                if let Err(source) = Regex::new(pattern) {
+                    self.add_json_error(crate::error::JsonModelError::InvalidRegex {
+                        index: n,
+                        pattern: pattern.to_string(),
+                        source,
+                    });
+                    return;
+                }
+                self.check_constraint_keys(n, c, &["pattern"]);
+            }
+            Some("signature_match") => {
+                if kind != SubjectKind::Class {
+                    self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
+                        index: n,
+                        constraint_type: "signature_match".to_string(),
+                    });
+                    return;
+                }
+                // Only `name`/`names` are honored here: the subject is already a class name,
+                // so `parent`/`parents` are meaningless and `qualified-id` would be a pure
+                // synonym for `name`. Both would otherwise be silently dropped conjuncts.
+                self.check_constraint_keys(n, c, &["name", "names"]);
+            }
             Some(other) => {
                 self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
                     index: n,
                     constraint_type: other.to_string(),
-                });
-                false
+                })
             }
-            None => {
-                self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
-                    index: n,
-                    constraint_type: "<missing>".to_string(),
-                });
-                false
-            }
+            None => self.add_json_error(crate::error::JsonModelError::UnexpectedConstraint {
+                index: n,
+                constraint_type: "<missing>".to_string(),
+            }),
         }
     }
 
@@ -468,7 +587,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         n: usize,
         idx: (FormalIndexTypeTag, Option<i16>),
         var_name: Option<&str>,
-        ap: &[&str],
+        ap: &[PathSegment],
         label: &str,
         direction: TaintDirection,
         wildcard: bool,
@@ -498,7 +617,7 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         n: usize,
         idx: (FormalIndexTypeTag, Option<i16>),
         var_name: Option<&str>,
-        ap: &[&str],
+        ap: &[PathSegment],
         label: &str,
         direction: TaintDirection,
         wildcard: bool,
@@ -522,16 +641,19 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 reason: Some(UnmatchedReason::PortRejected),
             };
         }
-        let callees = matched_functions(&self.methods[n], self.vmt);
+        // The port's access path, interned once: it is the same for every row this call emits.
+        let path = facts::Path::from_accesses(ap.iter().cloned());
+        let label = facts::Str::from(label);
+        let callees = matched_functions(&self.methods[n], self.index.vmt);
         let functions = callees.len();
         if !is_callsites {
             for func in callees {
                 // For a `Variable(name)` port, resolve the name to a base `LocalIdx` in *this*
-                // matched function. Copy the `&FunctionData` out first so `self.program_functions`
-                // is not borrowed across the `self.builder` mutable borrow below.
+                // matched function. Copy the `&FunctionData` out first so `self.index.program_functions`
+                // is not borrowed across the `self.out` mutable borrow below.
                 let local_index = if tag == FormalIndexTypeTag::Local {
                     let name = var_name.expect("Local port without var_name");
-                    let fd = self.program_functions.get(func.as_str()).copied();
+                    let fd = self.index.program_functions.get(func.as_str()).copied();
                     match fd.and_then(|fd| {
                         fd.locals
                             .iter_enumerated()
@@ -548,18 +670,19 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
                 } else {
                     None
                 };
-                self.builder.endpoint.append(
-                    &func,
-                    idx,
-                    local_index,
-                    ap,
+                self.out.endpoints.push(EndpointMatch {
+                    function: facts::Str::from(func.as_str()),
+                    selector_ty: idx.0,
+                    index: idx.1,
+                    path,
                     label,
                     direction,
                     wildcard,
                     saturating,
-                    None,
-                    false,
-                );
+                    in_function: None,
+                    callsite_scoped: false,
+                    local_index,
+                });
                 rows += 1;
             }
             // A non-`Local` port appends a row for every matched function, so `rows == 0`
@@ -582,25 +705,26 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         // were rejected above, so `local_index` is always `None` here.)
         let callers: Vec<Option<String>> = match &self.in_functions[n] {
             UniverseSet::All => vec![None],
-            _ => matched_functions(&self.in_functions[n], self.vmt)
+            _ => matched_functions(&self.in_functions[n], self.index.vmt)
                 .into_iter()
                 .map(Some)
                 .collect(),
         };
         for func in &callees {
             for caller in &callers {
-                self.builder.endpoint.append(
-                    func,
-                    idx,
-                    None,
-                    ap,
+                self.out.endpoints.push(EndpointMatch {
+                    function: facts::Str::from(func.as_str()),
+                    selector_ty: idx.0,
+                    index: idx.1,
+                    path,
                     label,
                     direction,
                     wildcard,
                     saturating,
-                    caller.as_deref(),
-                    true,
-                );
+                    in_function: caller.as_deref().map(facts::Str::from),
+                    callsite_scoped: true,
+                    local_index: None,
+                });
                 rows += 1;
             }
         }
@@ -656,6 +780,42 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
 impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Entry point. Clear the model_generator set then visit it.
     fn visit_model_generator(&mut self, n: usize, value: &serde_json::Value) {
+        // The generator object's own keys. The JSON schema's `additionalProperties: false` is
+        // an editor-time check only, so without this a misspelled `in` (or `wehre`) is silently
+        // dropped and the generator matches on whatever is left -- which, since the working set
+        // starts as *every* function, can be the whole program.
+        if let Some(obj) = value.as_object() {
+            let mut errors = Vec::new();
+            super::spec::check_keys(
+                obj,
+                n,
+                "model generator",
+                &["find", "where", "model", "in", "on-unmatched"],
+                &mut errors,
+            );
+            for e in errors {
+                self.add_json_error(e);
+            }
+        }
+
+        // `in` scoping. A generator whose scope does not admit this import contributes nothing
+        // to it -- no endpoints, no summaries, no match counts. Parse it even when it does not
+        // admit, so a malformed scope is an error against every artifact rather than only the
+        // ones it happens to name.
+        let mut scope_errors = Vec::new();
+        let scope = super::spec::ProgramScope::parse(value.get("in"), n, &mut scope_errors);
+        let malformed = !scope_errors.is_empty();
+        for e in scope_errors {
+            self.add_json_error(e);
+        }
+        if malformed || !scope.admits(&self.index.scope) {
+            log::trace!(
+                "generator {n} does not apply to {}",
+                self.index.scope.describe()
+            );
+            return;
+        }
+
         // Assign at `n`, don't `Vec::insert` at `n`: insert *shifts* the tail, which is only
         // ever a no-op because generators arrive in index order. Grow-then-assign keeps the
         // slot for generator `n` at index `n` no matter how the caller batches.
@@ -664,6 +824,84 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.current_set = CurrentSet::Methods;
         self.super_model_generator(n, value);
         self.methods[n] = UniverseSet::empty();
+    }
+
+    /// Reports a field the traversal expected to be an array and found otherwise.
+    ///
+    /// The traversal used to `.as_array().unwrap()` on `where`, `propagation`, `sources` and
+    /// `sinks`, so a scalar there **panicked** instead of erroring. A model file is user input.
+    fn report_not_array(&mut self, n: usize, field: &str) {
+        self.add_json_error(crate::error::JsonModelError::FieldNotArray {
+            index: n,
+            field_name: field.to_string(),
+        });
+    }
+
+    /// Validates the `model` object's keys, then visits what it carries.
+    fn visit_model(&mut self, n: usize, value: &serde_json::Value) {
+        // A `model` with no keys at all is legal (a bridge generator's model carries only
+        // `bridge`), but an unrecognized key is not: `propagations` for `propagation` would
+        // otherwise produce a generator that matches and models nothing.
+        if let Some(obj) = value.as_object() {
+            let mut errors = Vec::new();
+            super::spec::check_keys(
+                obj,
+                n,
+                "model",
+                &[
+                    "sources",
+                    "sinks",
+                    "taint",
+                    "propagation",
+                    "modes",
+                    "forward_self",
+                    "bridge",
+                    "access_paths",
+                ],
+                &mut errors,
+            );
+            for e in errors {
+                self.add_json_error(e);
+            }
+        }
+        self.super_model(n, value);
+    }
+
+    /// Records the paths a `model.access_paths` list declares.
+    ///
+    /// These need no matching: they are paths that occur nowhere in the IR, which is the whole
+    /// reason a user has to name them. They reach the indexer's initial path set in phase 2.
+    fn visit_access_paths(&mut self, n: usize, value: &serde_json::Value) {
+        let Some(items) = value.as_array() else {
+            self.report_not_array(n, "access_paths");
+            return;
+        };
+        for item in items {
+            let Some(text) = item.as_str() else {
+                self.add_json_error(crate::error::JsonModelError::FieldNotString {
+                    index: n,
+                    field_name: "access_paths".to_string(),
+                });
+                continue;
+            };
+            match super::spec::parse_declared_access_path(text, n) {
+                Ok(path) => {
+                    self.out.access_paths.insert(path);
+                }
+                Err(e) => self.add_json_error(e),
+            }
+        }
+    }
+
+    /// Counts a `model.bridge` and otherwise leaves it alone.
+    ///
+    /// A bridge pins matches in two *different* programs, so it cannot be resolved against the
+    /// one program this visitor has: it is scanned and validated before the import loop (see
+    /// [`super::spec::scan_model_files`]) and matched by
+    /// [`super::matches::observe_import`]. Counting it here is what lets a caller that cannot
+    /// act on it -- `ctadl query` -- say so once instead of dropping it in silence.
+    fn visit_bridge(&mut self, _n: usize, _value: &serde_json::Value) {
+        self.index_time_models.bridges += 1;
     }
 
     fn visit_find(&mut self, n: usize, value: &serde_json::Value) {
@@ -699,6 +937,30 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Intersects existing `self.methods[n]` with the matches for the constraint
     fn visit_signature_match_constraint(&mut self, n: usize, value: &serde_json::Value) {
         self.super_signature_match_constraint(n, value);
+        // Validate before the `find_method` gate: whether a model file is well-formed must
+        // not depend on the frontend or on whether `find` parsed.
+        //
+        // `parent`/`parents` stay honored unconditionally even though
+        // `program_method_parents` is populated only for the Java VMT. On a native VMT they
+        // intersect with the empty set and match nothing, which is fail-*closed* and matches
+        // the documented Java-only behavior of the standalone `parent` constraint. Rejecting
+        // them per-frontend would make one model file valid or invalid depending on which
+        // artifact it is loaded against.
+        if !self.check_constraint_keys(
+            n,
+            value,
+            &[
+                "name",
+                "names",
+                "parent",
+                "parents",
+                "qualified-id",
+                "qualified-ids",
+            ],
+        ) {
+            self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            return;
+        }
         if matches!(
             self.find_method.get(&n),
             Some(FindMethod::Methods | FindMethod::Callsites)
@@ -728,7 +990,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         .chain(name_iter)
                         .filter_map(|n| {
                             n.as_str().and_then(|name| {
-                                self.program_method_names
+                                self.index
+                                    .program_method_names
                                     .get(name)
                                     .map(|names| names.iter().copied())
                             })
@@ -766,7 +1029,8 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                         .chain(parent_iter)
                         .filter_map(|p| {
                             p.as_str().and_then(|parent| {
-                                self.program_method_parents
+                                self.index
+                                    .program_method_parents
                                     .get(parent)
                                     .map(|parents| parents.iter().copied())
                             })
@@ -781,12 +1045,68 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                     self.target_set_mut(n).intersect_with(parents);
                 }
             }
+            // Exact, whole-string match on a method's fully-qualified id. Unlike `name` this
+            // is neither a regex nor keyed on the bare name, so it is the one lever that can
+            // pick out a single method on a frontend with no class hierarchy: `parent` is
+            // populated only for the Java VMT, and `signature_pattern` regexes (unanchored,
+            // and only incidentally over the fq name). An id naming no function in the
+            // program intersects with the empty set and matches nothing — the same
+            // fail-closed behavior an unmatched `name` has today.
+            let has_qualified_ids = value
+                .get("qualified-ids")
+                .or(value.get("qualified-id"))
+                .is_some();
+            if has_qualified_ids {
+                let ids_result: Result<UniverseSet<&'p str>, ()> = (|| {
+                    let ids_iter = value
+                        .get("qualified-ids")
+                        .map(|v| {
+                            v.as_array().ok_or_else(|| {
+                                self.add_json_error(crate::error::JsonModelError::FieldNotArray {
+                                    index: n,
+                                    field_name: "qualified-ids".to_string(),
+                                });
+                            })
+                        })
+                        .transpose()?
+                        .into_iter()
+                        .flatten();
+
+                    let id_iter = value.get("qualified-id").into_iter();
+
+                    let ids: UniverseSet<&'p str> = ids_iter
+                        .chain(id_iter)
+                        .filter_map(|v| {
+                            v.as_str().and_then(|id| {
+                                self.index
+                                    .program_method_qualified_ids
+                                    .get(id)
+                                    .map(|fids| fids.iter().copied())
+                            })
+                        })
+                        .flatten()
+                        .collect();
+
+                    Ok(ids)
+                })();
+
+                if let Ok(ids) = ids_result {
+                    self.target_set_mut(n).intersect_with(ids);
+                }
+            }
         }
     }
 
     /// Intersects existing `self.methods[n]` with the matches for the constraint
     fn visit_signature_constraint(&mut self, n: usize, value: &serde_json::Value) {
         self.super_signature_constraint(n, value);
+        // A missing `pattern` used to fall out of the `let` chain below as a no-op, so
+        // `{"constraint": "signature", "name": ".*sink.*"}` — `name` where `pattern` was
+        // meant — matched every function in the program instead of failing.
+        if !self.check_constraint_keys(n, value, &["pattern"]) {
+            self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            return;
+        }
         if matches!(
             self.find_method.get(&n),
             Some(FindMethod::Methods | FindMethod::Callsites)
@@ -816,6 +1136,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             };
 
             let matches: UniverseSet<&'p str> = self
+                .index
                 .program_method_signatures
                 .iter()
                 .filter_map(|(sig, fids)| if rx.is_match(sig) { Some(fids) } else { None })
@@ -829,11 +1150,33 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// Matches the containing (caller) function of a callsite by evaluating the wrapped
     /// `inner` constraint against the caller set. Only meaningful for `find: callsites`.
     fn visit_in_function_constraint(&mut self, n: usize, value: &serde_json::Value) {
-        if let Some(FindMethod::Callsites) = self.find_method.get(&n) {
-            let prev = self.current_set;
-            self.current_set = CurrentSet::InFunction;
-            self.super_in_function_constraint(n, value);
-            self.current_set = prev;
+        if !self.check_constraint_keys(n, value, &["inner"]) {
+            self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            return;
+        }
+        match self.find_method.get(&n) {
+            Some(FindMethod::Callsites) => {
+                let prev = self.current_set;
+                self.current_set = CurrentSet::InFunction;
+                self.super_in_function_constraint(n, value);
+                self.current_set = prev;
+            }
+            Some(FindMethod::Methods) => {
+                // There is no caller set to narrow under `find: methods`, so the constraint
+                // used to vanish silently, leaving the generator matching on its remaining
+                // constraints alone. That is a mis-authored model, not a harmless one.
+                self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                    index: n,
+                    field_name: "in_function".to_string(),
+                    message: "'in_function' is only supported with find: callsites".to_string(),
+                });
+                self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            }
+            // `find` itself was missing or unrecognized; `visit_find` already reported it,
+            // so don't pile a second, more confusing error on top.
+            None => {
+                self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            }
         }
     }
 
@@ -970,6 +1313,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             }
         };
         let matches: UniverseSet<&'p str> = self
+            .index
             .program_method_names
             .iter()
             .filter(|(name, _)| rx.is_match(name))
@@ -1003,6 +1347,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             }
         };
         let matches: UniverseSet<&'p str> = self
+            .index
             .program_functions
             .iter()
             .filter(|(_, func)| func.blocks.is_empty() != want)
@@ -1015,7 +1360,11 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
     /// On-demand scan of every function body; frontends without symbolic loads/stores yield
     /// no match.
     fn visit_uses_field_constraint(&mut self, n: usize, value: &serde_json::Value) {
-        // Collect the wanted field names from `name` / `names` / `unqualified-id`.
+        if !self.check_constraint_keys(n, value, &["name", "names"]) {
+            self.target_set_mut(n).intersect_with(UniverseSet::empty());
+            return;
+        }
+        // Collect the wanted field names from `name` / `names`.
         let mut wanted: Vec<&str> = Vec::new();
         if let Some(names) = value.get("names") {
             match names.as_array() {
@@ -1032,13 +1381,11 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         if let Some(name) = value.get("name").and_then(|v| v.as_str()) {
             wanted.push(name);
         }
-        if let Some(uid) = value.get("unqualified-id").and_then(|v| v.as_str()) {
-            wanted.push(uid);
-        }
-        if wanted.is_empty() {
-            return;
-        }
+        // `check_constraint_keys` guaranteed `name` or `names` is present, so an empty
+        // `wanted` here means every entry was a non-string or the array was empty; either
+        // way, narrow to nothing rather than leaving the set untouched (== matching all).
         let matches: UniverseSet<&'p str> = self
+            .index
             .program_functions
             .iter()
             .filter(|(_, func)| {
@@ -1065,15 +1412,17 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             });
             return;
         };
-        // Snapshot (fid, arity) so the predicate evaluator can borrow `self` mutably.
+        self.validate_predicate(n, inner, SubjectKind::Int);
+        // Snapshot (fid, arity) so `target_set_mut` below can take `self` mutably.
         let funcs: Vec<(&'p str, i64)> = self
+            .index
             .program_functions
             .iter()
             .map(|(fid, func)| (*fid, func.num_parameters() as i64))
             .collect();
         let mut matched: Vec<&'p str> = Vec::new();
         for (fid, arity) in funcs {
-            if self.eval_predicate(n, inner, Subject::Int(arity)) {
+            if self.eval_predicate(inner, Subject::Int(arity)) {
                 matched.push(fid);
             }
         }
@@ -1091,7 +1440,11 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             });
             return;
         };
-        let entries: Vec<(&'p str, &'p str)> = match self.vmt {
+        // Validate before the frontend check below: a mis-authored predicate is a property
+        // of the model file, and reporting it only on Java programs would make the same file
+        // load cleanly or fail depending on the artifact.
+        self.validate_predicate(n, inner, SubjectKind::Class);
+        let entries: Vec<(&'p str, &'p str)> = match self.index.vmt {
             VirtualMethodTable::Java { methods, .. } => methods
                 .iter()
                 .map(|(cls, _, _, fid)| (cls.as_ref(), fid.as_ref()))
@@ -1104,7 +1457,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         };
         let mut matched: Vec<&'p str> = Vec::new();
         for (cls, fid) in entries {
-            if self.eval_predicate(n, inner, Subject::Class(cls)) {
+            if self.eval_predicate(inner, Subject::Class(cls)) {
                 matched.push(fid);
             }
         }
@@ -1122,9 +1475,12 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             });
             return;
         };
+        self.validate_predicate(n, inner, SubjectKind::Class);
         // Snapshot (fid, [supertypes]) — `hierarchy[cls]` is `[0]` = superclass, rest = interfaces.
-        let entries: Vec<(&'p str, Vec<&'p str>)> = match self.vmt {
-            VirtualMethodTable::Java { methods, hierarchy } => methods
+        let entries: Vec<(&'p str, Vec<&'p str>)> = match self.index.vmt {
+            VirtualMethodTable::Java {
+                methods, hierarchy, ..
+            } => methods
                 .iter()
                 .map(|(cls, _, _, fid)| {
                     let supers = hierarchy
@@ -1144,7 +1500,7 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         for (fid, supers) in &entries {
             if supers
                 .iter()
-                .any(|sc| self.eval_predicate(n, inner, Subject::Class(sc)))
+                .any(|sc| self.eval_predicate(inner, Subject::Class(sc)))
             {
                 matched.push(*fid);
             }
@@ -1153,9 +1509,12 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         self.target_set_mut(n).intersect_with(matched);
     }
 
-    /// Sends the methods in `self.methods[n]` to the SummaryBuilder
+    /// Records one [`PropagationMatch`] per method in `self.methods[n]`
     fn visit_propagation(&mut self, n: usize, value: &serde_json::Value) {
         self.super_propagation(n, value);
+        // Counted whether or not it matches anything: what a query-time load needs to report is
+        // that the *file* declared an index-time construct.
+        self.index_time_models.propagations += 1;
         // Propagation (summaries) at a callsite is a function-level fact and is not
         // supported for `find: callsites`.
         if let Some(FindMethod::Callsites) = self.find_method.get(&n) {
@@ -1237,12 +1596,22 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                             });
                             return;
                         }
-                        for func in matched_functions(&self.methods[n], self.vmt) {
-                            self.builder.summary.append(
-                                &func,
-                                (output.tag, output.index, &output.ap),
-                                (input.tag, input.index, &input.ap),
-                            );
+                        let dst = matches::ModelPort {
+                            tag: output.tag,
+                            index: output.index,
+                            path: facts::Path::from_accesses(output.ap.iter().cloned()),
+                        };
+                        let src = matches::ModelPort {
+                            tag: input.tag,
+                            index: input.index,
+                            path: facts::Path::from_accesses(input.ap.iter().cloned()),
+                        };
+                        for func in matched_functions(&self.methods[n], self.index.vmt) {
+                            self.out.propagations.push(PropagationMatch {
+                                function: facts::Str::from(func.as_str()),
+                                dst,
+                                src,
+                            });
                         }
                     }
                     Err(err) => self.add_json_error(err),
@@ -1435,66 +1804,89 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
 /// A parsed source/sink/propagation port. `var_name` is `Some` only for a `Variable(name)`
 /// port (`tag == Local`); `index` is `Some` only for a positional `Argument(n)` port
 /// (`tag == Index`). Both `var_name` and `ap` borrow from the port `text`.
-struct ParsedPort<'a> {
-    tag: FormalIndexTypeTag,
-    index: Option<i16>,
-    var_name: Option<&'a str>,
-    ap: Vec<&'a str>,
+#[derive(Debug)]
+pub(crate) struct ParsedPort<'a> {
+    pub(crate) tag: FormalIndexTypeTag,
+    pub(crate) index: Option<i16>,
+    pub(crate) var_name: Option<&'a str>,
+    /// The port's access path, parsed with the canonical grammar. Owned; the lifetime survives
+    /// only for `var_name`. A `PathSegment::Offset` here is what lets a port name a real offset
+    /// (`Argument(1).[8].deref`), which the previous `Vec<&str>` could not express -- every
+    /// segment became a `Symbol` and could never match the offsets pcode emits.
+    pub(crate) ap: Vec<PathSegment>,
 }
 
 /// Entry point for parsing propagation inputs and inputs, which are called ports
-fn parse_port(text: &str, index: usize) -> Result<ParsedPort<'_>, crate::error::JsonModelError> {
-    if let Some(m) = variable_regex().captures(text) {
+pub(crate) fn parse_port(
+    text: &str,
+    index: usize,
+) -> Result<ParsedPort<'_>, crate::error::JsonModelError> {
+    // Note the absence of `?` in the two `if let` arms: an early return would skip the
+    // index-patching `map_err` below, and the error would name generator 0.
+    let parsed = if let Some(m) = variable_regex().captures(text) {
         // `Variable(name)` — name-based local selector. The base `LocalIdx` is resolved
         // per-function later (in `emit_endpoints`), so no index is known here.
-        Ok(ParsedPort {
+        parse_access_path(m.get(2).map(|m| m.as_str())).map(|ap| ParsedPort {
             tag: FormalIndexTypeTag::Local,
             index: None,
             var_name: m.get(1).map(|m| m.as_str()),
-            ap: parse_access_path(m.get(2).map(|m| m.as_str())),
+            ap,
         })
     } else if let Some(m) = return_regex().captures(text) {
-        Ok(ParsedPort {
+        parse_access_path(m.get(1).map(|m| m.as_str())).map(|ap| ParsedPort {
             tag: FormalIndexTypeTag::Return,
             index: None,
             var_name: None,
-            ap: parse_access_path(m.get(1).map(|m| m.as_str())),
+            ap,
         })
     } else {
-        parse_argument(text)
-            .map(|(tag, idx, ap)| ParsedPort {
-                tag,
-                index: idx,
-                var_name: None,
-                ap,
-            })
-            .map_err(|mut err| {
-                // Update the index in the error
-                match &mut err {
-                    crate::error::JsonModelError::InvalidArgumentFormat {
-                        index: err_index,
-                        ..
-                    } => *err_index = index,
-                    crate::error::JsonModelError::InvalidInteger {
-                        index: err_index, ..
-                    } => *err_index = index,
-                    _ => {}
-                }
-                err
-            })
-    }
+        parse_argument(text).map(|(tag, idx, ap)| ParsedPort {
+            tag,
+            index: idx,
+            var_name: None,
+            ap,
+        })
+    };
+    parsed.map_err(|mut err| {
+        // These are raised with `index: 0` from helpers that do not know it; fill it in.
+        match &mut err {
+            crate::error::JsonModelError::InvalidArgumentFormat {
+                index: err_index, ..
+            } => *err_index = index,
+            crate::error::JsonModelError::InvalidInteger {
+                index: err_index, ..
+            } => *err_index = index,
+            crate::error::JsonModelError::InvalidAccessPath {
+                index: err_index, ..
+            } => *err_index = index,
+            _ => {}
+        }
+        err
+    })
 }
 
-fn parse_access_path(input_text: Option<&str>) -> Vec<&str> {
-    match input_text {
-        Some(".*") | None => Vec::new(),
-        Some(s) => split_dot_segments(s),
-    }
+/// Parses a port's trailing access path with the one canonical grammar, so `.[8]` is a real
+/// offset and a field name beginning with `[` is written `\[`.
+///
+/// Note the two things this deliberately no longer does. `".*"` used to map to the empty path;
+/// it now parses as `Symbol("*")`, a literal field, which is what it always was everywhere else.
+/// And `.[*]` used to yield `Symbol("[*]")`; it is now an `InvalidOffset` error.
+fn parse_access_path(
+    input_text: Option<&str>,
+) -> Result<Vec<PathSegment>, crate::error::JsonModelError> {
+    let Some(s) = input_text else {
+        return Ok(Vec::new());
+    };
+    mir::parse_segments(s).map_err(|source| crate::error::JsonModelError::InvalidAccessPath {
+        index: 0, // filled in by `parse_port`
+        text: s.to_string(),
+        source,
+    })
 }
 
 fn parse_argument(
     input_text: &str,
-) -> Result<(FormalIndexTypeTag, Option<i16>, Vec<&str>), crate::error::JsonModelError> {
+) -> Result<(FormalIndexTypeTag, Option<i16>, Vec<PathSegment>), crate::error::JsonModelError> {
     let m = argument_regex().captures(input_text).ok_or_else(|| {
         crate::error::JsonModelError::InvalidArgumentFormat {
             index: 0, // We don't have the index here, will be set by caller
@@ -1516,30 +1908,8 @@ fn parse_argument(
             })?),
         ),
     };
-    let p = parse_access_path(m.get(2).map(|m| m.as_str()));
+    let p = parse_access_path(m.get(2).map(|m| m.as_str()))?;
     Ok((tag, index, p))
-}
-
-fn split_dot_segments(s: &str) -> Vec<&str> {
-    let bytes = s.as_bytes();
-    let mut out = Vec::new();
-
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i] != b'.' {
-            break;
-        }
-        i += 1; // past '.'
-        let start = i;
-
-        while i < bytes.len() && bytes[i] != b'.' {
-            i += 1;
-        }
-        out.push(&s[start..i]); // does NOT include the leading '.'
-        // next iteration will see the next '.' (or end)
-    }
-
-    out
 }
 
 /// Visitor for JSON model generators
@@ -1551,13 +1921,22 @@ pub trait ModelGeneratorVisitor {
 
     #[inline]
     fn super_model_generators(&mut self, value: &serde_json::Value) {
-        value["model_generators"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .enumerate()
-            .for_each(|(i, m)| self.visit_model_generator(i, m));
+        match value["model_generators"].as_array() {
+            Some(gens) => gens
+                .iter()
+                .enumerate()
+                .for_each(|(i, m)| self.visit_model_generator(i, m)),
+            None => self.report_not_array(0, "model_generators"),
+        }
     }
+
+    /// Called when a field the traversal requires to be an array is something else. The default
+    /// is silence; [`ModelGeneratorIngest`] turns it into a hard error.
+    ///
+    /// This exists because the traversal used to `.as_array().unwrap()`, turning a scalar
+    /// `"where"` in a user-supplied model file into a panic.
+    #[inline]
+    fn report_not_array(&mut self, _n: usize, _field: &str) {}
 
     #[inline]
     fn visit_model_generator(&mut self, n: usize, value: &serde_json::Value) {
@@ -1567,12 +1946,12 @@ pub trait ModelGeneratorVisitor {
     #[inline]
     fn super_model_generator(&mut self, n: usize, model_generator: &serde_json::Value) {
         self.visit_find(n, &model_generator["find"]);
-        model_generator.get("where").into_iter().for_each(|cs| {
-            cs.as_array()
-                .unwrap()
-                .iter()
-                .for_each(|c| self.visit_where_constraint(n, c))
-        });
+        if let Some(cs) = model_generator.get("where") {
+            match cs.as_array() {
+                Some(items) => items.iter().for_each(|c| self.visit_where_constraint(n, c)),
+                None => self.report_not_array(n, "where"),
+            }
+        }
         self.visit_model(n, &model_generator["model"]);
     }
 
@@ -1641,12 +2020,12 @@ pub trait ModelGeneratorVisitor {
 
     #[inline]
     fn super_all_of_constraint(&mut self, n: usize, value: &serde_json::Value) {
-        value.get("inners").into_iter().for_each(|a| {
-            a.as_array()
-                .unwrap()
-                .iter()
-                .for_each(|c| self.visit_where_constraint(n, c))
-        });
+        if let Some(a) = value.get("inners") {
+            match a.as_array() {
+                Some(items) => items.iter().for_each(|c| self.visit_where_constraint(n, c)),
+                None => self.report_not_array(n, "inners"),
+            }
+        }
     }
 
     #[inline]
@@ -1656,12 +2035,12 @@ pub trait ModelGeneratorVisitor {
 
     #[inline]
     fn super_any_of_constraint(&mut self, n: usize, value: &serde_json::Value) {
-        value.get("inners").into_iter().for_each(|a| {
-            a.as_array()
-                .unwrap()
-                .iter()
-                .for_each(|c| self.visit_where_constraint(n, c))
-        });
+        if let Some(a) = value.get("inners") {
+            match a.as_array() {
+                Some(items) => items.iter().for_each(|c| self.visit_where_constraint(n, c)),
+                None => self.report_not_array(n, "inners"),
+            }
+        }
     }
 
     #[inline]
@@ -1758,27 +2137,46 @@ pub trait ModelGeneratorVisitor {
     #[inline]
     fn super_model(&mut self, n: usize, value: &serde_json::Value) {
         if let Some(propagation) = value.get("propagation") {
-            propagation
-                .as_array()
-                .unwrap()
-                .iter()
-                .for_each(|p| self.visit_propagation(n, p));
+            match propagation.as_array() {
+                Some(items) => items.iter().for_each(|p| self.visit_propagation(n, p)),
+                None => self.report_not_array(n, "propagation"),
+            }
         }
         if let Some(sinks) = value.get("sinks") {
-            sinks
-                .as_array()
-                .unwrap()
-                .iter()
-                .for_each(|s| self.visit_sink(n, s));
+            match sinks.as_array() {
+                Some(items) => items.iter().for_each(|s| self.visit_sink(n, s)),
+                None => self.report_not_array(n, "sinks"),
+            }
         }
         if let Some(sources) = value.get("sources") {
-            sources
-                .as_array()
-                .unwrap()
-                .iter()
-                .for_each(|s| self.visit_source(n, s));
+            match sources.as_array() {
+                Some(items) => items.iter().for_each(|s| self.visit_source(n, s)),
+                None => self.report_not_array(n, "sources"),
+            }
+        }
+        if let Some(paths) = value.get("access_paths") {
+            self.visit_access_paths(n, paths);
+        }
+        if let Some(bridge) = value.get("bridge") {
+            self.visit_bridge(n, bridge);
         }
     }
+
+    #[inline]
+    fn visit_access_paths(&mut self, n: usize, value: &serde_json::Value) {
+        self.super_access_paths(n, value)
+    }
+
+    #[inline]
+    fn super_access_paths(&mut self, _n: usize, _value: &serde_json::Value) {}
+
+    #[inline]
+    fn visit_bridge(&mut self, n: usize, value: &serde_json::Value) {
+        self.super_bridge(n, value)
+    }
+
+    #[inline]
+    fn super_bridge(&mut self, _n: usize, _value: &serde_json::Value) {}
 
     #[inline]
     fn visit_propagation(&mut self, n: usize, value: &serde_json::Value) {
@@ -1819,8 +2217,23 @@ pub fn matched_functions(set: &UniverseSet<&str>, vmt: &VirtualMethodTable) -> V
             VirtualMethodTable::Native { methods } => {
                 methods.iter().map(|t| t.2.to_string()).collect()
             }
-            VirtualMethodTable::Unknown | VirtualMethodTable::CplusPlus => {
-                // For PCODE (which uses Unknown or CplusPlus), we don't have a list of all methods in the VMT
+            // The `functions` column, not `methods`: on lua "all" means every function, the
+            // same as it does on java and native. Reading `methods` here made a `where`-less
+            // generator select only the metatable-recovered class methods and silently skip
+            // every free function. `externals` joins it so this stays the mirror of the
+            // `universe` set built in [`ModelGeneratorIngest::new`] -- the two disagreeing is
+            // exactly the bug the `functions` column fixed.
+            VirtualMethodTable::Lua {
+                functions,
+                externals,
+                ..
+            } => functions
+                .iter()
+                .chain(externals.iter())
+                .map(|t| t.1.to_string())
+                .collect(),
+            VirtualMethodTable::Unknown => {
+                // For PCODE (which uses Unknown), we don't have a list of all methods in the VMT
                 // but we should have been able to match them via names/signatures in ModelGeneratorIngest.
                 // If it's 'All', we might need to return all known functions in the program.
                 log::warn!(
@@ -1850,7 +2263,7 @@ mod parse_port_tests {
         let p = parse_port("Variable(buf).headers", 0).expect("parse");
         assert_eq!(p.tag, FormalIndexTypeTag::Local);
         assert_eq!(p.var_name, Some("buf"));
-        assert_eq!(p.ap, vec!["headers"]);
+        assert_eq!(p.ap, vec![PathSegment::symbol("headers")]);
     }
 
     #[test]
@@ -1863,5 +2276,112 @@ mod parse_port_tests {
         let r = parse_port("Return", 0).expect("parse");
         assert_eq!(r.tag, FormalIndexTypeTag::Return);
         assert_eq!(r.var_name, None);
+    }
+
+    /// A model port can now name an offset.
+    ///
+    /// `docs/model-generators.md` and `ctadl-model-generator.schema.json` have advertised this
+    /// spelling all along, but every segment used to become a `Symbol`, so `Argument(1).[8]` was
+    /// `Symbol("[8]")` and could never match the `Offset(8)` that pcode's `push_offset` actually
+    /// emits.
+    #[test]
+    fn port_can_name_an_offset() {
+        let p = parse_port("Argument(1).[8].deref", 0).expect("parse");
+        assert_eq!(p.tag, FormalIndexTypeTag::Index);
+        assert_eq!(p.index, Some(1));
+        assert_eq!(
+            p.ap,
+            vec![PathSegment::offset(8), PathSegment::symbol("deref")]
+        );
+    }
+
+    /// ... and a field name that begins with `[` is still reachable, written `\[`. This is how a
+    /// model names a Java array element, whose frontend segment is `Symbol("[]")`.
+    #[test]
+    fn port_can_name_a_bracketed_field() {
+        let p = parse_port(r"Argument(0).\[]", 0).expect("parse");
+        assert_eq!(p.ap, vec![PathSegment::symbol("[]")]);
+
+        let p = parse_port(r"Argument(0).\[_elem_]", 0).expect("parse");
+        assert_eq!(p.ap, vec![PathSegment::symbol("[_elem_]")]);
+    }
+
+    /// `.*` used to be special-cased to the empty path. It is now `Symbol("*")`, a literal
+    /// field -- which is what it always was everywhere else in the tree.
+    #[test]
+    fn trailing_star_is_a_literal_field() {
+        let p = parse_port("Argument(0).*", 0).expect("parse");
+        assert_eq!(p.ap, vec![PathSegment::symbol("*")]);
+
+        let r = parse_port("Return.*", 0).expect("parse");
+        assert_eq!(r.tag, FormalIndexTypeTag::Return);
+        assert_eq!(r.ap, vec![PathSegment::symbol("*")]);
+    }
+
+    #[test]
+    fn malformed_access_paths_are_hard_errors() {
+        use crate::error::JsonModelError;
+        use ctadl_ir::mir::PathSyntaxErrorKind;
+
+        // `.[*]` used to yield Symbol("[*]"), which matched nothing.
+        let e = parse_port("Argument(0).[*]", 7).unwrap_err();
+        assert!(
+            matches!(&e, JsonModelError::InvalidAccessPath { index: 7, source, .. }
+                     if source.kind == PathSyntaxErrorKind::InvalidOffset("*".into())),
+            "got {e:?}"
+        );
+
+        // An empty segment used to become Symbol("").
+        let e = parse_port("Argument(0).a..b", 3).unwrap_err();
+        assert!(
+            matches!(&e, JsonModelError::InvalidAccessPath { index: 3, source, .. }
+                     if source.kind == PathSyntaxErrorKind::EmptySegment),
+            "got {e:?}"
+        );
+
+        // A bare bracketed name is an offset position, and the message says how to fix it.
+        let e = parse_port("Argument(0).[_elem_]", 0).unwrap_err();
+        assert!(
+            matches!(&e, JsonModelError::InvalidAccessPath { source, .. }
+                     if source.kind == PathSyntaxErrorKind::InvalidOffset("_elem_".into())),
+            "got {e:?}"
+        );
+        assert!(
+            e.to_string().contains(r"\[_elem_]"),
+            "message must name the fix: {e}"
+        );
+    }
+
+    /// The regexes are anchored. Unanchored, `Return(.*)?` matched "MyReturnType", which was
+    /// silently accepted as a `Return` port with access path `Type`; likewise arbitrary text
+    /// could surround an `Argument(n)`.
+    #[test]
+    fn regexes_are_anchored() {
+        use crate::error::JsonModelError;
+
+        // Junk *before* the selector: no regex matches at all, so this is the existing
+        // InvalidArgumentFormat.
+        for text in [
+            "MyReturnType",
+            "prefixReturn",
+            "xxArgument(0)",
+            "aVariable(b)",
+        ] {
+            let e = parse_port(text, 5).unwrap_err();
+            assert!(
+                matches!(&e, JsonModelError::InvalidArgumentFormat { index: 5, text: t } if t == text),
+                "{text:?} should be InvalidArgumentFormat, got {e:?}"
+            );
+        }
+
+        // Junk *after* the selector is captured as the trailing access path, so it is rejected
+        // by the grammar instead -- also a hard error, and a more specific message.
+        for text in ["Argument(0)yy", "ReturnType", "Variable(b)zz"] {
+            let e = parse_port(text, 5).unwrap_err();
+            assert!(
+                matches!(&e, JsonModelError::InvalidAccessPath { index: 5, .. }),
+                "{text:?} should be InvalidAccessPath, got {e:?}"
+            );
+        }
     }
 }

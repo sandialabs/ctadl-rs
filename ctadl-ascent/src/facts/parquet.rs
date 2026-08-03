@@ -530,12 +530,17 @@ impl DecodeColumn<facts::Path> for DefaultDecoder {
     fn into_decode_array(name: &str, batch: &RecordBatch) -> impl IntoIterator<Item = facts::Path> {
         <Self as DecodeColumn<Str>>::into_decode_array(name, batch)
             .into_iter()
-            .map(|s| {
+            .map(move |s| {
                 if s.is_empty() {
                     facts::Path::empty()
                 } else {
-                    // Parse the string representation back to Path
-                    s.parse().unwrap_or_else(|_| facts::Path::empty())
+                    s.parse().unwrap_or_else(|e| {
+                        panic!(
+                            "corrupt access path {:?} in fact column {name:?}: {e}\n\
+                             this index was written by an incompatible build; re-run `ctadl index`",
+                            s.as_str()
+                        )
+                    })
                 }
             })
     }
@@ -544,6 +549,7 @@ impl_encode_newtype!(facts::Function, Str, GenericStringArray<i64>);
 impl_encode_newtype!(facts::Label, Str, GenericStringArray<i64>);
 impl_encode_newtype!(facts::FormalIndex, i16, Int16Array);
 impl_encode_newtype!(source_info::FileSpanId, u32, UInt32Array);
+impl_encode_newtype!(facts::ImportId, u32, UInt32Array);
 
 macro_rules! impl_encode_newtype_field {
     ($newty:path, $newcon:path, $rustty:ty, $fld:ident, $parquetty:ty) => {
@@ -866,9 +872,9 @@ impl DecodeColumn<facts::FlowEdge> for DefaultDecoder {
 }
 
 // A `CallTargetObject` spans three arrow columns: a `<name>_tag` byte (0 =
-// FunctionId, 1 = Symbol), a nullable `<name>_func` holding the target function id
+// FunctionId, 1 = Symbol, 2 = LuaClass), a nullable `<name>_func` holding the target function id
 // (present iff the variant is `FunctionId`), and a nullable `<name>_symbol` holding
-// the class name (present iff the variant is `Symbol`).
+// the class name (present iff the variant is `Symbol` or `LuaClass`).
 impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
     #[inline]
     fn encode_column(
@@ -885,6 +891,7 @@ impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
                 .map(|o| match o {
                     FunctionId(_) => 0u8,
                     Symbol(_) => 1,
+                    LuaClass(_) => 2,
                 })
                 .collect_vec(),
         );
@@ -894,7 +901,7 @@ impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
                 col.iter()
                     .map(|o| match o {
                         FunctionId(f) => Some(*f),
-                        Symbol(_) => None,
+                        Symbol(_) | LuaClass(_) => None,
                     })
                     .collect_vec(),
             );
@@ -904,7 +911,7 @@ impl EncodeColumn<facts::CallTargetObject> for DefaultEncoder {
                 col.into_iter()
                     .map(|o| match o {
                         FunctionId(_) => None,
-                        Symbol(s) => Some(s),
+                        Symbol(s) | LuaClass(s) => Some(s),
                     })
                     .collect_vec(),
             );
@@ -939,15 +946,17 @@ impl DecodeColumn<facts::CallTargetObject> for DefaultDecoder {
             .map(|(tag, func, symbol)| match tag {
                 0 => FunctionId(func.expect("FunctionId CallTargetObject missing func id")),
                 1 => Symbol(symbol.expect("Symbol CallTargetObject missing symbol")),
+                2 => LuaClass(symbol.expect("LuaClass CallTargetObject missing symbol")),
                 _ => panic!("bad encoding of CallTargetObject"),
             })
             .collect_vec()
     }
 }
 
-// A `CallDispatchKey` spans three arrow columns: a `<name>_tag` byte (0 = Java, 1 = C),
-// and nullable `<name>_name` / `<name>_desc` symbol columns (both present iff the variant is
-// `Java`, both null for `C`). Same tag + nullable pattern as `CallTargetObject`.
+// A `CallDispatchKey` spans three arrow columns: a `<name>_tag` byte (0 = Java, 1 = C,
+// 2 = Lua), and nullable `<name>_name` / `<name>_desc` symbol columns (both present iff the
+// variant is `Java`, both null for `C`; `Lua` populates only `<name>_name`). Same tag +
+// nullable pattern as `CallTargetObject`.
 impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
     #[inline]
     fn encode_column(
@@ -964,6 +973,7 @@ impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
                 .map(|c| match c {
                     Java(_, _) => 0u8,
                     C => 1,
+                    Lua(_) => 2,
                 })
                 .collect_vec(),
         );
@@ -972,7 +982,7 @@ impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
                 &name_column_name,
                 col.iter()
                     .map(|c| match c {
-                        Java(n, _) => Some(n.clone()),
+                        Java(n, _) | Lua(n) => Some(n.clone()),
                         C => None,
                     })
                     .collect_vec(),
@@ -983,7 +993,7 @@ impl EncodeColumn<facts::CallDispatchKey> for DefaultEncoder {
                 col.into_iter()
                     .map(|c| match c {
                         Java(_, d) => Some(d),
-                        C => None,
+                        C | Lua(_) => None,
                     })
                     .collect_vec(),
             );
@@ -1021,6 +1031,7 @@ impl DecodeColumn<facts::CallDispatchKey> for DefaultDecoder {
                     desc.expect("Java CallDispatchKey missing descriptor"),
                 ),
                 1 => C,
+                2 => Lua(name.expect("Lua CallDispatchKey missing method name")),
                 _ => panic!("bad encoding of CallDispatchKey"),
             })
             .collect_vec()

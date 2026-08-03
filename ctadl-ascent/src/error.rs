@@ -27,6 +27,13 @@ pub enum JsonModelError {
         index: usize,
         text: String,
     },
+    /// A port's trailing access path is not a path in the canonical grammar -- e.g.
+    /// `Argument(0).[*]`, or a field name beginning with `[` that was not written `\[`.
+    InvalidAccessPath {
+        index: usize,
+        text: String,
+        source: ctadl_ir::mir::PathSyntaxError,
+    },
     InvalidInteger {
         index: usize,
         source: std::num::ParseIntError,
@@ -77,6 +84,16 @@ impl std::fmt::Display for JsonModelError {
                 write!(
                     f,
                     "invalid argument format '{text}' in model generator at index {index}"
+                )
+            }
+            JsonModelError::InvalidAccessPath {
+                index,
+                text,
+                source,
+            } => {
+                write!(
+                    f,
+                    "invalid access path '{text}' ({source}) in model generator at index {index}"
                 )
             }
             JsonModelError::InvalidInteger { index, source } => {
@@ -195,6 +212,17 @@ pub enum Error {
     TreeSitterParse(String),
     #[error("JSON model parsing error")]
     JsonModel(#[from] JsonModelErrors),
+    /// A model was well-formed but could not be applied: a bridge side that matched nothing
+    /// under `on-unmatched: error`, or an ambiguous pairing under `on-ambiguous: error`.
+    /// Distinct from [`Error::JsonModel`], which is about the file's *syntax*; this one needs a
+    /// program to detect.
+    #[error("model error: {message}")]
+    Model { message: String },
+    /// The artifact was read fine and simply held no code -- a split APK carrying only
+    /// resources, say. Distinct from a decoding error: nothing is malformed, there is
+    /// just nothing here to analyze, and the message says where to look instead.
+    #[error("nothing to import: {message}")]
+    NothingToImport { message: String },
     #[error(
         "import '{name}' was created by an incompatible version of ctadl \
          (import format {found}, this build expects {expected}); the original \
@@ -205,6 +233,16 @@ pub enum Error {
         found: String,
         expected: String,
         artifact_path: PathBuf,
+    },
+    #[error(
+        "the index for project '{project}' was created by an incompatible version of ctadl \
+         (index format {found}, this build expects {expected}); \
+         re-run `ctadl index {project}`"
+    )]
+    IncompatibleIndex {
+        project: String,
+        found: String,
+        expected: String,
     },
     #[error("{context}")]
     Context {

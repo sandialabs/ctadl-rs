@@ -27,6 +27,39 @@ pub enum Kind {
     /// C parsed directly by the tree-sitter frontend, with source lines read
     /// straight off the SARIF regions (no compiler, no Ghidra).
     C { source: PathBuf, query: PathBuf },
+    /// Lua source imported directly; SARIF regions carry source lines, so no
+    /// linemap or compilation step is needed.
+    Lua { source: PathBuf, query: PathBuf },
+    /// Java `native` methods plus the shared library implementing them,
+    /// co-indexed as two imports of one project so the JNI bridge has both
+    /// halves to join. The only two-import case kind.
+    Jni {
+        java: PathBuf,
+        native: PathBuf,
+        config: PathBuf,
+        /// A declarative bridging model to use *instead of* the built-in JNI pass. When set,
+        /// the case indexes with `--no-jni-bridge -m <this>`, so it asserts exactly what the
+        /// built-in case asserts and the two are a direct A/B.
+        bridge: Option<PathBuf>,
+        /// How the two artifacts reach `ctadl import`. Every packaging asserts exactly the
+        /// same thing, so the set is a direct A/B on the importer alone.
+        packaging: Packaging,
+    },
+}
+
+/// How a [`Kind::Jni`] case hands its two halves to `ctadl import`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Packaging {
+    /// Import the DEX and the shared library as two separate artifacts. The baseline.
+    Separate,
+    /// Package both into one APK and import it once, as an ordinary Android app ships.
+    /// Exercises the APK importer finding, extracting, and disassembling `lib/<abi>`.
+    SingleApk,
+    /// Package each into an APK of its own -- a base APK holding the DEX and a
+    /// `config.<abi>.apk` holding only the library -- and import both. This is how an
+    /// Android App Bundle is distributed, and what an XAPK download unpacks to: the
+    /// native half arrives in an APK with no `classes*.dex` in it at all.
+    SplitApks,
 }
 
 impl Kind {
@@ -36,6 +69,8 @@ impl Kind {
             Kind::Jvm { .. } => Frontend::Jvm,
             Kind::Pcode { .. } => Frontend::Pcode,
             Kind::C { .. } => Frontend::C,
+            Kind::Lua { .. } => Frontend::Lua,
+            Kind::Jni { .. } => Frontend::Jni,
         }
     }
 }
@@ -53,11 +88,22 @@ pub enum Frontend {
     /// `tests/c/*.c` sources as `Pcode`, but parses them directly and reads
     /// source lines off the SARIF regions instead of going through Ghidra.
     C,
+    Lua,
+    /// Not a frontend of its own: the JNI bridge, which needs the dex *and*
+    /// pcode toolchains at once. It selects separately so `--frontend jni` runs
+    /// the two-import cases without also running every dex and pcode case.
+    Jni,
 }
 
 impl Frontend {
-    pub const ALL: &'static [Frontend] =
-        &[Frontend::Dex, Frontend::Jvm, Frontend::Pcode, Frontend::C];
+    pub const ALL: &'static [Frontend] = &[
+        Frontend::Dex,
+        Frontend::Jvm,
+        Frontend::Pcode,
+        Frontend::C,
+        Frontend::Lua,
+        Frontend::Jni,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -65,6 +111,8 @@ impl Frontend {
             Frontend::Jvm => "jvm",
             Frontend::Pcode => "pcode",
             Frontend::C => "c",
+            Frontend::Lua => "lua",
+            Frontend::Jni => "jni",
         }
     }
 }
@@ -78,7 +126,11 @@ impl FromStr for Frontend {
             "jvm" => Ok(Frontend::Jvm),
             "pcode" => Ok(Frontend::Pcode),
             "c" => Ok(Frontend::C),
-            other => bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c)"),
+            "lua" => Ok(Frontend::Lua),
+            "jni" => Ok(Frontend::Jni),
+            other => {
+                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni)")
+            }
         }
     }
 }
@@ -108,6 +160,8 @@ pub fn resolve_tests_dir(override_dir: Option<&Path>) -> Result<PathBuf> {
 pub fn discover(tests_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = discover_dex(&tests_dir.join("java"))?;
     cases.extend(discover_pcode(&tests_dir.join("c"))?);
+    cases.extend(discover_lua(&tests_dir.join("lua"))?);
+    cases.extend(discover_jni(&tests_dir.join("jni"))?);
     cases.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(cases)
 }
@@ -194,6 +248,120 @@ fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
     Ok(cases)
 }
 
+/// Pair each `foo.lua` -- or each `foo/` directory of Lua sources, imported whole
+/// as one `require` root -- with its `foo-query.json` config. A source without a
+/// matching query is skipped, mirroring the pcode discovery. The name is prefixed
+/// with `Lua:` so the reports (and `--filter`) distinguish it from other
+/// frontends' cases.
+fn discover_lua(lua_dir: &Path) -> Result<Vec<TestCase>> {
+    let mut cases = Vec::new();
+    if !lua_dir.is_dir() {
+        return Ok(cases);
+    }
+    for entry in read_dir_sorted(lua_dir)? {
+        if !entry.is_dir() && entry.extension().and_then(|e| e.to_str()) != Some("lua") {
+            continue;
+        }
+        let stem = file_stem(&entry)?;
+        let query = lua_dir.join(format!("{stem}-query.json"));
+        if !query.is_file() {
+            continue;
+        }
+        cases.push(TestCase {
+            name: format!("Lua:{stem}"),
+            kind: Kind::Lua {
+                source: absolute(&entry)?,
+                query: absolute(&query)?,
+            },
+        });
+    }
+    Ok(cases)
+}
+
+/// Pair each `Foo.java` with its sibling `Foo.c` -- the shared library implementing
+/// its `native` methods -- and its kebab-cased `foo.json`. All three must be present:
+/// a case here is by construction about the boundary between the two artifacts, so a
+/// `.java` with no `.c` (or no config) is not a degenerate JNI case, it is not one at
+/// all. Cases report as `Jni:Foo`.
+fn discover_jni(jni_dir: &Path) -> Result<Vec<TestCase>> {
+    let mut cases = Vec::new();
+    if !jni_dir.is_dir() {
+        return Ok(cases);
+    }
+    for entry in read_dir_sorted(jni_dir)? {
+        if entry.extension().and_then(|e| e.to_str()) != Some("java") {
+            continue;
+        }
+        let stem = file_stem(&entry)?;
+        let native = jni_dir.join(format!("{stem}.c"));
+        if !native.is_file() {
+            continue;
+        }
+        // Prefer a JSON5 config (it can carry inline comments), as the dex cases do.
+        let kebab = to_kebab_case(&stem);
+        let json5 = jni_dir.join(format!("{kebab}.json5"));
+        let json = jni_dir.join(format!("{kebab}.json"));
+        let config = if json5.is_file() { json5 } else { json };
+        if !config.is_file() {
+            continue;
+        }
+        cases.push(TestCase {
+            name: format!("Jni:{stem}"),
+            kind: Kind::Jni {
+                java: absolute(&entry)?,
+                native: absolute(&native)?,
+                config: absolute(&config)?,
+                bridge: None,
+                packaging: Packaging::Separate,
+            },
+        });
+        // The same two artifacts and the same claims, but packaged the way a real
+        // Android app ships them and imported with one command. If the APK importer
+        // finds and disassembles `lib/<abi>` correctly, both cases pass identically.
+        cases.push(TestCase {
+            name: format!("Jni:{stem}+apk"),
+            kind: Kind::Jni {
+                java: absolute(&entry)?,
+                native: absolute(&native)?,
+                config: absolute(&config)?,
+                bridge: None,
+                packaging: Packaging::SingleApk,
+            },
+        });
+        // And the way an app *bundle* ships them: two APKs, the native one carrying no
+        // DEX at all. Same claims again, so this is an A/B on whether a DEX-less APK
+        // imports and co-indexes like any other native half.
+        cases.push(TestCase {
+            name: format!("Jni:{stem}+split-apks"),
+            kind: Kind::Jni {
+                java: absolute(&entry)?,
+                native: absolute(&native)?,
+                config: absolute(&config)?,
+                bridge: None,
+                packaging: Packaging::SplitApks,
+            },
+        });
+        // A sibling `<kebab>.bridge.jsonl` turns the case into an A/B: the same two artifacts
+        // and the same claims, joined by a hand-written `model.bridge` under
+        // `--no-jni-bridge` instead of by the built-in pass. If the declarative construct is
+        // as expressive as the pass for this boundary, both cases pass identically.
+        let bridge = jni_dir.join(format!("{kebab}.bridge.jsonl"));
+        if bridge.is_file() {
+            cases.push(TestCase {
+                name: format!("Jni:{stem}+bridge"),
+                kind: Kind::Jni {
+                    java: absolute(&entry)?,
+                    native: absolute(&native)?,
+                    config: absolute(&config)?,
+                    bridge: Some(absolute(&bridge)?),
+                    packaging: Packaging::Separate,
+                },
+            });
+        }
+    }
+    Ok(cases)
+}
+
 fn read_dir_sorted(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = std::fs::read_dir(dir)
         .with_context(|| format!("failed to read {}", dir.display()))?
@@ -236,7 +404,94 @@ fn to_kebab_case(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{to_kebab_case, Frontend};
+    use super::{discover_jni, to_kebab_case, Frontend, Kind, Packaging};
+
+    /// Every shipped JNI case is discovered, and one that carries a `<kebab>.bridge.jsonl`
+    /// yields a second, declaratively-bridged case beside it.
+    ///
+    /// This is the cheap half of the A/B: the runner itself needs `javac`, `dx`, a C compiler
+    /// and Ghidra, so it only runs in the nightly environment. That the pair is *discovered* --
+    /// and that the two halves make the same claims, since they share a config file -- is
+    /// checkable everywhere.
+    #[test]
+    fn a_bridge_model_beside_a_jni_case_yields_an_ab_pair() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("nightly/tests/jni");
+        if !dir.is_dir() {
+            return;
+        }
+        let cases = discover_jni(&dir).expect("discovering jni cases");
+        let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
+        for stem in ["JniFlow", "JniArgShift"] {
+            assert!(
+                names.contains(&format!("Jni:{stem}").as_str()),
+                "the built-in case is missing: {names:?}"
+            );
+            assert!(
+                names.contains(&format!("Jni:{stem}+bridge").as_str()),
+                "the declarative A/B case is missing: {names:?}"
+            );
+            assert!(
+                names.contains(&format!("Jni:{stem}+apk").as_str()),
+                "the APK-packaged A/B case is missing: {names:?}"
+            );
+            assert!(
+                names.contains(&format!("Jni:{stem}+split-apks").as_str()),
+                "the split-APK A/B case is missing: {names:?}"
+            );
+        }
+        // The variants of each case differ in exactly one thing: which mechanism joins
+        // the boundary, or how the artifacts are packaged. Same sources, same config, so
+        // the same assertions.
+        for stem in ["JniFlow", "JniArgShift"] {
+            let of = |suffix: &str| {
+                let name = format!("Jni:{stem}{suffix}");
+                cases
+                    .iter()
+                    .find(|c| c.name == name)
+                    .map(|c| match &c.kind {
+                        Kind::Jni {
+                            java,
+                            native,
+                            config,
+                            bridge,
+                            packaging,
+                        } => (
+                            (java.clone(), native.clone(), config.clone()),
+                            bridge.clone(),
+                            *packaging,
+                        ),
+                        _ => panic!("expected a Jni case for {name}"),
+                    })
+                    .unwrap_or_else(|| panic!("no case named {name}"))
+            };
+            let (artifacts, bridge, packaging) = of("");
+            assert!(bridge.is_none(), "the built-in case uses no model");
+            assert_eq!(packaging, Packaging::Separate);
+
+            // Only the mechanism differs.
+            let (ab_artifacts, ab_bridge, ab_packaging) = of("+bridge");
+            assert_eq!(artifacts, ab_artifacts);
+            assert!(ab_bridge.is_some(), "the A/B case supplies one");
+            assert_eq!(ab_packaging, Packaging::Separate);
+
+            // Only the packaging differs; both use the built-in bridge.
+            for (suffix, expected) in [
+                ("+apk", Packaging::SingleApk),
+                ("+split-apks", Packaging::SplitApks),
+            ] {
+                let (packaged_artifacts, packaged_bridge, packaged) = of(suffix);
+                assert_eq!(artifacts, packaged_artifacts);
+                assert!(
+                    packaged_bridge.is_none(),
+                    "{suffix} uses the built-in bridge"
+                );
+                assert_eq!(packaged, expected);
+            }
+        }
+    }
 
     #[test]
     fn frontend_parses() {
@@ -244,10 +499,16 @@ mod tests {
         assert_eq!("jvm".parse::<Frontend>().unwrap(), Frontend::Jvm);
         assert_eq!("dex".parse::<Frontend>().unwrap(), Frontend::Dex);
         assert_eq!("c".parse::<Frontend>().unwrap(), Frontend::C);
+        assert_eq!("jni".parse::<Frontend>().unwrap(), Frontend::Jni);
         // Tolerate stray whitespace/case from a comma-separated list.
         assert_eq!(" Pcode ".parse::<Frontend>().unwrap(), Frontend::Pcode);
         assert_eq!(" C ".parse::<Frontend>().unwrap(), Frontend::C);
         assert!("bogus".parse::<Frontend>().is_err());
+        // Every variant round-trips through its own name, so `--frontend <x>`
+        // accepts anything the report prints.
+        for frontend in Frontend::ALL {
+            assert_eq!(frontend.as_str().parse::<Frontend>().unwrap(), *frontend);
+        }
     }
 
     #[test]

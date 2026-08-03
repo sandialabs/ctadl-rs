@@ -28,10 +28,25 @@ use dex_reader::{APKParser, DexParser};
 #[cfg(test)]
 mod tests;
 
-pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
+/// The Java half of an APK import: the IR, plus the number of `classes*.dex` entries it
+/// was built from.
+pub struct ApkImport {
+    pub program_info: ProgramInfo,
+    pub dex_count: usize,
+}
+
+/// Imports the Dex code out of an APK.
+///
+/// An APK with no `classes*.dex` yields an empty program rather than an error: a split
+/// APK out of an Android App Bundle -- `config.arm64_v8a.apk` inside an XAPK, as
+/// distributed by APKPure and friends -- puts the native libraries in one APK and the
+/// Dex in another, and the native half is still worth importing on its own. Callers that
+/// need to distinguish the two check [`ApkImport::dex_count`].
+pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
     let file = file.as_ref();
     let data = read_file_bytes(file)?;
     let parser = APKParser::new(&data)?;
+    let dex_count = parser.dex_count();
     let mut ctx = Context::new();
     let mut builders = Builders::new();
 
@@ -48,7 +63,10 @@ pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
         };
         ctx.process(&parser, key, &mut builders)?;
     }
-    ctx.finish(builders)
+    Ok(ApkImport {
+        program_info: ctx.finish(builders)?,
+        dex_count,
+    })
 }
 
 pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
@@ -184,6 +202,40 @@ impl Context {
                     &mut builders.program[fidx]
                 };
                 fdat.name = sig.clone();
+
+                // A `native` method is bodyless (`code_off == 0`), so the VMT push in the
+                // `code` branch below never runs for it, and the extern-stub loop at the end
+                // of `process` skips it too because it is in `self.defined`. Without a row
+                // here it reaches the fact base with no table entry at all.
+                if ACC_NATIVE.is_set_in(enc.access_flags) {
+                    let (class_name, method_name, method_descr) = parser.method_triple(mi)?;
+                    let cls = JavaClass(class_name.into());
+                    let simple = JavaSimpleName(method_name.into());
+                    let descr = JavaSignature(method_descr.into());
+                    let method = JavaMethod(sig.as_str().into());
+                    if let VirtualMethodTable::Java {
+                        methods, natives, ..
+                    } = &mut builders.vmt
+                    {
+                        // In `methods` because CHA builds its resolvent map from that column:
+                        // without a row there, an `invoke-virtual` of a native method resolves
+                        // to nothing and the call site is lost -- bridge or no bridge. (A
+                        // `static` native is reached by `invoke-static`, which resolves by name
+                        // and never consults the table.) The jvm frontend lists native methods
+                        // there for the same reason, because it walks every declared method.
+                        methods.push((cls.clone(), simple.clone(), descr.clone(), method.clone()));
+                        // ... and in `natives` because that is where the JNI bridge looks, and
+                        // it is the only column carrying the staticness the bridge needs.
+                        natives.push((
+                            cls,
+                            simple,
+                            descr,
+                            method,
+                            ACC_STATIC.is_set_in(enc.access_flags),
+                        ));
+                    }
+                }
+
                 // Handle instructions
 
                 // Parse the instruction stream for the method.

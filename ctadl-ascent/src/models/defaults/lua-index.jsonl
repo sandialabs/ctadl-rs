@@ -1,0 +1,39 @@
+// Default propagation models for the Lua frontend (VirtualMethodTable::Lua).
+//
+// These match *externals* -- functions called but never defined in the import. The frontend
+// registers each under both spellings it can appear as: the fully-qualified callee text
+// (`os.execute`) and its last dotted component (`execute`), because method-call syntax lowers
+// to the bare name (`s:format(x)` becomes `direct-call format(%s, x)`) while dotted syntax
+// keeps the prefix (`string.format(x)` becomes `direct-call string.format(x)`). A `names` entry
+// spelled bare therefore covers both call syntaxes; one spelled with a prefix covers only the
+// dotted form, which is deliberate for short names like `concat` and `remove`.
+//
+// DELIBERATELY ABSENT -- do not add:
+//   `table.insert`, `ipairs`, `pairs`, `select`: the frontend recognizes these syntactically
+//     and lowers them straight to dataflow (`lua/mod.rs`, `eval_builtin_call`), so no call
+//     statement is emitted at all. A model would double-count.
+//   `setmetatable`: likewise lowered directly (`eval_setmetatable`) -- it never appears as a
+//     call target, so a model on it would be inert rather than wrong.
+//   `pcall`, `xpcall`, `coroutine.*`: these invoke a function-valued argument and need
+//     `forward_call`, which the loader does not implement (docs/model-generators.md).
+//
+// Every port here is bare -- the strictly more permissive choice. The element field IS
+// modelable: the frontend emits `PathSegment::Symbol("[_elem_]")`, which a port spells
+// `.\[_elem_]` (in JSON, "\\[_elem_]") -- escaped, because an unescaped `[` at segment start
+// introduces an offset and would be a hard load error here. The level-correct variants, held
+// back until they are measured, are: `table.concat` reading `Argument(0).\[_elem_]`, `rawset`
+// writing `Argument(0).\[_elem_]`, and a `table.remove`/`unpack` that unwraps one level with
+// `Argument(0).\[_elem_]` -> `Return`. They distinguish "the table is tainted" from "an element
+// is"; the bare ports below do not.
+{"find":"methods","where":[{"constraint":"signature_match","names":["format","rep","sub","upper","lower","reverse","char"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["gsub","match","gmatch","byte","len"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["table.concat","table.remove","table.unpack","unpack"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["rawget","next"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["rawset"]}],"model":{"propagation":[{"input":"Argument(2)","output":"Argument(0)"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["tostring","tonumber","assert"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["os.date","os.getenv","os.tmpname"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["io.open","io.read","io.lines","read"]}],"model":{"propagation":[{"input":"Argument(*)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["write"]}],"model":{"propagation":[{"input":"Argument(1)","output":"Argument(0)"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["cjson.encode","cjson.decode","cjson.safe.encode","cjson.safe.decode"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["ngx.escape_uri","ngx.unescape_uri","ngx.encode_base64","ngx.decode_base64","ngx.encode_args","ngx.decode_args","ngx.quote_sql_str","ngx.md5","ngx.sha1_bin"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","names":["ngx.re.match","ngx.re.gsub","ngx.re.sub"]}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}

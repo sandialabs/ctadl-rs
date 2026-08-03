@@ -59,6 +59,7 @@ url = "2"
 trie = { path = "../trie" }
 tree-sitter = "0.26"
 tree-sitter-c = "0.24"
+tree-sitter-lua = "0.5"
 tempfile = "3"
 which = "6"
 elsa = "1.11"
@@ -66,6 +67,8 @@ immortal = { path = "../immortal" }
 
 [dev-dependencies]
 test-log = "0.2.19"
+# Building the split APKs of an app bundle (native-only, resource-only) as test fixtures.
+zip = "0.6"
 
 [lints]
 workspace = true

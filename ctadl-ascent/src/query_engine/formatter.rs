@@ -51,8 +51,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::{Error, ErrorContext};
 use crate::facts::schema;
 use crate::facts::{
-    CallArgId, FlowEdge, FlowVariable, FlowVertex, FormalIndex, FunctionId, InsnId, InsnSiteId,
-    Label, PackedInsnSiteId, Path, TaintDirection, TaintState,
+    CallArgId, FlowEdge, FlowVariable, FlowVertex, FormalIndex, FunctionId, ImportId, InsnId,
+    InsnSiteId, Label, PackedInsnSiteId, Path, TaintDirection, TaintState,
 };
 use crate::models::{EndpointStats, UnmatchedReason};
 use crate::project::{AnalysisProject, ArtifactLanguage};
@@ -67,18 +67,53 @@ pub enum SarifProfile {
     Debug,
 }
 
-pub struct ProjectContext<'a, P: AsRef<path::Path>> {
-    pub source_spans: &'a [(FileSpanId, FunctionId, InsnId)],
-    pub index_dir: P,
-    pub source_info_dir: P,
-    pub details_by_span: &'a BTreeMap<u32, Vec<(Label, FunctionId, FlowVariable, Path)>>,
-    pub facts: &'a FormatFacts,
-    pub taint_results: &'a TaintAnalysisResults,
+/// One instruction's source location, as the index recorded it.
+///
+/// The [`FileSpanId`] indexes the source-info database of `import` and of no other (see
+/// [`crate::facts::ImportId`]); `(func, insn)` identify the instruction project-wide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SourceSpan {
+    pub span: FileSpanId,
+    pub import: ImportId,
+    pub func: FunctionId,
+    pub insn: InsnId,
+}
+
+impl SourceSpan {
+    /// What identifies this location among the project's imports. Two imports number their
+    /// spans independently, so the span alone is not a key: span 7 exists in each of them and
+    /// denotes a different line in every one.
+    pub fn key(&self) -> SpanKey {
+        (self.import, self.span)
+    }
+}
+
+/// A source span qualified by the import that numbered it. See [`SourceSpan::key`].
+pub type SpanKey = (ImportId, FileSpanId);
+
+/// One import of the project being formatted, as [`ImportId`] resolves it.
+pub struct ImportSource {
+    pub id: ImportId,
+    /// Name in the store, as `ctadl index` recorded it.
+    pub name: String,
+    /// Directory holding this import's source-info parquet tables.
+    pub source_info_dir: path::PathBuf,
     pub language: ArtifactLanguage,
     /// Base address the disassembler loaded the artifact at, if known. Used to
     /// emit `relativeAddress` (the section-relative offset) alongside the
     /// absolute instruction address in binary SARIF locations.
     pub image_base: Option<i64>,
+}
+
+pub struct ProjectContext<'a, P: AsRef<path::Path>> {
+    pub source_spans: &'a [SourceSpan],
+    pub index_dir: P,
+    /// Every import of the project, each holding the source-info database its own spans are
+    /// numbered in. Results are rendered once, against the right one.
+    pub imports: &'a [ImportSource],
+    pub details_by_span: &'a BTreeMap<SpanKey, Vec<(Label, FunctionId, FlowVariable, Path)>>,
+    pub facts: &'a FormatFacts,
+    pub taint_results: &'a TaintAnalysisResults,
 }
 
 pub struct FormatConfig {
@@ -187,13 +222,6 @@ struct PathStats {
     dropped_no_location: usize,
 }
 
-impl PathStats {
-    fn merge(&mut self, other: PathStats) {
-        self.reported += other.reported;
-        self.dropped_no_location += other.dropped_no_location;
-    }
-}
-
 /// Assemble `run.invocations[0]`: the configuration and execution notifications, the rules
 /// the profile turned off, and the whole-run status.
 ///
@@ -264,7 +292,7 @@ fn build_invocation(
     }
 
     // CTADL0004: a generator that declared a port and produced no endpoint. The
-    // notification points at the model *file* — `EndpointRow` carries no provenance and
+    // notification points at the model *file* — `EndpointMatch` carries no provenance and
     // serde_json gives no spans, so there is no line/column to point at. Which of the
     // several ways it can produce nothing happened is what `unmatched_message` reports:
     // "matched no function" is only one of them.
@@ -1418,7 +1446,8 @@ pub struct SarifData {
 #[derive(Default)]
 pub struct SourceLocationData {
     pub all_locations: BTreeMap<(u32, u64), Location>,
-    pub batch_data: Vec<(u32, u32, u64, Location)>,
+    /// Every resolved location, as `(span key, func id, insn id, location)`.
+    pub batch_data: Vec<(SpanKey, u32, u64, Location)>,
     pub id_to_name: BTreeMap<u32, String>,
 }
 
@@ -1448,48 +1477,45 @@ async fn async_format_sarif(
             .push((label.clone(), *var, *pth));
     }
     // Build a map from each file span to its associated taint details.
-    let mut details_by_span: BTreeMap<u32, Vec<(Label, FunctionId, FlowVariable, Path)>> =
+    let mut details_by_span: BTreeMap<SpanKey, Vec<(Label, FunctionId, FlowVariable, Path)>> =
         BTreeMap::new();
-    for (fs, func_id, insn_id) in source_spans.iter() {
-        let key = (func_id.id, insn_id.id);
+    for span in source_spans.iter() {
+        let key = (span.func.id, span.insn.id);
         if let Some(details) = instr_to_details.get(&key) {
             for (label, var, pth) in details {
-                details_by_span.entry(fs.0).or_default().push((
+                details_by_span.entry(span.key()).or_default().push((
                     label.clone(),
-                    *func_id,
+                    span.func,
                     *var,
                     *pth,
                 ));
             }
         }
     }
-    let mut results = Vec::new();
-    let mut path_stats = PathStats::default();
     let mut sarif_data = SarifData::default();
     let index_dir = project.index_path()?;
-    // projects should have only one set of parquet files, so just take the last one
-    let mut parquet_dir = String::from("");
-    for import in project.iter_imports() {
-        let import = import?;
-        let dir = import.source_info_dir();
-        parquet_dir = object_store_path(&dir);
-        let ctx = ProjectContext {
-            source_spans: &source_spans,
-            index_dir: index_dir.clone(),
-            source_info_dir: dir,
-            details_by_span: &details_by_span,
-            facts,
-            taint_results,
-            language: import.language,
-            image_base: import.image_base,
-        };
-        let (sarif_results, import_path_stats) =
-            format_source_info_results(&ctx, config, &mut sarif_data)
-                .await
-                .err_context(|| "formatting results")?;
-        results.extend(sarif_results);
-        path_stats.merge(import_path_stats);
-    }
+    let imports = load_import_sources(&index_dir)?;
+    // The source-info tables this run read locations out of, one directory per import.
+    let parquet_dirs: Vec<String> = imports
+        .iter()
+        .map(|i| object_store_path(&i.source_info_dir))
+        .collect();
+    // Results are built once for the whole project, not once per import: a taint path is a
+    // fact about the project's fact base, and each of its locations is resolved against the
+    // one import that numbered it (see `populate_source_info`). Rendering per import instead
+    // emitted every result once per import, each copy carrying whatever line the other
+    // artifact happened to have at that span id.
+    let ctx = ProjectContext {
+        source_spans: &source_spans,
+        index_dir: index_dir.clone(),
+        imports: &imports,
+        details_by_span: &details_by_span,
+        facts,
+        taint_results,
+    };
+    let (mut results, path_stats) = format_source_info_results(&ctx, config, &mut sarif_data)
+        .await
+        .err_context(|| "formatting results")?;
 
     // What happened to `C0001` this run. Decided here rather than per import: the profile
     // gate and the endpoint counts are run-wide, and exactly one status result may be
@@ -1632,11 +1658,17 @@ async fn async_format_sarif(
         )
         .build();
 
+    // `parquet_dir` names the source-info tables the locations above came out of. A project has
+    // one such directory per import, so `parquet_dirs` carries them all and `parquet_dir` keeps
+    // naming a single one (the last) for consumers written when only one could exist.
     let properties = PropertyBag::builder()
-        .additional_properties(BTreeMap::from([(
-            "parquet_dir".to_string(),
-            serde_json::json!(parquet_dir),
-        )]))
+        .additional_properties(BTreeMap::from([
+            (
+                "parquet_dir".to_string(),
+                serde_json::json!(parquet_dirs.last().cloned().unwrap_or_default()),
+            ),
+            ("parquet_dirs".to_string(), serde_json::json!(parquet_dirs)),
+        ]))
         .build();
 
     // `results` is always set, never omitted: per the JSON schema it "must be present (but
@@ -1711,14 +1743,44 @@ async fn async_format_sarif(
     Ok((final_sarif, execution_successful))
 }
 
+/// Resolves every needed span to a SARIF [`Location`], each against the source-info database of
+/// the import that numbered it.
+///
+/// Span ids are per-import indices, so this dispatch is what makes them mean anything: the same
+/// id resolves in *every* import's database, to an unrelated line in an unrelated artifact. An
+/// import no span points into is skipped, tables and all.
 async fn populate_source_info<P: AsRef<path::Path>>(
     ctx: &ProjectContext<'_, P>,
     config: &FormatConfig,
     sarif_data: &mut SarifData,
     source_data: &mut SourceLocationData,
-    needed_spans: &[(FileSpanId, FunctionId, InsnId)],
+    needed_spans: &[SourceSpan],
 ) -> Result<(), Error> {
-    let dir = ctx.source_info_dir.as_ref();
+    for import in ctx.imports {
+        let spans: Vec<SourceSpan> = needed_spans
+            .iter()
+            .copied()
+            .filter(|s| s.import == import.id)
+            .collect();
+        if spans.is_empty() {
+            continue;
+        }
+        populate_import_source_info(ctx, import, config, sarif_data, source_data, &spans)
+            .await
+            .err_context(|| format!("resolving source locations in import '{}'", import.name))?;
+    }
+    Ok(())
+}
+
+async fn populate_import_source_info<P: AsRef<path::Path>>(
+    ctx: &ProjectContext<'_, P>,
+    import: &ImportSource,
+    config: &FormatConfig,
+    sarif_data: &mut SarifData,
+    source_data: &mut SourceLocationData,
+    needed_spans: &[SourceSpan],
+) -> Result<(), Error> {
+    let dir = import.source_info_dir.as_path();
     let index_dir = ctx.index_dir.as_ref();
     let ctx_session = SessionContext::new();
 
@@ -1759,9 +1821,9 @@ async fn populate_source_info<P: AsRef<path::Path>>(
         Field::new("insn_id", DataType::UInt64, false),
     ]));
 
-    let file_span_id_array: UInt32Array = needed_spans.iter().map(|(s, _, _)| s.0).collect();
-    let func_id_array: UInt32Array = needed_spans.iter().map(|(_, f, _)| f.id).collect();
-    let insn_id_array: UInt64Array = needed_spans.iter().map(|(_, _, i)| i.id).collect();
+    let file_span_id_array: UInt32Array = needed_spans.iter().map(|s| s.span.0).collect();
+    let func_id_array: UInt32Array = needed_spans.iter().map(|s| s.func.id).collect();
+    let insn_id_array: UInt64Array = needed_spans.iter().map(|s| s.insn.id).collect();
 
     let batch = RecordBatch::try_new(
         schema.clone(),
@@ -1897,7 +1959,7 @@ async fn populate_source_info<P: AsRef<path::Path>>(
                 .uri(uri_stripped.to_string())
                 .build();
 
-            let is_pcode = ctx.language == ArtifactLanguage::Pcode;
+            let is_pcode = import.language == ArtifactLanguage::Pcode;
             let physical_location = match encoding {
                 source_info::ArtifactEncoding::Binary if is_pcode => {
                     // `start` is the absolute instruction address (it includes
@@ -1907,7 +1969,7 @@ async fn populate_source_info<P: AsRef<path::Path>>(
                     // unknown, the relative offset degenerates to the absolute.
                     let address = Address::builder()
                         .absolute_address(start as i64)
-                        .relative_address(start as i64 - ctx.image_base.unwrap_or(0))
+                        .relative_address(start as i64 - import.image_base.unwrap_or(0))
                         .kind("instruction")
                         .build();
                     PhysicalLocation::builder()
@@ -1951,9 +2013,12 @@ async fn populate_source_info<P: AsRef<path::Path>>(
             source_data
                 .all_locations
                 .insert((func_id, insn_id), location.clone());
-            source_data
-                .batch_data
-                .push((file_span_id, func_id, insn_id, location));
+            source_data.batch_data.push((
+                (import.id, FileSpanId(file_span_id)),
+                func_id,
+                insn_id,
+                location,
+            ));
         }
     }
     Ok(())
@@ -2026,7 +2091,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
 
     let mut results_by_path: BTreeMap<
         Vec<u32>,
-        (u32, Vec<(QueryEndpoint, Option<QueryEndpoint>, Label)>),
+        (SpanKey, Vec<(QueryEndpoint, Option<QueryEndpoint>, Label)>),
     > = BTreeMap::new();
     if let Some(ref g) = graph {
         // Each distinct (source vertex, sink vertex) pair is searched once.
@@ -2034,7 +2099,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             (FunctionId, FlowVariable, Path),
             (FunctionId, FlowVariable, Path),
         )> = BTreeSet::new();
-        for (fs_id, details) in ctx.details_by_span {
+        for (span_key, details) in ctx.details_by_span {
             if !has_sinks {
                 break;
             }
@@ -2076,7 +2141,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                             let nodes: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
                             results_by_path
                                 .entry(nodes)
-                                .or_insert((*fs_id, Vec::new()))
+                                .or_insert((*span_key, Vec::new()))
                                 .1
                                 .push(((*src).clone(), Some((*sink).clone()), lbl.clone()));
                         }
@@ -2090,7 +2155,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     let mut seen_sites: BTreeSet<(u32, u64)> = ctx
         .source_spans
         .iter()
-        .map(|(_, f, i)| (f.id, i.id))
+        .map(|s| (s.func.id, s.insn.id))
         .collect();
 
     // The call instruction a *call-arg* vertex belongs to. A call-arg vertex is an
@@ -2175,13 +2240,13 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     }
     populate_source_info(ctx, config, sarif_data, &mut source_data, &needed_spans).await?;
 
-    let mut span_to_location: BTreeMap<u32, Location> = BTreeMap::new();
-    for (file_span_id, _, _, location) in &source_data.batch_data {
-        span_to_location.insert(*file_span_id, location.clone());
+    let mut span_to_location: BTreeMap<SpanKey, Location> = BTreeMap::new();
+    for (span_key, _, _, location) in &source_data.batch_data {
+        span_to_location.insert(*span_key, location.clone());
     }
 
-    let mut code_flows_by_span: BTreeMap<u32, Vec<CodeFlow>> = BTreeMap::new();
-    for (path, (file_span_id, details)) in &results_by_path {
+    let mut code_flows_by_span: BTreeMap<SpanKey, Vec<CodeFlow>> = BTreeMap::new();
+    for (path, (span_key, details)) in &results_by_path {
         let mut thread_flow_locations = Vec::new();
         let mut last_loc_id: Option<(String, Option<String>)> = None;
         // Monotonic step counter for the whole flow, surfaced as SARIF `executionOrder`
@@ -2397,7 +2462,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         }
 
         if !thread_flow_locations.is_empty() {
-            code_flows_by_span.entry(*file_span_id).or_default().push(
+            code_flows_by_span.entry(*span_key).or_default().push(
                 CodeFlow::builder()
                     .thread_flows(vec![
                         ThreadFlow::builder()
@@ -2411,21 +2476,21 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
 
     // Now build results for tainted instructions (only for Debug or Machine profiles)
     if config.profile == SarifProfile::Debug || config.profile == SarifProfile::Machine {
-        let tainted_span_ids: BTreeSet<u32> =
-            ctx.source_spans.iter().map(|(fs, _, _)| fs.0).collect();
+        let tainted_span_ids: BTreeSet<SpanKey> =
+            ctx.source_spans.iter().map(|s| s.key()).collect();
 
-        let mut results_by_span: BTreeMap<u32, SarifResult> = BTreeMap::new();
-        for (file_span_id, func_id, insn_id, location) in &source_data.batch_data {
-            if !tainted_span_ids.contains(file_span_id) {
+        let mut results_by_span: BTreeMap<SpanKey, SarifResult> = BTreeMap::new();
+        for (span_key, func_id, insn_id, location) in &source_data.batch_data {
+            if !tainted_span_ids.contains(span_key) {
                 continue;
             }
-            if results_by_span.contains_key(file_span_id) {
+            if results_by_span.contains_key(span_key) {
                 continue;
             }
 
             let mut all_labels = BTreeSet::new();
             let mut labels_to_vertices: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-            if let Some(details) = ctx.details_by_span.get(file_span_id) {
+            if let Some(details) = ctx.details_by_span.get(span_key) {
                 for (lbl, _func_id, var, pth) in details {
                     all_labels.insert(lbl.clone());
                     let vertex = format!("{}{}", var, pth.to_dot_string());
@@ -2441,7 +2506,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             sorted_labels.sort();
 
             let msg_text = if sorted_labels.is_empty() {
-                format!("span {file_span_id}")
+                format!("span {}", span_key.1.0)
             } else {
                 format!("Taint flow labelled '{}'", sorted_labels.join("', '"))
             };
@@ -2464,8 +2529,14 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 ),
             ]);
             if config.profile == SarifProfile::Debug {
+                // The span id alone does not identify a location in a multi-import project --
+                // each import numbers its spans from zero -- so name the import beside it.
                 additional_properties
-                    .insert("fileSpanId".to_string(), serde_json::json!(*file_span_id));
+                    .insert("fileSpanId".to_string(), serde_json::json!(span_key.1.0));
+                additional_properties.insert(
+                    "import".to_string(),
+                    serde_json::json!(import_name(ctx.imports, span_key.0)),
+                );
                 additional_properties.insert("funcId".to_string(), serde_json::json!(*func_id));
                 additional_properties.insert("insnId".to_string(), serde_json::json!(*insn_id));
             }
@@ -2482,7 +2553,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 .properties(properties)
                 .build();
 
-            results_by_span.insert(*file_span_id, result);
+            results_by_span.insert(*span_key, result);
         }
         results.extend(results_by_span.into_values());
     }
@@ -2510,8 +2581,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     // Now build results for paths (for Human, Debug, or Agent profiles, one per path)
     let mut path_stats = PathStats::default();
     if profile_finds_paths(config.profile) {
-        for (_path, (file_span_id, details)) in results_by_path {
-            let location = if let Some(loc) = span_to_location.get(&file_span_id) {
+        for (_path, (span_key, details)) in results_by_path {
+            let location = if let Some(loc) = span_to_location.get(&span_key) {
                 loc.clone()
             } else {
                 // A path was found but has nowhere to be reported. Counted so the run can
@@ -2530,7 +2601,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             sorted_labels.sort();
 
             let mut labels_to_vertices: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-            if let Some(details) = ctx.details_by_span.get(&file_span_id) {
+            if let Some(details) = ctx.details_by_span.get(&span_key) {
                 for (lbl, _func_id, var, pth) in details {
                     let vertex = format!("{}{}", var, pth.to_dot_string());
                     labels_to_vertices
@@ -2604,7 +2675,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 .additional_properties(additional_properties)
                 .build();
 
-            if let Some(code_flows) = code_flows_by_span.get(&file_span_id) {
+            if let Some(code_flows) = code_flows_by_span.get(&span_key) {
                 let result = SarifResult::builder()
                     .rule_id(TAINTED_PATH_RULE_ID.to_string())
                     // A reported taint path is a finding, not a note: `kind: "fail"` puts
@@ -2827,11 +2898,14 @@ fn format_absorbing_function_results(
     results
 }
 
-/// Look up the sites in the index source map and returns the span ids
+/// Look up the sites in the index source map and return their source spans.
+///
+/// Each span comes back with the import it was numbered in: the id alone is meaningless
+/// project-wide (see [`SourceSpan`]).
 pub async fn find_source_ids(
     source_map: &path::Path,
     tainted: &TaintedInstructions,
-) -> Result<Vec<(FileSpanId, FunctionId, InsnId)>, Error> {
+) -> Result<Vec<SourceSpan>, Error> {
     let mut ctx = SessionContext::new();
     register_parquet_checked(&ctx, "index_source_map", object_store_path(source_map)).await?;
 
@@ -2840,13 +2914,14 @@ pub async fn find_source_ids(
         .err_context(|| "building selector tables")?;
 
     let sql = "
-        SELECT index_source_map.source_span_id, index_source_map.func_id, index_source_map.insn_id
+        SELECT index_source_map.source_span_id, index_source_map.import_id,
+               index_source_map.func_id, index_source_map.insn_id
         FROM index_source_map
         JOIN site_id
         ON index_source_map.func_id = site_id.func_id
         AND index_source_map.insn_id = site_id.insn_id
         WHERE index_source_map.source_span_id != 0
-        ORDER BY index_source_map.source_span_id
+        ORDER BY index_source_map.import_id, index_source_map.source_span_id
     ";
 
     let mut batches = ctx.sql(sql).await?.collect().await?;
@@ -2858,29 +2933,75 @@ pub async fn find_source_ids(
             .as_any()
             .downcast_ref::<UInt32Array>()
             .unwrap();
-        let func_ids = batch
+        let import_ids = batch
             .column(1)
             .as_any()
             .downcast_ref::<UInt32Array>()
             .unwrap();
-        let insn_ids = batch
+        let func_ids = batch
             .column(2)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .unwrap();
+        let insn_ids = batch
+            .column(3)
             .as_any()
             .downcast_ref::<UInt64Array>()
             .unwrap();
 
         for i in 0..batch.num_rows() {
-            let span_id = span_ids.value(i);
-            let func_id = func_ids.value(i);
-            let insn_id = insn_ids.value(i);
-            result.push((
-                FileSpanId(span_id),
-                FunctionId::new(func_id),
-                InsnId::new(insn_id),
-            ));
+            result.push(SourceSpan {
+                span: FileSpanId(span_ids.value(i)),
+                import: ImportId(import_ids.value(i)),
+                func: FunctionId::new(func_ids.value(i)),
+                insn: InsnId::new(insn_ids.value(i)),
+            });
         }
     }
     Ok(result)
+}
+
+/// The imports an index was built from, in the order it walked them, each paired with the
+/// source-info database its spans are numbered in.
+///
+/// The names come from the index (`import_id.parquet`), not from the project config: a project
+/// whose import list changed since it was indexed would otherwise shift every span onto the
+/// wrong artifact, silently. An import named there but no longer loadable from the store is
+/// kept as a hole, so the ids of the imports after it still line up; spans landing in that hole
+/// simply go unresolved, exactly as they did before this table existed.
+fn load_import_sources(index_dir: &path::Path) -> Result<Vec<ImportSource>, Error> {
+    let names = schema::import_id::try_load(index_dir)?;
+    let mut imports = Vec::with_capacity(names.len());
+    for (id, name) in names {
+        let import = match crate::project::ArtifactImport::load_by_name(&name) {
+            Ok(import) => import,
+            Err(e) => {
+                log::warn!(
+                    "index was built from import '{name}', which cannot be loaded now ({e}); \
+                     source locations from it will be missing"
+                );
+                continue;
+            }
+        };
+        imports.push(ImportSource {
+            id,
+            name,
+            source_info_dir: import.source_info_dir(),
+            language: import.language,
+            image_base: import.image_base,
+        });
+    }
+    Ok(imports)
+}
+
+/// The store name of an import, for reporting. Falls back to the raw id for an import the
+/// index named but the store no longer has (see [`load_import_sources`]).
+fn import_name(imports: &[ImportSource], id: ImportId) -> String {
+    imports
+        .iter()
+        .find(|i| i.id == id)
+        .map(|i| i.name.clone())
+        .unwrap_or_else(|| format!("import#{}", id.0))
 }
 
 /// Creates and registers a selector table 'site_id' with two columns: 'function_id' and 'insn_id'.

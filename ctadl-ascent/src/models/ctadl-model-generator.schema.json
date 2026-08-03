@@ -48,14 +48,14 @@
               "type": "array",
               "items": { "type": "string" }
             },
-            "extends": {
-              "description": "Matches against base class of method",
-              "type": ["string", "array"],
-              "items": { "type": "string" }
-            },
-            "unqualified-id": {
-              "description": "Matches exactly with the unqualified-id of the method",
+            "qualified-id": {
+              "description": "Exact, whole-string match on the method's fully-qualified id (no regex). On jvm/dex this is the method id, e.g. 'Lcom/example/Foo;->bar(I)V'; on pcode it is the namespace-qualified but address-free name, e.g. 'Foo::bar' or '<EXTERNAL>::system'; on lua it is the module-qualified IR name, e.g. 'lib.reader.read' or 'kong.pdk.request.get_headers' (a global root names itself, so 'ngx.req.get_headers').",
               "type": "string"
+            },
+            "qualified-ids": {
+              "description": "As 'qualified-id', but matches any id in the list.",
+              "type": "array",
+              "items": { "type": "string" }
             }
           }
         },
@@ -214,34 +214,32 @@
               "description": "Names of fields",
               "type": "array",
               "items": { "type": "string" }
-            },
-            "unqualified-id": {
-              "description": "Matches exactly with the unqualified-id of the field",
-              "type": "string"
             }
           }
         }
       ]
     },
     "port-spec": {
+      "description": "A propagation port: a positional selector (Argument(n), Argument(*), Return) followed by an optional access path. Each access-path segment is introduced by '.' and is either a decimal offset in brackets (.[8], .[-8]) or a field name. A field name that begins with '[' must be escaped so it is not read as an offset -- a Java array element is Argument(0).\\[] -- and '.' or '\\' inside a name is escaped the same way (.a\\.b). The argument index is a non-negative decimal integer; the loader rejects a negative one.",
       "type": "string",
       "anyOf": [
-        { "pattern": "^Argument\\((-?[0-9]+|\\*)\\)" },
-        { "pattern": "^Return" }
+        { "pattern": "^Argument\\(([0-9]+|\\*)\\)(?:\\.(?:\\[[+-]?[0-9]+\\]|(?:[^.\\\\\\[]|\\\\.)(?:[^.\\\\]|\\\\.)*))*$" },
+        { "pattern": "^Return(?:\\.(?:\\[[+-]?[0-9]+\\]|(?:[^.\\\\\\[]|\\\\.)(?:[^.\\\\]|\\\\.)*))*$" }
       ]
     },
     "source-sink-port-spec": {
-      "description": "A source/sink port. In addition to the positional selectors (Argument(n)/Argument(*)/Return), a source/sink may select a local by its source name with Variable(name), e.g. Variable(buf), optionally refined by a trailing access path (Variable(buf).headers). Variable(...) is valid only here, NOT on propagation inputs/outputs, and NOT with find: callsites.",
+      "description": "A source/sink port. In addition to the positional selectors (Argument(n)/Argument(*)/Return), a source/sink may select a local by its source name with Variable(name), e.g. Variable(buf), optionally refined by a trailing access path (Variable(buf).headers). Variable(...) is valid only here, NOT on propagation inputs/outputs, and NOT with find: callsites. See port-spec for the access-path grammar.",
       "type": "string",
       "anyOf": [
-        { "pattern": "^Argument\\((-?[0-9]+|\\*)\\)" },
-        { "pattern": "^Return" },
-        { "pattern": "^Variable\\([^)]+\\)" }
+        { "pattern": "^Argument\\(([0-9]+|\\*)\\)(?:\\.(?:\\[[+-]?[0-9]+\\]|(?:[^.\\\\\\[]|\\\\.)(?:[^.\\\\]|\\\\.)*))*$" },
+        { "pattern": "^Return(?:\\.(?:\\[[+-]?[0-9]+\\]|(?:[^.\\\\\\[]|\\\\.)(?:[^.\\\\]|\\\\.)*))*$" },
+        { "pattern": "^Variable\\([^)]+\\)(?:\\.(?:\\[[+-]?[0-9]+\\]|(?:[^.\\\\\\[]|\\\\.)(?:[^.\\\\]|\\\\.)*))*$" }
       ]
     },
     "field-spec": {
+      "description": "A bare access path, e.g. '', '.deref', '.[8].deref', '.\\[_elem_]'. See port-spec for the grammar.",
       "type": "string",
-      "pattern": "^([.][^.]+)*"
+      "pattern": "^(?:\\.(?:\\[[+-]?[0-9]+\\]|(?:[^.\\\\\\[]|\\\\.)(?:[^.\\\\]|\\\\.)*))*$"
     },
     "source-sink-model": {
       "description": "Models associated SUT element as a source or a sink",
@@ -295,21 +293,91 @@
         }
       }
     },
-    "call-model": {
-      "description": "Models a callsite by forwarding to another function",
+    "report-severity": {
+      "description": "How loudly to report a condition. Defaults to 'warn' everywhere it appears: a bridge that fires on nothing produces an analysis with fewer flows rather than an error, which is indistinguishable from a clean app, so the default has to say something.",
+      "type": "string",
+      "enum": ["ignore", "warn", "error"]
+    },
+    "artifact-language": {
+      "description": "An imported artifact's language, as `ctadl import -l` spells it.",
+      "type": "string",
+      "enum": ["jvm", "jar", "dex", "apk", "c", "lua", "pcode", "flowy"]
+    },
+    "program-scope": {
+      "description": "Which imports a generator applies to. Keys within one block are ANDed; an absent key leaves that dimension unconstrained. Distinct from how built-in default model files are selected (by virtual method table): the VMT cannot tell dex from apk from jar, and this can.",
       "type": "object",
       "additionalProperties": false,
+      "not": { "required": ["language", "languages"] },
       "properties": {
-        "receiver": {
-          "description": "Receiver for virtual callee. Omit for direct call",
+        "language": {
+          "description": "Exactly the one-element case of 'languages'. Giving both keys in one block is an error rather than a union -- a reader cannot tell which was meant.",
+          "$ref": "#/$defs/artifact-language"
+        },
+        "languages": {
+          "description": "Admits a program whose language is any one of these. Not sugar: a language BOUNDARY has a set on each side, not a language -- 'the Java side' is jvm/jar/dex/apk and 'the native side' is pcode and eventually c. An empty list is an error, since it would match nothing quietly.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact-language" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "import": {
+          "description": "The import's name, as given to `ctadl import`.",
+          "type": "string"
+        }
+      }
+    },
+    "port-map": {
+      "description": "One argument correspondence across a bridge: read it as 'the caller's from vertex IS the callee's to vertex'. Ports name SLOTS, not declaration order, so a hand-written map is correct only for the frontend the method was observed through (dex numbers parameters by register, so long/double consume two; jvm numbers them by argument position).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": {
+          "description": "The caller-side port. Argument(*) is rejected: a wildcard has no correspondent on the other side.",
           "$ref": "#/$defs/port-spec"
         },
-        "where": {
-          "description": "Method for callee",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/where-constraint"
+        "to": {
+          "description": "The callee-side port, as the callee sees the parameter. May name a sub-path, e.g. 'Argument(0).stack.[1]'.",
+          "$ref": "#/$defs/port-spec"
+        },
+        "direction": {
+          "description": "Which way taint crosses. Defaults to 'both', matching how the engine treats an ordinary call.",
+          "type": "string",
+          "enum": ["in", "out", "both"]
+        }
+      }
+    },
+    "bridge-model": {
+      "description": "Connects a callee matched in one program to its implementation in another, with an explicit argument correspondence. Index-time only: a bridge creates call facts, which the index fixpoint consumes, so `ctadl query --models` cannot act on one.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["to"],
+      "properties": {
+        "to": {
+          "description": "Side B, the implementation side. A match block, not a scope: side A stays in the generator's own find/where, so every existing matching feature applies to it verbatim.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "in": { "$ref": "#/$defs/program-scope" },
+            "where": {
+              "description": "Constraints selecting the implementation, in the same language everything else uses.",
+              "type": "array",
+              "items": { "$ref": "#/$defs/where-constraint" }
+            },
+            "on-unmatched": {
+              "description": "What to do when side B matches nothing anywhere in the project. Independent of the generator-level 'on-unmatched', which covers side A. Set 'ignore' for a bridge written against a family of optional symbols. Not reported at all when side A matched nothing.",
+              "$ref": "#/$defs/report-severity"
+            }
           }
+        },
+        "arguments": {
+          "description": "The port map. Omitted entirely means the identity mapping over the arity the two sides share, plus Return. The globals pseudo-parameter is ALWAYS mapped and is not user-visible; without it heap flows do not cross the boundary at all. Return means the normal return; a Java side's exception return is never mapped.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/port-map" }
+        },
+        "on-ambiguous": {
+          "description": "What to do when the pairing is not singleton x singleton. Every matched A pairs with every matched B (the full cross product); this reports that rather than restricting it.",
+          "$ref": "#/$defs/report-severity"
         }
       }
     }
@@ -328,6 +396,14 @@
             "description": "The SUT element to match on",
             "type": "string",
             "enum": ["methods", "variables", "fields", "callsites"]
+          },
+          "in": {
+            "description": "Scopes this generator to some of the project's imports. Omit to apply it to every one.",
+            "$ref": "#/$defs/program-scope"
+          },
+          "on-unmatched": {
+            "description": "Bridging models only: what to do when side A (this generator's own where) matches nothing anywhere in the project. The 'to' block carries the setting for side B.",
+            "$ref": "#/$defs/report-severity"
           },
           "where": {
             "description": "Matching constraints",
@@ -372,8 +448,13 @@
                   "enum": ["skip-analysis"]
                 }
               },
-              "forward_call": {
-                "$ref": "#/$defs/call-model"
+              "bridge": {
+                "$ref": "#/$defs/bridge-model"
+              },
+              "access_paths": {
+                "description": "Access paths that occur nowhere in the IR, declared by hand so the indexer registers them. The escape hatch for composition across a bridge: a pathful bridge composes with its callee's derived summary only where the summary's endpoints land exactly on the port's to-path, and flows needing deeper residues nobody declared are dropped, silently. Each entry uses the same grammar as a port's trailing path, e.g. '.next.next.next'.",
+                "type": "array",
+                "items": { "$ref": "#/$defs/field-spec" }
               },
               "forward_self": {
                 "description": "A forward_self model forwards calls to the matched methods to another method of self, possibly with a different signature. This is used, e.g., to forward ASyncTask.execute to doInBackground on the same object. Only makes sense for object oriented languages, e.g., Java.",

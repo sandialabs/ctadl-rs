@@ -74,8 +74,8 @@ pub(crate) fn program_from_file<P: AsRef<std::path::Path>>(filename: P) -> Resul
 
 /* Common output for when tests fail. */
 pub(crate) fn check_fail_str(prog_str: &str, msg: &str) {
-    log::error!("TEST FAIL: {msg}");
-    log::error!("\t{prog_str}");
+    log::warn!("TEST FAIL: {msg}");
+    log::warn!("\t{prog_str}");
 }
 
 pub(crate) fn check_fail(prog: &Program, msg: &str) {
@@ -286,20 +286,20 @@ pub(crate) fn debug_output_blocks(prog: &Program) {
         return;
     };
     for (idx, block) in fun.blocks.iter().enumerate() {
-        log::info!("BLOCK {}: {}", idx, block);
+        log::debug!("BLOCK {}: {}", idx, block);
     }
 }
 
-// Every segment becomes a `FieldAccess::Symbol`, including subscripts like `[3]`. This matches the
-// C frontend, which currently lowers a subscript to `FieldAccess::Symbol("[N]")` (see
-// `flatten_subscript` in mod.rs) rather than a real `FieldAccess::Offset`. So `"f.[3]"` round-trips
-// to `[Symbol("f"), Symbol("[3]")]`, exactly what the parser emits. (Real `Offset` lowering is an
-// aspirational frontend change; revisit this helper if/when that lands.)
+/// Parses the access-path tail of a DSL string with the one canonical grammar
+/// ([`ctadl_ir::mir::path_syntax`]), so a fixture means exactly what the same text means in a
+/// model port, a `.flowy` file, or a fact column.
+///
+/// Panics on a malformed path — that is a broken fixture, and failing loudly beats the old
+/// behavior of silently dropping empty segments.
+#[track_caller]
 fn parse_fields(s: &str) -> Vec<PathSegment> {
-    s.split('.')
-        .filter(|part| !part.is_empty())
-        .map(PathSegment::symbol)
-        .collect()
+    ctadl_ir::mir::parse_segments(s)
+        .unwrap_or_else(|e| panic!("malformed access path {s:?} in test DSL: {e}"))
 }
 
 /// A base variable plus a mixed (offset + symbolic-field) path, parsed from the test DSL. Access
@@ -324,16 +324,26 @@ fn resolve_local(locals: &Locals, name: &str) -> VariableRef {
     VariableRef::new_local_idx(idx)
 }
 
+/// Splits a DSL string at the first `.` into the variable prefix and the access path, *keeping*
+/// the dot on the path — `"v.f1.f2"` -> `("v", ".f1.f2")`, `"v"` -> `("v", "")`. The path half is
+/// then in the canonical grammar, where every segment carries its leading dot.
+fn split_variable_prefix(s: &str) -> (&str, &str) {
+    match s.find('.') {
+        Some(i) => (&s[..i], &s[i..]),
+        None => (s, ""),
+    }
+}
+
 fn access_path_from_str(s: &str, locals: &Locals) -> DslPath {
     if let Some(rest) = s.strip_prefix("$globals") {
         return DslPath {
             base: VariableRef::new_global(),
-            fields: parse_fields(rest.strip_prefix('.').unwrap_or("")),
+            fields: parse_fields(rest),
         };
     }
 
     if let Some(rest) = s.strip_prefix("@p") {
-        let (n_str, suffix) = rest.split_once('.').unwrap_or((rest, ""));
+        let (n_str, suffix) = split_variable_prefix(rest);
         let n: u32 = n_str.parse().expect("invalid parameter index in @pN");
         return DslPath {
             base: VariableRef::new_parameter(n.into()),
@@ -341,7 +351,7 @@ fn access_path_from_str(s: &str, locals: &Locals) -> DslPath {
         };
     }
 
-    let (base, suffix) = s.split_once('.').unwrap_or((s, ""));
+    let (base, suffix) = split_variable_prefix(s);
     DslPath {
         base: resolve_local(locals, base),
         fields: parse_fields(suffix),
@@ -430,7 +440,7 @@ pub(crate) fn check_assign_or_update<I>(
 }
 
 /* Asserts the (single) function contains a `Load` that reads `source_str` (an access-path DSL
-string like `f.[3]` or `$globals.a`). Field reads lower to loads through a temporary, so this is
+string like `f.\[3]` or `$globals.a`). Field reads lower to loads through a temporary, so this is
 the load-based complement to `check_assign_or_update`'s field-path source. Panics if not found. */
 #[track_caller]
 pub(crate) fn check_loads(prog: &Program, source_str: &str) {
@@ -627,8 +637,13 @@ pub(crate) fn summary_search(
     to_index: i16,
     to_path: &str,
 ) -> bool {
-    let from_path: Path = from_path.parse().unwrap();
-    let to_path: Path = to_path.parse().unwrap();
+    // Fixtures are written in the canonical access-path grammar: every segment carries its
+    // leading dot (`.f2.f3`), and `""` is the empty path.
+    let parse = |s: &str| {
+        Path::parse(s).unwrap_or_else(|e| panic!("test access path {s:?} does not parse: {e}"))
+    };
+    let from_path = parse(from_path);
+    let to_path = parse(to_path);
     summary.iter().any(|r| {
         r.1 == fx::FormalIndex::new(to_index)
             && r.2 == to_path
@@ -652,11 +667,8 @@ fn fmt_endpoint(index: i16, path: &str) -> String {
     } else {
         format!("@p{index}")
     };
-    if path.is_empty() {
-        base
-    } else {
-        format!("{base}.{path}")
-    }
+    // `path` is already in the canonical grammar, leading dot and all.
+    format!("{base}{path}")
 }
 
 /* Asserting wrappers around the summary predicates above. Unlike a bare `assert!(summary_*(...))`,
@@ -947,26 +959,38 @@ mod ap_tests {
     }
 
     #[test]
-    fn parse_fields_skips_empty_segments() {
-        // Leading/trailing/double dots must not produce empty field segments.
-        let fields: Vec<PathSegment> = parse_fields(".a..b.");
-        assert_eq!(
-            fields,
-            vec![PathSegment::symbol("a"), PathSegment::symbol("b")],
-        );
+    #[should_panic(expected = "empty access-path segment")]
+    fn parse_fields_rejects_empty_segments() {
+        // These used to be silently dropped, so `.a..b.` and `.a.b` were the same fixture.
+        parse_fields(".a..b.");
     }
 
     #[test]
     fn subscript_is_symbol_segment() {
-        // The C frontend lowers `f[3]` to `PathSegment::Symbol("[3]")` (not a real Offset), so the
-        // DSL must too — `"f.[3]"` becomes base `f` with field `[Symbol("[3]")]`.
+        // The C frontend lowers `f[3]` to `PathSegment::Symbol("[3]")` (not a real Offset), so a
+        // fixture that wants what the frontend emits escapes the bracket: `"f.\[3]"`.
+        let mut locals = Locals::default();
+        let f = locals.get_or_intern("f");
+        assert_eq!(
+            access_path_from_str(r"f.\[3]", &locals),
+            DslPath {
+                base: VariableRef::new_local_idx(f),
+                fields: vec![PathSegment::symbol("[3]")],
+            },
+        );
+    }
+
+    #[test]
+    fn unescaped_subscript_is_an_offset() {
+        // ... and the unescaped spelling now means a real offset, as it does everywhere else.
+        // Before, both spellings produced `Symbol("[3]")` and the distinction was unwritable.
         let mut locals = Locals::default();
         let f = locals.get_or_intern("f");
         assert_eq!(
             access_path_from_str("f.[3]", &locals),
             DslPath {
                 base: VariableRef::new_local_idx(f),
-                fields: vec![PathSegment::symbol("[3]")],
+                fields: vec![PathSegment::offset(3)],
             },
         );
     }

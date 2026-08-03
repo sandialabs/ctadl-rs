@@ -153,6 +153,22 @@ pub struct ImportArgs {
     /// changed.
     #[arg(long)]
     pub skip_existing: bool,
+
+    /// Do not import the native libraries packaged inside an APK.
+    ///
+    /// By default, importing an APK also disassembles the `.so` files under
+    /// `lib/<abi>/` and imports each as its own program, so that Java `native`
+    /// methods link to their implementations. Pass this to import only the Dex.
+    #[arg(long)]
+    pub no_native_libs: bool,
+
+    /// Import an APK's native libraries for this ABI (e.g. armeabi-v7a).
+    ///
+    /// An APK usually ships the same library built for several ABIs; they are copies
+    /// of one program, so only one is imported. The default picks the first available
+    /// of arm64-v8a, armeabi-v7a, armeabi, x86_64, x86.
+    #[arg(long, value_name = "ABI")]
+    pub native_abi: Option<String>,
 }
 
 #[derive(Debug, Clone, ValueEnum, Copy)]
@@ -167,6 +183,8 @@ pub enum ImportLanguage {
     Apk,
     /// Treat as C files
     C,
+    /// Treat as Lua source files (parsed with the tree-sitter Lua grammar)
+    Lua,
     /// Export pcode via Ghidra. The artifact may be a binary to import, an existing
     /// local Ghidra project (`<name>.gpr` or its directory), or a Ghidra Server
     /// repository URL (`ghidra://…`).
@@ -213,6 +231,24 @@ pub struct IndexArgs {
     /// hard-to-analyze code.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
+
+    /// Do not load the built-in default propagation models for the imported language.
+    ///
+    /// CTADL ships one default model file per frontend family (Java, native, Lua) and loads the
+    /// one matching each import. Pass this to index against `--models` alone -- for an A/B
+    /// measurement of what the defaults add, or when a model file is meant to be the complete
+    /// story.
+    #[arg(long)]
+    pub no_default_models: bool,
+
+    /// Do not link Java `native` methods to their native implementations.
+    ///
+    /// When a Java/Dex artifact is co-indexed with native code, CTADL joins each `native` method
+    /// to the `Java_…` symbol implementing it, mapping arguments across the JNI ABI's two-slot
+    /// shift so taint flows both ways. Pass this to reproduce the pre-bridge behaviour, or to
+    /// measure what the bridge contributes. See `docs/jni.md`.
+    #[arg(long)]
+    pub no_jni_bridge: bool,
 
     /// Call resolution strategy: cha, hi, mixed
     #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
@@ -278,6 +314,16 @@ pub struct GoArgs {
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
+    /// Do not load the built-in default propagation models for the imported language.
+    /// See `ctadl index --help`.
+    #[arg(long)]
+    pub no_default_models: bool,
+
+    /// Do not link Java `native` methods to their native implementations.
+    /// See `ctadl index --help`.
+    #[arg(long)]
+    pub no_jni_bridge: bool,
+
     /// One or more artifacts to import in this one-shot flow
     #[arg(required = true)]
     pub artifacts: Vec<PathBuf>,
@@ -315,6 +361,16 @@ pub struct GoArgs {
     /// step of this one-shot flow.
     #[arg(long)]
     pub skip_existing: bool,
+
+    /// Do not import the native libraries packaged inside an APK.
+    /// See `ctadl import --help`.
+    #[arg(long)]
+    pub no_native_libs: bool,
+
+    /// Import an APK's native libraries for this ABI (e.g. armeabi-v7a).
+    /// See `ctadl import --help`.
+    #[arg(long, value_name = "ABI")]
+    pub native_abi: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -369,8 +425,8 @@ fn main() -> anyhow::Result<()> {
                         .ok_or_else(|| anyhow::anyhow!("error converting filename to string"))?
                         .to_string();
                     if args.artifacts.len() > 1 {
-                        eprintln!(
-                            "Warning: no project name given (-n); using '{}' inferred from the first artifact",
+                        log::warn!(
+                            "no project name given (-n); using '{}' inferred from the first artifact",
                             inferred
                         );
                     }
@@ -385,20 +441,22 @@ fn main() -> anyhow::Result<()> {
                     name: None,
                     language: args.language,
                     skip_existing: args.skip_existing,
+                    no_native_libs: args.no_native_libs,
+                    native_abi: args.native_abi.clone(),
                 };
-                eprintln!("Importing '{}'...", artifact.display());
                 let name = import_artifact_to_store(&import_args).with_context(|| {
                     format!("importing artifact from: '{}'", artifact.display())
                 })?;
                 imported_names.push(name);
             }
 
-            eprintln!("Indexing...");
             index_artifacts_to_store(&IndexArgs {
                 name: name.clone(),
                 progs: imported_names.clone(),
                 summary: vec![],
                 models: args.models.clone(),
+                no_default_models: args.no_default_models,
+                no_jni_bridge: args.no_jni_bridge,
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
@@ -406,7 +464,6 @@ fn main() -> anyhow::Result<()> {
             })
             .with_context(|| format!("running 'index' artifacts: {:?}", imported_names))?;
 
-            eprintln!("Querying...");
             query_project(&QueryArgs {
                 name: name.clone(),
                 models: args.models.clone(),
@@ -459,6 +516,13 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
             // Example 2: Define a sink using an exact signature match.
             // This will match the exact method signature 'executeQuery' and mark its first argument
             // as a sink for taint analysis.
+            //
+            // "name" matches the bare method name, so it selects every 'executeQuery' in the
+            // program. To pin down one specific method, use "qualified-id" instead: an exact
+            // (non-regex) match on the fully-qualified id, e.g.
+            //     {"constraint": "signature_match", "qualified-id": "Lcom/example/Db;->executeQuery(Ljava/lang/String;)V"}
+            // on jvm/dex, "Db::executeQuery" on pcode, or the module-qualified name
+            // "kong.db.executeQuery" on lua.
             "find": "methods",
             "where": [
                 {
@@ -499,7 +563,7 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
         }"#;
 
     std::fs::write(&args.output, template)?;
-    eprintln!("Wrote template model file to '{}'", args.output.display());
+    log::info!("Wrote template model file to '{}'", args.output.display());
     Ok(())
 }
 
@@ -514,7 +578,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
 
     match &args.cmd {
         LegacyPcodeSubcommand::Index(index_args) => {
-            eprintln!("Legacy Index: facts='{}'", index_args.facts_path.display());
+            log::info!("Legacy Index: facts='{}'", index_args.facts_path.display());
 
             // 1. Import pcode facts
             let import_args = ImportArgs {
@@ -522,6 +586,9 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 name: Some(legacy_name.to_string()),
                 language: ImportLanguage::Pcode,
                 skip_existing: false,
+                // Not an APK: this legacy path imports a directory of pcode facts.
+                no_native_libs: false,
+                native_abi: None,
             };
             import_artifact_to_store(&import_args)?;
 
@@ -531,6 +598,8 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 progs: vec![legacy_name.to_string()],
                 summary: vec![],
                 models: args.models.clone(),
+                no_default_models: false,
+                no_jni_bridge: false,
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
@@ -539,15 +608,15 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
             index_artifacts_to_store(&index_args)?;
         }
         LegacyPcodeSubcommand::Query(query_args) => {
-            eprintln!("Legacy Query: file='{}'", query_args.query_file.display());
+            log::info!("Legacy Query: file='{}'", query_args.query_file.display());
             if let Some(dir) = query_args.compute_slices {
-                eprintln!(
-                    "  (Note: --compute-slices {:?} is currently ignored and controlled by the query file)",
+                log::warn!(
+                    "--compute-slices {:?} is currently ignored; the direction is controlled by the query file",
                     dir
                 );
             }
             if query_args.no_compile_analysis {
-                eprintln!("  (Note: --no-compile-analysis is currently ignored)");
+                log::warn!("--no-compile-analysis is currently ignored");
             }
 
             let mut models = args.models.clone();
@@ -584,6 +653,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
             ImportLanguage::Jar => Jar,
             ImportLanguage::Jvm => Jvm,
             ImportLanguage::C => C,
+            ImportLanguage::Lua => Lua,
             ImportLanguage::Pcode => Pcode,
             ImportLanguage::Flowy => Flowy,
             ImportLanguage::Auto => unreachable!(),
@@ -610,7 +680,14 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
 
     // Create the import
     let config = project::ArtifactImport::try_create(name, language, path)?;
-    cli::import(&config)?;
+    cli::import(
+        &config,
+        cli::ImportOptions {
+            skip_existing: args.skip_existing,
+            native_libs: !args.no_native_libs,
+            native_abi: args.native_abi.as_deref(),
+        },
+    )?;
     // Import succeeded: reload the config so we pick up any updates the import wrote
     // (e.g. the pcode importer records `image_base`), then record the artifact's
     // content hash (and path) so a later `--skip-existing` import can tell the import
@@ -641,6 +718,8 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         &project,
         &args.summary,
         &args.models,
+        args.no_default_models,
+        args.no_jni_bridge,
         args.strategy,
         args.prune_unreachable_cfg_nodes.unwrap_or(true),
         args.alias_rule.unwrap_or(true),
@@ -685,7 +764,8 @@ fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
                     return cli::inspect_parquet(path).map_err(Into::into);
                 }
                 if let Some(file_name) = path.file_name().and_then(|n| n.to_str())
-                    && (file_name == "ir-program.bitcode" || file_name == "ir-vmt.bitcode")
+                    && (file_name == project::PROGRAM_BITCODE_FILE
+                        || file_name == project::VMT_BITCODE_FILE)
                 {
                     return cli::inspect_bitcode(path).map_err(Into::into);
                 }
@@ -725,6 +805,12 @@ fn autodetect_import_language<P: AsRef<Path>>(
             if project::is_ghidra_server_url(path) {
                 return Ok(ImportLanguage::Pcode);
             }
+            // A directory of Lua sources is imported whole (the directory is the `require` root),
+            // and has no extension to detect by; recognize it by containing `.lua` files.
+            if path.is_dir() && dir_contains_lua(path) {
+                return Ok(ImportLanguage::Lua);
+            }
+
             let ext = path.extension().and_then(|e| OsStr::to_str(e));
 
             match ext {
@@ -732,6 +818,7 @@ fn autodetect_import_language<P: AsRef<Path>>(
                 Some("apk") => ImportLanguage::Apk,
                 Some("class") => ImportLanguage::Jvm,
                 Some("jar") => ImportLanguage::Jar,
+                Some("lua") => ImportLanguage::Lua,
                 Some("tnt") => ImportLanguage::Flowy,
                 // A Ghidra project file: export pcode from the existing project.
                 Some("gpr") => ImportLanguage::Pcode,
@@ -751,6 +838,24 @@ fn autodetect_import_language<P: AsRef<Path>>(
         }
         _ => language,
     })
+}
+
+/// Whether a directory tree contains any `.lua` file.
+fn dir_contains_lua(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if dir_contains_lua(&path) {
+                return true;
+            }
+        } else if path.extension().and_then(|e| OsStr::to_str(e)) == Some("lua") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Heuristically decides whether `path` refers to a binary file.

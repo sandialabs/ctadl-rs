@@ -28,6 +28,7 @@ use std::{
 };
 
 use hashbrown::hash_set::HashSet;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, ErrorContext};
 
@@ -65,7 +66,78 @@ pub fn init_store_path<P: AsRef<Path>>(override_path: Option<P>) -> Result<(), &
 /// - `1`: original format.
 /// - `2`: MIR locals moved into a per-function `Locals` table and `Variable::Local` became a
 ///   `LocalIdx` instead of a name, changing the `bitcode` wire format of `ir-program.bitcode`.
-pub const IMPORT_FORMAT_VERSION: &str = "2";
+/// - `3`: the native VMT gained a fully-qualified-name column (`NativeQualifiedName`, backing
+///   the `qualified-id` model constraint), changing the `bitcode` wire format of
+///   `ir-vmt.bitcode`.
+/// - `4`: the lua VMT gained a `functions` column carrying every function's frontend-parsed
+///   simple name alongside its qualified name, so model matching reads the simple name instead
+///   of re-deriving it. Again a `bitcode` wire-format change to `ir-vmt.bitcode`.
+/// - `5`: the java VMT gained a `natives` column listing methods declared `native`, which are
+///   bodyless and so were invisible to the dex frontend's `methods` column. It is what the JNI
+///   bridge (`languages::jni`) joins against. Again a `bitcode` wire-format change to
+///   `ir-vmt.bitcode`.
+pub const IMPORT_FORMAT_VERSION: &str = "5";
+
+/// Filename of the serialized IR program inside an import directory.
+///
+/// Shared with the `inspect` command, which recognizes a raw path into the store by filename
+/// rather than by resolving an [`ArtifactImport`]. Keeping the spelling in one place means
+/// renaming an artifact file cannot silently desync the writer from the inspector.
+pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
+
+/// Filename of the serialized virtual method table inside an import directory.
+/// See [`PROGRAM_BITCODE_FILE`].
+pub const VMT_BITCODE_FILE: &str = "ir-vmt.bitcode";
+
+/// Filename of an import's config, which records its [`IMPORT_FORMAT_VERSION`].
+pub const IMPORT_CONFIG_FILE: &str = "import_config.json";
+
+/// Version of the on-disk index format: the parquet fact and result tables written by `ctadl
+/// index` into a project's `index/` directory.
+///
+/// Separate from [`IMPORT_FORMAT_VERSION`] because the two artifacts change independently -- an
+/// import holds structural `bitcode`, an index holds parquet columns whose *textual* encodings
+/// can shift without the schema moving. Bump this whenever a column's encoding or the table
+/// schema changes, so `ctadl query` fails with "re-run `ctadl index`" instead of decoding stale
+/// bytes into something wrong. History:
+///
+/// - `1`: original format. Every `Path` column was written by `Path::to_dot_string`, which
+///   escaped `.` but not `[`, and read back by a parser that treated a leading `[` as an offset.
+///   The frontends' bracketed symbol names round-tripped wrong: `Symbol("[]")` and
+///   `Symbol("[_elem_]")` were *deleted* (read back as the empty path) and `Symbol("[3]")` flipped
+///   to `Offset(3)`.
+/// - `2`: `Path` columns use the canonical access-path grammar (`ctadl_ir::mir::path_syntax`),
+///   which escapes a leading `[` on print, so those segments survive as the symbols the frontend
+///   emitted.
+/// - `3`: `index_source_map` gained an `import_id` column, and `import_id.parquet` names what
+///   each id stands for. Source span ids are per-import indices, and an index without the
+///   column cannot say which import's source-info database to read one in -- which is exactly
+///   how a multi-import project used to render every result once per import, each copy
+///   carrying an unrelated line from another artifact.
+pub const INDEX_FORMAT_VERSION: &str = "3";
+
+/// Filename of an index's config, which records its [`INDEX_FORMAT_VERSION`], inside a project's
+/// `index/` directory.
+pub const INDEX_CONFIG_FILE: &str = "index_config.json";
+
+/// The contents of `index/index_config.json`: what build wrote this index.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexConfig {
+    pub version: String,
+}
+
+/// Reads just the format version out of the `import_config.json` beside `path`, skipping the
+/// compatibility check [`ArtifactImport::load`] applies.
+///
+/// `load` refuses a stale import outright, which is right for anything that goes on to *use*
+/// it and wrong for diagnosing one: the version worth reporting is precisely the one that
+/// makes `load` fail. Returns `None` when there is no readable config beside `path`.
+pub fn import_format_version_beside<P: AsRef<Path>>(path: P) -> Option<String> {
+    let config = path.as_ref().parent()?.join(IMPORT_CONFIG_FILE);
+    let text = std::fs::read_to_string(config).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    Some(value.get("version")?.as_str()?.to_string())
+}
 
 /// Represents our local import of an artifact
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
@@ -93,6 +165,13 @@ pub struct ArtifactImport {
     /// not yet completed.
     #[serde(default)]
     pub hash: Option<String>,
+    /// Names of imports derived from this one: the native libraries extracted out of
+    /// an APK and lowered through the pcode frontend (see
+    /// [`crate::languages::apk_native`]). A project naming this import co-indexes
+    /// these too, which is what lets the JNI bridge see both halves of the boundary
+    /// from a single `ctadl import app.apk`. Empty for every other language.
+    #[serde(default)]
+    pub sub_imports: Vec<String>,
 }
 
 impl ArtifactImport {
@@ -127,6 +206,7 @@ impl ArtifactImport {
             version: IMPORT_FORMAT_VERSION.to_string(),
             image_base: None,
             hash: None,
+            sub_imports: Vec::new(),
         };
         result.save()?;
         Ok(result)
@@ -141,7 +221,7 @@ impl ArtifactImport {
         let path = self.config_path();
         let file = File::create(&path)?;
         serde_json::to_writer(file, &self)?;
-        log::info!(
+        log::debug!(
             "wrote import configuration to '{}'",
             path::absolute(&path)?.display()
         );
@@ -179,19 +259,19 @@ impl ArtifactImport {
     pub fn load_by_name(name: &str) -> Result<Self, Error> {
         let path = StorePaths::import_path()
             .join(name)
-            .join("import_config.json");
+            .join(IMPORT_CONFIG_FILE);
         Self::load(&path).err_context(|| format!("reading import config: '{}'", path.display()))
     }
 
     /// Path to the serialized IR program for this artifact
     #[inline]
     pub fn program_path(&self) -> PathBuf {
-        self.import_path.join("ir-program.bitcode")
+        self.import_path.join(PROGRAM_BITCODE_FILE)
     }
 
     /// Path to the serialized virtual method table
     pub fn vmt_path(&self) -> PathBuf {
-        self.import_path.join("ir-vmt.bitcode")
+        self.import_path.join(VMT_BITCODE_FILE)
     }
 
     /// Path to the serialized flowy requirements
@@ -206,7 +286,7 @@ impl ArtifactImport {
     /// Path to the IR program for this artifact
     #[inline]
     pub fn config_path(&self) -> PathBuf {
-        self.import_path.join("import_config.json")
+        self.import_path.join(IMPORT_CONFIG_FILE)
     }
 
     /// True if the import destination (the serialized IR program) is already present
@@ -368,13 +448,28 @@ impl AnalysisProject {
         let dir = canonicalize(&path)
             .map_err(Error::Io)
             .err_context(|| format!("in canonicalize project dir: {}", path.display()))?;
-        // Dedup import names (order-preserving): `index` co-indexes every argument, so a
-        // repeated program name (e.g. `index amuled amuled`) would codegen its facts twice and
-        // inflate every relation. Indexing the same import twice is never meaningful.
+        // Expand each name to itself followed by its sub-imports, then dedup
+        // (order-preserving): `index` co-indexes every argument, so a repeated program name
+        // (e.g. `index amuled amuled`) would codegen its facts twice and inflate every
+        // relation. Indexing the same import twice is never meaningful.
+        //
+        // The expansion is what makes `ctadl import app.apk && ctadl index p app` pull in the
+        // APK's native libraries: naming the APK names everything imported out of it. Parent
+        // first, so `cli::index`'s per-import source-span scoping stays in import order.
+        //
+        // A name with no loadable config passes through unchanged rather than erroring --
+        // a project may legitimately be created before (or without) its imports, and
+        // `cli::index` has its own preflight gates that report that properly.
         let mut seen = std::collections::HashSet::new();
         let imports: Vec<String> = import_names
             .iter()
-            .map(|s| s.as_ref().to_owned())
+            .flat_map(|s| {
+                let name = s.as_ref().to_owned();
+                let subs = ArtifactImport::load_by_name(&name)
+                    .map(|import| import.sub_imports)
+                    .unwrap_or_default();
+                std::iter::once(name).chain(subs)
+            })
             .filter(|n| seen.insert(n.clone()))
             .collect();
         let result = Self {
@@ -441,6 +536,62 @@ impl AnalysisProject {
         Ok(path)
     }
 
+    /// Stamps the index directory with [`INDEX_FORMAT_VERSION`].
+    ///
+    /// Call this *last* in `index`, after every table is on disk, so a run that dies partway
+    /// through leaves no stamp claiming the index is readable.
+    ///
+    /// # Errors
+    ///
+    /// If there is an error creating the index dir, or serializing or writing the config
+    #[inline]
+    pub fn write_index_config(&self) -> Result<(), Error> {
+        let path = self.index_path()?.join(INDEX_CONFIG_FILE);
+        let file = File::create(&path)?;
+        serde_json::to_writer(
+            file,
+            &IndexConfig {
+                version: INDEX_FORMAT_VERSION.to_string(),
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Refuses an index written by an incompatible build.
+    ///
+    /// Every reader of a project's `index/` calls this before touching a table. The decoders
+    /// below it are infallible-by-construction for anything this build wrote, so they panic
+    /// rather than silently substitute a default -- this check is what turns that panic into an
+    /// actionable "re-run `ctadl index`".
+    ///
+    /// # Errors
+    ///
+    /// [`Error::IncompatibleIndex`] if the version is missing or does not match
+    /// [`INDEX_FORMAT_VERSION`]; [`Error::Io`] / [`Error::Json`] on a malformed config file.
+    #[inline]
+    pub fn check_index_config(&self) -> Result<(), Error> {
+        let path = self.dir.join("index").join(INDEX_CONFIG_FILE);
+        // A missing config file is an index from before the version gate existed, which is
+        // exactly the stale-encoding case this is here to catch.
+        let found = match File::open(&path) {
+            Ok(file) => {
+                let config: IndexConfig = serde_json::from_reader(file)
+                    .err_context(|| format!("deserializing index config: '{}'", path.display()))?;
+                config.version
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => "1 (or older)".to_string(),
+            Err(e) => return Err(Error::Io(e)),
+        };
+        if found != INDEX_FORMAT_VERSION {
+            return Err(Error::IncompatibleIndex {
+                project: self.name.clone(),
+                found,
+                expected: INDEX_FORMAT_VERSION.to_string(),
+            });
+        }
+        Ok(())
+    }
+
     /// Save the analysis project configuration
     ///
     /// # Errors
@@ -451,7 +602,7 @@ impl AnalysisProject {
         let path = self.config_path();
         let file = File::create(&path)?;
         serde_json::to_writer(file, &self)?;
-        log::info!(
+        log::debug!(
             "wrote project configuration to '{}'",
             path::absolute(&path)?.display()
         );
@@ -550,11 +701,57 @@ pub enum ArtifactLanguage {
     Apk,
     /// Treat as C files
     C,
+    /// Treat as Lua source files
+    Lua,
     /// Export pcode via Ghidra, from a binary, an existing Ghidra project, or a
     /// Ghidra Server repository URL (`ghidra://…`).
     Pcode,
     /// Treat as Flowy file
     Flowy,
+}
+
+impl ArtifactLanguage {
+    /// Every language, in the order [`Self::name`] documents them. Exists so error messages can
+    /// enumerate the accepted spellings without a second list to keep in sync.
+    pub const ALL: &'static [ArtifactLanguage] = &[
+        ArtifactLanguage::Jvm,
+        ArtifactLanguage::Jar,
+        ArtifactLanguage::Dex,
+        ArtifactLanguage::Apk,
+        ArtifactLanguage::C,
+        ArtifactLanguage::Lua,
+        ArtifactLanguage::Pcode,
+        ArtifactLanguage::Flowy,
+    ];
+
+    /// The lowercase spelling a model generator's `in` block uses. Distinct from the
+    /// [`ctadl_ir::mir::call::VirtualMethodTable`] variant on purpose: the VMT cannot tell `dex`
+    /// from `apk` from `jar`, and `in` must.
+    pub fn name(self) -> &'static str {
+        match self {
+            ArtifactLanguage::Jvm => "jvm",
+            ArtifactLanguage::Jar => "jar",
+            ArtifactLanguage::Dex => "dex",
+            ArtifactLanguage::Apk => "apk",
+            ArtifactLanguage::C => "c",
+            ArtifactLanguage::Lua => "lua",
+            ArtifactLanguage::Pcode => "pcode",
+            ArtifactLanguage::Flowy => "flowy",
+        }
+    }
+
+    /// Inverse of [`Self::name`]. `None` for anything else, which callers report as an error
+    /// rather than silently dropping -- a scope naming a language that does not exist would
+    /// otherwise admit nothing and look like an app with no cross-language flow.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|l| l.name() == name)
+    }
+}
+
+impl std::fmt::Display for ArtifactLanguage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
 }
 
 // XDG_RUNTIME_DIR, if it doesn't exist, requires creating something temporary, and I'd like that

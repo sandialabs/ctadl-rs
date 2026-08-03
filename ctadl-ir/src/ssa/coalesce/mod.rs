@@ -42,7 +42,7 @@ pub fn coalesce_copies(program: &mut Program) {
     for (_, f) in program.functions.iter_enumerated_mut() {
         removed += coalesce_function(f);
     }
-    log::info!("coalesce_copies: removed {removed} fused copy statement(s)");
+    log::debug!("coalesce_copies: removed {removed} fused copy statement(s)");
 }
 
 /// A candidate def whose fusion into its (single) use is still possible.

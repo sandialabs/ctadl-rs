@@ -556,7 +556,7 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
     }
 
     if std::env::var("CTADL_QUERY_SIZES").is_ok() {
-        eprintln!(
+        log::info!(
             "QUERY_SIZES taint={} taint_edge={} states={} searches={} tainted_var_at_insn={} assign_like={} paths={} sources={}",
             taint.len(),
             taint_edge.len(),

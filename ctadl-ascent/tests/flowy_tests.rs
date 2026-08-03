@@ -3,13 +3,24 @@ use anyhow::Context;
 use ctadl_ascent::codegen::flowy;
 
 /// Indexes a .tnt file and ensures the summary requirements are met.
+///
+/// A sibling `<stem>.models.jsonl` is loaded as if passed to `ctadl index --models`. That is how
+/// a `.tnt` fixture pins what a *model port* means: flowy needs no toolchain, gets no default
+/// models of its own, and its `where summaries [...]` clause asserts on the index summary
+/// relation directly — so a fixture can say where taint lands, not merely whether one fixed
+/// probe fires.
 fn tnt_test<P: AsRef<std::path::Path>>(filename: P) -> anyhow::Result<()> {
     let filename = filename.as_ref();
-    flowy::check(filename, None)
+    let models: Vec<std::path::PathBuf> = vec![filename.with_extension("models.jsonl")]
+        .into_iter()
+        .filter(|p| p.exists())
+        .collect();
+    flowy::check(filename, None, &models)
         .map(|_| ())
         .with_context(|| {
             format!(
-            "Running test {}. Run 'cargo test -- --nocapture' to see full output. Run 'cargo run -p ctadl-ascent --example flowy --' on the file to run individual test case",
+            "Running test {}. The per-check failures are logged at `warn`, and this test binary installs no logger, so run the case on its own to see them: 'RUST_LOG=warn cargo run -p ctadl-ascent --example flowy -- {}'",
+            filename.display(),
             filename.display()
         )
         })

@@ -14,7 +14,6 @@ use std::path::Path;
 
 use itertools::Itertools;
 
-use crate::codegen::models::codegen_summary;
 use crate::codegen::{CallResolutionStrategy, codegen_program};
 use crate::error::{Error, ErrorContext};
 use crate::facts;
@@ -22,7 +21,7 @@ use crate::facts::FlowVariable;
 use crate::index_engine::{
     IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index_with_config,
 };
-use crate::languages::{dex, jvm, pcode, tree_sitter};
+use crate::languages::{apk_native, dex, jni, jvm, lua, pcode, tree_sitter};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
@@ -30,75 +29,283 @@ use ctadl_ir::graph::is_connected;
 use ctadl_ir::ssa;
 use ctadl_ir::{ProgramInfo, encode};
 
+/// How to perform one import, beyond the artifact and its language.
+///
+/// Every field only matters to an APK, which is the one artifact that imports *other*
+/// artifacts out of itself (its native libraries; see [`apk_native`]).
+/// [`Default`] is the plain behavior: import everything, reuse nothing.
+#[derive(Debug, Clone, Copy)]
+pub struct ImportOptions<'a> {
+    /// Reuse an existing sub-import whose stored artifact hash still matches instead of
+    /// redoing it. The parent artifact's own skip check lives in `main`; this is what
+    /// carries the flag down to the sub-imports, where the saving (a disassembly run
+    /// each) is much larger.
+    pub skip_existing: bool,
+    /// Import the native libraries packaged inside an APK. On by default.
+    pub native_libs: bool,
+    /// Import this ABI's libraries rather than the preferred one. See
+    /// [`dex_reader::apk::ABI_PREFERENCE`].
+    pub native_abi: Option<&'a str>,
+}
+
+impl Default for ImportOptions<'_> {
+    fn default() -> Self {
+        Self {
+            skip_existing: false,
+            native_libs: true,
+            native_abi: None,
+        }
+    }
+}
+
 // Imports a program for an artifact into the store
-pub fn import(import: &ArtifactImport) -> Result<(), Error> {
+pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Error> {
     use ArtifactLanguage::*;
+    log::info!(
+        "importing {} artifact '{}' from {}",
+        import.language,
+        import.name,
+        import.artifact_path.display()
+    );
     let program_info = match &import.language {
         Dex => dex::import_dex(&import.artifact_path)?,
-        Apk => dex::import_apk(&import.artifact_path)?,
+        Apk => {
+            // Dex first: it is cheap and it is what fails fast on an APK that is not one,
+            // before any native library is extracted or handed to Ghidra.
+            let dex::ApkImport {
+                program_info,
+                dex_count,
+            } = dex::import_apk(&import.artifact_path)?;
+            if dex_count > 0 {
+                log::info!(
+                    "{}: {} classes*.dex entr{}",
+                    import.artifact_path.display(),
+                    dex_count,
+                    if dex_count == 1 { "y" } else { "ies" },
+                );
+            }
+            // A split APK out of an app bundle has no Dex of its own; its libraries are
+            // the whole import. Decided before extracting anything so an APK that has
+            // neither half fails immediately, and so the reason is the APK's contents
+            // rather than whatever `import_native_libs` happened to be able to do with
+            // them (it returns no sub-imports when Ghidra is missing, too).
+            if dex_count == 0 {
+                apk_native::require_native_libs(&import.artifact_path)?;
+                if opts.native_libs {
+                    log::info!(
+                        "{}: no classes*.dex entries; importing as a native-only split APK",
+                        import.artifact_path.display(),
+                    );
+                } else {
+                    // Not an error -- the user asked for this -- but the result is an
+                    // import with nothing in it, which is worth saying out loud.
+                    log::warn!(
+                        "{}: no classes*.dex entries and --no-native-libs was passed, so this \
+                         import will be empty",
+                        import.artifact_path.display(),
+                    );
+                }
+            }
+            let sub_imports = apk_native::import_native_libs(import, opts)?;
+            if !sub_imports.is_empty() {
+                log::info!(
+                    "'{}': {} sub-import(s) indexed alongside it: {}",
+                    import.name,
+                    sub_imports.len(),
+                    sub_imports.join(", ")
+                );
+                // Reload rather than saving `import` back: a sub-import may have rewritten
+                // the parent's config in the meantime, and the caller reloads after this
+                // to pick these names up.
+                let mut updated = ArtifactImport::load_by_name(&import.name)?;
+                updated.sub_imports = sub_imports;
+                updated.save()?;
+            }
+            program_info
+        }
         Jar => jvm::import_jar(&import.artifact_path)?,
         Jvm => jvm::import_class(&import.artifact_path)?,
         Pcode => pcode::import_pcode(import)?,
+        Lua => lua::import_lua(&import.artifact_path)?,
         Flowy => crate::codegen::flowy::import(import)?,
         C => tree_sitter::import_c(&import.artifact_path)?,
     };
-    log::info!("encoding");
+    log::info!(
+        "'{}': imported {} function(s)",
+        import.name,
+        program_info.program.functions.len()
+    );
+    log::debug!("encoding");
     save_program_info(program_info, import)?;
     Ok(())
 }
 
 /// Indexes a project
 /// If summary_projects is provided, loads summaries from those projects and maps them into the current project.
+/// `no_default_models` suppresses the built-in per-language defaults, leaving `models` as the
+/// complete set. `no_jni_bridge` suppresses the automatic JNI link between Java `native` stubs and
+/// their native implementations (see [`crate::languages::jni`]).
+#[allow(clippy::too_many_arguments)]
 pub fn index(
     project: &AnalysisProject,
     summary_projects: &[String],
     models: &[std::path::PathBuf],
+    no_default_models: bool,
+    no_jni_bridge: bool,
     strategy: CallResolutionStrategy,
     prune_unreachable_cfg_nodes: bool,
     alias_rule: bool,
     dump_index_graph: Option<&Path>,
 ) -> Result<(), Error> {
     use crate::index_engine::phys_footprint_mb;
-    log::info!("[mem cp] index() start: {:.1} MB", phys_footprint_mb());
+    log::info!(
+        "indexing project '{}' from {} import(s): {}",
+        project.name,
+        project.imports.len(),
+        project.imports.join(", ")
+    );
+    log::debug!("[mem cp] index() start: {:.1} MB", phys_footprint_mb());
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
+
+    let file_specs = crate::models::scan_model_files(models)?;
+    // Every matched model, instantiated against the IR being indexed. It persists across the import
+    // loop and is codegen'd after it. Matches are a function of (artifact x models files) while the
+    // import cache is a pure function of the artifact, and persisting them would let `ctadl index
+    // --models a.json` poison the next `ctadl index --models b.json`.
+    let mut model_matches = crate::models::ProgramModelMatches::default();
+    model_matches.bridges.prepare(&file_specs.bridges);
+    // Source/sink models are inert at index time; warn once rather than discarding in silence.
+    // Keyed by file, not counted per (file, import) pair -- declaring an endpoint is a property
+    // of the file, and every file is re-matched once per import.
+    let mut files_declaring_endpoints: BTreeSet<&std::path::PathBuf> = BTreeSet::new();
+
+    // Collects both halves of every JNI boundary as the imports go by; the link itself can only
+    // happen after the loop, when one `IdMap` holds every program's functions.
+    let mut jni_observer = jni::JniObserver::new();
     for import in project.iter_imports() {
         let import = import?;
+        // Everything codegen records from here to the next import belongs to this one. Source
+        // spans are per-import indices, so this is what keeps them resolvable afterwards.
+        source_info.begin_import(&import.name);
+        log::info!("'{}': loading IR", import.name);
         let mut program_info = load_program_info_without_source_info(&import)?;
-        log::info!(
+        log::debug!(
             "[mem cp] loaded IR program (before SSA/codegen): {:.1} MB",
             phys_footprint_mb()
         );
-        let mut models_batch = crate::models::try_load_default_models(&program_info)?;
-        for model_path in models {
-            let model = crate::models::try_load_models(&program_info, model_path)?;
-            models_batch.union_with(&model)?;
+        if !no_jni_bridge {
+            jni_observer.observe(&program_info, jni::SlotModel::for_language(import.language));
         }
 
-        log::trace!("summary length: {}", models_batch.summary.num_rows());
+        // Match this import while its IR is in hand, and retain only the *matches*. The index
+        // and the IR are both dropped before the next import is loaded, which is what keeps
+        // the memory posture streaming rather than "every import's match index resident".
+        {
+            let scope = crate::models::ImportScope::new(import.language, &import.name);
+            let match_index = crate::models::ProgramMatchIndex::new(&program_info, scope);
+            if !no_default_models {
+                crate::models::try_load_default_models(&match_index, &mut model_matches)?;
+            }
+            for model_path in models {
+                let report =
+                    crate::models::try_load_models(&match_index, model_path, &mut model_matches)?;
+                if !report.endpoint_stats.is_empty() {
+                    files_declaring_endpoints.insert(model_path);
+                }
+            }
+            crate::models::matches::observe_import(
+                &match_index,
+                &file_specs.bridges,
+                &mut model_matches,
+            )?;
+        }
+
         // Delete assigned-but-never-read temporaries, then fuse single-use
         // copy temporaries, both before SSA. Together they cut the statement /
         // variable count that SSA and the datalog fact base pay for. Dead-temp
         // elimination runs first: it removes defs that coalescing can't (a dead
         // temp has no use to fuse into) and shrinks the input coalescing scans.
         // Both are no-ops on programs already in SSA form (e.g. flowy imports).
+        log::info!(
+            "'{}': preprocessing {} function(s) (SSA) and generating facts",
+            import.name,
+            program_info.program.functions.len()
+        );
         ssa::eliminate_dead_temps(&mut program_info.program);
         ssa::coalesce_copies(&mut program_info.program);
         ssa::transform_program(&mut program_info.program, prune_unreachable_cfg_nodes);
         ssa::propagate_copies(&mut program_info.program);
-        log::info!(
+        log::debug!(
             "[mem cp] after SSA transform: {:.1} MB",
             phys_footprint_mb()
         );
         codegen_program(program_info, &mut facts, &mut source_info, strategy);
-        log::info!(
+        log::debug!(
             "[mem cp] after codegen_program (IR dropped, facts built): {:.1} MB",
             phys_footprint_mb()
         );
-        log::trace!("summary length: {}", facts.summary.len());
-        codegen_summary(models_batch.summary, &mut facts, &mut source_info);
-        log::trace!("summary length: {}", facts.summary.len());
     }
+    // Measured, not assumed. Streaming matching retains only the *matches* -- one interned
+    // name plus two (tag, index, path) triples per propagation -- and drops each import's
+    // match index and IR with the import. On a 6.4 MB APK (`com.noto_54.apk`, 1224 propagation
+    // matches from the shipped Java defaults plus a bridge spec) this checkpoint reads the same
+    // 406.7 MB as the `after codegen_program` one immediately before it: the retained matches
+    // are below the resolution of the gauge. Peak physical footprint for that whole run was
+    // 2.27 GB, in `ascent_run`, not here.
+    //
+    // Still unquantified: the APK + `.so` pair. It is no longer an exotic shape -- importing
+    // an APK now imports its native libraries as pcode sub-imports (see
+    // [`crate::languages::apk_native`]), so a project naming one APK routinely walks several
+    // programs here -- but the loop drops each import's IR before loading the next, so the
+    // posture is per-import peak rather than the sum.
+    log::debug!(
+        "[mem cp] after import loop ({} propagation match(es), {} declared path(s), {} bridge \
+         spec(s) retained): {:.1} MB",
+        model_matches.propagations.len(),
+        model_matches.access_paths.len(),
+        file_specs.bridges.len(),
+        phys_footprint_mb()
+    );
+
+    // Every import's functions are interned by now, which is what the bridge needs to resolve a
+    // Java `native` stub and its `Java_…` implementation to two ids in the same map.
+    if !no_jni_bridge {
+        jni::link(&jni_observer, &mut facts, &mut source_info);
+    }
+
+    let model_report = crate::codegen::model_matches::codegen_model_matches(
+        &model_matches,
+        &file_specs.bridges,
+        &mut facts,
+        &mut source_info,
+    )?;
+    log::info!(
+        "models: {} summary row(s), {} declared access path(s)",
+        model_report.summaries,
+        model_report.declared_paths
+    );
+    // Unconditionally, at info, even when nothing went wrong: a bridge-only generator appears on
+    // no other surface, and this line is what catches the mis-paired case (wrong slot, wrong
+    // path, wrong function matched) that warn-on-empty cannot.
+    for stats in &model_report.bridges {
+        log::info!("bridge {stats}");
+    }
+    if !files_declaring_endpoints.is_empty() {
+        // The mirror of the warning `ctadl query` emits about propagation/bridging models: each
+        // phase silently discarded what the other consumes, and this closes the second half.
+        log::warn!(
+            "{} of the given model file(s) declare source/sink models, which `ctadl index` \
+             ignores -- pass them to `ctadl query` instead: {}",
+            files_declaring_endpoints.len(),
+            files_declaring_endpoints
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    drop(model_matches);
 
     // Load and map summaries from multiple projects if specified
     for summary_project_name in summary_projects {
@@ -111,11 +318,12 @@ pub fn index(
     // Only the (small) site IdMap is needed after saving
     let sites = source_info.sites.clone();
     source_info.try_save(&path)?;
-    log::info!(
+    log::debug!(
         "[mem cp] after facts.try_save: {:.1} MB",
         phys_footprint_mb()
     );
     let config = crate::index_engine::IndexConfig { alias_rule };
+    log::info!("indexing (computing the flow relation)");
     let result = taint_index_with_config(facts, config, Some(&sites));
 
     // Slightly ugly special case for flowy artifacts. Since they have specific assertions at index
@@ -135,6 +343,9 @@ pub fn index(
     result
         .try_save(&path)
         .err_context(|| format!("saving index: {}", path.display()))?;
+    // Last, so a run that dies partway through leaves no stamp claiming the index is readable.
+    project.write_index_config()?;
+    log::info!("wrote index to {}", path.display());
     Ok(())
 }
 
@@ -162,6 +373,10 @@ pub fn query(
     dump_taint_graph: Option<&Path>,
 ) -> Result<QueryStatus, Error> {
     let start_time_utc = query_engine::formatter::utc_timestamp();
+    log::info!("querying project '{}'", project.name);
+    // Before touching a table: the parquet decoders panic on an encoding they cannot read, and
+    // this is what turns that into an actionable "re-run `ctadl index`".
+    project.check_index_config()?;
     let index_path = project.index_path()?;
     let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
     // Load the index tables once; they seed the query and are reused to format the results.
@@ -184,30 +399,59 @@ pub fn query(
     };
 
     let facts = {
-        let mut models_batch: Option<crate::models::ModelsBatch> = None;
-        for model_path in models {
+        // One accumulator across every (import x model file) pair. Endpoints carry their own
+        // `facts::Path`, so accumulation is an append and there is nothing to renumber.
+        let mut model_matches = crate::models::ProgramModelMatches::default();
+        // Counted across every file and import, and reported once at the end: bridges and
+        // propagations are index-time constructs, and a query that silently drops them looks
+        // exactly like one whose models did nothing.
+        let mut ignored = crate::models::IndexTimeModelCounts::default();
+        // Import outer, model file inner: one `ProgramInfo` decode and one match index per
+        // import, reused across every model file, rather than one of each per (file, import)
+        // pair. The match tables are a function of the program alone.
+        if !models.is_empty() {
             for import in project.iter_imports() {
                 let import = import?;
                 let program_info = load_program_info_without_source_info(&import)?;
-                let s = crate::models::try_load_models(&program_info, model_path)?;
-                // Re-key this file's Stage-1 counts by file *before* the batches are
-                // unioned: `ModelsBatch::union_with` sums by (generator index, direction)
-                // alone, which would conflate two model files that happen to number their
-                // generators the same. Summing over imports is what makes a generator that
-                // is dead against one import but live against another come out live.
-                for ((index, direction), stats) in &s.endpoint_stats {
-                    diagnostics
-                        .generator_stats
-                        .entry((model_path.clone(), *index, *direction))
-                        .or_default()
-                        .merge(stats);
-                }
-                if let Some(ref mut s0) = models_batch {
-                    s0.union_with(&s)?;
-                } else {
-                    models_batch = Some(s);
+                let match_index = crate::models::ProgramMatchIndex::new(
+                    &program_info,
+                    crate::models::ImportScope::new(import.language, &import.name),
+                );
+                for model_path in models {
+                    let report = crate::models::try_load_models(
+                        &match_index,
+                        model_path,
+                        &mut model_matches,
+                    )?;
+                    ignored.merge(&report.index_time_models);
+                    // Re-key this file's Stage-1 counts by file: `ModelLoadReport` is keyed by
+                    // (generator index, direction) alone, which would conflate two model files
+                    // that happen to number their generators the same. Merging over imports is
+                    // what makes a generator that is dead against one import but live against
+                    // another come out live.
+                    for ((index, direction), stats) in &report.endpoint_stats {
+                        diagnostics
+                            .generator_stats
+                            .entry((model_path.clone(), *index, *direction))
+                            .or_default()
+                            .merge(stats);
+                    }
                 }
             }
+        }
+        log::debug!(
+            "[mem cp] after query model accumulation ({} endpoint match(es), {} propagation \
+             match(es) ignored): {:.1} MB",
+            model_matches.endpoints.len(),
+            model_matches.propagations.len(),
+            crate::index_engine::phys_footprint_mb()
+        );
+        if !ignored.is_empty() {
+            log::warn!(
+                "ignoring {} in the given model file(s); they take effect at \
+                 `ctadl index` time, so re-run `ctadl index` with them to use them",
+                ignored.describe()
+            );
         }
         let mut builder = QueryFactsBuilder::default();
         let mut endpoints = Vec::new();
@@ -230,9 +474,12 @@ pub fn query(
         let flowy_sinks = endpoints.len() - flowy_sources;
 
         let mut formal_params = index_facts.formal_param.clone();
-        if let Some(ref batch) = models_batch {
+        // Gated on having something to resolve, not merely on `-m` having been passed: Stage 2
+        // union-finds the whole `assign_like` relation before it touches an endpoint, and a
+        // model-less or flowy-only query must not pay for that.
+        if !model_matches.endpoints.is_empty() {
             let built = query_engine::build_query_endpoints(
-                &batch.endpoint,
+                &model_matches.endpoints,
                 &index_facts,
                 &ids,
                 &index_result.assign_like,
@@ -269,11 +516,11 @@ pub fn query(
             .count();
         diagnostics.sources_matched = sources;
         diagnostics.sinks_matched = sinks;
-        eprintln!("Matched {} sources and {} sinks", sources, sinks);
+        log::info!("matched {} sources and {} sinks", sources, sinks);
         // The line above reads the same whether an end is empty by accident or by design,
         // so say which it is rather than leaving the terminal silent about a vacuous query.
         if let Some(reason) = query_engine::formatter::empty_end_reason(&diagnostics) {
-            eprintln!("Warning: {reason}; see the SARIF invocation for details");
+            log::warn!("{reason}; see the SARIF invocation for details");
         }
 
         // `actual_param` and `call` are also needed by `FormatFacts` below, so the
@@ -326,7 +573,7 @@ pub fn query(
     }
 
     if output.to_str() != Some("-") {
-        eprintln!("Wrote '{}'", output.display());
+        log::info!("wrote {}", output.display());
     }
     Ok(QueryStatus {
         execution_successful,
@@ -347,7 +594,7 @@ fn dump_index_graph_dot(
 ) -> Result<(), Error> {
     let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
     // Embed the legend as a leading DOT comment so the file documents itself
-    // (kept in sync with the stderr message below).
+    // (kept in sync with the log message below).
     {
         use std::io::Write as _;
         writeln!(
@@ -369,7 +616,9 @@ fn dump_index_graph_dot(
     }
     crate::graphviz::render_index_graph(assign_like, id_map, &mut file)
         .err_context(|| "rendering index graph")?;
-    eprintln!(
+    // Multi-line, with its own hanging indentation: the log formatter prepends nothing to
+    // an info record, so the block below reaches the terminal as written.
+    log::info!(
         "Wrote index graph to '{}'\n  \
          edge A -> B is the assignment B = A\n  \
          node label: `function(<name>)` / `<variable><access-path>`; nodes are keyed by\n  \
@@ -479,7 +728,7 @@ fn dump_taint_graph_dot(
         .collect();
     let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
     // Embed the legend as a leading DOT comment so the file documents
-    // itself (kept in sync with the stderr message below).
+    // itself (kept in sync with the log message below).
     {
         use std::io::Write as _;
         writeln!(
@@ -507,7 +756,8 @@ fn dump_taint_graph_dot(
     let ids = facts::IdMap::try_load(index_path).err_context(|| "loading IdMap for taint graph")?;
     crate::graphviz::render_taint_graph(node_cone, &edges, &sources, &sinks, &ids, &mut file)
         .err_context(|| "rendering taint graph")?;
-    eprintln!(
+    // Multi-line; see the note in `dump_index_graph_dot`.
+    log::info!(
         "Wrote taint graph to '{}'\n  \
          nodes: diamond=source, ellipse=sink, box=propagated; \
          fill lightblue=forward cone, mistyrose=backward cone, palegreen=meet (on a source→sink path)\n  \
@@ -540,7 +790,7 @@ pub fn save_program_info(
     std::fs::write(path, data)
         .map_err(Error::Io)
         .err_context(|| format!("writing program: {}", path.display()))?;
-    log::info!("wrote {}", path.display());
+    log::debug!("wrote {}", path.display());
 
     let path = &import.vmt_path();
     let obj = std::mem::take(&mut program_info.vmt);
@@ -548,7 +798,7 @@ pub fn save_program_info(
     std::fs::write(path, data)
         .map_err(Error::Io)
         .err_context(|| format!("writing vmt: {}", path.display()))?;
-    log::info!("wrote {}", path.display());
+    log::debug!("wrote {}", path.display());
 
     let path = import.source_info_dir();
     let obj = std::mem::take(&mut program_info.source_info);
@@ -560,12 +810,12 @@ pub fn save_program_info(
 /// Load a serialized [`ProgramInfo`] from the import directory. The source info is elided.
 fn load_program_info_without_source_info(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.program_path();
-    log::info!("reading {}", path.display());
+    log::debug!("reading {}", path.display());
     let data = std::fs::read(path)?;
     let program = ctadl_ir::encode::decode_program(&data)?;
 
     let path = &import.vmt_path();
-    log::info!("reading {}", path.display());
+    log::debug!("reading {}", path.display());
     let data = std::fs::read(path)?;
     let vmt = bitcode::deserialize(&data)?;
 
@@ -591,6 +841,7 @@ fn load_and_map_summaries(
         .err_context(|| format!("loading summary project: {}", summary_project_name))?;
 
     // Load summaries directly using schema::summary::try_load
+    summary_project.check_index_config()?;
     let summary_index_path = summary_project.index_path()?;
     let source_summaries = crate::facts::schema::summary::try_load(&summary_index_path)
         .err_context(|| format!("loading source project summaries: {}", summary_project_name))?;
@@ -697,6 +948,7 @@ pub fn inspect(import: &ArtifactImport) -> Result<(), Error> {
                         ctadl_ir::call::CallStyle::DirectCall { .. } => "DirectCall",
                         ctadl_ir::call::CallStyle::FuncPtrCall { .. } => "FuncPtrCall",
                         ctadl_ir::call::CallStyle::JavaCall { .. } => "JavaCall",
+                        ctadl_ir::call::CallStyle::LuaCall { .. } => "LuaCall",
                     };
                     *call_style_counts.entry(style_name).or_insert(0) += 1;
                 }
@@ -846,6 +1098,7 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
         paths,
         taint,
         index_source_map,
+        import_id,
         function_id,
         external_function
     );
@@ -862,14 +1115,43 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
             message: "invalid filename".to_string(),
         })?;
 
+    // Unlike every other reader of these files, this one is handed a raw path rather than an
+    // `ArtifactImport` — deliberately, so a store can still be inspected when its import is
+    // too old for `ArtifactImport::load` to accept. The cost is that nothing has checked
+    // `IMPORT_FORMAT_VERSION` by the time we decode, and `bitcode::Error` is a zero-sized type
+    // outside debug builds that renders as a bare "bitcode error". Read the version out of the
+    // sibling config so the failure names the real cause instead of guessing at it.
+    let decode_failed = |what: &str| {
+        let expected = crate::project::IMPORT_FORMAT_VERSION;
+        match crate::project::import_format_version_beside(path) {
+            Some(found) if found != expected => format!(
+                "decoding {what} '{}': it was written with import format {found}, but this \
+                 build expects {expected}; re-import the artifact",
+                path.display(),
+            ),
+            Some(_) => format!(
+                "decoding {what} '{}': its import format ({expected}) matches this build, so \
+                 the file is likely truncated or corrupt",
+                path.display(),
+            ),
+            None => format!(
+                "decoding {what} '{}': no readable '{}' beside it, so its import format is \
+                 unknown; this build expects {expected}",
+                path.display(),
+                crate::project::IMPORT_CONFIG_FILE,
+            ),
+        }
+    };
     let data = std::fs::read(path)?;
-    if filename == "ir-program.bitcode" {
-        let program = ctadl_ir::encode::decode_program(&data)?;
+    if filename == crate::project::PROGRAM_BITCODE_FILE {
+        let program =
+            ctadl_ir::encode::decode_program(&data).err_context(|| decode_failed("program"))?;
         // Resolve locals through each function's table: a dump full of `%L7` is unreadable now
         // that the name lives in `FunctionData::locals` rather than in the variable itself.
         println!("{}", ctadl_ir::mir::WithLocalNames(&program));
-    } else if filename == "ir-vmt.bitcode" {
-        let vmt: ctadl_ir::call::VirtualMethodTable = bitcode::deserialize(&data)?;
+    } else if filename == crate::project::VMT_BITCODE_FILE {
+        let vmt: ctadl_ir::call::VirtualMethodTable =
+            bitcode::deserialize(&data).err_context(|| decode_failed("vmt"))?;
         println!("{}", vmt);
     } else {
         return Err(Error::Path {
@@ -895,17 +1177,17 @@ pub fn inspect_index_facts(
     facts: &IndexFacts,
     id_map: Option<&facts::IdMap>,
 ) -> anyhow::Result<()> {
-    log::info!("IndexFacts Statistics:");
-    log::info!("  formal_param:   {}", facts.formal_param.len());
-    log::info!("  actual_param:   {}", facts.actual_param.len());
-    log::info!("  call:           {}", facts.call.len());
-    log::info!("  assign:         {}", facts.assign.len());
-    log::info!("  summary:        {}", facts.summary.len());
-    log::info!("  paths:          {}", facts.paths.len());
-    log::info!("  callee_info:    {}", facts.callee_info.len());
-    log::info!("  callee_resolvents: {}", facts.callee_resolvents.len());
-    log::info!("  call_target_assign:{}", facts.call_target_assign.len());
-    log::info!("  external_function: {}", facts.external_function.len());
+    log::debug!("IndexFacts Statistics:");
+    log::debug!("  formal_param:   {}", facts.formal_param.len());
+    log::debug!("  actual_param:   {}", facts.actual_param.len());
+    log::debug!("  call:           {}", facts.call.len());
+    log::debug!("  assign:         {}", facts.assign.len());
+    log::debug!("  summary:        {}", facts.summary.len());
+    log::debug!("  paths:          {}", facts.paths.len());
+    log::debug!("  callee_info:    {}", facts.callee_info.len());
+    log::debug!("  callee_resolvents: {}", facts.callee_resolvents.len());
+    log::debug!("  call_target_assign:{}", facts.call_target_assign.len());
+    log::debug!("  external_function: {}", facts.external_function.len());
 
     use crate::facts::InsnSiteId;
 
@@ -921,7 +1203,7 @@ pub fn inspect_index_facts(
     site_resolvents.sort_by_key(|k| k.1.len());
 
     let top_n = 50;
-    log::info!("\nTop {top_n} busiest call sites (by number of unique targets):");
+    log::debug!("\nTop {top_n} busiest call sites (by number of unique targets):");
     for (site, resolvents) in site_resolvents.iter().rev().take(top_n) {
         let num_resolvents = resolvents.len();
         let InsnSiteId { func_id, insn_id } = InsnSiteId::try_from(*site).unwrap();
@@ -931,7 +1213,7 @@ pub fn inspect_index_facts(
             .map(|f| f.0.as_ref())
             .unwrap_or("unknown");
 
-        log::info!(
+        log::debug!(
             "  Site in {func_name} ({}):{} has {num_resolvents} targets",
             func_id.id,
             insn_id.id
@@ -941,10 +1223,10 @@ pub fn inspect_index_facts(
                 .and_then(|m| m.get_function(*target_id))
                 .map(|f| f.0.as_ref())
                 .unwrap_or("unknown");
-            log::info!("    -> {target_name} ({target_id:?})");
+            log::debug!("    -> {target_name} ({target_id:?})");
         }
         if num_resolvents > 3 {
-            log::info!("    ... and {} more", num_resolvents - 3);
+            log::debug!("    ... and {} more", num_resolvents - 3);
         }
     }
 
@@ -954,9 +1236,9 @@ pub fn inspect_index_facts(
     }
     let mut sorted_dist: Vec<_> = target_count_dist.into_iter().collect();
     sorted_dist.sort_by_key(|(count, _)| *count);
-    log::info!("\nCall site target count distribution:");
+    log::debug!("\nCall site target count distribution:");
     for (count, num_sites) in sorted_dist {
-        log::info!("  {count} targets: {num_sites} sites");
+        log::debug!("  {count} targets: {num_sites} sites");
     }
 
     // Assign analysis - which functions have most assigns?
@@ -967,13 +1249,13 @@ pub fn inspect_index_facts(
     }
     let mut sorted_assigns: Vec<_> = func_assigns.into_iter().collect();
     sorted_assigns.sort_by_key(|(_, count)| *count);
-    log::info!("\nTop 20 functions by number of assigns:");
+    log::debug!("\nTop 20 functions by number of assigns:");
     for (func_id, count) in sorted_assigns.iter().rev().take(20) {
         let func_name = id_map
             .and_then(|m| m.get_function(*func_id))
             .map(|f| f.0.as_ref())
             .unwrap_or("unknown");
-        log::info!("  {func_name} ({func_id:?}): {count} assigns");
+        log::debug!("  {func_name} ({func_id:?}): {count} assigns");
     }
 
     // Path analysis
@@ -990,10 +1272,10 @@ pub fn inspect_index_facts(
     }
     let mut sorted_path_lens: Vec<_> = path_len_dist.into_iter().collect();
     sorted_path_lens.sort_by_key(|(len, _)| *len);
-    log::info!("\nPath length distribution:");
+    log::debug!("\nPath length distribution:");
     for (len, count) in sorted_path_lens {
         let examples = &path_examples[&len];
-        log::info!(
+        log::debug!(
             "  length {len}: {count} paths (e.g., {})",
             examples.join(", ")
         );
@@ -1010,9 +1292,9 @@ pub fn inspect_index_facts(
     }
     let mut sorted_actual_dist: Vec<_> = actual_count_dist.into_iter().collect();
     sorted_actual_dist.sort_by_key(|(count, _)| *count);
-    log::info!("\nActual params per call site distribution:");
+    log::debug!("\nActual params per call site distribution:");
     for (count, num_sites) in sorted_actual_dist {
-        log::info!("  {count} actuals: {num_sites} sites");
+        log::debug!("  {count} actuals: {num_sites} sites");
     }
 
     Ok(())

@@ -136,6 +136,10 @@ impl Path {
     pub fn from_accesses(iter: impl IntoIterator<Item = mir::PathSegment>) -> Self {
         let mut items = Vec::new();
         for item in iter {
+            debug_assert!(
+                !matches!(&item, mir::PathSegment::Symbol(s) if s.is_empty()),
+                "Symbol(\"\") is not a representable access-path segment"
+            );
             match (items.last_mut(), &item) {
                 (Some(mir::PathSegment::Offset(last_off)), mir::PathSegment::Offset(new_off)) => {
                     last_off.0 += new_off.0;
@@ -166,39 +170,35 @@ impl Path {
         self.0.len()
     }
 
-    /// Returns the string representation with dot prefixes for display
-    /// e.g., ["foo", "bar"] becomes ".foo.bar"
+    /// Creates a path from a sequence of *field names*, every one of which becomes a
+    /// [`mir::PathSegment::Symbol`].
+    ///
+    /// This is deliberately named rather than a `FromIterator<S: AsRef<str>>` impl: an iterator
+    /// of strings is exactly as plausible a spelling for "parse these as access-path segments",
+    /// and silently choosing `Symbol` for all of them is how a model port could never name an
+    /// offset. Callers holding *syntax* want [`Path::parse`]; callers holding names want this.
+    pub fn from_symbol_names(iter: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
+        Self::from_accesses(
+            iter.into_iter()
+                .map(|name| mir::PathSegment::Symbol(ArcIntern::from(name.as_ref()))),
+        )
+    }
+
+    /// Parses an access path in the canonical grammar ([`mir::path_syntax`]).
+    ///
+    /// Not injective, and deliberately so: parsing normalizes through [`Path::from_accesses`],
+    /// which sums adjacent offset runs and drops `Offset(0)`. So `".[1].[2]"` and `".[3]"` both
+    /// yield `Offset(3)`, and `".x.[0]"` yields just `.x`. That is a *semantic* property of this
+    /// type (see the type docs), not a parsing one -- [`mir::parse_segments`] gives the segments
+    /// exactly as written if you need them.
+    pub fn parse(s: &str) -> Result<Self, mir::PathSyntaxError> {
+        mir::parse_segments(s).map(Self::from_accesses)
+    }
+
+    /// Returns the canonical string representation, e.g. `.foo.bar`, `.foo.[8]`, `.\[_elem_]`.
+    /// The exact inverse of [`Path::parse`], modulo that parse's documented normalization.
     pub fn to_dot_string(&self) -> String {
-        if self.0.is_empty() {
-            String::new()
-        } else {
-            let mut result = String::with_capacity(self.0.len() * 2); // Rough estimate
-
-            // Add leading dot for the whole path
-            result.push('.');
-
-            for (i, component) in self.0.iter().enumerate() {
-                if i > 0 {
-                    // Add separator dot (unescaped)
-                    result.push('.');
-                }
-
-                // Handle both Symbol and Offset variants
-                match component {
-                    mir::PathSegment::Symbol(symbol) => {
-                        // Escape dots WITHIN components
-                        let symbol_str: &str = symbol.as_ref();
-                        let escaped = symbol_str.replace(".", "\\.");
-                        result.push_str(&escaped);
-                    }
-                    mir::PathSegment::Offset(offset) => {
-                        result.push_str(&format!("[{}]", offset.0));
-                    }
-                }
-            }
-
-            result
-        }
+        mir::path_to_string(self.0.iter())
     }
 
     /// Iterates from the innermost access out
@@ -453,70 +453,13 @@ impl Lattice for SmallestCallString {
     }
 }
 
-/// Parses a path string into components, handling dot prefixes and escaped dots
-fn parse_path_string(s: &str) -> Path {
-    let s = s.trim_start_matches('.'); // Remove leading dot if present
-    if s.is_empty() {
-        return Path::empty();
-    }
-
-    let mut accesses = Vec::new();
-    let mut current_component = String::new();
-    let mut chars = s.chars().peekable();
-
-    // The iteration logic needs to advance the iterator inside the loop, so, skip the clippy
-    // warning.
-    #[allow(clippy::while_let_on_iterator)]
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            // Handle escaped character
-            if let Some(next_ch) = chars.next() {
-                // This is an escaped character - add it to the current component
-                current_component.push(next_ch);
-            }
-        } else if ch == '[' {
-            // Handle offset notation like [42]
-            if !current_component.is_empty() {
-                accesses.push(mir::PathSegment::Symbol(ArcIntern::from(
-                    current_component.clone(),
-                )));
-                current_component.clear();
-            }
-            let mut offset_str = String::new();
-            #[allow(clippy::while_let_on_iterator)]
-            while let Some(ch) = chars.next() {
-                if ch == ']' {
-                    if let Ok(offset) = offset_str.parse::<i64>() {
-                        accesses.push(mir::PathSegment::Offset(Offset(offset)));
-                    }
-                    break;
-                }
-                offset_str.push(ch);
-            }
-        } else if ch == '.' {
-            // This is a separator dot - end of component
-            if !current_component.is_empty() {
-                accesses.push(mir::PathSegment::Symbol(ArcIntern::from(
-                    current_component.clone(),
-                )));
-                current_component.clear();
-            }
-        } else {
-            current_component.push(ch);
-        }
-    }
-
-    // Add the last component if it's not empty
-    if !current_component.is_empty() {
-        accesses.push(mir::PathSegment::Symbol(ArcIntern::from(current_component)));
-    }
-
-    Path::from_accesses(accesses)
-}
-
+/// The canonical printer: `Display` and [`FromStr`] are inverses, so a rendered path can be fed
+/// straight back in. Note there is no `path(...)` wrapper -- a vertex renders as `%L1.deref`.
 impl Display for Path {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "path({})", self.to_dot_string())
+        let mut out = String::new();
+        mir::write_path(&mut out, self.0.iter());
+        f.write_str(&out)
     }
 }
 
@@ -527,38 +470,11 @@ impl From<&mir::FieldAccesses> for Path {
     }
 }
 
-impl From<&[&str]> for Path {
-    #[inline]
-    fn from(path: &[&str]) -> Self {
-        Self::from_accesses(
-            path.iter()
-                .map(|&fld| mir::PathSegment::Symbol(ArcIntern::from(fld))),
-        )
-    }
-}
-
-impl<S: AsRef<str>> FromIterator<S> for Path {
-    #[inline]
-    fn from_iter<I: IntoIterator<Item = S>>(iter: I) -> Self {
-        Self::from_accesses(
-            iter.into_iter()
-                .map(|fld| mir::PathSegment::Symbol(ArcIntern::from(fld.as_ref()))),
-        )
-    }
-}
-
-impl From<&str> for Path {
-    fn from(s: &str) -> Self {
-        parse_path_string(s)
-    }
-}
-
 impl FromStr for Path {
-    type Err = ();
+    type Err = mir::PathSyntaxError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let p = parse_path_string(s);
-        Ok(p)
+        Self::parse(s)
     }
 }
 
@@ -884,6 +800,23 @@ impl InsnId {
     }
 }
 
+/// Which artifact import an indexed instruction came from.
+///
+/// A project indexes several imports into *one* fact base: function and instruction ids are
+/// project-global, interned across every import. Source spans are not. A
+/// [`source_info::FileSpanId`] is an index into the source-info database of the import the
+/// instruction was codegen'd from, so the same number denotes a different line in every other
+/// import. This id says which database to read it in; without it a span resolves everywhere and
+/// means nothing anywhere. See [`schema::index_source_map`](crate::facts::schema::index_source_map).
+///
+/// The value is a position in the index-time import list, and
+/// [`schema::import_id`](crate::facts::schema::import_id) records the name it stood for.
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, Default,
+)]
+#[repr(transparent)]
+pub struct ImportId(pub u32);
+
 /// A variable with metadata that relates it to functions and call sites
 ///
 /// Flow variables are crafted to be 8 bytes. There are four variants, requiring 2 bits to
@@ -1129,6 +1062,11 @@ impl Display for FlowVertex {
 pub enum CallTargetObject {
     FunctionId(FunctionId),
     Symbol(Symbol),
+    /// A Lua class-table symbol (`lua$class$Account`), the projection of
+    /// [`ctadl_ir::mir::call::CallObject::LuaClass`]. Kept distinct from `Symbol` so that a Lua
+    /// import and a JVM import sharing one fact base cannot collide in the
+    /// `callee_resolvents` key space.
+    LuaClass(Symbol),
 }
 
 impl Display for CallTargetObject {
@@ -1136,6 +1074,7 @@ impl Display for CallTargetObject {
         match self {
             CallTargetObject::FunctionId(func_id) => write!(f, "ptr<{}>", func_id.id),
             CallTargetObject::Symbol(cls) => write!(f, "java<{cls}>"),
+            CallTargetObject::LuaClass(cls) => write!(f, "lua<{cls}>"),
         }
     }
 }
@@ -1150,12 +1089,19 @@ impl Display for CallTargetObject {
 /// - `C` — a C-style function-pointer call. The stored `CallTargetObject::FunctionId(f)`
 ///   resolves to itself via the identity `callee_resolvents(FunctionId(f), C, f)` emitted in
 ///   codegen for every function that appears as a call target.
+/// - `Lua(method)` — a Lua `recv:m(...)` call, resolved through the recovered `__index` chain:
+///   `callee_resolvents(CallTargetObject::LuaClass(class), Lua(method), target)`. Like `Java`
+///   this is class-hierarchy analysis, but there is no descriptor — a Lua method is uniquely
+///   named within its class table — and no static receiver class on the call site, so the class
+///   comes entirely from the receiver's allocation tag.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
 pub enum CallDispatchKey {
     /// JVM / Dex virtual call: (method simple name, method descriptor).
     Java(Symbol, Symbol),
     /// C-style function-pointer call: no additional key beyond the stored target.
     C,
+    /// Lua metatable call: the method's simple name. No descriptor.
+    Lua(Symbol),
 }
 
 impl Display for CallDispatchKey {
@@ -1163,6 +1109,7 @@ impl Display for CallDispatchKey {
         match self {
             CallDispatchKey::Java(name, desc) => write!(f, "java_call<{name}{desc}>"),
             CallDispatchKey::C => write!(f, "c_call"),
+            CallDispatchKey::Lua(name) => write!(f, "lua_call<{name}>"),
         }
     }
 }
@@ -1560,6 +1507,12 @@ impl IdMap {
 mod tests {
     use super::*;
 
+    /// Terse `Path` literal for tests. Named `parse_path` rather than `p` because these tests
+    /// bind `p`, `q`, `r` as paths and a `let p` would shadow the helper.
+    fn parse_path(s: &str) -> Path {
+        Path::parse(s).unwrap_or_else(|e| panic!("test path {s:?} does not parse: {e}"))
+    }
+
     #[test]
     fn test_subscript_may_alias() {
         // A non-constant subscript lowers to the symbol `[_elem_]`; it may-alias any concrete
@@ -1599,15 +1552,15 @@ mod tests {
         let p: Path = Path::empty();
         assert_eq!(p, p.substitute_prefix(&p, &p).unwrap());
 
-        let p: Path = ["a", "c"].iter().collect();
-        let q: Path = ["a"].iter().collect();
-        let r: Path = ["b"].iter().collect();
-        let e: Path = ["b", "c"].iter().collect();
+        let p = Path::from_symbol_names(["a", "c"]);
+        let q = Path::from_symbol_names(["a"]);
+        let r = Path::from_symbol_names(["b"]);
+        let e = Path::from_symbol_names(["b", "c"]);
 
         assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
 
-        let p: Path = ["a", "b"].iter().collect();
-        let q: Path = ["c", "d"].iter().collect();
+        let p = Path::from_symbol_names(["a", "b"]);
+        let q = Path::from_symbol_names(["c", "d"]);
         assert!(p.substitute_prefix(&q, &Path::empty()).is_none());
 
         // Test case: p23.substitute_prefix(p2, p1) where p23=.[1], p2='', p1=.[1] -> .[2]
@@ -1631,16 +1584,16 @@ mod tests {
         assert_eq!(result, expected);
 
         // More offset arithmetic tests
-        let p: Path = ".x.[2]".into();
-        let q: Path = ".x.[1]".into();
-        let r: Path = ".y".into();
-        let e: Path = ".y.[1]".into();
+        let p = parse_path(".x.[2]");
+        let q = parse_path(".x.[1]");
+        let r = parse_path(".y");
+        let e = parse_path(".y.[1]");
         assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
 
-        let p: Path = ".x.[1].f".into();
-        let q: Path = ".x".into();
-        let r: Path = ".y".into();
-        let e: Path = ".y.[1].f".into();
+        let p = parse_path(".x.[1].f");
+        let q = parse_path(".x");
+        let r = parse_path(".y");
+        let e = parse_path(".y.[1].f");
         assert_eq!(e, p.substitute_prefix(&q, &r).unwrap());
     }
 
@@ -1655,20 +1608,20 @@ mod tests {
         use ctadl_ir::mir::{Offset, PathSegment};
 
         // Whole-path exact offset match: suffix is empty, not `[Offset(0)]`.
-        let ap: Path = ".x.[2]".into();
-        let prefix: Path = ".x.[2]".into();
+        let ap = parse_path(".x.[2]");
+        let prefix = parse_path(".x.[2]");
         let suffix = match_prefix(&ap, &prefix).unwrap();
         assert!(suffix.is_empty());
 
         // Via substitute_prefix: result is `.y`, not `.y.[0]`.
-        let new_prefix: Path = ".y".into();
+        let new_prefix = parse_path(".y");
         assert_eq!(
             ap.substitute_prefix(&prefix, &new_prefix),
-            Some(".y".into())
+            Some(parse_path(".y"))
         );
 
         // Exact offset match mid-path: the offset is consumed, suffix starts at `.f`.
-        let ap: Path = ".x.[2].f".into();
+        let ap = parse_path(".x.[2].f");
         let suffix = match_prefix(&ap, &prefix).unwrap();
         assert_eq!(
             suffix.iter().cloned().collect::<Vec<_>>(),
@@ -1676,7 +1629,7 @@ mod tests {
         );
         assert_eq!(
             ap.substitute_prefix(&prefix, &new_prefix),
-            Some(".y.f".into())
+            Some(parse_path(".y.f"))
         );
 
         // Round trip: forward then backward substitution is the identity, including the
@@ -1687,9 +1640,9 @@ mod tests {
             (".x.[2]", ".x.[2]", ".y.[3]"),
             (".x.[5]", ".x.[2]", ".y"),
         ] {
-            let ap: Path = ap_s.into();
-            let pre: Path = pre_s.into();
-            let np: Path = np_s.into();
+            let ap = parse_path(ap_s);
+            let pre = parse_path(pre_s);
+            let np = parse_path(np_s);
             let fwd = ap.substitute_prefix(&pre, &np).unwrap();
             assert_eq!(
                 fwd.substitute_prefix(&np, &pre),
@@ -1699,7 +1652,7 @@ mod tests {
         }
 
         // A nonzero adjustment still merges offsets as before.
-        let ap: Path = ".x.[5]".into();
+        let ap = parse_path(".x.[5]");
         let suffix = match_prefix(&ap, &prefix).unwrap();
         assert_eq!(
             suffix.iter().cloned().collect::<Vec<_>>(),
@@ -1734,11 +1687,11 @@ mod tests {
         let prefixes = ["", ".x", ".x.[1]", ".a", ".[3]", ".x.[4]", ".p.q", ".nope"];
         let new_prefixes = ["", ".y", ".y.[3]", ".[7]", ".m.n", ".[0]"];
         for ap_s in aps {
-            let ap: Path = ap_s.into();
+            let ap = parse_path(ap_s);
             for pre_s in prefixes {
-                let pre: Path = pre_s.into();
+                let pre = parse_path(pre_s);
                 for np_s in new_prefixes {
-                    let np: Path = np_s.into();
+                    let np = parse_path(np_s);
                     assert_eq!(
                         ap.substitute_prefix(&pre, &np),
                         rebuild(&ap, &pre, &np),
@@ -1752,9 +1705,9 @@ mod tests {
     #[test]
     fn test_is_extension_of() {
         let empty = Path::empty();
-        let deref: Path = ".deref".into();
-        let off_deref: Path = ".[-40].deref".into();
-        let foo: Path = ".foo".into();
+        let deref = parse_path(".deref");
+        let off_deref = parse_path(".[-40].deref");
+        let foo = parse_path(".foo");
 
         // An empty port (bare `Argument(n)`) matches every path.
         assert!(empty.is_extension_of(&empty));
@@ -1779,75 +1732,75 @@ mod tests {
 
         // No offset arithmetic (unlike match_prefix): `.[8]` is not an extension
         // of `.[4]`.
-        let off4: Path = ".[4]".into();
-        let off8: Path = ".[8]".into();
+        let off4 = parse_path(".[4]");
+        let off8 = parse_path(".[8]");
         assert!(!off8.is_extension_of(&off4));
     }
 
     #[test]
     fn test_substitute_prefix_comprehensive() {
         // 1. Several offsets
-        let p: Path = ".x.[30]".into();
-        let q: Path = ".x.[10]".into();
-        let r: Path = ".y.[2]".into();
-        let expected: Path = ".y.[22]".into();
+        let p = parse_path(".x.[30]");
+        let q = parse_path(".x.[10]");
+        let r = parse_path(".y.[2]");
+        let expected = parse_path(".y.[22]");
         assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
 
-        let p: Path = ".a.[100].b.[50]".into();
-        let q: Path = ".a.[60]".into();
-        let r: Path = ".c.[10]".into();
-        let expected: Path = ".c.[50].b.[50]".into(); // .c.[10] + ([100]-[60]) = .c.[50]
+        let p = parse_path(".a.[100].b.[50]");
+        let q = parse_path(".a.[60]");
+        let r = parse_path(".c.[10]");
+        let expected = parse_path(".c.[50].b.[50]"); // .c.[10] + ([100]-[60]) = .c.[50]
         assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
 
         // 2. Empty prefix
-        let p: Path = ".x.[10]".into();
+        let p = parse_path(".x.[10]");
         let q: Path = Path::empty();
-        let r: Path = ".y.[5]".into();
-        let expected: Path = ".y.[5].x.[10]".into();
+        let r = parse_path(".y.[5]");
+        let expected = parse_path(".y.[5].x.[10]");
         assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
 
-        let p: Path = ".[10]".into();
+        let p = parse_path(".[10]");
         let q: Path = Path::empty();
-        let r: Path = ".[5]".into();
-        let expected: Path = ".[15]".into();
+        let r = parse_path(".[5]");
+        let expected = parse_path(".[15]");
         assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
 
         // 3. Empty new_prefix
-        let p: Path = ".x.y".into();
-        let q: Path = ".x".into();
+        let p = parse_path(".x.y");
+        let q = parse_path(".x");
         let r: Path = Path::empty();
-        let expected: Path = ".y".into();
+        let expected = parse_path(".y");
         assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
 
-        let p: Path = ".x.[10]".into();
-        let q: Path = ".x".into();
+        let p = parse_path(".x.[10]");
+        let q = parse_path(".x");
         let r: Path = Path::empty();
-        let expected: Path = ".[10]".into();
+        let expected = parse_path(".[10]");
         assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
 
         // 4. Empty path
         let p: Path = Path::empty();
         let q: Path = Path::empty();
-        let r: Path = ".x.[10]".into();
-        let expected: Path = ".x.[10]".into();
+        let r = parse_path(".x.[10]");
+        let expected = parse_path(".x.[10]");
         assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
 
         let p: Path = Path::empty();
-        let q: Path = ".x".into();
-        let r: Path = ".y".into();
+        let q = parse_path(".x");
+        let r = parse_path(".y");
         assert_eq!(p.substitute_prefix(&q, &r), None);
 
         // Additional cases: Negative offsets
-        let p: Path = ".[10]".into();
-        let q: Path = ".[20]".into();
-        let r: Path = ".[5]".into();
-        let expected: Path = ".[-5]".into(); // [5] + ([10] - [20]) = [5] - [10] = [-5]
+        let p = parse_path(".[10]");
+        let q = parse_path(".[20]");
+        let r = parse_path(".[5]");
+        let expected = parse_path(".[-5]"); // [5] + ([10] - [20]) = [5] - [10] = [-5]
         assert_eq!(p.substitute_prefix(&q, &r), Some(expected));
     }
 
     #[test]
     fn test_path_serialization() {
-        let path: Path = ["foo", "bar.baz"].iter().collect();
+        let path = Path::from_symbol_names(["foo", "bar.baz"]);
         let serialized = path.to_dot_string();
         assert_eq!(serialized, ".foo.bar\\.baz");
 
@@ -1857,7 +1810,7 @@ mod tests {
 
     #[test]
     fn test_path_with_dots() {
-        let path: Path = ["foo.bar", "baz.qux"].iter().collect();
+        let path = Path::from_symbol_names(["foo.bar", "baz.qux"]);
         let serialized = path.to_dot_string();
         assert_eq!(serialized, ".foo\\.bar.baz\\.qux");
 
@@ -1881,6 +1834,108 @@ mod tests {
 
         let parsed_back: Path = serialized.parse().unwrap();
         assert_eq!(path, parsed_back);
+    }
+
+    /// `parse(to_dot_string(p)) == p` over the corpus the parquet layer used to destroy.
+    ///
+    /// Before the canonical grammar, `to_dot_string` escaped `.` but not `[`, and the parser read
+    /// a leading `[` as an offset. So on every index -> query round trip the frontends' bracketed
+    /// symbol names either vanished (`Symbol("[]")`, `Symbol("[_elem_]")` -> the empty path) or
+    /// changed type (`Symbol("[3]")` -> `Offset(3)`). Nothing pinned any of these.
+    #[test]
+    fn test_path_round_trip_corpus() {
+        use ctadl_ir::mir::{Offset, PathSegment};
+        let sym = |s: &str| PathSegment::symbol(s);
+        let off = |n: i64| PathSegment::Offset(Offset(n));
+
+        for segs in [
+            vec![],
+            // The three the fact store was corrupting: dex/jvm, lua/C, and lua/C again.
+            vec![sym("[]")],
+            vec![sym("[_elem_]")],
+            vec![sym("[3]")],
+            // ... and in context, which is how they actually occur.
+            vec![sym("arr"), sym("[]")],
+            vec![sym("t"), sym("[1]"), sym("[2]")],
+            // Escapes.
+            vec![sym("a.b")],
+            vec![sym(r"a\b")],
+            vec![sym("a"), sym("b")],
+            // Offsets, including the sign and the model-port shape from `Argument(1).[8].deref`.
+            vec![off(-1)],
+            vec![off(42)],
+            vec![off(8), sym("deref")],
+            vec![sym("foo"), off(42), sym("bar")],
+        ] {
+            let path = Path::from_accesses(segs.clone());
+            let printed = path.to_dot_string();
+            let parsed = Path::parse(&printed)
+                .unwrap_or_else(|e| panic!("{segs:?} printed as {printed:?}, which failed: {e}"));
+            assert_eq!(path, parsed, "round trip through {printed:?}");
+        }
+    }
+
+    /// The two ways `Path::parse` is deliberately not injective. Both are `from_accesses`
+    /// normalizing -- a *semantic* property of `Path` (see its type docs), not a parse bug -- so
+    /// they are pinned here rather than left to look like round-trip failures.
+    #[test]
+    fn test_path_parse_normalizes() {
+        use ctadl_ir::mir::{Offset, PathSegment};
+
+        // Adjacent offsets are summed: an access path holds at most one offset in a row.
+        assert_eq!(
+            Path::parse(".[1].[2]").unwrap(),
+            Path::parse(".[3]").unwrap()
+        );
+        assert_eq!(
+            Path::parse(".[1].[2]").unwrap(),
+            Path::from_accesses([PathSegment::Offset(Offset(3))])
+        );
+
+        // A zero offset is the identity on addresses and is dropped.
+        assert_eq!(Path::parse(".x.[0]").unwrap(), Path::parse(".x").unwrap());
+        assert_eq!(Path::parse(".[0]").unwrap(), Path::empty());
+
+        // Which is why `Symbol("[3]")` (a lua/C array field) and `Offset(3)` must stay distinct:
+        // before the escape, both spelled `.[3]` and the symbol lost.
+        assert_ne!(
+            Path::from_accesses([PathSegment::symbol("[3]")]),
+            Path::from_accesses([PathSegment::Offset(Offset(3))])
+        );
+        assert_eq!(
+            Path::from_accesses([PathSegment::symbol("[3]")]).to_dot_string(),
+            r".\[3]"
+        );
+        assert_eq!(
+            Path::from_accesses([PathSegment::Offset(Offset(3))]).to_dot_string(),
+            ".[3]"
+        );
+    }
+
+    /// `Display` and `FromStr` are inverses: no `path(...)` wrapper.
+    #[test]
+    fn test_path_display_is_parseable() {
+        let path = Path::parse(r".foo.[8].\[_elem_]").unwrap();
+        assert_eq!(path.to_string(), r".foo.[8].\[_elem_]");
+        assert_eq!(Path::parse(&path.to_string()).unwrap(), path);
+        assert_eq!(Path::empty().to_string(), "");
+    }
+
+    #[test]
+    fn test_path_parse_rejects_malformed() {
+        use ctadl_ir::mir::PathSyntaxErrorKind;
+        assert_eq!(
+            Path::parse("foo").unwrap_err().kind,
+            PathSyntaxErrorKind::MissingLeadingDot
+        );
+        assert_eq!(
+            Path::parse(".a..b").unwrap_err().kind,
+            PathSyntaxErrorKind::EmptySegment
+        );
+        assert_eq!(
+            Path::parse(".[_elem_]").unwrap_err().kind,
+            PathSyntaxErrorKind::InvalidOffset("_elem_".into())
+        );
     }
 
     #[test]

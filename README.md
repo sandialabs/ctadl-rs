@@ -7,13 +7,12 @@ CTADL (Compositional Taint Analysis in Datalog) is a static taint analyzer. CTAD
 
 ## Usage
 
-The typical pipeline is **import → index → query**. Each stage stores its output
-under a project name so later stages can pick it up. Use `ctadl <command> --help`
-for the full, current set of flags.
+The typical pipeline is **import → index → query**. Use `ctadl <command> --help` for the full,
+current set of flags.
 
 | Command | What it does |
 | --- | --- |
-| `import` | Import a single artifact (`.dex`, `.jar`, `.class`, APK, a `.c`/`.h` file or a directory of C sources and headers, Ghidra pcode, Flowy) into the store. A C directory is parsed as one translation unit (its `.h` and `.c` files, headers first). For pcode (`-l pcode`), the artifact may be a binary, an existing Ghidra project (`<name>.gpr`), or a Ghidra Server URL (`ghidra://…`). |
+| `import` | Import a single artifact (`.dex`, `.jar`, `.class`, APK, a `.c`/`.h` file or a directory of C sources and headers, Ghidra pcode, Flowy) into the store. |
 | `index` | Index one or more imported programs into an analysis project, resolving calls and building SSA. Can load prior summaries and propagation models. |
 | `query` | Run a taint-analysis query over an indexed project and write results as SARIF. |
 | `go` | One-shot convenience: import, index, and query in a single invocation. |
@@ -34,6 +33,31 @@ ctadl import /path/to/app.apk --name my-app
 ctadl index my-app
 ctadl query my-app --models sources-and-sinks.json5 --output results.sarif
 ```
+
+### Import
+
+An APK also imports the native libraries packaged in it (`--no-native-libs`, `--native-abi` to
+control). For pcode (`-l pcode`), the artifact may be a binary, an existing Ghidra project
+(`<name>.gpr`), or a Ghidra Server URL (`ghidra://…`). For C (`-l c`), the artifact may be a single
+`.c`/`.h` file or a directory; a directory is parsed as one translation unit (its `.h` and `.c`
+files, headers first).
+
+An app's Java and native halves analyze as a whole using [the JNI bridge](docs/jni.md). When the
+halves are separate files, import each and name both:
+
+```bash
+ctadl import app.dex            --name app_dex
+ctadl import -l pcode libapp.so --name app_native
+ctadl index  app app_dex app_native
+```
+
+## Documentation
+
+- [Model generators](docs/model-generators.md) — the declarative language for
+  sources, sinks, and propagation through code CTADL cannot see.
+- [The JNI bridge](docs/jni.md) — how Java `native` methods are linked to their
+  native implementations when both are indexed together.
+- [Debugging](docs/debugging.md).
 
 # Testing
 

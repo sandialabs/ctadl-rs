@@ -48,7 +48,7 @@ We don't maintain the dex-parser or jvm-parser crates. They're vendored.
 Users may be interested in writing their own Datalog to customize the algorithm. Datalog is run
 with [`ascent::ascent`] or [`ascent::ascent_run`].
 
-- To add models, users can use [`crate::codegen::models`].
+- To add models, users can use [`crate::models`], whose matches [`crate::codegen::model_matches`] turns into facts.
 
 # Code Development
 

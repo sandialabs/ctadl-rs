@@ -1,0 +1,2 @@
+// Loaded by `flowy_tests.rs` for the sibling `port_bare.tnt`, as `ctadl index --models` would.
+{"find":"methods","where":[{"constraint":"signature_match","name":"id"}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}

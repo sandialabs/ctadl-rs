@@ -15,6 +15,7 @@ mod dex;
 mod discovery;
 mod exec;
 mod jvm;
+mod models;
 mod regression;
 mod sarif;
 
@@ -69,7 +70,7 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let value = args.next().context("--frontend requires a value")?;
                 let names: Vec<&str> = value.split(',').filter(|s| !s.trim().is_empty()).collect();
                 if names.is_empty() {
-                    bail!("--frontend requires at least one of: dex, jvm, pcode, c");
+                    bail!("--frontend requires at least one of: dex, jvm, pcode, c, lua, jni");
                 }
                 let selected = frontends.get_or_insert_with(BTreeSet::new);
                 for name in names {
@@ -101,6 +102,10 @@ fn parse_regression_args(mut args: impl Iterator<Item = String>) -> Result<regre
                 let path = args.next().context("--dex-apk requires a value")?;
                 opts.dex_apk = Some(PathBuf::from(path));
             }
+            "--models-dir" => {
+                let dir = args.next().context("--models-dir requires a value")?;
+                opts.models_dir = Some(PathBuf::from(dir));
+            }
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -122,13 +127,16 @@ cargo xtask <task>
 Tasks:
   regression                 Run the source-sink taint regression suite.
     --frontend <f>           Only exercise frontend <f>: `pcode`, `jvm`, `dex`,
-                             or `c` (default: all). Accepts a comma-separated list
-                             and may be repeated; unselected frontends are skipped
-                             entirely, so their toolchains are not needed.
-                             E.g. `--frontend pcode` runs the C/pcode cases and
-                             the Ghidra checks without any Java toolchain, while
-                             `--frontend c` runs the tree-sitter C cases over the
-                             same sources with neither Ghidra nor a compiler.
+                             `c`, `lua`, or `jni` (default: all). Accepts a
+                             comma-separated list and may be repeated; unselected
+                             frontends are skipped entirely, so their toolchains
+                             are not needed. E.g. `--frontend pcode` runs the
+                             C/pcode cases and the Ghidra checks without any Java
+                             toolchain, `--frontend c` runs the tree-sitter C
+                             cases over those same sources with neither Ghidra nor
+                             a compiler, and `--frontend lua` runs just the Lua
+                             source cases. `jni` is the two-import bridge cases,
+                             which need the Java *and* Ghidra toolchains.
     --filter <name>          Only run cases whose name contains <name>.
                              Composes with --frontend.
     -j, --jobs <n>           Run <n> cases concurrently (default: one per core,
@@ -148,6 +156,11 @@ Tasks:
     --dex-apk <path>         Real-world APK to parse in the dex-reader smoke
                              test (default: auto-detect
                              `xtask/tests/dex/com.noto_54.apk`).
+    --models-dir <dir>       Directory holding the model generator schema and
+                             the built-in model files checked against it
+                             (default: auto-detect `ctadl-ascent/src/models`).
+                             The `models:*` checks self-skip when neither the
+                             flag nor the default directory is present.
 "
     );
 }
