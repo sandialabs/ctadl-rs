@@ -50,7 +50,7 @@ of its two endpoints:
 1. `model.json` marks the framework methods named in the findings' source/sink
    IR signatures as ctadl sources/sinks (e.g. `ContentResolver.query`'s return
    is a source; `Transport.sendMessage`'s arguments are a sink).
-2. `ctadl format --sarif-profile agent` emits a `tainted-path` result for each
+2. `ctadl query --sarif-profile agent` emits a `tainted-path` result for each
    connected flow, carrying the source and sink callee (`sourceCallee` /
    `sinkCallee`, e.g. `Ljava/io/DataOutputStream;->write([BII)V`).
 3. xtask parses the callee `(class, method)` from each finding's IR

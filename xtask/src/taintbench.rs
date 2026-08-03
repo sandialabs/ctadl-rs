@@ -33,7 +33,7 @@ use serde_json::Value;
 
 use crate::exec;
 
-/// SARIF rule IDs emitted by `ctadl format --sarif-profile agent`.
+/// SARIF rule IDs emitted by `ctadl query --sarif-profile agent`.
 const TAINT_SOURCE_RULE_ID: &str = "C0003.taint-source";
 const TAINT_SINK_RULE_ID: &str = "C0004.taint-sink";
 const TAINTED_PATH_RULE_ID: &str = "C0001.tainted-path";
@@ -263,14 +263,11 @@ fn run_app(app: &App, apk: &Path) -> Result<Outcome> {
     run_ctadl(
         &work,
         &state,
-        &["query", &project, "-m", &model.to_string_lossy()],
-    )?;
-    run_ctadl(
-        &work,
-        &state,
         &[
-            "format",
+            "query",
             &project,
+            "-m",
+            &model.to_string_lossy(),
             "-o",
             &sarif.to_string_lossy(),
             "--sarif-profile",
