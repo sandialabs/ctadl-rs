@@ -225,10 +225,13 @@ impl ArtifactImport {
         let artifact_path = if is_ghidra_server_url(artifact_path) {
             artifact_path.to_path_buf()
         } else {
-            canonicalize(artifact_path)?
+            canonicalize(artifact_path)
+                .err_context(|| format!("resolving artifact: '{}'", artifact_path.display()))?
         };
         let import_dir = StorePaths::relative_import_dir(name);
-        std::fs::create_dir_all(StorePaths::resolve(&import_dir))?;
+        let resolved_import_dir = StorePaths::resolve(&import_dir);
+        std::fs::create_dir_all(&resolved_import_dir)
+            .err_context(|| format!("creating import dir: '{}'", resolved_import_dir.display()))?;
         let result = Self {
             name: name.to_owned(),
             language,
@@ -250,8 +253,10 @@ impl ArtifactImport {
     /// If there are i/o or deserialization errors
     pub fn save(&self) -> Result<(), Error> {
         let path = self.config_path();
-        let file = File::create(&path)?;
-        serde_json::to_writer(file, &self)?;
+        let file = File::create(&path)
+            .err_context(|| format!("creating import config: '{}'", path.display()))?;
+        serde_json::to_writer(file, &self)
+            .err_context(|| format!("writing import config: '{}'", path.display()))?;
         log::debug!(
             "wrote import configuration to '{}'",
             path::absolute(&path)?.display()
@@ -267,8 +272,11 @@ impl ArtifactImport {
     /// incompatible version of ctadl (see [`IMPORT_FORMAT_VERSION`]).
     #[inline]
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
-        let file = File::open(path)?;
-        let mut result: Self = serde_json::from_reader(file)?;
+        let path = path.as_ref();
+        let file = File::open(path)
+            .err_context(|| format!("opening import config: '{}'", path.display()))?;
+        let mut result: Self = serde_json::from_reader(file)
+            .err_context(|| format!("deserializing import config: '{}'", path.display()))?;
         // An absolute directory here was written by a build that recorded where the store
         // happened to live, so it would send a copied store back to the original. The layout is
         // fixed, so the name says what the directory is.
@@ -297,7 +305,7 @@ impl ArtifactImport {
         let path = StorePaths::import_path()
             .join(name)
             .join(IMPORT_CONFIG_FILE);
-        Self::load(&path).err_context(|| format!("reading import config: '{}'", path.display()))
+        Self::load(&path).err_context(|| format!("reading import '{name}'"))
     }
 
     /// Usable path to this import's directory: [`Self::import_dir`] resolved against the store
@@ -384,7 +392,8 @@ impl ArtifactImport {
             None => return Ok(false),
         };
         // Compare canonicalized paths so the stored path (always canonical) lines up.
-        let artifact_path = canonicalize(artifact_path)?;
+        let artifact_path = canonicalize(artifact_path)
+            .err_context(|| format!("resolving artifact: '{}'", artifact_path.display()))?;
         if config.artifact_path != artifact_path {
             return Ok(false);
         }
@@ -413,7 +422,8 @@ pub fn hash_artifact(path: &Path) -> Result<String, Error> {
     use source_info::ContentHasher;
 
     let mut hasher = ContentHasher::new();
-    let metadata = std::fs::symlink_metadata(path)?;
+    let metadata = std::fs::symlink_metadata(path)
+        .err_context(|| format!("reading artifact metadata: {}", path.display()))?;
     if metadata.is_dir() {
         let mut files = Vec::new();
         collect_files(path, &mut files)?;
@@ -442,10 +452,13 @@ pub fn hash_artifact(path: &Path) -> Result<String, Error> {
 
 /// Recursively collects regular files under `dir` into `out`.
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), Error> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    let entries =
+        std::fs::read_dir(dir).err_context(|| format!("listing directory: {}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.err_context(|| format!("listing directory: {}", dir.display()))?;
         let path = entry.path();
-        let metadata = std::fs::symlink_metadata(&path)?;
+        let metadata = std::fs::symlink_metadata(&path)
+            .err_context(|| format!("reading file metadata: {}", path.display()))?;
         if metadata.is_dir() {
             collect_files(&path, out)?;
         } else if metadata.is_file() {
@@ -535,7 +548,8 @@ impl AnalysisProject {
     #[inline]
     pub fn try_load_path<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         let path = path.as_ref();
-        let file = File::open(path)?;
+        let file =
+            File::open(path).err_context(|| format!("opening config: '{}'", path.display()))?;
         let mut result: Self = serde_json::from_reader(file)
             .err_context(|| format!("deserializing config: '{}'", path.display()))?;
         // See [`ArtifactImport::load`]: an absolute directory came from a build that wrote down
@@ -556,7 +570,9 @@ impl AnalysisProject {
         let path = StorePaths::projects_path()
             .join(name)
             .join(PROJECT_CONFIG_FILE);
-        Self::try_load_path(&path).err_context(|| format!("loading config: '{}'", path.display()))
+        // No context of its own: `try_load_path` already names this path in every error it
+        // returns, and repeating it here just doubles the line in the chain.
+        Self::try_load_path(&path)
     }
 
     /// Loads artifact imports. Each item in the iterator may throw an error; see
@@ -605,13 +621,15 @@ impl AnalysisProject {
     #[inline]
     pub fn write_index_config(&self) -> Result<(), Error> {
         let path = self.index_path()?.join(INDEX_CONFIG_FILE);
-        let file = File::create(&path)?;
+        let file = File::create(&path)
+            .err_context(|| format!("creating index config: '{}'", path.display()))?;
         serde_json::to_writer(
             file,
             &IndexConfig {
                 version: INDEX_FORMAT_VERSION.to_string(),
             },
-        )?;
+        )
+        .err_context(|| format!("writing index config: '{}'", path.display()))?;
         Ok(())
     }
 
@@ -638,7 +656,10 @@ impl AnalysisProject {
                 config.version
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => "1 (or older)".to_string(),
-            Err(e) => return Err(Error::Io(e)),
+            Err(e) => {
+                return Err(e)
+                    .err_context(|| format!("opening index config: '{}'", path.display()));
+            }
         };
         if found != INDEX_FORMAT_VERSION {
             return Err(Error::IncompatibleIndex {
@@ -658,8 +679,10 @@ impl AnalysisProject {
     #[inline]
     pub fn save(&self) -> Result<(), Error> {
         let path = self.config_path();
-        let file = File::create(&path)?;
-        serde_json::to_writer(file, &self)?;
+        let file = File::create(&path)
+            .err_context(|| format!("creating project config: '{}'", path.display()))?;
+        serde_json::to_writer(file, &self)
+            .err_context(|| format!("writing project config: '{}'", path.display()))?;
         log::debug!(
             "wrote project configuration to '{}'",
             path::absolute(&path)?.display()

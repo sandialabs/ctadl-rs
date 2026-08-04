@@ -378,10 +378,13 @@ pub fn query(
     // this is what turns that into an actionable "re-run `ctadl index`".
     project.check_index_config()?;
     let index_path = project.index_path()?;
-    let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
+    let ids = facts::IdMap::try_load(&index_path)
+        .err_context(|| format!("loading IdMap from index: {}", index_path.display()))?;
     // Load the index tables once; they seed the query and are reused to format the results.
-    let index_facts = IndexFacts::try_load(&index_path).err_context(|| "loading index facts")?;
-    let index_result = IndexResult::try_load(&index_path).err_context(|| "loading index result")?;
+    let index_facts = IndexFacts::try_load(&index_path)
+        .err_context(|| format!("loading index facts from: {}", index_path.display()))?;
+    let index_result = IndexResult::try_load(&index_path)
+        .err_context(|| format!("loading index result from: {}", index_path.display()))?;
 
     // Assembled alongside the query itself and handed to the SARIF writer, which turns it
     // into `run.invocations[0]`. See `formatter::QueryDiagnostics`.
@@ -592,7 +595,8 @@ fn dump_index_graph_dot(
     id_map: &facts::IdMap,
     dot_path: &Path,
 ) -> Result<(), Error> {
-    let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+    let mut file = std::fs::File::create(dot_path)
+        .err_context(|| format!("creating dot file: {}", dot_path.display()))?;
     // Embed the legend as a leading DOT comment so the file documents itself
     // (kept in sync with the log message below).
     {
@@ -612,10 +616,10 @@ fn dump_index_graph_dot(
              // label with no `.field` suffix means \"this vertex, empty path\" -- it does\n\
              // NOT mean paths are omitted from labels.\n"
         )
-        .err_context(|| "writing index graph legend")?;
+        .err_context(|| format!("writing index graph legend: {}", dot_path.display()))?;
     }
     crate::graphviz::render_index_graph(assign_like, id_map, &mut file)
-        .err_context(|| "rendering index graph")?;
+        .err_context(|| format!("rendering index graph: {}", dot_path.display()))?;
     // Multi-line, with its own hanging indentation: the log formatter prepends nothing to
     // an info record, so the block below reaches the terminal as written.
     log::info!(
@@ -726,7 +730,8 @@ fn dump_taint_graph_dot(
             }
         })
         .collect();
-    let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+    let mut file = std::fs::File::create(dot_path)
+        .err_context(|| format!("creating dot file: {}", dot_path.display()))?;
     // Embed the legend as a leading DOT comment so the file documents
     // itself (kept in sync with the log message below).
     {
@@ -751,11 +756,16 @@ fn dump_taint_graph_dot(
              //   red dashed  = backward propagation\n\
              //   bold green  = meet edge (on a source->sink path)\n"
         )
-        .err_context(|| "writing taint graph legend")?;
+        .err_context(|| format!("writing taint graph legend: {}", dot_path.display()))?;
     }
-    let ids = facts::IdMap::try_load(index_path).err_context(|| "loading IdMap for taint graph")?;
+    let ids = facts::IdMap::try_load(index_path).err_context(|| {
+        format!(
+            "loading IdMap for taint graph from index: {}",
+            index_path.display()
+        )
+    })?;
     crate::graphviz::render_taint_graph(node_cone, &edges, &sources, &sinks, &ids, &mut file)
-        .err_context(|| "rendering taint graph")?;
+        .err_context(|| format!("rendering taint graph: {}", dot_path.display()))?;
     // Multi-line; see the note in `dump_index_graph_dot`.
     log::info!(
         "Wrote taint graph to '{}'\n  \
@@ -802,8 +812,10 @@ pub fn save_program_info(
 
     let path = import.source_info_dir();
     let obj = std::mem::take(&mut program_info.source_info);
-    std::fs::create_dir_all(&path)?;
-    source_info::write_parquet_source_info(&path, &obj)?;
+    std::fs::create_dir_all(&path)
+        .err_context(|| format!("creating source info dir: {}", path.display()))?;
+    source_info::write_parquet_source_info(&path, &obj)
+        .err_context(|| format!("writing source info: {}", path.display()))?;
     Ok(())
 }
 
@@ -811,13 +823,16 @@ pub fn save_program_info(
 fn load_program_info_without_source_info(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.program_path();
     log::debug!("reading {}", path.display());
-    let data = std::fs::read(path)?;
-    let program = ctadl_ir::encode::decode_program(&data)?;
+    let data =
+        std::fs::read(path).err_context(|| format!("reading program: {}", path.display()))?;
+    let program = ctadl_ir::encode::decode_program(&data)
+        .err_context(|| format!("decoding program: {}", path.display()))?;
 
     let path = &import.vmt_path();
     log::debug!("reading {}", path.display());
-    let data = std::fs::read(path)?;
-    let vmt = bitcode::deserialize(&data)?;
+    let data = std::fs::read(path).err_context(|| format!("reading vmt: {}", path.display()))?;
+    let vmt =
+        bitcode::deserialize(&data).err_context(|| format!("decoding vmt: {}", path.display()))?;
 
     Ok(ProgramInfo {
         program,
@@ -1006,8 +1021,11 @@ pub fn list_store_contents() -> Result<(), Error> {
     println!("Imported artifacts:");
     let mut imports = Vec::new();
     if import_path.exists() {
-        for entry in fs::read_dir(import_path)? {
-            let entry = entry?;
+        let entries = fs::read_dir(&import_path)
+            .err_context(|| format!("listing imports: {}", import_path.display()))?;
+        for entry in entries {
+            let entry =
+                entry.err_context(|| format!("listing imports: {}", import_path.display()))?;
             if entry.file_type()?.is_dir()
                 && let Some(name) = entry.file_name().to_str()
             {
@@ -1035,8 +1053,11 @@ pub fn list_store_contents() -> Result<(), Error> {
     println!("Analysis projects:");
     let mut projects = Vec::new();
     if projects_path.exists() {
-        for entry in fs::read_dir(projects_path)? {
-            let entry = entry?;
+        let entries = fs::read_dir(&projects_path)
+            .err_context(|| format!("listing projects: {}", projects_path.display()))?;
+        for entry in entries {
+            let entry =
+                entry.err_context(|| format!("listing projects: {}", projects_path.display()))?;
             if entry.file_type()?.is_dir()
                 && let Some(name) = entry.file_name().to_str()
             {
@@ -1142,7 +1163,7 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
             ),
         }
     };
-    let data = std::fs::read(path)?;
+    let data = std::fs::read(path).err_context(|| format!("reading {}", path.display()))?;
     if filename == crate::project::PROGRAM_BITCODE_FILE {
         let program =
             ctadl_ir::encode::decode_program(&data).err_context(|| decode_failed("program"))?;

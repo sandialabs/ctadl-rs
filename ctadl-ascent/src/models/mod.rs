@@ -199,6 +199,7 @@ pub fn try_load_models<P: AsRef<std::path::Path>>(
                 .err_context(|| format!("opening model JSONL file: {}", path.display()))?;
             let rdr = BufReader::new(file);
             try_load_jsonl_models(index, rdr, out)
+                .err_context(|| format!("reading model JSONL file: {}", path.display()))
         }
         Some("json5") => try_load_json5_models(index, path, out),
         _ => try_load_json_models(index, path, out),

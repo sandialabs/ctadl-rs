@@ -48,7 +48,8 @@ pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramIn
     // section-relative offsets regardless of the base Ghidra chose.
     if let Some(image_base) = PcodeFactsReader::new(&facts_dir)
         .read_image_base()
-        .map_err(|e| Error::PcodeFactRead(format!("Failed to read image base: {}", e)))?
+        .map_err(|e| Error::PcodeFactRead(format!("Failed to read image base: {}", e)))
+        .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?
     {
         let mut updated = import.clone();
         updated.image_base = Some(image_base);
@@ -206,7 +207,8 @@ impl Context {
         let reader = PcodeFactsReader::new(facts_dir);
         let mut pcode_facts = reader
             .read_all_facts()
-            .map_err(|e| Error::PcodeFactRead(format!("Failed to read pcode facts: {}", e)))?;
+            .map_err(|e| Error::PcodeFactRead(format!("Failed to read pcode facts: {}", e)))
+            .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?;
 
         // Synthesize stack top varnode and add it to facts
         let stack_top_vn = pcode_reader::PcodeVarnode::from("__stack_top");

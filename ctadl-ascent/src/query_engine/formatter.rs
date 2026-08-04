@@ -1426,13 +1426,18 @@ pub fn format_sarif(
     let writer: Box<dyn std::io::Write> = if output.to_str() == Some("-") {
         Box::new(std::io::stdout())
     } else {
-        Box::new(File::create(output).err_context(|| "creating sarif output file")?)
+        Box::new(
+            File::create(output)
+                .err_context(|| format!("creating sarif output file: {}", output.display()))?,
+        )
     };
 
     if compact {
-        serde_json::to_writer(writer, &final_sarif).err_context(|| "writing sarif")?;
+        serde_json::to_writer(writer, &final_sarif)
+            .err_context(|| format!("writing sarif: {}", output.display()))?;
     } else {
-        serde_json::to_writer_pretty(writer, &final_sarif).err_context(|| "writing sarif")?;
+        serde_json::to_writer_pretty(writer, &final_sarif)
+            .err_context(|| format!("writing sarif: {}", output.display()))?;
     }
     Ok(execution_successful)
 }
@@ -1927,9 +1932,14 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
                     }
                 }
                 source_info::ArtifactEncoding::Utf8 | source_info::ArtifactEncoding::Utf16 => {
-                    let file = File::open(canonical_path)?;
+                    let file = File::open(canonical_path)
+                        .err_context(|| format!("opening source file: {canonical_path}"))?;
                     // SAFETY: This is inherently unsafe because of mmap(). *shrug*
-                    let contents = unsafe { MmapOptions::new().map(&file)? };
+                    let contents = unsafe {
+                        MmapOptions::new()
+                            .map(&file)
+                            .err_context(|| format!("mapping source file: {canonical_path}"))?
+                    };
                     let line_map = LineMap::from_bytes(&contents);
                     let end_byte = match len_tag {
                         0 => start,

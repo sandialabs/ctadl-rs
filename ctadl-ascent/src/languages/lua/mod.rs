@@ -89,7 +89,7 @@ use smallvec::SmallVec;
 use source_info::{ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 use tree_sitter::{Node, Parser, Tree};
 
-use crate::error::Error;
+use crate::error::{Error, ErrorContext};
 
 /// One Lua source file in an import: where it came from, the `require` name it answers to, and
 /// its text.
@@ -136,7 +136,8 @@ fn collect_units(path: &Path) -> Result<Vec<SourceUnit>, Error> {
     files
         .into_iter()
         .map(|file| {
-            let source = source_info::read_source(&file)?;
+            let source = source_info::read_source(&file)
+                .err_context(|| format!("reading Lua source: {}", file.display()))?;
             Ok(SourceUnit {
                 module: module_name(&root, &file),
                 path: file,
@@ -148,9 +149,14 @@ fn collect_units(path: &Path) -> Result<Vec<SourceUnit>, Error> {
 
 /// Recursively collects `.lua` files under `dir`.
 fn collect_lua_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), Error> {
-    for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
-        let meta = std::fs::symlink_metadata(&path)?;
+    let entries =
+        std::fs::read_dir(dir).err_context(|| format!("listing directory: {}", dir.display()))?;
+    for entry in entries {
+        let path = entry
+            .err_context(|| format!("listing directory: {}", dir.display()))?
+            .path();
+        let meta = std::fs::symlink_metadata(&path)
+            .err_context(|| format!("reading file metadata: {}", path.display()))?;
         if meta.is_dir() {
             collect_lua_files(&path, out)?;
         } else if meta.is_file() && path.extension().and_then(|e| e.to_str()) == Some("lua") {

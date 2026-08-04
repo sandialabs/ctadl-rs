@@ -562,7 +562,8 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
         ]
         }"#;
 
-    std::fs::write(&args.output, template)?;
+    std::fs::write(&args.output, template)
+        .with_context(|| format!("writing template model file: '{}'", args.output.display()))?;
     log::info!("Wrote template model file to '{}'", args.output.display());
     Ok(())
 }
