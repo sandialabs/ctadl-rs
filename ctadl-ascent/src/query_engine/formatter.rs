@@ -103,6 +103,31 @@ pub struct ImportSource {
     /// emit `relativeAddress` (the section-relative offset) alongside the
     /// absolute instruction address in binary SARIF locations.
     pub image_base: Option<i64>,
+    /// Absolute path of the artifact this import was made from, as `ctadl import` resolved it.
+    /// It is what makes a source location's URI mean something to a reader: see
+    /// [`Self::uri_base`]. `None` for an artifact that is not a filesystem path (a
+    /// `ghidra://` project URL).
+    pub artifact_path: Option<path::PathBuf>,
+}
+
+impl ImportSource {
+    /// The directory this import's SARIF URIs are written relative to: the artifact's *parent*,
+    /// so every URI leads with the artifact's own name.
+    ///
+    /// A URI is supposed to say where a finding is *within the thing that was scanned*, not
+    /// where that thing happened to sit on the machine that scanned it. The absolute path is
+    /// not thrown away: it is published once per import in `run.originalUriBaseIds`, under
+    /// [`Self::uri_base_id`], which is exactly the indirection SARIF §3.4.4 defines for this.
+    fn uri_base(&self) -> Option<&path::Path> {
+        self.artifact_path.as_deref().and_then(|p| p.parent())
+    }
+
+    /// The `uriBaseId` symbol naming [`Self::uri_base`] in `run.originalUriBaseIds`. One per
+    /// import: a project's imports are rooted in unrelated directories, so a single base
+    /// would only be right for one of them.
+    fn uri_base_id(&self) -> String {
+        format!("IMPORT_{}", self.name)
+    }
 }
 
 pub struct ProjectContext<'a, P: AsRef<path::Path>> {
@@ -613,6 +638,67 @@ fn artifact_uri(p: &path::Path) -> String {
         .and_then(|abs| url::Url::from_file_path(abs).ok())
         .map(|u| u.to_string())
         .unwrap_or_else(|| p.to_string_lossy().replace('\\', "/"))
+}
+
+/// Where a source file is, as SARIF says a location: relative to the import it belongs to.
+///
+/// A path inside the import root is written relative to [`ImportSource::uri_base`] and tagged
+/// with the import's `uriBaseId`, whose absolute value is registered in `uri_bases` (and from
+/// there into `run.originalUriBaseIds`).
+///
+/// Two kinds of path fall outside that root, and each keeps the only form it has: a relative
+/// path (a frontend that names sources by their in-artifact path, e.g. Dex debug info) is
+/// already artifact-relative and stands alone, and an absolute path elsewhere on disk is
+/// written as the `file:` URI it is, rather than as a slash-stripped imitation of a relative
+/// one -- which is what every path used to get, and what made the URIs unreadable.
+fn source_artifact_location(
+    import: &ImportSource,
+    canonical_path: &str,
+    uri_bases: &mut BTreeMap<String, String>,
+) -> ArtifactLocation {
+    let path = path::Path::new(canonical_path);
+    if let Some(rel) = import
+        .uri_base()
+        .and_then(|base| path.strip_prefix(base).ok())
+    {
+        let id = import.uri_base_id();
+        if let Some(base) = import.uri_base() {
+            uri_bases
+                .entry(id.clone())
+                .or_insert_with(|| directory_uri(base));
+        }
+        let mut location = ArtifactLocation::builder().uri(uri_reference(rel)).build();
+        location.uri_base_id = Some(id);
+        return location;
+    }
+    let uri = if path.is_absolute() {
+        artifact_uri(path)
+    } else {
+        uri_reference(path)
+    };
+    ArtifactLocation::builder().uri(uri).build()
+}
+
+/// A relative path as a URI reference: `/`-separated, whatever the platform separator is.
+fn uri_reference(p: &path::Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
+/// A `file:` URI for a directory. SARIF requires the value of an `originalUriBaseIds` entry to
+/// end with a slash (§3.14.14), which is what distinguishes it from a URI for the directory
+/// *as a file*.
+fn directory_uri(dir: &path::Path) -> String {
+    path::absolute(dir)
+        .ok()
+        .and_then(|abs| url::Url::from_directory_path(abs).ok())
+        .map(|u| u.to_string())
+        .unwrap_or_else(|| {
+            let mut uri = uri_reference(dir);
+            if !uri.ends_with('/') {
+                uri.push('/');
+            }
+            uri
+        })
 }
 
 /// A UTC timestamp in the `date-time` form SARIF requires (§3.9).
@@ -1446,6 +1532,10 @@ pub fn format_sarif(
 pub struct SarifData {
     pub global_logical_locations_map: BTreeMap<String, usize>,
     pub global_logical_locations: Vec<LogicalLocation>,
+    /// Every `uriBaseId` a location used, mapped to the absolute directory URI it stands for.
+    /// Written out as `run.originalUriBaseIds`; see [`ImportSource::uri_base`]. Only imports
+    /// that actually produced a location appear.
+    pub uri_bases: BTreeMap<String, String>,
 }
 
 #[derive(Default)]
@@ -1676,9 +1766,23 @@ async fn async_format_sarif(
         ]))
         .build();
 
+    // What each `uriBaseId` the locations reference stands for on this machine. Locations are
+    // written relative to their import (see `source_artifact_location`); this is where the
+    // absolute directory each one is relative to is said, once.
+    let original_uri_base_ids: BTreeMap<String, ArtifactLocation> = sarif_data
+        .uri_bases
+        .iter()
+        .map(|(id, uri)| {
+            (
+                id.clone(),
+                ArtifactLocation::builder().uri(uri.clone()).build(),
+            )
+        })
+        .collect();
+
     // `results` is always set, never omitted: per the JSON schema it "must be present (but
     // may be empty) if a log file represents an actual scan".
-    let run = if sarif_data.global_logical_locations.is_empty() {
+    let mut run = if sarif_data.global_logical_locations.is_empty() {
         Run::builder()
             .tool(tool)
             .invocations(vec![invocation])
@@ -1692,6 +1796,9 @@ async fn async_format_sarif(
             .logical_locations(sarif_data.global_logical_locations)
             .build()
     };
+    if !original_uri_base_ids.is_empty() {
+        run.original_uri_base_ids = Some(original_uri_base_ids);
+    }
     // we need to deconstruct and rebuild the run to ensure a certain order (needs serde_json feature preserve_order)
     let final_run = match serde_json::to_value(&run).unwrap() {
         serde_json::Value::Object(mut old_map) => {
@@ -1963,11 +2070,8 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
                 }
             };
 
-            let uri_str = canonical_path.to_string();
-            let uri_stripped = uri_str.strip_prefix('/').unwrap_or(&uri_str);
-            let artifact_location = ArtifactLocation::builder()
-                .uri(uri_stripped.to_string())
-                .build();
+            let artifact_location =
+                source_artifact_location(import, canonical_path, &mut sarif_data.uri_bases);
 
             let is_pcode = import.language == ArtifactLanguage::Pcode;
             let physical_location = match encoding {
@@ -2993,12 +3097,20 @@ fn load_import_sources(index_dir: &path::Path) -> Result<Vec<ImportSource>, Erro
                 continue;
             }
         };
+        // A `ghidra://…` artifact is a project URL, not a path, so it roots nothing; its
+        // locations fall back to whatever the frontend recorded (see
+        // `source_artifact_location`).
+        let artifact_path = import
+            .artifact_path
+            .is_absolute()
+            .then(|| import.artifact_path.clone());
         imports.push(ImportSource {
             id,
             name,
             source_info_dir: import.source_info_dir(),
             language: import.language,
             image_base: import.image_base,
+            artifact_path,
         });
     }
     Ok(imports)

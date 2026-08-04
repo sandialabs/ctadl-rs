@@ -33,6 +33,18 @@ struct SarifLog {
 struct Run {
     tool: Option<Tool>,
     results: Vec<ResultItem>,
+    /// What each `uriBaseId` a location names stands for on the machine that ran the tool.
+    /// A relative URI is resolved against its own base first, and only then against
+    /// `--basedir`.
+    originalUriBaseIds: Option<HashMap<String, ArtifactLocation>>,
+}
+
+impl Run {
+    /// The directory `id` names, if this run says.
+    fn base_dir(&self, id: &str) -> Option<PathBuf> {
+        let uri = self.originalUriBaseIds.as_ref()?.get(id)?.uri.as_deref()?;
+        uri_to_path(uri).ok()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +82,7 @@ struct PhysicalLocation {
 #[derive(Debug, Deserialize)]
 struct ArtifactLocation {
     uri: Option<String>,
+    uriBaseId: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -334,7 +347,16 @@ fn process_sarif(sarif_path: &Path, basedir: &Path, out: &mut dyn Write) -> bool
                     }
                 };
                 if !src_path.is_absolute() {
-                    src_path = basedir.join(&src_path);
+                    // A URI written relative to a `uriBaseId` resolves against the directory
+                    // the run says that id stands for; `--basedir` is for the URIs that name
+                    // no base.
+                    let base = phys
+                        .artifactLocation
+                        .as_ref()
+                        .and_then(|al| al.uriBaseId.as_deref())
+                        .and_then(|id| run.base_dir(id))
+                        .unwrap_or_else(|| basedir.to_path_buf());
+                    src_path = base.join(&src_path);
                 }
 
                 // Canonicalise (resolves `..` and symlinks). If it fails we keep the
