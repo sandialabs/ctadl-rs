@@ -1,4 +1,4 @@
-# GitHub release builds — work in progress
+# GitHub release builds — work in progress - DO-NOT-MERGE
 
 Task: on a new `x.y.z` tag, have CI create a GitHub release carrying macOS
 (aarch64), Linux (x86_64), and Windows binaries plus a SHA-256 file for each,
@@ -22,10 +22,10 @@ with Nix doing the builds.
 - `xtask/src/regression.rs` — a comment that claimed the readers were
   workspace-excluded.
 
-`nix/release.nix` and `.github/workflows/release.yml` are `git add -N`'d. They
-have to be at least intent-to-add or Nix cannot see them: a flake's source is
-its *tracked* git tree, so an untracked file does not exist as far as
-`nix build` is concerned.
+All of this is now committed (`One version to rule them all`). While it was in
+progress, `nix/release.nix` and `.github/workflows/release.yml` had to be at
+least `git add -N`'d: a flake's source is its *tracked* git tree, so an
+untracked file does not exist as far as `nix build` is concerned.
 
 ## What `nix/release.nix` does
 
@@ -101,12 +101,12 @@ lands in the same `opts.Body` that the documented `--notes` prepend path reads.
 Decided: one version for the whole workspace, set in one place and inherited
 everywhere. A release tag then names exactly one number. Concretely —
 
-- The root `Cargo.toml` keeps `[workspace.package] version = "0.1.0"`. This is
-  the only version to edit. Bumping it bumps the tree.
+- The root `Cargo.toml` carries `[workspace.package] version`, now "0.1.1".
+  This is the only version to edit. Bumping it bumps the tree.
 - Every member takes it with `version.workspace = true`: `ctadl-ascent`,
   `ctadl-flowy`, `ctadl-ir`, `dex-reader`, `immortal`, `jvm-reader`,
   `pcode-reader`, `rustc_graphviz`, `source-info`, `tailshare`, `trie`,
-  `xtask`. Verified with `cargo metadata`: all twelve resolve to 0.1.0.
+  `xtask`. Verified with `cargo metadata`: all twelve resolve to 0.1.1.
 - Nothing is excluded from the workspace any more. That is what makes "all
   twelve" possible: `exclude` puts a package outside the workspace, and cargo
   then rejects `version.workspace = true` there with "failed to find a
@@ -128,8 +128,8 @@ everywhere. A release tag then names exactly one number. Concretely —
   fails the release on a mismatch. Checking the binary rather than a manifest
   means what is checked is what ships.
 
-The tree reads 0.1.0, so the first tag has to be `0.1.0`, or
-`[workspace.package] version` needs a bump to whatever you tag.
+The tree reads 0.1.1, so the first tag has to be `0.1.1`, or
+`[workspace.package] version` needs another bump to whatever you tag.
 
 ## Keeping developer programs out of the distro
 
@@ -184,12 +184,33 @@ no longer a bin. All four now take `src = ./.` and select with `--package`:
   the entire workspace — a far larger build than either check wants.
 - A new `workspaceVersion` reads `[workspace.package] version` out of
   `Cargo.toml` with `builtins.fromTOML`, so these derivations stay named after
-  the version instead of naersk's fallback `unknown`. (`packages.default` still
-  says `rust-workspace-unknown`; that predates this branch and changing it would
-  force a full rebuild for a cosmetic name.)
+  the version instead of naersk's fallback `unknown`. `nix/release.nix` takes
+  it too, as a parameter rather than reading the manifest a second time, and
+  pairs it with `name = binName`: all three release targets used to build as
+  `rust-workspace-unknown` and now build as `ctadl-0.1.1` (and their shared
+  dependency derivation as `ctadl-deps-0.1.1`). They share that name across
+  targets -- still distinct derivations, and the workflow renames the artifacts
+  per target anyway. (`packages.default` is untouched and still says
+  `rust-workspace-unknown`; that predates this branch.)
 
-`nix/release.nix` needed no change. It selects `.target.name == "ctadl"`, so
-examples could not reach the distro even if something did build them.
+  The name could not come from the root manifest the way the version does.
+  Cargo has no name for a virtual workspace, which is why naersk falls back to
+  the hardcoded string `rust-workspace`. So `binName = "ctadl"` is stated once
+  in `nix/release.nix`'s `let` block and used four times: the derivation name,
+  the `copyBinsFilter` that picks one artifact out of the build, and the two
+  `$out/bin/<name>` paths the Darwin `postInstall` rewrites.
+
+  Worth recording why naersk needed telling at all, since it looks like it
+  should already know. Its fallback chain is
+  `toplevelCargotoml.package.version or toplevelCargotoml."workspace.package".version
+  or "unknown"`, and that middle term looks up an attribute whose name is the
+  literal string `workspace.package`. `fromTOML` of `[workspace.package]`
+  produces a *nested* attrset, so the literal key never exists. naersk means to
+  read the workspace version and cannot.
+
+`nix/release.nix` needed no change for the examples themselves. It selects
+`.target.name == "ctadl"`, so an example could not reach the distro even if
+something did build one.
 
 `cargo test --workspace` now covers the reader crates' unit tests, which
 exclusion used to prevent. `dex-reader-tests` is kept anyway — it runs on the
@@ -200,31 +221,44 @@ and need both `JVM_READER_TEST_FIXTURES` and `--include-ignored`.
 ## Verification status
 
 - **The workspace itself — verified.** `cargo metadata` reports twelve members,
-  all 0.1.0, with `dex-reader`, `jvm-reader`, and `show-regions` as `example`
+  all 0.1.1, with `dex-reader`, `jvm-reader`, and `show-regions` as `example`
   targets rather than bins. `cargo clippy -p dex-reader -p jvm-reader
   -- -Dwarnings` passes, which is what the per-PR job now runs over them for the
   first time, and `cargo test --workspace --no-run` builds clean — that is the
   job that compiles the examples. `nix flake check --no-build` passes.
-- **The naersk example build — verified on this Mac.** Built the reworked
-  `dex-reader` derivation for real. It produces `$out/bin/dex-reader`, and the
-  binary runs and prints its usage. So naersk does install an example the same
-  way it installs a bin; that was the one claim in the `flake.nix` rework that
-  reasoning alone could not settle.
-- **What that leaves unproven in `flake.nix`.** `jvm-reader` is the same shape as
-  `dex-reader` and was not built. Neither `-tests` check was run, so the
-  `--package` on `cargoTestOptions` is read, not exercised. All four evaluate.
-- **aarch64-apple-darwin — done, verified.** Rebuilt from scratch after the move
-  into `nix/release.nix` and again after the first round of Cargo.toml changes.
-  Not rebuilt since the workspace rework. That rework forces a recompile (it
-  changes `rustc_graphviz`'s version) but should not change the result: the
-  reported version is 0.1.0 either way, `cargo build` still ignores examples, and
-  the `.target.name == "ctadl"` filter still admits exactly one binary. Worth one
-  rebuild to confirm `$out/bin` has not grown. `$out/bin`
-  holds only `ctadl` (no `xtask`); `otool -L` shows only CoreFoundation,
+- **The `flake.nix` rework — all four derivations built on this Mac.**
+  - `dex-reader` and `jvm-reader` each produce a `$out/bin/<name>` that runs and
+    prints its usage. So naersk does install an example the same way it installs
+    a bin — the one claim in the rework that reasoning alone could not settle.
+    Both builds produced a `<name>-deps` derivation, which is the `--lib` trick
+    working: the dependency pass found something to build.
+  - `nix build .#checks.aarch64-darwin.{dex,jvm}-reader-tests` both pass. The
+    jvm log shows `cargo test … --package jvm-reader -- --include-ignored` and
+    compiles jvm-reader alone, so `--package` is doing its job — without it,
+    `src = ./.` would have pulled in the whole workspace.
+  - One cosmetic wart in the `-tests` logs: `jq: parse error: Invalid numeric
+    literal`. naersk's install step tries to read the test run's output as the
+    JSON build log it is not. Harmless, and it predates this branch — the old
+    `mode = "test"` checks did the same.
+- **aarch64-apple-darwin — done, verified.** Rebuilt from scratch five times
+  now: after the move into `nix/release.nix`, after the first round of
+  Cargo.toml changes, after the workspace rework and the bump to 0.1.1, after
+  the derivation rename, and after the `binName` dedupe. Those last two are
+  byte-identical -- same SHA-256, not merely the same size -- which is exactly
+  what an edit that changes no build instruction should
+  produce, and a pleasant side finding: this build is reproducible across two
+  different derivations. The dedupe rebuild also reused `ctadl-deps` rather than
+  rebuilding it, confirming the note above.
+
+  Every time: `$out/bin` holds only `ctadl` — no `xtask`, and now no examples
+  either; `otool -L` shows only CoreFoundation,
   `/usr/lib/libiconv.2.dylib`, `/usr/lib/libSystem.B.dylib`; `nix path-info -r`
   on the output returns exactly one path, its own, so nothing in the store is
   retained at runtime; copied out of the store it runs and reports
-  `ctadl 0.1.0`. 146 MB.
+  `ctadl 0.1.1`. 146 MB.
+
+  That last line is the version plan working end to end: `[workspace.package]
+  version` was edited, nothing else was, and the shipped binary says 0.1.1.
 - **x86_64-unknown-linux-musl / x86_64-pc-windows-gnu — evaluated, not built.**
   Both `.#legacyPackages.x86_64-linux.release."…"` derivations now evaluate
   cleanly *as an x86_64-linux builder would evaluate them* (evaluation is
@@ -262,25 +296,9 @@ and need both `JVM_READER_TEST_FIXTURES` and `--include-ignored`.
 2. Sanity-check the Linux binary is actually static (`file` should say
    "statically linked").
 
-3. Rebuild the darwin release target and confirm `$out/bin` still holds `ctadl`
-   alone — the workspace rework should not have changed that, but it is one
-   command and it is the thing the whole examples-not-bins arrangement exists to
-   guarantee:
-
-   ```
-   nix build '.#legacyPackages.aarch64-darwin.release."aarch64-apple-darwin"'
-   ls result/bin
-   ```
-
-   Same for the reworked reader derivations, which the nightly depends on:
-
-   ```
-   nix build '.#checks.aarch64-darwin.dex-reader-tests' '.#checks.aarch64-darwin.jvm-reader-tests'
-   ```
-
-4. Push the branch and run the workflow via `workflow_dispatch` before tagging
+3. Push the branch and run the workflow via `workflow_dispatch` before tagging
    anything. That is the only true test of the CI path, and given (1) it is the
-   cheapest way to get one. Nothing is committed yet — that was deliberate.
+   cheapest way to get one. Nothing is pushed yet.
 
    Note that a `workflow_dispatch` run does *not* exercise the `release` job
    (it is gated on `refs/tags/`), so the tag check, the checksums, the notes,
@@ -301,6 +319,17 @@ and need both `JVM_READER_TEST_FIXTURES` and `--include-ignored`.
 - **Runner disk.** macOS runners have ~14 GB free; the naersk deps output alone
   is a 1 GB closure. It should fit, but a disk-cleanup step may become necessary.
 - **Rebuild sensitivity.** `src = ./.` is the whole flake source, so editing
-  `flake.nix` invalidates the ctadl build and recompiles the workspace. That is
-  pre-existing (`packages.default` does the same), not new here, but it makes
-  local iteration on the flake expensive.
+  *any tracked file* invalidates the ctadl build and recompiles the workspace --
+  `flake.nix`, `nix/release.nix`, and this document alike. Measured, not
+  assumed: a comment-only edit to `nix/release.nix` changed the derivation, and
+  a `nix derivation show` diff of before and after showed exactly two
+  differences, `src` and `out`. Every build instruction was byte-identical.
+  What is not invalidated is the `ctadl-deps` derivation, which naersk builds
+  from a stub tree of manifests and the lockfile; it survives edits to anything
+  else, so a rebuild after one of these is the workspace only, not the whole
+  dependency graph.
+
+  This is pre-existing (`packages.default` does the same), not new here, but it
+  makes local iteration expensive, and it is worth knowing before starting a
+  build: finish editing first, because a one-character change while a build runs
+  means the finished build is not the tree you have.
