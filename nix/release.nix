@@ -32,10 +32,21 @@
   fenix,
   # The source tree to build; the flake passes its own root.
   src,
+  # The workspace version, so these derivations are named for what they are.
+  # Passed in rather than read here so that `[workspace.package] version` has
+  # exactly one reader in the flake.
+  version,
 }:
 let
   inherit (pkgs) lib;
   system = pkgs.stdenv.hostPlatform.system;
+
+  # The one binary that ships, named as cargo names it -- `[[bin]] name` in
+  # ctadl-ascent/Cargo.toml. It is the derivation name, the artifact selected out
+  # of the build, and the file the Darwin fixups rewrite, so it is said once
+  # here rather than four times below. Cargo has no name for a virtual
+  # workspace, so unlike the version this cannot come from the root manifest.
+  binName = "ctadl";
 
   # naersk runs cargo on the builder, so what varies per target is the
   # toolchain, not the stdenv: a cargo and rustc that run here, plus the std of
@@ -58,7 +69,13 @@ let
     }).buildPackage
       (
         {
-          inherit src;
+          inherit src version;
+          # Without these, naersk names the derivation after the root manifest,
+          # which has no `[package]` -- so all three came out as
+          # `rust-workspace-unknown`. They are `ctadl-<version>` now. All three
+          # targets share that name; they are still distinct derivations, and
+          # the release workflow renames the artifacts per target anyway.
+          name = binName;
           # A cross build cannot run the tests it compiles, and the workspace's
           # tests run in the `test` workflow regardless.
           doCheck = false;
@@ -66,7 +83,7 @@ let
           # `cargo build --bin` is deliberate: naersk reuses the build options
           # for a first pass over a stub source tree, where no bin target of
           # this workspace exists yet.
-          copyBinsFilter = ''select(.reason == "compiler-artifact" and .executable != null and .profile.test == false and .target.name == "ctadl")'';
+          copyBinsFilter = ''select(.reason == "compiler-artifact" and .executable != null and .profile.test == false and .target.name == "${binName}")'';
           CARGO_BUILD_TARGET = target;
         }
         // attrs
@@ -150,10 +167,10 @@ in
     postInstall = ''
       # `tail -n +2` drops otool's header, which is the binary's own path --
       # itself under /nix/store, and not a dependency.
-      deps() { otool -L $out/bin/ctadl | tail -n +2; }
+      deps() { otool -L $out/bin/${binName} | tail -n +2; }
 
       for dylib in $(deps | awk '/^\t\/nix\/store/ { print $1 }'); do
-        install_name_tool -change "$dylib" "/usr/lib/$(basename "$dylib")" $out/bin/ctadl
+        install_name_tool -change "$dylib" "/usr/lib/$(basename "$dylib")" $out/bin/${binName}
       done
       if deps | grep -q /nix/store; then
         echo "error: release binary still references /nix/store:" >&2

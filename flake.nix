@@ -203,6 +203,7 @@
         release = import ./nix/release.nix {
           inherit pkgs naersk fenix;
           src = ./.;
+          version = workspaceVersion;
         };
       in
       {
