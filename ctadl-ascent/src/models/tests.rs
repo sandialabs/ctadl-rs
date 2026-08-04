@@ -181,6 +181,155 @@ fn bracketed_segment_spellings_stay_distinct() {
     );
 }
 
+/// Tests for the per-generator capture `ctadl check-models` reads.
+///
+/// The capture is what makes a count trustworthy without an index, so what is pinned here is
+/// exactly the two ways a count can lie: an unnarrowed generator reported as zero, and a
+/// narrowed one disagreeing with the set the matcher actually used.
+mod capture {
+    use super::*;
+    use crate::models::json::MatchedFunctions;
+
+    /// A frontend with no method table -- what pcode uses. The match index falls back to the
+    /// IR function names, so a `where` still matches; it is only `matched_functions(&All)`
+    /// that has nothing to enumerate.
+    fn unknown_vmt_program(names: &[&str]) -> ProgramInfo {
+        use ctadl_ir::mir::call::VirtualMethodTable;
+        use ctadl_ir::mir::{FunctionData, Functions, ParameterType, Program};
+
+        let functions: Vec<FunctionData> = names
+            .iter()
+            .map(|name| {
+                let mut f = FunctionData::default();
+                f.set_name((*name).to_string());
+                f.params.parameters.push(ParameterType::ByVal);
+                f
+            })
+            .collect();
+        ProgramInfo {
+            vmt: VirtualMethodTable::Unknown,
+            program: Program::new(Functions::new(functions)),
+            ..Default::default()
+        }
+    }
+
+    /// Runs `generators` against `program_info` with the capture on, keeping every name.
+    fn capture_of(
+        program_info: &ProgramInfo,
+        generators: Vec<serde_json::Value>,
+    ) -> (
+        BTreeMap<usize, MatchedFunctions>,
+        BTreeMap<usize, crate::models::PropagationStats>,
+    ) {
+        let mut out = ProgramModelMatches::default();
+        let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
+        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
+        ingest.capture_matches(usize::MAX);
+        ingest.encode_models(generators).expect("encoding models");
+        (
+            std::mem::take(&mut ingest.matched),
+            std::mem::take(&mut ingest.propagation_stats),
+        )
+    }
+
+    #[test]
+    fn a_narrowed_generator_agrees_with_matched_functions() {
+        let program_info = native_program(&["f", "g"]);
+        let (matched, _) = capture_of(
+            &program_info,
+            vec![serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "signature_match", "name": "f"}],
+                "model": {"sources": [{"kind": "l", "port": "Return"}]},
+            })],
+        );
+        let captured = matched.get(&0).expect("generator 0 captured");
+        assert_eq!(captured.total(), Some(1));
+        // The same set the matcher fanned its endpoints out over.
+        assert_eq!(
+            captured.names().iter().cloned().collect::<Vec<_>>(),
+            vec!["f".to_string()]
+        );
+    }
+
+    /// A generator with no `where` matches every function, and the capture says so as `All`
+    /// rather than as a number -- including on a frontend where `matched_functions(&All)`
+    /// returns an empty list. Reporting *that* as "matched 0 functions" is the count-that-lies
+    /// `check-models` exists to prevent.
+    #[test]
+    fn a_where_less_generator_captures_all() {
+        for program_info in [
+            native_program(&["f", "g"]),
+            unknown_vmt_program(&["f", "g"]),
+        ] {
+            let (matched, _) = capture_of(
+                &program_info,
+                vec![serde_json::json!({
+                    "find": "methods",
+                    "model": {"sources": [{"kind": "l", "port": "Return"}]},
+                })],
+            );
+            assert_eq!(matched.get(&0), Some(&MatchedFunctions::All));
+            assert_eq!(matched[&0].total(), None);
+        }
+    }
+
+    /// The pcode-shaped case, spelled out: a `where`-narrowed generator on an `Unknown` VMT
+    /// captures a real count even though the `All` arm of `matched_functions` could not.
+    #[test]
+    fn a_narrowed_generator_counts_on_an_unknown_vmt() {
+        let program_info = unknown_vmt_program(&["f", "g"]);
+        let (matched, _) = capture_of(
+            &program_info,
+            vec![serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "signature_match", "name": "f"}],
+                "model": {"sinks": [{"kind": "l", "port": "Argument(0)"}]},
+            })],
+        );
+        assert_eq!(matched[&0].total(), Some(1));
+    }
+
+    /// A propagation's two counts are the ends of one fan-out: two entries declared, and one
+    /// row per (entry x matched function).
+    #[test]
+    fn propagation_counts_ports_and_rows() {
+        let program_info = native_program(&["f", "g"]);
+        let (_, propagation) = capture_of(
+            &program_info,
+            vec![serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "signature", "pattern": "^[fg]$"}],
+                "model": {"propagation": [
+                    {"input": "Argument(0)", "output": "Return"},
+                    {"input": "Argument(1)", "output": "Return"},
+                ]},
+            })],
+        );
+        let stats = propagation.get(&0).expect("generator 0 counted");
+        assert_eq!(stats.ports_declared, 2);
+        assert_eq!(stats.rows, 4);
+    }
+
+    /// Nothing is recorded unless the caller asked for it: `index` and `query` must pay
+    /// nothing for a capture neither of them reads.
+    #[test]
+    fn capture_is_off_by_default() {
+        let program_info = native_program(&["f"]);
+        let mut out = ProgramModelMatches::default();
+        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
+        ingest
+            .encode_models(vec![serde_json::json!({
+                "find": "methods",
+                "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]},
+            })])
+            .expect("encoding models");
+        assert!(ingest.matched.is_empty());
+        assert!(ingest.propagation_stats.is_empty());
+    }
+}
+
 // Tests for UniverseSet set difference (backs the `not` combinator).
 mod universe_set_diff {
     use crate::models::universe_set::UniverseSet;

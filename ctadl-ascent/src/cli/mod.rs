@@ -12,6 +12,12 @@ as parameters.
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+mod check_models;
+pub use check_models::{
+    Caveat, CheckOptions, CheckReport, EndpointDirection, EndpointReport, FileReport,
+    GeneratorKind, GeneratorReport, ImportSummary, check_models, check_programs,
+};
+
 use itertools::Itertools;
 
 use crate::codegen::{CallResolutionStrategy, codegen_program};

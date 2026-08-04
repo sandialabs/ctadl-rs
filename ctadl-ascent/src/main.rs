@@ -38,6 +38,15 @@ pub enum Command {
     /// Run a taint analysis query and format the results as SARIF. (See 'index' for prerequisites)
     Query(QueryArgs),
 
+    /// Report what a model file matches, without an index. (See 'import' for prerequisites)
+    ///
+    /// Model matching happens in two stages, and only the second needs an index: the first
+    /// evaluates every generator's `where` against one imported program's name/signature
+    /// tables. This runs that stage alone, so a model file can be made ready while the index
+    /// is still building. With no import named it lints the files alone.
+    #[command(name = "check-models")]
+    CheckModels(CheckModelsArgs),
+
     /// One-shot: import artifacts, index them under name, query, and format output
     Go(GoArgs),
 
@@ -304,6 +313,46 @@ pub struct QueryArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct CheckModelsArgs {
+    /// Imported artifact names, or project names, to match the models against.
+    ///
+    /// A project name expands to its imports, and an import name expands to its sub-imports
+    /// (an APK's native libraries), so `check-models app` works both before and after
+    /// `ctadl index app`. With no name at all the model files are only linted.
+    pub names: Vec<String>,
+
+    /// Model files to check, in JSON, JSON5, or JSONL. Can be given multiple times.
+    #[arg(long, short, action = clap::ArgAction::Append, required = true)]
+    pub models: Vec<PathBuf>,
+
+    /// List the matched function names, at most N of them (bare flag: 20; 0: all).
+    #[arg(long, num_args = 0..=1, default_missing_value = "20", value_name = "N")]
+    pub show_matches: Option<usize>,
+
+    /// Output format
+    #[arg(long, value_enum, default_value_t = CheckFormat::Human)]
+    pub format: CheckFormat,
+
+    /// Also check the built-in per-language propagation defaults.
+    ///
+    /// Off by default: the Java file alone is dozens of generators and would bury the file you
+    /// are editing. `index` loads the defaults and `query` does not, so neither answer is the
+    /// "correct" one; this makes the choice explicit.
+    #[arg(long)]
+    pub default_models: bool,
+
+    /// Exit non-zero when a generator declared a model and matched nothing.
+    #[arg(long)]
+    pub strict: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CheckFormat {
+    Human,
+    Json,
+}
+
+#[derive(Debug, Args)]
 pub struct GoArgs {
     /// Analysis project (index) name. Inferred from the first artifact by default
     #[arg(long, short)]
@@ -408,6 +457,10 @@ fn main() -> anyhow::Result<()> {
         Command::Query(args) => {
             query_project(args)
                 .with_context(|| format!("running 'query' project: {:?}", args.name))?;
+        }
+        Command::CheckModels(args) => {
+            check_models_command(args)
+                .with_context(|| format!("running 'check-models' against: {:?}", args.names))?;
         }
         Command::Inspect(args) => {
             inspect_artifact(args)
@@ -747,6 +800,44 @@ fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
         anyhow::bail!(
             "query produced no analyzable endpoints; see '{}' for details",
             args.output.display()
+        );
+    }
+    Ok(())
+}
+
+fn check_models_command(args: &CheckModelsArgs) -> anyhow::Result<()> {
+    let report = cli::check_models(
+        &args.names,
+        cli::CheckOptions {
+            models: &args.models,
+            default_models: args.default_models,
+            show_matches: args.show_matches,
+        },
+    )?;
+
+    let mut out = std::io::stdout().lock();
+    match args.format {
+        CheckFormat::Human => report.render_human(&mut out)?,
+        CheckFormat::Json => {
+            serde_json::to_writer_pretty(&mut out, &report)?;
+            use std::io::Write as _;
+            writeln!(out)?;
+        }
+    }
+
+    // The report is written first either way: it is what explains the failure.
+    if report.has_errors() {
+        anyhow::bail!("one or more model files have errors; see the report above");
+    }
+    let dead = report.dead_generators();
+    if args.strict && !dead.is_empty() {
+        anyhow::bail!(
+            "{} generator(s) declared a model and matched nothing: {}",
+            dead.len(),
+            dead.iter()
+                .map(|(path, index)| format!("{}:{index}", path.display()))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
     Ok(())

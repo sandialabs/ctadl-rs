@@ -73,6 +73,131 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     /// that cannot act on them (`ctadl query`) can say so once instead of silently dropping
     /// them. See [`IndexTimeModelCounts`].
     pub index_time_models: IndexTimeModelCounts,
+    /// How many matched function names to retain per generator, or `None` to record nothing
+    /// at all. `index` and `query` leave this `None`, so neither pays for the capture; only
+    /// `ctadl check-models` turns it on. `Some(0)` records the counts without the names.
+    ///
+    /// A cap and not a flag because the names are the expensive half: a `where`-less generator
+    /// selects every function in the program, and a real APK has tens of thousands.
+    capture: Option<usize>,
+    /// Per generator, what its `where` finally selected -- see [`MatchedFunctions`]. Recorded
+    /// only when [`Self::capture`] is set. Filled in one place, after the whole generator has
+    /// been visited, so it is uniform across every model kind, including a bridge-only
+    /// generator that has no [`Self::endpoint_stats`] entry at all.
+    pub matched: BTreeMap<usize, MatchedFunctions>,
+    /// Per `find: callsites` generator, what its `in_function` constraint selected (the
+    /// callers). Absent for `find: methods`, which has no caller set.
+    pub in_function_matched: BTreeMap<usize, MatchedFunctions>,
+    /// Per generator, what its `propagation` list declared and emitted. Recorded only when
+    /// [`Self::capture`] is set.
+    pub propagation_stats: BTreeMap<usize, PropagationStats>,
+    /// Per generator, how many `model.access_paths` entries parsed and were registered.
+    /// Recorded only when [`Self::capture`] is set.
+    pub access_path_stats: BTreeMap<usize, usize>,
+}
+
+/// What one generator's `where` selected in one program.
+///
+/// Deliberately not a `Vec<String>`: the point of this type is that the `All` case is *never*
+/// enumerated. See [`Self::capture`] for both reasons.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MatchedFunctions {
+    /// Nothing narrowed the set: the generator matches every function in the import. Never
+    /// enumerated -- rendered against the import's function count, which a caller knows even
+    /// for a frontend whose [`VirtualMethodTable`] is `Unknown`.
+    All,
+    /// `total` is exact; `names` holds at most the caller's cap.
+    Some {
+        total: usize,
+        names: BTreeSet<String>,
+    },
+}
+
+impl MatchedFunctions {
+    /// Reads a generator's final match set, retaining at most `cap` names.
+    ///
+    /// Matching on the [`UniverseSet`] directly, rather than going through
+    /// [`matched_functions`], is what makes this safe to call per generator per import. That
+    /// function materializes *every* name into a `Vec<String>` before any cap could apply, and
+    /// its `All` arm returns an empty `Vec` for [`VirtualMethodTable::Unknown`] -- which is what
+    /// pcode uses -- so a fully live generator would be captured as matching zero functions.
+    fn capture(set: &UniverseSet<&str>, cap: usize) -> Self {
+        match set {
+            UniverseSet::All => MatchedFunctions::All,
+            UniverseSet::Explicit(names) => MatchedFunctions::Some {
+                total: names.len(),
+                names: names.iter().take(cap).map(|s| (*s).to_owned()).collect(),
+            },
+        }
+    }
+
+    /// Folds in the same generator's capture from another import, keeping at most `cap` names.
+    ///
+    /// `All` absorbs: a generator unnarrowed against any one import matches everything there,
+    /// and no count over the other imports makes that false. Two `Some`s sum, because the
+    /// imports' function sets are disjoint and a generator live against either is live.
+    pub fn merge(&mut self, other: &Self, cap: usize) {
+        match (&mut *self, other) {
+            (MatchedFunctions::All, _) => {}
+            (_, MatchedFunctions::All) => *self = MatchedFunctions::All,
+            (
+                MatchedFunctions::Some { total, names },
+                MatchedFunctions::Some {
+                    total: other_total,
+                    names: other_names,
+                },
+            ) => {
+                *total += other_total;
+                for name in other_names {
+                    if names.len() >= cap {
+                        break;
+                    }
+                    names.insert(name.clone());
+                }
+            }
+        }
+    }
+
+    /// The exact count, or `None` for [`Self::All`] -- which has one only relative to an
+    /// import's function count, and which must never be reported as zero.
+    pub fn total(&self) -> Option<usize> {
+        match self {
+            MatchedFunctions::All => None,
+            MatchedFunctions::Some { total, .. } => Some(*total),
+        }
+    }
+
+    /// The retained sample of matched names. Always empty for [`Self::All`].
+    pub fn names(&self) -> &BTreeSet<String> {
+        static EMPTY: std::sync::LazyLock<BTreeSet<String>> =
+            std::sync::LazyLock::new(BTreeSet::new);
+        match self {
+            MatchedFunctions::All => &EMPTY,
+            MatchedFunctions::Some { names, .. } => names,
+        }
+    }
+}
+
+/// What Stage 1 did with one generator's `propagation` list.
+///
+/// The two ends of the same fan-out that [`EndpointStats`] records for source/sink ports: a
+/// generator declares propagation *ports*, and each matched function turns one into a row.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PropagationStats {
+    /// `propagation` entries whose input and output ports both parsed. A property of the model
+    /// file alone, so [`Self::merge`] takes the max -- the same file is re-matched once per
+    /// import.
+    pub ports_declared: usize,
+    /// [`PropagationMatch`] rows emitted for those entries. Summed by [`Self::merge`]: a
+    /// generator dead against one import but live against another is live.
+    pub rows: usize,
+}
+
+impl PropagationStats {
+    pub fn merge(&mut self, other: &Self) {
+        self.ports_declared = self.ports_declared.max(other.ports_declared);
+        self.rows += other.rows;
+    }
 }
 
 /// How many generators declared each index-time-only model construct.
@@ -265,7 +390,21 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
             errors: Vec::new(),
             endpoint_stats: BTreeMap::new(),
             index_time_models: IndexTimeModelCounts::default(),
+            capture: None,
+            matched: BTreeMap::new(),
+            in_function_matched: BTreeMap::new(),
+            propagation_stats: BTreeMap::new(),
+            access_path_stats: BTreeMap::new(),
         }
+    }
+
+    /// Records per-generator match sets and model-kind counters, retaining at most `names` of
+    /// each generator's matched function names (`usize::MAX` for all of them).
+    ///
+    /// Off by default: `ctadl index` and `ctadl query` consume neither, and the point of the
+    /// capture is to be free for them. See [`Self::capture`].
+    pub fn capture_matches(&mut self, names: usize) {
+        self.capture = Some(names);
     }
 
     /// Evaluates one side of a bridge: the `where` constraints of a synthetic
@@ -762,18 +901,31 @@ impl<'p, 'b> ModelGeneratorIngest<'p, 'b> {
         start: usize,
         batch: impl IntoIterator<Item = serde_json::Value>,
     ) -> Result<(), Error> {
+        self.visit_models_from(start, batch);
+        // Check for any collected errors and return them
+        self.take_errors()
+    }
+
+    /// [`Self::encode_models_from`] without the error check: visits every generator in the
+    /// batch and leaves whatever it collected in [`Self::errors`].
+    ///
+    /// This is the seam between the two loader entry points. Visiting always collects;
+    /// whether collected errors become an `Err` (`try_load_models`) or are drained and
+    /// reported alongside an intact report (`try_check_models`) is the entry point's
+    /// decision, not this function's.
+    pub fn visit_models_from(
+        &mut self,
+        start: usize,
+        batch: impl IntoIterator<Item = serde_json::Value>,
+    ) {
         for (i, value) in batch.into_iter().enumerate() {
             self.visit_model_generator(start + i, &value);
         }
-        // Check for any collected errors and return them
-        let errors = std::mem::take(&mut self.errors);
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            let mut json_errors = crate::error::JsonModelErrors::default();
-            json_errors.extend(errors);
-            Err(Error::JsonModel(json_errors))
-        }
+    }
+
+    /// Takes the errors collected so far, leaving the ingest usable for the next batch.
+    pub fn drain_errors(&mut self) -> Vec<crate::error::JsonModelError> {
+        std::mem::take(&mut self.errors)
     }
 }
 
@@ -823,6 +975,17 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
         set_slot(&mut self.in_functions, n, UniverseSet::all());
         self.current_set = CurrentSet::Methods;
         self.super_model_generator(n, value);
+        // The one capture point, taken here rather than inside a model-kind visitor: at this
+        // instant `self.methods[n]` is the generator's final narrowed set, uniformly for every
+        // kind -- including a bridge-only generator, which has no `endpoint_stats` entry at all.
+        if let Some(cap) = self.capture {
+            self.matched
+                .insert(n, MatchedFunctions::capture(&self.methods[n], cap));
+            if matches!(self.find_method.get(&n), Some(FindMethod::Callsites)) {
+                self.in_function_matched
+                    .insert(n, MatchedFunctions::capture(&self.in_functions[n], cap));
+            }
+        }
         self.methods[n] = UniverseSet::empty();
     }
 
@@ -887,6 +1050,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
             match super::spec::parse_declared_access_path(text, n) {
                 Ok(path) => {
                     self.out.access_paths.insert(path);
+                    if self.capture.is_some() {
+                        *self.access_path_stats.entry(n).or_default() += 1;
+                    }
                 }
                 Err(e) => self.add_json_error(e),
             }
@@ -1606,12 +1772,22 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                             index: input.index,
                             path: facts::Path::from_accesses(input.ap.iter().cloned()),
                         };
+                        let mut rows = 0usize;
                         for func in matched_functions(&self.methods[n], self.index.vmt) {
                             self.out.propagations.push(PropagationMatch {
                                 function: facts::Str::from(func.as_str()),
                                 dst,
                                 src,
                             });
+                            rows += 1;
+                        }
+                        // Counted per entry of the `propagation` list, mirroring how
+                        // `emit_endpoints` counts a port: this is the point at which both
+                        // ports parsed, so the entry declared something matchable.
+                        if self.capture.is_some() {
+                            let stats = self.propagation_stats.entry(n).or_default();
+                            stats.ports_declared += 1;
+                            stats.rows += rows;
                         }
                     }
                     Err(err) => self.add_json_error(err),

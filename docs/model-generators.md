@@ -86,6 +86,42 @@ CTADL ships no default sources or sinks. You can scaffold a starter file with:
 ctadl init-model model.json5
 ```
 
+### Checking a model file before you index
+
+Matching is decided **per import**, and only half of it needs an index. Stage 1 evaluates every
+generator's `where` against one program's name / parent / signature / qualified-id tables — it
+reads the import and nothing else. Stage 2 resolves the matched names to function ids, fans
+endpoints out over call sites, and expands wildcard sinks; that half needs the index. Since
+functions are never optimized out, the common case — a source or sink that names a function
+call — is fully decided in Stage 1.
+
+`ctadl check-models` runs Stage 1 on its own, so you can find out whether a `where` selects
+anything without waiting for `ctadl index`:
+
+```bash
+ctadl check-models my-app --models sources-and-sinks.json5 --show-matches
+```
+
+With no import named it lints the files alone: every unknown key, every malformed port, every
+bridge, plus the generator inventory. `--strict` exits non-zero when a generator declared a
+model and matched nothing, which is what makes it usable in CI.
+
+What it deliberately cannot tell you, each marked `*` in its output rather than left implicit:
+
+- **`find: callsites`** — Stage 1 matches the callee (and the caller, for `in_function`). The
+  call-site fan-out is Stage 2, so "3 callees" does not mean any call site exists.
+- **`Argument(*)`** — expands over an arity computed from actual parameters and call sites
+  across every import. It is reported as one port, not as its expansion.
+- **A matched name can still vanish.** Stage 2 raises `CTADL0005` for a name the index does not
+  contain.
+- **Bridge pair counts.** The two side counts and the diagnosis need no index; the pair count
+  does, so none is printed.
+- **Cross-import bridges.** A bridge's sides can live in two imports, so a bridge verdict is
+  only meaningful when you name every import the real project will index.
+
+Note also that `--default-models` is **off** here, while `ctadl index` loads the defaults and
+`ctadl query` does not — neither answer is the "correct" one, so the choice is explicit.
+
 ---
 
 ## 3. File format
@@ -804,6 +840,9 @@ CTADL reports every flow where data returned by `source()` reaches
 
 ## 10. Tips
 
+- **Run `ctadl check-models` first.** On a new or edited model file it is the fastest way to
+  learn which generators select something and which select nothing, and it needs only the
+  import — no index, no query, no SARIF to read. See §2.
 - **`signature_match` with `names`/`parents`** is the most maintainable way to
   model families of library methods — group by owning class.
 - **Get the ports right for the language.** Java methods usually taint through
