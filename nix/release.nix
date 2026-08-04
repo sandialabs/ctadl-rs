@@ -85,6 +85,13 @@ let
           # this workspace exists yet.
           copyBinsFilter = ''select(.reason == "compiler-artifact" and .executable != null and .profile.test == false and .target.name == "${binName}")'';
           CARGO_BUILD_TARGET = target;
+          # Fat LTO for what ships: optimize the whole program as one LLVM
+          # module rather than thin LTO's per-unit summaries. It buys a smaller
+          # binary for a longer link. Set here, as a profile override, rather
+          # than in `[profile.release]`, so only these three derivations pay
+          # for it -- a developer's `cargo build --release` keeps the tree's
+          # `lto = "thin"`.
+          CARGO_PROFILE_RELEASE_LTO = "fat";
         }
         // attrs
       );
