@@ -103,6 +103,31 @@ pub struct ImportSource {
     /// emit `relativeAddress` (the section-relative offset) alongside the
     /// absolute instruction address in binary SARIF locations.
     pub image_base: Option<i64>,
+    /// Absolute path of the artifact this import was made from, as `ctadl import` resolved it.
+    /// It is what makes a source location's URI mean something to a reader: see
+    /// [`Self::uri_base`]. `None` for an artifact that is not a filesystem path (a
+    /// `ghidra://` project URL).
+    pub artifact_path: Option<path::PathBuf>,
+}
+
+impl ImportSource {
+    /// The directory this import's SARIF URIs are written relative to: the artifact's *parent*,
+    /// so every URI leads with the artifact's own name.
+    ///
+    /// A URI is supposed to say where a finding is *within the thing that was scanned*, not
+    /// where that thing happened to sit on the machine that scanned it. The absolute path is
+    /// not thrown away: it is published once per import in `run.originalUriBaseIds`, under
+    /// [`Self::uri_base_id`], which is exactly the indirection SARIF §3.4.4 defines for this.
+    fn uri_base(&self) -> Option<&path::Path> {
+        self.artifact_path.as_deref().and_then(|p| p.parent())
+    }
+
+    /// The `uriBaseId` symbol naming [`Self::uri_base`] in `run.originalUriBaseIds`. One per
+    /// import: a project's imports are rooted in unrelated directories, so a single base
+    /// would only be right for one of them.
+    fn uri_base_id(&self) -> String {
+        format!("IMPORT_{}", self.name)
+    }
 }
 
 pub struct ProjectContext<'a, P: AsRef<path::Path>> {
@@ -165,6 +190,11 @@ const NOTIF_GENERATOR_DEAD: &str = "CTADL0004.generator-matched-nothing";
 const NOTIF_FUNCTION_NOT_INDEXED: &str = "CTADL0005.endpoint-function-not-indexed";
 const NOTIF_NO_SOURCES_MATCHED: &str = "CTADL0006.no-sources-matched";
 const NOTIF_NO_SINKS_MATCHED: &str = "CTADL0007.no-sinks-matched";
+const NOTIF_NO_INDEX: &str = "CTADL0008.no-index-model-check-only";
+const NOTIF_SCOPE_EXCLUDED: &str = "CTADL0009.generator-scope-excluded";
+const NOTIF_BRIDGE_DIAGNOSIS: &str = "CTADL0010.bridge-model-diagnosis";
+const NOTIF_GENERATOR_MATCHED: &str = "CTADL0011.generator-matched";
+const NOTIF_MODEL_FILE_ERROR: &str = "CTADL0012.model-file-error";
 const NOTIF_MATCH_SUMMARY: &str = "CTADL0100.endpoint-match-summary";
 const NOTIF_PATHS_DISABLED: &str = "CTADL0101.path-generation-disabled";
 const NOTIF_NO_PATHS: &str = "CTADL0102.no-paths-found";
@@ -195,6 +225,91 @@ pub struct QueryDiagnostics {
     pub arguments: Vec<String>,
     /// SARIF-format UTC timestamp; see [`utc_timestamp`].
     pub start_time_utc: String,
+    /// Set only when the project had no index and the run checked the model files against the
+    /// imported programs instead. See [`ModelCheck`], and `cli::query` for when that happens.
+    pub model_check: Option<ModelCheck>,
+}
+
+/// What Stage 1 alone could say about the model files, when there was no index to run Stage 2
+/// against.
+///
+/// Everything here is a *configuration* fact -- what the files declare and what the imported
+/// programs matched -- which is why it lands in `invocation.toolConfigurationNotifications`
+/// beside the ordinary `CTADL00xx` block rather than in a report of its own. The counts in
+/// [`QueryDiagnostics`] mean the same thing they always did, with one caveat this type's
+/// `CTADL0008` states in the file: `sources_matched`/`sinks_matched` are Stage-1 rows, before
+/// the call-site fan-out and wildcard expansion that need an index.
+#[derive(Debug, Default, Clone)]
+pub struct ModelCheck {
+    /// Each import the files were matched against, as `(name, functions in its IR)`.
+    pub imports: Vec<(String, usize)>,
+    /// A file that could not be read, or a generator whose shape is wrong. Neither ends the
+    /// check: the rest of the file, and every other file, is still reported.
+    pub file_errors: Vec<ModelFileError>,
+    /// Generators whose `in` clause admits none of the imports. Not the same condition as
+    /// matching nothing, and reported separately so it cannot be read as one.
+    pub scope_excluded: Vec<ScopeExcluded>,
+    /// What each generator's `where` selected. Note-level: this is the answer to "does this
+    /// `where` select anything", which is the question the check exists to answer.
+    pub matched: Vec<GeneratorMatch>,
+    /// Generators declaring an index-time construct that matched nothing.
+    pub index_time_dead: Vec<IndexTimeDead>,
+    /// A bridge whose sides cannot be paired, as `models::matches::diagnose` describes it.
+    pub bridges: Vec<BridgeDiagnosis>,
+}
+
+/// A model file that could not be read, or a generator in it whose shape is wrong.
+#[derive(Debug, Clone)]
+pub struct ModelFileError {
+    /// `None` for an error that belongs to the run rather than to one file -- an import that
+    /// would not load, say. It then gets no location, because there is no file to point at.
+    pub file: Option<path::PathBuf>,
+    pub message: String,
+}
+
+/// A generator no named import's scope admits.
+#[derive(Debug, Clone)]
+pub struct ScopeExcluded {
+    pub file: path::PathBuf,
+    pub index: usize,
+    /// The `in` clause as the file spells it, when there is one.
+    pub scope: Option<String>,
+}
+
+/// What one generator's `where` selected, summed over the imports.
+#[derive(Debug, Clone)]
+pub struct GeneratorMatch {
+    pub file: path::PathBuf,
+    pub index: usize,
+    /// The generator's `find`, which says what unit `total` counts: functions, or the callees
+    /// of call sites.
+    pub find: Option<String>,
+    /// `None` for a generator no `where` narrowed: it matches every function in the import,
+    /// a count that exists only relative to that import and must never be reported as zero.
+    pub total: Option<usize>,
+    /// A few of the matched names, for a reader checking that the `where` selected what was
+    /// meant.
+    pub sample: Vec<String>,
+}
+
+/// A generator declaring a construct `ctadl index` consumes, which matched nothing.
+#[derive(Debug, Clone)]
+pub struct IndexTimeDead {
+    pub file: path::PathBuf,
+    pub index: usize,
+    /// What it declares, as the notification names it: `propagation`.
+    pub kind: String,
+}
+
+/// One bridge's verdict, carried verbatim from `models::matches::diagnose`.
+#[derive(Debug, Clone)]
+pub struct BridgeDiagnosis {
+    pub file: path::PathBuf,
+    pub index: usize,
+    /// The spec's own `on-unmatched`/`on-ambiguous` setting, which is what decides whether this
+    /// is an error or a warning -- exactly as it does at index time.
+    pub error: bool,
+    pub message: String,
 }
 
 /// What happened to the `C0001.tainted-path` rule this run. Exactly one of these holds, and
@@ -244,6 +359,85 @@ fn build_invocation(
         .collect();
 
     // --- Configuration: what the models declared (§3.20.22). ---
+    // First, because it says what every count below it does and does not mean. `associatedRule`
+    // for the same reason `CTADL0006`/`CTADL0007` carry it: this is why `C0001` was not
+    // evaluated.
+    if let Some(check) = &diagnostics.model_check {
+        // "no program" is a real outcome -- every import failed to load, and the errors below
+        // say why -- so it gets said rather than rendered as an empty list.
+        let described = if check.imports.is_empty() {
+            "no program could be loaded".to_string()
+        } else {
+            check
+                .imports
+                .iter()
+                .map(|(name, functions)| format!("{name} ({functions} function(s))"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let mut notif = notification(
+            NOTIF_NO_INDEX,
+            "error",
+            vec![described.clone(), check.imports.len().to_string()],
+            format!(
+                "The project has no index, so no taint analysis ran. The model files were \
+                 matched against the imported program(s) instead -- {described} -- and the \
+                 notifications below report what they select. These are model-matching results \
+                 only: call-site fan-out, 'Argument(*)' expansion and sink wildcard expansion \
+                 need the index, a matched name can still be absent from it, and bridge pairs \
+                 are not counted. Run `ctadl index` for a real query."
+            ),
+            BTreeMap::from([
+                (
+                    "imports".to_string(),
+                    serde_json::json!(
+                        check
+                            .imports
+                            .iter()
+                            .map(|(name, _)| name.clone())
+                            .collect::<Vec<_>>()
+                    ),
+                ),
+                (
+                    "functions".to_string(),
+                    serde_json::json!(check.imports.iter().map(|(_, n)| n).sum::<usize>()),
+                ),
+            ]),
+        );
+        notif.associated_rule = Some(
+            ReportingDescriptorReference::builder()
+                .id(TAINTED_PATH_RULE_ID.to_string())
+                .build(),
+        );
+        config_notifications.push(notif);
+
+        // CTADL0012: a file the check could not read, or a generator whose shape is wrong.
+        // `ctadl query` normally fails on these; here they are reported and the check goes on,
+        // because a linter that stops at the first typo is no linter.
+        for error in &check.file_errors {
+            let file = error.file.as_ref().map(|f| f.display().to_string());
+            let notif = notification(
+                NOTIF_MODEL_FILE_ERROR,
+                "error",
+                vec![file.clone().unwrap_or_default(), error.message.clone()],
+                match &file {
+                    Some(file) => format!("Model file '{file}': {}", error.message),
+                    None => format!("Checking the model files: {}", error.message),
+                },
+                match &file {
+                    Some(file) => {
+                        BTreeMap::from([("modelFile".to_string(), serde_json::json!(file))])
+                    }
+                    None => BTreeMap::new(),
+                },
+            );
+            config_notifications.push(match &error.file {
+                Some(file) => at_file(notif, file),
+                None => notif,
+            });
+        }
+    }
+
     if diagnostics.sources_declared == 0 && diagnostics.sinks_declared == 0 {
         config_notifications.push(notification(
             NOTIF_NO_ENDPOINTS,
@@ -326,26 +520,147 @@ fn build_invocation(
         if let Some(name) = &detail.variable {
             properties.insert("variableName".to_string(), serde_json::json!(name));
         }
-        let mut notif = notification_with_message_id(
-            NOTIF_GENERATOR_DEAD,
-            detail.message_id,
-            "warning",
-            detail.arguments,
-            detail.text,
-            properties,
-        );
-        notif.locations = Some(vec![
-            Location::builder()
-                .physical_location(
-                    PhysicalLocation::builder()
-                        .artifact_location(
-                            ArtifactLocation::builder().uri(artifact_uri(file)).build(),
-                        )
-                        .build(),
-                )
-                .build(),
-        ]);
-        config_notifications.push(notif);
+        config_notifications.push(at_file(
+            notification_with_message_id(
+                NOTIF_GENERATOR_DEAD,
+                detail.message_id,
+                "warning",
+                detail.arguments,
+                detail.text,
+                properties,
+            ),
+            file,
+        ));
+    }
+
+    // The rest of what the no-index check found. Every one of these points at a model file and
+    // names a generator by the same index the JSON errors and `CTADL0004` use.
+    if let Some(check) = &diagnostics.model_check {
+        // CTADL0009: never evaluated, which is not the same as evaluated and matching nothing.
+        // Stage 1 returns early for a generator whose scope excludes the import, leaving no
+        // stats at all -- indistinguishable from dead if this went unsaid.
+        for excluded in &check.scope_excluded {
+            let file = excluded.file.display().to_string();
+            let index = excluded.index;
+            let scope = excluded.scope.clone().unwrap_or_default();
+            config_notifications.push(at_file(
+                notification(
+                    NOTIF_SCOPE_EXCLUDED,
+                    "warning",
+                    vec![index.to_string(), file.clone(), scope.clone()],
+                    format!(
+                        "Model generator {index} in '{file}' has an 'in' scope ({scope}) that \
+                         admits none of the programs checked, so it was never evaluated against \
+                         any of them."
+                    ),
+                    BTreeMap::from([
+                        ("generatorIndex".to_string(), serde_json::json!(index)),
+                        ("scope".to_string(), serde_json::json!(scope)),
+                    ]),
+                ),
+                &excluded.file,
+            ));
+        }
+
+        // CTADL0004, for the half of a model file `ctadl index` consumes rather than `ctadl
+        // query`. Same condition, same descriptor, its own message: what it contributes
+        // nothing to is the *index*.
+        for dead in &check.index_time_dead {
+            let file = dead.file.display().to_string();
+            let (index, kind) = (dead.index, &dead.kind);
+            config_notifications.push(at_file(
+                notification_with_message_id(
+                    NOTIF_GENERATOR_DEAD,
+                    DEAD_INDEX_TIME,
+                    "warning",
+                    vec![index.to_string(), file.clone(), kind.clone()],
+                    format!(
+                        "Model generator {index} in '{file}' declares a {kind}, but no function \
+                         in the program matched its 'where' constraints, so it will contribute \
+                         nothing when the project is indexed."
+                    ),
+                    BTreeMap::from([
+                        ("generatorIndex".to_string(), serde_json::json!(index)),
+                        ("declarationKind".to_string(), serde_json::json!(kind)),
+                        ("reason".to_string(), serde_json::json!(DEAD_INDEX_TIME)),
+                    ]),
+                ),
+                &dead.file,
+            ));
+        }
+
+        // CTADL0010: `diagnose`'s verdict, verbatim, at the severity the spec itself set --
+        // the same text and the same severity `ctadl index` would raise. No pair count: pairing
+        // needs the fact base.
+        for bridge in &check.bridges {
+            let file = bridge.file.display().to_string();
+            config_notifications.push(at_file(
+                notification(
+                    NOTIF_BRIDGE_DIAGNOSIS,
+                    if bridge.error { "error" } else { "warning" },
+                    vec![
+                        bridge.index.to_string(),
+                        file.clone(),
+                        bridge.message.clone(),
+                    ],
+                    format!(
+                        "Model generator {} in '{file}': {}",
+                        bridge.index, bridge.message
+                    ),
+                    BTreeMap::from([(
+                        "generatorIndex".to_string(),
+                        serde_json::json!(bridge.index),
+                    )]),
+                ),
+                &bridge.file,
+            ));
+        }
+
+        // CTADL0011: the live generators. A count of what a `where` selected is the answer a
+        // reader came for, and it is not deducible from the silence of the notifications above.
+        for matched in &check.matched {
+            let file = matched.file.display().to_string();
+            let index = matched.index;
+            let unit = if matched.find.as_deref() == Some("callsites") {
+                "callee"
+            } else {
+                "function"
+            };
+            let sample = if matched.sample.is_empty() {
+                String::new()
+            } else {
+                format!(" (e.g. {})", matched.sample.join(", "))
+            };
+            // "all functions" rather than a number: an unnarrowed generator's count exists only
+            // relative to one import, and printing it as a number invites subtracting it.
+            let count = match matched.total {
+                Some(total) => format!("{total} {unit}(s)"),
+                None => format!("every {unit} in the program(s) checked"),
+            };
+            let mut properties = BTreeMap::from([
+                ("generatorIndex".to_string(), serde_json::json!(index)),
+                ("unit".to_string(), serde_json::json!(unit)),
+                ("sample".to_string(), serde_json::json!(matched.sample)),
+            ]);
+            if let Some(total) = matched.total {
+                properties.insert("matched".to_string(), serde_json::json!(total));
+            }
+            config_notifications.push(at_file(
+                notification(
+                    NOTIF_GENERATOR_MATCHED,
+                    "note",
+                    vec![
+                        index.to_string(),
+                        file.clone(),
+                        count.clone(),
+                        sample.clone(),
+                    ],
+                    format!("Model generator {index} in '{file}' matched {count}{sample}."),
+                    properties,
+                ),
+                &matched.file,
+            ));
+        }
     }
 
     // CTADL0005: Stage 1 matched a name that Stage 2 could not resolve against the index.
@@ -410,8 +725,16 @@ fn build_invocation(
     // the message states both units rather than printing the numbers side by side as though
     // they were the same thing. `ports_unmatched` is in port units too: it sums the ports of
     // every declaration that produced no endpoint.
-    exec_notifications.push(notification(
+    exec_notifications.push(notification_with_message_id(
         NOTIF_MATCH_SUMMARY,
+        // Without an index the matched half is Stage-1 rows, before the fan-out that would
+        // turn one of them into many. Same numbers, a different unit -- so a different message
+        // rather than the same sentence quietly meaning something else.
+        if diagnostics.model_check.is_some() {
+            SUMMARY_MODEL_CHECK
+        } else {
+            SUMMARY_DEFAULT
+        },
         "note",
         vec![
             diagnostics.sources_declared.to_string(),
@@ -420,15 +743,28 @@ fn build_invocation(
             diagnostics.sinks_matched.to_string(),
             ports_unmatched.to_string(),
         ],
-        format!(
-            "Declared {} source and {} sink port(s), which matched {} source and {} sink \
-             endpoint(s) in the program; {} declared port(s) matched nothing.",
-            diagnostics.sources_declared,
-            diagnostics.sinks_declared,
-            diagnostics.sources_matched,
-            diagnostics.sinks_matched,
-            ports_unmatched
-        ),
+        if diagnostics.model_check.is_some() {
+            format!(
+                "Declared {} source and {} sink port(s), which matched {} source and {} sink \
+                 model row(s) in the program(s) checked -- before the call-site fan-out and \
+                 wildcard expansion an index would apply; {} declared port(s) matched nothing.",
+                diagnostics.sources_declared,
+                diagnostics.sinks_declared,
+                diagnostics.sources_matched,
+                diagnostics.sinks_matched,
+                ports_unmatched
+            )
+        } else {
+            format!(
+                "Declared {} source and {} sink port(s), which matched {} source and {} sink \
+                 endpoint(s) in the program; {} declared port(s) matched nothing.",
+                diagnostics.sources_declared,
+                diagnostics.sinks_declared,
+                diagnostics.sources_matched,
+                diagnostics.sinks_matched,
+                ports_unmatched
+            )
+        },
         BTreeMap::from([
             (
                 "sourcesDeclared".to_string(),
@@ -604,6 +940,24 @@ fn path_status_result(outcome: &PathOutcome) -> Option<SarifResult> {
     )
 }
 
+/// Points a notification at a model file.
+///
+/// The file, and not a line in it: `EndpointMatch` carries no provenance and `serde_json` gives
+/// no spans, so there is no line/column to point at. The generator index in the message is what
+/// stands in for one.
+fn at_file(mut notif: Notification, file: &path::Path) -> Notification {
+    notif.locations = Some(vec![
+        Location::builder()
+            .physical_location(
+                PhysicalLocation::builder()
+                    .artifact_location(ArtifactLocation::builder().uri(artifact_uri(file)).build())
+                    .build(),
+            )
+            .build(),
+    ]);
+    notif
+}
+
 /// A `file:` URI for a path a notification points at, falling back to the lossy display
 /// form when the path cannot be made absolute (SARIF wants a URI, but a readable relative
 /// path beats no location at all).
@@ -613,6 +967,67 @@ fn artifact_uri(p: &path::Path) -> String {
         .and_then(|abs| url::Url::from_file_path(abs).ok())
         .map(|u| u.to_string())
         .unwrap_or_else(|| p.to_string_lossy().replace('\\', "/"))
+}
+
+/// Where a source file is, as SARIF says a location: relative to the import it belongs to.
+///
+/// A path inside the import root is written relative to [`ImportSource::uri_base`] and tagged
+/// with the import's `uriBaseId`, whose absolute value is registered in `uri_bases` (and from
+/// there into `run.originalUriBaseIds`).
+///
+/// Two kinds of path fall outside that root, and each keeps the only form it has: a relative
+/// path (a frontend that names sources by their in-artifact path, e.g. Dex debug info) is
+/// already artifact-relative and stands alone, and an absolute path elsewhere on disk is
+/// written as the `file:` URI it is, rather than as a slash-stripped imitation of a relative
+/// one -- which is what every path used to get, and what made the URIs unreadable.
+fn source_artifact_location(
+    import: &ImportSource,
+    canonical_path: &str,
+    uri_bases: &mut BTreeMap<String, String>,
+) -> ArtifactLocation {
+    let path = path::Path::new(canonical_path);
+    if let Some(rel) = import
+        .uri_base()
+        .and_then(|base| path.strip_prefix(base).ok())
+    {
+        let id = import.uri_base_id();
+        if let Some(base) = import.uri_base() {
+            uri_bases
+                .entry(id.clone())
+                .or_insert_with(|| directory_uri(base));
+        }
+        let mut location = ArtifactLocation::builder().uri(uri_reference(rel)).build();
+        location.uri_base_id = Some(id);
+        return location;
+    }
+    let uri = if path.is_absolute() {
+        artifact_uri(path)
+    } else {
+        uri_reference(path)
+    };
+    ArtifactLocation::builder().uri(uri).build()
+}
+
+/// A relative path as a URI reference: `/`-separated, whatever the platform separator is.
+fn uri_reference(p: &path::Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
+/// A `file:` URI for a directory. SARIF requires the value of an `originalUriBaseIds` entry to
+/// end with a slash (§3.14.14), which is what distinguishes it from a URI for the directory
+/// *as a file*.
+fn directory_uri(dir: &path::Path) -> String {
+    path::absolute(dir)
+        .ok()
+        .and_then(|abs| url::Url::from_directory_path(abs).ok())
+        .map(|u| u.to_string())
+        .unwrap_or_else(|| {
+            let mut uri = uri_reference(dir);
+            if !uri.ends_with('/') {
+                uri.push('/');
+            }
+            uri
+        })
 }
 
 /// A UTC timestamp in the `date-time` form SARIF requires (§3.9).
@@ -761,6 +1176,14 @@ const DEAD_LOCAL_NOT_FOUND: &str = "localNotFound";
 const DEAD_NO_CALLER: &str = "noCallerMatched";
 const DEAD_PORT_REJECTED: &str = "portRejected";
 const DEAD_MIXED: &str = "mixedReasons";
+/// The one condition that is not about a source/sink port at all: a `propagation` that matched
+/// no function. Its own id because what it contributes nothing to is the *index*, not the query.
+const DEAD_INDEX_TIME: &str = "indexTimeDeclaration";
+
+/// The `message.id`s of `CTADL0100`. The numbers are the same either way; what the matched half
+/// *counts* is not, so each unit gets its own sentence.
+const SUMMARY_DEFAULT: &str = "default";
+const SUMMARY_MODEL_CHECK: &str = "modelCheckOnly";
 
 /// The prose, `message.id` and `message.arguments` for one `CTADL0004`.
 struct UnmatchedMessage {
@@ -958,6 +1381,12 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
                     "Model generator {0} in '{1}' declares {3} {2} port(s), none of which matched \
                      anything in the program ({4}), so it contributes nothing to the query.",
                 ),
+                (
+                    DEAD_INDEX_TIME,
+                    "Model generator {0} in '{1}' declares a {2}, but no function in the program \
+                     matched its 'where' constraints, so it will contribute nothing when the \
+                     project is indexed.",
+                ),
             ],
         ),
         notification_descriptor(
@@ -982,11 +1411,59 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
              no flow could be detected.",
         ),
         notification_descriptor(
+            NOTIF_NO_INDEX,
+            "No index; model check only",
+            "The project has no index, so only the model files were checked",
+            "The project has no index, so no taint analysis ran. The model files were matched \
+             against the imported program(s) instead -- {0} -- and the notifications below \
+             report what they select. These are model-matching results only: call-site fan-out, \
+             'Argument(*)' expansion and sink wildcard expansion need the index, a matched name \
+             can still be absent from it, and bridge pairs are not counted. Run `ctadl index` \
+             for a real query.",
+        ),
+        notification_descriptor(
+            NOTIF_SCOPE_EXCLUDED,
+            "Model generator out of scope",
+            "A generator's 'in' clause admits none of the programs checked",
+            "Model generator {0} in '{1}' has an 'in' scope ({2}) that admits none of the \
+             programs checked, so it was never evaluated against any of them.",
+        ),
+        notification_descriptor(
+            NOTIF_BRIDGE_DIAGNOSIS,
+            "Bridge model cannot be paired",
+            "A bridge's sides matched nothing, or matched ambiguously",
+            "Model generator {0} in '{1}': {2}",
+        ),
+        notification_descriptor(
+            NOTIF_GENERATOR_MATCHED,
+            "Model generator matched",
+            "What a generator's 'where' constraints selected",
+            "Model generator {0} in '{1}' matched {2}{3}.",
+        ),
+        notification_descriptor(
+            NOTIF_MODEL_FILE_ERROR,
+            "Model file error",
+            "A model file could not be read, or a generator in it is malformed",
+            "Model file '{0}': {1}",
+        ),
+        notification_descriptor_multi(
             NOTIF_MATCH_SUMMARY,
             "Endpoint match summary",
             "How many ports the models declared and how many endpoints they matched",
-            "Declared {0} source and {1} sink port(s), which matched {2} source and {3} sink \
-             endpoint(s) in the program; {4} declared port(s) matched nothing.",
+            &[
+                (
+                    SUMMARY_DEFAULT,
+                    "Declared {0} source and {1} sink port(s), which matched {2} source and {3} \
+                     sink endpoint(s) in the program; {4} declared port(s) matched nothing.",
+                ),
+                (
+                    SUMMARY_MODEL_CHECK,
+                    "Declared {0} source and {1} sink port(s), which matched {2} source and {3} \
+                     sink model row(s) in the program(s) checked -- before the call-site fan-out \
+                     and wildcard expansion an index would apply; {4} declared port(s) matched \
+                     nothing.",
+                ),
+            ],
         ),
         notification_descriptor(
             NOTIF_PATHS_DISABLED,
@@ -1422,25 +1899,67 @@ pub fn format_sarif(
     let (final_sarif, execution_successful) = rt.block_on(async {
         async_format_sarif(project, taint_results, facts, &config, diagnostics).await
     })?;
+    write_sarif(&final_sarif, compact, output)?;
+    Ok(execution_successful)
+}
 
+/// Writes the SARIF a run with no index could produce: the model check's notifications, and no
+/// results but `C0001`'s own not-applicable status.
+///
+/// The same tool descriptor, the same invocation, the same notification vocabulary as
+/// [`format_sarif`] -- a consumer reads this file the way it reads any other. What is missing is
+/// missing because it needs an index: there are no source locations to resolve against, so
+/// nothing here touches the project directory.
+pub fn format_model_check_sarif(
+    compact: bool,
+    output: &path::Path,
+    profile: SarifProfile,
+    diagnostics: &QueryDiagnostics,
+) -> Result<bool, Error> {
+    let config = FormatConfig { compact, profile };
+    // Not `Disabled`, whatever the profile says: path search did not run because there was
+    // nothing to run it over, and naming the profile as the cause would send a reader to change
+    // a flag that would not have helped.
+    let outcome = PathOutcome::NotApplicable(
+        "the project has no index, so only the model files were checked".to_string(),
+    );
+    let invocation = build_invocation(diagnostics, &config, &outcome, PathStats::default());
+    let execution_successful = invocation.execution_successful;
+    let results: Vec<SarifResult> = path_status_result(&outcome).into_iter().collect();
+    let sarif = sarif_document(invocation, results, SarifData::default(), Vec::new());
+    write_sarif(&sarif, compact, output)?;
+    Ok(execution_successful)
+}
+
+/// Writes the assembled document to `output`, or to stdout for `-`.
+fn write_sarif(sarif: &serde_json::Value, compact: bool, output: &path::Path) -> Result<(), Error> {
     let writer: Box<dyn std::io::Write> = if output.to_str() == Some("-") {
         Box::new(std::io::stdout())
     } else {
-        Box::new(File::create(output).err_context(|| "creating sarif output file")?)
+        Box::new(
+            File::create(output)
+                .err_context(|| format!("creating sarif output file: {}", output.display()))?,
+        )
     };
 
     if compact {
-        serde_json::to_writer(writer, &final_sarif).err_context(|| "writing sarif")?;
+        serde_json::to_writer(writer, sarif)
+            .err_context(|| format!("writing sarif: {}", output.display()))?;
     } else {
-        serde_json::to_writer_pretty(writer, &final_sarif).err_context(|| "writing sarif")?;
+        serde_json::to_writer_pretty(writer, sarif)
+            .err_context(|| format!("writing sarif: {}", output.display()))?;
     }
-    Ok(execution_successful)
+    Ok(())
 }
 
 #[derive(Default)]
 pub struct SarifData {
     pub global_logical_locations_map: BTreeMap<String, usize>,
     pub global_logical_locations: Vec<LogicalLocation>,
+    /// Every `uriBaseId` a location used, mapped to the absolute directory URI it stands for.
+    /// Written out as `run.originalUriBaseIds`; see [`ImportSource::uri_base`]. Only imports
+    /// that actually produced a location appear.
+    pub uri_bases: BTreeMap<String, String>,
 }
 
 #[derive(Default)]
@@ -1534,8 +2053,18 @@ async fn async_format_sarif(
     let invocation = build_invocation(diagnostics, config, &path_outcome, path_stats);
     let execution_successful = invocation.execution_successful;
 
+    Ok((
+        sarif_document(invocation, results, sarif_data, parquet_dirs),
+        execution_successful,
+    ))
+}
+
+/// The `tool` object every CTADL SARIF run carries: the `C000x` rules, and the `CTADL00xx` /
+/// `CTADL01xx` notification descriptors declared once (§3.19.24) so that every `message.id` a
+/// notification selects resolves.
+fn ctadl_tool() -> Tool {
     const CTADL_FULL_DESCRIPTION: &str = "CTADL (Compositional Taint Analysis in Datalog).";
-    let tool = Tool::builder()
+    Tool::builder()
         .driver(
             ToolComponent::builder()
                 .name("ctadl")
@@ -1656,7 +2185,20 @@ async fn async_format_sarif(
                 .notifications(notification_descriptors())
                 .build(),
         )
-        .build();
+        .build()
+}
+
+/// Assembles the run, and the document around it, out of what a run produced.
+///
+/// Shared by the indexed path and the model-check one so that the two files differ only in what
+/// they *say* -- same tool, same key order, same shape.
+fn sarif_document(
+    invocation: Invocation,
+    results: Vec<SarifResult>,
+    sarif_data: SarifData,
+    parquet_dirs: Vec<String>,
+) -> serde_json::Value {
+    let tool = ctadl_tool();
 
     // `parquet_dir` names the source-info tables the locations above came out of. A project has
     // one such directory per import, so `parquet_dirs` carries them all and `parquet_dir` keeps
@@ -1671,9 +2213,23 @@ async fn async_format_sarif(
         ]))
         .build();
 
+    // What each `uriBaseId` the locations reference stands for on this machine. Locations are
+    // written relative to their import (see `source_artifact_location`); this is where the
+    // absolute directory each one is relative to is said, once.
+    let original_uri_base_ids: BTreeMap<String, ArtifactLocation> = sarif_data
+        .uri_bases
+        .iter()
+        .map(|(id, uri)| {
+            (
+                id.clone(),
+                ArtifactLocation::builder().uri(uri.clone()).build(),
+            )
+        })
+        .collect();
+
     // `results` is always set, never omitted: per the JSON schema it "must be present (but
     // may be empty) if a log file represents an actual scan".
-    let run = if sarif_data.global_logical_locations.is_empty() {
+    let mut run = if sarif_data.global_logical_locations.is_empty() {
         Run::builder()
             .tool(tool)
             .invocations(vec![invocation])
@@ -1687,6 +2243,9 @@ async fn async_format_sarif(
             .logical_locations(sarif_data.global_logical_locations)
             .build()
     };
+    if !original_uri_base_ids.is_empty() {
+        run.original_uri_base_ids = Some(original_uri_base_ids);
+    }
     // we need to deconstruct and rebuild the run to ensure a certain order (needs serde_json feature preserve_order)
     let final_run = match serde_json::to_value(&run).unwrap() {
         serde_json::Value::Object(mut old_map) => {
@@ -1713,7 +2272,7 @@ async fn async_format_sarif(
         .properties(properties)
         .build();
     // rebuild sarif to preserve order
-    let final_sarif = match serde_json::to_value(&sarif).unwrap() {
+    match serde_json::to_value(&sarif).unwrap() {
         serde_json::Value::Object(mut old_map) => {
             // remove the default (empty array) in the old map
             old_map.remove("runs");
@@ -1739,8 +2298,7 @@ async fn async_format_sarif(
             serde_json::Value::Object(new_map)
         }
         _ => panic!("Failed to extract serde_json sarif map"),
-    };
-    Ok((final_sarif, execution_successful))
+    }
 }
 
 /// Resolves every needed span to a SARIF [`Location`], each against the source-info database of
@@ -1927,9 +2485,14 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
                     }
                 }
                 source_info::ArtifactEncoding::Utf8 | source_info::ArtifactEncoding::Utf16 => {
-                    let file = File::open(canonical_path)?;
+                    let file = File::open(canonical_path)
+                        .err_context(|| format!("opening source file: {canonical_path}"))?;
                     // SAFETY: This is inherently unsafe because of mmap(). *shrug*
-                    let contents = unsafe { MmapOptions::new().map(&file)? };
+                    let contents = unsafe {
+                        MmapOptions::new()
+                            .map(&file)
+                            .err_context(|| format!("mapping source file: {canonical_path}"))?
+                    };
                     let line_map = LineMap::from_bytes(&contents);
                     let end_byte = match len_tag {
                         0 => start,
@@ -1953,11 +2516,8 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
                 }
             };
 
-            let uri_str = canonical_path.to_string();
-            let uri_stripped = uri_str.strip_prefix('/').unwrap_or(&uri_str);
-            let artifact_location = ArtifactLocation::builder()
-                .uri(uri_stripped.to_string())
-                .build();
+            let artifact_location =
+                source_artifact_location(import, canonical_path, &mut sarif_data.uri_bases);
 
             let is_pcode = import.language == ArtifactLanguage::Pcode;
             let physical_location = match encoding {
@@ -2983,12 +3543,20 @@ fn load_import_sources(index_dir: &path::Path) -> Result<Vec<ImportSource>, Erro
                 continue;
             }
         };
+        // A `ghidra://…` artifact is a project URL, not a path, so it roots nothing; its
+        // locations fall back to whatever the frontend recorded (see
+        // `source_artifact_location`).
+        let artifact_path = import
+            .artifact_path
+            .is_absolute()
+            .then(|| import.artifact_path.clone());
         imports.push(ImportSource {
             id,
             name,
             source_info_dir: import.source_info_dir(),
             language: import.language,
             image_base: import.image_base,
+            artifact_path,
         });
     }
     Ok(imports)

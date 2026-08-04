@@ -33,6 +33,18 @@ struct SarifLog {
 struct Run {
     tool: Option<Tool>,
     results: Vec<ResultItem>,
+    /// What each `uriBaseId` a location names stands for on the machine that ran the tool.
+    /// A relative URI is resolved against its own base first, and only then against
+    /// `--basedir`.
+    originalUriBaseIds: Option<HashMap<String, ArtifactLocation>>,
+}
+
+impl Run {
+    /// The directory `id` names, if this run says.
+    fn base_dir(&self, id: &str) -> Option<PathBuf> {
+        let uri = self.originalUriBaseIds.as_ref()?.get(id)?.uri.as_deref()?;
+        uri_to_path(uri).ok()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +82,7 @@ struct PhysicalLocation {
 #[derive(Debug, Deserialize)]
 struct ArtifactLocation {
     uri: Option<String>,
+    uriBaseId: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,13 +135,40 @@ fn uri_to_path(uri: &str) -> io::Result<PathBuf> {
     }
 }
 
+/// Decode source bytes as UTF-8, replacing each invalid byte with a space.
+fn decode_source(bytes: &[u8]) -> String {
+    if let Ok(s) = str::from_utf8(bytes) {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(bytes.len());
+    let mut rest = bytes;
+    loop {
+        match str::from_utf8(rest) {
+            Ok(s) => {
+                out.push_str(s);
+                break;
+            }
+            Err(e) => {
+                let good = e.valid_up_to();
+                out.push_str(str::from_utf8(&rest[..good]).expect("prefix validated"));
+                let bad = e.error_len().unwrap_or(rest.len() - good);
+                for _ in 0..bad {
+                    out.push(' ');
+                }
+                rest = &rest[good + bad..];
+            }
+        }
+    }
+    out
+}
+
 /// Return a cached vector of lines (without line‑break characters).
 fn get_file_lines<'a>(
     path: &Path,
     cache: &'a mut HashMap<PathBuf, Vec<String>>,
 ) -> io::Result<&'a [String]> {
     if !cache.contains_key(path) {
-        let content = fs::read_to_string(path)?;
+        let content = decode_source(&fs::read(path)?);
         // `lines()` removes both `\n` and trailing `\r`.
         let vec: Vec<String> = content.lines().map(|l| l.to_owned()).collect();
         cache.insert(path.to_path_buf(), vec);
@@ -307,7 +347,16 @@ fn process_sarif(sarif_path: &Path, basedir: &Path, out: &mut dyn Write) -> bool
                     }
                 };
                 if !src_path.is_absolute() {
-                    src_path = basedir.join(&src_path);
+                    // A URI written relative to a `uriBaseId` resolves against the directory
+                    // the run says that id stands for; `--basedir` is for the URIs that name
+                    // no base.
+                    let base = phys
+                        .artifactLocation
+                        .as_ref()
+                        .and_then(|al| al.uriBaseId.as_deref())
+                        .and_then(|id| run.base_dir(id))
+                        .unwrap_or_else(|| basedir.to_path_buf());
+                    src_path = base.join(&src_path);
                 }
 
                 // Canonicalise (resolves `..` and symlinks). If it fails we keep the

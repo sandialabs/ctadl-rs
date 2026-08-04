@@ -16,6 +16,14 @@ A project represents a set of programs that have been indexed together. It might
 - `index`: Stores parquet files, the output of indexing.
 - `query`: Stores parquet files, the output of a taint analysis query.
 
+# Relocating a store
+
+A store is movable: copy the directory somewhere else, point `--store` at the copy, and it
+works. That holds because every path a config records *into* the store is relative to the store
+root ([`ArtifactImport::import_dir`], [`AnalysisProject::project_dir`]), resolved against
+whatever root the current process is using. Only paths that point *out* of the store stay
+absolute -- [`ArtifactImport::artifact_path`] names the artifact that was imported, and that
+identity does not move when the store does.
 
 */
 
@@ -39,7 +47,7 @@ static STORE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 #[inline]
 fn default_store_path() -> PathBuf {
-    get_xdg_state_home().join("ctadl")
+    absolutize(&get_xdg_state_home().join("ctadl"))
 }
 
 /// Initializes the store path for this process. If you don't call this function, CTADL uses
@@ -48,12 +56,20 @@ fn default_store_path() -> PathBuf {
 /// again with a different value, returns Err.
 pub fn init_store_path<P: AsRef<Path>>(override_path: Option<P>) -> Result<(), &'static str> {
     let value = override_path
-        .map(|p| p.as_ref().to_path_buf())
+        .map(|p| absolutize(p.as_ref()))
         .unwrap_or_else(default_store_path);
 
     STORE_PATH
         .set(value)
         .map_err(|_| "STORE_PATH already initialized")
+}
+
+/// Makes `path` absolute, resolving symlinks when it already exists. Falls back to
+/// [`path::absolute`] (which is purely lexical) for a path that has not been created yet.
+fn absolutize(path: &Path) -> PathBuf {
+    canonicalize(path)
+        .or_else(|_| path::absolute(path))
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Version of the on-disk import format: the serialized IR program, VMT, and the rest of an
@@ -91,6 +107,9 @@ pub const VMT_BITCODE_FILE: &str = "ir-vmt.bitcode";
 
 /// Filename of an import's config, which records its [`IMPORT_FORMAT_VERSION`].
 pub const IMPORT_CONFIG_FILE: &str = "import_config.json";
+
+/// Filename of a project's config, which records the imports it was created from.
+pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 
 /// Version of the on-disk index format: the parquet fact and result tables written by `ctadl
 /// index` into a project's `index/` directory.
@@ -145,10 +164,18 @@ pub struct ArtifactImport {
     /// Name of the import for 'index' to reference
     pub name: String,
     pub language: ArtifactLanguage,
-    /// Path to the original artifact
+    /// Path to the original artifact. Absolute: it names something outside the store, which
+    /// stays where it is when the store moves.
     pub artifact_path: PathBuf,
-    /// Path to the import directory for the artifact.
-    pub import_path: PathBuf,
+    /// The import directory for the artifact, *relative to the store root* (`imports/<name>`).
+    /// Read it through [`Self::import_path`], which resolves it against the current root; that
+    /// indirection is what lets a store be copied elsewhere and used from there.
+    ///
+    /// Deserializes from the older `import_path` key too, and [`Self::load`] rewrites an
+    /// absolute value (which is what builds before this field went relative wrote) back to a
+    /// store-relative one, so an old store relocates just as well as a new one.
+    #[serde(alias = "import_path")]
+    pub import_dir: PathBuf,
     /// The [`IMPORT_FORMAT_VERSION`] this import was written with. [`Self::load`] rejects
     /// anything else.
     pub version: String,
@@ -194,15 +221,18 @@ impl ArtifactImport {
         let artifact_path = if is_ghidra_server_url(artifact_path) {
             artifact_path.to_path_buf()
         } else {
-            canonicalize(artifact_path)?
+            canonicalize(artifact_path)
+                .err_context(|| format!("resolving artifact: '{}'", artifact_path.display()))?
         };
-        let import_path = StorePaths::import_path().join(name);
-        std::fs::create_dir_all(&import_path)?;
+        let import_dir = StorePaths::relative_import_dir(name);
+        let resolved_import_dir = StorePaths::resolve(&import_dir);
+        std::fs::create_dir_all(&resolved_import_dir)
+            .err_context(|| format!("creating import dir: '{}'", resolved_import_dir.display()))?;
         let result = Self {
             name: name.to_owned(),
             language,
             artifact_path,
-            import_path,
+            import_dir,
             version: IMPORT_FORMAT_VERSION.to_string(),
             image_base: None,
             hash: None,
@@ -219,8 +249,10 @@ impl ArtifactImport {
     /// If there are i/o or deserialization errors
     pub fn save(&self) -> Result<(), Error> {
         let path = self.config_path();
-        let file = File::create(&path)?;
-        serde_json::to_writer(file, &self)?;
+        let file = File::create(&path)
+            .err_context(|| format!("creating import config: '{}'", path.display()))?;
+        serde_json::to_writer(file, &self)
+            .err_context(|| format!("writing import config: '{}'", path.display()))?;
         log::debug!(
             "wrote import configuration to '{}'",
             path::absolute(&path)?.display()
@@ -236,8 +268,17 @@ impl ArtifactImport {
     /// incompatible version of ctadl (see [`IMPORT_FORMAT_VERSION`]).
     #[inline]
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
-        let file = File::open(path)?;
-        let result: Self = serde_json::from_reader(file)?;
+        let path = path.as_ref();
+        let file = File::open(path)
+            .err_context(|| format!("opening import config: '{}'", path.display()))?;
+        let mut result: Self = serde_json::from_reader(file)
+            .err_context(|| format!("deserializing import config: '{}'", path.display()))?;
+        // An absolute directory here was written by a build that recorded where the store
+        // happened to live, so it would send a copied store back to the original. The layout is
+        // fixed, so the name says what the directory is.
+        if result.import_dir.is_absolute() {
+            result.import_dir = StorePaths::relative_import_dir(&result.name);
+        }
         // Refuse a stale import here rather than letting the caller hit an opaque `bitcode` error
         // (or a successful-but-wrong decode) when it reads the IR out of the import directory.
         if result.version != IMPORT_FORMAT_VERSION {
@@ -260,33 +301,41 @@ impl ArtifactImport {
         let path = StorePaths::import_path()
             .join(name)
             .join(IMPORT_CONFIG_FILE);
-        Self::load(&path).err_context(|| format!("reading import config: '{}'", path.display()))
+        Self::load(&path).err_context(|| format!("reading import '{name}'"))
+    }
+
+    /// Usable path to this import's directory: [`Self::import_dir`] resolved against the store
+    /// root this process is using. Every other path below hangs off it, so all of them follow
+    /// the store wherever it is mounted.
+    #[inline]
+    pub fn import_path(&self) -> PathBuf {
+        StorePaths::resolve(&self.import_dir)
     }
 
     /// Path to the serialized IR program for this artifact
     #[inline]
     pub fn program_path(&self) -> PathBuf {
-        self.import_path.join(PROGRAM_BITCODE_FILE)
+        self.import_path().join(PROGRAM_BITCODE_FILE)
     }
 
     /// Path to the serialized virtual method table
     pub fn vmt_path(&self) -> PathBuf {
-        self.import_path.join(VMT_BITCODE_FILE)
+        self.import_path().join(VMT_BITCODE_FILE)
     }
 
     /// Path to the serialized flowy requirements
     pub fn requirements_path(&self) -> PathBuf {
-        self.import_path.join("tnt-requirements.bitcode")
+        self.import_path().join("tnt-requirements.bitcode")
     }
 
     pub fn source_info_dir(&self) -> PathBuf {
-        self.import_path.join("source-info")
+        self.import_path().join("source-info")
     }
 
     /// Path to the IR program for this artifact
     #[inline]
     pub fn config_path(&self) -> PathBuf {
-        self.import_path.join(IMPORT_CONFIG_FILE)
+        self.import_path().join(IMPORT_CONFIG_FILE)
     }
 
     /// True if the import destination (the serialized IR program) is already present
@@ -339,7 +388,8 @@ impl ArtifactImport {
             None => return Ok(false),
         };
         // Compare canonicalized paths so the stored path (always canonical) lines up.
-        let artifact_path = canonicalize(artifact_path)?;
+        let artifact_path = canonicalize(artifact_path)
+            .err_context(|| format!("resolving artifact: '{}'", artifact_path.display()))?;
         if config.artifact_path != artifact_path {
             return Ok(false);
         }
@@ -368,7 +418,8 @@ pub fn hash_artifact(path: &Path) -> Result<String, Error> {
     use source_info::ContentHasher;
 
     let mut hasher = ContentHasher::new();
-    let metadata = std::fs::symlink_metadata(path)?;
+    let metadata = std::fs::symlink_metadata(path)
+        .err_context(|| format!("reading artifact metadata: {}", path.display()))?;
     if metadata.is_dir() {
         let mut files = Vec::new();
         collect_files(path, &mut files)?;
@@ -397,10 +448,13 @@ pub fn hash_artifact(path: &Path) -> Result<String, Error> {
 
 /// Recursively collects regular files under `dir` into `out`.
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), Error> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    let entries =
+        std::fs::read_dir(dir).err_context(|| format!("listing directory: {}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.err_context(|| format!("listing directory: {}", dir.display()))?;
         let path = entry.path();
-        let metadata = std::fs::symlink_metadata(&path)?;
+        let metadata = std::fs::symlink_metadata(&path)
+            .err_context(|| format!("reading file metadata: {}", path.display()))?;
         if metadata.is_dir() {
             collect_files(&path, out)?;
         } else if metadata.is_file() {
@@ -424,8 +478,11 @@ fn to_hex(bytes: &[u8]) -> String {
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct AnalysisProject {
     pub name: String,
-    /// Project directory in the store
-    pub dir: PathBuf,
+    /// Project directory, *relative to the store root* (`projects/<name>`). Read it through
+    /// [`Self::dir`], which resolves it against the current root. See
+    /// [`ArtifactImport::import_dir`] for why, and for how an older absolute value is handled.
+    #[serde(alias = "dir")]
+    pub project_dir: PathBuf,
     /// Names of the imports referred to by this project
     pub imports: Vec<String>,
 }
@@ -436,18 +493,27 @@ impl AnalysisProject {
     ///
     /// # Errors
     ///
-    /// If project path cannot be canonicalized, created, or there is an error creating the config
+    /// If the project directory cannot be created, or there is an error creating the config
     pub fn try_create<S: AsRef<str>>(
         name: &str,
         import_names: &[S],
     ) -> Result<AnalysisProject, Error> {
-        let path = StorePaths::projects_path().join(name);
+        let result = Self::ephemeral(name, import_names);
+        let path = result.dir();
         std::fs::create_dir_all(&path)
             .map_err(Error::Io)
             .err_context(|| format!("in create project dir: {}", path.display()))?;
-        let dir = canonicalize(&path)
-            .map_err(Error::Io)
-            .err_context(|| format!("in canonicalize project dir: {}", path.display()))?;
+        result.save()?;
+        Ok(result)
+    }
+
+    /// The same project value [`Self::try_create`] would build, without writing anything.
+    ///
+    /// This is what lets `ctadl query my-import -m models.json5` work on a name that was only
+    /// ever imported: the query has an import list to match models against, and the store is
+    /// left exactly as it was. Nothing that reads or writes the project's directory may be
+    /// called on the result -- notably [`Self::index_path`], which creates it.
+    pub fn ephemeral<S: AsRef<str>>(name: &str, import_names: &[S]) -> AnalysisProject {
         // Expand each name to itself followed by its sub-imports, then dedup
         // (order-preserving): `index` co-indexes every argument, so a repeated program name
         // (e.g. `index amuled amuled`) would codegen its facts twice and inflate every
@@ -472,13 +538,11 @@ impl AnalysisProject {
             })
             .filter(|n| seen.insert(n.clone()))
             .collect();
-        let result = Self {
+        Self {
             name: name.to_owned(),
-            dir,
+            project_dir: StorePaths::relative_project_dir(name),
             imports,
-        };
-        result.save()?;
-        Ok(result)
+        }
     }
 
     /// Load the analysis project from a path
@@ -489,9 +553,15 @@ impl AnalysisProject {
     #[inline]
     pub fn try_load_path<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         let path = path.as_ref();
-        let file = File::open(path)?;
-        let result = serde_json::from_reader(file)
+        let file =
+            File::open(path).err_context(|| format!("opening config: '{}'", path.display()))?;
+        let mut result: Self = serde_json::from_reader(file)
             .err_context(|| format!("deserializing config: '{}'", path.display()))?;
+        // See [`ArtifactImport::load`]: an absolute directory came from a build that wrote down
+        // where the store was, and would pin a copied store to the original location.
+        if result.project_dir.is_absolute() {
+            result.project_dir = StorePaths::relative_project_dir(&result.name);
+        }
         Ok(result)
     }
 
@@ -504,8 +574,10 @@ impl AnalysisProject {
     pub fn try_load_name(name: &str) -> Result<Self, Error> {
         let path = StorePaths::projects_path()
             .join(name)
-            .join("project_config.json");
-        Self::try_load_path(&path).err_context(|| format!("loading config: '{}'", path.display()))
+            .join(PROJECT_CONFIG_FILE);
+        // No context of its own: `try_load_path` already names this path in every error it
+        // returns, and repeating it here just doubles the line in the chain.
+        Self::try_load_path(&path)
     }
 
     /// Loads artifact imports. Each item in the iterator may throw an error; see
@@ -517,8 +589,15 @@ impl AnalysisProject {
             .map(|name| ArtifactImport::load_by_name(name.as_ref()))
     }
 
+    /// Usable path to this project's directory: [`Self::project_dir`] resolved against the store
+    /// root this process is using.
+    #[inline]
+    pub fn dir(&self) -> PathBuf {
+        StorePaths::resolve(&self.project_dir)
+    }
+
     pub fn config_path(&self) -> PathBuf {
-        self.dir.join("project_config.json")
+        self.dir().join(PROJECT_CONFIG_FILE)
     }
 
     /// The path to the folder where the result of 'index' should be stored. Ensures the path is
@@ -529,7 +608,7 @@ impl AnalysisProject {
     /// If there is an error creating the path
     #[inline]
     pub fn index_path(&self) -> Result<PathBuf, Error> {
-        let path = self.dir.join("index");
+        let path = self.dir().join("index");
         std::fs::create_dir_all(&path)
             .map_err(Error::Io)
             .err_context(|| format!("in create index dir: '{}'", path.display()))?;
@@ -547,14 +626,28 @@ impl AnalysisProject {
     #[inline]
     pub fn write_index_config(&self) -> Result<(), Error> {
         let path = self.index_path()?.join(INDEX_CONFIG_FILE);
-        let file = File::create(&path)?;
+        let file = File::create(&path)
+            .err_context(|| format!("creating index config: '{}'", path.display()))?;
         serde_json::to_writer(
             file,
             &IndexConfig {
                 version: INDEX_FORMAT_VERSION.to_string(),
             },
-        )?;
+        )
+        .err_context(|| format!("writing index config: '{}'", path.display()))?;
         Ok(())
+    }
+
+    /// Whether `ctadl index` ever finished for this project.
+    ///
+    /// The stamp is written *last* (see [`Self::write_index_config`]), so this is false both
+    /// for a project that was never indexed and for one whose index is still being written --
+    /// which is exactly when `ctadl query` falls back to checking the model files alone. It
+    /// deliberately does not read the version: an index this build cannot read still exists,
+    /// and [`Self::check_index_config`] is what says so.
+    #[inline]
+    pub fn has_index(&self) -> bool {
+        self.dir().join("index").join(INDEX_CONFIG_FILE).is_file()
     }
 
     /// Refuses an index written by an incompatible build.
@@ -570,7 +663,7 @@ impl AnalysisProject {
     /// [`INDEX_FORMAT_VERSION`]; [`Error::Io`] / [`Error::Json`] on a malformed config file.
     #[inline]
     pub fn check_index_config(&self) -> Result<(), Error> {
-        let path = self.dir.join("index").join(INDEX_CONFIG_FILE);
+        let path = self.dir().join("index").join(INDEX_CONFIG_FILE);
         // A missing config file is an index from before the version gate existed, which is
         // exactly the stale-encoding case this is here to catch.
         let found = match File::open(&path) {
@@ -580,7 +673,10 @@ impl AnalysisProject {
                 config.version
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => "1 (or older)".to_string(),
-            Err(e) => return Err(Error::Io(e)),
+            Err(e) => {
+                return Err(e)
+                    .err_context(|| format!("opening index config: '{}'", path.display()));
+            }
         };
         if found != INDEX_FORMAT_VERSION {
             return Err(Error::IncompatibleIndex {
@@ -600,8 +696,10 @@ impl AnalysisProject {
     #[inline]
     pub fn save(&self) -> Result<(), Error> {
         let path = self.config_path();
-        let file = File::create(&path)?;
-        serde_json::to_writer(file, &self)?;
+        let file = File::create(&path)
+            .err_context(|| format!("creating project config: '{}'", path.display()))?;
+        serde_json::to_writer(file, &self)
+            .err_context(|| format!("writing project config: '{}'", path.display()))?;
         log::debug!(
             "wrote project configuration to '{}'",
             path::absolute(&path)?.display()
@@ -614,23 +712,51 @@ impl AnalysisProject {
 pub struct StorePaths {}
 
 impl StorePaths {
+    /// Subdirectory of the root holding imported artifacts.
+    pub const IMPORTS: &'static str = "imports";
+
+    /// Subdirectory of the root holding analysis projects.
+    pub const PROJECTS: &'static str = "projects";
+
     /// Root of the store. By default, this is the "ctadl" directory in `XDG_STATE_HOME`. That
     /// behavior can be customized by calling [`init_store_path`] BEFORE any store interaction.
+    /// Always absolute, so a store-relative path resolves the same no matter what the current
+    /// directory is.
     #[inline]
     pub fn root() -> &'static Path {
         STORE_PATH.get_or_init(default_store_path).as_path()
     }
 
+    /// Resolves a store-relative path (such as [`ArtifactImport::import_dir`]) against the root.
+    #[inline]
+    pub fn resolve<P: AsRef<Path>>(relative: P) -> PathBuf {
+        Self::root().join(relative)
+    }
+
     /// Artifacts are imported to the "imports" subdirectory of the root
     #[inline]
     pub fn import_path() -> PathBuf {
-        Self::root().join("imports")
+        Self::resolve(Self::IMPORTS)
     }
 
-    /// Analysis projects are stored in the "imports" subdirectory of the root
+    /// Analysis projects are stored in the "projects" subdirectory of the root
     #[inline]
     pub fn projects_path() -> PathBuf {
-        Self::root().join("projects")
+        Self::resolve(Self::PROJECTS)
+    }
+
+    /// Where the import named `name` lives, relative to the root. This is the form that goes
+    /// into a config file; [`Self::resolve`] turns it back into a usable path.
+    #[inline]
+    pub fn relative_import_dir(name: &str) -> PathBuf {
+        Path::new(Self::IMPORTS).join(name)
+    }
+
+    /// Where the project named `name` lives, relative to the root. See
+    /// [`Self::relative_import_dir`].
+    #[inline]
+    pub fn relative_project_dir(name: &str) -> PathBuf {
+        Path::new(Self::PROJECTS).join(name)
     }
 }
 

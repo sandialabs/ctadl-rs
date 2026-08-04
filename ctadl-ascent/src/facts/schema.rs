@@ -7,7 +7,7 @@ use std::path;
 
 use source_info::FileSpanId;
 
-use crate::error::{Error, ErrorContext};
+use crate::error::Error;
 use crate::facts::parquet;
 use crate::facts::{
     FlowEdge, FlowVariable, FormalIndex, FormalType, Function, FunctionId, ImportId, InsnId, Path,
@@ -16,6 +16,9 @@ use crate::facts::{
 use crate::query_engine::QueryEndpoint;
 
 // Captures the Record type and FILENAME and COLUMNS constants.
+//
+// Neither half adds context of its own: `parquet::Writer`/`parquet::Reader` already name the
+// full path of the file they failed on, which is strictly more than `FILENAME` says.
 macro_rules! save_load {
     () => {
         pub fn try_save<P: AsRef<path::Path>>(
@@ -25,14 +28,11 @@ macro_rules! save_load {
             let path = path.as_ref();
             parquet::Writer::new(path.join(FILENAME))
                 .write_vec(&COLUMNS, items.into_iter().collect())
-                .err_context(|| format!("saving parquet '{FILENAME}'"))
         }
 
         pub fn try_load<P: AsRef<path::Path>>(path: P) -> Result<Vec<Record>, Error> {
             let path = path.as_ref();
-            parquet::Reader::new(path.join(FILENAME))
-                .read_vec(&COLUMNS)
-                .err_context(|| format!("loading parquet '{FILENAME}'"))
+            parquet::Reader::new(path.join(FILENAME)).read_vec(&COLUMNS)
         }
     };
 }

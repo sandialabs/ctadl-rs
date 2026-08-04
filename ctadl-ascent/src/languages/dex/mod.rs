@@ -44,8 +44,9 @@ pub struct ApkImport {
 /// need to distinguish the two check [`ApkImport::dex_count`].
 pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
     let file = file.as_ref();
-    let data = read_file_bytes(file)?;
-    let parser = APKParser::new(&data)?;
+    let data = read_file_bytes(file).err_context(|| format!("reading APK: {}", file.display()))?;
+    let parser =
+        APKParser::new(&data).err_context(|| format!("parsing APK: {}", file.display()))?;
     let dex_count = parser.dex_count();
     let mut ctx = Context::new();
     let mut builders = Builders::new();
@@ -61,7 +62,8 @@ pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
             hash: Vec::new(),
             encoding: source_info::ArtifactEncoding::Binary,
         };
-        ctx.process(&parser, key, &mut builders)?;
+        ctx.process(&parser, key, &mut builders)
+            .err_context(|| format!("converting '{}' in APK: {}", dex_file_name, file.display()))?;
     }
     Ok(ApkImport {
         program_info: ctx.finish(builders)?,
@@ -71,8 +73,10 @@ pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
 
 pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
     let file = file.as_ref();
-    let data = read_file_bytes(file)?;
-    let parser = DexParser::new(&data)?;
+    let data =
+        read_file_bytes(file).err_context(|| format!("reading Dex file: {}", file.display()))?;
+    let parser =
+        DexParser::new(&data).err_context(|| format!("parsing Dex file: {}", file.display()))?;
     let mut ctx = Context::new();
     let mut builders = Builders::new();
     let key = ArtifactKey {
@@ -82,7 +86,8 @@ pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
         encoding: source_info::ArtifactEncoding::Binary,
     };
 
-    ctx.process(&parser, key, &mut builders)?;
+    ctx.process(&parser, key, &mut builders)
+        .err_context(|| format!("converting Dex file: {}", file.display()))?;
     ctx.finish(builders)
 }
 

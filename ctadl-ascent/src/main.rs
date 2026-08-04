@@ -36,6 +36,11 @@ pub enum Command {
     Index(IndexArgs),
 
     /// Run a taint analysis query and format the results as SARIF. (See 'index' for prerequisites)
+    ///
+    /// Given `--models` and no index -- because the project was never indexed, or is being
+    /// indexed right now -- this reports what those model files match in the imported
+    /// program(s) instead of failing. Model matching happens in two stages and only the second
+    /// needs an index, so a model file can be made ready while the index is still building.
     Query(QueryArgs),
 
     /// One-shot: import artifacts, index them under name, query, and format output
@@ -562,7 +567,8 @@ fn handle_init_model(args: &InitModelArgs) -> anyhow::Result<()> {
         ]
         }"#;
 
-    std::fs::write(&args.output, template)?;
+    std::fs::write(&args.output, template)
+        .with_context(|| format!("writing template model file: '{}'", args.output.display()))?;
     log::info!("Wrote template model file to '{}'", args.output.display());
     Ok(())
 }
@@ -729,8 +735,7 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
 }
 
 fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
-    let project = project::AnalysisProject::try_load_name(&args.name)
-        .with_context(|| format!("loading project: '{}'", args.name))?;
+    let project = load_or_infer_project(&args.name)?;
     let status = cli::query(
         &project,
         &args.models,
@@ -743,12 +748,40 @@ fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
     // is deliberately after `cli::query` has written (and announced) the output file, since
     // that file is what explains the failure.
     if !status.execution_successful {
+        if status.model_check_only {
+            anyhow::bail!(
+                "no index, so only the model files were checked; see '{}' for what they match, \
+                 then run `ctadl index {}`",
+                args.output.display(),
+                args.name
+            );
+        }
         anyhow::bail!(
             "query produced no analyzable endpoints; see '{}' for details",
             args.output.display()
         );
     }
     Ok(())
+}
+
+/// The project `name` denotes, or the one an import of that name would be indexed into.
+///
+/// `ctadl index app` creates a project named `app` out of the import named `app`, so before it
+/// has ever run there is no project to load -- and that is exactly when checking a model file
+/// against the import is most useful. Falling back to [`AnalysisProject::ephemeral`] gives
+/// `ctadl query` the same import list, with the same `sub_imports` expansion (an APK's native
+/// libraries), and writes nothing to the store. The query itself then finds no index and says
+/// so; see [`cli::query`].
+fn load_or_infer_project(name: &str) -> anyhow::Result<project::AnalysisProject> {
+    match project::AnalysisProject::try_load_name(name) {
+        Ok(project) => Ok(project),
+        Err(project_error) => match project::ArtifactImport::load_by_name(name) {
+            Ok(_) => Ok(project::AnalysisProject::ephemeral(name, &[name])),
+            // Neither a project nor an import: report the project error, which is what the
+            // command was asked for.
+            Err(_) => Err(project_error).with_context(|| format!("loading project: '{name}'")),
+        },
+    }
 }
 
 fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {

@@ -48,7 +48,7 @@ use crate::error::Error;
 use crate::facts;
 use crate::facts::TaintDirection;
 use crate::models::FormalIndexTypeTag;
-use crate::models::spec::BridgeSpec;
+use crate::models::spec::{BridgeSpec, Severity};
 
 use super::json::ModelGeneratorIngest;
 use super::match_index::ProgramMatchIndex;
@@ -312,6 +312,66 @@ pub fn observe_import(
             .extend(to.iter().map(|f| facts::Str::from(f.as_str())));
     }
     result
+}
+
+/// The verdict on one bridge spec's accumulated sides: `on-unmatched` per side, then
+/// `on-ambiguous`.
+///
+/// Returns what to *say*, not the saying of it. Evaluation was eager -- both sides are matched
+/// per import as imports stream by -- because side B's import may arrive before side A's, so
+/// whether `from` matched is unknowable at match time. The conditionality is applied here, once,
+/// over the whole project: "unmatched" means *not matched anywhere*, not "not matched in this
+/// import".
+///
+/// This reads nothing but the spec and the two match sets, which is what lets `ctadl query`
+/// render the same verdict with no index in existence (see `cli::model_check`). Phase 2 of codegen wraps it
+/// in [`crate::codegen::model_matches::classify`], which is the only caller that acts on the
+/// severity.
+pub(crate) fn diagnose(spec: &BridgeSpec, side: &BridgeSideMatches) -> Option<(Severity, String)> {
+    let where_ = spec.provenance();
+    if side.from.is_empty() {
+        // A scope admitting no import in the project lands here too, which is deliberate: it is
+        // the same observable condition (nothing matched) and gets the same warning, rather
+        // than a separate configuration-error category.
+        return Some((
+            spec.from.on_unmatched,
+            format!(
+                "bridge {where_}: the 'from' side matched no function in this project, so \
+                 nothing is bridged. Check the 'where' constraints and the 'in' scope."
+            ),
+        ));
+        // Note there is no `to`-side report here. "If the from side doesn't match anything, the
+        // to side isn't even attempted" is exactly this: reporting semantics, not evaluation
+        // order.
+    }
+    if side.to.is_empty() {
+        return Some((
+            spec.to.on_unmatched,
+            format!(
+                "bridge {where_}: the 'from' side matched {} function(s) ({}) but the 'to' side \
+                 matched none, so nothing is bridged. Set 'on-unmatched': 'ignore' on the 'to' \
+                 block if the implementation is legitimately absent.",
+                side.from.len(),
+                sample(&side.from, 3)
+            ),
+        ));
+    }
+    if !side.is_unique() {
+        return Some((
+            spec.on_ambiguous,
+            format!(
+                "bridge {where_}: matched {} 'from' function(s) ({}) and {} 'to' function(s) \
+                 ({}); every combination is bridged, for {} pair(s). Add \
+                 'on-ambiguous': 'ignore' to silence this, or narrow the 'where' constraints.",
+                side.from.len(),
+                sample(&side.from, 3),
+                side.to.len(),
+                sample(&side.to, 3),
+                side.from.len() * side.to.len()
+            ),
+        ));
+    }
+    None
 }
 
 /// The functions a set of matches names, for a diagnostic that has to list a few of them.
