@@ -71,16 +71,126 @@ the boundary, applied the same optimization inside the search engine: endpoints 
 and `sink_tags` all hold `Arc<QueryEndpoint>`. `absorbing` still wants owned
 values, so that one site derefs: `(**src).clone()`.
 
-## API drift the compiler could not catch
+## A pre-existing bug in the taintbench xtask
 
-`ctadl format` no longer exists — main merged it into `ctadl query`, which now
-takes `-o` and `--sarif-profile` directly. The taintbench xtask shells out to
-`ctadl`, so this compiled fine and failed at runtime with
-`error: unrecognized subcommand 'format'` on all three apps.
+`xtask/src/taintbench.rs` shelled out to a `ctadl format` subcommand. **That
+subcommand has never existed.** The top-level subcommand list is identical at the
+merge base (`73109eab`) and at `origin/main` (`e27e1466`): `import`, `index`,
+`query`, `go`, `init-model`, `inspect`, `legacy-pcode-cli`. `ctadl query` has taken
+`-o` and `--sarif-profile` directly the whole time.
 
-Fixed in `xtask/src/taintbench.rs` by folding the flags into the single `query`
-call, and updated the stale references in `taintbench/README.md` and the rule-ID
-doc comment.
+Every commit of the pre-rebase branch (`1a57772a`..`ac0dc06d`) carries this call, so
+`cargo xtask taintbench` never completed a run on that branch — it failed at the
+`format` step on every app. This is not API drift introduced by the rebase; it is a
+bug that was always there and only became visible once the suite was run.
+
+Fixed by folding the flags into the single `query` call, and updated the stale
+references in `taintbench/README.md` and the rule-ID doc comment.
+
+Consequence for the baselines: `expected.json` was not produced by an end-to-end run
+of this harness. The values are still trustworthy — building the pre-rebase tip
+(`ac0dc06d`) and running `ctadl query` on it directly reproduces exactly
+`{1,2,3,4,6,7,8,9,10,12,15}` for `cajino_baidu`, matching the committed baseline.
+
+## Benchmark results
+
+`cargo xtask taintbench` against the three APKs, run from the rebased tree:
+
+| app | pre-rebase | rebased | rebased + model fix |
+| --- | --- | --- | --- |
+| `beita_com_beita_contact` | 1/3 | 1/3 | 1/3 |
+| `cajino_baidu` | 11/12 | 10/12 (#8 lost) | 11/12 |
+| `hummingbad_android_samp` | 0/2 | 2/2 | 2/2 |
+
+```
+3 passed, 0 skipped, 0 failed of 3 app(s)
+```
+
+Both movements were investigated. **Neither is caused by the query-regime switch.**
+
+### The regime switch is verdict-neutral
+
+`taint_analysis` now dispatches to `search::taint_search` unless
+`CTADL_QUERY_DATALOG=1` is set, so it is the obvious suspect. It is not the cause.
+Running the full model on the rebased tree under both regimes gives identical
+finding-level verdicts on all three apps:
+
+| app | search regime | datalog regime |
+| --- | --- | --- |
+| `cajino_baidu` | 10 source/sink pairs, #8 absent | same 10 pairs, #8 absent |
+| `hummingbad_android_samp` | both flows found | both flows found |
+| `beita_com_beita_contact` | 1 pair | same pair |
+
+The regimes differ in how many redundant paths they report per pair (the search
+emits one breadth-first shortest path per sink vertex; the closure engine emits
+many), but not in which pairs exist. The `Arc` and `taint_edge` conflict
+resolutions above are representational and likewise change nothing.
+
+### Root cause: `66a24fd6` "Canonicalize access path encoding (#85)"
+
+Bisected over the 39 commits the rebase pulled in (`73109eab..e27e1466`) with a
+reproducer that runs in about ten seconds: a model containing only the
+`File.listFiles` source and the `FileWriter.write` sink, testing whether the SARIF
+reports that pair.
+
+```
+good 73109eab (#46)   good c62394b5 (#68)   good 4d901137 (#79)
+good 90f7c056 (#81)   good 08298913 (#82)   bad 66a24fd6 (#85)   bad e27e1466 (#90)
+```
+
+`#85`'s parent is `#82`, so the range closes on a single commit.
+
+The dex frontend encodes an array access as the field `[]`
+(`FieldPath::symbol("[]")`, `ctadl-ascent/src/languages/dex/mod.rs:803` for `AGet`,
+`:826` for `APut`). Before `#85`, `Path::to_dot_string` escaped `.` but not `[`, and
+the parser read a leading `[` as an offset, so `Symbol("[]")` did not survive the
+index -> query round trip. The commit's own test corpus names it first: *"The three
+the fact store was corrupting: dex/jvm, lua/C, and lua/C again"*, `vec![sym("[]")]`.
+
+With the element field corrupted away, an array was indistinguishable from its
+elements, so empty-path taint on an array flowed into every element read. That
+over-tainting is what carried finding #8, whose flow is
+`File[] files = ...listFiles(); ... files[i].toString()`. Measured over the same
+three `listFiles` sources, the fix removes it: **3120 -> 1584 tainted instructions,
+341 -> 185 tainted functions**. The sink side moves for the same reason —
+`Argument(*)` on `FileWriter.write` fans out to 4 endpoints before and 8 after, now
+correctly enumerating the `.\[]` and `.length` subtree.
+
+`#85` is a correctness fix. What it exposed is a modelling gap.
+
+### Fix: mark the `listFiles` source saturating
+
+Post-`#85`, `File.listFiles`'s `Return` source seeds taint at the **empty path** on
+the returned array, and `files[i]` is a load off `.\[]` — a strictly longer sibling
+path that precise, path-matched propagation correctly declines to follow.
+
+This is exactly what `a836dbef` "Add saturating sources (#70)" is for;
+`docs/model-generators.md` gives C's `argv` as the motivating case (`argv[1]` read
+at an offset path that is a sibling of the one the source is modeled at).
+`File.listFiles()` returning `File[]` is the Java analogue.
+
+`taintbench/apps/cajino_baidu/model.json`:
+
+```json
+{ "kind": "FileData", "port": "Return", "saturating": true }
+```
+
+`cajino_baidu` returns to `11/12`, meeting the committed baseline exactly, with no
+new false positives — the three negatives `#11`/`#13`/`#14` remain
+`MATCH(shadowed-by-positive)`. **`expected.json` is unchanged.**
+
+### `hummingbad_android_samp` 0/2 -> 2/2
+
+Both ground-truth flows (`Cursor.getString` -> `SQLiteDatabase.insert` and
+`-> .update`) now connect, under both regimes. The old baseline comment explained
+the empty value as flows crossing Intent IPC, JSON serialize/deserialize, and async
+network callbacks that the analysis could not track end-to-end; something in the
+same block of main commits connects them. Not bisected — it is an improvement, and
+the README prescribes folding those in.
+
+**`expected.json` updated to `[1, 2]`**, and its comment corrected: the earlier
+version credited the demand-driven search regime, which the two-regime comparison
+above rules out.
 
 ## Verification
 
@@ -89,79 +199,16 @@ doc comment.
 - `cargo clippy --workspace --all-targets` — clean (two `unnecessary_cast`
   warnings in `index_engine/locals_trie.rs` are pre-existing on main, untouched here)
 - `cargo test --workspace` — 231 + all other suites pass, 0 failed
-
-## Benchmark results
-
-`cargo xtask taintbench` against the three APKs, run from the rebased tree:
-
-| app | before | after | verdict |
-| --- | --- | --- | --- |
-| `beita_com_beita_contact` | 1/3 | 1/3 | PASS, unchanged |
-| `cajino_baidu` | 11/12 | 10/12 | **FAIL — regression, finding #8 lost** |
-| `hummingbad_android_samp` | 0/2 | 2/2 | PASS, **improvement** |
-
-```
-2 passed, 0 skipped, 1 failed of 3 app(s)
-```
-
-Both movements point at the same cause: **main switched the default query regime.**
-`taint_analysis` now dispatches to `search::taint_search` (the demand-driven
-multi-start realizable-path search) unless `CTADL_QUERY_DATALOG=1` is set. Every
-`expected.json` baseline in the suite was recorded against the datalog closure
-engine, so the suite is comparing two different analyses.
-
-### Improvement: `hummingbad_android_samp` 0/2 → 2/2
-
-Both ground-truth flows (`Cursor.getString` → `SQLiteDatabase.insert` and
-`→ .update`) now connect. The old baseline comment explained the empty baseline as
-flows crossing Intent IPC, JSON serialize/deserialize, and async network callbacks
-that the analysis could not track end-to-end. The search regime connects them.
-
-**`expected.json` updated to `[1, 2]`** — this is the improvement fold-in the
-README prescribes.
-
-### Regression: `cajino_baidu` finding #8
-
-```
-#8 pos [BaiduUtils:-1 java.io.File.listFiles -> BaiduUtils:479 java.io.FileWriter.write]
-   source:HIT  sink:HIT  path:no  => -
-```
-
-Both endpoints are still recognized; the connecting path is gone. The reported
-path list confirms it — `File.listFiles` still reaches `BaiduBCS.putObject` and
-`File.delete`, but no longer `FileWriter.write`.
-
-Consistent with how the search regime reports: it emits one breadth-first shortest
-path per sink *vertex* reached, deduped by the level-agnostic vertex. A second
-distinct flow arriving at a sink vertex some other path already reached is not
-reported separately, so a genuine source→sink pair can drop out of the SARIF even
-though taint does arrive.
-
-**`cajino_baidu/expected.json` was left at `[1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 15]`.**
-Lowering it would bury a real capability loss behind a green check. Whether to
-accept the trade (the search regime exists because the datalog closure blows up on
-firmware-sized copy groups) is a call for you, not something to baseline away
-silently. Options:
-
-1. Accept it — drop `8` from the baseline and note the engine switch in the comment.
-2. Fix the reporting — have the search emit a path per (source-set, sink vertex)
-   pair rather than one per sink vertex, so co-arriving flows stay distinguishable.
-3. Re-baseline the whole suite under `CTADL_QUERY_DATALOG=1` and treat the search
-   regime as a separate axis.
-
-### Attribution check (in flight)
-
-A confirming run of `cajino_baidu` under `CTADL_QUERY_DATALOG=1` was still
-executing when this was written — the datalog engine is much slower on this app,
-which is what motivated the switch. If #8 returns under the datalog engine, the
-loss is fully attributable to the regime change and not to any conflict resolution
-above. Note that the `Arc` and `taint_edge` resolutions are representational only
-and cannot change which paths are found.
+- `cargo xtask taintbench` — 3 passed, 0 skipped, 0 failed
 
 ## Files changed beyond the replayed commits
 
-- `xtask/src/taintbench.rs` — `format` subcommand folded into `query`; doc comment
+- `xtask/src/taintbench.rs` — the never-valid `format` subcommand folded into
+  `query`; doc comment
 - `taintbench/README.md` — same rename
-- `taintbench/apps/hummingbad_android_samp/expected.json` — baseline `[]` → `[1, 2]`
+- `taintbench/apps/cajino_baidu/model.json` — `listFiles` source marked
+  `saturating`, with the rationale in `description`
+- `taintbench/apps/hummingbad_android_samp/expected.json` — baseline `[]` ->
+  `[1, 2]`, comment corrected
 
 These are uncommitted working-tree changes.
