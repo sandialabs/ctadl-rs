@@ -1,18 +1,21 @@
 # Rebase of `taintbench` onto `origin/main` - DO-NOT-MERGE
 
-Rebased `taintbench` onto `origin/main` (`e27e1466`, "Add human output (#90)") and
+Rebased `taintbench` onto `origin/main` (`afe3f1f4`, "Misc fixes (#91)") and
 re-ran the TaintBench suite (see `taintbench/README.md`).
 
 ## Result
 
-Rebase succeeded. Four of the five commits replayed:
+Rebase succeeded. Four of the five original commits replayed, plus two commits
+carrying this note and the baseline/model edits:
 
 ```
-21566a48 Optimize some more things in the query
-b5767a7b Format
-0673fa43 Fix taintbench sink
-3c25d4a8 Taintbench
-e27e1466 Add human output (#90)   <- origin/main
+507276ff updates
+1975bc8b update branch
+a79cff37 Optimize some more things in the query
+325d7e64 Format
+252d959e Fix taintbench sink
+dcada83d Taintbench
+afe3f1f4 Misc fixes (#91)   <- origin/main
 ```
 
 The **"Clippy" commit dropped out as empty**. Its only surviving content was a
@@ -49,10 +52,10 @@ Two conflicts, both genuine two-sided changes:
 
 ## Semantic conflicts (auto-merged clean, did not compile)
 
-Two places where git merged without complaint but the result was broken — each
-side independently touched code the other's change invalidated.
+Places where git merged without complaint but the result was broken — each side
+independently touched code the other's change invalidated.
 
-### `ctadl-ascent/src/query_engine/mod.rs:597`
+### `ctadl-ascent/src/query_engine/mod.rs:593`
 
 Main added a `CTADL_QUERY_SIZES` diagnostic that reads `engine.taint_edge.len()`.
 Our commit **deleted the `taint_edge` relation** from the ascent block — the graph
@@ -63,21 +66,39 @@ carries the same information pre-orientation.
 
 ### `ctadl-ascent/src/query_engine/search.rs`
 
-Main's new demand-driven search engine is a second producer of `QueryResult`, and
-it built its `taint` rows with inline `QueryEndpoint` values — the exact
+Main's demand-driven search engine is a second producer of `QueryResult`, and it
+built its `taint` rows with inline `QueryEndpoint` values — the exact
 representation our commit changed to `Arc<QueryEndpoint>`. Rather than convert at
 the boundary, applied the same optimization inside the search engine: endpoints are
 `Arc`'d once up front (`all_endpoints`) and `source_sets`, `sink_nodes`, `taint`,
 and `sink_tags` all hold `Arc<QueryEndpoint>`. `absorbing` still wants owned
 values, so that one site derefs: `(**src).clone()`.
 
+### `#91` added three more consumers needing the same treatment
+
+The rebase onto `afe3f1f4` pulled in `#91`'s `model_check` CLI and its
+`codegen::flowy::query_check` path, both of which construct the formatter's
+taint-results view. They called `TaintAnalysisResults::from_query_result`, which
+our commit replaced with a borrowing `::new(&facts.taint_edge, ..)` so the taint
+graph — by far the largest query artifact — is lent out of `FormatFacts` instead
+of cloned a second time. That reverses the construction order: build the facts
+first, then the view.
+
+- `ctadl-ascent/src/cli/mod.rs:587` — facts built first, moving the query result's
+  pieces in; view borrows from `facts.taint_edge`.
+- `ctadl-ascent/src/codegen/flowy.rs:462` — same, but `query_result` is only
+  borrowed here, so the facts take clones and the view still borrows from them.
+  Also `TaintAnalysisResults<'_>` in `check_human_profile_paths`'s signature.
+- `ctadl-ascent/src/codegen/tests.rs:123` — `r.4` is now `Arc<QueryEndpoint>`, so
+  `(*r.4).clone()` where the old code had `r.4.clone()`.
+
 ## A pre-existing bug in the taintbench xtask
 
 `xtask/src/taintbench.rs` shelled out to a `ctadl format` subcommand. **That
 subcommand has never existed.** The top-level subcommand list is identical at the
-merge base (`73109eab`) and at `origin/main` (`e27e1466`): `import`, `index`,
-`query`, `go`, `init-model`, `inspect`, `legacy-pcode-cli`. `ctadl query` has taken
-`-o` and `--sarif-profile` directly the whole time.
+merge base (`73109eab`) and at `origin/main`: `import`, `index`, `query`, `go`,
+`init-model`, `inspect`, `legacy-pcode-cli`. `ctadl query` has taken `-o` and
+`--sarif-profile` directly the whole time.
 
 Every commit of the pre-rebase branch (`1a57772a`..`ac0dc06d`) carries this call, so
 `cargo xtask taintbench` never completed a run on that branch — it failed at the
@@ -94,44 +115,40 @@ of this harness. The values are still trustworthy — building the pre-rebase ti
 
 ## Benchmark results
 
-`cargo xtask taintbench` against the three APKs, run from the rebased tree:
-
-| app | pre-rebase | rebased | rebased + model fix |
-| --- | --- | --- | --- |
-| `beita_com_beita_contact` | 1/3 | 1/3 | 1/3 |
-| `cajino_baidu` | 11/12 | 10/12 (#8 lost) | 11/12 |
-| `hummingbad_android_samp` | 0/2 | 2/2 | 2/2 |
+`cargo xtask taintbench` against the three APKs, run from the rebased tree. **All
+three apps meet their committed baseline exactly.**
 
 ```
 3 passed, 0 skipped, 0 failed of 3 app(s)
 ```
 
-Both movements were investigated. **Neither is caused by the query-regime switch.**
+| app | baseline | detected | matched IDs |
+| --- | --- | --- | --- |
+| `beita_com_beita_contact` | 1/3 | 1/3 | `[3]` |
+| `cajino_baidu` | 11/12 | 11/12 | `[1,2,3,4,6,7,8,9,10,12,15]` |
+| `hummingbad_android_samp` | 2/2 | 2/2 | `[1,2]` |
 
-### The regime switch is verdict-neutral
+The three `cajino_baidu` negatives `#11`/`#13`/`#14` remain
+`MATCH(shadowed-by-positive)`; no false positives anywhere. `beita`'s two misses
+(`#1`, `#2`) and `cajino`'s `#5` have both endpoints recognized but no connecting
+path, as their baseline comments record.
 
-`taint_analysis` now dispatches to `search::taint_search` unless
-`CTADL_QUERY_DATALOG=1` is set, so it is the obvious suspect. It is not the cause.
-Running the full model on the rebased tree under both regimes gives identical
-finding-level verdicts on all three apps:
+### The two movements that got us here
 
-| app | search regime | datalog regime |
-| --- | --- | --- |
-| `cajino_baidu` | 10 source/sink pairs, #8 absent | same 10 pairs, #8 absent |
-| `hummingbad_android_samp` | both flows found | both flows found |
-| `beita_com_beita_contact` | 1 pair | same pair |
+Both were investigated when the suite first ran end-to-end, and **neither was
+caused by the query-regime switch**:
 
-The regimes differ in how many redundant paths they report per pair (the search
-emits one breadth-first shortest path per sink vertex; the closure engine emits
-many), but not in which pairs exist. The `Arc` and `taint_edge` conflict
-resolutions above are representational and likewise change nothing.
+| app | pre-rebase | first rebased run | with model fix |
+| --- | --- | --- | --- |
+| `beita_com_beita_contact` | 1/3 | 1/3 | 1/3 |
+| `cajino_baidu` | 11/12 | 10/12 (#8 lost) | 11/12 |
+| `hummingbad_android_samp` | 0/2 | 2/2 | 2/2 |
 
-### Root cause: `66a24fd6` "Canonicalize access path encoding (#85)"
+#### Root cause of the `cajino_baidu` dip: `66a24fd6` "Canonicalize access path encoding (#85)"
 
-Bisected over the 39 commits the rebase pulled in (`73109eab..e27e1466`) with a
-reproducer that runs in about ten seconds: a model containing only the
-`File.listFiles` source and the `FileWriter.write` sink, testing whether the SARIF
-reports that pair.
+Bisected over the commits the rebase pulled in with a reproducer that runs in about
+ten seconds: a model containing only the `File.listFiles` source and the
+`FileWriter.write` sink, testing whether the SARIF reports that pair.
 
 ```
 good 73109eab (#46)   good c62394b5 (#68)   good 4d901137 (#79)
@@ -158,7 +175,7 @@ correctly enumerating the `.\[]` and `.length` subtree.
 
 `#85` is a correctness fix. What it exposed is a modelling gap.
 
-### Fix: mark the `listFiles` source saturating
+#### Fix: mark the `listFiles` source saturating
 
 Post-`#85`, `File.listFiles`'s `Return` source seeds taint at the **empty path** on
 the returned array, and `files[i]` is a load off `.\[]` — a strictly longer sibling
@@ -176,32 +193,77 @@ at an offset path that is a sibling of the one the source is modeled at).
 ```
 
 `cajino_baidu` returns to `11/12`, meeting the committed baseline exactly, with no
-new false positives — the three negatives `#11`/`#13`/`#14` remain
-`MATCH(shadowed-by-positive)`. **`expected.json` is unchanged.**
+new false positives. **`expected.json` is unchanged.**
 
-### `hummingbad_android_samp` 0/2 -> 2/2
+#### `hummingbad_android_samp` 0/2 -> 2/2
 
 Both ground-truth flows (`Cursor.getString` -> `SQLiteDatabase.insert` and
-`-> .update`) now connect, under both regimes. The old baseline comment explained
-the empty value as flows crossing Intent IPC, JSON serialize/deserialize, and async
-network callbacks that the analysis could not track end-to-end; something in the
-same block of main commits connects them. Not bisected — it is an improvement, and
-the README prescribes folding those in.
+`-> .update`) now connect. The old baseline comment explained the empty value as
+flows crossing Intent IPC, JSON serialize/deserialize, and async network callbacks
+that the analysis could not track end-to-end; something in the block of main commits
+the rebase pulled in connects them. Not bisected — it is an improvement, and the
+README prescribes folding those in. **`expected.json` updated to `[1, 2]`.**
 
-**`expected.json` updated to `[1, 2]`**, and its comment corrected: the earlier
-version credited the demand-driven search regime, which the two-regime comparison
-above rules out.
+## The datalog regime no longer reproduces the baseline
+
+`taint_analysis` dispatches to `search::taint_search` unless `CTADL_QUERY_DATALOG=1`
+is set. Under the fallback datalog engine the suite **fails**:
+
+```
+2 passed, 0 skipped, 1 failed of 3 app(s)
+```
+
+| app | search regime (default) | datalog regime |
+| --- | --- | --- |
+| `beita_com_beita_contact` | 1/3 `[3]` | same |
+| `cajino_baidu` | 11/12 | **10/12 — #8 regresses to `path:no`** |
+| `hummingbad_android_samp` | 2/2 | same |
+
+**Cause: `saturating` is a search-engine-only feature.** The datalog engine's
+source-seeding rule destructures the endpoint and explicitly discards the flag —
+`ctadl-ascent/src/query_engine/mod.rs:425`:
+
+```rust
+let QueryEndpoint { infunc, vertex, label, direction, call_site: _, saturating: _ } = s,
+```
+
+so every source is seeded at the plain level. The search engine instead maps it to
+a taint level (`search.rs:461`):
+
+```rust
+let level = if ep.saturating { TaintLevel::Saturating } else { TaintLevel::Plain };
+```
+
+That is precisely the difference finding #8 depends on: the `saturating` marking on
+`File.listFiles` is what reconnects the `.\[]` element read, and only the search
+engine acts on it. The two regression tests for the behavior
+(`saturating_source_reaches_offset_read`, `saturating_source_reaches_extended_sink`)
+live in `search.rs` and exercise only that engine, so nothing caught the gap.
+
+This supersedes an earlier claim in this note that the regime switch was
+verdict-neutral. That measurement predated the `saturating` model fix; the two
+regimes agreed only while the flag was unused. The `Arc` and `taint_edge` conflict
+resolutions above remain representational and change nothing under either regime.
+
+Not a merge blocker — the datalog engine is an opt-in fallback and the default path
+meets every baseline — but `saturating` is silently ignored there, which is worth
+either implementing or rejecting at model-load time under that flag.
 
 ## Verification
 
 - `cargo check --workspace --all-targets` — clean
 - `cargo fmt --all` — applied
-- `cargo clippy --workspace --all-targets` — clean (two `unnecessary_cast`
-  warnings in `index_engine/locals_trie.rs` are pre-existing on main, untouched here)
-- `cargo test --workspace` — 231 + all other suites pass, 0 failed
+- `cargo clippy --workspace --all-targets` — clean of anything we introduced. Two
+  `unnecessary_cast` warnings in `index_engine/locals_trie.rs:1293,1297` are
+  pre-existing (last touched by `a77bcfdb` (#73); this branch does not touch the
+  file), and one `wrong_self_convention` is in the vendored `rustc_graphviz`.
+- `cargo test --workspace` — 584 passed across 34 suites, 0 failed
 - `cargo xtask taintbench` — 3 passed, 0 skipped, 0 failed
+- `CTADL_QUERY_DATALOG=1 cargo xtask taintbench` — 2 passed, 1 failed (see above)
 
 ## Files changed beyond the replayed commits
+
+Now committed, in `1975bc8b` ("update branch") and `507276ff` ("updates"):
 
 - `xtask/src/taintbench.rs` — the never-valid `format` subcommand folded into
   `query`; doc comment
@@ -210,5 +272,6 @@ above rules out.
   `saturating`, with the rationale in `description`
 - `taintbench/apps/hummingbad_android_samp/expected.json` — baseline `[]` ->
   `[1, 2]`, comment corrected
+- `merge.md` — this note
 
-These are uncommitted working-tree changes.
+The working tree is clean against `origin/taintbench`.
