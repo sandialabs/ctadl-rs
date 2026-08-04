@@ -64,12 +64,8 @@ pub fn init_store_path<P: AsRef<Path>>(override_path: Option<P>) -> Result<(), &
         .map_err(|_| "STORE_PATH already initialized")
 }
 
-/// Makes `path` absolute, resolving symlinks when it already exists.
-///
-/// Every path inside a store config is relative to the root, so the root is the one place that
-/// has to be pinned down: a relative `--store some/dir` would otherwise re-resolve against
-/// whatever the current directory happens to be by the time an import is read. Falls back to
-/// [`path::absolute`] (which is purely lexical) for a store that has not been created yet.
+/// Makes `path` absolute, resolving symlinks when it already exists. Falls back to
+/// [`path::absolute`] (which is purely lexical) for a path that has not been created yet.
 fn absolutize(path: &Path) -> PathBuf {
     canonicalize(path)
         .or_else(|_| path::absolute(path))
