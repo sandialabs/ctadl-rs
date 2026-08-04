@@ -136,7 +136,7 @@ fn collect_units(path: &Path) -> Result<Vec<SourceUnit>, Error> {
     files
         .into_iter()
         .map(|file| {
-            let source = std::fs::read_to_string(&file)?;
+            let source = source_info::read_source(&file)?;
             Ok(SourceUnit {
                 module: module_name(&root, &file),
                 path: file,
@@ -3092,5 +3092,20 @@ mod tests {
         "#;
         let info = import_str(src);
         assert!(object_tags(&info).is_empty());
+    }
+
+    #[test]
+    fn a_file_that_is_not_utf8_still_parses() {
+        // Latin-1 bytes in a comment, plus a byte pair that no encoding of ours accepts. The code
+        // around them is ordinary Lua, so the import should recover the function rather than fail.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("m.lua");
+        let mut bytes = b"local M = {}\n-- caf".to_vec();
+        bytes.extend_from_slice(&[0xe9, b' ', 0xff, 0xfe]);
+        bytes.extend_from_slice(b"\nfunction M.hello() return 1 end\nreturn M\n");
+        std::fs::write(&file, &bytes).expect("writing source");
+
+        let info = import_lua(dir.path()).expect("import of a non-UTF-8 file failed");
+        assert!(function_names(&info).contains(&"m.hello".to_string()));
     }
 }

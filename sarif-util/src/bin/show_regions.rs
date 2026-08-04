@@ -122,13 +122,40 @@ fn uri_to_path(uri: &str) -> io::Result<PathBuf> {
     }
 }
 
+/// Decode source bytes as UTF-8, replacing each invalid byte with a space.
+fn decode_source(bytes: &[u8]) -> String {
+    if let Ok(s) = str::from_utf8(bytes) {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(bytes.len());
+    let mut rest = bytes;
+    loop {
+        match str::from_utf8(rest) {
+            Ok(s) => {
+                out.push_str(s);
+                break;
+            }
+            Err(e) => {
+                let good = e.valid_up_to();
+                out.push_str(str::from_utf8(&rest[..good]).expect("prefix validated"));
+                let bad = e.error_len().unwrap_or(rest.len() - good);
+                for _ in 0..bad {
+                    out.push(' ');
+                }
+                rest = &rest[good + bad..];
+            }
+        }
+    }
+    out
+}
+
 /// Return a cached vector of lines (without line‑break characters).
 fn get_file_lines<'a>(
     path: &Path,
     cache: &'a mut HashMap<PathBuf, Vec<String>>,
 ) -> io::Result<&'a [String]> {
     if !cache.contains_key(path) {
-        let content = fs::read_to_string(path)?;
+        let content = decode_source(&fs::read(path)?);
         // `lines()` removes both `\n` and trailing `\r`.
         let vec: Vec<String> = content.lines().map(|l| l.to_owned()).collect();
         cache.insert(path.to_path_buf(), vec);
