@@ -60,6 +60,13 @@ Decisions worth remembering, all of which are commented in `nix/release.nix`:
   options for a first pass over a stub source tree where no bin target of this
   workspace exists yet; `--bin ctadl` fails there with "no bin target named
   `ctadl`". Filtering at the copy step keeps `xtask` out of `$out` instead.
+- **Fat LTO, and only here.** The tree builds with `lto = "thin"`. These three
+  derivations override that to `"fat"` with `CARGO_PROFILE_RELEASE_LTO`, so
+  LLVM optimizes the whole program as one module instead of trading precision
+  for parallelism. The override sits in `nix/release.nix` rather than in
+  `[profile.release]` so that only a release pays the longer link; a
+  developer's `cargo build --release` keeps thin LTO. Measured below: 23% off
+  the binary, and one stage of the build about eight times longer.
 - **`pkgsCross.musl64`, not `pkgsStatic`.** pkgsStatic follows the *builder's*
   architecture, so it would quietly emit aarch64 code on an aarch64 builder.
 - **`depsBuildBuild`, not `nativeBuildInputs`, for the cross cc.** The latter's
@@ -255,10 +262,33 @@ and need both `JVM_READER_TEST_FIXTURES` and `--include-ignored`.
   `/usr/lib/libiconv.2.dylib`, `/usr/lib/libSystem.B.dylib`; `nix path-info -r`
   on the output returns exactly one path, its own, so nothing in the store is
   retained at runtime; copied out of the store it runs and reports
-  `ctadl 0.1.1`. 146 MB.
+  `ctadl 0.1.1`. 146 MB under thin LTO, 112 MB under fat.
 
   That last line is the version plan working end to end: `[workspace.package]
   version` was edited, nothing else was, and the shipped binary says 0.1.1.
+- **What fat LTO costs and buys — measured, on this Mac (20 cores).** Both
+  builds ran on the same machine, one after the other, from the same tree; the
+  only difference between them is `CARGO_PROFILE_RELEASE_LTO`. Each stage was
+  timed on its own, `ctadl-deps` first and then the workspace build that
+  consumes it.
+
+  | | thin | fat | change |
+  | --- | --- | --- | --- |
+  | `ctadl-deps` | 1m52s | 1m53s | none to speak of |
+  | workspace + link | 1m33s | 12m27s | 8.0x |
+  | both, cold | 3m26s | 14m19s | 4.2x |
+  | binary | 146,151,792 B | 112,229,872 B | -33,921,920 B, -23.2% |
+
+  The dependency stage costing the same either way is the expected result and
+  worth stating: cargo compiles dependencies to bitcode under thin LTO too, so
+  fat LTO adds no work there. All of it lands in the final link, which is why
+  one stage absorbs the whole 11 minutes.
+
+  A caveat on reading those minutes: GitHub's runners have a few cores, not 20,
+  and the LTO phase is largely serial, so CI will pay more than 11 minutes
+  wall-clock. The `timeout-minutes: 180` the build job already carries leaves
+  room for it. The two cross targets are unmeasured for the usual reason --
+  this Mac cannot build them.
 - **x86_64-unknown-linux-musl / x86_64-pc-windows-gnu — evaluated, not built.**
   Both `.#legacyPackages.x86_64-linux.release."…"` derivations now evaluate
   cleanly *as an x86_64-linux builder would evaluate them* (evaluation is
@@ -307,12 +337,15 @@ and need both `JVM_READER_TEST_FIXTURES` and `--include-ignored`.
 
 ## Open questions / caveats
 
-- **Stripping.** The binary is 146 MB. Three of them per release. Note the
+- **Stripping.** The binary is 112 MB, down from 146 MB now that fat LTO is on.
+  Three of them per release. Note the
   build log already says `stripping (with command strip and flags -S)`: nixpkgs'
   fixupPhase runs, and `[profile.release] strip = "debuginfo"` is set in
-  `Cargo.toml`, so debug info is gone already and the 146 MB is what remains.
+  `Cargo.toml`, so debug info is gone already and the 112 MB is what remains.
   Stripping further (`strip = "symbols"`) would cost symbolized panic
-  backtraces. Left as is.
+  backtraces. Left as is. `codegen-units = 1` is the other knob of this kind
+  and is not set; it would shrink the binary further and lengthen the build
+  again. Not tried.
 - **Three toolchains.** `rust-toolchain.toml` pins 1.94.1, the release builds
   use fenix's `stable` (pinned by `flake.lock`), and the rest of the flake uses
   nixpkgs' rustc. Pinning fenix to 1.94.1 is possible but needs a hash.
