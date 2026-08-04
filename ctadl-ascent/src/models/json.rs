@@ -74,8 +74,9 @@ pub struct ModelGeneratorIngest<'p, 'b> {
     /// them. See [`IndexTimeModelCounts`].
     pub index_time_models: IndexTimeModelCounts,
     /// How many matched function names to retain per generator, or `None` to record nothing
-    /// at all. `index` and `query` leave this `None`, so neither pays for the capture; only
-    /// `ctadl check-models` turns it on. `Some(0)` records the counts without the names.
+    /// at all. An ordinary `index` or `query` leaves this `None`, so neither pays for the
+    /// capture; only the no-index model check turns it on (see `cli::model_check`). `Some(0)`
+    /// records the counts without the names.
     ///
     /// A cap and not a flag because the names are the expensive half: a `where`-less generator
     /// selects every function in the program, and a real APK has tens of thousands.

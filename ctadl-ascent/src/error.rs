@@ -234,6 +234,16 @@ pub enum Error {
         expected: String,
         artifact_path: PathBuf,
     },
+    /// No index has been written for the project yet. Distinct from
+    /// [`Error::IncompatibleIndex`], which is about an index that exists and cannot be read.
+    /// With model files in hand `ctadl query` does not raise this at all: it checks them
+    /// against the imports instead (see `cli::query`).
+    #[error(
+        "project '{project}' has no index; run `ctadl index {project}` first. \
+         With `--models` given, `ctadl query {project}` reports what those files match in the \
+         imported programs without one."
+    )]
+    MissingIndex { project: String },
     #[error(
         "the index for project '{project}' was created by an incompatible version of ctadl \
          (index format {found}, this build expects {expected}); \

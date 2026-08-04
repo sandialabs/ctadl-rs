@@ -498,11 +498,22 @@ impl AnalysisProject {
         name: &str,
         import_names: &[S],
     ) -> Result<AnalysisProject, Error> {
-        let project_dir = StorePaths::relative_project_dir(name);
-        let path = StorePaths::resolve(&project_dir);
+        let result = Self::ephemeral(name, import_names);
+        let path = result.dir();
         std::fs::create_dir_all(&path)
             .map_err(Error::Io)
             .err_context(|| format!("in create project dir: {}", path.display()))?;
+        result.save()?;
+        Ok(result)
+    }
+
+    /// The same project value [`Self::try_create`] would build, without writing anything.
+    ///
+    /// This is what lets `ctadl query my-import -m models.json5` work on a name that was only
+    /// ever imported: the query has an import list to match models against, and the store is
+    /// left exactly as it was. Nothing that reads or writes the project's directory may be
+    /// called on the result -- notably [`Self::index_path`], which creates it.
+    pub fn ephemeral<S: AsRef<str>>(name: &str, import_names: &[S]) -> AnalysisProject {
         // Expand each name to itself followed by its sub-imports, then dedup
         // (order-preserving): `index` co-indexes every argument, so a repeated program name
         // (e.g. `index amuled amuled`) would codegen its facts twice and inflate every
@@ -527,13 +538,11 @@ impl AnalysisProject {
             })
             .filter(|n| seen.insert(n.clone()))
             .collect();
-        let result = Self {
+        Self {
             name: name.to_owned(),
-            project_dir,
+            project_dir: StorePaths::relative_project_dir(name),
             imports,
-        };
-        result.save()?;
-        Ok(result)
+        }
     }
 
     /// Load the analysis project from a path
@@ -627,6 +636,18 @@ impl AnalysisProject {
         )
         .err_context(|| format!("writing index config: '{}'", path.display()))?;
         Ok(())
+    }
+
+    /// Whether `ctadl index` ever finished for this project.
+    ///
+    /// The stamp is written *last* (see [`Self::write_index_config`]), so this is false both
+    /// for a project that was never indexed and for one whose index is still being written --
+    /// which is exactly when `ctadl query` falls back to checking the model files alone. It
+    /// deliberately does not read the version: an index this build cannot read still exists,
+    /// and [`Self::check_index_config`] is what says so.
+    #[inline]
+    pub fn has_index(&self) -> bool {
+        self.dir().join("index").join(INDEX_CONFIG_FILE).is_file()
     }
 
     /// Refuses an index written by an incompatible build.

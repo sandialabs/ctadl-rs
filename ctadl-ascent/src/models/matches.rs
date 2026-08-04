@@ -323,8 +323,8 @@ pub fn observe_import(
 /// over the whole project: "unmatched" means *not matched anywhere*, not "not matched in this
 /// import".
 ///
-/// This reads nothing but the spec and the two match sets, which is what lets `ctadl
-/// check-models` render the same verdict with no index in existence. Phase 2 of codegen wraps it
+/// This reads nothing but the spec and the two match sets, which is what lets `ctadl query`
+/// render the same verdict with no index in existence (see `cli::model_check`). Phase 2 of codegen wraps it
 /// in [`crate::codegen::model_matches::classify`], which is the only caller that acts on the
 /// severity.
 pub(crate) fn diagnose(spec: &BridgeSpec, side: &BridgeSideMatches) -> Option<(Severity, String)> {

@@ -14,8 +14,7 @@ current set of flags.
 | --- | --- |
 | `import` | Import a single artifact (`.dex`, `.jar`, `.class`, APK, directory of `.c` files, Ghidra pcode, Flowy) into the store. |
 | `index` | Index one or more imported programs into an analysis project, resolving calls and building SSA. Can load prior summaries and propagation models. |
-| `query` | Run a taint-analysis query over an indexed project and write results as SARIF. |
-| `check-models` | Report what a model file matches in an imported program, without an index. Needs only `import`, so it answers "does this `where` select anything?" in seconds. |
+| `query` | Run a taint-analysis query over an indexed project and write results as SARIF. With `--models` and no index yet, reports what those model files match in the imported programs instead. |
 | `go` | One-shot convenience: import, index, and query in a single invocation. |
 | `init-model` | Emit a template JSON5 model file for defining sources, sinks, and external function propagation models. |
 | `inspect` | Inspect the contents of the CTADL store (artifacts, projects). |
@@ -31,9 +30,10 @@ Or run the stages separately:
 
 ```bash
 ctadl import /path/to/app.apk --name my-app
-# Optional, and only needs the import: which generators select a function, and which select
-# nothing. Run it while you write the model file rather than after indexing.
-ctadl check-models my-app --models sources-and-sinks.json5
+# Optional, and needs only the import: with no index yet, `query` reports which generators
+# select a function and which select nothing. Run it while you write the model file rather
+# than after indexing.
+ctadl query my-app --models sources-and-sinks.json5 --output check.sarif
 ctadl index my-app
 ctadl query my-app --models sources-and-sinks.json5 --output results.sarif
 ```

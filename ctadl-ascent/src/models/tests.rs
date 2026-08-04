@@ -181,7 +181,7 @@ fn bracketed_segment_spellings_stay_distinct() {
     );
 }
 
-/// Tests for the per-generator capture `ctadl check-models` reads.
+/// Tests for the per-generator capture the no-index model check reads.
 ///
 /// The capture is what makes a count trustworthy without an index, so what is pinned here is
 /// exactly the two ways a count can lie: an unnarrowed generator reported as zero, and a
@@ -255,7 +255,7 @@ mod capture {
     /// A generator with no `where` matches every function, and the capture says so as `All`
     /// rather than as a number -- including on a frontend where `matched_functions(&All)`
     /// returns an empty list. Reporting *that* as "matched 0 functions" is the count-that-lies
-    /// `check-models` exists to prevent.
+    /// the model check exists to prevent.
     #[test]
     fn a_where_less_generator_captures_all() {
         for program_info in [

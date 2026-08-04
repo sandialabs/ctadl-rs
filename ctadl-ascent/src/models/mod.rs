@@ -89,8 +89,7 @@ pub fn try_load_default_models(
 /// `(name, contents)`.
 ///
 /// Split out of [`try_load_default_models`] so a caller that reports on the defaults rather
-/// than merely loading them -- `ctadl check-models --default-models` -- names the same file the
-/// index would.
+/// than merely loading them names the same file the index would.
 pub fn default_model_file(vmt: &VirtualMethodTable) -> Option<(&'static str, &'static [u8])> {
     match vmt {
         VirtualMethodTable::Java { .. } => Some(JAVA_DEFAULT_MODELS),

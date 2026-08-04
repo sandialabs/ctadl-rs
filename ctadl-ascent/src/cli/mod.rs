@@ -12,11 +12,8 @@ as parameters.
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-mod check_models;
-pub use check_models::{
-    Caveat, CheckOptions, CheckReport, EndpointDirection, EndpointReport, FileReport,
-    GeneratorKind, GeneratorReport, ImportSummary, check_models, check_programs,
-};
+mod model_check;
+pub use model_check::{ModelCheckOutcome, check_models, check_programs};
 
 use itertools::Itertools;
 
@@ -362,6 +359,9 @@ pub fn index(
 #[derive(Debug, Clone, Copy)]
 pub struct QueryStatus {
     pub execution_successful: bool,
+    /// True when there was no index and the run reported on the model files alone. The SARIF
+    /// says so in `CTADL0008`; this is so the caller can say it on the terminal too.
+    pub model_check_only: bool,
 }
 
 /// Runs a taint query and formats the results as SARIF.
@@ -370,6 +370,15 @@ pub struct QueryStatus {
 /// not persisted. The `profile` selects what the SARIF reports: path profiles enumerate
 /// source -> sink paths, closure profiles list every tainted instruction (see
 /// [`query_engine::formatter`]).
+///
+/// # Without an index
+///
+/// Model matching is decided per import and only half of it needs an index (see
+/// [`model_check`]). So when the project has not been indexed -- or is *being* indexed, since
+/// the version stamp is written last -- and model files were given, this reports what those
+/// files match in the imported programs rather than failing outright. The SARIF is the ordinary
+/// one, carrying the same notifications and saying in `CTADL0008` what it could not determine;
+/// the run is still a failure, because the query asked for could not be answered.
 pub fn query(
     project: &AnalysisProject,
     models: &[std::path::PathBuf],
@@ -380,6 +389,14 @@ pub fn query(
 ) -> Result<QueryStatus, Error> {
     let start_time_utc = query_engine::formatter::utc_timestamp();
     log::info!("querying project '{}'", project.name);
+    if !project.has_index() {
+        if models.is_empty() {
+            return Err(Error::MissingIndex {
+                project: project.name.clone(),
+            });
+        }
+        return query_model_check(project, models, compact, output, profile, start_time_utc);
+    }
     // Before touching a table: the parquet decoders panic on an encoding they cannot read, and
     // this is what turns that into an actionable "re-run `ctadl index`".
     project.check_index_config()?;
@@ -586,6 +603,74 @@ pub fn query(
     }
     Ok(QueryStatus {
         execution_successful,
+        model_check_only: false,
+    })
+}
+
+/// [`query`] for a project with no index: report what the model files match against the
+/// imported programs, and say plainly that that is all this is.
+///
+/// The output is the ordinary SARIF, written by the ordinary writer, because the questions it
+/// answers are the ones `ctadl query` always answers -- which generators matched nothing, which
+/// declared ports produced no row -- asked of Stage 1 alone. What is different is stated in the
+/// file: see `CTADL0008`.
+fn query_model_check(
+    project: &AnalysisProject,
+    models: &[std::path::PathBuf],
+    compact: bool,
+    output: &Path,
+    profile: query_engine::formatter::SarifProfile,
+    start_time_utc: String,
+) -> Result<QueryStatus, Error> {
+    log::warn!(
+        "project '{}' has no index, so no taint analysis can run. Checking what the given model \
+         file(s) select in the imported program(s) instead -- partial feedback: call sites, \
+         `Argument(*)` and wildcard sinks need the index. Run `ctadl index {}` for a real query",
+        project.name,
+        project.name
+    );
+    let outcome = model_check::check_models(project, models)?;
+    // The counts, on the terminal; the SARIF is where each of them is named and explained.
+    log::info!(
+        "checked {} model file(s) against {} import(s): {} generator(s) matched something, {} \
+         declaration(s) matched nothing, {} generator(s) admitted by no import",
+        models.len(),
+        outcome.check.imports.len(),
+        outcome.check.matched.len(),
+        outcome.dead_declarations(),
+        outcome.check.scope_excluded.len(),
+    );
+
+    let has_file_errors = outcome.has_file_errors();
+    let mut diagnostics = outcome.into_diagnostics();
+    diagnostics.command_line = std::env::args_os()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
+    diagnostics.arguments = std::env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    diagnostics.start_time_utc = start_time_utc;
+
+    let execution_successful =
+        query_engine::formatter::format_model_check_sarif(compact, output, profile, &diagnostics)
+            .err_context(|| "formatting sarif")?;
+    if output.to_str() != Some("-") {
+        log::info!("wrote {}", output.display());
+    }
+    // A file error is reported in the SARIF (`CTADL0012`) rather than raised, so that one typo
+    // does not cost the rest of the check. It still fails the run: `execution_successful` is
+    // already false, since that notification is error-level.
+    if has_file_errors {
+        log::error!(
+            "one or more model files have errors; see {}",
+            output.display()
+        );
+    }
+    Ok(QueryStatus {
+        execution_successful,
+        model_check_only: true,
     })
 }
 

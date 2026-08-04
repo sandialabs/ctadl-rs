@@ -377,16 +377,15 @@ fn index_version_gate_rejects_a_different_version() {
 }
 
 // ---------------------------------------------------------------------------
-// `check-models` against the store. The rest of the command is covered by
-// `tests/check_models.rs`, which drives `check_programs` with no store at all; what is
-// store-specific is name resolution -- and the promise that checking a model file writes
-// nothing.
+// `query` with no index. The rest of the check is covered by `tests/model_check.rs`, which
+// drives `check_programs` with no store at all; what is store-specific is name resolution --
+// and the promise that a query that cannot run writes nothing into the store.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn check_models_expands_an_import_and_writes_nothing() {
+fn query_without_an_index_checks_the_models_and_writes_nothing() {
     run_store_test(|| {
-        let name = "test_check_models";
+        let name = "test_model_check";
         let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
         cli::import(&import, cli::ImportOptions::default()).unwrap();
         // Reloaded: `cli::import` records the APK's native sub-imports into the config.
@@ -407,34 +406,33 @@ fn check_models_expands_an_import_and_writes_nothing() {
             models.flush().unwrap();
         }
 
-        let report = cli::check_models(
-            &[name.to_string()],
-            cli::CheckOptions {
-                models: &[models.path().to_path_buf()],
-                default_models: false,
-                show_matches: None,
-            },
-        )
-        .unwrap();
+        // What `ctadl query <an-import-that-was-never-indexed>` builds: the import list, with
+        // no project written to the store.
+        let project = AnalysisProject::ephemeral(name, &[name]);
+        let outcome = cli::check_models(&project, &[models.path().to_path_buf()]).unwrap();
 
         // Naming the import names everything imported out of it: the APK plus its native
         // libraries, the same expansion `AnalysisProject::try_create` does.
-        let checked: Vec<&str> = report.imports.iter().map(|i| i.name.as_str()).collect();
+        let checked: Vec<&str> = outcome
+            .check
+            .imports
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
         let mut expected = vec![name.to_string()];
         expected.extend(import.sub_imports.iter().cloned());
         assert_eq!(
             checked,
             expected.iter().map(String::as_str).collect::<Vec<_>>()
         );
-        assert!(report.imports.iter().all(|i| i.error.is_none()));
-        assert!(report.files[0].generators[0].functions_total.unwrap() > 0);
+        assert!(!outcome.has_file_errors());
+        assert!(outcome.check.matched[0].total.unwrap() > 0);
 
-        // Checking a model file must not create a project. `AnalysisProject::try_create`
-        // would, which is exactly why the expansion above is not routed through it.
+        // A query that only checked model files must leave the store as it found it.
         let project_dir = StorePaths::projects_path().join(name);
         assert!(
             !project_dir.exists(),
-            "check-models wrote a project config: {}",
+            "the model check wrote a project config: {}",
             project_dir.display()
         );
     });

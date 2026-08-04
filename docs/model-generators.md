@@ -95,18 +95,32 @@ endpoints out over call sites, and expands wildcard sinks; that half needs the i
 functions are never optimized out, the common case — a source or sink that names a function
 call — is fully decided in Stage 1.
 
-`ctadl check-models` runs Stage 1 on its own, so you can find out whether a `where` selects
-anything without waiting for `ctadl index`:
+So `ctadl query` runs Stage 1 on its own when there is no index — because the project was never
+indexed, or is being indexed right now — instead of failing. You can find out whether a `where`
+selects anything without waiting for `ctadl index`:
 
 ```bash
-ctadl check-models my-app --models sources-and-sinks.json5 --show-matches
+ctadl import /path/to/app.apk --name my-app
+ctadl query my-app --models sources-and-sinks.json5 --output check.sarif
 ```
 
-With no import named it lints the files alone: every unknown key, every malformed port, every
-bridge, plus the generator inventory. `--strict` exits non-zero when a generator declared a
-model and matched nothing, which is what makes it usable in CI.
+The output is the ordinary SARIF, and it reports what it found in the notifications a query
+already uses:
 
-What it deliberately cannot tell you, each marked `*` in its output rather than left implicit:
+| Notification | What it says |
+| --- | --- |
+| `CTADL0008` | There was no index, so this is a model check; it also lists what a model check cannot decide (below). |
+| `CTADL0004` | A generator declared a source, a sink, or a propagation and matched nothing — and which of the several reasons it was. |
+| `CTADL0009` | A generator's `in` clause admits none of the programs checked, so it was never evaluated. Not the same thing as matching nothing. |
+| `CTADL0010` | A bridge whose sides cannot be paired, in the same words `ctadl index` would use. |
+| `CTADL0011` | What each live generator's `where` selected: the count, and a few of the names. |
+| `CTADL0012` | A model file that could not be read, or a malformed generator. One typo no longer costs the rest of the check. |
+| `CTADL0100` | The totals, in Stage-1 units. |
+
+The run still exits non-zero: the query you asked for could not be answered. The built-in
+default models are not loaded, exactly as `ctadl query` does not load them.
+
+What it deliberately cannot tell you, all of it stated in `CTADL0008` rather than left implicit:
 
 - **`find: callsites`** — Stage 1 matches the callee (and the caller, for `in_function`). The
   call-site fan-out is Stage 2, so "3 callees" does not mean any call site exists.
@@ -115,12 +129,9 @@ What it deliberately cannot tell you, each marked `*` in its output rather than 
 - **A matched name can still vanish.** Stage 2 raises `CTADL0005` for a name the index does not
   contain.
 - **Bridge pair counts.** The two side counts and the diagnosis need no index; the pair count
-  does, so none is printed.
+  does, so none is reported.
 - **Cross-import bridges.** A bridge's sides can live in two imports, so a bridge verdict is
-  only meaningful when you name every import the real project will index.
-
-Note also that `--default-models` is **off** here, while `ctadl index` loads the defaults and
-`ctadl query` does not — neither answer is the "correct" one, so the choice is explicit.
+  only meaningful when the project holds every import the real one will index.
 
 ---
 
@@ -840,9 +851,9 @@ CTADL reports every flow where data returned by `source()` reaches
 
 ## 10. Tips
 
-- **Run `ctadl check-models` first.** On a new or edited model file it is the fastest way to
-  learn which generators select something and which select nothing, and it needs only the
-  import — no index, no query, no SARIF to read. See §2.
+- **Query before you index.** On a new or edited model file, `ctadl query` against an
+  un-indexed project is the fastest way to learn which generators select something and which
+  select nothing; it needs only the import. See §2.
 - **`signature_match` with `names`/`parents`** is the most maintainable way to
   model families of library methods — group by owning class.
 - **Get the ports right for the language.** Java methods usually taint through
