@@ -5,25 +5,29 @@ What this branch does to the `locals` BYODS store
 set structure on its own, the store driven exactly as Ascent's semi-naive loop drives it, and
 `ctadl index` end to end on generated programs — plus process memory.
 
-Everything below was measured in one session on one machine: Apple M1 Ultra (20 cores, 128 GB),
-macOS 26.5.2 (arm64), rustc 1.94.1, hashbrown 0.16.1, `--release` (`lto = "thin"`).
+Everything below was **re-measured after rebasing this branch onto `e27e1466`**, in one session on
+one machine: Apple M1 Ultra (20 cores, 128 GB), macOS 26.6 (arm64), rustc 1.94.1, hashbrown
+0.16.1, `--release` (`lto = "thin"`). Where a number moved from the pre-rebase measurement, §12
+says so; the store's bytes did not move at all.
 
 ---
 
 ## 1. What is compared
 
-`main` was `6da40f4` when this was measured; this branch forked at `097d526`, and
+This branch is now rebased onto `e27e1466` ("Add human output", #90), so main and the fork point
+are the same commit. Main advanced `6da40f4` → `e27e1466` since the previous measurement, and
 
 ```
-git diff 097d526 6da40f4 -- ctadl-ascent/src/index_engine/
+git diff 6da40f4 e27e1466 -- ctadl-ascent/src/index_engine/
 ```
 
-is **empty** — everything main has added since the fork is front-end work that does not touch
-this store. (Main has since advanced to `64975a9`, "Dex shared library import"; the same diff
-against that tip is also empty, so nothing below is stale.) So "main's `locals` store" is well
-defined, and it is the sorted-`Vec`-then-`HashSet` one:
+is **no longer empty**, as it was then. But every line of it swaps a `log::info!` for a
+`log::debug!` in `mod.rs`, 22 times over. The Ascent program, the rules and the store are
+byte-identical, so "main's `locals` store" is still well defined, and it is still the
+sorted-`Vec`-then-`HashSet` one. What that change does break is the tier-2 harness, which read
+those log lines at INFO (§11).
 
-| | `main` (`6da40f4`) | this branch (`5286e37`) |
+| | `main` (`e27e1466`) | this branch (`6547f3d0`) |
 |---|---|---|
 | a `(F,V)` group | `enum Group { Small(sorted Vec<(P,M,Fp)>), Large(hashbrown::HashSet) }` | one `HybridSet<(P,M,Fp)>` |
 | below 64 leaves | sorted `Vec`, binary search, merge re-copies the group | linear-probe table over bare slots + a `u64` occupancy word, O(delta) merge |
@@ -58,11 +62,13 @@ each, private `CARGO_TARGET_DIR`, same toolchain and profile:
 
 | name | commit | what it is |
 |---|---|---|
-| `main6` | `6da40f4` | **main itself.** No bench harness, and its `heap_report` predates the estimator fix (§8), so it is used for end-to-end *time* and *process memory*, which no estimator touches. |
-| `main` | `9fd4c47` | main's store plus the two things needed to measure it: the bench harnesses and the exact `hb_bytes` (§8). `git diff` against the fork point touches nothing but instrumentation. Every **store-byte** number attributed to main comes from here. |
-| `head` | `5286e37` | this branch. |
+| `maint` | `e27e1466` | **main itself.** No bench harness, and its `heap_report` predates the estimator fix (§8), so it is used for end-to-end *time* and *process memory*, which no estimator touches. |
+| `maini` | `ee9b4c71` | main's store plus the two things needed to measure it: the bench harnesses and the exact `hb_bytes` (§8). It is `e27e1466` with the two instrumentation commits cherry-picked on top, and is tagged `bench/main-instrumented` so this stays reproducible; `git diff e27e1466 bench/main-instrumented -- ctadl-ascent/src/index_engine/` touches nothing but instrumentation. Every **store-byte** number attributed to main comes from here. |
+| `head` | `6547f3d0` | this branch. |
 
-`main6` and `main` are run side by side end to end in §6–§7, which is what licenses the
+(These were `main6` / `main` / `head` before the rebase, at `6da40f4` / `9fd4c47` / `5286e37`.)
+
+`maint` and `maini` are run side by side end to end in §6–§7, which is what licenses the
 substitution: they agree on fixpoint time and process memory to within the run-to-run spread, and
 their store estimates differ only by the estimator fix.
 
@@ -74,23 +80,28 @@ their store estimates differ only by the estimator fix.
   leaf per group**, falling to parity once groups are large enough that their leaves dominate
   (§5). End to end on generated programs it is **33–41 % smaller at every configuration
   measured** (§6), because a real group distribution is singleton-heavy whatever its maximum.
-* **Process memory.** Peak physical footprint is **2.6–14.5 %** below main's at all 13
-  end-to-end configurations and peak RSS **3.4–12.2 %** below at all 13 (§7). Both statistics
-  agree at every cell, and RSS needs no sampling.
+* **Process memory.** Peak RSS is **1.7–11.3 %** below main's at 12 of the 13 end-to-end
+  configurations — and **2.3 % above** at group size 1, which is the one regression this
+  re-measurement found (§7 finding 18a). That gap sits entirely in front-end parquet decoding,
+  before the store holds anything: it comes from a bimodal allocation that all three binaries
+  exhibit, and head drew the expensive mode in every run. Where the peak is contaminated this way
+  — group sizes 1 and 2 — read the mode-robust statistic instead: the footprint grown across the
+  fixpoint is **17.8–51.8 %** below main's at all four configurations where it can be computed,
+  9 of 9 paired passes each (§7 finding 19).
 * **Time.** At store level this branch is faster at every group size from 1 to 4096 leaves, by
-  **5.1 % to 63 %**, winning **9 of 9** paired passes at 12 of those 13 sizes; at 8192 leaves and
-  above the two are level (§5). End to end the effect is much smaller and only partly separable
-  from noise: **−7.3 % and −4.5 %** at group sizes 1 and 2 over 9 paired passes (9/9 and 8/9),
-  and a wash at 32, 64 and 128 (§6.1). The store is a component of the index phase, not the whole
-  of it.
+  **6.1 % to 63 %**, winning **9 of 9** paired passes at 9 of those 13 sizes and 6–8 of 9 at the
+  rest; at 8192 leaves and above the two are level (§5). End to end the effect is much smaller
+  and only partly separable from noise: **−3.0 %, −5.7 % and −7.1 %** at group sizes 1, 2 and 64
+  over 9 paired passes (8/9, 9/9, 8/9), and a wash at 32 and 128 (§6.1). The store is a component
+  of the index phase, not the whole of it.
 * **The set structure.** Below the threshold it holds 24 B/element like main's sorted `Vec` but
-  inserts **1.8–3.5× faster** from 16 elements up (and 1.1–2.6× *slower* at 2–5, where a `Vec`
+  inserts **1.9–3.6× faster** from 16 elements up (and 1.1–2.4× *slower* at 2–5, where a `Vec`
   push is a memcpy); above it, the from-scratch Swiss table allocates the same bytes as hashbrown
   at every size ≥ 5 elements (§4).
-* **The one regression** is a miss against an exactly-full small table, which degenerates to a
-  scan: 39.5 ns at 64 slots against ~5 ns for main's binary search (§4 finding 4). It is bounded,
-  it is the price of load factor 1.0, and the workload that manufactures it is among the fastest
-  configurations measured (§9).
+* **The structural regression** is a miss against an exactly-full small table, which degenerates
+  to a scan: 44.8 ns at 64 slots against ~6 ns for main's binary search (§4 finding 4). It is
+  bounded, it is the price of load factor 1.0, and the workload that manufactures it is among the
+  fastest configurations measured (§9).
 
 ---
 
@@ -108,8 +119,9 @@ their store estimates differ only by the estimator fix.
 | `scripts/locals-bench.py` | **tier 2** — generate → `ctadl import` → `ctadl index`, parsing store bytes, fixpoint time, peak footprint and peak RSS |
 | `HeapReport` additions | `max_group`, `large_groups`, `group_hist` — the store logs its own group-size distribution, which is how the harness verifies the generator hit its target shape |
 
-`cargo test -p ctadl-ascent --lib` is green in both profiles (198 tests, 18 of them in
-`index_engine`: 13 for `HybridSet`, 3 for the Swiss layer, 2 for the store's views), and
+`cargo test -p ctadl-ascent --lib` is green in both profiles (254 tests, 5 ignored, 18 of them in
+`index_engine`: 13 for `HybridSet`, 3 for the Swiss layer, 2 for the store's views — the count
+rose from 198 because the rebase brought main's new tests, not this branch's), and
 `cargo clippy --all-targets -p ctadl-ascent` is clean under the workspace's
 `undocumented_unsafe_blocks = "deny"`.
 
@@ -162,51 +174,51 @@ entry.
 
 | n | B/elem hybrid / vec64 / hash | ins ns | hit ns | miss ns | merge ns |
 |---|---|---|---|---|---|
-| 1 | **32.0** / 96.0 / 108.0 | **16.8** / 23.3 / 24.3 | **2.9** / 3.7 / 4.8 | **1.9** / 2.1 / 2.3 | **17.8** / 21.4 / 53.4 |
-| 2 | **28.0** / 48.0 / 54.0 | 22.4 / **10.6** / 11.4 | 3.2 / 3.0 / **2.6** | 3.0 / 2.8 / **2.0** | **34.7** / 35.9 / 46.0 |
-| 3 | 34.7 / **32.0** / 36.0 | 24.9 / 9.5 / **8.8** | 3.5 / 4.3 / **2.6** | 3.3 / 3.5 / **1.9** | 41.9 / 43.5 / **43.4** |
-| 5 | 40.0 / **38.4** / 41.6 | 24.5 / 22.3 / **22.2** | 4.2 / 7.0 / **3.1** | **2.9** / 3.7 / 3.8 | **44.8** / 52.7 / 51.3 |
-| 8 | 25.0 / **24.0** / 51.0 | **16.2** / 17.3 / 30.6 | **2.7** / 6.2 / 3.3 | 4.7 / **3.6** / 3.7 | **44.2** / 60.7 / 59.8 |
-| 16 | 24.5 / **24.0** / 50.5 | **13.8** / 24.1 / 30.1 | **3.0** / 8.2 / 3.4 | 9.4 / 4.9 / **2.8** | **40.3** / 46.3 / 47.9 |
-| 24 | 32.3 / **32.0** / 33.7 | **14.8** / 29.4 / 20.9 | 2.9 / 10.8 / **2.5** | **2.7** / 4.3 / 2.9 | 43.0 / 42.0 / **35.7** |
-| 31 | 25.0 / **24.8** / 51.9 | **11.5** / 29.1 / 27.6 | 4.3 / 10.6 / **3.6** | 10.3 / 4.3 / **2.6** | **35.1** / 43.3 / 49.3 |
-| 32 | 24.2 / **24.0** / 50.2 | **11.1** / 27.3 / 23.7 | 4.1 / 10.6 / **2.6** | 19.2 / 4.3 / **2.6** | **33.6** / 39.6 / 49.7 |
-| 33 | 46.8 / **46.5** / 48.7 | **17.9** / 33.5 / 23.0 | 3.7 / 14.7 / **2.6** | **2.6** / 6.3 / **2.6** | **36.9** / 45.4 / 45.2 |
-| 40 | 38.6 / **38.4** / 40.2 | **12.4** / 30.8 / 17.6 | 2.7 / 13.5 / **2.6** | 2.6 / 5.7 / **2.4** | **35.8** / 47.8 / 42.6 |
-| 48 | 32.2 / **32.0** / 33.5 | **10.3** / 32.2 / 14.6 | **2.4** / 13.1 / 2.6 | **2.6** / 5.6 / 3.9 | **31.0** / 45.6 / 35.4 |
-| 64 | 24.1 / **24.0** / 50.1 | **9.4** / 33.1 / 17.2 | 3.7 / 12.9 / **2.7** | 39.5 / 5.3 / **2.4** | **25.3** / 44.6 / 46.5 |
-| 65 | **49.4 / 49.4 / 49.4** | 18.9 / 44.6 / **16.8** | 4.6 / **2.7 / 2.7** | **2.1** / 2.3 / 2.3 | **35.1** / 54.3 / 43.6 |
-| 128 | **50.1 / 50.1 / 50.1** | 17.2 / 30.1 / **15.1** | 4.5 / 3.5 / **2.7** | **2.6** / 3.1 / 3.1 | **26.3** / 37.5 / 37.6 |
-| 1024 | **50.0 / 50.0 / 50.0** | 14.6 / 14.8 / **12.4** | 5.8 / **4.2 / 4.2** | **2.1** / 2.6 / 2.6 | **24.7** / 37.1 / 29.9 |
+| 1 | **32.0** / 96.0 / 108.0 | **17.7** / 25.0 / 25.5 | **2.7** / 4.7 / 6.4 | **2.0** / 2.8 / 3.2 | **19.2** / 23.0 / 56.3 |
+| 2 | **28.0** / 48.0 / 54.0 | 23.6 / **11.3** / 12.2 | 3.6 / 3.2 / **2.8** | 3.1 / 3.0 / **1.9** | **37.2** / 37.9 / 49.3 |
+| 3 | 34.7 / **32.0** / 36.0 | 24.1 / 10.1 / **9.4** | 3.3 / 4.5 / **2.7** | 3.5 / 3.8 / **1.7** | **45.0** / 46.4 / 46.5 |
+| 5 | 40.0 / **38.4** / 41.6 | 25.8 / **23.6** / 24.9 | 4.6 / 7.5 / **2.7** | **3.1** / 3.9 / 4.4 | **47.7** / 56.9 / 55.7 |
+| 8 | 25.0 / **24.0** / 51.0 | **17.7** / 24.9 / 32.4 | **2.9** / 6.6 / 3.9 | 5.2 / **3.8** / 5.2 | **46.5** / 65.7 / 64.3 |
+| 16 | 24.5 / **24.0** / 50.5 | **12.8** / 25.6 / 31.5 | **3.0** / 8.8 / 3.7 | 10.5 / 6.1 / **3.1** | **43.3** / 64.0 / 50.6 |
+| 24 | 32.3 / **32.0** / 33.7 | **13.2** / 38.6 / 21.4 | **2.6** / 11.8 / 2.7 | **2.9** / 5.9 / 4.2 | 45.0 / 46.8 / **42.7** |
+| 31 | 25.0 / **24.8** / 51.9 | **12.2** / 30.9 / 29.1 | **4.6** / 11.5 / 5.1 | 11.2 / 4.8 / **2.8** | **37.4** / 47.8 / 59.7 |
+| 32 | 24.2 / **24.0** / 50.2 | **11.7** / 28.9 / 25.3 | 4.4 / 11.4 / **3.8** | 21.1 / 4.9 / **3.2** | **37.4** / 47.9 / 52.5 |
+| 33 | 46.8 / **46.5** / 48.7 | **19.0** / 35.1 / 24.3 | **3.5** / 15.5 / 3.6 | 3.1 / 8.5 / **2.9** | **39.5** / 51.1 / 48.8 |
+| 40 | 38.6 / **38.4** / 40.2 | **13.2** / 36.8 / 23.1 | **3.0** / 13.8 / 3.0 | 2.9 / 7.3 / **2.4** | **38.4** / 55.7 / 51.4 |
+| 48 | 32.2 / **32.0** / 33.5 | **10.9** / 39.3 / 15.7 | **2.6** / 14.2 / 2.9 | **2.7** / 6.6 / 4.1 | **34.3** / 50.2 / 37.9 |
+| 64 | 24.1 / **24.0** / 50.1 | **10.0** / 35.1 / 23.1 | **3.9** / 13.8 / 4.6 | 44.8 / 6.3 / **2.3** | **26.8** / 48.8 / 58.3 |
+| 65 | **49.4 / 49.4 / 49.4** | **15.9** / 45.1 / 18.0 | 3.8 / **3.0 / 3.0** | 2.7 / 2.5 / **2.4** | **36.9** / 60.8 / 49.1 |
+| 128 | **50.1 / 50.1 / 50.1** | 18.0 / 28.3 / **16.1** | 5.2 / **3.0 / 3.0** | **3.4** / 3.8 / 3.5 | **28.0** / 40.8 / 43.7 |
+| 1024 | **50.0 / 50.0 / 50.0** | 15.4 / 15.3 / **13.4** | 8.4 / 6.6 / **6.3** | **2.7** / 3.4 / 2.8 | **26.4** / 41.6 / 31.6 |
 
 The Swiss table on its own (`SMALL = 0`, i.e. the large half used at every size) against
 hashbrown, which is the comparison the spec's "implement a custom one" clause invites:
 
 | n | B/elem swiss / hash | ins ns | hit ns | miss ns | merge ns |
 |---|---|---|---|---|---|
-| 1 | 208.0 / **108.0** | 32.5 / **24.3** | 20.2 / **4.8** | 9.6 / **2.3** | 59.9 / **53.4** |
-| 2 | 104.0 / **54.0** | 17.6 / **11.4** | 12.4 / **2.6** | 6.5 / **2.0** | **40.0** / 46.0 |
-| 3 | 69.3 / **36.0** | **8.1** / 8.8 | 2.8 / **2.6** | 4.5 / **1.9** | **38.3** / 43.4 |
-| 5 | **41.6 / 41.6** | **7.0** / 22.2 | **2.7** / 3.1 | **3.3** / 3.8 | **37.9** / 51.3 |
-| 8 | **51.0 / 51.0** | **16.6** / 30.6 | 3.5 / **3.3** | **3.2** / 3.7 | **43.1** / 59.8 |
-| 16 | **50.5 / 50.5** | **17.2** / 30.1 | 3.7 / **3.4** | **2.6** / 2.8 | **35.5** / 47.9 |
-| 24 | **33.7 / 33.7** | **13.3** / 20.9 | 2.7 / **2.5** | **2.7** / 2.9 | **29.9** / 35.7 |
-| 32 | **50.2 / 50.2** | **16.8** / 23.7 | 2.8 / **2.6** | **2.3** / 2.6 | **31.7** / 49.7 |
-| 48 | **33.5 / 33.5** | **10.2** / 14.6 | 2.8 / **2.6** | **3.3** / 3.9 | **22.9** / 35.4 |
-| 64 | **50.1 / 50.1** | **16.8** / 17.2 | 4.0 / **2.7** | **2.1** / 2.4 | **34.3** / 46.5 |
-| 128 | **50.1 / 50.1** | 15.9 / **15.1** | 3.8 / **2.7** | **2.8** / 3.1 | **30.2** / 37.6 |
-| 1024 | **50.0 / 50.0** | **11.0** / 12.4 | 4.4 / **4.2** | **2.0** / 2.6 | **26.3** / 29.9 |
+| 1 | 208.0 / **108.0** | 33.2 / **25.5** | 19.2 / **6.4** | 11.6 / **3.2** | 65.7 / **56.3** |
+| 2 | 104.0 / **54.0** | 20.0 / **12.2** | 14.4 / **2.8** | 9.4 / **1.9** | **42.4** / 49.3 |
+| 3 | 69.3 / **36.0** | **8.6** / 9.4 | 3.0 / **2.7** | 8.1 / **1.7** | **40.6** / 46.5 |
+| 5 | **41.6 / 41.6** | **7.3** / 24.9 | 2.9 / **2.7** | 5.9 / **4.4** | **40.4** / 55.7 |
+| 8 | **51.0 / 51.0** | **17.4** / 32.4 | 4.1 / **3.9** | **4.7** / 5.2 | **52.3** / 64.3 |
+| 16 | **50.5 / 50.5** | **18.1** / 31.5 | 4.1 / **3.7** | 3.4 / **3.1** | **37.4** / 50.6 |
+| 24 | **33.7 / 33.7** | **14.1** / 21.4 | 2.9 / **2.7** | **3.5** / 4.2 | **31.1** / 42.7 |
+| 32 | **50.2 / 50.2** | **19.7** / 25.3 | **3.7** / 3.8 | 3.5 / **3.2** | **34.8** / 52.5 |
+| 48 | **33.5 / 33.5** | **10.8** / 15.7 | 2.9 / **2.9** | 4.2 / **4.1** | **27.2** / 37.9 |
+| 64 | **50.1 / 50.1** | **17.8** / 23.1 | 4.7 / **4.6** | 2.6 / **2.3** | **38.7** / 58.3 |
+| 128 | **50.1 / 50.1** | 16.9 / **16.1** | 4.6 / **3.0** | **3.5** / 3.5 | **32.1** / 43.7 |
+| 1024 | **50.0 / 50.0** | **12.7** / 13.4 | 7.8 / **6.3** | 2.8 / **2.8** | **28.3** / 31.6 |
 
 **Findings.**
 
 1. **Below the threshold the hybrid matches main's `Vec` on bytes and pulls away from it on
    insert as the group fills.** 24.1 B/element against 24.0 at 64 elements, 24.2 against 24.0 at
-   32 — the occupancy word amortizes away — while insert is 9.4 ns against 33.1 and merge 25.3
-   against 44.6. Main's `Vec` gets *worse* as the group fills (17.3 → 24.1 → 27.3 → 33.1 ns per
+   32 — the occupancy word amortizes away — while insert is 10.0 ns against 35.1 and merge 26.8
+   against 48.8. Main's `Vec` gets *worse* as the group fills (24.9 → 25.6 → 28.9 → 35.1 ns per
    insert from 8 to 64 elements) because `Vec::insert` shifts; the probe table gets *better*
-   (17.3 → 13.8 → 11.1 → 9.4) because more slots mean fewer collisions. That divergence is the
-   whole of §5's time result. **At 2–5 elements it goes the other way** — 22.4 ns against the
-   `Vec`'s 10.6 at n=2 — because a `Vec` push into spare capacity is a memcpy and the probe table
+   (17.7 → 12.8 → 11.7 → 10.0) because more slots mean fewer collisions. That divergence is the
+   whole of §5's time result. **At 2–5 elements it goes the other way** — 23.6 ns against the
+   `Vec`'s 11.3 at n=2 — because a `Vec` push into spare capacity is a memcpy and the probe table
    still hashes. §10 item 3 is the fix; §5 and §6 show the crossover is well below where the
    store actually lives, since a store's small sets are built by *merge*, not by repeated insert,
    and merge is 1.0–1.8× faster at every size measured.
@@ -216,18 +228,19 @@ hashbrown, which is the comparison the spec's "implement a custom one" clause in
 3. **The from-scratch table is hashbrown's layout.** From 5 elements up the two allocate
    *identical* bytes at every size in the sweep — 41.6, 51.0, 50.5, 33.7, 50.2, 33.5, 50.1, 50.0
    B/element — which is what a unit test checks against a live `hashbrown::HashSet` over 2000
-   inserts. It inserts up to 3.2× faster and merges 1.1–1.6× faster (no `growth_left` to
+   inserts. It inserts up to 3.4× faster and merges 1.1–1.5× faster (no `growth_left` to
    maintain, no tombstone handling, equality on whole elements rather than through a closure);
-   hashbrown's only win above the floor is 15.1 vs 15.9 ns of insert at n=128, and lookups agree
-   to within 1.3 ns. Below 5 elements the from-scratch table is 2× *worse* on bytes, because its
+   hashbrown's only wins above the floor are insert at n=128 (16.1 vs 16.9 ns) and n=31 (29.1 vs
+   31.2), and lookups agree to within 1.6 ns. Below 5 elements the from-scratch table is 2×
+   *worse* on bytes, because its
    bucket floor is 8 rather than 4 — a deliberate simplification, in a range the hybrid never
    gives it.
 4. **The known regression: a miss against an exactly-full small table degenerates to a scan** —
-   9.4 ns at 16 slots, 19.2 at 32, **39.5 at 64** — against ~5 ns for main's binary search and
+   10.5 ns at 16 slots, 21.1 at 32, **44.8 at 64** — against ~5–6 ns for main's binary search and
    ~2.5 ns for either hash table. Load factor 1.0 is what buys the 24 B/element. §9 is the
    argument that the workload does not pay it.
 5. **Promotion costs about one insert of latency at the boundary**: at n=65 the hybrid inserts in
-   18.9 ns against the raw Swiss table's 16.6, because reaching 65 means filling a 64-slot probe
+   15.9 ns against the raw Swiss table's 14.2, because reaching 65 means filling a 64-slot probe
    table and then moving it. By n=1024 it is the raw table plus noise.
 
 ---
@@ -244,23 +257,23 @@ Semi-naive shape, one new leaf per group per iteration (pessimal for the delta�
 
 | group | groups | main B/row | head B/row | Δ bytes | +delta main | +delta head | main s | head s | Δ time | paired ratio | head wins |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 1048576 | 213.4 | **117.4** | **−45.0 %** | 312.7 | 184.7 | 0.188 | **0.158** | −15.6 % | 0.849 | 9/9 |
-| 2 | 524288 | 82.7 | **70.7** | −14.5 % | 182.0 | 138.0 | 0.215 | **0.174** | −19.0 % | 0.818 | 9/9 |
-| 4 | 262144 | 53.4 | **47.4** | −11.2 % | 103.0 | 81.0 | 0.208 | **0.157** | −24.3 % | 0.749 | 9/9 |
-| 8 | 131072 | 38.7 | **35.7** | −7.8 % | 63.5 | 52.5 | 0.193 | **0.134** | −30.5 % | 0.688 | 9/9 |
-| 16 | 65536 | 31.3 | **29.8** | −4.8 % | 43.7 | 38.2 | 0.208 | **0.114** | −45.5 % | 0.548 | 9/9 |
-| 32 | 32768 | 27.7 | **26.9** | −2.7 % | 33.9 | 31.1 | 0.219 | **0.104** | −52.5 % | 0.473 | 9/9 |
-| **64** | 16384 | 25.8 | **25.5** | −1.5 % | 28.9 | 27.6 | 0.275 | **0.103** | **−62.7 %** | **0.373** | 9/9 |
-| 128 | 8192 | 51.0 | **50.7** | −0.5 % | 52.5 | 51.8 | 0.220 | **0.126** | −42.9 % | 0.575 | 9/9 |
-| 256 | 4096 | 50.5 | **50.4** | −0.2 % | 51.3 | 50.9 | 0.174 | **0.117** | −32.7 % | 0.671 | 9/9 |
-| 512 | 2048 | 50.2 | 50.2 | −0.1 % | 50.6 | 50.4 | 0.138 | **0.112** | −19.1 % | 0.805 | 9/9 |
-| 1024 | 1024 | 50.1 | 50.1 | −0.1 % | 50.3 | 50.2 | 0.122 | **0.108** | −11.8 % | 0.871 | 9/9 |
-| 2048 | 512 | 50.1 | 50.0 | −0.0 % | 50.2 | 50.1 | 0.111 | **0.104** | −6.7 % | 0.944 | 7/9 |
-| 4096 | 256 | 50.0 | 50.0 | −0.0 % | 50.1 | 50.1 | 0.106 | **0.100** | −5.1 % | 0.945 | 9/9 |
-| 8192 | 128 | 50.0 | 50.0 | −0.0 % | 50.0 | 50.0 | 0.097 | 0.096 | −1.5 % | 0.987 | 5/9 |
-| 16384 | 64 | 50.0 | 50.0 | −0.0 % | 50.0 | 50.0 | **0.090** | 0.096 | +6.2 % | 1.048 | 1/9 |
-| 32768 | 32 | 50.0 | 50.0 | −0.0 % | 50.0 | 50.0 | 0.098 | 0.099 | +1.0 % | 1.009 | 2/9 |
-| 65536 | 16 | 50.0 | 50.0 | −0.0 % | 50.0 | 50.0 | 0.109 | 0.110 | +0.9 % | 1.004 | 3/9 |
+| 1 | 1048576 | 213.4 | **117.4** | **−45.0 %** | 312.7 | 184.7 | 0.191 | **0.157** | −17.7 % | 0.832 | 9/9 |
+| 2 | 524288 | 82.7 | **70.7** | −14.5 % | 182.0 | 138.0 | 0.217 | **0.176** | −18.7 % | 0.816 | 9/9 |
+| 4 | 262144 | 53.4 | **47.4** | −11.2 % | 103.0 | 81.0 | 0.209 | **0.161** | −23.0 % | 0.758 | 9/9 |
+| 8 | 131072 | 38.7 | **35.7** | −7.8 % | 63.5 | 52.5 | 0.194 | **0.141** | −27.4 % | 0.685 | 9/9 |
+| 16 | 65536 | 31.3 | **29.8** | −4.8 % | 43.7 | 38.2 | 0.206 | **0.114** | −44.7 % | 0.548 | 9/9 |
+| 32 | 32768 | 27.7 | **26.9** | −2.7 % | 33.9 | 31.1 | 0.219 | **0.106** | −51.6 % | 0.478 | 9/9 |
+| **64** | 16384 | 25.8 | **25.5** | −1.5 % | 28.9 | 27.6 | 0.276 | **0.103** | **−62.7 %** | **0.377** | 9/9 |
+| 128 | 8192 | 51.0 | **50.7** | −0.5 % | 52.5 | 51.8 | 0.218 | **0.125** | −42.7 % | 0.576 | 9/9 |
+| 256 | 4096 | 50.5 | **50.4** | −0.2 % | 51.3 | 50.9 | 0.178 | **0.117** | −34.1 % | 0.677 | 9/9 |
+| 512 | 2048 | 50.2 | 50.2 | −0.1 % | 50.6 | 50.4 | 0.138 | **0.111** | −19.6 % | 0.790 | 8/9 |
+| 1024 | 1024 | 50.1 | 50.1 | −0.1 % | 50.3 | 50.2 | 0.123 | **0.108** | −12.7 % | 0.865 | 8/9 |
+| 2048 | 512 | 50.1 | 50.0 | −0.0 % | 50.2 | 50.1 | 0.113 | **0.104** | −7.5 % | 0.935 | 8/9 |
+| 4096 | 256 | 50.0 | 50.0 | −0.0 % | 50.1 | 50.1 | 0.106 | **0.099** | −6.1 % | 0.946 | 6/9 |
+| 8192 | 128 | 50.0 | 50.0 | −0.0 % | 50.0 | 50.0 | 0.098 | 0.097 | −1.0 % | 0.952 | 5/9 |
+| 16384 | 64 | 50.0 | 50.0 | −0.0 % | 50.0 | 50.0 | **0.092** | 0.096 | +3.8 % | 1.007 | 3/9 |
+| 32768 | 32 | 50.0 | 50.0 | −0.0 % | 50.0 | 50.0 | 0.100 | 0.099 | −1.3 % | 1.004 | 3/9 |
+| 65536 | 16 | 50.0 | 50.0 | −0.0 % | 50.0 | 50.0 | 0.109 | 0.112 | +2.9 % | 1.007 | 3/9 |
 
 `heap_report()` matches the allocator to **1.00 for both binaries at every group size**, so the
 estimate logged by every real index run is trustworthy at whole-store granularity.
@@ -281,13 +294,13 @@ estimate logged by every real index run is trustworthy at whole-store granularit
    measures exactly that: 96.0 vs 32.0 B/elem at n=1). That is 64 of the 96 B/row; the map entry
    is the other 32. From group size 2 up, main's sorted `Vec` was already 24 B/leaf, so only the
    entry term is left, which is finding 6.
-8. **Time: this branch wins 9 of 9 paired passes at 12 of the 13 group sizes from 1 to 4096**
-   (group 2048 is 7 of 9), by 5.1 % at 4096 leaves up to **63 % at group size 64**. The peak is
-   exactly where main is worst: group size 64 is the largest *un-promoted* sorted `Vec`, so every
-   insert shifts up to 63 leaves and every delta→total merge re-copies the whole group. Both
-   costs are gone. From 8192 leaves per group up the two are level (ratios 0.99–1.05, 1–5 of 9
-   passes) — there main was already a `HashSet` and this is the Swiss table against hashbrown,
-   which §4 finding 3 says is a wash.
+8. **Time: this branch is ahead at every group size from 1 to 4096**, winning 9 of 9 paired
+   passes at 9 of those 13 sizes and 6–8 of 9 at the rest, by 6.1 % at 4096 leaves up to **63 %
+   at group size 64**. The peak is exactly where main is worst: group size 64 is the largest
+   *un-promoted* sorted `Vec`, so every insert shifts up to 63 leaves and every delta→total merge
+   re-copies the whole group. Both costs are gone. From 8192 leaves per group up the two are
+   level (ratios 0.95–1.01, 3–5 of 9 passes) — there main was already a `HashSet` and this is the
+   Swiss table against hashbrown, which §4 finding 3 says is a wash.
 9. **The `delta`/`new` copies still cost more than the store.** `+delta` is 184.7 B/row against
    a `total` of 117.4 at group size 1 — Ascent's delta and new relations hold 1.6× the
    steady-state store — because `absorb` empties them with `fwd.drain()`, which does not free a
@@ -303,7 +316,7 @@ interleaved passes** of the whole sweep with all three binaries alternating over
 generated programs, order rotated each pass. `store MB` is `heap_report()`; it was identical in
 all 5 passes for every cell and is reported as a single value.
 
-| group | rows | groups | max | large | `main6` MB | `main` MB | `head` MB | head vs main |
+| group | rows | groups | max | large | `maint` MB | `maini` MB | `head` MB | head vs `maini` |
 |---|---|---|---|---|---|---|---|---|
 | 1 | 999999 | 857142 | 2 | 0 | 143.2 | 142.1 | **83.6** | **−41.2 %** |
 | 2 | 1083329 | 749997 | 3 | 0 | 133.6 | 133.0 | **82.6** | −37.9 % |
@@ -323,21 +336,21 @@ Fixpoint time — the wall time of the SCC holding the `locals` rules, from Asce
 `#![measure_rule_times]`. Medians of the same 5 passes, plus the paired per-pass ratio against
 actual main:
 
-| group | `main6` s | `main` s | `head` s | head vs main6 | paired ratio | head wins |
+| group | `maint` s | `maini` s | `head` s | head vs `maint` | paired ratio | head wins |
 |---|---|---|---|---|---|---|
-| 1 | 1.011 | 1.007 | **0.934** | −7.6 % | 0.922 | 5/5 |
-| 2 | 1.090 | 1.104 | **0.974** | −10.6 % | 0.909 | 5/5 |
-| 4 | 0.940 | 0.931 | **0.902** | −4.0 % | 0.995 | 3/5 |
-| 8 | 0.721 | 0.745 | **0.692** | −4.0 % | 0.971 | 3/5 |
-| 16 | 0.643 | 0.628 | **0.598** | −7.0 % | 0.947 | 4/5 |
-| 32 | 0.624 | 0.613 | **0.584** | −6.4 % | 0.907 | 4/5 |
-| 63 | 0.627 | 0.632 | **0.579** | −7.7 % | 0.915 | 5/5 |
-| 64 | 0.693 | 0.637 | **0.581** | −16.2 % | 0.910 | 5/5 |
-| 65 | 0.642 | 0.660 | **0.597** | −7.0 % | 0.880 | 5/5 |
-| 128 | 0.612 | 0.598 | **0.555** | −9.3 % | 0.915 | 4/5 |
-| 512 | 0.637 | 0.660 | **0.558** | −12.4 % | 0.944 | 4/5 |
-| 2048 | 0.665 | 0.590 | **0.523** | −21.4 % | 0.918 | 5/5 |
-| 8192 | 0.558 | 0.545 | **0.526** | −5.7 % | 0.926 | 4/5 |
+| 1 | 0.982 | 0.983 | **0.941** | −4.2 % | 0.958 | 5/5 |
+| 2 | 1.036 | 1.032 | **0.979** | −5.5 % | 0.944 | 5/5 |
+| 4 | **0.822** | 0.825 | 0.833 | +1.3 % | 1.002 | 2/5 |
+| 8 | 0.676 | 0.673 | **0.664** | −1.9 % | 0.982 | 5/5 |
+| 16 | 0.588 | 0.583 | **0.585** | −0.4 % | 0.997 | 3/5 |
+| 32 | 0.575 | 0.579 | **0.566** | −1.5 % | 0.985 | 3/5 |
+| 63 | 0.579 | 0.579 | **0.543** | −6.2 % | 0.937 | 5/5 |
+| 64 | 0.584 | 0.585 | **0.546** | −6.7 % | 0.933 | 5/5 |
+| 65 | 0.586 | 0.583 | **0.562** | −4.1 % | 0.961 | 5/5 |
+| 128 | 0.564 | 0.573 | **0.551** | −2.3 % | 0.979 | 5/5 |
+| 512 | 0.548 | 0.548 | **0.536** | −2.2 % | 0.979 | 4/5 |
+| 2048 | 0.539 | 0.534 | **0.533** | −1.1 % | 0.987 | 4/5 |
+| 8192 | 0.515 | 0.519 | **0.508** | −1.3 % | 0.986 | 4/5 |
 
 The group-size distribution the store logs, which is what makes the byte result not decay the way
 §5 says it should (`log2hist` bucket 0 is groups holding exactly one leaf):
@@ -356,7 +369,7 @@ The group-size distribution the store logs, which is what makes the byte result 
 10. **The store is 33.5–41.2 % smaller than main's at every configuration measured.** No
     configuration goes the other way, and the range is narrow — the sweep changes `max_group` by
     four orders of magnitude and the saving moves by 8 points.
-11. **`main6` and `main` agree, which is what licenses the stand-in.** Their store estimates
+11. **`maint` and `maini` agree, which is what licenses the stand-in.** Their store estimates
     differ by 1.1 MB (0.8 %) at group size 1, 0.6 MB at group 2 and ≤ 0.3 MB everywhere else —
     the whole of main's `hb_bytes` overcount (§8), showing up exactly where the store holds the
     most tiny `fidx` tables. Their fixpoint medians and process memory sit on either side of each
@@ -373,35 +386,36 @@ The group-size distribution the store logs, which is what makes the byte result 
     65 (three) → 63.8. That is +27.9 % across the cliff, against main's 82.4 → 96.4 = +17.0 %:
     the cliff is *relatively* steeper here precisely because the un-promoted side got so much
     cheaper. In absolute terms the two pay the same to cross it: 13.9 MB here, 14.0 on main.
-14. **The fixpoint is faster than main's at all 13 configurations by median** — by 4.0 % to
-    21.4 %, with paired ratios 0.88–1.00 and head ahead in 3–5 of 5 passes. **Most of that margin
-    does not survive resampling**; §6.1 is what the timing claim should actually be.
+14. **The fixpoint is faster than main's at 12 of the 13 configurations by median** — by 0.4 % to
+    6.7 %, with paired ratios 0.93–1.00 and head ahead in 2–5 of 5 passes. Group size 4 goes the
+    other way (+1.3 %, 2 of 5). These margins are far smaller than the pre-rebase measurement's
+    −4 % to −21 %, which §6.1 had already flagged as mostly unreproducible; the 9-pass numbers
+    below are what the timing claim should be.
 
 ### 6.1 Nine-pass resample of the fixpoint
 
 Five configurations at **9 interleaved passes**, reported as the paired per-pass ratio (the ratio
 taken within a pass) and the count of passes head won. This is the statistic this machine needs
-(§11), and it was taken while the machine was noisier than the 5-pass sweep — the slowest sample
-in each column is 1.2–1.4× the median, and those slow samples land in the same passes for all
-three binaries, which is exactly what pairing is for.
+(§11). The machine was quiet for this resample — the slowest sample in each column is 1.01–1.14×
+its median, against 1.2–1.4× in the pre-rebase session — so the paired ratios and the medians
+agree here, which they did not before.
 
-| group | head/`main6` | head wins | head/`main` | head wins |
+| group | head/`maint` | head wins | head/`maini` | head wins |
 |---|---|---|---|---|
-| 1 | **0.927** | **9/9** | 0.951 | 7/9 |
-| 2 | **0.955** | **8/9** | 0.985 | 5/9 |
-| 32 | 0.980 | 5/9 | 0.996 | 5/9 |
-| 64 | 0.969 | 6/9 | 0.936 | 7/9 |
-| 128 | 0.984 | 5/9 | 1.025 | 4/9 |
+| 1 | **0.970** | **8/9** | 0.971 | **9/9** |
+| 2 | **0.943** | **9/9** | 0.951 | **9/9** |
+| 32 | 0.986 | 6/9 | 0.983 | 7/9 |
+| 64 | **0.929** | **8/9** | 0.933 | 8/9 |
+| 128 | 0.972 | 7/9 | 0.978 | 7/9 |
 
-15. **End to end, only group sizes 1 and 2 are a defensible timing win**: −7.3 % and −4.5 %
-    against actual main, 9 of 9 and 8 of 9 paired passes. Those are the configurations with the
-    most outer-map entries per leaf (857 k and 750 k groups), which is where §5's byte saving is
-    largest — the same term buying time.
-16. **At group sizes 32, 64 and 128 the fixpoint is a wash.** Median ratios sit at 0.97–0.98
-    against main6 but head wins only 5–6 of 9 passes, and against `main` one configuration goes
-    the other way (1.025 at group 128). The 5-pass sweep's −6 % to −21 % at these sizes is not
-    reproducible and **should not be quoted**. This is the same failure mode §11 warns about, and
-    it is why the sweep's timing column is presented as a direction rather than a figure.
+15. **End to end, group sizes 1, 2 and 64 are a defensible timing win**: −3.0 %, −5.7 % and
+    −7.1 % against actual main, 8 of 9, 9 of 9 and 8 of 9 paired passes. Group sizes 1 and 2 are
+    the configurations with the most outer-map entries per leaf (857 k and 750 k groups), which is
+    where §5's byte saving is largest — the same term buying time. Group size 64 is where main's
+    sorted `Vec` is at its worst (§5 finding 8), the tier-1 effect showing through end to end.
+16. **At group sizes 32 and 128 the fixpoint is a wash.** Median ratios sit at 0.97–0.99 and head
+    wins 6–7 of 9 passes — a direction, not a figure. This is the failure mode §11 warns about,
+    and it is why the sweep's timing column should not be quoted at these sizes.
 17. **The tier-1 result and the tier-2 result are not in conflict.** §5 measures the store alone
     driving 1 M rows through the semi-naive loop, where the store *is* the workload and the
     margin is 5–63 %. Here the same store is one component of an index phase that also parses,
@@ -413,43 +427,68 @@ three binaries, which is exactly what pairing is for.
 
 ## 7. Process memory
 
-Peak physical footprint and peak RSS of the whole `ctadl index` run, median of the 5 passes.
+Peak physical footprint and peak RSS of the whole `ctadl index` run, median of the 5 passes, with
+the five configurations of §6.1 re-measured at 9 passes as a check.
 Footprint is sampled at 20 ms; RSS is the child's own rusage high-water mark, so it needs no
 sampling and is the quieter statistic. Both are whole-process numbers: the front end (parse, SSA,
 codegen — large here, because the programs have up to 143 k functions) is identical in all three
 binaries and dilutes the ratio, so §6's store figures are the ones to quote for the store.
 
-| group | peak fp `main6` / `main` / `head` MB | head vs `main6` | peak rss `main6` / `main` / `head` MB | head vs `main6` |
+| group | peak fp `maint` / `maini` / `head` MB | head vs `maint` | peak rss `maint` / `maini` / `head` MB | head vs `maint` |
 |---|---|---|---|---|
-| 1 | 1027 / 1033 / **930** | −9.4 % | 1558 / 1564 / **1462** | −6.2 % |
-| 2 | 759 / 736 / **653** | −14.0 % | 1289 / 1264 / **1181** | −8.4 % |
-| 4 | 711 / 699 / **625** | −12.0 % | 978 / 965 / **892** | −8.8 % |
-| 8 | 598 / 581 / **513** | −14.2 % | 861 / 846 / **768** | −10.8 % |
-| 16 | 483 / 486 / **452** | −6.4 % | 670 / 673 / **639** | −4.6 % |
-| 32 | 495 / 497 / **482** | −2.6 % | 631 / 625 / **609** | −3.4 % |
-| 63 | 355 / 344 / **305** | −13.9 % | 486 / 489 / **436** | −10.1 % |
-| 64 | 346 / 351 / **302** | −12.6 % | 550 / 539 / **507** | −7.9 % |
-| 65 | 410 / 410 / **390** | −4.8 % | 596 / 596 / **566** | −4.9 % |
-| 128 | 385 / 387 / **363** | −5.8 % | 505 / 502 / **444** | −12.2 % |
-| 512 | 375 / 375 / **320** | −14.5 % | 472 / 469 / **428** | −9.4 % |
-| 2048 | 324 / 321 / **311** | −4.2 % | 417 / 413 / **381** | −8.6 % |
-| 8192 | 313 / 302 / **290** | −7.4 % | 405 / 405 / **370** | −8.8 % |
+| **1** | 924 / 931 / **959** | **+3.7 %** | 1458 / 1465 / **1491** | **+2.3 %** |
+| 2 | 756 / 763 / **669** | −11.5 % | 1284 / 1280 / **1197** | −6.7 % |
+| 4 | 668 / 707 / **635** | −5.1 % | 936 / 975 / **902** | −3.7 % |
+| 8 | 599 / 598 / **528** | −11.9 % | 805 / 862 / **791** | −1.7 % |
+| 16 | 470 / 480 / **452** | −3.7 % | 657 / 668 / **640** | −2.7 % |
+| 32 | 491 / 488 / **479** | −2.5 % | 625 / 628 / **605** | −3.1 % |
+| 63 | 359 / 381 / **304** | −15.4 % | 487 / 484 / **432** | −11.3 % |
+| 64 | 364 / 364 / **292** | −19.9 % | 537 / 536 / **503** | −6.4 % |
+| 65 | 414 / 414 / **380** | −8.2 % | 587 / 588 / **559** | −4.8 % |
+| 128 | 385 / 380 / **360** | −6.4 % | 497 / 496 / **442** | −11.0 % |
+| 512 | 374 / 374 / **320** | −14.4 % | 454 / 454 / **417** | −8.2 % |
+| **2048** | 320 / 318 / 320 | **+0.1 %** | 410 / 410 / **373** | −9.0 % |
+| **8192** | 295 / 295 / 301 | **+2.1 %** | 400 / 400 / **363** | −9.3 % |
 
 **Findings.**
 
-18. **Peak process footprint is 2.6–14.5 % below main's at all 13 configurations, and peak RSS is
-    3.4–12.2 % below at all 13.** Every cell goes the same way in both statistics, which is the
-    strongest form this measurement takes: RSS needs no sampling, so agreement between the two
-    rules out a sampling artifact.
-19. **Unlike the timing, the memory result survives resampling.** The five configurations rerun
-    at 9 passes (§6.1) give peak footprint 932 / 661 / 482 / 312 / 360 MB against the 5-pass
-    sweep's 930 / 653 / 482 / 302 / 363, and peak RSS within 9 MB at all five. Bytes on this
-    machine are reproducible in a way that seconds are not.
+18. **Peak RSS is 1.7–11.3 % below main's at 12 of 13 configurations; group size 1 is 2.3 %
+    *above*.** Peak footprint agrees at 10 of 13 and disagrees at three: group 1 (+3.7 %), 2048
+    (+0.1 %) and 8192 (+2.1 %). The pre-rebase measurement had both statistics below main at all
+    13, which is no longer true — findings 18a and 18b are what changed.
+18a. **The group-size-1 regression is real and reproducible, and it is not the store.** Head's
+    peak is above main's in 7 of 9 paired passes on both statistics, so it is not noise. But the
+    `[mem cp]` checkpoints put the whole gap *before the store is populated*:
+    head reaches "about to enter ascent_run" at 723–740 MB against main's 606–610, and the
+    divergence is already there at "entry (facts loaded)", which is pure front-end parquet
+    decoding — identical code in both binaries. That checkpoint is **bimodal**: over five
+    interleaved fresh runs it reads either ~414 MB or ~545 MB, and **all three binaries show both
+    modes** — `maint` (unmodified main) drew the high mode in 1 of 5, `maini` in 3 of 5, head in
+    5 of 5. Compared within the same mode, head *wins*: ending the fixpoint at 912–932 MB against
+    main's 1036–1044 in the high mode, i.e. ~120 MB lower, which is what §5 predicts. Head drew
+    the expensive mode in every run measured this session; why the draw correlates with the
+    binary at this configuration is not explained. Group size 2 is the same effect with the signs
+    reversed — main drew the high mode in 6 of 9 passes and head in none — which is why its
+    footprint reads −11.5 % over five passes and −24.8 % over nine, while its RSS reads −6.7 %
+    and +1.3 % on the same two samples. Group size 2's process memory should not be quoted
+    either.
+18b. **At group sizes 2048 and 8192 the two statistics contradict each other** — RSS −9.0 % and
+    −9.3 %, footprint +0.1 % and +2.1 % — with no bimodality in the checkpoints to explain it.
+    Neither direction should be quoted at those two sizes.
+19. **The mode-robust statistic still favours this branch.** The footprint *grown across the
+    fixpoint* (`fp_after − fp_before`) cancels whatever mode the front end drew, because both
+    endpoints are inside it. Over the nine-pass resample it is below main's at all four
+    configurations whose checkpoints hold one mode throughout — **−38.0 %** at group size 1,
+    −20.3 % at 32, −17.8 % at 64, **−51.8 %** at 128 — winning 9 of 9 paired passes at each. The
+    fifth, group size 2, cannot be computed: main switched modes mid-sweep, so its own two
+    endpoints come from different regimes. That statistic is the process-level shadow of §5's
+    byte result, and it is the one to quote for the store when the peak is contaminated.
 20. **The process saves more absolute bytes than the `total` store does**, which is the delta
-    copies showing up. At group size 63 the store's `total` is 32.6 MB smaller and the process
-    footprint is 50 MB smaller; at group size 1, 59.6 MB against 97. The ratio is ~1.6× in both
-    cases, and §5's `+delta` column is the reason: Ascent holds `delta` and `new` copies of the
-    same store, they shrink by the same rule, and only the `total` is what `heap_report()`
+    copies showing up. At group size 63 the store's `total` is 32.5 MB smaller and the process
+    footprint is 55 MB smaller; at group size 1 the store is 58.5 MB smaller and the fixpoint's
+    own growth is 117 MB smaller (finding 19 — the peak cannot be used there). The ratio is
+    ~1.7–2.0×, and §5's `+delta` column is the reason: Ascent holds `delta` and `new` copies of
+    the same store, they shrink by the same rule, and only the `total` is what `heap_report()`
     reports. The *percentages* still shrink at process level, because the front end is in the
     denominator and is identical in all three binaries.
 
@@ -515,8 +554,8 @@ Two consequences for reading the rest of this document:
 * Byte counts here are aarch64. On x86-64 add 8 B per hashbrown table (`Group::WIDTH` 16 vs 8);
   bucket *counts* are platform-independent, and the estimator derives the width from the same
   cfg hashbrown uses, so it is exact on both.
-* Main's own reported store size is inflated by this bug. §6 measures how much: main6 (main's
-  estimator) against main (same allocations, exact estimator) on the same programs.
+* Main's own reported store size is inflated by this bug. §6 measures how much: `maint` (main's
+  estimator) against `maini` (same allocations, exact estimator) on the same programs.
 
 ---
 
@@ -533,15 +572,15 @@ promoted set never demotes. §4 measures the step directly: 24.1 B/element at 64
 
 Nothing pulls the other way on memory, so a lower threshold strictly loses: it would move every
 set of 33–64 leaves from 24 to ~50 B/element. What a lower threshold would buy is finding 4's
-worst case — a miss against an exactly-full probe table — which halves from 39.5 ns at 64 slots
-to 19.2 at 32. Two things bound that cost:
+worst case — a miss against an exactly-full probe table — which halves from 44.8 ns at 64 slots
+to 21.1 at 32. Two things bound that cost:
 
 * It is the *miss* path against a table at load factor 1.0, and load factor 1.0 is what buys the
   24 B/element in the first place.
 * The workload that manufactures exactly that shape is not slow. In §5, group size 64 — where
   every group holds exactly 64 leaves in a full 64-slot probe table — is the **fastest**
-  configuration in this branch's whole sweep (0.103 s) and the **slowest** in main's (0.275).
-  End to end, group size 63 sits at 0.579 s in a sweep spanning 0.52–0.97 (§6).
+  configuration in this branch's whole sweep (0.103 s) and the **slowest** in main's (0.276).
+  End to end, group size 63 sits at 0.543 s in a sweep spanning 0.51–0.98 (§6).
 
 Under main's representation the trade ran the other way: the largest un-promoted group was the
 slowest configuration in the whole sweep, because a sorted `Vec` degrades as it fills. §5 finding
@@ -567,8 +606,8 @@ free to be chosen for memory.
    single leaf** at every configuration measured (99–100 % once `max_group` is 128 or more). At
    those sizes comparing is cheaper than hashing, and the small representation is already exactly
    a packed array — the change is to skip the hash when `slots <= 4`. What it would recover is
-   the one place §4 finding 1 has this branch losing to main: 22.4 ns to insert into a 2-element
-   set against the `Vec`'s 10.6.
+   the one place §4 finding 1 has this branch losing to main: 23.6 ns to insert into a 2-element
+   set against the `Vec`'s 11.3.
 4. **A 16-wide group on x86-64.** The word-parallel group is the only implementation, so on
    x86-64 this scans 8 buckets per probe step where hashbrown's SSE2 group scans 16. Adding an
    SSE2 `Group` behind the same three methods (`match_byte`, `match_empty`, `match_full`) is
@@ -584,9 +623,12 @@ free to be chosen for memory.
 
 * **Binaries.** One `git worktree` per commit, private `CARGO_TARGET_DIR`, `cargo build
   --release`, same rustc 1.94.1 and the workspace's `lto = "thin"`. No measured source was
-  modified. The one harness change made for this session is a second, laxer regex in
-  `scripts/locals-bench.py` so it can also parse main's `heap_report` line, which lacks the
-  `groups:` shape suffix this branch added.
+  modified. Two harness changes exist in `scripts/locals-bench.py`: a second, laxer regex so it
+  can also parse main's `heap_report` line, which lacks the `groups:` shape suffix this branch
+  added; and, for the re-measurement, `RUST_LOG=info,ctadl_ascent::index_engine=debug`, because
+  main `e27e1466` moved the store estimate, the SCC times and the `[mem cp]` lines from INFO to
+  DEBUG (§1). Only that one module is raised, so no other module's DEBUG output lands in the
+  fixpoint's hot path and taxes the time being measured.
 * **Interleaving.** Every comparison alternates binaries over the same generated programs, one
   configuration at a time, rotating order each pass, so no binary systematically gets a warmer
   machine. Tiers 0 and 1 use the same rotation over the bench binaries.
@@ -617,6 +659,13 @@ free to be chosen for memory.
   `peak rss` is the child's own rusage high-water mark and needs no sampling. Physical footprint,
   not RSS, is the number that matters on macOS — RSS omits compressed pages (see
   `.claude/skills/measure-process-memory`).
+* **Whole-process peaks are contaminated by a bimodal front end** and, at group sizes 1 and 2,
+  that mode is worth more than the whole store saving. Fact loading settles at either ~414 MB or
+  ~545 MB of footprint, per process, in *all three* binaries; the two modes then carry through to
+  the peak. §7 finding 18a is the evidence. Where a comparison must be robust to it, use the
+  footprint grown across the fixpoint (`fp_after − fp_before`), which cancels the mode, or read
+  the store's own bytes from §6. This did not show up in the pre-rebase measurement, and it is
+  the reason two of §7's cells changed sign.
 * **Row counts across a sweep are held near a target, not exactly equal** (the generator produces
   ~5K+2 rows per function for group size K); the actual count is reported per row and all per-row
   figures are normalized by it.
@@ -627,3 +676,42 @@ free to be chosen for memory.
   singleton groups for every K-leaf group. That is faithful to real targets (many tiny, few huge)
   but it means the end-to-end tier cannot isolate group-size effects on total bytes the way the
   structure tier (where *every* group has the target size) can. Read the two together.
+
+---
+
+## 12. What moved when this was re-measured on the rebase
+
+Everything above was re-run after rebasing onto `e27e1466`, with the same generators, the same
+pass counts and the same three-binary interleaving. What follows is only what differs between the
+two sessions, so a reader who knows the old numbers does not have to diff the tables.
+
+**Nothing moved on bytes.** Every store-byte figure in §4, §5 and §6 came back *identical* —
+tier-1 `total B/row` bit-for-bit at all 17 group sizes, tier-2 `store MB` to the reported decimal
+at all 13 configurations, and the group histograms to the individual group. The rebase brought no
+change to the store, and the byte result does not depend on machine state.
+
+**One regression, and it is not the store.** Peak process memory at group size 1 went from 9.4 %
+*below* main to 3.7 % *above* on footprint, and 6.2 % below to 2.3 % above on RSS (§7). The cause
+is a bimodal front-end allocation of ~130 MB that all three binaries exhibit and that head drew
+the expensive side of in every run; measured within one mode, or measured as the footprint grown
+across the fixpoint, this branch is still ~120 MB ahead (§7 finding 18a, 19). No source change on
+either side explains it, and it was not visible in the previous session.
+
+**Two cells where footprint and RSS now contradict each other**, group sizes 2048 and 8192: RSS
+−9 %, footprint +0.1 % and +2.1 % (§7 finding 18b). Previously both read the same way. Neither
+direction should be quoted there.
+
+**End-to-end timing got a little better and a lot more consistent.** The 9-pass paired ratios
+moved 0.927 → 0.970 at group size 1, 0.955 → 0.943 at 2, 0.980 → 0.986 at 32, 0.969 → **0.929**
+at 64 and 0.984 → 0.972 at 128; group size 64 is now a defensible win (8 of 9 passes) where it
+was a wash, and no configuration reads above 1.000 against either main binary, where the previous
+session had 1.025 at group 128. The 5-pass sweep's absolute fixpoint times fell across the board
+(e.g. 1.011 → 0.982 s at group size 1), so the *margins* shrank even where the ratios held.
+
+**Tier-1 time is unchanged in shape, marginally noisier at the tail.** Head still wins by 6.1 %
+to 63 % from group size 1 to 4096; the 9-of-9 sweeps thinned to 6–8 of 9 at group sizes 512–4096,
+and the one adverse cell moved from +6.2 % at group 16384 to +3.8 % (§5 finding 8).
+
+**Tier-0's known regression got slightly worse**: the miss against an exactly-full 64-slot table
+is 44.8 ns, against 39.5 before (§4 finding 4). The bytes at that size are unchanged, so this is
+the same trade at the same price, measured on a slightly slower day.

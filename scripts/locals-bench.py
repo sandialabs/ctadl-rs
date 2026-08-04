@@ -9,7 +9,7 @@ binary, so what is measured is the store as the index phase actually drives it.
 
 What is reported, per configuration:
 
-  * store bytes    -- `LocalsIndCommon::heap_report()` (logged at INFO by the index phase).
+  * store bytes    -- `LocalsIndCommon::heap_report()` (logged at DEBUG by the index phase).
                       Cross-checked against a counting allocator by
                       `cargo bench -p ctadl-ascent --bench locals_trie`: accurate to <1% for
                       the whole store, so it is used here as the per-structure number that
@@ -146,7 +146,7 @@ def parse_log(log):
         m = INCREASE_RE.search(log)
         if not m:
             raise RuntimeError("no `locals store estimate` or `relation increase: locals` line "
-                               "in index output (was the index run with RUST_LOG=info?)")
+                               "in index output (was the index run with the index_engine module at DEBUG?)")
         rows, groups = int(m.group(1)), int(m.group(2))
         rec = {
             "store_mb": 0.0, "rows": rows, "b_per_row": 0.0, "fwd_mb": 0.0,
@@ -186,7 +186,11 @@ def run_config(ctadl, workdir, funcs, group_size, paths, keep):
     if rc != 0:
         raise RuntimeError(f"import failed for group_size={group_size}:\n{out}")
 
-    env = dict(os.environ, RUST_LOG="info")
+    # The store estimate, the scc times and the `[mem cp]` lines all live in
+    # `ctadl_ascent::index_engine` and moved from INFO to DEBUG in main `e27e1466`. Raise that
+    # one module rather than the whole log, so no other module's DEBUG output lands in the
+    # fixpoint's hot path and taxes the time being measured.
+    env = dict(os.environ, RUST_LOG="info,ctadl_ascent::index_engine=debug")
     rc, out, wall, peak_fp, peak_rss = sh(
         [ctadl, "--store", str(store), "index", "bench"], env=env)
     if rc != 0:
