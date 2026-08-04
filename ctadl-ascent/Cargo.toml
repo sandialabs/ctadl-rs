@@ -1,6 +1,6 @@
 [package]
 name = "ctadl-ascent"
-version = "0.1.1"
+version.workspace = true
 edition = "2024"
 default-run = "ctadl"
 
@@ -69,6 +69,10 @@ immortal = { path = "../immortal" }
 test-log = "0.2.19"
 # Building the split APKs of an app bundle (native-only, resource-only) as test fixtures.
 zip = "0.6"
+# For `examples/show-regions.rs` only. Examples see dev-dependencies, so putting
+# it here keeps it out of the shipped binary. The example's other crates (clap,
+# serde, serde_json, url) are already ordinary dependencies above.
+percent-encoding = "2.3"
 
 [lints]
 workspace = true

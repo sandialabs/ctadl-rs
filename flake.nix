@@ -4,6 +4,15 @@
     nixpkgs.url = "github:NixOS/nixpkgs";
     utils.url = "github:numtide/flake-utils";
     ctadl-souffle.url = "github:sandialabs/ctadl";
+    # Only the release builds use fenix: they cross-compile, and cross-compiling
+    # with naersk needs a rustc that carries the *target's* std alongside a cargo
+    # that runs on the builder. fenix serves those upstream Rust artifacts per
+    # target; nixpkgs' rustc only ships std for its own host. Everything else in
+    # this flake still builds with the nixpkgs toolchain.
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -13,6 +22,7 @@
       utils,
       naersk,
       ctadl-souffle,
+      fenix,
     }:
     utils.lib.eachDefaultSystem (
       system:
@@ -89,19 +99,45 @@
             exec ${jdk}/bin/java -jar ${jar} "$@"
           '';
 
-        # `dex-reader` is a workspace-excluded crate (its bins must stay out of
-        # the distro), so we build it on its own for the linemap step of the DEX
-        # tests rather than expecting it in packages.default.
+        # The one version this tree has. Read rather than repeated so these
+        # derivations stay named after it; see the root Cargo.toml.
+        workspaceVersion = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
+
+        # `dex-reader` is the DEX dumper the linemap step of the DEX regression
+        # tests runs. It is an *example* of the dex-reader crate, not a bin, so
+        # that a plain `cargo build` -- which is what packages.default runs --
+        # leaves it out of the distro. Examples are not built by default, so
+        # ask for it by name.
+        #
+        # Two details of the target selection:
+        #
+        # - The src is the whole workspace, not ./dex-reader. dex-reader is a
+        #   workspace member now, and a member cannot be built alone: its
+        #   `version.workspace = true` needs the root manifest.
+        # - `--lib` rides along with `--examples` for naersk's sake. naersk
+        #   builds dependencies in a first pass over a stub source tree, which
+        #   has no examples/ directory; with `--examples` alone that pass
+        #   matches no targets, builds nothing, and the dependency caching it
+        #   exists for is lost. `--lib` gives it the crate's real dependencies
+        #   to chew on.
+        #
+        # naersk installs whatever cargo reports as an executable, and an
+        # example is one, so this lands at $out/bin/dex-reader as before.
         dex-reader = naersk-lib.buildPackage {
-          src = ./dex-reader;
+          src = ./.;
+          version = workspaceVersion;
+          name = "dex-reader";
           release = false;
+          cargoBuildOptions = x: x ++ [ "--package" "dex-reader" "--lib" "--examples" ];
         };
 
-        # `jvm-reader` is workspace-excluded for the same reason; build its bin
-        # for the JVM E2E linemap step rather than expecting it in packages.default.
+        # `jvm-reader` is the same arrangement for the JVM E2E linemap step.
         jvm-reader = naersk-lib.buildPackage {
-          src = ./jvm-reader;
+          src = ./.;
+          version = workspaceVersion;
+          name = "jvm-reader";
           release = false;
+          cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" "--lib" "--examples" ];
         };
 
         # The two classes jvm-reader's `flow.rs` unit tests load at runtime,
@@ -160,6 +196,14 @@
             pkgs.ghidra-bin
           ];
         };
+
+        # The distributable `ctadl` binaries, one per released target. What each
+        # one is, why it cannot just be `packages.default`, and which builder
+        # can produce which target all live in ./nix/release.nix.
+        release = import ./nix/release.nix {
+          inherit pkgs naersk fenix;
+          src = ./.;
+        };
       in
       {
         packages.default = naersk-lib.buildPackage ./.;
@@ -188,6 +232,11 @@
             perl = null;
           }
         );
+
+        # The distributable binaries. They live under `legacyPackages` rather
+        # than `packages` for the same reason the example above does; see
+        # ./nix/release.nix for the rest.
+        legacyPackages.release = release;
 
         # CI/test logic lives under `checks` so the nightly GitHub workflow can run
         #   nix build .#checks.<system>.regression .#checks.<system>.dex-reader-tests
@@ -250,29 +299,43 @@
                   mkdir -p "$out"
                 '';
 
-            # The dex-reader crate is workspace-excluded (its bins must not ship
-            # in the distro), so `cargo test --workspace` never runs its tests.
-            # Run its pure-Rust unit tests here instead, built offline by naersk
-            # in test mode. No external toolchain needed. The integration-style
+            # dex-reader's pure-Rust unit tests, built offline by naersk in test
+            # mode. No external toolchain needed. The integration-style
             # full-parse checks (compiled samples + the real-world APK) were
             # moved to `xtask regression`.
+            #
+            # `cargo test --workspace` in the test workflow now covers these
+            # too -- dex-reader is a workspace member, where it used to be
+            # excluded. This check is kept because it runs on the nightly's Nix
+            # builder with no toolchain assumptions, and because it costs
+            # nothing to keep.
+            #
+            # `--package` is not optional here: without it, `src = ./.` would
+            # test the whole workspace, which is a far larger build than this
+            # check wants.
             dex-reader-tests = naersk-lib.buildPackage {
-              src = ./dex-reader;
+              src = ./.;
+              version = workspaceVersion;
+              name = "dex-reader-tests";
               mode = "test";
+              cargoBuildOptions = x: x ++ [ "--package" "dex-reader" ];
+              cargoTestOptions = opts: opts ++ [ "--package" "dex-reader" ];
             };
 
-            # jvm-reader is workspace-excluded for the same reason (its bin must
-            # not ship in the distro), which also keeps its tests out of
-            # `cargo test --workspace`. Run them here. Its `flow.rs` unit tests
-            # are `#[ignore]`d and load two classes at runtime from
-            # JVM_READER_TEST_FIXTURES (compiled from source by jvmTestFixtures,
-            # below); `--include-ignored` runs them. The integration-style
-            # checks were moved to `xtask regression`.
+            # jvm-reader's unit tests, same arrangement. `cargo test --workspace`
+            # does *not* subsume this one: the `flow.rs` tests are `#[ignore]`d
+            # and load two classes at runtime from JVM_READER_TEST_FIXTURES
+            # (compiled from source by jvmTestFixtures, below), so only a run
+            # with both the fixtures and `--include-ignored` exercises them.
+            # The integration-style checks were moved to `xtask regression`.
             jvm-reader-tests = naersk-lib.buildPackage {
-              src = ./jvm-reader;
+              src = ./.;
+              version = workspaceVersion;
+              name = "jvm-reader-tests";
               mode = "test";
               JVM_READER_TEST_FIXTURES = "${jvmTestFixtures}";
-              cargoTestOptions = opts: opts ++ [ "--" "--include-ignored" ];
+              cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" ];
+              cargoTestOptions = opts: opts ++ [ "--package" "jvm-reader" "--" "--include-ignored" ];
             };
           in
           {
