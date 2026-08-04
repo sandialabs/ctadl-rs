@@ -2,24 +2,26 @@
 //! open-addressed table; once it is large it is a **Swiss table**. Either way it stays *one*
 //! structure, not an enum over two.
 //!
-//! A Datalog index on `K` needs a `Map<K, Set<V>>` (see `locals-trie-benchmark.md` §1). This is
-//! the `Set<V>` half of that. In the workloads that motivate it, the number of values per key
-//! spans four orders of magnitude: most keys hold a couple of values, and a few hold thousands.
-//! No single representation is right for both ends.
+//! A Datalog index on `K` needs a `Map<K, Set<V>>`. This is the `Set<V>` half of that. In the
+//! workloads that motivate it, the number of values per key spans four orders of magnitude: most
+//! keys hold a couple of values, and a few hold thousands. No single representation is right for
+//! both ends.
 //!
 //! * A Swiss table is wrong for 2 elements. Its bucket count is a power of two, held at 87.5%
-//!   load or less. So it rounds a 2-element set up to a whole group of buckets, then adds one
-//!   control byte per bucket plus a group mirror. That comes to 108 B in hashbrown, or 216 B in
-//!   the table here, whose floor is one 8-bucket group, to hold 48 B of payload. A real index
-//!   holds about 400k such tiny sets, and at that multiple the slack *is* the store.
+//!   load or less, and it adds one control byte per bucket plus a group mirror. So 48 B of
+//!   payload — two 24 B leaves — costs 108 B in hashbrown, which rounds up to its 4-bucket
+//!   floor, and 208 B in the table here, which has no 4-bucket regime and so rounds up to one
+//!   8-bucket group. A real index holds about 400k such tiny sets, and at that multiple the
+//!   slack *is* the store.
 //! * A linear scan is wrong for 10 000 elements. So is anything that re-copies the whole set
 //!   when a delta is merged into it. That is what made large groups quadratic to build.
 //!
 //! So a [`HybridSet`] probes linearly up to [`SMALL_THRESHOLD`] elements, and switches to Swiss
-//! probing above that. The spec asks us to write the upper representation here rather than take
-//! it from a library. [`swiss`] is therefore a SwissTable built from scratch, with control
-//! bytes, word-parallel group scans, and hashbrown's sizing rules. Its own module docs describe
-//! it, including the three places where it deliberately parts company with hashbrown.
+//! probing above that. The spec this implements asks us to write the upper representation here
+//! rather than take it from a library. [`swiss`] is therefore a SwissTable built from scratch,
+//! with control bytes, word-parallel group scans, and hashbrown's sizing rules. Its own module
+//! docs describe it, including the three places where it deliberately parts company with
+//! hashbrown.
 //!
 //! ## Not an enum
 //!
@@ -42,24 +44,30 @@
 //! routine, one element addressing rule, one `Drop`, one `Clone`, one growth path, and one
 //! iterator serve both, and `len` and `capacity` do not branch at all. `raw`'s module docs give
 //! the full argument. The short version is that the enum this replaces cost a discriminant on
-//! every access, two of every impl, and 8 bytes on **every** entry of the enclosing map, whether
-//! or not that entry ever grew past two elements.
+//! every access, two of every impl, and 16 bytes on **every** entry of the enclosing map,
+//! whether or not that entry ever grew past two elements.
 //!
 //! ## Choosing the threshold
 //!
-//! [`SMALL_THRESHOLD`] is not hard-wired. It is the default of the `SMALL` const parameter, so a
-//! measurement can sweep it without editing the structure; `locals-trie-benchmark.md` §9 argues
-//! for the value we chose. Setting `SMALL = 0` gives a pure Swiss table, which is the A/B the
-//! `hybrid_set` bench runs against `hashbrown`.
+//! [`SMALL_THRESHOLD`] is 64: the spec's value, and the largest a `u64` occupancy bitmask
+//! admits. It is not hard-wired, though. It is the default of the `SMALL` const parameter, so a
+//! measurement can sweep it without editing the structure. Setting `SMALL = 0` gives a pure
+//! Swiss table, which is the A/B the `hybrid_set` bench runs against `hashbrown`.
 //!
-//! Promotion roughly doubles the bytes a set spends per element. A Swiss table holds a 24 B
+//! What the threshold decides is **how much of the size distribution pays for promotion**, and
+//! promotion roughly doubles the bytes a set spends per element: a Swiss table holds a 24 B
 //! element in a power-of-two bucket array at 87.5% load or less, which comes to about 50 B per
-//! element, against the probe table's 24 B. Without removals, a set that crosses the threshold
-//! never comes back. The threshold therefore decides how much of the size distribution pays that
-//! step, and it should sit *above* the bulk of the distribution. We measured 16, 32, and 64 on
-//! the `locals` workloads. 64 is the best of the three: it keeps 33-to-64-element sets at 24 B
-//! per element, worth 14% of the whole store where such sets occur, and it costs no measurable
-//! time.
+//! element against the probe table's 24 B. Without removals, a set that crosses the threshold
+//! never comes back, so that step is never refunded. Nothing pulls the other way on memory, so
+//! a lower threshold strictly loses: it would move every set of 33 to 64 elements from 24 to
+//! about 50 B per element.
+//!
+//! What a lower threshold *would* buy is the one case this design is measurably worse at — a
+//! miss against an exactly-full probe table, which degenerates to a scan and halves from about
+//! 45 ns at 64 slots to about 21 ns at 32. We do not take that trade, because load factor 1.0 is
+//! what buys the 24 B per element in the first place, and because the workload that manufactures
+//! exactly that shape — every group holding exactly 64 leaves — is the *fastest* configuration
+//! in the store-level sweep, not the slowest.
 //!
 //! ## Transitioning
 //!
@@ -702,8 +710,8 @@ mod tests {
 
     /// The set is two words wide, whatever it holds. Those two words are a pointer into one
     /// allocation, at its metadata, with its elements lying below, and a packed slot-or-bucket
-    /// count and element count. That is 8 bytes narrower than the enum it replaced, on every
-    /// entry of the enclosing map.
+    /// count and element count. That is 16 bytes narrower than the 32-byte enum it replaced, on
+    /// every entry of the enclosing map.
     #[test]
     fn set_is_two_words() {
         let word = std::mem::size_of::<usize>();

@@ -28,7 +28,7 @@
 //!   - one heap allocation per group, instead of `1 + (#distinct P)` tiny hash tables;
 //!   - leaves packed 24 B each, with no per-element control bytes. In the small
 //!     representation the whole occupancy map is a single `u64` word beside the slots;
-//!   - a group that is only two words wide, so the outer map entry is 32 B rather than 40.
+//!   - a group that is only two words wide, so the outer map entry is 32 B rather than 48.
 //!     One structure changes regime as it grows; it is not an enum over two representations;
 //!   - existence checks that probe rather than scan, at every group size.
 //!
@@ -156,8 +156,8 @@ pub fn hb_bytes(capacity: usize, elem: usize) -> usize {
 ///
 /// A `HybridSet` is a two-word structure. While the group holds at most [`SMALL_THRESHOLD`]
 /// leaves it probes linearly over its bare element slots. That is by far the common case: 67
-/// to 100% of the groups in a measured store hold exactly *one* leaf
-/// (`locals-trie-benchmark.md` §6). Above the threshold it switches to Swiss probing, which
+/// to 100% of the groups hold exactly *one* leaf, in every store we have measured, whatever
+/// the largest group in it was. Above the threshold it switches to Swiss probing, which
 /// keeps the per-iteration delta->total merge at O(delta) instead of re-copying the whole
 /// accumulated group every round. Being two words rather than three saves 8 B on *every* entry
 /// of the forward map, whether or not that entry ever gets promoted.
@@ -839,7 +839,7 @@ where
         // what lets us return `None` for a `P` the group does not hold, which cuts the caller's
         // whole join. Without it, a miss would hand the planner a `Some` that it has to drive
         // to exhaustion. The scan costs O(group), it stops at the first match, and the median
-        // group holds a single leaf (`locals-trie-benchmark.md` §6).
+        // group holds a single leaf.
         if !group.iter().any(|(pp, _, _)| *pp == p) {
             return None;
         }

@@ -35,7 +35,7 @@
 //! that decides it provably cannot be ambiguous; see [`RawTable::MIN_LARGE_BUCKETS`].
 //!
 //! The result is **16 bytes**, namely `{ptr, cap, len}`, for any `T`. The enum this replaces cost
-//! 24, on *every* set the enclosing map holds, whether or not that set ever promotes. Being
+//! 32, on *every* set the enclosing map holds, whether or not that set ever promotes. Being
 //! narrower is not the only gain: `len` and `capacity` no longer branch at all, the iterator is
 //! one type rather than three, and growth, promotion, cloning, dropping, and freeing are each
 //! written once for both regimes.
@@ -71,9 +71,9 @@
 //! load-factor slack, only `Vec`-style doubling slack.
 //!
 //! This is the one place where the design is measurably worse than either alternative. A *miss*
-//! against a completely full table costs about 19 ns at 32 slots and about 40 ns at 64, against
-//! about 2.5 ns for a sorted `Vec` or a `hashbrown` table (`locals-trie-benchmark.md` §4,
-//! finding 4).
+//! against a completely full table costs about 21 ns at 32 slots and about 45 ns at 64, against
+//! about 5 to 6 ns for a sorted `Vec`'s binary search and about 2.5 ns for a `hashbrown` table.
+//! [`super::SMALL_THRESHOLD`]'s docs argue why the workload does not pay for that.
 //!
 //! # Transitioning
 //!

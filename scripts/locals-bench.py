@@ -101,8 +101,9 @@ HEAP_RE = re.compile(
     r"groups: max (\d+), large (\d+), mean ([\d.]+), log2hist \[([^\]]*)\]"
 )
 # A build from before this branch (e.g. `main`) logs the same line without the `groups:` shape
-# suffix, which `HeapReport` grew here. Parse it too, so `main` itself can be measured; note its
-# `hb_bytes` predates the fix in `locals-trie-benchmark.md` §8 and so overcounts small tables.
+# suffix, which `HeapReport` grew here. Parse it too, so `main` itself can be measured; note that
+# its `hb_bytes` assumed hashbrown's minimum table was 8 buckets rather than 4, so it reports
+# every table of <=3 elements at twice its real size.
 LEGACY_HEAP_RE = re.compile(
     r"locals store estimate: total ([\d.]+) MB over (\d+) rows \(([\d.]+) B/row\) \| "
     r"fwd ([\d.]+) MB \((\d+)%\): (\d+) \(F,V\) groups, (\d+) \(F,V,P\) entries, (\d+) leaves \| "
@@ -119,9 +120,9 @@ UNIT = {"ns": 1e-9, "µs": 1e-6, "ms": 1e-3, "s": 1.0}
 def parse_log(log):
     """Pull the store shape, the dominant SCC's time, and the fixpoint's memory delta.
 
-    A build with the `#[ds(locals_trie)]` attribute removed (the A/B baseline against Ascent's
-    default relation storage -- see `locals-trie-benchmark.md`) logs no store estimate. Fall
-    back to the row/variable counts from the stats line so the same harness measures both.
+    A build with the `#[ds(locals_trie)]` attribute removed -- the A/B baseline against Ascent's
+    default relation storage -- logs no store estimate. Fall back to the row/variable counts
+    from the stats line so the same harness measures both.
     """
     m = HEAP_RE.search(log)
     if m:
@@ -244,7 +245,7 @@ def main():
                     help="approximate `locals` rows to hold constant across the sweep")
     ap.add_argument("--group-sizes", default="1,2,4,8,16,32,64,65,128,512,2048,8192",
                     help="comma-separated group sizes to sweep (65 straddles the "
-                         "GROUP_HASHSET_THRESHOLD=64 promotion)")
+                         "SMALL_THRESHOLD=64 promotion to a Swiss table)")
     ap.add_argument("--paths", type=int, default=1,
                     help="distinct access paths per group (secondary knob)")
     ap.add_argument("--workdir", default=None, help="where to put generated programs/stores")

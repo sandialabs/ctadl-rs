@@ -14,7 +14,9 @@
 //! check `HeapReport`'s own estimator against it: the `est/real` column below is
 //! `locals_trie::hb_bytes`'s whole-store prediction over the counting allocator's truth. (The
 //! only per-table check left on `hb_bytes` is `hybrid_set`'s `bucket_counts_track_hashbrown`,
-//! which covers 8 B elements in tables of 8 buckets or more; see `locals-trie-benchmark.md` §8.)
+//! which covers 8 B elements in tables of 8 buckets or more. hashbrown's 4-bucket floor, which
+//! `hb_buckets` models with its `.max(4)`, has no direct test; this whole-store ratio is what
+//! stands in for one.)
 //!
 //! Leaf/key types are plain integers chosen to have the same sizes and hashing cost as the
 //! production instantiation (`FunctionId`, `FlowVariable`, `Path`, `FormalIndex`, `Path`):

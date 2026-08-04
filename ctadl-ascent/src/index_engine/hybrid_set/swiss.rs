@@ -1,9 +1,9 @@
 //! The Swiss-table machinery that [`super::raw::RawTable`] runs on once a set is large: control
 //! bytes, word-parallel group scans, quadratic group probing, and hashbrown's sizing rules.
 //!
-//! `locals-trie-benchmark.md` §1 records the spec. It asks for the above-threshold representation
-//! to be "implemented like a `hashbrown::HashTable` … not actually use the `HashTable` type or any
-//! built-in hashtable". So we rebuild the SwissTable design here: **one control byte per bucket**
+//! The spec this implements asks for the above-threshold representation to be "implemented like a
+//! `hashbrown::HashTable` … not actually use the `HashTable` type or any built-in hashtable". So
+//! we rebuild the SwissTable design here: **one control byte per bucket**
 //! holding the top 7 bits of the hash, scanned a whole **group** at a time with word-parallel
 //! arithmetic, over a power-of-two bucket array held at 87.5% load or less.
 //!
@@ -55,7 +55,8 @@
 //!   target feature. We always use the word-parallel one ([`Group`], 8 bytes at a time). On
 //!   aarch64, where we measure, that is exactly what hashbrown itself compiles to, because its
 //!   NEON group is also 8 wide. On x86-64, hashbrown would scan 16 buckets per step where we scan
-//!   8; see `locals-trie-benchmark.md` §11.
+//!   8, so the timings we quote should not be assumed to carry there. The *bytes* are
+//!   platform-independent, and 8 B per table smaller than hashbrown's on x86-64.
 
 use std::mem;
 

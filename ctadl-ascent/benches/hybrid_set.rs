@@ -3,21 +3,20 @@
 //! representations it is competing with.
 //!
 //! This is the data structure on its own — no `locals` store, no Ascent, no views. The
-//! store-level and end-to-end numbers are `cargo bench -p ctadl-ascent --bench locals_trie` and
-//! `scripts/locals-bench.py`; see `locals-trie-benchmark.md`.
+//! store-level and end-to-end numbers come from `cargo bench -p ctadl-ascent --bench locals_trie`
+//! and `scripts/locals-bench.py`.
 //!
 //! Run with:
 //!     cargo bench -p ctadl-ascent --bench hybrid_set
 //!     cargo bench -p ctadl-ascent --bench hybrid_set -- --tsv   # machine-readable
 //!
-//! Five representations, all holding the production leaf `(Path, FormalIndex, Path)` = 24 B:
+//! Four representations, all holding the production leaf `(Path, FormalIndex, Path)` = 24 B:
 //!
 //! | column   | representation                                                             |
 //! |----------|----------------------------------------------------------------------------|
 //! | `hybrid` | [`HybridSet`]: linear probing under `SMALL_THRESHOLD`, Swiss probing above  |
 //! | `swiss`  | the same structure with `SMALL = 0` — this crate's own hashbrown model      |
 //! | `vec64`  | the shipped predecessor: sorted `Vec` under 64 elements, `HashSet` above    |
-//! | `vec32`  | the same, thresholded at 32 — isolates representation from threshold        |
 //! | `hash`   | `hashbrown::HashSet` at every size, i.e. no hybrid at all                   |
 //!
 //! `swiss` against `hash` is the A/B that answers "is the hand-written table as good as the
@@ -106,7 +105,8 @@ type Leaf = (u64, i16, u64);
 
 type Set<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 
-/// The set operations an index needs of its value collection (`locals-trie-benchmark.md` §1).
+/// The set operations an index needs of its value collection: the spec's `insert`, `contains`
+/// and `a.merge(b)`, plus the `len` the harness checks them against.
 trait Bag: Default {
     /// Displayed name.
     const NAME: &'static str;
@@ -433,9 +433,9 @@ struct Row {
     merge_bytes_per_elem: f64,
 }
 
-/// Deltas merged in to build one set, mirroring the ~6 semi-naive iterations a real fixpoint
-/// takes (`locals-trie-benchmark.md` §6). Held constant across `n` so the merge column measures
-/// merge cost per element rather than a varying number of merges.
+/// Deltas merged in to build one set, in the same ballpark as the number of semi-naive
+/// iterations a real fixpoint takes. Held constant across `n` so the merge column measures merge
+/// cost per element rather than a varying number of merges.
 const ROUNDS: usize = 8;
 
 fn measure<B: Bag>(n: usize, paths: usize) -> Row {

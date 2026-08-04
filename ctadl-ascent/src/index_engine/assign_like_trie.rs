@@ -147,10 +147,12 @@ where
     ///
     /// The leaf container is a `Vec`, which dedups by linear scan, and deliberately **not** a
     /// `HashSet`. Keyed on `(F, Vsrc)`, `assign_like` fans out to fewer than 2 leaves per group on
-    /// average; we measured 1.85 on binary targets. A whole hashbrown table per group costs at
-    /// least about 216 B to hold 1 or 2 elements, which is far more than the full-tuple index it
-    /// is meant to replace. A trie with `HashSet` leaves measured *larger* than Ascent's default
-    /// storage. A `Vec` stores a singleton or tiny group in a few dozen bytes.
+    /// average; we measured 1.85 on binary targets. A whole hashbrown table per group costs about
+    /// 108 B to hold 1 or 2 leaves — hashbrown's smallest table is 4 buckets, each holding a 24 B
+    /// leaf, plus a control byte per bucket and the group mirror — which is far more than the
+    /// full-tuple index it is meant to replace. A trie with `HashSet` leaves measured *larger*
+    /// than Ascent's default storage. A `Vec` stores a singleton or tiny group in a few dozen
+    /// bytes.
     ///
     /// Dedup costs O(group size), but groups are tiny, so it is cheap in practice. The
     /// max-group-size `WARN` in [`AssignTrie::heap_report`] guards that assumption.

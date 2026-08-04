@@ -4,7 +4,7 @@
 `locals(FunctionId, FlowVariable, Path, FormalIndex, Path)` is stored by
 `ctadl-ascent/src/index_engine/locals_trie.rs` as one group per `(F,V)` holding the
 `(P, FormalIndex, Fp)` leaves. Group *size* is the shape parameter the whole module design
-turns on (sorted `Small` Vec vs. promoted `Large` HashSet at 64 leaves), so this generator
+turns on (a linear-probing set under 64 leaves, a Swiss table above), so this generator
 makes it a knob and scales it from 1 to tens of thousands while keeping the total row count
 fixed -- which is what makes time/memory comparable across the sweep.
 
@@ -19,7 +19,8 @@ How the shape is produced (all through ordinary flow, no special casing in the e
   * `--paths D` spreads those K formals over D distinct *access paths* of one variable, by
     chunking them and storing each chunk into its own field: `obj.p0 = c0; obj.p1 = c1; ...`.
     The group for `obj` then holds K leaves over D distinct `P` values, which is what makes
-    the `0_1_2` `partition_point` range probe non-trivial.
+    the `0_1_2` view's per-`P` filter non-trivial: a group is an unordered set, so that view
+    scans the group rather than slicing a contiguous run.
   * `--funcs N` replicates the function N times to scale total rows independently of group
     size.
 
@@ -85,7 +86,7 @@ def main() -> int:
         # (`locals store estimate: ... groups: max ...`); this is the design intent.
         print(f"funcs={args.funcs} group_size={args.group_size} paths={args.paths}")
         print(f"expected max_group={args.group_size}")
-        print(f"expected promoted (Large) groups: "
+        print(f"expected promoted (Swiss) groups: "
               f"{'yes' if args.group_size > 64 else 'no'} (threshold 64)")
         return 0
 
