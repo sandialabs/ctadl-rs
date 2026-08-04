@@ -74,5 +74,13 @@ zip = "0.6"
 # serde, serde_json, url) are already ordinary dependencies above.
 percent-encoding = "2.3"
 
+[[bench]]
+name = "locals_trie"
+harness = false
+
+[[bench]]
+name = "hybrid_set"
+harness = false
+
 [lints]
 workspace = true

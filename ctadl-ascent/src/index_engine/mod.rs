@@ -53,6 +53,7 @@ use crate::facts::{
 };
 
 pub mod assign_like_trie;
+pub mod hybrid_set;
 pub mod locals_trie;
 pub mod source_info;
 
