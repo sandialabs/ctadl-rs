@@ -911,7 +911,9 @@ pub fn save_program_info(
 }
 
 /// Load a serialized [`ProgramInfo`] from the import directory. The source info is elided.
-fn load_program_info_without_source_info(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
+pub fn load_program_info_without_source_info(
+    import: &ArtifactImport,
+) -> Result<ProgramInfo, Error> {
     let path = &import.program_path();
     log::debug!("reading {}", path.display());
     let data =

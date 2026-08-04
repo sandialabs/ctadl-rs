@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -122,7 +122,7 @@ async fn run() -> Result<(), Error> {
         .map(|s| parse_pair(s))
         .collect::<Result<_, _>>()?;
 
-    let mut project = match ctadl_ascent::project::AnalysisProject::try_load_name(&args.project_name) {
+    let project = match ctadl_ascent::project::AnalysisProject::try_load_name(&args.project_name) {
         Ok(p) => p,
         Err(e) => {
             let mut err_msg = format!("{}", e);
@@ -137,12 +137,11 @@ async fn run() -> Result<(), Error> {
             std::process::exit(1);
         }
     };
-    project.dir = ctadl_ascent::project::StorePaths::projects_path().join(&args.project_name);
     let parquet_index_path = project.index_path()?;
 
     let mut parquet_source_info_path = PathBuf::new();
     for import_name in &project.imports {
-        let mut import = match ctadl_ascent::project::ArtifactImport::load_by_name(import_name) {
+        let import = match ctadl_ascent::project::ArtifactImport::load_by_name(import_name) {
             Ok(i) => i,
             Err(e) => {
                 let mut err_msg = format!("{}", e);
@@ -159,7 +158,6 @@ async fn run() -> Result<(), Error> {
                 std::process::exit(1);
             }
         };
-        import.import_path = ctadl_ascent::project::StorePaths::import_path().join(&import.name);
         parquet_source_info_path = import.source_info_dir();
     }
     if parquet_source_info_path.as_os_str().is_empty() {
@@ -215,7 +213,7 @@ async fn run() -> Result<(), Error> {
     .await?;
 
     let all_arts_df = ctx
-        .sql("SELECT canonical_path FROM artifacts")
+        .sql("SELECT canonical_path FROM artifacts ORDER BY canonical_path")
         .await?
         .collect()
         .await?;
@@ -266,6 +264,11 @@ async fn run() -> Result<(), Error> {
             if match_len > max_match_len {
                 max_match_len = match_len;
                 best_match = Some(art.clone());
+            } else if match_len == max_match_len {
+                // Deterministic tie-break: pick lexicographically smallest artifact path.
+                if best_match.as_ref().is_none_or(|b| art < b) {
+                    best_match = Some(art.clone());
+                }
             }
         }
 
@@ -407,37 +410,26 @@ async fn run() -> Result<(), Error> {
             if *f != func_id.id {
                 return false;
             }
-            if let ctadl_ascent::facts::FlowVariableKind::CallArg(packed) = v1.kind() {
-                if let Ok(call_arg) = ctadl_ascent::facts::CallArgId::try_from(packed) {
-                    if call_arg.insn_id.id == *i {
-                        return true;
-                    }
-                }
+            if let ctadl_ascent::facts::FlowVariableKind::CallArg(packed) = v1.kind()
+                && let Ok(call_arg) = ctadl_ascent::facts::CallArgId::try_from(packed)
+                && call_arg.insn_id.id == *i
+            {
+                return true;
             }
-            if let ctadl_ascent::facts::FlowVariableKind::CallArg(packed) = v2.kind() {
-                if let Ok(call_arg) = ctadl_ascent::facts::CallArgId::try_from(packed) {
-                    if call_arg.insn_id.id == *i {
-                        return true;
-                    }
-                }
+            if let ctadl_ascent::facts::FlowVariableKind::CallArg(packed) = v2.kind()
+                && let Ok(call_arg) = ctadl_ascent::facts::CallArgId::try_from(packed)
+                && call_arg.insn_id.id == *i
+            {
+                return true;
             }
             false
         });
 
         if is_target {
-            target_vertices.push((
-                *func_id,
-                None,
-                ctadl_ascent::facts::FlowVertex(v1.clone(), p1.clone()),
-            ));
-            target_vertices.push((
-                *func_id,
-                None,
-                ctadl_ascent::facts::FlowVertex(v2.clone(), p2.clone()),
-            ));
+            target_vertices.push((*func_id, None, ctadl_ascent::facts::FlowVertex(*v1, *p1)));
+            target_vertices.push((*func_id, None, ctadl_ascent::facts::FlowVertex(*v2, *p2)));
         }
     }
-
 
     let mut insn_to_func = BTreeMap::new();
     for (site_packed, _, _) in &index_facts.actual_param {
@@ -456,30 +448,42 @@ async fn run() -> Result<(), Error> {
     let mut model_endpoints = Vec::new();
     let index_path = project.index_path()?;
     let ids = ctadl_ascent::facts::IdMap::try_load(&index_path)?;
+    // First pass: load shipped default models into a match accumulator.
+    // We'll run Stage 2 (index-dependent endpoint resolution + expansion) once, after the
+    // loop, because it also needs the union-find over the whole `assign_like` relation.
+    let mut model_matches = ctadl_ascent::models::ProgramModelMatches::default();
     for import in project.iter_imports() {
-        let mut import = import?;
-        import.import_path = ctadl_ascent::project::StorePaths::import_path().join(&import.name);
+        let import = import?;
         let program_info = ctadl_ascent::cli::load_program_info_without_source_info(&import)?;
-        let s = ctadl_ascent::models::try_load_default_models(&program_info)?;
-        let (eps, _formals) = ctadl_ascent::cli::build_query_endpoints(
-            &s.endpoint,
-            &index_facts,
-            &ids,
-            &index_result.assign_like,
+        let match_index = ctadl_ascent::models::ProgramMatchIndex::new(
+            &program_info,
+            ctadl_ascent::models::ImportScope::new(import.language, &import.name),
         );
-        for (ep,) in eps {
-            model_endpoints.push(ep);
-        }
+        // Load whatever defaults apply for this program's VMT.
+        ctadl_ascent::models::try_load_default_models(&match_index, &mut model_matches)?;
+
+        // Flowy endpoints are already resolved against the call graph and don't need Stage 2.
         if import.language == ctadl_ascent::project::ArtifactLanguage::Flowy {
-            let eps = ctadl_ascent::codegen::flowy::get_endpoints(&import, &ids, &index_facts.call)?;
+            let eps =
+                ctadl_ascent::codegen::flowy::get_endpoints(&import, &ids, &index_facts.call)?;
             for (ep,) in eps {
                 model_endpoints.push(ep);
             }
         }
     }
 
-
-
+    // Stage 2: resolve default (name-based) matched endpoints against the index and expand
+    // call-site fan-out / wildcard sinks.
+    let built = ctadl_ascent::query_engine::build_query_endpoints(
+        &model_matches.endpoints,
+        &index_facts,
+        &ids,
+        &index_result.assign_like,
+    );
+    for (ep,) in built.endpoints {
+        model_endpoints.push(ep);
+    }
+    let built_formals = built.formals;
 
     if !args.sources.is_empty() {
         model_endpoints.retain(|ep| ep.direction != FactsTaintDirection::Forward);
@@ -495,6 +499,7 @@ async fn run() -> Result<(), Error> {
                             label: Label("user_source".into()),
                             direction: FactsTaintDirection::Forward,
                             call_site: None,
+                            saturating: false,
                         });
                     } else {
                         eprintln!("Warning: could not find function for source {}", s);
@@ -522,6 +527,7 @@ async fn run() -> Result<(), Error> {
                             label: Label("user_sink".into()),
                             direction: FactsTaintDirection::Backward,
                             call_site: None,
+                            saturating: false,
                         });
                     } else {
                         eprintln!("Warning: could not find function for sink {}", s);
@@ -535,10 +541,16 @@ async fn run() -> Result<(), Error> {
         }
     }
 
-    for ep in &model_endpoints {
-        endpoints.push((ep.clone(),));
-    }
+    let want_forward = matches!(direction, TaintDirection::All | TaintDirection::Fwd);
+    let want_backward = matches!(direction, TaintDirection::All | TaintDirection::Bwd);
 
+    for ep in &model_endpoints {
+        if (want_forward && ep.direction == FactsTaintDirection::Forward)
+            || (want_backward && ep.direction == FactsTaintDirection::Backward)
+        {
+            endpoints.push((ep.clone(),));
+        }
+    }
 
     for (func_id, site_packed, vertex) in target_vertices {
         if matches!(direction, TaintDirection::Fwd | TaintDirection::All) {
@@ -548,6 +560,7 @@ async fn run() -> Result<(), Error> {
                 label: Label("target_fwd".into()),
                 direction: FactsTaintDirection::Forward,
                 call_site: site_packed,
+                saturating: false,
             },));
         }
         if matches!(direction, TaintDirection::Bwd | TaintDirection::All) {
@@ -557,6 +570,7 @@ async fn run() -> Result<(), Error> {
                 label: Label("target_bwd".into()),
                 direction: FactsTaintDirection::Backward,
                 call_site: site_packed,
+                saturating: false,
             },));
         }
     }
@@ -565,8 +579,11 @@ async fn run() -> Result<(), Error> {
         endpoints.len()
     );
 
+    let mut formal_param = index_facts.formal_param.clone();
+    formal_param.extend(built_formals);
+
     let query_facts = QueryFacts {
-        formal_param: index_facts.formal_param.clone(),
+        formal_param,
         actual_param: index_facts.actual_param.clone(),
         call: index_facts.call.clone(),
         assign: index_result.assign_like.clone(),
@@ -602,7 +619,8 @@ async fn run() -> Result<(), Error> {
             rev_edges.push((succ, i as u32, rev_label));
         }
     }
-    let rev_graph = ctadl_ascent::query_engine::formatter::LabeledTaintGraph::new(graph.num_nodes(), rev_edges);
+    let rev_graph =
+        ctadl_ascent::query_engine::formatter::LabeledTaintGraph::new(graph.num_nodes(), rev_edges);
 
     let mut all_sources: BTreeSet<&QueryEndpoint> = BTreeSet::new();
     let mut all_sinks: BTreeSet<&QueryEndpoint> = BTreeSet::new();
@@ -632,24 +650,24 @@ async fn run() -> Result<(), Error> {
         bwd: Vec::new(),
     };
 
+    let mut seen_fwd: HashSet<Vec<u32>> = HashSet::new();
+    let mut seen_bwd: HashSet<Vec<u32>> = HashSet::new();
+
     for endpoint_tuple in &endpoints {
         let endpoint = &endpoint_tuple.0;
-        let start_n = (
-            endpoint.infunc,
-            endpoint.vertex.0.clone(),
-            endpoint.vertex.1.clone(),
-        );
+        let start_n = (endpoint.infunc, endpoint.vertex.0, endpoint.vertex.1);
         if let Some(&start_id) = node_to_id.get(&start_n) {
             if endpoint.direction == FactsTaintDirection::Forward {
                 for sink in &all_sinks {
-                    let end_n = (sink.infunc, sink.vertex.0.clone(), sink.vertex.1.clone());
-                    if let Some(&target_id) = node_to_id.get(&end_n) {
-                        if let Some(path) =
+                    let end_n = (sink.infunc, sink.vertex.0, sink.vertex.1);
+                    if let Some(&target_id) = node_to_id.get(&end_n)
+                        && let Some(path) =
                             find_annotated_path_to_set(&graph, start_id, |n, _s: &TaintState| {
                                 n == target_id
                             })
-                        {
-                            let path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
+                    {
+                        let path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
+                        if seen_fwd.insert(path_ids.clone()) {
                             let path_res = build_path(
                                 &path_ids,
                                 &id_to_node,
@@ -663,15 +681,17 @@ async fn run() -> Result<(), Error> {
                 }
             } else if endpoint.direction == FactsTaintDirection::Backward {
                 for source in &all_sources {
-                    let target_n = (source.infunc, source.vertex.0.clone(), source.vertex.1.clone());
-                    if let Some(&target_id) = node_to_id.get(&target_n) {
-                        if let Some(path) =
-                            find_annotated_path_to_set(&rev_graph, start_id, |n, _s: &TaintState| {
-                                n == target_id
-                            })
-                        {
-                            let mut path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
-                            path_ids.reverse();
+                    let target_n = (source.infunc, source.vertex.0, source.vertex.1);
+                    if let Some(&target_id) = node_to_id.get(&target_n)
+                        && let Some(path) = find_annotated_path_to_set(
+                            &rev_graph,
+                            start_id,
+                            |n, _s: &TaintState| n == target_id,
+                        )
+                    {
+                        let mut path_ids: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
+                        path_ids.reverse();
+                        if seen_bwd.insert(path_ids.clone()) {
                             let path_res = build_path(
                                 &path_ids,
                                 &id_to_node,
@@ -743,10 +763,10 @@ fn build_path(
         };
 
         let mut byte_offset = None;
-        if let Some(site) = node_to_site.get(out_node) {
-            if let Some((_, offset)) = site_to_loc.get(&(site.0.id, site.1.id)) {
-                byte_offset = Some(*offset);
-            }
+        if let Some(site) = node_to_site.get(out_node)
+            && let Some((_, offset)) = site_to_loc.get(&(site.0.id, site.1.id))
+        {
+            byte_offset = Some(*offset);
         }
 
         path.push(CtadlDataResult {
@@ -766,33 +786,34 @@ fn main() {
     }
 }
 
+fn parse_vertex_str(
+    s: &str,
+) -> Option<(ctadl_ascent::facts::FlowVariable, ctadl_ascent::facts::Path)> {
+    if let Some(rest) = s.strip_prefix("call-arg(")
+        && let Some(idx) = rest.find(')')
+    {
+        let inner = &rest[..idx];
+        let mut parts = inner.split(',');
+        let insn_str = parts.next()?.trim();
+        let formal_str = parts.next()?.trim();
+        let insn_id = insn_str.parse::<u64>().ok()?;
+        let formal = formal_str.parse::<i16>().ok()?;
 
-fn parse_vertex_str(s: &str) -> Option<(ctadl_ascent::facts::FlowVariable, ctadl_ascent::facts::Path)> {
-    if let Some(rest) = s.strip_prefix("call-arg(") {
-        if let Some(idx) = rest.find(')') {
-            let inner = &rest[..idx];
-            let mut parts = inner.split(',');
-            let insn_str = parts.next()?.trim();
-            let formal_str = parts.next()?.trim();
-            let insn_id = insn_str.parse::<u64>().ok()?;
-            let formal = formal_str.parse::<i16>().ok()?;
+        let call_arg_id = ctadl_ascent::facts::CallArgId::new(
+            ctadl_ascent::facts::InsnId { id: insn_id },
+            ctadl_ascent::facts::FormalIndex::from(formal),
+        );
+        let packed = ctadl_ascent::facts::PackedCallArg::try_from(call_arg_id).ok()?;
+        let var = ctadl_ascent::facts::FlowVariableKind::CallArg(packed).into();
 
-            let call_arg_id = ctadl_ascent::facts::CallArgId::new(
-                ctadl_ascent::facts::InsnId { id: insn_id },
-                ctadl_ascent::facts::FormalIndex::from(formal),
-            );
-            let packed = ctadl_ascent::facts::PackedCallArg::try_from(call_arg_id).ok()?;
-            let var = ctadl_ascent::facts::FlowVariableKind::CallArg(packed).into();
+        let path_str = &rest[idx + 1..];
+        let path = if path_str.is_empty() {
+            ctadl_ascent::facts::Path::empty()
+        } else {
+            path_str.parse::<ctadl_ascent::facts::Path>().ok()?
+        };
 
-            let path_str = &rest[idx+1..];
-            let path = if path_str.is_empty() {
-                ctadl_ascent::facts::Path::empty()
-            } else {
-                path_str.parse::<ctadl_ascent::facts::Path>().ok()?
-            };
-
-            return Some((var, path));
-        }
+        return Some((var, path));
     }
     None
 }
