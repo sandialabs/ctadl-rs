@@ -116,7 +116,7 @@ fn test_cli_import_apk_without_native_libs() {
             reloaded.sub_imports
         );
         // Nothing was extracted, so the staging directory was never created.
-        assert!(!import.import_path.join("native").exists());
+        assert!(!import.import_path().join("native").exists());
     });
 }
 
@@ -299,7 +299,7 @@ fn test_hash_artifact_file_and_dir() {
 
 //        assert!(project.name == "test_index_project");
 //        assert_eq!(project.imports, &["test_index_artifact"]);
-//        assert!(project.dir.is_dir());
+//        assert!(project.dir().is_dir());
 //        assert!(project.index_path().is_ok());
 //        assert!(project.index_path().unwrap().is_dir());
 //        assert!(project.config_path().is_file());

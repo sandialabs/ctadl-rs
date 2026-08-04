@@ -30,10 +30,10 @@ pub fn ghidra_available() -> bool {
 /// Import pcode facts from an artifact by running Ghidra and then converting the facts
 pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.artifact_path;
-    let import_path = &import.import_path;
+    let import_path = import.import_path();
 
     // Run Ghidra to generate facts
-    ghidra::run_ghidra_export(path, import_path)?;
+    ghidra::run_ghidra_export(path, &import_path)?;
 
     let facts_dir = import_path.join("facts");
 
