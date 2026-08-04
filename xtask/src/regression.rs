@@ -458,9 +458,11 @@ fn resolve_models_dir(override_dir: Option<&Path>) -> Result<Option<PathBuf>> {
 /// Ensure the executables needed for the selected cases are available.
 ///
 /// Runs once, single-threaded, before any worker starts. It (re)builds the `ctadl` binary from
-/// current source and records its path, so it's not stale. The reader binaries
-/// (`dex-reader`/`jvm-reader`) are workspace-excluded and come from `PATH`, so those are still just
-/// presence-checked here.
+/// current source and records its path, so it's not stale. The reader programs
+/// (`dex-reader`/`jvm-reader`) are cargo *examples* rather than bins, so that they stay out of the
+/// distro; they come from `PATH` (the Nix `testEnv` builds them) and are still just
+/// presence-checked here. To supply them by hand: `cargo build --example dex-reader` and put
+/// `target/debug/examples` on `PATH`.
 fn preflight(cases: &[TestCase], ghidra_selected: bool, release: bool) -> Result<()> {
     let bin = prebuilt_ctadl()?.map_or_else(|| build_ctadl(release), Ok)?;
     // First (and only) writer; a later worker reading it back via `ctadl_bin`
