@@ -63,20 +63,46 @@ point at which both halves of the address translation are known. A Ghidra addres
 is `image_base + (ELF vaddr - first PT_LOAD p_vaddr)`; that last term is read from
 the ELF rather than assumed to be zero, and logged when it is not.
 
-An entry whose address has no function keeps its row with `function: null`. It is
-counted, not dropped: dropping one would punch a hole in the contiguity step 4
-depends on.
+**Branch veneers are followed.** A `fnPtr` is not always the implementation. When
+the linker cannot reach it from the table's range it emits a *veneer* — a
+four-byte stub holding one `B` — and that stub's address is what reaches
+`RegisterNatives`. Ghidra makes no function out of a bare thunk, so the entry
+would resolve to nothing. When and only when the pointer itself named no
+function, the scan decodes one AArch64 `B` at `fn_addr`, checks the target is
+executable, and resolves that instead. The hop is recorded as `veneer_target`;
+`fn_addr` keeps the address the table holds, so a spot-check against the ELF still
+lines up. A veneer Ghidra *did* make a function of is left alone — that function
+is already the right answer, and following it would name the callee instead.
+
+Three deliberate limits, each of them measured rather than assumed:
+
+- **One hop.** Every veneer in the reference corpus branches straight to its
+  implementation. A chain would leave the row unresolved, exactly as before.
+- **`B` only.** `BL` differs by one bit and would follow a call out of a real
+  function body.
+- **AArch64 only.** Decoding the four shapes a 32-bit linker emits over every
+  unresolved row in the corpus finds one candidate, whose target is not a function
+  either. The 32-bit misses are ordinary Thumb function bodies the disassembler did
+  not recognize — no branch to follow.
+
+An entry whose address has no function, after that, keeps its row with
+`function: null`. It is counted, not dropped: dropping one would punch a hole in
+the contiguity step 4 depends on.
 
 ### 3. Persist as a sidecar
 
 `jni-registry.json` is written into the import directory beside `ir-vmt.bitcode`,
 with `JNI_REGISTRY_FILE` and `ArtifactImport::jni_registry_path()` next to the
 existing accessors. Rows carry both `table_addr` (what attribution orders by) and
-`fn_addr` (what a human spot-checks against the ELF), sorted by `table_addr`.
+`fn_addr` (what a human spot-checks against the ELF), sorted by `table_addr`, plus
+`veneer_target` on the rows that went through a veneer.
 
 A sidecar rather than a new VMT column, so **`IMPORT_FORMAT_VERSION` stays `"5"`**
 and every existing import keeps loading. An import without the file contributes
-nothing. Every field carries `#[serde(default)]`.
+nothing. Every field carries `#[serde(default)]`, which is what let `veneer_target`
+be added later without a version bump: a sidecar written before it reads back with
+the field absent, which is `None`, which is what a row that resolved directly says
+anyway.
 
 `ctadl inspect <import-dir>/jni-registry.json` prints the rows. That dispatch is
 two-sited, and both sites have a branch; since the file is JSON rather than
@@ -239,6 +265,15 @@ the Thumb bit set, a `fnPtr` outside executable code, the three quiet no-ops, an
 `.rela.dyn` typed `SHT_ANDROID_RELA` asserted to be ignored — the same fixture with
 `SHT_RELA` asserts the opposite, so it tests the gate rather than the fixture.
 
+Veneers get five more: the instruction decoder against the word Messenger 563
+actually ships (`0x17ff246e` at `0x40e74`, which is `0xa02c`) plus both extremes of
+the immediate; `BL`, `RET`, a real `STP` prologue and padding all rejected, since
+`BL` is one bit away and following it would leave the function; a `fnPtr` at a
+veneer recording its target while `fn_addr` stays put; a `fnPtr` at ordinary code
+recording nothing; and a branch leaving executable code refused. The ELF32 test
+asserts no veneer target, which is a statement about the machine gate rather than
+about the fixture's bytes.
+
 **Link-level tests, `jni/tests.rs`** — a native bound only by registration, a
 registration beating a matching symbol with exactly one bridge emitted, a
 registration rescuing an overload the short symbol cannot resolve, an unattributed
@@ -304,6 +339,11 @@ measured.
 Totals across the thirteen: **3428 table entries in 99 libraries, 3354 attributed
 (97.8%)**, and linked native methods rising from **9077 to 11 294** — 2217 methods
 that had no implementation before.
+
+This table records the run as it stood before branch veneers were followed. That
+change moved one row of it: Messenger 563 now reads **97 (96)** rather than 54
+(53). Everything else, including every entry and attribution count, is unaffected —
+re-running Facebook Lite and Messenger 570 reproduced their rows exactly.
 
 **Every entry, library and attribution count the plan predicted was reproduced
 exactly** — all eleven packages the plan tabulated, including the two largest.
@@ -371,22 +411,28 @@ defect, and the gap will never close:
 1. **Duplicate registrations.** Telegram's 83 entries are only 78 distinct
    `(name, descriptor)` pairs — `nativeCacheDirectBufferAddress` is registered 4×
    and `nativeDataIsRecorded` 3× across different classes.
-2. **Ghidra creates no function at the `fnPtr`.** 1173 of 3428 rows. These keep
+2. **Ghidra creates no function at the `fnPtr`.** 1173 of 3428 rows in the run as
+   first measured; 50 fewer now that veneers are followed. These keep
    `function: null` by design, exactly as step 2 specifies, and still count for
    attribution because attribution reads the name and descriptor strings.
-3. **Branch veneers.** Of those 1173 nulls, at least **62 are a single AArch64 `B`
-   instruction** — a veneer jumping to the real implementation — and **50 of the 62
-   branch to a function Ghidra did create**. Messenger 563's `libsuperpack-jni` is
-   the clean case: all 28 `fnPtr`s sit at a 4-byte stride and every one is a `B`,
-   which is why that library maps 0 of 28 while the *same library* in Facebook Lite
-   maps 28 of 28. WhatsApp shows the same split — the arm64 build maps 19/19, the
-   armeabi-v7a build 8/19.
+3. **Branch veneers — since fixed.** Of those 1173 nulls, **62 were a single
+   AArch64 `B`** — a veneer jumping to the real implementation — and **50 of the 62
+   branched to a function Ghidra did create**. Messenger 563's `libsuperpack-jni`
+   was the clean case: all 28 `fnPtr`s sit at a 4-byte stride and every one is a
+   `B`, which is why that library mapped 0 of 28 while the *same library* in
+   Facebook Lite mapped 28 of 28.
 
-   Following a one-instruction veneer would recover most of these. It is not
-   implemented, and 62 is a **lower bound**: the detector decodes only the AArch64
-   `B` encoding, so Thumb-2 veneers in the 32-bit libraries are uncounted. This is
-   a genuine improvement opportunity, not a defect in the scan — the veneer address
-   *is* the pointer `RegisterNatives` receives.
+   Step 2 now follows that branch. Re-running the three packages that ship
+   `libsuperpack-jni` takes Messenger 563 from 53 mapped entries to 97 and from
+   `54 linked (53 registered)` to `97 linked (96 registered)`, and moves neither
+   control: Facebook Lite stays 28/28, the armeabi-v7a Messenger 570 stays 14/28.
+   The verification doc's "Re-run: following the veneer" has the table.
+
+   The 32-bit half of that finding did not survive measurement. Decoding the four
+   shapes a 32-bit linker emits over every null row in the corpus turns up one
+   candidate, whose target is not a function either; the 32-bit misses are ordinary
+   Thumb function bodies Ghidra did not recognize. So 62 is not a lower bound, it is
+   the count, and the decoder is AArch64-only deliberately.
 
 ### Unattributed entries are the Java half being absent
 
@@ -498,5 +544,6 @@ target; the scan is a quiet no-op on the Mach-O a macOS worker would produce.
 Everything the plan lists as out of scope stays out of scope: class attribution
 from the binary side (following `FindClass` through `JNI_OnLoad`), `JNIEnv`
 accessor calls, `luaL_Reg` tables, Superpack-compressed payloads, and Java halves
-that ship outside `classes.dex`. Following a `B` veneer to its target, measured
-above, is a new candidate for that list.
+that ship outside `classes.dex`. Following a `B` veneer to its target was raised
+as a candidate for that list by the first verification run; it was measured, and
+then built instead.

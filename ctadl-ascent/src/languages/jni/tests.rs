@@ -698,6 +698,7 @@ fn observe_table(obs: &mut JniObserver, import: &str, rows: &[(&str, &str, &str)
                         name: (*name).to_string(),
                         descriptor: (*descriptor).to_string(),
                         function: Some((*function).to_string()),
+                        veneer_target: None,
                     },
                 )
                 .collect(),

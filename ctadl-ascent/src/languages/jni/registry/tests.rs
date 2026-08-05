@@ -36,6 +36,7 @@ fn registry(entry_size: u64, rows: &[(u64, &'static str, &'static str)]) -> JniR
                 name: name.to_string(),
                 descriptor: descriptor.to_string(),
                 function: Some(format!("fn_{name}")),
+                veneer_target: None,
             })
             .collect(),
     }
@@ -384,6 +385,67 @@ fn elf32_masks_the_thumb_bit() {
     assert_eq!(scan.entries[0].name, "readBytesNative");
     // Stored as `TEXT_ADDR | 1`; recovered masked, which is what the function map is keyed by.
     assert_eq!(scan.entries[0].fn_addr, TEXT_ADDR);
+    // Veneer following is AArch64 only. `.text` is zeroed here, but the guard is on the machine,
+    // not on what the bytes happen to be: a 32-bit `fnPtr` may be Thumb or ARM and this decoder
+    // reads neither. Measured on the corpus, the 32-bit libraries hold no veneers here anyway.
+    assert_eq!(scan.entries[0].veneer_target, None);
+}
+
+// ---------------------------------------------------------------------------
+// Branch veneers
+// ---------------------------------------------------------------------------
+
+/// The instruction decoder, against the bytes Messenger 563 actually ships: `0x17ff246e` at
+/// `0x40e74` is the veneer for `writeNative`, and it branches back to `0xa02c`.
+#[test]
+fn an_aarch64_branch_decodes_to_its_target() {
+    assert_eq!(aarch64_branch_target(0x17ff_246e, 0x40e74), Some(0xa02c));
+    // Forward, and the two extremes of the immediate.
+    assert_eq!(aarch64_branch_target(0x1400_0010, 0x1000), Some(0x1040));
+    assert_eq!(aarch64_branch_target(0x1400_0000, 0x1000), Some(0x1000));
+    assert_eq!(aarch64_branch_target(0x17ff_ffff, 0x1000), Some(0xffc));
+}
+
+/// Anything that is not a `B` is not a veneer. `BL` differs from `B` in exactly one bit, and
+/// taking it would follow a call out of a real function body rather than through a stub.
+#[test]
+fn only_a_plain_branch_is_followed() {
+    assert_eq!(aarch64_branch_target(0x9400_0010, 0x1000), None); // BL
+    assert_eq!(aarch64_branch_target(0xd65f_03c0, 0x1000), None); // RET
+    assert_eq!(aarch64_branch_target(0xa9bf_7bfd, 0x1000), None); // STP -- a real prologue
+    assert_eq!(aarch64_branch_target(0x0000_0000, 0x1000), None); // padding
+}
+
+/// The Messenger shape end to end: the `fnPtr` points at a stub holding one `B`, so the scan
+/// records where it goes. `fn_addr` stays the address in the table -- that is the pointer
+/// `RegisterNatives` receives, and changing it would break a spot-check against the ELF.
+#[test]
+fn a_function_pointer_at_a_veneer_records_its_target() {
+    let scan =
+        scan_bytes(&Elf64::new().with_veneer_to(TEXT_ADDR + 0x40).build()).expect("scanning");
+    assert_eq!(scan.entries.len(), 1);
+    assert_eq!(scan.entries[0].fn_addr, TEXT_ADDR);
+    assert_eq!(scan.entries[0].veneer_target, Some(TEXT_ADDR + 0x40));
+}
+
+/// A pointer into an ordinary function body records nothing, so resolution goes on using the
+/// pointer itself. This is the Facebook Lite shape, and it is also every entry in a library
+/// linked without veneers.
+#[test]
+fn a_function_pointer_at_ordinary_code_records_no_veneer() {
+    // `stp x29, x30, [sp, #-16]!` -- the prologue at the head of a real function.
+    let scan = scan_bytes(&Elf64::new().with_code(0xa9bf_7bfd).build()).expect("scanning");
+    assert_eq!(scan.entries.len(), 1);
+    assert_eq!(scan.entries[0].veneer_target, None);
+}
+
+/// A branch leaving executable code is not a veneer to anything, whatever it decodes to. Without
+/// this the row would carry a target that no function can ever sit at.
+#[test]
+fn a_branch_out_of_executable_code_is_not_a_veneer() {
+    let scan = scan_bytes(&Elf64::new().with_veneer_to(RODATA_ADDR).build()).expect("scanning");
+    assert_eq!(scan.entries.len(), 1);
+    assert_eq!(scan.entries[0].veneer_target, None);
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +500,9 @@ struct Elf64 {
     /// `sh_type` of the relocation section, and whether its addends are the right ones.
     relocs: Option<(u32, bool)>,
     fn_addr: u64,
+    /// The instruction word at [`TEXT_ADDR`], where `fn_addr` points by default. Zero -- padding,
+    /// which decodes as no branch -- unless a test says otherwise.
+    code: u32,
 }
 
 impl Elf64 {
@@ -446,7 +511,21 @@ impl Elf64 {
             in_place: true,
             relocs: None,
             fn_addr: TEXT_ADDR,
+            code: 0,
         }
+    }
+
+    /// Puts one AArch64 `B target` at [`TEXT_ADDR`], which is what a linker's veneer holds.
+    fn with_veneer_to(mut self, target: u64) -> Self {
+        let imm26 = (((target as i64 - TEXT_ADDR as i64) / 4) as u32) & 0x03ff_ffff;
+        self.code = 0x1400_0000 | imm26;
+        self
+    }
+
+    /// Puts an arbitrary instruction word there instead.
+    fn with_code(mut self, word: u32) -> Self {
+        self.code = word;
+        self
     }
 
     /// The slots are zero in the file and a `SHT_RELA` section supplies the real addresses.
@@ -496,6 +575,7 @@ impl Elf64 {
         put64(&mut out, 0x50, 0); // p_vaddr
 
         put_strings(&mut out);
+        put32(&mut out, TEXT_OFF as usize, self.code);
         if self.in_place {
             put64(&mut out, DATA_OFF as usize, RODATA_ADDR);
             put64(

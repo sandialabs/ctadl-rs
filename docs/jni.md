@@ -266,6 +266,26 @@ ctadl inspect ~/.local/state/ctadl/imports/app__arm64-v8a__libcrypto/jni-registr
   ...
 ```
 
+**Branch veneers are followed.** A `fnPtr` does not always point at the
+implementation. When the linker cannot reach it from the table's own range it
+emits a *veneer* — a four-byte stub holding one `B` — and the address that
+reaches `RegisterNatives` is the stub's. No disassembler makes a function out of
+a bare thunk, so such an entry would resolve to nothing at all. CTADL decodes the
+branch and resolves its target instead, recording where it went as
+`veneer_target`; `fn_addr` stays the address the table holds, so a spot-check
+against the library still lines up.
+
+```
+  0x46850  0x40e74  writeNative(JLjava/io/OutputStream;)V  -> FUN_0010a02c (via a veneer to 0xa02c)
+```
+
+Whether a library is linked this way is not a property of the library: one real
+app ships `libsuperpack-jni.so` with every one of its 28 pointers a veneer, and
+another ships the same library with none. Only the AArch64 `B` is decoded, and
+only one hop. Measured across the reference corpus that is the whole of it —
+every veneer found is a single branch straight to its implementation, and the
+32-bit libraries hold none in this position.
+
 Scanning is unconditional and costs milliseconds. Anything that is not an ELF
 file on disk — a `ghidra://` repository, a `.gpr` project, a Mach-O or PE binary,
 or one of the ZIPs and packed containers apps occasionally ship under `lib/` — is

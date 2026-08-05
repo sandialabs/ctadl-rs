@@ -8,8 +8,7 @@ convention. They call `env->RegisterNatives(clazz, table, n)` from `JNI_OnLoad`,
 typedef struct { const char *name; const char *signature; void *fnPtr; } JNINativeMethod;
 ```
 
-and the implementations keep private, unexported names. Nothing joins the two halves, so taint
-stops at the boundary in exactly the apps people analyze.
+and the implementations keep private, unexported names.
 
 Those tables are recoverable without Ghidra and without any dataflow analysis, because they are
 plain initialized data. This module does that in three parts:
@@ -17,8 +16,10 @@ plain initialized data. This module does that in three parts:
 1. [`scan_bytes`] walks a shared library's writable, non-executable `PROGBITS` sections at pointer
    stride and accepts a triple whose first two slots point at a Java method name and a method
    descriptor and whose third points into executable code.
-2. [`scan_import`] turns each `fnPtr` into the IR function that lives at that address and writes
-   the result beside the import's other artifacts as `jni-registry.json`.
+2. [`scan_import`] turns each `fnPtr` into the IR function that lives at that address -- or, when
+   the pointer is a linker's branch veneer, at the far end of its one branch (see
+   [`aarch64_branch_target`]) -- and writes the result beside the import's other artifacts as
+   `jni-registry.json`.
 3. [`attribute`] recovers the *class* -- which the table itself does not carry -- from the Dex
    side, by segmenting the address-ordered entries into runs that one class can explain.
 
@@ -84,6 +85,14 @@ pub struct RegistryEntry {
     /// address contiguity [`attribute`] depends on.
     #[serde(default)]
     pub function: Option<String>,
+    /// Where a branch veneer at `fn_addr` led, when that is how [`function`][Self::function] was
+    /// found. `None` for a row that resolved directly, and for one that did not resolve at all.
+    ///
+    /// `fn_addr` stays the address in the table -- that is the pointer `RegisterNatives` actually
+    /// receives, and it is what a human spot-checks against the ELF -- so this is what records
+    /// that the two differ. See [`aarch64_branch_target`].
+    #[serde(default)]
+    pub veneer_target: Option<u64>,
 }
 
 /// One import's recovered tables: the contents of its `jni-registry.json`.
@@ -162,8 +171,12 @@ impl JniRegistry {
             registry.entry_size,
         );
         for entry in &registry.entries {
+            let via = match entry.veneer_target {
+                Some(target) => format!(" (via a veneer to {target:#x})"),
+                None => String::new(),
+            };
             println!(
-                "  {:#x}  {:#x}  {}{}  -> {}",
+                "  {:#x}  {:#x}  {}{}  -> {}{via}",
                 entry.table_addr,
                 entry.fn_addr,
                 entry.name,
@@ -266,13 +279,25 @@ pub fn scan_import(
     }
 
     let mut mapped = 0usize;
+    let mut through_veneer = 0usize;
     let entries: Vec<RegistryEntry> = scan
         .entries
         .into_iter()
         .map(|raw| {
-            let ghidra_addr =
-                image_base.wrapping_add(raw.fn_addr.wrapping_sub(scan.load_bias) as i64);
-            let function = entry_points.get(&ghidra_addr).cloned();
+            let ghidra =
+                |addr: u64| image_base.wrapping_add(addr.wrapping_sub(scan.load_bias) as i64);
+            let mut function = entry_points.get(&ghidra(raw.fn_addr)).cloned();
+            let mut veneer_target = None;
+            // Only when the pointer itself named nothing: a veneer Ghidra *did* make a function
+            // of is already the right answer, and following it would name the callee instead.
+            if function.is_none()
+                && let Some(target) = raw.veneer_target
+                && let Some(name) = entry_points.get(&ghidra(target))
+            {
+                function = Some(name.clone());
+                veneer_target = Some(target);
+                through_veneer += 1;
+            }
             if function.is_some() {
                 mapped += 1;
             }
@@ -282,12 +307,18 @@ pub fn scan_import(
                 name: raw.name,
                 descriptor: raw.descriptor,
                 function,
+                veneer_target,
             }
         })
         .collect();
 
+    let via = if through_veneer == 0 {
+        String::new()
+    } else {
+        format!(", {through_veneer} through a branch veneer")
+    };
     log::info!(
-        "jni registry: {} RegisterNatives entr{} recovered from '{}' ({} with a function)",
+        "jni registry: {} RegisterNatives entr{} recovered from '{}' ({} with a function{via})",
         entries.len(),
         if entries.len() == 1 { "y" } else { "ies" },
         import.name,
@@ -307,6 +338,10 @@ struct RawEntry {
     fn_addr: u64,
     name: String,
     descriptor: String,
+    /// Where the branch at `fn_addr` goes, when `fn_addr` holds one single AArch64 `B` and its
+    /// target is executable. Recovered here because only the ELF can answer it; used only as a
+    /// fallback, in [`scan_import`].
+    veneer_target: Option<u64>,
 }
 
 /// What [`scan_bytes`] recovered from one library.
@@ -443,17 +478,23 @@ where
                 if thumb_mask {
                     fn_addr &= !1;
                 }
-                if !executable
-                    .iter()
-                    .any(|(lo, hi)| fn_addr >= *lo && fn_addr < *hi)
-                {
+                let is_executable = |a: u64| executable.iter().any(|(lo, hi)| a >= *lo && a < *hi);
+                if !is_executable(fn_addr) {
                     return None;
                 }
+                let veneer_target = if machine == elf::EM_AARCH64 {
+                    read_u32(&mapped, fn_addr, endian)
+                        .and_then(|word| aarch64_branch_target(word, fn_addr))
+                        .filter(|target| is_executable(*target))
+                } else {
+                    None
+                };
                 Some(RawEntry {
                     table_addr: addr,
                     fn_addr,
                     name: name.to_string(),
                     descriptor: descriptor.to_string(),
+                    veneer_target,
                 })
             })();
             // Advance by a whole entry on a match, by one pointer otherwise. Scanning at a flat
@@ -499,6 +540,47 @@ fn read_word(bytes: &[u8], offset: usize, pointer: u64, endian: Endianness) -> O
     } else {
         u64::from(endian.read_u32_bytes(slice.try_into().ok()?))
     })
+}
+
+/// Reads the 4-byte instruction word at `addr`, wherever in the image that is.
+fn read_u32(mapped: &[(u64, &[u8])], addr: u64, endian: Endianness) -> Option<u32> {
+    for (base, bytes) in mapped {
+        if addr < *base || addr >= base + bytes.len() as u64 {
+            continue;
+        }
+        let offset = (addr - base) as usize;
+        let slice = bytes.get(offset..offset.checked_add(4)?)?;
+        return Some(endian.read_u32_bytes(slice.try_into().ok()?));
+    }
+    None
+}
+
+/// The target of an AArch64 `B` at `addr`, or `None` when `word` is any other instruction.
+///
+/// A linker that cannot reach the implementation with one `BL` emits a **veneer**: a stub holding
+/// nothing but this branch, and registers *that* address. Ghidra creates no function object at a
+/// bare 4-byte thunk, so the `fnPtr` names nothing and the native goes unlinked -- which is why
+/// Messenger's `libsuperpack-jni.so` mapped 0 of 28 entries while the same library in Facebook
+/// Lite, linked without veneers, mapped 28 of 28.
+///
+/// Following the branch gives the real implementation. That is the right answer for a genuine
+/// veneer and also for the one other thing this decodes, a one-instruction tail-call thunk:
+/// either way the arguments arrive unchanged at the target, so it is where the taint goes.
+///
+/// One hop, deliberately. Every one of the 62 veneers in the reference corpus is a single branch
+/// straight to its implementation; a chain would leave the row unresolved, exactly as it is today.
+///
+/// The encoding is `0b000101` : `imm26`, and the offset is `imm26` sign-extended and scaled by 4.
+/// AArch64 only: measured across the corpus, the 32-bit libraries hold no veneers at all here --
+/// their unmapped pointers are ordinary Thumb functions Ghidra did not recognize, which following
+/// a branch cannot fix.
+fn aarch64_branch_target(word: u32, addr: u64) -> Option<u64> {
+    if word >> 26 != 0b000101 {
+        return None;
+    }
+    // Sign-extend imm26, then scale: `((word << 6) as i32 >> 6)` keeps the sign in one step.
+    let offset = i64::from(((word << 6) as i32) >> 6) * 4;
+    Some(addr.wrapping_add(offset as u64))
 }
 
 /// Follows a pointer slot to the NUL-terminated string it names, wherever in the image that is.

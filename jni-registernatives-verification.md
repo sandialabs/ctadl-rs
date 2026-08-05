@@ -15,9 +15,13 @@ including both TikTok builds. VLC is the one package that could not be measured,
 for a disk reason unrelated to this change.
 
 Nothing was found wrong with the feature. Two things were found worth recording:
-branch veneers cost more `fnPtr` mappings than expected (with a measured, bounded
-fix available), and the plan's account of how non-ELF files are handled is not
-quite how they are actually handled.
+branch veneers cost more `fnPtr` mappings than expected, and the plan's account of
+how non-ELF files are handled is not quite how they are actually handled.
+
+**The veneer finding has since been fixed**, and the three packages it touches
+re-run. Messenger 563 goes from `54 linked (53 registered)` to
+`97 linked (96 registered)`; the two controls do not move. See "Finding: branch
+veneers" and "Re-run: following the veneer".
 
 ## Method
 
@@ -71,6 +75,11 @@ Totals across the thirteen: **3428 table entries in 99 libraries, 3354 attribute
 that had no implementation before, a 1.24× gain overall and far larger on the apps
 that use `RegisterNatives` heavily (Messenger 563: 1 → 54; TikTok Lite: 154 → 644).
 
+The table is the run as it stood, before the veneer finding below was acted on.
+That fix moved exactly one row: Messenger 563 is now **97 (96)**, so its gain is
+1 → 97. Facebook Lite and Messenger 570 were re-run and reproduced their rows
+digit for digit.
+
 The A/B baselines mostly match the plan's `Java_`-symbol counts to the digit —
 Chrome 11, Telegram 381, Facebook Lite and all three WhatsApp builds 1 — but not
 always: TikTok Lite gives 154 against a predicted 155, Messenger 570 gives 8
@@ -93,6 +102,12 @@ function entry point, and no null row had an entry point that was overlooked.
 Step 2's address arithmetic — `image_base + (ELF vaddr − first PT_LOAD p_vaddr)` —
 is correct on ELF64 and ELF32, through both the relocation path and the in-place
 path.
+
+The audit was tightened when veneers were fixed: a mapped row must sit on an entry
+point at `fn_addr`, or at `veneer_target` when it has one, and a null row must hold
+no followable branch either. On the re-run it still reports `badmap=0 missed=0
+unfollowed=0`, so the extra rows are resolved *through* the veneer rather than
+merely resolved.
 
 ### The Thumb mask works, checked against the bytes
 
@@ -163,34 +178,92 @@ gap will not close.
 1. **Duplicate registrations.** Telegram's 83 entries are only 78 distinct
    `(name, descriptor)` pairs — `nativeCacheDirectBufferAddress` is registered 4×
    and `nativeDataIsRecorded` 3×, across different classes.
-2. **Ghidra creates no function at the `fnPtr`.** 1173 of 3428 rows. These keep
-   `function: null` by design and still count for attribution, which reads the name
-   and descriptor strings rather than the pointer.
-3. **Branch veneers** — see below.
+2. **Ghidra creates no function at the `fnPtr`.** 1173 of 3428 rows as measured
+   here. 50 of those are branch veneers and now resolve — see below — leaving 1123.
+   The rest keep `function: null` by design and still count for attribution, which
+   reads the name and descriptor strings rather than the pointer.
+3. **Branch veneers** — see below. This one has since been closed.
 
-## Finding: branch veneers
+## Finding: branch veneers — fixed and re-measured
 
-`libsuperpack-jni` maps **0 of 28** in Messenger 563 and **28 of 28** in Facebook
+`libsuperpack-jni` mapped **0 of 28** in Messenger 563 and **28 of 28** in Facebook
 Lite. Same library name, opposite result. Chasing it into the ELF:
 
 - The 28 `fn_addr`s sit at a perfect 4-byte stride across 124 bytes.
 - Every one decodes as a single AArch64 `B` — a veneer branching to the real
   implementation (`0x40e74 → 0xa02c`, and so on). Messenger links this library with
   veneers; Facebook Lite does not.
-- Ghidra creates no function object at a bare 4-byte thunk, so the row correctly
-  gets `function: null`.
+- Ghidra creates no function object at a bare 4-byte thunk, so the row got
+  `function: null`.
 - **21 of the 28 branch targets *are* Ghidra functions.**
 
-The same split shows in WhatsApp: the arm64 build maps 19/19, the armeabi-v7a build
-8/19.
+Corpus-wide, **62 null rows are a single-`B` veneer, and 50 of those branch to a
+function Ghidra did create.** This was never a defect in the scan — the veneer
+address genuinely *is* the pointer `RegisterNatives` receives — but it was a
+bounded, measured improvement, and it has now been made: the scan decodes one
+AArch64 `B` at an unresolved `fnPtr` and resolves the target instead, recording the
+hop as `veneer_target` and leaving `fn_addr` alone. See "Re-run: following the
+veneer" below for what it produced.
 
-Corpus-wide, **at least 62 null rows are a single-`B` veneer, and 50 of those
-branch to a function Ghidra did create.** Following one instruction would recover
-them. This is not a defect in the scan — the veneer address genuinely *is* the
-pointer `RegisterNatives` receives — but it is a bounded, measured improvement.
+**The Thumb-2 caveat was wrong, and the corpus says so.** The earlier draft called
+62 a lower bound on the grounds that a 32-bit veneer would go uncounted. Decoding
+the four shapes a 32-bit linker actually emits — A32 `B`, A32 `LDR pc,[pc,#-4]`,
+Thumb `B`, Thumb `B.W` — over every null row in the corpus finds **one** candidate,
+in Chrome, and its target is not a function either. The 32-bit misses are something
+else entirely: the pointers in Messenger 570's and WhatsApp's `libsuperpack` are
+ordinary Thumb function bodies (`push {r4-r7,lr}`, `mov r0,r2; b.w …`) that Ghidra
+simply did not recognize as functions. No branch to follow, so 62 is the whole of
+it, and the decoder is AArch64-only on purpose.
 
-62 is a **lower bound**: the detector decodes only the AArch64 `B` encoding, so
-Thumb-2 veneers in the 32-bit libraries are uncounted.
+## Re-run: following the veneer
+
+Re-imported and re-indexed fresh, same method as the original run, on the three
+packages that ship `libsuperpack-jni` — the two that the finding is about and the
+32-bit build as a control.
+
+| Package | library | mapped before | mapped after | linked (registered) before | after |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Messenger 563 (arm64) | `libsuperpack-jni` | 0/28 | **21/28** | 54 (53) | **97 (96)** |
+| Messenger 563 (arm64) | `libbreakpad` | 0/23 | **18/23** | — | — |
+| Messenger 563 (arm64) | `libappcomponentfactory-jni` | 0/3 | **3/3** | — | — |
+| Messenger 563 (arm64) | `libdextricks-early`, `libdistract-config` | 0/1 each | **1/1** each | — | — |
+| Facebook Lite 513 (arm64) | `libsuperpack-jni` | 28/28 | 28/28 | 29 (28) | 29 (28) |
+| Messenger 570 (armeabi-v7a) | `libsuperpack-jni` | 14/28 | 14/28 | 89 (81) | 89 (81) |
+
+Messenger 563 is the whole finding realized: **44 more of its 118 entries resolve
+(53 → 97), and linked native methods go 54 → 97**, against an A/B baseline of 1.
+Every one of the 44 is logged as going through a veneer:
+
+```
+jni registry: 28 RegisterNatives entries recovered from 'm563__arm64-v8a__libsuperpack-jni'
+  (21 with a function, 21 through a branch veneer)
+```
+
+The two controls do not move at all. Facebook Lite, linked without veneers, stays
+28/28 and `29 linked (28 registered)`; Messenger 570, 32-bit, stays 14/28 and
+`89 linked (81 registered)`. Attribution is untouched everywhere — Messenger 563
+still reports 118 entries, 117 attributed, and `ambiguous` is still 0 on all three.
+
+The mapping audit was re-run with the veneer rule added — a mapped row must sit on
+an entry point at `fn_addr`, or at `veneer_target` when it has one, and no null row
+may hold a followable branch:
+
+```
+rows=265  mapped=208 (44 through a branch veneer)  null=57
+mapping errors: badmap=0  missed=0  unfollowed-veneers=0  -> EXACT
+of 57 null rows: 12 are a single-B veneer, of which 0 branch to a real Ghidra function
+```
+
+That last line is the fix stated from the other side. Of the 62 single-`B` rows the
+corpus holds, 50 branch to a real function. All 12 that do not live in Messenger
+563, and there they are exactly what still reads `function: null` — 7 in
+`libsuperpack-jni`, 5 in `libbreakpad`. Nothing followable is left behind in the
+three packages re-run.
+
+The other 6 followable rows are in TikTok 46.1.3 (`libbdvideouploader`, `liblynx`,
+`libshadowhook`, `libttmplayer`, `libvideodec`). Those packages were not re-imported
+— this run was scoped to `libsuperpack-jni` — so 6 of the corpus's 50 are predicted
+rather than measured.
 
 ## Finding: non-ELF files are filtered before the scan, not by it
 
@@ -251,6 +324,16 @@ Raw per-package logs, the results file and the analysis scripts are in
 - `results.txt` — import/index/A-B lines per package
 - `summarize.py` — regenerates the results table from the logs
 - `audit.py` — the mapping audit (sidecar rows vs `HFUNC_EP`, veneer classification)
+
+`audit.py` reads both sidecar shapes: a row written before veneer following has no
+`veneer_target`, which leaves its checks exactly as they were. Point it at another
+store with `CTADL_VERIFY_STORE`.
+
+The veneer re-run is in `~/jni-verify-store2/`, same layout — Facebook Lite,
+Messenger 563 and Messenger 570, each imported fresh and indexed twice — plus
+`rerun.sh`, which drove it, and `classify.py`, which decodes every unresolved
+`fn_addr` against the six veneer encodings and is where the AArch64-only decision
+comes from.
 
 Re-import is required throughout: the sidecar is written at import time, and
 `--skip-existing` will not create one.
