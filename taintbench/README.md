@@ -1,4 +1,4 @@
-# TaintBench regression suite
+# TaintBench regression suite - DO-NOT-MERGE
 
 [TaintBench](https://github.com/TaintBench) is an open benchmark of real Android
 malware apps, each shipped with a hand-curated set of ground-truth taint flows.
@@ -32,10 +32,10 @@ Each app is a directory under `apps/<name>/` holding four files:
 | `findings.json`  | TaintBench ground truth, copied verbatim from the app's upstream repo. |
 | `model.json`     | ctadl query model (`model_generators`) — the sources/sinks to mark. |
 | `expected.json`  | Baseline: the finding IDs ctadl currently detects (see below).   |
-| `app.json`       | APK coordinates (`url` + SRI `sha256`) and provenance, read by the flake. |
+| `app.json`       | APK coordinates (`url` + SRI `sha256`) and provenance, read by `nix/taintbench.nix`. |
 
-Adding an app is data-only: drop in these four files and the flake picks it up
-(`builtins.readDir`). No code or list to edit. `app.json`'s `sha256` is an SRI
+Adding an app is data-only: drop in these four files and `nix/taintbench.nix`
+picks it up (`builtins.readDir`). No code or list to edit. `app.json`'s `sha256` is an SRI
 hash; get it with `nix store prefetch-file --json <url> | jq -r .hash`.
 
 ## How a finding is matched
