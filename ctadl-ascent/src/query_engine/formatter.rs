@@ -20,7 +20,8 @@ details of exactly what is tainted in each place. It's intended to communicate h
 findings as well as how exactly to reason about the chain. It also includes functions that
 absorb taint, which allows agents to produce their own models to further the analysis.
 The machine profile contains explicit detail about each individual finding -- tainted
-instructions. The debug profile contains as much information as has been useful for debugging.
+instructions -- while keeping the SARIF output compact for programmatic consumers.
+The debug profile contains as much information as has been useful for debugging.
 
 */
 use std::fs::File;
@@ -141,11 +142,6 @@ pub struct ProjectContext<'a, P: AsRef<path::Path>> {
     pub taint_results: &'a TaintAnalysisResults,
 }
 
-pub struct FormatConfig {
-    pub compact: bool,
-    pub profile: SarifProfile,
-}
-
 // SARIF rule identifier for any tainted path result
 const TAINTED_PATH_RULE_ID: &str = "C0001.tainted-path";
 const TAINTED_PATH_RULE_NAME: &str = "Tainted paths";
@@ -166,11 +162,11 @@ const TAINT_SINK_RULE_NAME: &str = "Tainted data sink";
 const TAINT_SINK_RULE_DESCRIPTION: &str = "Tainted data sinks";
 
 // SARIF rule identifiers for tainted data and almost-path functions
-const TAINTED_DATA_RULE_ID: &str = "C0005";
+const TAINTED_DATA_RULE_ID: &str = "C0005.tainted-data";
 const TAINTED_DATA_RULE_NAME: &str = "Tainted data";
 const TAINTED_DATA_RULE_DESCRIPTION: &str = "Tainted variables and fields";
 
-const ALMOST_PATH_FUNCTION_RULE_ID: &str = "C0006";
+const ALMOST_PATH_FUNCTION_RULE_ID: &str = "C0006.almost-path-function";
 const ALMOST_PATH_FUNCTION_RULE_NAME: &str = "Almost-path function";
 const ALMOST_PATH_FUNCTION_RULE_DESCRIPTION: &str = "A function which contains source-tainted and sink-tainted data, which means there's 'almost' a path between them.";
 
@@ -345,7 +341,7 @@ struct PathStats {
 /// caller sets a non-zero process exit code to match (§3.58.6).
 fn build_invocation(
     diagnostics: &QueryDiagnostics,
-    config: &FormatConfig,
+    profile: SarifProfile,
     outcome: &PathOutcome,
     path_stats: PathStats,
 ) -> Invocation {
@@ -801,7 +797,7 @@ fn build_invocation(
 
     match outcome {
         PathOutcome::Disabled => {
-            let profile = format!("{:?}", config.profile).to_lowercase();
+            let profile = format!("{:?}", profile).to_lowercase();
             exec_notifications.push(notification(
                 NOTIF_PATHS_DISABLED,
                 "note",
@@ -854,7 +850,7 @@ fn build_invocation(
     let execution_successful =
         !config_notifications.iter().any(is_error) && !exec_notifications.iter().any(is_error);
 
-    let rule_configuration_overrides: Vec<ConfigurationOverride> = disabled_rules(config.profile)
+    let rule_configuration_overrides: Vec<ConfigurationOverride> = disabled_rules(profile)
         .into_iter()
         .map(|rule_id| {
             ConfigurationOverride::builder()
@@ -1888,18 +1884,16 @@ pub fn format_sarif(
     project: &AnalysisProject,
     facts: &FormatFacts,
     taint_results: &TaintAnalysisResults,
-    compact: bool,
     output: &path::Path,
     profile: SarifProfile,
     diagnostics: &QueryDiagnostics,
 ) -> Result<bool, Error> {
     log::trace!("format_sarif entry");
     let rt = tokio::runtime::Runtime::new()?;
-    let config = FormatConfig { compact, profile };
     let (final_sarif, execution_successful) = rt.block_on(async {
-        async_format_sarif(project, taint_results, facts, &config, diagnostics).await
+        async_format_sarif(project, taint_results, facts, profile, diagnostics).await
     })?;
-    write_sarif(&final_sarif, compact, output)?;
+    write_sarif(&final_sarif, profile, output)?;
     Ok(execution_successful)
 }
 
@@ -1911,28 +1905,37 @@ pub fn format_sarif(
 /// missing because it needs an index: there are no source locations to resolve against, so
 /// nothing here touches the project directory.
 pub fn format_model_check_sarif(
-    compact: bool,
+    project: &AnalysisProject,
     output: &path::Path,
     profile: SarifProfile,
     diagnostics: &QueryDiagnostics,
 ) -> Result<bool, Error> {
-    let config = FormatConfig { compact, profile };
     // Not `Disabled`, whatever the profile says: path search did not run because there was
     // nothing to run it over, and naming the profile as the cause would send a reader to change
     // a flag that would not have helped.
     let outcome = PathOutcome::NotApplicable(
         "the project has no index, so only the model files were checked".to_string(),
     );
-    let invocation = build_invocation(diagnostics, &config, &outcome, PathStats::default());
+    let invocation = build_invocation(diagnostics, profile, &outcome, PathStats::default());
     let execution_successful = invocation.execution_successful;
     let results: Vec<SarifResult> = path_status_result(&outcome).into_iter().collect();
-    let sarif = sarif_document(invocation, results, SarifData::default(), Vec::new());
-    write_sarif(&sarif, compact, output)?;
+    let sarif = sarif_document(
+        project,
+        invocation,
+        results,
+        SarifData::default(),
+        Vec::new(),
+    );
+    write_sarif(&sarif, profile, output)?;
     Ok(execution_successful)
 }
 
 /// Writes the assembled document to `output`, or to stdout for `-`.
-fn write_sarif(sarif: &serde_json::Value, compact: bool, output: &path::Path) -> Result<(), Error> {
+fn write_sarif(
+    sarif: &serde_json::Value,
+    profile: SarifProfile,
+    output: &path::Path,
+) -> Result<(), Error> {
     let writer: Box<dyn std::io::Write> = if output.to_str() == Some("-") {
         Box::new(std::io::stdout())
     } else {
@@ -1942,7 +1945,7 @@ fn write_sarif(sarif: &serde_json::Value, compact: bool, output: &path::Path) ->
         )
     };
 
-    if compact {
+    if matches!(profile, SarifProfile::Machine) {
         serde_json::to_writer(writer, sarif)
             .err_context(|| format!("writing sarif: {}", output.display()))?;
     } else {
@@ -1974,7 +1977,7 @@ async fn async_format_sarif(
     project: &AnalysisProject,
     taint_results: &TaintAnalysisResults,
     facts: &FormatFacts,
-    config: &FormatConfig,
+    profile: SarifProfile,
     diagnostics: &QueryDiagnostics,
 ) -> Result<(serde_json::Value, bool), Error> {
     let path = project
@@ -2032,14 +2035,14 @@ async fn async_format_sarif(
         facts,
         taint_results,
     };
-    let (mut results, path_stats) = format_source_info_results(&ctx, config, &mut sarif_data)
+    let (mut results, path_stats) = format_source_info_results(&ctx, profile, &mut sarif_data)
         .await
         .err_context(|| "formatting results")?;
 
     // What happened to `C0001` this run. Decided here rather than per import: the profile
     // gate and the endpoint counts are run-wide, and exactly one status result may be
     // emitted no matter how many imports the project has.
-    let path_outcome = if !profile_finds_paths(config.profile) {
+    let path_outcome = if !profile_finds_paths(profile) {
         PathOutcome::Disabled
     } else if let Some(reason) = empty_end_reason(diagnostics) {
         PathOutcome::NotApplicable(reason)
@@ -2050,11 +2053,11 @@ async fn async_format_sarif(
     };
     results.extend(path_status_result(&path_outcome));
 
-    let invocation = build_invocation(diagnostics, config, &path_outcome, path_stats);
+    let invocation = build_invocation(diagnostics, profile, &path_outcome, path_stats);
     let execution_successful = invocation.execution_successful;
 
     Ok((
-        sarif_document(invocation, results, sarif_data, parquet_dirs),
+        sarif_document(project, invocation, results, sarif_data, parquet_dirs),
         execution_successful,
     ))
 }
@@ -2193,6 +2196,7 @@ fn ctadl_tool() -> Tool {
 /// Shared by the indexed path and the model-check one so that the two files differ only in what
 /// they *say* -- same tool, same key order, same shape.
 fn sarif_document(
+    project: &AnalysisProject,
     invocation: Invocation,
     results: Vec<SarifResult>,
     sarif_data: SarifData,
@@ -2210,6 +2214,7 @@ fn sarif_document(
                 serde_json::json!(parquet_dirs.last().cloned().unwrap_or_default()),
             ),
             ("parquet_dirs".to_string(), serde_json::json!(parquet_dirs)),
+            ("project_name".to_string(), serde_json::json!(project.name)),
         ]))
         .build();
 
@@ -2309,7 +2314,7 @@ fn sarif_document(
 /// import no span points into is skipped, tables and all.
 async fn populate_source_info<P: AsRef<path::Path>>(
     ctx: &ProjectContext<'_, P>,
-    config: &FormatConfig,
+    profile: SarifProfile,
     sarif_data: &mut SarifData,
     source_data: &mut SourceLocationData,
     needed_spans: &[SourceSpan],
@@ -2323,7 +2328,7 @@ async fn populate_source_info<P: AsRef<path::Path>>(
         if spans.is_empty() {
             continue;
         }
-        populate_import_source_info(ctx, import, config, sarif_data, source_data, &spans)
+        populate_import_source_info(ctx, import, profile, sarif_data, source_data, &spans)
             .await
             .err_context(|| format!("resolving source locations in import '{}'", import.name))?;
     }
@@ -2333,7 +2338,7 @@ async fn populate_source_info<P: AsRef<path::Path>>(
 async fn populate_import_source_info<P: AsRef<path::Path>>(
     ctx: &ProjectContext<'_, P>,
     import: &ImportSource,
-    config: &FormatConfig,
+    profile: SarifProfile,
     sarif_data: &mut SarifData,
     source_data: &mut SourceLocationData,
     needed_spans: &[SourceSpan],
@@ -2478,7 +2483,7 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
             let region = match encoding {
                 source_info::ArtifactEncoding::Binary => {
                     let builder = Region::builder().byte_offset(start);
-                    if config.compact {
+                    if matches!(profile, SarifProfile::Machine) {
                         builder.build()
                     } else {
                         builder.byte_length(len_value).build()
@@ -2587,7 +2592,7 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
 #[allow(clippy::too_many_arguments)]
 async fn format_source_info_results<P: AsRef<path::Path>>(
     ctx: &ProjectContext<'_, P>,
-    config: &FormatConfig,
+    profile: SarifProfile,
     sarif_data: &mut SarifData,
 ) -> Result<(Vec<SarifResult>, PathStats), Error> {
     // Prepare graph for path finding when the selected profile emits path traces.
@@ -2602,7 +2607,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     let mut node_to_id: BTreeMap<FlowNode, u32> = BTreeMap::new();
 
     let graph = if matches!(
-        config.profile,
+        profile,
         SarifProfile::Human | SarifProfile::Debug | SarifProfile::Agent
     ) {
         // Same graph the human-profile path check uses; see `build_taint_flow_graph`.
@@ -2798,7 +2803,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     for (&id, name) in &ctx.facts.id_to_name {
         source_data.id_to_name.insert(id, name.clone());
     }
-    populate_source_info(ctx, config, sarif_data, &mut source_data, &needed_spans).await?;
+    populate_source_info(ctx, profile, sarif_data, &mut source_data, &needed_spans).await?;
 
     let mut span_to_location: BTreeMap<SpanKey, Location> = BTreeMap::new();
     for (span_key, _, _, location) in &source_data.batch_data {
@@ -3035,7 +3040,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     }
 
     // Now build results for tainted instructions (only for Debug or Machine profiles)
-    if config.profile == SarifProfile::Debug || config.profile == SarifProfile::Machine {
+    if matches!(profile, SarifProfile::Debug | SarifProfile::Machine) {
         let tainted_span_ids: BTreeSet<SpanKey> =
             ctx.source_spans.iter().map(|s| s.key()).collect();
 
@@ -3072,7 +3077,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             };
 
             let mut final_msg_text = msg_text;
-            if config.compact {
+            if matches!(profile, SarifProfile::Machine) {
                 const COMPACT_MAX_MESSAGE_CHARS: usize = 100;
                 if let Some((byte_idx, _)) =
                     final_msg_text.char_indices().nth(COMPACT_MAX_MESSAGE_CHARS)
@@ -3088,7 +3093,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     serde_json::json!(labels_to_vertices),
                 ),
             ]);
-            if config.profile == SarifProfile::Debug {
+            if profile == SarifProfile::Debug {
                 // The span id alone does not identify a location in a multi-import project --
                 // each import numbers its spans from zero -- so name the import beside it.
                 additional_properties
@@ -3130,7 +3135,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         &source_data.all_locations,
     ));
 
-    if config.profile == SarifProfile::Agent {
+    if profile == SarifProfile::Agent {
         results.extend(format_absorbing_function_results(
             sarif_data,
             &ctx.taint_results.absorbing_functions,
@@ -3140,7 +3145,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
 
     // Now build results for paths (for Human, Debug, or Agent profiles, one per path)
     let mut path_stats = PathStats::default();
-    if profile_finds_paths(config.profile) {
+    if profile_finds_paths(profile) {
         for (_path, (span_key, details)) in results_by_path {
             let location = if let Some(loc) = span_to_location.get(&span_key) {
                 loc.clone()
@@ -3174,7 +3179,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             let msg_text = format!("Taint flow labelled '{}'", sorted_labels.join("', '"));
 
             let mut final_msg_text = msg_text;
-            if config.compact {
+            if matches!(profile, SarifProfile::Machine) {
                 const COMPACT_MAX_MESSAGE_CHARS: usize = 100;
                 if let Some((byte_idx, _)) =
                     final_msg_text.char_indices().nth(COMPACT_MAX_MESSAGE_CHARS)

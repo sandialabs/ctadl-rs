@@ -291,16 +291,12 @@ pub struct QueryArgs {
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
-    /// Output as compact as possible (for the sarif extension)
-    #[arg(long, short, action)]
-    pub compact: bool,
-
     /// Output file path (defaults to results.sarif)
     #[arg(long, short, default_value = "results.sarif")]
     pub output: PathBuf,
 
     /// SARIF profile
-    #[arg(long, value_enum, default_value_t = SarifProfile::Human)]
+    #[arg(long, short, value_enum, default_value_t = SarifProfile::Human)]
     pub sarif_profile: SarifProfile,
 
     /// Dump the taint graph to a dot file
@@ -333,16 +329,12 @@ pub struct GoArgs {
     #[arg(required = true)]
     pub artifacts: Vec<PathBuf>,
 
-    /// Output as compact as possible (for the sarif extension)
-    #[arg(long, short, action)]
-    pub compact: bool,
-
     /// Output file path (defaults to results.sarif)
     #[arg(long, short, default_value = "results.sarif")]
     pub output: PathBuf,
 
     /// SARIF profile
-    #[arg(long, value_enum, default_value_t = SarifProfile::Human)]
+    #[arg(long, short, value_enum, default_value_t = SarifProfile::Human)]
     pub sarif_profile: SarifProfile,
 
     /// Dump the taint graph to a dot file
@@ -472,7 +464,6 @@ fn main() -> anyhow::Result<()> {
             query_project(&QueryArgs {
                 name: name.clone(),
                 models: args.models.clone(),
-                compact: args.compact,
                 output: args.output.clone(),
                 sarif_profile: args.sarif_profile,
                 dump_taint_graph: args.dump_taint_graph.clone(),
@@ -627,11 +618,9 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
 
             let mut models = args.models.clone();
             models.push(query_args.query_file.clone());
-            // Run the query and format the output (compact=true for Ghidra).
             let q_args = QueryArgs {
                 name: legacy_name.to_string(),
                 models,
-                compact: true,
                 output: PathBuf::from("results.sarif"),
                 sarif_profile: SarifProfile::Human,
                 dump_taint_graph: None,
@@ -739,7 +728,6 @@ fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
     let status = cli::query(
         &project,
         &args.models,
-        args.compact,
         &args.output,
         args.sarif_profile,
         args.dump_taint_graph.as_deref(),

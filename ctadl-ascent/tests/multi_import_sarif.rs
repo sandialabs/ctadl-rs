@@ -122,7 +122,7 @@ fn query_two_import_project(case: &str, profile: SarifProfile) -> Value {
     let query_models = dir.join(format!("{case}-query.json"));
     std::fs::write(&query_models, QUERY_MODEL).expect("writing query model");
     let sarif: PathBuf = dir.join(format!("{case}-{profile:?}.sarif"));
-    cli::query(&project, &[query_models], false, &sarif, profile, None).expect("querying");
+    cli::query(&project, &[query_models], &sarif, profile, None).expect("querying");
 
     let text = std::fs::read_to_string(&sarif).expect("reading sarif");
     serde_json::from_str(&text).expect("parsing sarif")

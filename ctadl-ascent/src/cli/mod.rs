@@ -382,7 +382,6 @@ pub struct QueryStatus {
 pub fn query(
     project: &AnalysisProject,
     models: &[std::path::PathBuf],
-    compact: bool,
     output: &Path,
     profile: query_engine::formatter::SarifProfile,
     dump_taint_graph: Option<&Path>,
@@ -395,7 +394,7 @@ pub fn query(
                 project: project.name.clone(),
             });
         }
-        return query_model_check(project, models, compact, output, profile, start_time_utc);
+        return query_model_check(project, models, output, profile, start_time_utc);
     }
     // Before touching a table: the parquet decoders panic on an encoding they cannot read, and
     // this is what turns that into an actionable "re-run `ctadl index`".
@@ -587,7 +586,6 @@ pub fn query(
         project,
         &facts,
         &taint_results,
-        compact,
         output,
         profile,
         &diagnostics,
@@ -617,7 +615,6 @@ pub fn query(
 fn query_model_check(
     project: &AnalysisProject,
     models: &[std::path::PathBuf],
-    compact: bool,
     output: &Path,
     profile: query_engine::formatter::SarifProfile,
     start_time_utc: String,
@@ -654,7 +651,7 @@ fn query_model_check(
     diagnostics.start_time_utc = start_time_utc;
 
     let execution_successful =
-        query_engine::formatter::format_model_check_sarif(compact, output, profile, &diagnostics)
+        query_engine::formatter::format_model_check_sarif(project, output, profile, &diagnostics)
             .err_context(|| "formatting sarif")?;
     if output.to_str() != Some("-") {
         log::info!("wrote {}", output.display());

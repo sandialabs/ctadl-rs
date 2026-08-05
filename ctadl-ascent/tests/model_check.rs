@@ -10,6 +10,7 @@ use std::io::Write as _;
 use ctadl_ascent::cli;
 use ctadl_ascent::facts::TaintDirection;
 use ctadl_ascent::models::ImportScope;
+use ctadl_ascent::project::AnalysisProject;
 use ctadl_ascent::query_engine::formatter::{SarifProfile, format_model_check_sarif};
 use ctadl_ir::mir::ProgramInfo;
 use tempfile::NamedTempFile;
@@ -311,8 +312,15 @@ fn the_check_is_reported_as_sarif() {
     let outcome = check(&["sink"], &[&file]);
     let diagnostics = outcome.into_diagnostics();
     let out = NamedTempFile::with_suffix(".sarif").unwrap();
+
+    // `format_model_check_sarif` requires a project handle, but only uses the
+    // project name, so an empty-imports ephemeral project is sufficient.
+    let project_name = "test_project";
+    let project = AnalysisProject::ephemeral(project_name, &[] as &[&str]);
+
     let successful =
-        format_model_check_sarif(true, out.path(), SarifProfile::Human, &diagnostics).unwrap();
+        format_model_check_sarif(&project, out.path(), SarifProfile::Machine, &diagnostics)
+            .unwrap();
     assert!(
         !successful,
         "a run that could not answer the query is not a success"
@@ -320,6 +328,12 @@ fn the_check_is_reported_as_sarif() {
 
     let sarif: serde_json::Value =
         serde_json::from_reader(std::fs::File::open(out.path()).unwrap()).unwrap();
+
+    assert_eq!(
+        sarif["properties"]["project_name"].as_str(),
+        Some(project_name)
+    );
+
     let invocation = &sarif["runs"][0]["invocations"][0];
     let ids: Vec<&str> = invocation["toolConfigurationNotifications"]
         .as_array()
