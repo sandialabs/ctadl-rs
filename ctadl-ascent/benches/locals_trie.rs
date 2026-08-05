@@ -22,15 +22,24 @@
 //! production instantiation (`FunctionId`, `FlowVariable`, `Path`, `FormalIndex`, `Path`):
 //! the leaf `(P,M,Fp)` is 24 B either way. Using the real interned types would add *their*
 //! allocations to the counter, which is exactly what this bench is trying to isolate.
+//!
+//! The third sweep runs the same shapes through `index_engine::c_locals_trie`, the parallel
+//! store `ascent_par!` uses, inserted concurrently from a rayon pool. Its `B/row` columns are
+//! what answer "what does `DashMap` cost in memory"; read its `secs` column with the caveat in
+//! [`build_par`]'s docs.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use ascent::internal::{RelFullIndexWrite, RelIndexMerge, ToRelIndex};
+use ascent::internal::{
+    CRelFullIndexWrite, RelFullIndexWrite, RelIndexMerge, ToRelIndex, ToRelIndex0,
+};
+use ctadl_ascent::index_engine::c_locals_trie::{CLocalsIndCommon, CToFull};
 use ctadl_ascent::index_engine::hybrid_set::HybridSet;
 use ctadl_ascent::index_engine::locals_trie::{LocalsIndCommon, ToFull};
+use rayon::prelude::*;
 use rustc_hash::FxHasher;
 
 // ---------------------------------------------------------------------------
@@ -46,7 +55,14 @@ struct Counting;
 fn record_alloc(size: usize) {
     ALLOCS.fetch_add(1, Ordering::Relaxed);
     let live = LIVE.fetch_add(size, Ordering::Relaxed) + size;
-    PEAK.fetch_max(live, Ordering::Relaxed);
+    // Read before writing. `fetch_max` is a read-modify-write on a line every thread touches, and
+    // the parallel sweep below runs 20 threads through here; once the peak is established almost
+    // no allocation raises it, so the plain load turns nearly all of that traffic into a shared
+    // read. The counters are still a serialization point the serial sweep does not pay in the same
+    // way -- see `build_par`'s note on reading the `secs` column.
+    if live > PEAK.load(Ordering::Relaxed) {
+        PEAK.fetch_max(live, Ordering::Relaxed);
+    }
 }
 
 // SAFETY: every method forwards to `System` with the caller's unmodified pointer and layout,
@@ -127,6 +143,20 @@ type P = u64; // Path (interned handle)
 type M = i16; // FormalIndex
 type Fp = u64; // Path (interned handle)
 type Store = LocalsIndCommon<F, V, P, M, Fp>;
+type CStore = CLocalsIndCommon<F, V, P, M, Fp>;
+
+/// Leaf `i` of a group: spread over `paths` distinct `P` values, with a distinct `(M, Fp)` per
+/// leaf so every leaf is unique within its group.
+#[inline]
+fn leaf(i: usize, paths: usize) -> (P, M, Fp) {
+    ((i % paths) as P, (i / paths) as M, i as Fp)
+}
+
+/// The `(F, V)` key of group `g`. 64 groups per function, so `fidx` holds a realistic fan-out.
+#[inline]
+fn key(g: usize) -> (F, V) {
+    ((g / 64) as F, g as V)
+}
 
 /// Drive the store the way Ascent's semi-naive loop does: derive this round's leaves into
 /// `new`, then `merge_delta_to_total_new_to_delta` (delta -> total, swap new/delta).
@@ -144,20 +174,16 @@ fn build(groups: usize, group_size: usize, rounds: usize, paths: usize) -> Run {
     let mut new = Store::default();
     let mut writer = ToFull::<F, V, P, M, Fp>::default();
 
-    // Leaf `i` of a group: spread over `paths` distinct `P` values, with a distinct
-    // `(M, Fp)` per leaf so every leaf is unique within its group.
-    let leaf = |i: usize| ((i % paths) as P, (i / paths) as M, i as Fp);
-
     let per_round = group_size.div_ceil(rounds);
     let mut emitted = 0usize;
     for _ in 0..rounds {
         let hi = (emitted + per_round).min(group_size);
         {
-            let mut w = writer.to_rel_index_write(&mut new);
+            let mut w = ToRelIndex::to_rel_index_write(&mut writer, &mut new);
             for g in 0..groups {
-                let (f, v) = ((g / 64) as F, g as V);
+                let (f, v) = key(g);
                 for i in emitted..hi {
-                    let (p, m, fp) = leaf(i);
+                    let (p, m, fp) = leaf(i, paths);
                     w.insert_if_not_present(&(f, v, p, m, fp), ());
                 }
             }
@@ -176,6 +202,70 @@ fn build(groups: usize, group_size: usize, rounds: usize, paths: usize) -> Run {
     // `drain()` does not free a hashbrown table, so the emptied `delta`/`new` stores keep
     // whatever outer-map capacity their widest iteration reached, for the whole run. Drop
     // them to separate that retention from the steady-state size of `total`.
+    drop((delta, new));
+    let live_total = mem_since(base).live;
+    drop(total);
+    Run {
+        secs,
+        peak: mem.peak,
+        live_all: mem.live,
+        live_total,
+        est_total: report.fwd_bytes + report.fidx_bytes,
+        allocs: mem.allocs,
+    }
+}
+
+/// The same build against the **parallel** store, driven the way `ascent_par!` drives it: each
+/// round's leaves are inserted into `new` concurrently from a rayon pool, through
+/// `to_c_rel_index_write` and `CRelFullIndexWrite::insert_if_not_present(&self, ..)`; then the
+/// single-threaded `merge_delta_to_total_new_to_delta` moves delta into total.
+///
+/// Reading this against `build`'s columns answers the two open questions about the parallel
+/// store with ground truth rather than a guess: what `DashMap`'s shard tables cost in bytes per
+/// row, and how much a hot shard costs in time. Groups are partitioned across threads by `(F,V)`,
+/// which is the realistic shape — a rule derives many different subjects at once — while a group
+/// with `group_size` leaves still has every one of those leaves inserted under a single shard
+/// lock, so the contention regime the module docs warn about is present at large group sizes.
+///
+/// Read the `secs` column as an upper bound on cost, not as a scaling measurement. Two things
+/// inflate it and only the parallel sweep pays them: the counting allocator's `LIVE` counter is a
+/// contended atomic on every allocation and free, and at large group sizes there are fewer groups
+/// than threads (`ROWS / group_size` items to fan out over), so the parallel loop runs out of work
+/// to hand out long before it runs out of threads. What the column *does* show honestly is the
+/// shape: cost grows with group size, which is the single-shard-lock regime.
+fn build_par(groups: usize, group_size: usize, rounds: usize, paths: usize) -> Run {
+    let base = mem_reset();
+    let start = Instant::now();
+
+    let mut total = CStore::default();
+    let mut delta = CStore::default();
+    let mut new = CStore::default();
+    let writer = CToFull::<F, V, P, M, Fp>::default();
+
+    let per_round = group_size.div_ceil(rounds);
+    let mut emitted = 0usize;
+    for _ in 0..rounds {
+        let hi = (emitted + per_round).min(group_size);
+        {
+            let w = ToRelIndex0::to_c_rel_index_write(&writer, &new);
+            (0..groups).into_par_iter().for_each(|g| {
+                let (f, v) = key(g);
+                for i in emitted..hi {
+                    let (p, m, fp) = leaf(i, paths);
+                    CRelFullIndexWrite::insert_if_not_present(&w, &(f, v, p, m, fp), ());
+                }
+            });
+        }
+        emitted = hi;
+        CStore::merge_delta_to_total_new_to_delta(&mut new, &mut delta, &mut total);
+    }
+    CStore::merge_delta_to_total_new_to_delta(&mut new, &mut delta, &mut total);
+
+    let secs = start.elapsed().as_secs_f64();
+    let mem = mem_since(base);
+    assert_eq!(total.len(), groups * group_size, "rows built");
+    let report = total.heap_report();
+    assert_eq!(report.max_group, group_size, "group size actually reached");
     drop((delta, new));
     let live_total = mem_since(base).live;
     drop(total);
@@ -266,6 +356,27 @@ fn main() {
         let groups = ROWS / group_size;
         let r = build(groups, group_size, 1, 1.max(group_size / 4));
         line("bulk", group_size, groups, &r);
+    }
+
+    // The parallel store, same shapes and same pessimal merge, inserted concurrently. Compare the
+    // `B/row` columns against the first sweep for `DashMap`'s memory overhead, and `secs` for what
+    // the shard locks buy (or cost) at each group size.
+    //
+    // Spin the pool up first: rayon allocates its worker stacks on first use, and that one-time
+    // cost would otherwise land in the first row's `peak` and `allocs`.
+    (0..rayon::current_num_threads())
+        .into_par_iter()
+        .for_each(|_| {});
+    println!(
+        "\n== parallel store, {ROWS} rows, pessimal merge, {} rayon threads ==",
+        rayon::current_num_threads()
+    );
+    header();
+    for lg in 0..=MAX_LG {
+        let group_size = 1usize << lg;
+        let groups = ROWS / group_size;
+        let r = build_par(groups, group_size, group_size, 1.max(group_size / 4));
+        line("par", group_size, groups, &r);
     }
 
     if tsv {

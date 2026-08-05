@@ -1039,6 +1039,12 @@ where
 //   locals_trie::rel_full_ind!(Name, (cols), [inds], ser, (args), Key, Val)
 //   locals_trie::rel_ind!(Name, (cols), [inds], ser, (args), [subset], Key, Val)
 //   locals_trie::rel_codegen!(Name, (cols), [inds], ser, (args))
+//
+// The fourth argument is the literal token `ser` under `ascent!` and `par` under `ascent_par!`.
+// Each macro matches on it and selects the serial types here or the concurrent ones in
+// [`super::c_locals_trie`]. Two separate types, rather than one dual-mode type, keeps the serial
+// path at zero overhead and confines the freeze-state machine to the parallel store — the same
+// split Ascent itself makes between `RelFullIndex` and `CRelFullIndex`.
 // ---------------------------------------------------------------------------
 
 #[doc(hidden)]
@@ -1051,8 +1057,11 @@ pub use locals_trie_rel_codegen as rel_codegen;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! locals_trie_rel {
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt) => {
         $crate::index_engine::locals_trie::CountingVec<($f, $v, $p, $m, $fp)>
+    };
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt) => {
+        $crate::index_engine::c_locals_trie::CCountingVec<($f, $v, $p, $m, $fp)>
     };
 }
 pub use locals_trie_rel as rel;
@@ -1060,8 +1069,11 @@ pub use locals_trie_rel as rel;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! locals_trie_rel_ind_common {
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt) => {
         $crate::index_engine::locals_trie::LocalsIndCommon<$f, $v, $p, $m, $fp>
+    };
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt) => {
+        $crate::index_engine::c_locals_trie::CLocalsIndCommon<$f, $v, $p, $m, $fp>
     };
 }
 pub use locals_trie_rel_ind_common as rel_ind_common;
@@ -1069,8 +1081,11 @@ pub use locals_trie_rel_ind_common as rel_ind_common;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! locals_trie_rel_full_ind {
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt, $key:ty, $val:ty) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt, $key:ty, $val:ty) => {
         $crate::index_engine::locals_trie::ToFull<$f, $v, $p, $m, $fp>
+    };
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, $key:ty, $val:ty) => {
+        $crate::index_engine::c_locals_trie::CToFull<$f, $v, $p, $m, $fp>
     };
 }
 pub use locals_trie_rel_full_ind as rel_full_ind;
@@ -1078,17 +1093,30 @@ pub use locals_trie_rel_full_ind as rel_full_ind;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! locals_trie_rel_ind {
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt, [], $key:ty, $val:ty) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt, [], $key:ty, $val:ty) => {
         $crate::index_engine::locals_trie::ToNone<$f, $v, $p, $m, $fp>
     };
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt, [0, 1], $key:ty, $val:ty) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt, [0, 1], $key:ty, $val:ty) => {
         $crate::index_engine::locals_trie::To01<$f, $v, $p, $m, $fp>
     };
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt, [0, 1, 2], $key:ty, $val:ty) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt, [0, 1, 2], $key:ty, $val:ty) => {
         $crate::index_engine::locals_trie::To012<$f, $v, $p, $m, $fp>
     };
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt, [0, 3, 4], $key:ty, $val:ty) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt, [0, 3, 4], $key:ty, $val:ty) => {
         $crate::index_engine::locals_trie::To034<$f, $v, $p, $m, $fp>
+    };
+
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, [], $key:ty, $val:ty) => {
+        $crate::index_engine::c_locals_trie::CToNone<$f, $v, $p, $m, $fp>
+    };
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, [0, 1], $key:ty, $val:ty) => {
+        $crate::index_engine::c_locals_trie::CTo01<$f, $v, $p, $m, $fp>
+    };
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, [0, 1, 2], $key:ty, $val:ty) => {
+        $crate::index_engine::c_locals_trie::CTo012<$f, $v, $p, $m, $fp>
+    };
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, [0, 3, 4], $key:ty, $val:ty) => {
+        $crate::index_engine::c_locals_trie::CTo034<$f, $v, $p, $m, $fp>
     };
 }
 pub use locals_trie_rel_ind as rel_ind;

@@ -48,6 +48,14 @@ use crate::index_engine::locals_trie::{DynIter, NoopWrite};
 
 type Map<K, V> = hashbrown::HashMap<K, V, rustc_hash::FxBuildHasher>;
 
+/// Build a store from its seed rows, without the caller naming the store's type.
+pub trait FromRows<R> {
+    /// Build a store from the seed rows, consuming them.
+    ///
+    /// Rows are moved into the store, not cloned, and the input `Vec` is freed as we go.
+    fn from_rows(rows: Vec<R>) -> Self;
+}
+
 // ---------------------------------------------------------------------------
 // Physical `rel!` storage.
 //
@@ -294,6 +302,28 @@ where
             }
         }
         out
+    }
+}
+
+impl<F, Vd, Pd, Vs, Ps> FromRows<(F, Vd, Pd, Vs, Ps)> for AssignTrie<F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    fn from_rows(rows: Vec<(F, Vd, Pd, Vs, Ps)>) -> Self {
+        let mut store = Self::default();
+        for (f, vd, pd, vs, ps) in rows {
+            let leaves = store.fwd.entry((f, vs)).or_default();
+            let leaf = (vd, pd, ps);
+            if !leaves.contains(&leaf) {
+                leaves.push(leaf);
+                store.len += 1;
+            }
+        }
+        store
     }
 }
 
@@ -578,7 +608,9 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// The BYODS provider macros. See `locals_trie` for the protocol.
+// The BYODS provider macros. See `locals_trie` for the protocol, including why each macro splits
+// on the literal `ser` / `par` token: the parallel types live in
+// [`crate::index_engine::c_assign_like_trie`].
 // ---------------------------------------------------------------------------
 
 #[doc(hidden)]
@@ -591,8 +623,11 @@ pub use assign_like_trie_rel_codegen as rel_codegen;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! assign_like_trie_rel {
-    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, $par:ident, $args:tt) => {
+    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, ser, $args:tt) => {
         $crate::index_engine::assign_like_trie::SeedVec<($f, $vd, $pd, $vs, $ps)>
+    };
+    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, par, $args:tt) => {
+        $crate::index_engine::c_assign_like_trie::CSeedVec<($f, $vd, $pd, $vs, $ps)>
     };
 }
 pub use assign_like_trie_rel as rel;
@@ -600,8 +635,11 @@ pub use assign_like_trie_rel as rel;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! assign_like_trie_rel_ind_common {
-    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, $par:ident, $args:tt) => {
+    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, ser, $args:tt) => {
         $crate::index_engine::assign_like_trie::AssignTrie<$f, $vd, $pd, $vs, $ps>
+    };
+    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, par, $args:tt) => {
+        $crate::index_engine::c_assign_like_trie::CAssignTrie<$f, $vd, $pd, $vs, $ps>
     };
 }
 pub use assign_like_trie_rel_ind_common as rel_ind_common;
@@ -609,8 +647,11 @@ pub use assign_like_trie_rel_ind_common as rel_ind_common;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! assign_like_trie_rel_full_ind {
-    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, $par:ident, $args:tt, $key:ty, $val:ty) => {
+    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, ser, $args:tt, $key:ty, $val:ty) => {
         $crate::index_engine::assign_like_trie::ToFull<$f, $vd, $pd, $vs, $ps>
+    };
+    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, par, $args:tt, $key:ty, $val:ty) => {
+        $crate::index_engine::c_assign_like_trie::CToFull<$f, $vd, $pd, $vs, $ps>
     };
 }
 pub use assign_like_trie_rel_full_ind as rel_full_ind;
@@ -618,8 +659,11 @@ pub use assign_like_trie_rel_full_ind as rel_full_ind;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! assign_like_trie_rel_ind {
-    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, $par:ident, $args:tt, [0, 3], $key:ty, $val:ty) => {
+    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, ser, $args:tt, [0, 3], $key:ty, $val:ty) => {
         $crate::index_engine::assign_like_trie::To03<$f, $vd, $pd, $vs, $ps>
+    };
+    ($name:ident, ($f:ty, $vd:ty, $pd:ty, $vs:ty, $ps:ty), $inds:tt, par, $args:tt, [0, 3], $key:ty, $val:ty) => {
+        $crate::index_engine::c_assign_like_trie::CTo03<$f, $vd, $pd, $vs, $ps>
     };
 }
 pub use assign_like_trie_rel_ind as rel_ind;
