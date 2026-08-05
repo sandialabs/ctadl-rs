@@ -475,6 +475,8 @@ deliberately reports that rather than falling back.
 
 ## Verification
 
+Use the nix `regression` devShell environment to add these tests.
+
 **Unit tests** — `ctadl-ascent/src/languages/jni/registry/tests.rs`.
 
 Attribution carries the real risk, and it needs no ELF: drive the run
