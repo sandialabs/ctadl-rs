@@ -25,9 +25,16 @@ plain initialized data. This module does that in three parts:
 
 # Why the scan can be this simple
 
-A slot's value is the addend of a relative dynamic relocation at that offset when one exists, and
-otherwise the word stored in the file. That second rule is what covers `.relr.dyn` and 32-bit
-`.rel.dyn`, both of which keep the value in place -- so `RELR` needs no decoder here.
+A slot's value comes from one of three places. It is the addend of a relative dynamic relocation at
+that offset when one exists; failing that, `st_value + addend` of an absolute pointer-width
+relocation against a symbol this object defines; failing both, the word stored in the file. That
+last rule is what covers `.relr.dyn` and 32-bit `.rel.dyn`, both of which keep the value in place --
+so `RELR` needs no decoder here.
+
+The absolute case is the one a library reaches by *exporting* its implementations: an exported
+function is preemptible, so the linker leaves the reference symbolic and the word in the file stays
+zero. Reading only the first two sources would reject the whole triple, and one unreadable `fnPtr`
+costs the entire table.
 
 Relocation sections are selected by `sh_type`, never by name: Android ships two *packed* formats
 (`SHT_ANDROID_RELA` = `0x60000002`, `SHT_ANDROID_RELR` = `0x6fffff00`) under the standard section
@@ -46,7 +53,7 @@ use std::path::Path;
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
 use object::elf;
-use object::read::elf::{FileHeader, ProgramHeader, Rela, SectionHeader};
+use object::read::elf::{FileHeader, ProgramHeader, Rela, SectionHeader, Sym};
 use object::{Endian, Endianness};
 use serde::{Deserialize, Serialize};
 
@@ -406,8 +413,10 @@ where
     // Every allocated section that has bytes in the file, so a pointer slot can be followed to
     // the string it names (which lives in `.rodata`, not in the section being scanned).
     let mut mapped: Vec<(u64, &[u8])> = Vec::new();
-    // Addends of the relative dynamic relocations, keyed by the address they apply to.
-    let mut relative: HashMap<u64, u64> = HashMap::new();
+    // Load-time value of every slot a dynamic relocation writes, keyed by the address it applies
+    // to. Both kinds this reads land here: a relative relocation's addend, and an absolute one's
+    // resolved symbol address.
+    let mut resolved: HashMap<u64, u64> = HashMap::new();
 
     for section in sections.iter() {
         let flags: u64 = section.sh_flags(endian).into();
@@ -425,13 +434,34 @@ where
         }
         // `rela` is gated on `sh_type == SHT_RELA`, which is exactly the discipline this needs:
         // a section *named* `.rela.dyn` may be a packed Android blob with a non-standard type.
-        if let Ok(Some((relas, _))) = section.rela(endian, data) {
+        if let Ok(Some((relas, link))) = section.rela(endian, data) {
+            // The linked symbol table, needed only by the absolute arm. Resolved once per
+            // section, and its failure costs only that arm: `sh_link` is 0 on a relocation
+            // section that references no symbol, and losing the relative addends over that would
+            // be a regression.
+            let symbols = sections.symbol_table_by_index(endian, data, link).ok();
             for rela in relas {
-                if !is_relative(machine, rela.r_type(endian, false)) {
-                    continue;
-                }
+                let r_type = rela.r_type(endian, false);
+                let offset: u64 = rela.r_offset(endian).into();
                 let addend: i64 = rela.r_addend(endian).into();
-                relative.insert(rela.r_offset(endian).into(), addend as u64);
+                if is_relative(machine, r_type) {
+                    resolved.insert(offset, addend as u64);
+                } else if is_absolute_pointer(machine, r_type)
+                    && let Some(symbols) = symbols.as_ref()
+                    && let Some(index) = rela.symbol(endian, false)
+                    && let Ok(sym) = symbols.symbol(index)
+                    // An undefined symbol is bound to some other library at load time, and its
+                    // `st_value` here is zero -- which is the very failure this arm exists to
+                    // fix, so taking it would only move the bug.
+                    && sym.st_shndx(endian) != elf::SHN_UNDEF
+                {
+                    let value: u64 = sym.st_value(endian).into();
+                    // `or_insert`, so that a relative relocation at the same address wins
+                    // whichever order the two are seen in: it is the linker's final answer.
+                    resolved
+                        .entry(offset)
+                        .or_insert(value.wrapping_add(addend as u64));
+                }
             }
         }
     }
@@ -455,8 +485,8 @@ where
         let base: u64 = section.sh_addr(endian).into();
 
         let slot = |addr: u64| -> Option<u64> {
-            if let Some(addend) = relative.get(&addr) {
-                return Some(*addend);
+            if let Some(value) = resolved.get(&addr) {
+                return Some(*value);
             }
             let offset = addr.checked_sub(base)? as usize;
             read_word(bytes, offset, pointer, endian)
@@ -527,6 +557,23 @@ fn is_relative(machine: u16, r_type: u32) -> bool {
         elf::EM_X86_64 => r_type == elf::R_X86_64_RELATIVE,
         elf::EM_ARM => r_type == elf::R_ARM_RELATIVE,
         elf::EM_386 => r_type == elf::R_386_RELATIVE,
+        _ => false,
+    }
+}
+
+/// True when `r_type` is the machine's pointer-width *absolute* relocation, whose slot takes the
+/// referenced symbol's address plus the addend.
+///
+/// This is what a `fnPtr` gets when the implementation it names is **exported**: an exported
+/// function in a shared object is preemptible, so the linker cannot commit to an address and must
+/// leave the reference symbolic instead of emitting a `RELATIVE`. The word in the file is then
+/// zero. Libraries built the ordinary Android way -- hidden visibility -- never reach here.
+fn is_absolute_pointer(machine: u16, r_type: u32) -> bool {
+    match machine {
+        elf::EM_AARCH64 => r_type == elf::R_AARCH64_ABS64,
+        elf::EM_X86_64 => r_type == elf::R_X86_64_64,
+        elf::EM_ARM => r_type == elf::R_ARM_ABS32,
+        elf::EM_386 => r_type == elf::R_386_32,
         _ => false,
     }
 }

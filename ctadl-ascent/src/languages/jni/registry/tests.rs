@@ -338,6 +338,42 @@ fn elf64_falls_back_to_the_value_stored_in_the_file() {
     assert_eq!(scan.entries[0].fn_addr, TEXT_ADDR);
 }
 
+/// The exported-implementation path: the `fnPtr` slot is zero in the file and carries an
+/// `R_AARCH64_ABS64` against a symbol this object defines, which is what the linker emits when
+/// the implementation is not hidden. Reading only relative addends and the in-place word gives
+/// zero, which fails the executable test and takes the whole table down with it.
+///
+/// `nightly/tests/jni/JniRegister.c` is exactly this shape.
+#[test]
+fn elf64_resolves_an_exported_fn_ptr_through_its_symbol() {
+    let scan = scan_bytes(&Elf64::new().with_exported_fn_ptr(true, 0).build()).expect("scanning");
+    assert_eq!(scan.entries.len(), 1);
+    assert_eq!(scan.entries[0].name, "readBytesNative");
+    assert_eq!(scan.entries[0].descriptor, "(JII[BI)V");
+    assert_eq!(scan.entries[0].fn_addr, TEXT_ADDR);
+
+    // The value is `st_value + addend`, not `st_value`: an addend is how the linker points at an
+    // offset from a symbol, and dropping it would land inside the wrong function.
+    let scan =
+        scan_bytes(&Elf64::new().with_exported_fn_ptr(true, 0x40).build()).expect("scanning");
+    assert_eq!(scan.entries.len(), 1);
+    assert_eq!(scan.entries[0].fn_addr, TEXT_ADDR + 0x40);
+}
+
+/// The guard on that: an *undefined* symbol is resolved by some other library at load time, and
+/// its `st_value` here is zero. Whatever this object can compute from it is not the slot's value,
+/// so nothing is recovered.
+///
+/// The addend is [`TEXT_ADDR`] deliberately. With addend 0 the sum is 0, and the executable-code
+/// test rejects that on its own -- the assertion would hold with the guard deleted, and prove
+/// nothing. Landing the sum inside `.text` takes that fallback away and leaves the guard as the
+/// only thing standing between a `SHN_UNDEF` symbol and an invented `fnPtr`.
+#[test]
+fn an_undefined_symbol_resolves_nothing() {
+    let elf = Elf64::new().with_exported_fn_ptr(false, TEXT_ADDR).build();
+    assert!(scan_bytes(&elf).expect("scanning").entries.is_empty());
+}
+
 /// A `.rela.dyn` typed `SHT_ANDROID_RELA` (`0x60000002`) holds a packed APS2 blob, not an array
 /// of `Elf64_Rela`. Decoding it as one yields garbage addends -- and plausible-looking ones,
 /// which is worse -- so selection is by `sh_type`, never by section name.
@@ -461,23 +497,39 @@ const SHT_ANDROID_RELA: u32 = 0x6000_0002;
 const TEXT_ADDR: u64 = 0x1000;
 const RODATA_ADDR: u64 = 0x2000;
 const DATA_ADDR: u64 = 0x3000;
+const DYNSYM_ADDR: u64 = 0x4000;
 const TEXT_OFF: u64 = 0x1000;
 const RODATA_OFF: u64 = 0x2000;
 const DATA_OFF: u64 = 0x3000;
 const RELA_OFF: u64 = 0x4000;
 const SHSTR_OFF: u64 = 0x5000;
 const SHOFF: u64 = 0x6000;
+const DYNSYM_OFF: u64 = 0x7000;
 const FILE_SIZE: usize = 0x8000;
+
+/// Index of the one non-null symbol in the ELF64 fixture's `.dynsym`, and of the sections the
+/// relocations and that symbol point at.
+const SYM_INDEX: u64 = 1;
+const TEXT_SHNDX: u16 = 1;
+const SHSTRTAB_SHNDX: u32 = 5;
+const DYNSYM_SHNDX: u32 = 6;
 
 /// The name and descriptor every fixture registers, laid out back to back in `.rodata`.
 const FIXTURE_NAME: &[u8] = b"readBytesNative\0";
 const FIXTURE_DESCRIPTOR: &[u8] = b"(JII[BI)V\0";
 const DESCRIPTOR_OFF: u64 = FIXTURE_NAME.len() as u64;
 
-/// `\0.text\0.rodata\0.data.rel.ro\0.rela.dyn\0.shstrtab\0`.
+/// `\0.text\0.rodata\0.data.rel.ro\0.rela.dyn\0.shstrtab\0.dynsym\0`.
 fn shstrtab() -> Vec<u8> {
     let mut out = vec![0u8];
-    for name in [".text", ".rodata", ".data.rel.ro", ".rela.dyn", ".shstrtab"] {
+    for name in [
+        ".text",
+        ".rodata",
+        ".data.rel.ro",
+        ".rela.dyn",
+        ".shstrtab",
+        ".dynsym",
+    ] {
         out.extend_from_slice(name.as_bytes());
         out.push(0);
     }
@@ -499,6 +551,9 @@ struct Elf64 {
     in_place: bool,
     /// `sh_type` of the relocation section, and whether its addends are the right ones.
     relocs: Option<(u32, bool)>,
+    /// The `fnPtr` slot's relocation is `R_AARCH64_ABS64` against the fixture's one symbol rather
+    /// than `R_AARCH64_RELATIVE`: whether that symbol is defined here, and the addend.
+    exported_fn_ptr: Option<(bool, u64)>,
     fn_addr: u64,
     /// The instruction word at [`TEXT_ADDR`], where `fn_addr` points by default. Zero -- padding,
     /// which decodes as no branch -- unless a test says otherwise.
@@ -510,6 +565,7 @@ impl Elf64 {
         Self {
             in_place: true,
             relocs: None,
+            exported_fn_ptr: None,
             fn_addr: TEXT_ADDR,
             code: 0,
         }
@@ -532,6 +588,21 @@ impl Elf64 {
     fn relocated(mut self) -> Self {
         self.in_place = false;
         self.relocs = Some((object::elf::SHT_RELA, true));
+        self
+    }
+
+    /// The two string slots resolve through `RELATIVE` addends as usual, but the `fnPtr` carries
+    /// an `R_AARCH64_ABS64` against the fixture's one `.dynsym` symbol -- what the linker emits
+    /// for an *exported* implementation, whose address it cannot commit to. The slot is zero in
+    /// the file, so the symbol is the only way to read it.
+    ///
+    /// `defined` puts that symbol in `.text` at [`TEXT_ADDR`]; otherwise it is `SHN_UNDEF` with
+    /// `st_value` 0, which some other library supplies at load time and which nothing here can
+    /// resolve.
+    fn with_exported_fn_ptr(mut self, defined: bool, addend: u64) -> Self {
+        self.in_place = false;
+        self.relocs = Some((object::elf::SHT_RELA, true));
+        self.exported_fn_ptr = Some((defined, addend));
         self
     }
 
@@ -565,8 +636,8 @@ impl Elf64 {
         put16(&mut out, 0x36, 56); // e_phentsize
         put16(&mut out, 0x38, 1); // e_phnum
         put16(&mut out, 0x3a, 64); // e_shentsize
-        put16(&mut out, 0x3c, 6); // e_shnum
-        put16(&mut out, 0x3e, 5); // e_shstrndx
+        put16(&mut out, 0x3c, 7); // e_shnum
+        put16(&mut out, 0x3e, SHSTRTAB_SHNDX as u16); // e_shstrndx
 
         // One PT_LOAD at vaddr 0, as every Android shared library has.
         put32(&mut out, 0x40, object::elf::PT_LOAD);
@@ -603,6 +674,26 @@ impl Elf64 {
                 put64(&mut out, at + 8, u64::from(object::elf::R_AARCH64_RELATIVE));
                 put64(&mut out, at + 16, *addend);
             }
+            // The `fnPtr` entry, rewritten as an absolute relocation against symbol 1. `r_info`
+            // is the symbol index in its high 32 bits and the type in its low 32.
+            if let Some((_, addend)) = self.exported_fn_ptr {
+                let at = RELA_OFF as usize + 2 * 24;
+                put64(
+                    &mut out,
+                    at + 8,
+                    (SYM_INDEX << 32) | u64::from(object::elf::R_AARCH64_ABS64),
+                );
+                put64(&mut out, at + 16, addend);
+            }
+        }
+
+        // `.dynsym`: the null symbol, then one symbol at `.text`, or undefined.
+        if let Some((defined, _)) = self.exported_fn_ptr {
+            let at = (DYNSYM_OFF + SYM_INDEX * 24) as usize;
+            put32(&mut out, at, 0); // st_name -- never read, and the strtab link is `.shstrtab`
+            out[at + 4] = 0x12; // st_info: STB_GLOBAL | STT_FUNC
+            put16(&mut out, at + 6, if defined { TEXT_SHNDX } else { 0 });
+            put64(&mut out, at + 8, if defined { TEXT_ADDR } else { 0 });
         }
 
         let names = shstrtab();
@@ -667,8 +758,26 @@ impl Elf64 {
             SHSTR_OFF,
             names.len() as u64,
         );
+        sh(
+            6,
+            ".dynsym",
+            object::elf::SHT_DYNSYM,
+            alloc,
+            DYNSYM_ADDR,
+            DYNSYM_OFF,
+            2 * 24,
+        );
         // `sh_entsize` on the relocation section, which `object` reads to size its array.
         put64(&mut out, SHOFF as usize + 4 * 64 + 56, 24);
+        // `sh_link` on `.dynsym` is its string table; `.shstrtab` stands in, since no test reads
+        // a symbol name.
+        put32(&mut out, SHOFF as usize + 6 * 64 + 40, SHSTRTAB_SHNDX);
+        // `sh_link` on `.rela.dyn` is the symbol table its entries index -- set only when there
+        // are symbolic entries. A relocation section holding nothing but `RELATIVE` entries
+        // references no symbol and legitimately links none, and its addends must still be read.
+        if self.exported_fn_ptr.is_some() {
+            put32(&mut out, SHOFF as usize + 4 * 64 + 40, DYNSYM_SHNDX);
+        }
         out
     }
 }
