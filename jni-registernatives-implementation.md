@@ -1,4 +1,4 @@
-# Linking natives bound through `RegisterNatives` — what was built
+# Linking natives bound through `RegisterNatives` — what was built -- DO-NOT-MERGE
 
 Implements `jni-registernatives-plan.md`. This file records what changed, where it
 differs from the plan, and what is still unverified.

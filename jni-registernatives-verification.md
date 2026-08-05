@@ -1,4 +1,4 @@
-# Verifying `RegisterNatives` linking against the real APKs
+# Verifying `RegisterNatives` linking against the real APKs - DO-NOT-MERGE
 
 What was run, what it measured, and what it found. The companion to
 `jni-registernatives-plan.md` (the design) and
