@@ -1,21 +1,25 @@
 # Rebase of `taintbench` onto `origin/main` - DO-NOT-MERGE
 
-Rebased `taintbench` onto `origin/main` (`afe3f1f4`, "Misc fixes (#91)") and
-re-ran the TaintBench suite (see `taintbench/README.md`).
+Rebased `taintbench` onto `origin/main` (`de45c4b0`, "Implement hybrid locals
+data structure (#93)") and re-ran the TaintBench suite (see
+`taintbench/README.md`).
 
 ## Result
 
-Rebase succeeded. Four of the five original commits replayed, plus two commits
+Rebase succeeded. Four of the five original commits replayed, plus three commits
 carrying this note and the baseline/model edits:
 
 ```
-507276ff updates
-1975bc8b update branch
-a79cff37 Optimize some more things in the query
-325d7e64 Format
-252d959e Fix taintbench sink
-dcada83d Taintbench
-afe3f1f4 Misc fixes (#91)   <- origin/main
+0d9a67a8 Update merge note
+310cf417 updates
+55cbf658 update branch
+6c9c2de6 Optimize some more things in the query
+1ed52727 Format
+4255b8ce Fix taintbench sink
+68e28a3b Taintbench
+de45c4b0 Implement hybrid locals data structure (#93)   <- origin/main
+c8b61936 GitHub release ci (#92)
+afe3f1f4 Misc fixes (#91)
 ```
 
 The **"Clippy" commit dropped out as empty**. Its only surviving content was a
@@ -23,7 +27,26 @@ The **"Clippy" commit dropped out as empty**. Its only surviving content was a
 already refactored those assertions to go through `local_name(&locals, var)`, so
 resolving to main's side left the commit with nothing.
 
-## Conflicts resolved
+## Conflicts resolved — onto `de45c4b0` (#92, #93)
+
+One conflicted commit, one file, and no semantic conflicts: `cargo check
+--workspace --all-targets` was clean straight off the rebase.
+
+### `flake.nix` — two conflicts, one additive, one main's side
+
+- `#92` added the `release = import ./nix/release.nix { ... }` binding right where
+  our commit added the `taintbenchAppsDir` / `taintbenchApps` block. Purely
+  additive on both sides; both kept.
+- `jvm-reader-tests` — `#92` added `cargoBuildOptions = ... "--package"
+  "jvm-reader"` and put the same `--package` filter on `cargoTestOptions`; our
+  side only reflowed the base one-liner across several lines. Main's is the
+  semantic change and matches the single-line style of the `dex-reader-tests`
+  block above it. Took main's.
+
+`#93` replaced `index_engine/locals_trie.rs` wholesale, and none of our commits
+touch that file, so it merged silently and correctly.
+
+## Conflicts resolved — earlier steps (onto `afe3f1f4`)
 
 ### `xtask/src/main.rs` — additive, both sides kept
 
@@ -115,8 +138,9 @@ of this harness. The values are still trustworthy — building the pre-rebase ti
 
 ## Benchmark results
 
-`cargo xtask taintbench` against the three APKs, run from the rebased tree. **All
-three apps meet their committed baseline exactly.**
+`cargo xtask taintbench` against the three APKs, re-run from the tree rebased onto
+`de45c4b0`. **All three apps meet their committed baseline exactly, and every
+verdict is unchanged from the `afe3f1f4` run** — `#92` and `#93` moved nothing.
 
 ```
 3 passed, 0 skipped, 0 failed of 3 app(s)
@@ -207,7 +231,8 @@ README prescribes folding those in. **`expected.json` updated to `[1, 2]`.**
 ## The datalog regime no longer reproduces the baseline
 
 `taint_analysis` dispatches to `search::taint_search` unless `CTADL_QUERY_DATALOG=1`
-is set. Under the fallback datalog engine the suite **fails**:
+is set. Under the fallback datalog engine the suite **fails**, identically on the
+`de45c4b0` rebase as on `afe3f1f4`:
 
 ```
 2 passed, 0 skipped, 1 failed of 3 app(s)
@@ -251,19 +276,26 @@ either implementing or rejecting at model-load time under that flag.
 
 ## Verification
 
-- `cargo check --workspace --all-targets` — clean
-- `cargo fmt --all` — applied
+Re-run on the tree rebased onto `de45c4b0`:
+
+- `cargo check --workspace --all-targets` — clean, with no fixups needed after the
+  rebase
+- `cargo fmt --all --check` — clean
 - `cargo clippy --workspace --all-targets` — clean of anything we introduced. Two
-  `unnecessary_cast` warnings in `index_engine/locals_trie.rs:1293,1297` are
-  pre-existing (last touched by `a77bcfdb` (#73); this branch does not touch the
-  file), and one `wrong_self_convention` is in the vendored `rustc_graphviz`.
-- `cargo test --workspace` — 584 passed across 34 suites, 0 failed
+  warnings remain, both pre-existing and in files this branch does not touch: an
+  `items_after_test_module` in `jvm-reader/src/flow.rs:1792` and a
+  `wrong_self_convention` in the vendored `rustc_graphviz`. (The two
+  `unnecessary_cast` warnings this note used to list are gone: `#93` replaced
+  `index_engine/locals_trie.rs` wholesale.)
+- `cargo test --workspace` — 614 passed across 38 suites, 0 failed
 - `cargo xtask taintbench` — 3 passed, 0 skipped, 0 failed
-- `CTADL_QUERY_DATALOG=1 cargo xtask taintbench` — 2 passed, 1 failed (see above)
+- `CTADL_QUERY_DATALOG=1 cargo xtask taintbench` — 2 passed, 1 failed, the same
+  `cajino_baidu` `#8` regression as before (see above)
 
 ## Files changed beyond the replayed commits
 
-Now committed, in `1975bc8b` ("update branch") and `507276ff` ("updates"):
+Now committed, in `55cbf658` ("update branch"), `310cf417` ("updates"), and
+`0d9a67a8` ("Update merge note"):
 
 - `xtask/src/taintbench.rs` — the never-valid `format` subcommand folded into
   `query`; doc comment
