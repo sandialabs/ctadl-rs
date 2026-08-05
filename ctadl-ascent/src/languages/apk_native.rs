@@ -113,10 +113,26 @@ pub fn import_native_libs(
     // Chosen before the Ghidra probe below so that probe can say how many libraries are
     // actually at stake: an APK shipping one library for four ABIs has four entries but
     // only ever imports one of them.
-    let abi = match opts.native_abi {
-        Some(abi) => abi,
-        None => preferred_abi(&entries).expect("entries is non-empty"),
+    let (abi, unusable) = match opts.native_abi {
+        Some(abi) => (abi, Vec::new()),
+        None => {
+            let choice = preferred_abi(&apk_bytes, &entries).expect("entries is non-empty");
+            (choice.abi, choice.unusable)
+        }
     };
+    if !unusable.is_empty() {
+        log::info!(
+            "{}: skipping {} -- {} no entry there is a loadable object file (an empty \
+             placeholder, say); pass --native-abi to override",
+            apk_path.display(),
+            unusable.join(", "),
+            if unusable.len() == 1 {
+                "it has"
+            } else {
+                "they have"
+            },
+        );
+    }
     let selected = entries.iter().filter(|e| e.abi == abi).count();
     let skipped: Vec<&str> = {
         let mut other: Vec<&str> = entries

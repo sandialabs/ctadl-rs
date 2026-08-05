@@ -30,10 +30,22 @@ Two constraints follow from that rule set:
   only when it finds a code item), so the bridge emits the rows itself, exactly as
   [`crate::codegen::model_matches::codegen_model_matches`] does for modelled functions.
 
+# Two ways a native method finds its implementation
+
+The symbol convention above is one of them, and the only one a JVM applies on its own. The other
+is `env->RegisterNatives(clazz, table, n)`, which an app calls from `JNI_OnLoad` to bind a
+`JNINativeMethod[]` at run time -- name, descriptor and function pointer, with no exported symbol
+anywhere. Most Android apps use it for most of their natives.
+
+[`registry`] recovers those tables straight out of the library's data sections at import time and
+recovers each entry's declaring class from the Dex side at index time. [`resolve`] consults that
+result *first*, because it is what the runtime does: a method bound by `RegisterNatives` runs the
+registered function even when a matching `Java_…` symbol also exists.
+
 # Limitations
 
-`RegisterNatives` is not handled, and calls through the `JNIEnv` accessor vtable
-(`(*env)->GetStringUTFChars(...)`) are not modelled. See `docs/jni.md`.
+Calls through the `JNIEnv` accessor vtable (`(*env)->GetStringUTFChars(...)`) are not modelled.
+See `docs/jni.md`.
 */
 
 use hashbrown::hash_map::HashMap;
@@ -43,13 +55,16 @@ use std::collections::BTreeMap;
 use ctadl_ir::ProgramInfo;
 use ctadl_ir::mir::call::VirtualMethodTable;
 
+pub mod registry;
+
 use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
+use crate::error::Error;
 use crate::facts::{
     self, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, PackedInsnSiteId,
 };
 use crate::index_engine::IndexFacts;
 use crate::index_engine::source_info::IndexSourceInfo;
-use crate::project::ArtifactLanguage;
+use crate::project::{ArtifactImport, ArtifactLanguage};
 
 /// How a Java frontend numbers a method's declared parameters.
 ///
@@ -251,6 +266,12 @@ pub struct JniObserver {
     natives: Vec<JavaNative>,
     /// Native simple name -> the fully-qualified IR function name(s) carrying it.
     symbols: BTreeMap<String, Vec<String>>,
+    /// One entry per import that shipped a `jni-registry.json`: its name, and the tables
+    /// recovered from it.
+    ///
+    /// Kept per import, unlike `natives` and `symbols`, because `table_addr` order is only
+    /// meaningful within one library -- and run segmentation is the whole of attribution.
+    registries: Vec<(String, registry::JniRegistry)>,
 }
 
 impl JniObserver {
@@ -293,10 +314,32 @@ impl JniObserver {
         }
     }
 
-    /// True when no import contributed a Java `native` method or no import contributed native
-    /// symbols -- i.e. there is no boundary to bridge.
+    /// Records one import's recovered `RegisterNatives` tables, if it has any. Call it per
+    /// import, beside [`Self::observe`].
+    ///
+    /// # Errors
+    ///
+    /// If the import has a `jni-registry.json` that cannot be read or parsed. A missing one is
+    /// not an error: only an ELF import scanned by this build has one at all.
+    pub fn observe_registry(&mut self, import: &ArtifactImport) -> Result<(), Error> {
+        let Some(registry) = registry::JniRegistry::load(import)? else {
+            return Ok(());
+        };
+        if registry.entries.is_empty() {
+            return Ok(());
+        }
+        self.registries.push((import.name.clone(), registry));
+        Ok(())
+    }
+
+    /// True when there is no boundary to bridge: no import contributed a Java `native` method, or
+    /// none contributed a native half -- a symbol table *or* a recovered `RegisterNatives` table.
+    ///
+    /// The registry half counts on its own. A library that exports not one `Java_…` symbol and
+    /// binds all 28 of its natives through `RegisterNatives` is the ordinary case, not an exotic
+    /// one, and treating it as "nothing to link" would skip exactly the apps this exists for.
     pub fn is_empty(&self) -> bool {
-        self.natives.is_empty() || self.symbols.is_empty()
+        self.natives.is_empty() || (self.symbols.is_empty() && self.registries.is_empty())
     }
 }
 
@@ -312,28 +355,37 @@ pub struct LinkStats {
     pub natives: usize,
     /// Of those, ones joined to a native implementation.
     pub linked: usize,
+    /// Of those linked, ones joined through a recovered `RegisterNatives` table rather than
+    /// through a `Java_…` symbol. A subset of `linked`, not an addition to it.
+    pub registered: usize,
     /// Ones with no matching `Java_…` symbol (or whose two halves were not both in the fact base).
     pub unresolved: usize,
     /// Ones whose only candidate was an ambiguous short name.
     pub ambiguous: usize,
+    /// Recovered `RegisterNatives` entries that tier 1 could not attribute to a single class.
+    /// Not a subset of anything above: it counts table entries, not Java methods.
+    pub unattributed: usize,
 }
 
 impl std::fmt::Display for LinkStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} native method(s): {} linked, {} unresolved, {} ambiguous",
-            self.natives, self.linked, self.unresolved, self.ambiguous
+            "{} native method(s): {} linked ({} registered), {} unresolved, {} ambiguous",
+            self.natives, self.linked, self.registered, self.unresolved, self.ambiguous
         )
     }
 }
 
-/// How a Java native method resolved against the native symbol table.
+/// How a Java native method resolved against the native half.
 enum Resolution<'a> {
-    /// The mangled symbol, and the IR function name it belongs to.
+    /// The mangled symbol (or, for a registered native, its registered name), and the IR
+    /// function name it belongs to.
     Found {
         symbol: String,
         function: &'a str,
+        /// True when this came from a recovered `RegisterNatives` table.
+        registered: bool,
     },
     /// A short name matched but could not be attributed to one method.
     Ambiguous {
@@ -383,18 +435,32 @@ pub fn link(
             .or_default() += 1;
     }
 
+    let registered = attribute_registries(obs, &natives, &mut stats);
+
     for nat in natives {
         stats.natives += 1;
 
-        let function = match resolve(nat, &obs.symbols, &overloads) {
-            Resolution::Found { symbol, function } => {
-                log::debug!("jni bridge: {} -> {} ({})", nat.method, function, symbol);
-                function
+        let (function, via_registry) = match resolve(nat, &obs.symbols, &overloads, &registered) {
+            Resolution::Found {
+                symbol,
+                function,
+                registered,
+            } => {
+                log::debug!(
+                    "jni bridge: {} -> {} ({}{})",
+                    nat.method,
+                    function,
+                    if registered { "registered as " } else { "" },
+                    symbol
+                );
+                (function, registered)
             }
             Resolution::Ambiguous { symbol, reason } => {
                 log::warn!(
                     "jni bridge: not linking '{}': symbol '{}' is ambiguous ({}). \
-                     Give the implementation its long (descriptor-qualified) name to disambiguate.",
+                     Give the implementation its long (descriptor-qualified) name to \
+                     disambiguate, or bind it with RegisterNatives, which names the method \
+                     unambiguously.",
                     nat.method,
                     symbol,
                     reason
@@ -464,17 +530,165 @@ pub fn link(
 
         emit_bridge(java_id, native_id, &ports, facts, source_info);
         stats.linked += 1;
+        if via_registry {
+            stats.registered += 1;
+        }
     }
 
     log::info!("jni bridge: {}", stats);
     stats
 }
 
-/// Resolves one Java native method against the native symbol table, mirroring the JNI runtime:
-/// prefer the long (descriptor-qualified) name when that symbol exists, otherwise fall back to the
-/// short name -- but only when the declaring class has exactly one native method with that simple
-/// name, since an overloaded native reached by its short name cannot be attributed.
+/// Runs tier-1 attribution over every import's recovered tables and returns the resulting
+/// `Java method -> IR function` pairings, which [`resolve`] consults as tier 0.
+///
+/// The table side is per import; the Java candidate side spans the project. That asymmetry is
+/// what makes a split APK work: in an app bundle the `.so` and the `classes.dex` are different
+/// imports, so an attribution scoped to one import on both sides would link nothing.
+fn attribute_registries<'a>(
+    obs: &'a JniObserver,
+    natives: &[&'a JavaNative],
+    stats: &mut LinkStats,
+) -> HashMap<&'a str, &'a str> {
+    let mut links: HashMap<&'a str, &'a str> = HashMap::new();
+    if obs.registries.is_empty() {
+        return links;
+    }
+
+    let index = registry::ClassIndex::build(natives.iter().map(|nat| {
+        (
+            nat.class_internal.as_str(),
+            nat.simple_name.as_str(),
+            nat.descriptor.as_str(),
+        )
+    }));
+    // (class, simple name, descriptor) -> the Java stub, so an attributed entry names a method
+    // the bridge can emit against.
+    let methods: HashMap<(&str, &str, &str), &'a JavaNative> = natives
+        .iter()
+        .map(|nat| {
+            (
+                (
+                    nat.class_internal.as_str(),
+                    nat.simple_name.as_str(),
+                    nat.descriptor.as_str(),
+                ),
+                *nat,
+            )
+        })
+        .collect();
+
+    let (mut entries, mut attributed) = (0usize, 0usize);
+    for (import_name, reg) in &obs.registries {
+        let report = registry::attribute(reg, &index);
+        let mut classes: HashSet<&str> = HashSet::new();
+        for hit in &report.attributed {
+            classes.insert(hit.class);
+            let key = (
+                hit.class,
+                hit.entry.name.as_str(),
+                hit.entry.descriptor.as_str(),
+            );
+            // An entry with no function is still attributed and still counted: it is the
+            // disassembler, not the scan, that came up empty.
+            let (Some(nat), Some(function)) = (methods.get(&key), hit.entry.function.as_deref())
+            else {
+                continue;
+            };
+            if let Some(previous) = links.insert(nat.method.as_str(), function)
+                && previous != function
+            {
+                log::warn!(
+                    "jni registry: '{}' is registered twice, to '{}' and '{}'; keeping the \
+                     latter",
+                    nat.method,
+                    previous,
+                    function,
+                );
+            }
+        }
+        // Only libraries that have tables: a per-library line for the hundreds that do not is
+        // noise, and a config split can hold two hundred of them.
+        log::info!(
+            "jni registry: {} table(s), {} entr{} in {}: {} attributed to {} class(es), {} \
+             unattributed",
+            report.tables,
+            reg.entries.len(),
+            if reg.entries.len() == 1 { "y" } else { "ies" },
+            import_name,
+            report.attributed.len(),
+            classes.len(),
+            report.unattributed,
+        );
+        entries += reg.entries.len();
+        attributed += report.attributed.len();
+        stats.unattributed += report.unattributed;
+    }
+    log::info!(
+        "jni registry: {} entr{} across {} librar{}: {} attributed, {} unattributed",
+        entries,
+        if entries == 1 { "y" } else { "ies" },
+        obs.registries.len(),
+        if obs.registries.len() == 1 {
+            "y"
+        } else {
+            "ies"
+        },
+        attributed,
+        stats.unattributed,
+    );
+    links
+}
+
+/// Resolves one Java native method to its implementation, mirroring the JNI runtime.
+///
+/// **Tier 0** is a `RegisterNatives` binding recovered by [`registry`]. It wins outright, because
+/// that is what the runtime does: a registered method runs the registered function whether or not
+/// a matching `Java_…` symbol exists. It also has to be consulted *before* the symbol tiers rather
+/// than as a fallback -- the `Ambiguous` arm below never reaches a fallback, and an overloaded
+/// native is exactly the case `RegisterNatives` matters most for.
+///
+/// Otherwise the symbol convention: prefer the long (descriptor-qualified) name when that symbol
+/// exists, otherwise fall back to the short name -- but only when the declaring class has exactly
+/// one native method with that simple name, since an overloaded native reached by its short name
+/// cannot be attributed.
 fn resolve<'a>(
+    nat: &JavaNative,
+    symbols: &'a BTreeMap<String, Vec<String>>,
+    overloads: &HashMap<(&str, &str), usize>,
+    registered: &HashMap<&'a str, &'a str>,
+) -> Resolution<'a> {
+    if let Some(function) = registered.get(nat.method.as_str()).copied() {
+        // Resolve the symbol side too, purely to notice a disagreement. `resolve` must still
+        // return exactly one answer: `emit_bridge` mints a *fresh* site per call, so returning
+        // both would double-bridge the method.
+        if let Resolution::Found {
+            function: by_symbol,
+            symbol,
+            ..
+        } = resolve_by_symbol(nat, symbols, overloads)
+            && by_symbol != function
+        {
+            log::warn!(
+                "jni bridge: '{}' is registered to '{}' but symbol '{}' names '{}'; using the \
+                 registration, which is what the runtime does",
+                nat.method,
+                function,
+                symbol,
+                by_symbol,
+            );
+        }
+        return Resolution::Found {
+            symbol: nat.simple_name.clone(),
+            function,
+            registered: true,
+        };
+    }
+    resolve_by_symbol(nat, symbols, overloads)
+}
+
+/// Tiers 1 and 2: the JNI name-mangling convention. See [`resolve`].
+fn resolve_by_symbol<'a>(
     nat: &JavaNative,
     symbols: &'a BTreeMap<String, Vec<String>>,
     overloads: &HashMap<(&str, &str), usize>,
@@ -483,6 +697,7 @@ fn resolve<'a>(
         [only] => Resolution::Found {
             symbol,
             function: only.as_str(),
+            registered: false,
         },
         many => Resolution::Ambiguous {
             symbol,

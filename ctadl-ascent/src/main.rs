@@ -186,6 +186,10 @@ pub enum ImportLanguage {
     Dex,
     /// Treat as Android APK inputs
     Apk,
+    /// Treat as an Android app bundle (`.xapk`), a ZIP of split APKs. Each split is imported
+    /// through the APK path, so the Dex in the base and the libraries in `config.<abi>.apk`
+    /// are co-indexed by naming the bundle.
+    Xapk,
     /// Treat as C files
     C,
     /// Treat as Lua source files (parsed with the tree-sitter Lua grammar)
@@ -254,6 +258,16 @@ pub struct IndexArgs {
     /// measure what the bridge contributes. See `docs/jni.md`.
     #[arg(long)]
     pub no_jni_bridge: bool,
+
+    /// Ignore the `RegisterNatives` tables recovered from a native library at import time.
+    ///
+    /// Most Android apps bind their natives at run time, from `JNI_OnLoad`, rather than through
+    /// the `Java_…` symbol convention; CTADL recovers those bindings out of the library's data
+    /// sections when it imports it. Pass this to link by symbol name alone -- an A/B measurement
+    /// of what the registry contributes, with no re-import needed. Implied by
+    /// `--no-jni-bridge`. See `docs/jni.md`.
+    #[arg(long)]
+    pub no_jni_registry: bool,
 
     /// Call resolution strategy: cha, hi, mixed
     #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
@@ -328,6 +342,11 @@ pub struct GoArgs {
     /// See `ctadl index --help`.
     #[arg(long)]
     pub no_jni_bridge: bool,
+
+    /// Ignore the `RegisterNatives` tables recovered at import time.
+    /// See `ctadl index --help`.
+    #[arg(long)]
+    pub no_jni_registry: bool,
 
     /// One or more artifacts to import in this one-shot flow
     #[arg(required = true)]
@@ -462,6 +481,7 @@ fn main() -> anyhow::Result<()> {
                 models: args.models.clone(),
                 no_default_models: args.no_default_models,
                 no_jni_bridge: args.no_jni_bridge,
+                no_jni_registry: args.no_jni_registry,
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
@@ -606,6 +626,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 models: args.models.clone(),
                 no_default_models: false,
                 no_jni_bridge: false,
+                no_jni_registry: false,
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
@@ -655,6 +676,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
         use project::ArtifactLanguage::*;
         match autodetect_import_language(path, args.language)? {
             ImportLanguage::Apk => Apk,
+            ImportLanguage::Xapk => Xapk,
             ImportLanguage::Dex => Dex,
             ImportLanguage::Jar => Jar,
             ImportLanguage::Jvm => Jvm,
@@ -725,11 +747,14 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         &args.summary,
         &args.models,
         args.no_default_models,
-        args.no_jni_bridge,
-        args.strategy,
-        args.prune_unreachable_cfg_nodes.unwrap_or(true),
-        args.alias_rule.unwrap_or(true),
-        args.dump_index_graph.as_deref(),
+        cli::IndexOptions {
+            no_jni_bridge: args.no_jni_bridge,
+            no_jni_registry: args.no_jni_registry,
+            strategy: args.strategy,
+            prune_unreachable_cfg_nodes: args.prune_unreachable_cfg_nodes.unwrap_or(true),
+            alias_rule: args.alias_rule.unwrap_or(true),
+            dump_index_graph: args.dump_index_graph.as_deref(),
+        },
     )?;
     Ok(())
 }
@@ -802,6 +827,11 @@ fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
                 {
                     return cli::inspect_bitcode(path).map_err(Into::into);
                 }
+                // The JNI registry is JSON, not bitcode, so it gets its own printer rather than
+                // a third branch inside `inspect_bitcode`.
+                if path.file_name().and_then(|n| n.to_str()) == Some(project::JNI_REGISTRY_FILE) {
+                    return cli::inspect_jni_registry(path).map_err(Into::into);
+                }
             }
         }
 
@@ -849,6 +879,10 @@ fn autodetect_import_language<P: AsRef<Path>>(
             match ext {
                 Some("dex") => ImportLanguage::Dex,
                 Some("apk") => ImportLanguage::Apk,
+                // Without this arm a bundle falls through to `file_looks_binary`, which sees the
+                // NULs in the ZIP and hands the whole thing to Ghidra: a slow, confusing failure
+                // rather than an import.
+                Some("xapk") => ImportLanguage::Xapk,
                 Some("class") => ImportLanguage::Jvm,
                 Some("jar") => ImportLanguage::Jar,
                 Some("lua") => ImportLanguage::Lua,

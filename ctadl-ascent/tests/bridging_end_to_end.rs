@@ -17,7 +17,6 @@
 //! against the built-in pass.
 
 use ctadl_ascent::cli;
-use ctadl_ascent::codegen::CallResolutionStrategy;
 use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, init_store_path};
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use serde_json::Value;
@@ -109,18 +108,7 @@ fn flows_found(case: &str, lib_text: &str, models: &[PathBuf]) -> usize {
     let dir = store_dir();
     let (app, lib) = import_pair(case, lib_text);
     let project = AnalysisProject::try_create(case, &[app, lib]).expect("project");
-    cli::index(
-        &project,
-        &[],
-        models,
-        false,
-        false,
-        CallResolutionStrategy::Mixed,
-        true,
-        true,
-        None,
-    )
-    .expect("indexing");
+    cli::index(&project, &[], models, false, cli::IndexOptions::default()).expect("indexing");
 
     let query_models = dir.join(format!("{case}-query.json"));
     std::fs::write(&query_models, QUERY_MODEL).expect("writing query model");

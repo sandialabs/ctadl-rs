@@ -602,8 +602,11 @@ loader.
 Connects a callee matched in one program to its implementation in another, with an explicit
 argument correspondence. This is the declarative counterpart of [the JNI bridge](jni.md), for
 the boundaries no built-in pass can see: a Lua script calling a C function registered in a
-`luaL_Reg` table, an implementation bound through `RegisterNatives` rather than by symbol name,
-a call through a table field or a `dlsym`'d pointer.
+`luaL_Reg` table, a call through a table field or a `dlsym`'d pointer, or a
+`RegisterNatives`-bound implementation whose declaring class the bridge could not recover (it
+recovers most of them — see [Natives bound through
+`RegisterNatives`](jni.md#natives-bound-through-registernatives) — so check the
+`jni registry:` counts before writing one by hand).
 
 ```jsonc
 {

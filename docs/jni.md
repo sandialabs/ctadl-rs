@@ -1,15 +1,21 @@
 # The JNI bridge
 
 An Android app's `native` method is a declaration with no body. Its
-implementation lives in a shared library, under a name derived from the Java
-class and method by the JNI mangling rules. Nothing in either artifact names the
-other, so co-indexing them is not by itself enough: taint entering a `native`
-method vanishes, and taint produced by the implementation never comes back.
+implementation lives in a shared library, bound either by a name derived from the
+Java class and method (the JNI mangling rules) or at run time by a call to
+`RegisterNatives`. Nothing in either artifact names the other, so co-indexing
+them is not by itself enough: taint entering a `native` method vanishes, and
+taint produced by the implementation never comes back.
 
 The **JNI bridge** closes that gap. Whenever a Java or Dex artifact is indexed
-alongside native code, CTADL joins each `native` method to the `Java_…` function
+alongside native code, CTADL joins each `native` method to the function
 implementing it and maps the arguments across the JNI ABI, so taint flows in both
-directions. It runs automatically; there is nothing to write.
+directions. It runs automatically; there is nothing to write. Both bindings are
+covered: the `Java_…` symbol convention, and the `JNINativeMethod[]` tables a
+`RegisterNatives` call reads, which CTADL recovers from the library's data
+sections at import time (see [Natives bound through
+`RegisterNatives`](#natives-bound-through-registernatives) — for most real
+Android apps this is where the majority of the links come from).
 
 An APK already contains both halves, so importing one imports both:
 
@@ -36,12 +42,15 @@ ctadl index  app app_dex app_native
 The `index` run logs what it did at `info` level:
 
 ```
-jni bridge: 14 native method(s): 12 linked, 1 unresolved, 1 ambiguous
+jni registry: 3 table(s), 28 entr(ies) in app__arm64-v8a__libcrypto: 28 attributed to 3 class(es), 0 unattributed
+jni bridge: 14 native method(s): 12 linked (9 registered), 1 unresolved, 1 ambiguous
 ```
 
-That line is worth reading. A native method that fails to link produces no flow
-*and no error* — the analysis simply comes out quieter than it should. See
-[Diagnostics](#diagnostics).
+Those lines are worth reading. A native method that fails to link produces no
+flow *and no error* — the analysis simply comes out quieter than it should. See
+[Diagnostics](#diagnostics). `registered` counts the subset of `linked` that came
+from a `RegisterNatives` table rather than from a symbol name; only libraries
+that actually carry a table get a `jni registry:` line.
 
 The *per-method* resolution lines (`jni bridge: <method> -> <symbol>`) are logged at `debug`,
 so a default run does not show them. Run with `RUST_LOG=warn,ctadl=debug` (or
@@ -105,7 +114,31 @@ resources. XAPK downloads (APKPure and the like) are exactly this set, zipped
 together. So the Java and native halves land in *different files*, and a
 `config.<abi>.apk` has no `classes*.dex` in it at all.
 
-Import them as what they are: each APK on its own, then one project over both.
+**Import the `.xapk` directly.** CTADL unwraps the bundle, imports each split
+through the ordinary APK path, and records them all on the bundle's import, so
+naming the bundle co-indexes everything in it:
+
+```bash
+ctadl import app.xapk
+ctadl index  app app                     # <- the bridge fires here
+```
+
+```
+[INFO] app.xapk: 30 split APK(s): app__myapp, app__config.arm64_v8a, …
+[INFO] app.xapk: 7 split(s) imported, 23 resource-only split(s) skipped
+```
+
+Dex-bearing splits are imported first, so the Java half of the boundary is
+observed before the native half. The resource-only splits — usually most of the
+file count — hold no code in either language and are skipped, not fatal.
+
+The bundle's own import contributes no program: everything is in the splits,
+named `<bundle>__<split-stem>` and, below those, `<split>__<abi>__<lib>`. All of
+them are recorded on the bundle in one flat list, which is what makes naming the
+bundle enough.
+
+Splits you have already unzipped work too — import each as what it is, then one
+project over both:
 
 ```bash
 ctadl import Telegram/org.telegram.messenger.apk --name tg_dex
@@ -118,14 +151,33 @@ pulls in `tg_native__arm64-v8a__libtmessages.49` and the rest. Because the two
 halves are ordinary co-indexed imports, the bridge joins them exactly as it does
 within a single APK.
 
-The resource-only splits have no code in either language, and importing one is an
-error rather than an empty program:
+Importing a resource-only split *by itself* is an error rather than an empty
+program — inside a bundle it is skipped, but on its own it is almost certainly
+not the file you meant:
 
 ```
 $ ctadl import Telegram/config.en.apk
 Error: nothing to import: '…/config.en.apk' has no classes*.dex entries and no
 native libraries under lib/<abi>/. …
 ```
+
+### When the preferred ABI holds no code
+
+Some apps ship a placeholder for one ABI and their real code for another — Chrome
+ships a **zero-byte** `lib/arm64-v8a/libplaceholder.so` and builds
+`lib/armeabi-v7a/libelements.so` for real. Taking the ABI preference literally
+there yields an import with no native libraries at all.
+
+So an ABI whose every entry fails the object-file magic check is skipped, and the
+next one in the preference order is used. The choice is never silent:
+
+```
+[INFO] app.apk: skipping arm64-v8a -- it has no entry there is a loadable object file
+       (an empty placeholder, say); pass --native-abi to override
+```
+
+An explicit `--native-abi` is still honored as given, including when it names an
+ABI with nothing usable in it: that is reported rather than worked around.
 
 ---
 
@@ -155,17 +207,105 @@ So `Lcom/example/Crypto;->encrypt(Ljava/lang/String;)Ljava/lang/String;` yields
 the short name `Java_com_example_Crypto_encrypt` and the long name
 `Java_com_example_Crypto_encrypt__Ljava_lang_String_2`.
 
-**Resolution order**, mirroring the runtime: the long name wins when that symbol
-exists; otherwise the short name is used, but only when the declaring class has
-exactly one native method with that simple name. An overloaded native reached
-only by its short name cannot be attributed to one overload, so CTADL warns and
-skips it rather than guessing. Give the implementations their long names to
-disambiguate.
+**Resolution order**, mirroring the runtime: a recovered `RegisterNatives`
+binding wins outright — that is what the runtime does, and it names the method
+unambiguously. Failing that, the long name wins when that symbol exists;
+otherwise the short name is used, but only when the declaring class has exactly
+one native method with that simple name. An overloaded native reached only by its
+short name cannot be attributed to one overload, so CTADL warns and skips it
+rather than guessing. Give the implementations their long names to disambiguate,
+or bind them with `RegisterNatives`.
+
+Where a method resolves both ways and the two disagree, CTADL takes the
+registration and says so at `warn`.
 
 Matching is against the *simple* name in the native virtual method table, not the
 raw IR function name, so a decorated name (Ghidra's uniquing suffixes,
 `<EXTERNAL>::sym@addr`) still matches — as does the leading underscore Mach-O
 prefixes every C symbol with.
+
+---
+
+## Natives bound through `RegisterNatives`
+
+Most Android apps do not use the symbol convention. They call
+
+```c
+env->RegisterNatives(clazz, table, count);
+```
+
+from `JNI_OnLoad`, passing an array of
+
+```c
+typedef struct { const char *name; const char *signature; void *fnPtr; } JNINativeMethod;
+```
+
+and the implementations keep private, unexported names. Under the symbol
+convention alone such an app links almost nothing: one real package declares 535
+`native` methods in its Dex and exports exactly one `Java_…` symbol across every
+library it ships.
+
+Those tables are ordinary initialized data, so CTADL recovers them without
+Ghidra and without any dataflow analysis.
+
+**At import time**, each ELF library's writable, non-executable data sections
+(`.data.rel.ro`, `.data`) are walked at pointer stride, and a triple is taken as
+a `JNINativeMethod` when the first slot points at a valid Java method name, the
+second at a well-formed method descriptor, and the third into executable code.
+Each recovered `fnPtr` is then resolved to the function the disassembler found at
+that address. The result is written beside the import's other artifacts as
+`jni-registry.json`:
+
+```bash
+ctadl inspect ~/.local/state/ctadl/imports/app__arm64-v8a__libcrypto/jni-registry.json
+```
+
+```
+28 RegisterNatives entries (entry size 24)
+  0x2a000  0x10c20  readBytesNative(JII[BI)V  -> readBytesNative
+  ...
+```
+
+Scanning is unconditional and costs milliseconds. Anything that is not an ELF
+file on disk — a `ghidra://` repository, a `.gpr` project, a Mach-O or PE binary,
+or one of the ZIPs and packed containers apps occasionally ship under `lib/` — is
+a quiet no-op.
+
+**At index time**, each entry's *declaring class*, which the table does not
+carry, is recovered from the Dex side. A `JNINativeMethod[]` is contiguous, and
+one class's table begins where the previous one ends, so CTADL walks the entries
+in address order keeping the set of Java classes that declare *every* entry so
+far, matched on name **and** full descriptor. When that set empties the run
+closes and a new one begins; a closed run with exactly one surviving class
+attributes all of its entries to it. Runs are also split at an address gap and at
+a repeated `(name, descriptor)`, since a table cannot register the same method
+twice.
+
+Matching is by containment, never by count: a class that declares 14 natives and
+registers 13 of them is ordinary.
+
+Anything that run does not attribute is **counted and reported, never guessed
+at**. There is no "the name is globally unique, so it must be this one" tier:
+measured across 4280 entries in eleven packages, the number of unattributed
+entries whose `(name, descriptor)` is globally unique is **zero**. Every entry
+that fails attribution either matches no declared `native` at all or matches
+several classes, and a uniqueness rule rescues neither. Do not re-add that tier
+without new evidence.
+
+Attributing nothing is often the right answer. A library whose Java classes ship
+outside `classes.dex` — VLC's bundled libbluray BD-J bindings, a feature-split
+dex — yields well-formed tables that match nothing, each entry closes its own
+run, and no link is fabricated.
+
+**Two things to know when using it:**
+
+- The sidecar is written at **import** time, so a library imported before this
+  feature existed has none. `ctadl import --skip-existing` reuses an unchanged
+  library's import directory and will *not* create one — re-import without
+  `--skip-existing` to gain it.
+- `ctadl index --no-jni-registry` ignores the sidecar, leaving the bridge with
+  the symbol convention alone. That is the clean A/B for what the registry
+  contributes, and it needs no re-import. `--no-jni-bridge` implies it.
 
 ---
 
@@ -231,23 +371,29 @@ has no call site to report it at.
 
 ## Diagnostics
 
-The bridge warns, at `warn` level, on the two situations it cannot resolve
-silently:
+The bridge warns, at `warn` level, on the situations it cannot resolve silently:
 
 - **Ambiguity.** Either the class has several native overloads of a name whose
   only symbol is the short form, or several native functions carry the matched
-  symbol name. The method is skipped.
+  symbol name. The method is skipped. A `RegisterNatives` binding resolves this
+  case outright, since it names the descriptor.
 - **An incomplete native prototype.** The implementation resolved, but the
   disassembler recovered fewer parameters than the port map needs — Ghidra gives
   a function with no recovered prototype zero parameters at all — so some
   arguments have nothing on the far side to flow into. Build the library with
   `-g` (or otherwise give Ghidra the types) and re-import.
+- **A registration that disagrees with a symbol.** Both bindings exist and name
+  different functions. CTADL takes the registration, as the runtime does.
 
 A method with no matching symbol at all is reported only in the `LinkStats`
 counts, since a Java-only project legitimately has one per `native` declaration.
+So are unattributed table entries; both are on the `jni registry:` and
+`jni bridge:` lines.
 
 To reproduce the pre-bridge behaviour — for an A/B measurement of what the bridge
-contributes — pass `--no-jni-bridge` to `ctadl index` or `ctadl go`.
+contributes — pass `--no-jni-bridge` to `ctadl index` or `ctadl go`. For the
+narrower question of what the `RegisterNatives` tables contribute, pass
+`--no-jni-registry`, which leaves the symbol convention working.
 
 `--no-jni-bridge` is also what you want when joining a pair *by hand* with a
 [`bridge` model](model-generators.md#bridge). A declarative bridge over a pair this pass
@@ -257,12 +403,25 @@ already links double-bridges it — two sites, duplicated flows — so switch on
 
 ## Limitations
 
-- **`RegisterNatives` is not handled.** Only the standard mangled-symbol
-  convention is linked. An implementation bound dynamically through
-  `RegisterNatives` needs the contents of a `JNINativeMethod[]` table, which is a
-  separate constant-propagation problem. The correspondence is one a human can read out of that
-  table, though, so this is exactly what a hand-written
-  [`bridge` model](model-generators.md#bridge) is for.
+- **A `RegisterNatives` entry whose class cannot be recovered is not linked.**
+  The table carries a name, a descriptor and a function pointer, but not the
+  declaring class; that comes from the Dex side, by [contiguous-run
+  attribution](#natives-bound-through-registernatives). Where the Java half is
+  present this attributes 97–100% of entries, but an entry whose class ships
+  outside the imported Dex — or one in a run that stays ambiguous — is counted
+  unattributed and left alone. Following `FindClass` through the decompiled
+  `JNI_OnLoad` would recover the rest, and would need the `JNIEnv` vtable
+  offsets; for now a [`bridge` model](model-generators.md#bridge) is how you join
+  such a pair by hand.
+- **Only ELF libraries are scanned for tables.** The scan reads the library's own
+  bytes, so a Mach-O or PE artifact, a `ghidra://` repository, or an existing
+  `.gpr` project contributes no registrations — quietly, since none of those is
+  an Android shared library.
+- **The table has to be in the APK.** A library that is packed, compressed, or
+  otherwise not shipped as a loadable `.so` (Facebook Lite's Superpack payloads,
+  TikTok's `\x7fKOM` and `SKCL` containers) has no data section to scan until
+  something unpacks it. No amount of JNI linking reaches code that is not in the
+  file.
 - **`JNIEnv` accessor calls are not modelled.** Real native code reaches its
   arguments through the environment vtable — `(*env)->GetStringUTFChars(env, s,
   0)` — an indirect call whose target CTADL cannot currently resolve, so taint
@@ -293,11 +452,14 @@ already links double-bridges it — two sites, duplicated flows — so switch on
 ## See also
 
 - [`model.bridge`](model-generators.md#bridge) — the declarative construct for the
-  boundaries this pass cannot reach: a `RegisterNatives`-bound implementation, a Lua-to-C
-  `luaL_Reg` entry, a call through a `dlsym`'d pointer. It takes an explicit port map, since
-  nothing derives one for a boundary with no naming convention.
+  boundaries this pass cannot reach: a Lua-to-C `luaL_Reg` entry, a call through a `dlsym`'d
+  pointer, a `RegisterNatives` entry whose class stayed unattributed. It takes an explicit
+  port map, since nothing derives one for a boundary with no naming convention.
 - [Model generators](model-generators.md) — for the code the bridge cannot reach,
   including the `JNIEnv` accessors above.
 - `ctadl-ascent/src/languages/jni.rs` — the implementation, and the unit tests
   pinning the mangling table and the port map.
-- `nightly/tests/jni/` — the end-to-end regression cases.
+- `ctadl-ascent/src/languages/jni/registry.rs` — the ELF table scan and the run
+  attribution, with unit tests over both.
+- `nightly/tests/jni/` — the end-to-end regression cases, including
+  `JniRegister`, whose boundary no symbol name joins.

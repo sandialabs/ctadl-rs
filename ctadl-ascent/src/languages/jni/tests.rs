@@ -337,8 +337,10 @@ fn links_an_instance_native_to_its_implementation() {
         LinkStats {
             natives: 1,
             linked: 1,
+            registered: 0,
             unresolved: 0,
-            ambiguous: 0
+            ambiguous: 0,
+            unattributed: 0
         }
     );
 
@@ -471,8 +473,10 @@ fn a_method_observed_twice_is_bridged_once() {
         LinkStats {
             natives: 1,
             linked: 1,
+            registered: 0,
             unresolved: 0,
-            ambiguous: 0
+            ambiguous: 0,
+            unattributed: 0
         }
     );
     assert_eq!(facts.call.len(), 1);
@@ -498,8 +502,10 @@ fn emits_nothing_when_there_is_no_native_import() {
         LinkStats {
             natives: 1,
             linked: 0,
+            registered: 0,
             unresolved: 1,
-            ambiguous: 0
+            ambiguous: 0,
+            unattributed: 0
         }
     );
     assert!(facts.call.is_empty());
@@ -575,8 +581,10 @@ fn skips_an_overloaded_native_with_only_a_short_symbol() {
         LinkStats {
             natives: 2,
             linked: 0,
+            registered: 0,
             unresolved: 0,
-            ambiguous: 2
+            ambiguous: 2,
+            unattributed: 0
         }
     );
     assert_eq!(linked, None);
@@ -622,8 +630,10 @@ fn skips_a_symbol_carried_by_several_native_functions() {
         LinkStats {
             natives: 1,
             linked: 0,
+            registered: 0,
             unresolved: 0,
-            ambiguous: 1
+            ambiguous: 1,
+            unattributed: 0
         }
     );
 }
@@ -639,8 +649,10 @@ fn reports_a_native_with_no_matching_symbol_as_unresolved() {
         LinkStats {
             natives: 1,
             linked: 0,
+            registered: 0,
             unresolved: 1,
-            ambiguous: 0
+            ambiguous: 0,
+            unattributed: 0
         }
     );
 }
@@ -663,4 +675,198 @@ fn slot_model_follows_the_frontend() {
         SlotModel::for_language(ArtifactLanguage::Jvm),
         SlotModel::Argument
     );
+}
+
+// ---------------------------------------------------------------------------
+// Natives bound by `RegisterNatives`
+// ---------------------------------------------------------------------------
+
+/// A library's recovered tables, as `observe_registry` would have loaded them: one contiguous
+/// ELF64 table of `(name, descriptor, function)` triples.
+fn observe_table(obs: &mut JniObserver, import: &str, rows: &[(&str, &str, &str)]) {
+    obs.registries.push((
+        import.to_string(),
+        registry::JniRegistry {
+            entry_size: 24,
+            entries: rows
+                .iter()
+                .enumerate()
+                .map(
+                    |(i, (name, descriptor, function))| registry::RegistryEntry {
+                        table_addr: 0x2a000 + 24 * i as u64,
+                        fn_addr: 0x1000 + 16 * i as u64,
+                        name: (*name).to_string(),
+                        descriptor: (*descriptor).to_string(),
+                        function: Some((*function).to_string()),
+                    },
+                )
+                .collect(),
+        },
+    ));
+}
+
+/// The case the whole registry exists for: the implementation exports no `Java_…` symbol at all,
+/// so the symbol convention finds nothing and the binding is only visible in the table.
+#[test]
+fn links_a_native_bound_by_register_natives() {
+    let java = "Lcom/example/Superpack;";
+    let descriptor = "(JII[BI)V";
+    let stub = java_method_name(java, "readBytesNative", descriptor);
+
+    let mut obs = JniObserver::new();
+    obs.observe(
+        &java_program(&[(java, "readBytesNative", descriptor, false)]),
+        SlotModel::Register,
+    );
+    // The library exports one unrelated symbol; nothing here is a mangled JNI name.
+    obs.observe(
+        &native_program(&[("stash_impl", "stash_impl")]),
+        SlotModel::Argument,
+    );
+    observe_table(
+        &mut obs,
+        "app__arm64-v8a__libsuperpack-jni",
+        &[("readBytesNative", descriptor, "stash_impl")],
+    );
+
+    let (mut facts, mut source_info) = fact_base(&[(&stub, 0), ("stash_impl", 7)]);
+    let stats = link(&obs, &mut facts, &mut source_info);
+    assert_eq!(
+        stats,
+        LinkStats {
+            natives: 1,
+            linked: 1,
+            registered: 1,
+            unresolved: 0,
+            ambiguous: 0,
+            unattributed: 0
+        }
+    );
+    assert_eq!(facts.call.len(), 1);
+    assert_eq!(facts.call[0].1, function_id(&source_info, "stash_impl"));
+}
+
+/// Where a method resolves both ways, the registration wins -- that is what the runtime does --
+/// and exactly one bridge is emitted, so `emit_bridge` cannot mint two sites for one method.
+#[test]
+fn a_registration_wins_over_a_matching_symbol() {
+    let java = "LJniFlow;";
+    let descriptor = "()V";
+    let stub = java_method_name(java, "nativeStash", descriptor);
+
+    let mut obs = JniObserver::new();
+    obs.observe(
+        &java_program(&[(java, "nativeStash", descriptor, true)]),
+        SlotModel::Register,
+    );
+    obs.observe(
+        &native_program(&[("Java_JniFlow_nativeStash", "Java_JniFlow_nativeStash")]),
+        SlotModel::Argument,
+    );
+    observe_table(
+        &mut obs,
+        "lib",
+        &[("nativeStash", descriptor, "stash_impl")],
+    );
+
+    let (mut facts, mut source_info) = fact_base(&[
+        (&stub, 0),
+        ("Java_JniFlow_nativeStash", 2),
+        ("stash_impl", 2),
+    ]);
+    let stats = link(&obs, &mut facts, &mut source_info);
+    assert_eq!(stats.linked, 1);
+    assert_eq!(stats.registered, 1);
+    assert_eq!(facts.call.len(), 1, "one bridge, not two");
+    assert_eq!(facts.call[0].1, function_id(&source_info, "stash_impl"));
+}
+
+/// Tier 0 has to run *before* the symbol tiers, not as a fallback: the ambiguous arm `continue`s
+/// without ever reaching one, so a fallback-only registry would never rescue an overloaded
+/// native -- the case `RegisterNatives` matters most for.
+#[test]
+fn a_registration_rescues_an_overload_a_short_symbol_cannot_resolve() {
+    let java = "LFoo;";
+    let mut obs = JniObserver::new();
+    obs.observe(
+        &java_program(&[(java, "f", "(I)V", true), (java, "f", "(J)V", true)]),
+        SlotModel::Register,
+    );
+    // Only the short symbol exists, so both overloads are ambiguous by name alone.
+    obs.observe(
+        &native_program(&[("Java_Foo_f", "Java_Foo_f")]),
+        SlotModel::Argument,
+    );
+    observe_table(
+        &mut obs,
+        "lib",
+        &[("f", "(I)V", "f_int"), ("f", "(J)V", "f_long")],
+    );
+
+    let (mut facts, mut source_info) = fact_base(&[
+        (&java_method_name(java, "f", "(I)V"), 0),
+        (&java_method_name(java, "f", "(J)V"), 0),
+        ("Java_Foo_f", 3),
+        ("f_int", 3),
+        ("f_long", 3),
+    ]);
+    let stats = link(&obs, &mut facts, &mut source_info);
+    assert_eq!(
+        stats,
+        LinkStats {
+            natives: 2,
+            linked: 2,
+            registered: 2,
+            unresolved: 0,
+            ambiguous: 0,
+            unattributed: 0
+        }
+    );
+    let targets: HashSet<FunctionId> = facts.call.iter().map(|(_, target)| *target).collect();
+    assert_eq!(targets.len(), 2, "each overload got its own implementation");
+}
+
+/// An entry tier 1 cannot attribute is counted, never guessed at, and emits no link.
+#[test]
+fn an_unattributed_entry_is_counted_and_not_linked() {
+    let java = "Lcom/example/A;";
+    let stub = java_method_name(java, "a", "()V");
+
+    let mut obs = JniObserver::new();
+    obs.observe(
+        &java_program(&[(java, "a", "()V", true)]),
+        SlotModel::Register,
+    );
+    obs.observe(
+        &native_program(&[("unrelated", "unrelated")]),
+        SlotModel::Argument,
+    );
+    // The Java half of this library ships outside `classes.dex`, so nothing matches.
+    observe_table(
+        &mut obs,
+        "lib",
+        &[("getBdjoN", "(J)Lorg/videolan/bdjo/Bdjo;", "bdjo_impl")],
+    );
+
+    let (mut facts, mut source_info) = fact_base(&[(&stub, 0), ("bdjo_impl", 3)]);
+    let stats = link(&obs, &mut facts, &mut source_info);
+    assert_eq!(stats.linked, 0);
+    assert_eq!(stats.registered, 0);
+    assert_eq!(stats.unattributed, 1);
+    assert_eq!(stats.unresolved, 1);
+    assert!(facts.call.is_empty());
+}
+
+/// The registry half counts as a native half on its own: a library that exports not one `Java_…`
+/// symbol and binds everything through `RegisterNatives` is the ordinary case.
+#[test]
+fn a_registry_alone_is_not_an_empty_observer() {
+    let mut obs = JniObserver::new();
+    obs.observe(
+        &java_program(&[("LA;", "a", "()V", true)]),
+        SlotModel::Register,
+    );
+    assert!(obs.is_empty(), "no native half at all");
+    observe_table(&mut obs, "lib", &[("a", "()V", "a_impl")]);
+    assert!(!obs.is_empty());
 }

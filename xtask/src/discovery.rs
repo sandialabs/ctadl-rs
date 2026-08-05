@@ -469,6 +469,32 @@ mod tests {
         }
     }
 
+    /// A case with no `.bridge.jsonl` gets the three built-in variants and no A/B one. That is
+    /// how `JniRegister` ships: its boundary is joined by a `RegisterNatives` table recovered
+    /// from the library, and a hand-written bridge model would be testing something else.
+    #[test]
+    fn a_jni_case_without_a_bridge_model_yields_no_ab_pair() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("nightly/tests/jni");
+        if !dir.is_dir() {
+            return;
+        }
+        let cases = discover_jni(&dir).expect("discovering jni cases");
+        let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
+        for suffix in ["", "+apk", "+split-apks"] {
+            assert!(
+                names.contains(&format!("Jni:JniRegister{suffix}").as_str()),
+                "the RegisterNatives case is missing: {names:?}"
+            );
+        }
+        assert!(
+            !names.contains(&"Jni:JniRegister+bridge"),
+            "no bridge model ships beside it, so there is nothing to A/B against"
+        );
+    }
+
     #[test]
     fn frontend_parses() {
         assert_eq!("pcode".parse::<Frontend>().unwrap(), Frontend::Pcode);
