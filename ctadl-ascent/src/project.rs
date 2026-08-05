@@ -774,8 +774,8 @@ pub(crate) fn get_xdg_config_home() -> PathBuf {
         .ok()
         .map(PathBuf::from)
         .or_else(|| {
-            let home = env::var("HOME").ok()?;
-            Some(PathBuf::from(home).join(".config"))
+            let home = std::env::home_dir()?;
+            Some(home.join(".config"))
         })
         .unwrap()
 }
@@ -786,8 +786,8 @@ pub(crate) fn get_xdg_data_home() -> PathBuf {
         .ok()
         .map(PathBuf::from)
         .or_else(|| {
-            let home = env::var("HOME").ok()?;
-            Some(PathBuf::from(home).join(".local").join("share"))
+            let home = std::env::home_dir()?;
+            Some(home.join(".local").join("share"))
         })
         .unwrap()
 }
@@ -797,8 +797,8 @@ pub(crate) fn get_xdg_state_home() -> PathBuf {
         .ok()
         .map(PathBuf::from)
         .or_else(|| {
-            let home = env::var("HOME").ok()?;
-            Some(PathBuf::from(home).join(".local").join("state"))
+            let home = std::env::home_dir()?;
+            Some(home.join(".local").join("state"))
         })
         .unwrap()
 }
@@ -809,8 +809,8 @@ pub(crate) fn get_xdg_cache_home() -> PathBuf {
         .ok()
         .map(PathBuf::from)
         .or_else(|| {
-            let home = env::var("HOME").ok()?;
-            Some(PathBuf::from(home).join(".cache"))
+            let home = std::env::home_dir()?;
+            Some(home.join(".cache"))
         })
         .unwrap()
 }
