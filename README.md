@@ -94,9 +94,6 @@ existed has none, and `ctadl import --skip-existing` will not create one — re-
 
 - [Model generators](docs/model-generators.md) — the declarative language for
   sources, sinks, and propagation through code CTADL cannot see.
-- `ctadl-ascent/src/languages/jni.rs` — how Java `native` methods are linked to
-  their native implementations: the mangling rules, the resolution order, the
-  argument map, and the limitations.
 - [Debugging](docs/debugging.md).
 
 # Testing
