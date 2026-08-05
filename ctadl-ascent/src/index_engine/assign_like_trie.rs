@@ -48,6 +48,14 @@ use crate::index_engine::locals_trie::{DynIter, NoopWrite};
 
 type Map<K, V> = hashbrown::HashMap<K, V, rustc_hash::FxBuildHasher>;
 
+/// Build a store from its seed rows, without the caller naming the store's type.
+pub trait FromRows<R> {
+    /// Build a store from the seed rows, consuming them.
+    ///
+    /// Rows are moved into the store, not cloned, and the input `Vec` is freed as we go.
+    fn from_rows(rows: Vec<R>) -> Self;
+}
+
 // ---------------------------------------------------------------------------
 // Physical `rel!` storage.
 //
@@ -201,22 +209,6 @@ where
         }
     }
 
-    /// Build a store from the seed rows, consuming them.
-    ///
-    /// Rows are moved into the store, not cloned, and the input `Vec` is freed as we go.
-    pub fn from_rows(rows: Vec<(F, Vd, Pd, Vs, Ps)>) -> Self {
-        let mut store = Self::default();
-        for (f, vd, pd, vs, ps) in rows {
-            let leaves = store.fwd.entry((f, vs)).or_default();
-            let leaf = (vd, pd, ps);
-            if !leaves.contains(&leaf) {
-                leaves.push(leaf);
-                store.len += 1;
-            }
-        }
-        store
-    }
-
     /// Merge `from` into `self`, taking the union. The delta->total move uses this.
     fn absorb(&mut self, from: &mut Self) {
         for (key, leaves) in from.fwd.drain() {
@@ -310,6 +302,28 @@ where
             }
         }
         out
+    }
+}
+
+impl<F, Vd, Pd, Vs, Ps> FromRows<(F, Vd, Pd, Vs, Ps)> for AssignTrie<F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    fn from_rows(rows: Vec<(F, Vd, Pd, Vs, Ps)>) -> Self {
+        let mut store = Self::default();
+        for (f, vd, pd, vs, ps) in rows {
+            let leaves = store.fwd.entry((f, vs)).or_default();
+            let leaf = (vd, pd, ps);
+            if !leaves.contains(&leaf) {
+                leaves.push(leaf);
+                store.len += 1;
+            }
+        }
+        store
     }
 }
 

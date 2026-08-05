@@ -31,6 +31,7 @@ use std::marker::PhantomData;
 use std::ops::Index;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use super::assign_like_trie::FromRows;
 use super::c_locals_trie::{CMap, Hasher};
 use super::locals_trie::{DynIter, hb_bytes};
 use ascent::dashmap::ReadOnlyView;
@@ -183,17 +184,6 @@ where
         self.len() == 0
     }
 
-    /// Build a store from the seed rows, consuming them. See the module docs: this is what
-    /// replaces `SeedVec`'s draining index-build pass under `ascent_par!`, and it keeps the same
-    /// property — the rows end up in the store and nowhere else.
-    pub fn from_rows(rows: Vec<(F, Vd, Pd, Vs, Ps)>) -> Self {
-        let store = Self::default();
-        for row in rows {
-            store.c_insert(&row);
-        }
-        store
-    }
-
     /// Existence probe against the **frozen** store.
     #[inline]
     fn contains(&self, f: &F, vd: &Vd, pd: &Pd, vs: &Vs, ps: &Ps) -> bool {
@@ -325,6 +315,25 @@ where
             }
         }
         out
+    }
+}
+
+/// See the module docs: this is what replaces `SeedVec`'s draining index-build pass under
+/// `ascent_par!`, and it keeps the same property — the rows end up in the store and nowhere else.
+impl<F, Vd, Pd, Vs, Ps> FromRows<(F, Vd, Pd, Vs, Ps)> for CAssignTrie<F, Vd, Pd, Vs, Ps>
+where
+    F: Clone + Eq + Hash,
+    Vd: Clone + Eq + Hash,
+    Pd: Clone + Eq + Hash,
+    Vs: Clone + Eq + Hash,
+    Ps: Clone + Eq + Hash,
+{
+    fn from_rows(rows: Vec<(F, Vd, Pd, Vs, Ps)>) -> Self {
+        let store = Self::default();
+        for row in rows {
+            store.c_insert(&row);
+        }
+        store
     }
 }
 
@@ -969,10 +978,15 @@ mod tests {
         let mut seed = rows(7, 5);
         seed.extend_from_slice(&seed.clone());
         let store = Store::from_rows(seed.clone());
+        // The index engine seeds without naming the store type, letting the assigned field's type
+        // pick the impl. That inference is what keeps the seeding line identical under `ascent!`
+        // and `ascent_par!`, so exercise the un-named form here too.
+        let inferred: Store = FromRows::from_rows(seed.clone());
         let mut want = seed;
         want.sort_unstable();
         want.dedup();
         assert_eq!(store.len(), want.len());
+        assert_eq!(inferred.len(), want.len());
         let mut got = store.into_vec();
         got.sort_unstable();
         assert_eq!(got, want);

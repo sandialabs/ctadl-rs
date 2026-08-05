@@ -44,6 +44,7 @@ use ascent::ascent_run;
 use derive_builder::Builder;
 use hashbrown::hash_map::HashMap;
 use packed_struct::prelude::*;
+use streaming_iterator::StreamingIterator;
 
 use crate::error::Error;
 use crate::facts::{
@@ -51,6 +52,7 @@ use crate::facts::{
     FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg,
     PackedInsnSiteId, Path, SmallestCallString, isout,
 };
+use crate::index_engine::assign_like_trie::FromRows;
 
 pub mod assign_like_trie;
 pub mod c_assign_like_trie;
@@ -511,47 +513,140 @@ impl IndexResult {
     }
 }
 
+/// One relation's rows, whatever the index engine happens to store them in.
+///
+/// Serial Ascent keeps a plain relation in a `Vec<Row>`. Parallel Ascent keeps a plain relation in
+/// a `boxcar::Vec<Row>` (a lock-free append-only vector) and a *lattice* in a
+/// `boxcar::Vec<RwLock<Row>>`. The three differ in how a row is reached — directly by reference,
+/// or through a read guard — so [`HybridInliningRelations`] reads them through this trait instead
+/// of a slice. That keeps the trace-dump call site identical under `ascent!` and `ascent_par!`,
+/// and it copies nothing in any of the three cases.
+///
+/// The count is its own method rather than something taken from the stream, because `boxcar::Vec`
+/// reports no upper size bound when iterated: the vector can be appended to mid-iteration, so its
+/// iterator cannot be an `ExactSizeIterator`. Nothing appends here — the fixpoint is over before we
+/// dump — but the type cannot know that.
+trait Rows<Row> {
+    fn len(&self) -> usize;
+
+    /// Stream the rows, each borrowed for as long as it is looked at.
+    ///
+    /// A [`StreamingIterator`] rather than an `Iterator` because a lattice row lives behind an
+    /// `RwLock`: the only way to hand out a plain `&Row` without copying is to keep that row's read
+    /// guard alive for exactly the span of the borrow, which is what a streaming iterator's
+    /// `advance`/`get` split expresses and a plain iterator cannot. Yielding `&Row` uniformly is
+    /// also what keeps this trait object-safe, so [`HybridInliningRelations`] needs no type
+    /// parameters.
+    fn stream(&self) -> Box<dyn StreamingIterator<Item = Row> + '_>;
+}
+
+impl<Row> Rows<Row> for Vec<Row> {
+    fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    fn stream(&self) -> Box<dyn StreamingIterator<Item = Row> + '_> {
+        Box::new(streaming_iterator::convert_ref(self.as_slice().iter()))
+    }
+}
+
+// The two parallel-engine cases. They are dead code under `ascent!` and live under `ascent_par!`;
+// keeping both compiled is what lets the switch between the macros touch nothing here.
+impl<Row> Rows<Row> for ascent::boxcar::Vec<Row> {
+    fn len(&self) -> usize {
+        ascent::boxcar::Vec::len(self)
+    }
+
+    fn stream(&self) -> Box<dyn StreamingIterator<Item = Row> + '_> {
+        Box::new(streaming_iterator::convert_ref(self.iter()))
+    }
+}
+
+/// A lattice's rows, each held under its own read guard while it is being looked at.
+struct GuardedRows<'a, I, Row> {
+    inner: I,
+    guard: Option<std::sync::RwLockReadGuard<'a, Row>>,
+}
+
+impl<'a, I, Row> StreamingIterator for GuardedRows<'a, I, Row>
+where
+    I: Iterator<Item = &'a std::sync::RwLock<Row>>,
+    Row: 'a,
+{
+    type Item = Row;
+
+    fn advance(&mut self) {
+        // Dropping the previous guard here is what bounds each row's lock to its own turn.
+        self.guard = self.inner.next().map(|lock| lock.read().unwrap());
+    }
+
+    fn get(&self) -> Option<&Row> {
+        self.guard.as_deref()
+    }
+}
+
+impl<Row> Rows<Row> for ascent::boxcar::Vec<std::sync::RwLock<Row>> {
+    fn len(&self) -> usize {
+        ascent::boxcar::Vec::len(self)
+    }
+
+    fn stream(&self) -> Box<dyn StreamingIterator<Item = Row> + '_> {
+        Box::new(GuardedRows {
+            inner: self.iter(),
+            guard: None,
+        })
+    }
+}
+
+type CriticalSummaryRow = (FunctionId, FormalIndex, Path);
+type ResolventRow = (
+    FunctionId,
+    FormalIndex,
+    Path,
+    CallTargetObject,
+    SmallestCallString,
+);
+type CallTargetAssignLikeRow = (FunctionId, FlowVariable, Path, CallTargetObject);
+type ContextAssignRow = (
+    FunctionId,
+    FlowVariable,
+    Path,
+    FlowVariable,
+    Path,
+    SmallestCallString,
+);
+type ContextLocalsRow = (
+    FunctionId,
+    FlowVariable,
+    Path,
+    FormalIndex,
+    Path,
+    SmallestCallString,
+);
+type ContextSummaryRow = (
+    FunctionId,
+    FormalIndex,
+    Path,
+    FormalIndex,
+    Path,
+    SmallestCallString,
+);
+
 struct HybridInliningRelations<'a> {
-    critical_summary: &'a [(FunctionId, FormalIndex, Path)],
-    resolvent: &'a [(
-        FunctionId,
-        FormalIndex,
-        Path,
-        CallTargetObject,
-        SmallestCallString,
-    )],
-    call_target_assign_like: &'a [(FunctionId, FlowVariable, Path, CallTargetObject)],
-    context_assign: &'a [(
-        FunctionId,
-        FlowVariable,
-        Path,
-        FlowVariable,
-        Path,
-        SmallestCallString,
-    )],
-    context_locals: &'a [(
-        FunctionId,
-        FlowVariable,
-        Path,
-        FormalIndex,
-        Path,
-        SmallestCallString,
-    )],
-    context_summary: &'a [(
-        FunctionId,
-        FormalIndex,
-        Path,
-        FormalIndex,
-        Path,
-        SmallestCallString,
-    )],
+    critical_summary: &'a dyn Rows<CriticalSummaryRow>,
+    resolvent: &'a dyn Rows<ResolventRow>,
+    call_target_assign_like: &'a dyn Rows<CallTargetAssignLikeRow>,
+    context_assign: &'a dyn Rows<ContextAssignRow>,
+    context_locals: &'a dyn Rows<ContextLocalsRow>,
+    context_summary: &'a dyn Rows<ContextSummaryRow>,
     id_map: Option<&'a IdMap>,
 }
 
-impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
+impl std::fmt::Display for HybridInliningRelations<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Critical Summary ({}):", self.critical_summary.len())?;
-        for (func_id, formal_index, path) in self.critical_summary {
+        let mut rows = self.critical_summary.stream();
+        while let Some((func_id, formal_index, path)) = rows.next() {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
@@ -569,7 +664,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nResolvent ({}):", self.resolvent.len())?;
-        for (func_id, formal_index, path, resolvent, cs) in self.resolvent {
+        let mut rows = self.resolvent.stream();
+        while let Some((func_id, formal_index, path, resolvent, cs)) = rows.next() {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
@@ -597,7 +693,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
             "\nCall Target Assign-Like ({}):",
             self.call_target_assign_like.len()
         )?;
-        for (func_id, var, path, tgt) in self.call_target_assign_like {
+        let mut rows = self.call_target_assign_like.stream();
+        while let Some((func_id, var, path, tgt)) = rows.next() {
             let var_str = if let Some(name) = var.as_local() {
                 name.to_string()
             } else {
@@ -634,7 +731,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Assign ({}):", self.context_assign.len())?;
-        for (func_id, dest_var, dest_path, src_var, src_path, cs) in self.context_assign {
+        let mut rows = self.context_assign.stream();
+        while let Some((func_id, dest_var, dest_path, src_var, src_path, cs)) = rows.next() {
             let cs = match cs {
                 SmallestCallString::Value(cs) => cs.to_string(),
                 SmallestCallString::Bottom => "⊥".to_string(),
@@ -670,7 +768,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Locals ({}):", self.context_locals.len())?;
-        for (func_id, var, path, formal_idx, formal_path, cs) in self.context_locals {
+        let mut rows = self.context_locals.stream();
+        while let Some((func_id, var, path, formal_idx, formal_path, cs)) = rows.next() {
             let cs = match cs {
                 SmallestCallString::Value(cs) => cs.to_string(),
                 SmallestCallString::Bottom => "⊥".to_string(),
@@ -701,7 +800,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Summary ({}):", self.context_summary.len())?;
-        for (func_id, dest_idx, dest_path, src_idx, src_path, cs) in self.context_summary {
+        let mut rows = self.context_summary.stream();
+        while let Some((func_id, dest_idx, dest_path, src_idx, src_path, cs)) = rows.next() {
             let cs = match cs {
                 SmallestCallString::Value(cs) => cs.to_string(),
                 SmallestCallString::Bottom => "⊥".to_string(),
@@ -1080,9 +1180,9 @@ pub fn taint_index_with_config(
             summary(tgt, n1, dst_path, n2, src_path),
             call(func_id, insn_id, tgt),
             let v1 = call_arg!(*insn_id, *n1),
-            let p1 = dst_path.clone(),
+            let p1 = dst_path,
             let v2 = call_arg!(*insn_id, *n2),
-            let p2 = src_path.clone();
+            let p2 = src_path;
 
         // Compute context-free summaries from local reachability.
         summary(infunc, n1, p1, n2, p2) <--
@@ -1344,11 +1444,10 @@ pub fn taint_index_with_config(
     prog.callee_resolvents = facts.callee_resolvents.into_iter().collect();
     prog.summary = facts.summary.into_iter().collect();
     prog.config = config_val.into_iter().collect();
-    // Switching to `ascent_par!` means swapping this one line for
-    // `c_assign_like_trie::CAssignTrie::from_rows(assign_like)`, which seeds the parallel store
-    // the same way.
-    prog.__assign_like_ind_common =
-        crate::index_engine::assign_like_trie::AssignTrie::from_rows(assign_like);
+    // Seeding goes through the `FromRows` trait rather than naming a store type, so this line is
+    // the same under `ascent!` and `ascent_par!`: the field's type selects the serial `AssignTrie`
+    // or the concurrent `CAssignTrie` impl.
+    prog.__assign_like_ind_common = FromRows::from_rows(assign_like);
     prog.prog_store = prog_store.into_iter().collect();
     prog.alias_of_formal = alias_of_formal.into_iter().collect();
     prog.model_paths = summary_paths.into_iter().collect();
@@ -1380,9 +1479,10 @@ pub fn taint_index_with_config(
     // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
     log::debug!("{}", prog.__locals_ind_common.heap_report());
     log::debug!("{}", prog.__assign_like_ind_common.heap_report());
-    // Serial Ascent stores these relations as plain `Vec`s, so the formatter borrows them
-    // directly. Under `ascent_par!` they are `boxcar::Vec`s (lattices are
-    // `boxcar::Vec<RwLock<..>>`) and have to be materialized first; see git history for that form.
+    // The formatter reads these through the `Rows` trait, so this call is the same under `ascent!`
+    // (plain `Vec`s) and `ascent_par!` (`boxcar::Vec`s, with lattices as
+    // `boxcar::Vec<RwLock<..>>`): each field's own type selects the impl, and nothing is copied in
+    // either case.
     log::trace!(
         "hybrid inlining relations:\n{}",
         HybridInliningRelations {
