@@ -9,7 +9,7 @@
 // So this case fails outright under the mangled-name convention alone. It
 // passes only if the table itself is recovered from the library's data section
 // at import time and its entries attributed back to this class -- see
-// `docs/jni.md` and `ctadl_ascent::languages::jni::registry`.
+// `ctadl_ascent::languages::jni` and `ctadl_ascent::languages::jni::registry`.
 //
 // The dataflow is JniFlow's, deliberately: the tainted value enters one native
 // function, survives in native storage, and leaves through a *different* one,

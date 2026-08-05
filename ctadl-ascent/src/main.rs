@@ -255,7 +255,7 @@ pub struct IndexArgs {
     /// When a Java/Dex artifact is co-indexed with native code, CTADL joins each `native` method
     /// to the `Java_…` symbol implementing it, mapping arguments across the JNI ABI's two-slot
     /// shift so taint flows both ways. Pass this to reproduce the pre-bridge behaviour, or to
-    /// measure what the bridge contributes. See `docs/jni.md`.
+    /// measure what the bridge contributes. See `ctadl_ascent::languages::jni`.
     #[arg(long)]
     pub no_jni_bridge: bool,
 
@@ -265,7 +265,7 @@ pub struct IndexArgs {
     /// the `Java_…` symbol convention; CTADL recovers those bindings out of the library's data
     /// sections when it imports it. Pass this to link by symbol name alone -- an A/B measurement
     /// of what the registry contributes, with no re-import needed. Implied by
-    /// `--no-jni-bridge`. See `docs/jni.md`.
+    /// `--no-jni-bridge`. See `ctadl_ascent::languages::jni::registry`.
     #[arg(long)]
     pub no_jni_registry: bool,
 

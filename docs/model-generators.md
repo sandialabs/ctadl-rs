@@ -32,7 +32,7 @@ rule: **find** some set of program elements, optionally filter them with
 > A Java `native` method is *not* one of these cases. When the library
 > implementing it is indexed alongside the app, CTADL links the two itself and
 > maps the arguments across the JNI ABI; you do not need a propagation model for
-> it. See [The JNI bridge](jni.md).
+> it. See [The JNI bridge](../README.md#the-jni-bridge).
 
 ---
 
@@ -600,13 +600,12 @@ loader.
 ### `bridge`
 
 Connects a callee matched in one program to its implementation in another, with an explicit
-argument correspondence. This is the declarative counterpart of [the JNI bridge](jni.md), for
-the boundaries no built-in pass can see: a Lua script calling a C function registered in a
-`luaL_Reg` table, a call through a table field or a `dlsym`'d pointer, or a
-`RegisterNatives`-bound implementation whose declaring class the bridge could not recover (it
-recovers most of them — see [Natives bound through
-`RegisterNatives`](jni.md#natives-bound-through-registernatives) — so check the
-`jni registry:` counts before writing one by hand).
+argument correspondence. This is the declarative counterpart of [the JNI
+bridge](../README.md#the-jni-bridge), for the boundaries no built-in pass can see: a Lua script
+calling a C function registered in a `luaL_Reg` table, a call through a table field or a `dlsym`'d
+pointer, or a `RegisterNatives`-bound implementation whose declaring class the bridge could not
+recover (it recovers most of them, so check the `jni registry:` counts before writing one by
+hand).
 
 ```jsonc
 {
@@ -716,7 +715,8 @@ Two consequences worth internalizing:
 
 #### Interaction with the built-in JNI bridge
 
-A user bridge over a pair the [built-in JNI pass](jni.md) also links **double-bridges** it: two
+A user bridge over a pair the [built-in JNI pass](../README.md#the-jni-bridge) also links
+**double-bridges** it: two
 sites, duplicated flows. If you are writing one for a `Java_…`-named method — which you should
 not normally need to — pass `--no-jni-bridge` to `ctadl index` so exactly one mechanism is in
 play. That is also what makes an A/B measurement between the two meaningful.

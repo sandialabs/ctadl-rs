@@ -11,6 +11,11 @@ Name coincidence would not be enough even if it happened: the JNI ABI shifts eve
 (`JNIEnv *`, then `jobject`/`jclass`), so a bare call edge would wire the Java receiver to `JNIEnv *`
 and drop every real argument -- silently, with no flow and no diagnostic.
 
+The bridge closes that gap wherever a Java artifact is co-indexed with native code, without any
+user input. A method it fails to link produces no flow *and no error*, so [`LinkStats`] and the
+`info` line it prints are the only signal the pass fired at all; the per-method pairings are logged
+at `debug`. The README covers running it and reading those counts.
+
 # What the bridge emits
 
 No new relation and no new inference rule. The index engine already turns a call into dataflow with
@@ -30,22 +35,150 @@ Two constraints follow from that rule set:
   only when it finds a code item), so the bridge emits the rows itself, exactly as
   [`crate::codegen::model_matches::codegen_model_matches`] does for modelled functions.
 
+# Which symbol implements which method
+
+CTADL resolves a native method exactly as the JNI runtime does, by mangling the class and method
+names into a symbol ([`short_name`], [`long_name`], [`mangle_component`]):
+
+```text
+short = "Java_" + mangle(class-internal-name) + "_" + mangle(method-name)
+long  = short + "__" + mangle(parameter-descriptor)
+```
+
+| character | becomes |
+| --- | --- |
+| `/` | `_` |
+| `_` | `_1` |
+| `;` | `_2` |
+| `[` | `_3` |
+| ASCII alphanumeric | itself |
+| anything else | `_0` + four lowercase hex digits of the UTF-16 code unit |
+
+So `Lcom/example/Crypto;->encrypt(Ljava/lang/String;)Ljava/lang/String;` yields the short name
+`Java_com_example_Crypto_encrypt` and the long name
+`Java_com_example_Crypto_encrypt__Ljava_lang_String_2`.
+
+**Resolution order**, mirroring the runtime (see [`resolve`]): a recovered `RegisterNatives`
+binding wins outright. Failing that, the long name wins when that symbol exists; otherwise the
+short name is used, but only when the declaring class has exactly one native method with that
+simple name. An overloaded native reached only by its short name cannot be attributed to one
+overload, so the pass warns and skips it rather than guessing. Where a method resolves both ways
+and the two disagree, the registration wins and the disagreement is logged at `warn`.
+
+Matching is against the *simple* name in the native VMT, not the raw IR function name, so a
+decorated name (Ghidra's uniquing suffixes, `<EXTERNAL>::sym@addr`) still matches -- as does the
+leading underscore Mach-O prefixes every C symbol with.
+
 # Two ways a native method finds its implementation
 
 The symbol convention above is one of them, and the only one a JVM applies on its own. The other
 is `env->RegisterNatives(clazz, table, n)`, which an app calls from `JNI_OnLoad` to bind a
 `JNINativeMethod[]` at run time -- name, descriptor and function pointer, with no exported symbol
-anywhere. Most Android apps use it for most of their natives.
+anywhere. Most Android apps use it for most of their natives: one real package declares 535
+`native` methods in its Dex and exports exactly one `Java_…` symbol across every library it ships.
 
-[`registry`] recovers those tables straight out of the library's data sections at import time and
-recovers each entry's declaring class from the Dex side at index time. [`resolve`] consults that
-result *first*, because it is what the runtime does: a method bound by `RegisterNatives` runs the
-registered function even when a matching `Java_…` symbol also exists.
+[`registry`] recovers those tables straight out of the library's data sections at import time,
+writing them beside the import's other artifacts as `jni-registry.json`, and recovers each entry's
+declaring class -- which the table does not carry -- from the Dex side at index time.
+[`resolve`] consults that result *first*, because it is what the runtime does: a method bound by
+`RegisterNatives` runs the registered function even when a matching `Java_…` symbol also exists.
+
+Attribution never guesses. There is no "the name is globally unique, so it must be this one" tier:
+measured across 4280 entries in eleven packages, the number of unattributed entries whose
+`(name, descriptor)` is globally unique is **zero**. Every entry that fails attribution either
+matches no declared `native` at all or matches several classes, and a uniqueness rule rescues
+neither. Do not re-add that tier without new evidence. Attributing nothing is often the right
+answer: a library whose Java classes ship outside `classes.dex` (a bundled BD-J stack, a
+feature-split dex) yields well-formed tables that match nothing, and no link is fabricated.
+
+Because the scan runs at import time, a library imported before this feature existed has no
+sidecar, and `--skip-existing` will not create one on a re-import. `--no-jni-registry` ignores the
+sidecar at index time, leaving the symbol convention alone.
+
+# How arguments are mapped
+
+A JNI implementation takes two extra leading parameters before anything the Java signature
+declares. [`port_map`] maps ports across that shift:
+
+| Java side | Native side |
+| --- | --- |
+| -- (nothing) | `0` -- `JNIEnv *env` |
+| `this`, instance methods only | `1` -- `jobject` / `jclass` |
+| declared parameter *k* | `2 + k` |
+| return value | return value |
+| globals | globals |
+
+The Java-side *slot* of parameter *k* is frontend-dependent and is not `k` in general, which is
+what [`SlotModel`] captures: Dex numbers parameters by *register*, so `long`/`double` consume two
+and `(JI)V` puts the `int` at slot 2, while the JVM numbers them by *argument position* and puts
+the same `int` at slot 1. Both put `this` at slot 0 for an instance method.
+
+Only the *normal* return is mapped: a Java function has return arity 2 (normal and exception) while
+a native function has one, and a JNI implementation cannot throw into the second. Globals are
+threaded through exactly as they are at a real call site. Because ports are bidirectional,
+by-reference out-parameters and the return value come back across the boundary with no extra work.
+
+# Reading the results
+
+A bridged project is the ordinary multi-import case, and its SARIF locates every result in the
+artifact that result is actually in: the Java half by byte offset into the `.dex`/`.jar`, the native
+half by instruction address into the shared library. This works because `ctadl index` records, per
+instruction, which import its source span came from. Span ids are *per-import* indices -- each
+artifact's source-info database numbers its spans from zero, while function and instruction ids are
+project-global -- so a span read against the wrong import's database still resolves, to an
+unrelated line in an unrelated file. That is what used to happen: every result was rendered once per
+import, and a Java finding reappeared carrying an address in the `.so`.
+
+# Diagnostics
+
+The pass warns, at `warn` level, on what it cannot resolve silently:
+
+- **Ambiguity.** Either the class has several native overloads of a name whose only symbol is the
+  short form, or several native functions carry the matched symbol name. The method is skipped. A
+  `RegisterNatives` binding resolves this case outright, since it names the descriptor.
+- **An incomplete native prototype.** The implementation resolved, but the disassembler recovered
+  fewer parameters than the port map needs -- Ghidra gives a function with no recovered prototype
+  zero parameters at all -- so some arguments have nothing on the far side to flow into. Build the
+  library with `-g` (or otherwise give Ghidra the types) and re-import.
+- **A registration that disagrees with a symbol.** Both bindings exist and name different
+  functions; the registration wins, as it does at run time.
+
+A method with no matching symbol at all appears only in [`LinkStats`], since a Java-only project
+legitimately has one per `native` declaration. So do unattributed table entries.
 
 # Limitations
 
-Calls through the `JNIEnv` accessor vtable (`(*env)->GetStringUTFChars(...)`) are not modelled.
-See `docs/jni.md`.
+- **A `RegisterNatives` entry whose class cannot be recovered is not linked.** Where the Java half
+  is present, run attribution recovers 97-100% of entries, but an entry whose class ships outside
+  the imported Dex -- or one in a run that stays ambiguous -- is counted unattributed and left
+  alone. Following `FindClass` through the decompiled `JNI_OnLoad` would recover the rest, and
+  would need the `JNIEnv` vtable offsets.
+- **Only ELF libraries are scanned for tables**, and only a library actually shipped as a loadable
+  `.so`. A packed or compressed payload has no data section to scan until something unpacks it.
+- **`JNIEnv` accessor calls are not modelled.** Real native code reaches its arguments through the
+  environment vtable -- `(*env)->GetStringUTFChars(env, s, 0)` -- an indirect call whose target
+  CTADL cannot currently resolve, so taint stops there. The bridge delivers the argument to the
+  native function correctly; propagating *through* the accessors additionally needs a default model
+  for the `JNINativeInterface` functions and a way to resolve the vtable.
+- **Index time only.** Like `propagation` models, the bridge creates facts the index fixpoint
+  consumes, so `ctadl query --models` cannot introduce one after the fact. Re-run `ctadl index` if
+  you add the native artifact later.
+- **One frontend's slot model per method.** If the same method is observed through two Java
+  frontends at once (a Dex and a JVM import of the same class), the first observation's slot model
+  is used. The two agree except on `long`/`double` parameters.
+- **An index written before this feature cannot be queried**, since the per-import span provenance
+  above is an index format change. `ctadl query` on an older index says so and asks for a
+  re-`index`.
+
+# See also
+
+- [`registry`] -- the ELF table scan and the run attribution, with unit tests over both.
+- `docs/model-generators.md` -- the declarative `bridge` construct, for the boundaries this pass
+  cannot reach: a Lua-to-C `luaL_Reg` entry, a call through a `dlsym`'d pointer, a
+  `RegisterNatives` entry whose class stayed unattributed. It takes an explicit port map, since
+  nothing derives one for a boundary with no naming convention.
+- `nightly/tests/jni/` -- the end-to-end regression cases, including `JniRegister`, whose boundary
+  no symbol name joins.
 */
 
 use hashbrown::hash_map::HashMap;
