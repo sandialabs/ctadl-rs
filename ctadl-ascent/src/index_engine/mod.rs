@@ -39,7 +39,7 @@ to 0.f.
 
 use std::path;
 
-use ascent::ascent_par;
+use ascent::ascent;
 use ascent::ascent_run;
 use derive_builder::Builder;
 use hashbrown::hash_map::HashMap;
@@ -802,7 +802,7 @@ fn compute_alias_of_formal(
     pre.alias_of_formal
 }
 
-// The `ascent_par!` datalog block below expands to code that trips several style lints
+// The `ascent!` datalog block below expands to code that trips several style lints
 // (`.clone()` on Copy types, auto-borrows, unit-valued lets, and Default field
 // reassignment). These are artifacts of the macro's generated code, not the
 // hand-written rules, so silence them for this function.
@@ -949,7 +949,7 @@ pub fn taint_index_with_config(
         phys_footprint_mb()
     );
 
-    ascent_par! {
+    ascent! {
         #![measure_rule_times]
         #![generate_run_timeout]
         struct IndexProg;
@@ -1317,9 +1317,10 @@ pub fn taint_index_with_config(
     // used to be inline `= <init>` initializers are set here instead, because the declared-struct
     // `Default::default()` where ascent would otherwise place them has no access to these locals.
     //
-    // Under `ascent_par!` a plain relation's physical store is a `boxcar::Vec` (a lock-free
-    // append-only vector), not a `std::vec::Vec`, so each input is collected into one. The
-    // conversion is a move of the tuples, not a copy of the data behind them.
+    // The inputs are `collect`ed rather than assigned, which costs nothing here (`Vec` to `Vec`
+    // reuses the allocation) and is what `ascent_par!` needs, where a plain relation's physical
+    // store is a `boxcar::Vec` (a lock-free append-only vector) instead of a `std::vec::Vec`. So
+    // these lines hold for either macro.
     let mut prog = IndexProg::default();
     prog.formal_param = facts.formal_param.into_iter().collect();
     prog.actual_param = facts.actual_param.into_iter().collect();
@@ -1343,11 +1344,11 @@ pub fn taint_index_with_config(
     prog.callee_resolvents = facts.callee_resolvents.into_iter().collect();
     prog.summary = facts.summary.into_iter().collect();
     prog.config = config_val.into_iter().collect();
-    // Switching back to `ascent!` means swapping this one line for
-    // `assign_like_trie::AssignTrie::from_rows(assign_like)`, which seeds the serial store the
-    // same way.
+    // Switching to `ascent_par!` means swapping this one line for
+    // `c_assign_like_trie::CAssignTrie::from_rows(assign_like)`, which seeds the parallel store
+    // the same way.
     prog.__assign_like_ind_common =
-        crate::index_engine::c_assign_like_trie::CAssignTrie::from_rows(assign_like);
+        crate::index_engine::assign_like_trie::AssignTrie::from_rows(assign_like);
     prog.prog_store = prog_store.into_iter().collect();
     prog.alias_of_formal = alias_of_formal.into_iter().collect();
     prog.model_paths = summary_paths.into_iter().collect();
@@ -1379,33 +1380,21 @@ pub fn taint_index_with_config(
     // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
     log::debug!("{}", prog.__locals_ind_common.heap_report());
     log::debug!("{}", prog.__assign_like_ind_common.heap_report());
-    // The hybrid-inlining dump reads relations that parallel Ascent stores as `boxcar::Vec`s, and
-    // the lattices as `boxcar::Vec<RwLock<..>>`. Materialize plain slices for the formatter, but
-    // only when trace logging is actually on, so a normal run pays nothing.
-    if log::log_enabled!(log::Level::Trace) {
-        fn unlock<T: Clone>(lat: &ascent::boxcar::Vec<std::sync::RwLock<T>>) -> Vec<T> {
-            lat.iter().map(|l| l.read().unwrap().clone()).collect()
+    // Serial Ascent stores these relations as plain `Vec`s, so the formatter borrows them
+    // directly. Under `ascent_par!` they are `boxcar::Vec`s (lattices are
+    // `boxcar::Vec<RwLock<..>>`) and have to be materialized first; see git history for that form.
+    log::trace!(
+        "hybrid inlining relations:\n{}",
+        HybridInliningRelations {
+            critical_summary: &prog.critical_summary,
+            resolvent: &prog.resolvent,
+            call_target_assign_like: &prog.call_target_assign_like,
+            context_assign: &prog.context_assign,
+            context_locals: &prog.context_locals,
+            context_summary: &prog.context_summary,
+            id_map,
         }
-        let critical_summary: Vec<_> = prog.critical_summary.iter().cloned().collect();
-        let call_target_assign_like: Vec<_> =
-            prog.call_target_assign_like.iter().cloned().collect();
-        let resolvent = unlock(&prog.resolvent);
-        let context_assign = unlock(&prog.context_assign);
-        let context_locals = unlock(&prog.context_locals);
-        let context_summary = unlock(&prog.context_summary);
-        log::trace!(
-            "hybrid inlining relations:\n{}",
-            HybridInliningRelations {
-                critical_summary: &critical_summary,
-                resolvent: &resolvent,
-                call_target_assign_like: &call_target_assign_like,
-                context_assign: &context_assign,
-                context_locals: &context_locals,
-                context_summary: &context_summary,
-                id_map,
-            }
-        );
-    }
+    );
 
     // `assign_like` is stored in the BYODS trie (`__assign_like_ind_common`); its physical
     // relation is a `SeedVec` holding no tuples. Reconstruct the saved output Vec from the store,
