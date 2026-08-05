@@ -39,7 +39,7 @@ to 0.f.
 
 use std::path;
 
-use ascent::ascent_par;
+use ascent::ascent;
 use ascent::ascent_run;
 use derive_builder::Builder;
 use hashbrown::hash_map::HashMap;
@@ -1049,7 +1049,7 @@ pub fn taint_index_with_config(
         phys_footprint_mb()
     );
 
-    ascent_par! {
+    ascent! {
         #![measure_rule_times]
         #![generate_run_timeout]
         struct IndexProg;
