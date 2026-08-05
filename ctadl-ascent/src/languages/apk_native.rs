@@ -122,7 +122,7 @@ pub fn import_native_libs(
     };
     if !unusable.is_empty() {
         log::info!(
-            "{}: skipping {} -- {} no entry there is a loadable object file (an empty \
+            "{}: skipping {} -- {} no entry that is a loadable object file (an empty \
              placeholder, say); pass --native-abi to override",
             apk_path.display(),
             unusable.join(", "),
