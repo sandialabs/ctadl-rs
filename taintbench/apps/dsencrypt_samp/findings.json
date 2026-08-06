@@ -1,0 +1,66 @@
+{
+  "fileName": "dsencrypt_samp.apk",
+  "day": "2019-04-11",
+  "findings": [
+    {
+      "source": {
+        "statement": "InputStream is = getAssets().open(\"ds\");",
+        "methodName": "private void loadClass(Context context)",
+        "className": "com.kbstar.kb.android.star.ProxyApp",
+        "lineNo": 28,
+        "targetName": "open",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r13 = virtualinvoke $r12.<android.content.res.AssetManager: java.io.InputStream open(java.lang.String)>(\"ds\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "DexFile dx = (DexFile) Class.forName(\"dalvik.system.DexFile\").getMethod(\"loadDex\", new Class[]{String.class, String.class, Integer.TYPE}).invoke(null, argsObj);",
+        "methodName": "private void loadClass(Context context)",
+        "className": "com.kbstar.kb.android.star.ProxyApp",
+        "lineNo": 60,
+        "targetName": "invoke",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r17 = virtualinvoke $r16.<java.lang.reflect.Method: java.lang.Object invoke(java.lang.Object,java.lang.Object[])>(null, $r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "is.read(encrypeData, 0, len);",
+          "methodName": "private void loadClass(Context context)",
+          "className": "com.kbstar.kb.android.star.ProxyApp",
+          "lineNo": 33,
+          "ID": 1
+        },
+        {
+          "statement": "byte[] rawdata = new DesUtils(DesUtils.STRING_KEY).decrypt(encrypeData);",
+          "methodName": "private void loadClass(Context context)",
+          "className": "com.kbstar.kb.android.star.ProxyApp",
+          "lineNo": 35,
+          "ID": 2
+        },
+        {
+          "statement": "fos.write(rawdata);",
+          "methodName": "private void loadClass(Context context)",
+          "className": "com.kbstar.kb.android.star.ProxyApp",
+          "lineNo": 38,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "partialFlow": true,
+        "reflection": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads an encrypted zip file from asset folder, decrypts it and extracts class.dex which contains malicious code. The malicious code is called via reflection.",
+      "isNegative": false
+    }
+  ]
+}

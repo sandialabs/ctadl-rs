@@ -1,0 +1,49 @@
+{
+  "description": [
+    "ctadl query model for the TaintBench `dsencrypt_samp` app. Sources and sinks are",
+    "derived from the framework methods named in the source/sink IR (Jimple) signatures of",
+    "dsencrypt_samp_findings.json: AssetManager.open() reads the packed asset `ds`",
+    "(source); Method.invoke() reflectively calls DexFile.loadDex on the decrypted result",
+    "(sink) -- the dynamic-code-loading leak this app is benchmarked for.",
+    "ctadl ignores the non-schema `description` key, as it does `expected_lines` in the",
+    "nightly models."
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "open",
+          "parent": "Landroid/content/res/AssetManager;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "AssetData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "invoke",
+          "parent": "Ljava/lang/reflect/Method;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "CodeLoading",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    }
+  ]
+}

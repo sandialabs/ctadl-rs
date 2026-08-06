@@ -1,0 +1,49 @@
+{
+  "description": [
+    "ctadl query model for the TaintBench `death_ring_materialflow` app. Sources and sinks",
+    "are derived from the framework methods named in the source/sink IR (Jimple)",
+    "signatures of death_ring_materialflow_findings.json: SmsMessage.getDisplayMessageBody()",
+    "reads the body of a received SMS (source); SmsManager.sendTextMessage() forwards it by",
+    "SMS (sink). Both are the deprecated `android.telephony.gsm` classes the app calls.",
+    "ctadl ignores the non-schema `description` key, as it does `expected_lines` in the",
+    "nightly models."
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "getDisplayMessageBody",
+          "parent": "Landroid/telephony/gsm/SmsMessage;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "SmsData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "sendTextMessage",
+          "parent": "Landroid/telephony/gsm/SmsManager;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    }
+  ]
+}

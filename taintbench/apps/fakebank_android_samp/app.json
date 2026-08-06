@@ -1,0 +1,9 @@
+{
+  "name": "fakebank_android_samp",
+  "apk": {
+    "url": "https://github.com/TaintBench/fakebank_android_samp/releases/download/APK/fakebank_android_samp.apk",
+    "sha256": "sha256-GREIN53M1dwbIcX3H0611HYD/ElQJV8ysSKNSwZupRI="
+  },
+  "upstream": "https://github.com/TaintBench/fakebank_android_samp",
+  "findingsCommit": "master"
+}

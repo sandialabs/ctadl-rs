@@ -1,0 +1,9 @@
+{
+  "name": "death_ring_materialflow",
+  "apk": {
+    "url": "https://github.com/TaintBench/death_ring_materialflow/releases/download/APK/death_ring_materialflow.apk",
+    "sha256": "sha256-n++TXWW0wVnuCcevFpIQXVJC/u8Ke04Q9oN3DtXJcuo="
+  },
+  "upstream": "https://github.com/TaintBench/death_ring_materialflow",
+  "findingsCommit": "master"
+}

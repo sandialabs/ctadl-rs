@@ -23,6 +23,21 @@ cargo xtask taintbench --apk beita_com_beita_contact=/path/to/app.apk
 cargo xtask taintbench --filter beita        # only matching apps
 ```
 
+## The apps
+
+Ten TaintBench apps run today:
+
+- `backflash`
+- `beita_com_beita_contact`
+- `cajino_baidu`
+- `chulia`
+- `death_ring_materialflow`
+- `dsencrypt_samp`
+- `exprespam`
+- `fakeappstore`
+- `fakebank_android_samp`
+- `hummingbad_android_samp`
+
 ## Layout
 
 Each app is a directory under `apps/<name>/` holding four files:
@@ -30,13 +45,22 @@ Each app is a directory under `apps/<name>/` holding four files:
 | file             | role                                                              |
 | ---------------- | ---------------------------------------------------------------- |
 | `findings.json`  | TaintBench ground truth, copied verbatim from the app's upstream repo. |
-| `model.json`     | ctadl query model (`model_generators`) — the sources/sinks to mark. |
+| `model.json`     | ctadl model (`model_generators`) — the sources/sinks to mark, plus any propagations the app's flows need. |
 | `expected.json`  | Baseline: the finding IDs ctadl currently detects (see below).   |
 | `app.json`       | APK coordinates (`url` + SRI `sha256`) and provenance, read by `nix/taintbench.nix`. |
 
+`model.json` goes to **both** `ctadl index` and `ctadl query`: index consumes its
+`propagation` models (they become function summaries) and query its sources and
+sinks. Each phase warns about the part it ignores. Several apps exfiltrate
+through framework classes that have no body in the APK — the apache-http
+request plumbing, say — and need a summary for the taint to reach the sink.
+
 Adding an app is data-only: drop in these four files and `nix/taintbench.nix`
-picks it up (`builtins.readDir`). No code or list to edit. `app.json`'s `sha256` is an SRI
-hash; get it with `nix store prefetch-file --json <url> | jq -r .hash`.
+picks it up (`builtins.readDir`). No code or list to edit — only the app list
+above, which is written by hand. `app.json`'s `sha256` is an SRI hash; get it
+with `nix store prefetch-file --json <url> | jq -r .hash`. Remember to `git add`
+the new directory: the flake reads its source from git, so an untracked app is
+silently skipped by `nix build` while `cargo xtask taintbench` still runs it.
 
 ## How a finding is matched
 

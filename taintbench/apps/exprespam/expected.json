@@ -1,0 +1,4 @@
+{
+  "_comment": "Baseline snapshot: TaintBench finding IDs ctadl currently detects via a connected source->sink path. Both flows (phone number and contact list posted to the C2 server) connect, given the apache-http request summaries in model.json. See ../../README.md.",
+  "matched_finding_ids": [1, 2]
+}

@@ -1,0 +1,4 @@
+{
+  "_comment": "Baseline snapshot: TaintBench finding IDs ctadl currently detects via a connected source->sink path. The app's single flow -- an intercepted SMS body forwarded by SmsManager.sendTextMessage -- connects. See ../../README.md.",
+  "matched_finding_ids": [1]
+}

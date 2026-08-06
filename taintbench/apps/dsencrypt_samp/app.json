@@ -1,0 +1,9 @@
+{
+  "name": "dsencrypt_samp",
+  "apk": {
+    "url": "https://github.com/TaintBench/dsencrypt_samp/releases/download/APK/dsencrypt_samp.apk",
+    "sha256": "sha256-sQPziXsWGd7hV+YqFzfoZEUqhbq2E62XGsYZOz9qSDQ="
+  },
+  "upstream": "https://github.com/TaintBench/dsencrypt_samp",
+  "findingsCommit": "master"
+}

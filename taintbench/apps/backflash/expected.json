@@ -1,0 +1,4 @@
+{
+  "_comment": "Baseline snapshot: TaintBench finding IDs ctadl currently detects via a connected source->sink path. 6 of the 13 positive flows connect -- the Intent.getStringExtra -> OutputStreamWriter.write leaks that stay inside one class. The 7 misses (#2, #3, #4, #19-#22) all cross an AsyncTask boundary: the data is packed into the String[] passed to `new FlashVirtual().execute(...)` and read back out of `params` in doInBackground, an edge ctadl's call graph does not have. Every finding's source and sink is recognized as an endpoint. The negatives #9/#10/#18 share their callee pair with a positive, so they are shadowed and not counted as false positives; the other negatives are not reported at all. See ../../README.md.",
+  "matched_finding_ids": [1, 5, 6, 7, 8, 17]
+}

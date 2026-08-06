@@ -1,0 +1,9 @@
+{
+  "name": "chulia",
+  "apk": {
+    "url": "https://github.com/TaintBench/chulia/releases/download/APK/chulia.apk",
+    "sha256": "sha256-Np7s7hSDhzWEmfwCWV04SbjFrrqkL0ykrqNkTto6pu8="
+  },
+  "upstream": "https://github.com/TaintBench/chulia",
+  "findingsCommit": "master"
+}

