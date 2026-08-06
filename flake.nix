@@ -153,7 +153,7 @@
             }
             ''
               mkdir -p "$out"
-              javac -d "$out" "$src/HelloWorld.java" "$src/ArrayFlow.java" "$src/LoopFlow.java"
+              javac -encoding UTF-8 -d "$out" "$src/HelloWorld.java" "$src/ArrayFlow.java" "$src/LoopFlow.java"
             '';
 
         # The external toolchain the regression scripts expect on PATH

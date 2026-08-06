@@ -1,6 +1,6 @@
 // JniRegister.java -- taint crossing a JNI boundary that no symbol name joins.
 //
-// The two natives below have no `Java_JniRegister_…` symbol anywhere in the
+// The two natives below have no `Java_JniRegister_...` symbol anywhere in the
 // shared library. Their implementations are bound at run time, the way most
 // real Android apps bind theirs: `JNI_OnLoad` hands `RegisterNatives` a
 // `JNINativeMethod[]` of (name, signature, function pointer) triples. Nothing
