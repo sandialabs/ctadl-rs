@@ -1,31 +1,73 @@
 # Rebase of `taintbench` onto `origin/main` - DO-NOT-MERGE
 
-Rebased `taintbench` onto `origin/main` (`de45c4b0`, "Implement hybrid locals
-data structure (#93)") and re-ran the TaintBench suite (see
+Rebased `taintbench` onto `origin/main` (`0852b052`, "updates to sarif
+formatting (#96)") and re-ran the TaintBench suite (see
 `taintbench/README.md`).
 
 ## Result
 
-Rebase succeeded. Four of the five original commits replayed, plus three commits
-carrying this note and the baseline/model edits:
+Rebase succeeded. All nine commits replayed, one conflict, no runner changes
+needed:
 
 ```
-0d9a67a8 Update merge note
-310cf417 updates
-55cbf658 update branch
-6c9c2de6 Optimize some more things in the query
-1ed52727 Format
-4255b8ce Fix taintbench sink
-68e28a3b Taintbench
-de45c4b0 Implement hybrid locals data structure (#93)   <- origin/main
-c8b61936 GitHub release ci (#92)
-afe3f1f4 Misc fixes (#91)
+db2e4324 Move taintbench to its own nix file
+cb4409f8 Update merge.md
+b034e7b1 Update merge note
+2c30e315 updates
+89c23602 update branch
+70cb8c7a Optimize some more things in the query
+25d2bf31 Format
+6bd0d01b Fix taintbench sink
+6ab8fa96 Taintbench
+0852b052 updates to sarif formatting (#96)              <- origin/main
+faabe32d Parallel indexing (#95)
+228651c6 CI: version the ctadl binaries (#94)
+de45c4b0 Implement hybrid locals data structure (#93)
 ```
 
-The **"Clippy" commit dropped out as empty**. Its only surviving content was a
-`.into()` removal in `ctadl-ascent/src/languages/dex/tests.rs`, and main had
-already refactored those assertions to go through `local_name(&locals, var)`, so
-resolving to main's side left the commit with nothing.
+(One further commit, "Clippy", dropped out as empty during the earlier rebase
+onto `afe3f1f4`. Its only surviving content was a `.into()` removal in
+`ctadl-ascent/src/languages/dex/tests.rs`, and main had already refactored those
+assertions to go through `local_name(&locals, var)`, so resolving to main's side
+left the commit with nothing.)
+
+## Conflicts resolved — onto `0852b052` (#94, #95, #96)
+
+One conflicted commit, one file, one hunk. `cargo check --workspace
+--all-targets` was clean straight off the rebase.
+
+### `ctadl-ascent/src/query_engine/formatter.rs` — combined
+
+`format_sarif`'s signature. `#96` dropped the standalone `compact: bool`
+parameter (compactness is now a property of `SarifProfile::Machine`); ours
+changed `taint_results` to `&TaintAnalysisResults<'_>`. Kept both: main's
+parameter list with our lifetime. The body had already auto-merged to main's
+side, which no longer threads `compact` through `async_format_sarif`.
+
+Nothing else in `#96` collided. It renamed the `C0005`/`C0006` rule IDs to
+`C0005.tainted-data` / `C0006.almost-path-function` and added
+`properties.project_name`; `#95`'s parallel indexing is confined to
+`index_engine`, which this branch does not touch; `#94` is CI YAML only.
+
+### The test runner needed no changes
+
+`#96` is the one main commit that could have broken `xtask taintbench`, since
+the suite is a SARIF consumer. It did not, and the reasons are worth recording
+so the next rebase knows where to look:
+
+- **Rule IDs.** The runner reads `C0001.tainted-path`, `C0003.taint-source`, and
+  `C0004.taint-sink` (`xtask/src/taintbench.rs:37`). `#96` renamed only `C0005`
+  and `C0006`, which the runner never mentions.
+- **The dropped `--compact` flag.** The runner never passed it; it calls `ctadl
+  query -m <model> -o <sarif> --sarif-profile agent`. Compact output is now what
+  `SarifProfile::Machine` means, and the suite asks for `agent`, which still
+  pretty-prints.
+- **`sourceCallee` / `sinkCallee`.** The match itself hangs on these two
+  `properties` of a `tainted-path` result. `#96` added `project_name` alongside
+  them and removed nothing, so the parse is unchanged.
+
+Re-running the suite confirms it: same verdicts, same matched IDs, same
+baselines as the `de45c4b0` run below.
 
 ## Conflicts resolved — onto `de45c4b0` (#92, #93)
 
@@ -138,9 +180,10 @@ of this harness. The values are still trustworthy — building the pre-rebase ti
 
 ## Benchmark results
 
-`cargo xtask taintbench` against the three APKs, re-run from the tree rebased onto
-`de45c4b0`. **All three apps meet their committed baseline exactly, and every
-verdict is unchanged from the `afe3f1f4` run** — `#92` and `#93` moved nothing.
+`nix build .#checks.aarch64-darwin.taintbench` against the three APKs, re-run
+from the tree rebased onto `0852b052`. **All three apps meet their committed
+baseline exactly, and every verdict is unchanged from the `afe3f1f4` and
+`de45c4b0` runs** — `#92` through `#96` moved nothing.
 
 ```
 3 passed, 0 skipped, 0 failed of 3 app(s)
@@ -276,7 +319,7 @@ either implementing or rejecting at model-load time under that flag.
 
 ## Verification
 
-Re-run on the tree rebased onto `de45c4b0`:
+Re-run on the tree rebased onto `0852b052`:
 
 - `cargo check --workspace --all-targets` — clean, with no fixups needed after the
   rebase
@@ -284,18 +327,17 @@ Re-run on the tree rebased onto `de45c4b0`:
 - `cargo clippy --workspace --all-targets` — clean of anything we introduced. Two
   warnings remain, both pre-existing and in files this branch does not touch: an
   `items_after_test_module` in `jvm-reader/src/flow.rs:1792` and a
-  `wrong_self_convention` in the vendored `rustc_graphviz`. (The two
-  `unnecessary_cast` warnings this note used to list are gone: `#93` replaced
-  `index_engine/locals_trie.rs` wholesale.)
-- `cargo test --workspace` — 614 passed across 38 suites, 0 failed
-- `cargo xtask taintbench` — 3 passed, 0 skipped, 0 failed
-- `CTADL_QUERY_DATALOG=1 cargo xtask taintbench` — 2 passed, 1 failed, the same
-  `cajino_baidu` `#8` regression as before (see above)
+  `wrong_self_convention` in the vendored `rustc_graphviz`.
+- `cargo test --workspace` — 621 passed across 38 suites, 0 failed
+- `nix build .#checks.aarch64-darwin.taintbench` — 3 passed, 0 skipped, 0 failed
+- `CTADL_QUERY_DATALOG=1 xtask taintbench` — 2 passed, 1 failed, the same
+  `cajino_baidu` `#8` regression as before (see above), so the datalog gap is
+  unchanged by `#94`–`#96`
 
 ## Files changed beyond the replayed commits
 
-Now committed, in `55cbf658` ("update branch"), `310cf417` ("updates"), and
-`0d9a67a8` ("Update merge note"):
+Now committed, in `89c23602` ("update branch"), `2c30e315` ("updates"), and
+`b034e7b1` ("Update merge note"):
 
 - `xtask/src/taintbench.rs` — the never-valid `format` subcommand folded into
   `query`; doc comment
