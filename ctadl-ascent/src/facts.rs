@@ -388,13 +388,15 @@ pub mod counters {
     pub static LOCALS_FWD_DST: AtomicU64 = AtomicU64::new(0);
     /// `locals` forward-field propagation, substituting into the formal path.
     pub static LOCALS_FWD_FML: AtomicU64 = AtomicU64::new(0);
-    /// `context_locals` forward-field propagation, destination path. Twin of [`LOCALS_FWD_DST`].
+    /// Rule 3.3a, `context_locals` forward-field propagation, destination path. Twin of
+    /// [`LOCALS_FWD_DST`].
     pub static CTX_LOCALS_FWD_DST: AtomicU64 = AtomicU64::new(0);
-    /// `context_locals` forward-field propagation, formal path. Twin of [`LOCALS_FWD_FML`].
+    /// Rule 3.3a, `context_locals` forward-field propagation, formal path. Twin of
+    /// [`LOCALS_FWD_FML`].
     pub static CTX_LOCALS_FWD_FML: AtomicU64 = AtomicU64::new(0);
-    /// Rule 3.3, seeding `context_locals` from `context_assign`, destination path.
+    /// Rule 3.3b, seeding `context_locals` from `context_assign`, destination path.
     pub static CTX_LOCALS_SEED_DST: AtomicU64 = AtomicU64::new(0);
-    /// Rule 3.3, seeding `context_locals` from `context_assign`, formal path.
+    /// Rule 3.3b, seeding `context_locals` from `context_assign`, formal path.
     pub static CTX_LOCALS_SEED_FML: AtomicU64 = AtomicU64::new(0);
 
     /// Counts one derivation. Returns `u64` so it can sit in an `ascent!` `let` clause.

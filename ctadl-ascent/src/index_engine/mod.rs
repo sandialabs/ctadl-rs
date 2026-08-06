@@ -1158,22 +1158,6 @@ pub fn taint_index_with_config(
             paths(&p43),
             let _d = counters::bump(&counters::LOCALS_FWD_FML);
 
-        // Forward field propagation (context-carrying) -- identical shape to the two rules above,
-        // threading the call string through so a context-specific flow keeps its context as it
-        // moves across assignments.
-        context_locals(infunc, v1, p13.clone(), a, p4, cs_lat.clone()) <--
-            context_locals(infunc, v2, p23, a, p4, cs_lat),
-            assign_like(infunc, v1, p1, v2, p2),
-            if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(&p13),
-            let _d = counters::bump(&counters::CTX_LOCALS_FWD_DST);
-        context_locals(infunc, v1, p1, a, p43.clone(), cs_lat.clone()) <--
-            context_locals(infunc, v2, p2, a, p4, cs_lat),
-            assign_like(infunc, v1, p1, v2, p23),
-            if let Some(p43) = p23.substitute_prefix(p2, p4),
-            paths(&p43),
-            let _d = counters::bump(&counters::CTX_LOCALS_FWD_FML);
-
         // Compute assignments from call sites
         assign_like(func_id, v.clone(), p, cv.clone(), Path::empty()),
         assign_like(func_id, cv.clone(), Path::empty(), v.clone(), p) <--
@@ -1303,9 +1287,24 @@ pub fn taint_index_with_config(
             let v1 = call_arg!(insn_id, *n1),
             let v2 = call_arg!(insn_id, *n2);
 
-        // 3.3: We have to reason about contextual local reachability. Do forward/backward field
-        // prapagation on `context_locals` with the context-specific flow from a bare flow
-        // (`locals`) and a contextual assign.
+        // 3.3a: We have to reason about contextual local reachability. This involves reasoning
+        // about flows composed of hops, some of which are non-contextual and some of which are
+        // contextual. The following two rules extend contextual flows with built-in assigns using
+        // the same shape as forward/backward propagation.
+        context_locals(infunc, v1, p13.clone(), a, p4, cs_lat.clone()) <--
+            context_locals(infunc, v2, p23, a, p4, cs_lat),
+            assign_like(infunc, v1, p1, v2, p2),
+            if let Some(p13) = p23.substitute_prefix(p2, p1),
+            paths(&p13),
+            let _d = counters::bump(&counters::CTX_LOCALS_FWD_DST);
+        context_locals(infunc, v1, p1, a, p43.clone(), cs_lat.clone()) <--
+            context_locals(infunc, v2, p2, a, p4, cs_lat),
+            assign_like(infunc, v1, p1, v2, p23),
+            if let Some(p43) = p23.substitute_prefix(p2, p4),
+            paths(&p43),
+            let _d = counters::bump(&counters::CTX_LOCALS_FWD_FML);
+
+        // 3.3b: The following two rules extend non-contextual flows with contextual assigns.
         context_locals(func_id, v1.clone(), p13.clone(), a.clone(), p4.clone(), cs_lat.clone()) <--
             context_assign(func_id, v1, p1, v2, p2, cs_lat),
             locals(func_id, v2, p23, a, p4),
