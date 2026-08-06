@@ -1319,6 +1319,7 @@ dependencies = [
  "log",
  "log-once",
  "memmap",
+ "object",
  "packed_struct",
  "parquet",
  "paste",

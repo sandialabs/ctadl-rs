@@ -17,7 +17,9 @@ use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;
 
-mod ghidra;
+// `pub(crate)` for `GhidraSource::detect`, which the JNI registry scan uses to tell an artifact
+// that is a binary on disk from a `ghidra://` URL or a `.gpr` project.
+pub(crate) mod ghidra;
 
 /// This is hardcoded for now, but should be read from the facts
 const WORD_SIZE: i64 = 8;
@@ -46,11 +48,11 @@ pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramIn
     // Persist Ghidra's image base on the import config so downstream consumers
     // (SARIF address mapping, regression line checks) can recover
     // section-relative offsets regardless of the base Ghidra chose.
-    if let Some(image_base) = PcodeFactsReader::new(&facts_dir)
+    let image_base = PcodeFactsReader::new(&facts_dir)
         .read_image_base()
         .map_err(|e| Error::PcodeFactRead(format!("Failed to read image base: {}", e)))
-        .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?
-    {
+        .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?;
+    if let Some(image_base) = image_base {
         let mut updated = import.clone();
         updated.image_base = Some(image_base);
         updated.save()?;
@@ -67,6 +69,15 @@ pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramIn
     };
 
     ctx.process(&facts_dir, key, &mut builders)?;
+
+    // Recover this library's `RegisterNatives` tables and write them beside the import's other
+    // artifacts. Here, rather than earlier or later, because this is the first point at which
+    // both halves of the address translation are known: Ghidra's image base was read above, and
+    // `ctx.process` has just populated the entry-point map every recovered `fnPtr` is looked up
+    // in. Scanning is unconditional and costs milliseconds; `--no-jni-registry` ignores the
+    // result at index time, which is what makes a clean A/B possible without re-importing.
+    crate::languages::jni::registry::scan_import(import, image_base, &ctx.entry_points)?;
+
     ctx.finish(builders)
 }
 
@@ -154,6 +165,11 @@ struct Context {
     register_facts: Vec<pcode_reader::RegisterData>,
     // Current function being processed
     current_hfunc: Option<pcode_reader::HighFunc>,
+    // Function entry address -> the fully-qualified IR name of the function there. Keyed by the
+    // address Ghidra reports, which is `image_base + ELF vaddr`. Built alongside `functions` in
+    // `process_functions`; the JNI registry scan is its only consumer, resolving each recovered
+    // `fnPtr` to something `link` can name.
+    entry_points: BTreeMap<i64, String>,
     counter: i64,
 }
 
@@ -169,6 +185,7 @@ impl Context {
             global_vnodes: Default::default(),
             register_facts: Default::default(),
             current_hfunc: None,
+            entry_points: Default::default(),
             counter: 0,
         }
     }
@@ -413,6 +430,12 @@ impl Context {
 
             // Store function mapping
             self.functions.insert(func_id.clone(), func_idx);
+            // And, by entry address, the name `link` resolves to a `FunctionId`: `fq_name` is
+            // exactly the string that went into the `NativeFunction` VMT column above, so a
+            // registry row naming it names the same function the bridge would.
+            if let Some(entry_point) = &func_data.entry_point {
+                self.entry_points.insert(entry_point.0, fq_name);
+            }
         }
         Ok(())
     }

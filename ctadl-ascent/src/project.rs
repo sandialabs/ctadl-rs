@@ -105,6 +105,11 @@ pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 /// See [`PROGRAM_BITCODE_FILE`].
 pub const VMT_BITCODE_FILE: &str = "ir-vmt.bitcode";
 
+/// Filename of the `RegisterNatives` tables recovered from an ELF import, beside the artifacts
+/// above. See [`crate::languages::jni::registry`]. An import without the file simply contributes no
+/// registered natives.
+pub const JNI_REGISTRY_FILE: &str = "jni-registry.json";
+
 /// Filename of an import's config, which records its [`IMPORT_FORMAT_VERSION`].
 pub const IMPORT_CONFIG_FILE: &str = "import_config.json";
 
@@ -321,6 +326,15 @@ impl ArtifactImport {
     /// Path to the serialized virtual method table
     pub fn vmt_path(&self) -> PathBuf {
         self.import_path().join(VMT_BITCODE_FILE)
+    }
+
+    /// Path to the `RegisterNatives` tables recovered from this import, if it has any.
+    ///
+    /// Written at *import* time, so `ctadl import --skip-existing` -- which reuses an unchanged
+    /// library's import directory -- will not create one for a library imported before this
+    /// existed. Re-import without `--skip-existing` to gain it.
+    pub fn jni_registry_path(&self) -> PathBuf {
+        self.import_path().join(JNI_REGISTRY_FILE)
     }
 
     /// Path to the serialized flowy requirements
@@ -825,6 +839,8 @@ pub enum ArtifactLanguage {
     Dex,
     /// Treat as Android APK inputs
     Apk,
+    /// Treat as an Android app bundle (`.xapk`): a ZIP of split APKs, imported one split each.
+    Xapk,
     /// Treat as C files
     C,
     /// Treat as Lua source files
@@ -844,6 +860,7 @@ impl ArtifactLanguage {
         ArtifactLanguage::Jar,
         ArtifactLanguage::Dex,
         ArtifactLanguage::Apk,
+        ArtifactLanguage::Xapk,
         ArtifactLanguage::C,
         ArtifactLanguage::Lua,
         ArtifactLanguage::Pcode,
@@ -859,6 +876,7 @@ impl ArtifactLanguage {
             ArtifactLanguage::Jar => "jar",
             ArtifactLanguage::Dex => "dex",
             ArtifactLanguage::Apk => "apk",
+            ArtifactLanguage::Xapk => "xapk",
             ArtifactLanguage::C => "c",
             ArtifactLanguage::Lua => "lua",
             ArtifactLanguage::Pcode => "pcode",
