@@ -10,7 +10,7 @@ use hashbrown::hash_map::HashMap;
 use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
 
-use crate::error::Error;
+use crate::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
     CallObject, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
@@ -20,6 +20,7 @@ use jvm_reader::flow::{CallInfo, CallKind, ConstantValue, DataflowInfo, Location
 use jvm_reader::{ClassFileParser, JarFileParser};
 
 const JVM_ACC_STATIC: u16 = 0x0008;
+const JVM_ACC_NATIVE: u16 = 0x0100;
 
 /// JVM internal names (`java/lang/Object`, `MyInterface`) and type descriptors
 /// (`LMyInterface;`) to the `L...;` symbol form used in MIR and CHA.
@@ -50,10 +51,16 @@ fn jvm_descriptor_to_params(descriptor: &str, is_instance: bool) -> Vec<Paramete
 
 pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
     //let data = read_file_bytes(file)?;
-    let parser = JarFileParser::open(file)?;
+    let parser =
+        JarFileParser::open(file).err_context(|| format!("reading jar: {}", file.display()))?;
     let mut ctx = Context::new();
     let mut builders = Builders::new();
 
+    log::info!(
+        "{}: {} class file(s)",
+        file.display(),
+        parser.class_parsers().len()
+    );
     for (sub_artifact_id, parser) in parser.class_parsers().iter().enumerate() {
         let key = ArtifactKey {
             path: file.to_string_lossy().to_string(),
@@ -61,14 +68,17 @@ pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
             hash: Vec::new(),
             encoding: source_info::ArtifactEncoding::Binary,
         };
-        ctx.process(parser, key, &mut builders)?;
+        ctx.process(parser, key, &mut builders)
+            .err_context(|| format!("converting class in jar: {}", file.display()))?;
     }
     ctx.finish(builders)
 }
 
 pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
-    let data = read_file_bytes(file)?;
-    let parser = ClassFileParser::parse(&data)?;
+    let data =
+        read_file_bytes(file).err_context(|| format!("reading class file: {}", file.display()))?;
+    let parser = ClassFileParser::parse(&data)
+        .err_context(|| format!("parsing class file: {}", file.display()))?;
     let mut ctx = Context::new();
     let mut builders = Builders::new();
     let key = ArtifactKey {
@@ -78,7 +88,8 @@ pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
         encoding: source_info::ArtifactEncoding::Binary,
     };
 
-    ctx.process(&parser, key, &mut builders)?;
+    ctx.process(&parser, key, &mut builders)
+        .err_context(|| format!("converting class file: {}", file.display()))?;
     ctx.finish(builders)
 }
 
@@ -201,6 +212,21 @@ impl Context {
                         JavaSimpleName(method_name.clone().into()),
                         JavaSignature(java_sig.clone().into()),
                         JavaMethod(full_name.clone().into()),
+                    ));
+                }
+                // Native methods are additionally listed in `natives`, the column the JNI
+                // bridge reads. They are already in `methods` above -- this frontend walks
+                // every declared method, code or not -- so the extra row is only there to
+                // carry the staticness the bridge needs to know whether slot 0 is `this`.
+                if enc.access_flags & JVM_ACC_NATIVE != 0
+                    && let VirtualMethodTable::Java { natives, .. } = &mut builders.vmt
+                {
+                    natives.push((
+                        JavaClass(class_name.to_string().into()),
+                        JavaSimpleName(method_name.clone().into()),
+                        JavaSignature(java_sig.clone().into()),
+                        JavaMethod(full_name.clone().into()),
+                        !is_instance,
                     ));
                 }
 

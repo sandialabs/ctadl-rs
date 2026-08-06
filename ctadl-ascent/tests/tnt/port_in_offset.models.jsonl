@@ -1,0 +1,1 @@
+{"find":"methods","where":[{"constraint":"signature_match","name":"id"}],"model":{"propagation":[{"input":"Argument(0).[12]","output":"Return"}]}}

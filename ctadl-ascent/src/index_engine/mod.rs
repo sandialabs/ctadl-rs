@@ -44,6 +44,7 @@ use ascent::ascent_run;
 use derive_builder::Builder;
 use hashbrown::hash_map::HashMap;
 use packed_struct::prelude::*;
+use streaming_iterator::StreamingIterator;
 
 use crate::error::Error;
 use crate::facts::{
@@ -51,8 +52,12 @@ use crate::facts::{
     FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg,
     PackedInsnSiteId, Path, SmallestCallString, isout,
 };
+use crate::index_engine::assign_like_trie::FromRows;
 
 pub mod assign_like_trie;
+pub mod c_assign_like_trie;
+pub mod c_locals_trie;
+pub mod hybrid_set;
 pub mod locals_trie;
 pub mod source_info;
 
@@ -317,13 +322,13 @@ impl IndexStats {
         let ratio =
             |final_val: usize, initial_val: usize| (final_val as f64) / (initial_val.max(1) as f64);
 
-        log::info!(
+        log::debug!(
             "relation increase: assign_like: {:.2} ({}/{})",
             ratio(self.final_assign_like, self.initial_assign),
             self.final_assign_like,
             self.initial_assign
         );
-        log::info!(
+        log::debug!(
             "relation increase: locals: {}, {} formals, {:.2} reached per formal, {:.1}% of variables reached ({}/{}), {:.2} rows per variable",
             self.final_locals,
             self.initial_formals,
@@ -333,7 +338,7 @@ impl IndexStats {
             self.num_variables,
             ratio(self.final_locals, self.num_variables)
         );
-        log::info!(
+        log::debug!(
             "relation increase: call_target_assign_like: {:.2} ({}/{})",
             ratio(
                 self.final_call_target_assign_like,
@@ -342,13 +347,13 @@ impl IndexStats {
             self.final_call_target_assign_like,
             self.initial_call_target_assign
         );
-        log::info!(
+        log::debug!(
             "relation increase: summary: {:.2} ({}/{}) (ratio over num_functions)",
             ratio(self.final_summary, self.num_functions),
             self.final_summary,
             self.num_functions
         );
-        log::info!(
+        log::debug!(
             "hybrid inlining: critical_summary: {:.2} ({}/{}), resolvent: {}, context_assign: {:.2} ({}/{}) (ratio over final assign_like), context_locals: {:.2} ({}/{}) (ratio over final locals), context_summary: {}",
             ratio(self.hybrid_critical_summary, self.num_functions),
             self.hybrid_critical_summary,
@@ -383,7 +388,7 @@ impl IndexResult {
         // `ascent_run returned`, but on path-heavy targets (e.g. JVM `fb`) the true peak is
         // here, in the parquet writer, not in the fixpoint. Report row counts too so peak
         // bytes can be attributed to a specific table.
-        log::info!(
+        log::debug!(
             "[mem cp] result.try_save start (summary={} assign_like={} paths={} ext={}): {:.1} MB",
             self.summary.len(),
             self.assign_like.len(),
@@ -392,26 +397,26 @@ impl IndexResult {
             phys_footprint_mb()
         );
         summary::try_save(&dir, self.summary)?;
-        log::info!(
+        log::debug!(
             "[mem cp]   after summary::try_save: {:.1} MB",
             phys_footprint_mb()
         );
         let assign_like_rows = self.assign_like.len();
         assign::try_save(&dir, self.assign_like)?;
-        log::info!(
+        log::debug!(
             "[mem cp]   after assign::try_save ({} rows): {:.1} MB",
             assign_like_rows,
             phys_footprint_mb()
         );
         let paths_rows = self.paths.len();
         paths::try_save(&dir, self.paths)?;
-        log::info!(
+        log::debug!(
             "[mem cp]   after paths::try_save ({} rows): {:.1} MB",
             paths_rows,
             phys_footprint_mb()
         );
         external_function::try_save(&dir, self.external_function)?;
-        log::info!(
+        log::debug!(
             "[mem cp] result.try_save done: {:.1} MB",
             phys_footprint_mb()
         );
@@ -508,47 +513,140 @@ impl IndexResult {
     }
 }
 
+/// One relation's rows, whatever the index engine happens to store them in.
+///
+/// Serial Ascent keeps a plain relation in a `Vec<Row>`. Parallel Ascent keeps a plain relation in
+/// a `boxcar::Vec<Row>` (a lock-free append-only vector) and a *lattice* in a
+/// `boxcar::Vec<RwLock<Row>>`. The three differ in how a row is reached — directly by reference,
+/// or through a read guard — so [`HybridInliningRelations`] reads them through this trait instead
+/// of a slice. That keeps the trace-dump call site identical under `ascent!` and `ascent_par!`,
+/// and it copies nothing in any of the three cases.
+///
+/// The count is its own method rather than something taken from the stream, because `boxcar::Vec`
+/// reports no upper size bound when iterated: the vector can be appended to mid-iteration, so its
+/// iterator cannot be an `ExactSizeIterator`. Nothing appends here — the fixpoint is over before we
+/// dump — but the type cannot know that.
+trait Rows<Row> {
+    fn len(&self) -> usize;
+
+    /// Stream the rows, each borrowed for as long as it is looked at.
+    ///
+    /// A [`StreamingIterator`] rather than an `Iterator` because a lattice row lives behind an
+    /// `RwLock`: the only way to hand out a plain `&Row` without copying is to keep that row's read
+    /// guard alive for exactly the span of the borrow, which is what a streaming iterator's
+    /// `advance`/`get` split expresses and a plain iterator cannot. Yielding `&Row` uniformly is
+    /// also what keeps this trait object-safe, so [`HybridInliningRelations`] needs no type
+    /// parameters.
+    fn stream(&self) -> Box<dyn StreamingIterator<Item = Row> + '_>;
+}
+
+impl<Row> Rows<Row> for Vec<Row> {
+    fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    fn stream(&self) -> Box<dyn StreamingIterator<Item = Row> + '_> {
+        Box::new(streaming_iterator::convert_ref(self.as_slice().iter()))
+    }
+}
+
+// The two parallel-engine cases. They are dead code under `ascent!` and live under `ascent_par!`;
+// keeping both compiled is what lets the switch between the macros touch nothing here.
+impl<Row> Rows<Row> for ascent::boxcar::Vec<Row> {
+    fn len(&self) -> usize {
+        ascent::boxcar::Vec::len(self)
+    }
+
+    fn stream(&self) -> Box<dyn StreamingIterator<Item = Row> + '_> {
+        Box::new(streaming_iterator::convert_ref(self.iter()))
+    }
+}
+
+/// A lattice's rows, each held under its own read guard while it is being looked at.
+struct GuardedRows<'a, I, Row> {
+    inner: I,
+    guard: Option<std::sync::RwLockReadGuard<'a, Row>>,
+}
+
+impl<'a, I, Row> StreamingIterator for GuardedRows<'a, I, Row>
+where
+    I: Iterator<Item = &'a std::sync::RwLock<Row>>,
+    Row: 'a,
+{
+    type Item = Row;
+
+    fn advance(&mut self) {
+        // Dropping the previous guard here is what bounds each row's lock to its own turn.
+        self.guard = self.inner.next().map(|lock| lock.read().unwrap());
+    }
+
+    fn get(&self) -> Option<&Row> {
+        self.guard.as_deref()
+    }
+}
+
+impl<Row> Rows<Row> for ascent::boxcar::Vec<std::sync::RwLock<Row>> {
+    fn len(&self) -> usize {
+        ascent::boxcar::Vec::len(self)
+    }
+
+    fn stream(&self) -> Box<dyn StreamingIterator<Item = Row> + '_> {
+        Box::new(GuardedRows {
+            inner: self.iter(),
+            guard: None,
+        })
+    }
+}
+
+type CriticalSummaryRow = (FunctionId, FormalIndex, Path);
+type ResolventRow = (
+    FunctionId,
+    FormalIndex,
+    Path,
+    CallTargetObject,
+    SmallestCallString,
+);
+type CallTargetAssignLikeRow = (FunctionId, FlowVariable, Path, CallTargetObject);
+type ContextAssignRow = (
+    FunctionId,
+    FlowVariable,
+    Path,
+    FlowVariable,
+    Path,
+    SmallestCallString,
+);
+type ContextLocalsRow = (
+    FunctionId,
+    FlowVariable,
+    Path,
+    FormalIndex,
+    Path,
+    SmallestCallString,
+);
+type ContextSummaryRow = (
+    FunctionId,
+    FormalIndex,
+    Path,
+    FormalIndex,
+    Path,
+    SmallestCallString,
+);
+
 struct HybridInliningRelations<'a> {
-    critical_summary: &'a [(FunctionId, FormalIndex, Path)],
-    resolvent: &'a [(
-        FunctionId,
-        FormalIndex,
-        Path,
-        CallTargetObject,
-        SmallestCallString,
-    )],
-    call_target_assign_like: &'a [(FunctionId, FlowVariable, Path, CallTargetObject)],
-    context_assign: &'a [(
-        FunctionId,
-        FlowVariable,
-        Path,
-        FlowVariable,
-        Path,
-        SmallestCallString,
-    )],
-    context_locals: &'a [(
-        FunctionId,
-        FlowVariable,
-        Path,
-        FormalIndex,
-        Path,
-        SmallestCallString,
-    )],
-    context_summary: &'a [(
-        FunctionId,
-        FormalIndex,
-        Path,
-        FormalIndex,
-        Path,
-        SmallestCallString,
-    )],
+    critical_summary: &'a dyn Rows<CriticalSummaryRow>,
+    resolvent: &'a dyn Rows<ResolventRow>,
+    call_target_assign_like: &'a dyn Rows<CallTargetAssignLikeRow>,
+    context_assign: &'a dyn Rows<ContextAssignRow>,
+    context_locals: &'a dyn Rows<ContextLocalsRow>,
+    context_summary: &'a dyn Rows<ContextSummaryRow>,
     id_map: Option<&'a IdMap>,
 }
 
-impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
+impl std::fmt::Display for HybridInliningRelations<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Critical Summary ({}):", self.critical_summary.len())?;
-        for (func_id, formal_index, path) in self.critical_summary {
+        let mut rows = self.critical_summary.stream();
+        while let Some((func_id, formal_index, path)) = rows.next() {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
@@ -566,7 +664,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nResolvent ({}):", self.resolvent.len())?;
-        for (func_id, formal_index, path, resolvent, cs) in self.resolvent {
+        let mut rows = self.resolvent.stream();
+        while let Some((func_id, formal_index, path, resolvent, cs)) = rows.next() {
             let func_name = self
                 .id_map
                 .and_then(|m| m.get_function(*func_id))
@@ -594,7 +693,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
             "\nCall Target Assign-Like ({}):",
             self.call_target_assign_like.len()
         )?;
-        for (func_id, var, path, tgt) in self.call_target_assign_like {
+        let mut rows = self.call_target_assign_like.stream();
+        while let Some((func_id, var, path, tgt)) = rows.next() {
             let var_str = if let Some(name) = var.as_local() {
                 name.to_string()
             } else {
@@ -616,6 +716,7 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
                     format!("ptr {}({})", tgt_name, tgt.id)
                 }
                 CallTargetObject::Symbol(cls) => format!("java<{cls}>"),
+                CallTargetObject::LuaClass(cls) => format!("lua<{cls}>"),
             };
 
             writeln!(
@@ -630,7 +731,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Assign ({}):", self.context_assign.len())?;
-        for (func_id, dest_var, dest_path, src_var, src_path, cs) in self.context_assign {
+        let mut rows = self.context_assign.stream();
+        while let Some((func_id, dest_var, dest_path, src_var, src_path, cs)) = rows.next() {
             let cs = match cs {
                 SmallestCallString::Value(cs) => cs.to_string(),
                 SmallestCallString::Bottom => "⊥".to_string(),
@@ -666,7 +768,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Locals ({}):", self.context_locals.len())?;
-        for (func_id, var, path, formal_idx, formal_path, cs) in self.context_locals {
+        let mut rows = self.context_locals.stream();
+        while let Some((func_id, var, path, formal_idx, formal_path, cs)) = rows.next() {
             let cs = match cs {
                 SmallestCallString::Value(cs) => cs.to_string(),
                 SmallestCallString::Bottom => "⊥".to_string(),
@@ -697,7 +800,8 @@ impl<'a> std::fmt::Display for HybridInliningRelations<'a> {
         }
 
         writeln!(f, "\nContext Summary ({}):", self.context_summary.len())?;
-        for (func_id, dest_idx, dest_path, src_idx, src_path, cs) in self.context_summary {
+        let mut rows = self.context_summary.stream();
+        while let Some((func_id, dest_idx, dest_path, src_idx, src_path, cs)) = rows.next() {
             let cs = match cs {
                 SmallestCallString::Value(cs) => cs.to_string(),
                 SmallestCallString::Bottom => "⊥".to_string(),
@@ -838,7 +942,7 @@ pub fn taint_index_with_config(
     let initial_summary = facts.summary.len();
     let initial_formals = facts.formal_param.len();
 
-    log::info!(
+    log::debug!(
         "[mem cp] entry (facts loaded): {:.1} MB | assign={} summary={} formals={}",
         phys_footprint_mb(),
         initial_assign,
@@ -859,7 +963,7 @@ pub fn taint_index_with_config(
     // temporaries, so only the per-hop paths land on edges). Dropping them under-approximates the
     // propagation gate and silently kills flows.
     program_paths.extend(facts.paths.iter().cloned());
-    log::info!(
+    log::debug!(
         "[mem cp] + program_paths ({} rows): {:.1} MB",
         program_paths.len(),
         phys_footprint_mb()
@@ -877,7 +981,7 @@ pub fn taint_index_with_config(
             (func_id, dst.0, src.0)
         })
         .collect();
-    log::info!(
+    log::debug!(
         "[mem cp] + copy_edge ({} rows): {:.1} MB",
         copy_edge.len(),
         phys_footprint_mb()
@@ -894,7 +998,7 @@ pub fn taint_index_with_config(
             (func_id, dst.0, dst.1)
         })
         .collect();
-    log::info!(
+    log::debug!(
         "[mem cp] + prog_store ({} rows): {:.1} MB",
         prog_store.len(),
         phys_footprint_mb()
@@ -907,7 +1011,7 @@ pub fn taint_index_with_config(
             (func_id, dst.0, dst.1, src.0, src.1)
         })
         .collect();
-    log::info!(
+    log::debug!(
         "[mem cp] + assign_like ({} rows, facts.assign consumed): {:.1} MB",
         assign_like.len(),
         phys_footprint_mb()
@@ -921,7 +1025,7 @@ pub fn taint_index_with_config(
         .iter()
         .flat_map(|(_, _, p1, _, p2)| [(*p1,), (*p2,)])
         .collect();
-    log::info!(
+    log::debug!(
         "[mem cp] + summary_paths ({} rows): {:.1} MB",
         summary_paths.len(),
         phys_footprint_mb()
@@ -939,7 +1043,7 @@ pub fn taint_index_with_config(
     // Precompute `alias_of_formal` in its own small fixpoint, BEFORE the main ascent -- see
     // `compute_alias_of_formal`. This is what lets `copy_edge` stay out of the main engine.
     let alias_of_formal = compute_alias_of_formal(&facts.formal_param, copy_edge);
-    log::info!(
+    log::debug!(
         "[mem cp] + alias_of_formal ({} rows), about to enter ascent_run: {:.1} MB",
         alias_of_formal.len(),
         phys_footprint_mb()
@@ -970,30 +1074,9 @@ pub fn taint_index_with_config(
 
         // Derived:
 
-        // Context-free field-sensitive reachability -- the dominant relation. Kept as a PLAIN
-        // relation (no call-string lattice column) so Ascent materializes it under far fewer
-        // indices than a 6-col lattice: on C/binary targets ~100% of reachability is context-free,
-        // and the lattice column plus the 4 indices keyed on it were pure overhead. The rare
-        // context-carrying flows live in `context_locals` (below), which was previously declared
-        // but unused and now holds exactly those flows.
-        //
-        // Stored via a prefix-sharing (trie-like) BYODS data structure: one shared store
-        // whose forward map `(F,V) -> P -> {(M,Fp)}` serves the none/0_1/0_1_2/existence
-        // views (sharing the (F,V) and P prefixes) and whose inverse map serves 0_3_4. This
-        // replaces the ~6× full-tuple replication of the default relation storage. See
-        // `locals_trie`.
+        // Local reachability. The core, most expensive relation.
         #[ds(crate::index_engine::locals_trie)]
         relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
-        // Stored via a prefix-sharing (trie-like) BYODS store keyed on `(F, src-var)` = the only
-        // columns any rule binds when reading `assign_like`. Collapses the default ~3× storage
-        // (physical Vec + full existence index + `0_3` probe index, each replicating the column
-        // data) to a single shared store. See `assign_like_trie`.
-        //
-        // The `= SeedVec::from(..)` seed is the original program assignments — ~94% of the final
-        // relation on binary targets. It is routed into the trie at 1×: `SeedVec` is a physical
-        // store that *drains* its seed into the shared store on Ascent's single index-build
-        // `iter()` pass and holds nothing thereafter, so the seed lives only in the trie for the
-        // duration of the run (never in a second full-size buffer). See `assign_like_trie::SeedVec`.
         #[ds(crate::index_engine::assign_like_trie)]
         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
         // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
@@ -1097,9 +1180,9 @@ pub fn taint_index_with_config(
             summary(tgt, n1, dst_path, n2, src_path),
             call(func_id, insn_id, tgt),
             let v1 = call_arg!(*insn_id, *n1),
-            let p1 = dst_path.clone(),
+            let p1 = dst_path,
             let v2 = call_arg!(*insn_id, *n2),
-            let p2 = src_path.clone();
+            let p2 = src_path;
 
         // Compute context-free summaries from local reachability.
         summary(infunc, n1, p1, n2, p2) <--
@@ -1262,20 +1345,67 @@ pub fn taint_index_with_config(
             let v2 = FlowVariableKind::CallArg(n2_id),
             let v1 = FlowVariableKind::CallArg(n1_id);
 
+        // Functions whose tag closure we bother to compute. `critical_call` alone is too narrow:
+        // a pure factory (`h = lookup()`, `Account.new`) contains no indirect call and calls
+        // nothing with a critical summary, so its closure would be empty and the tag would never
+        // reach its own out-formal for the return-direction rule below to pick up. A called
+        // function that holds a call-target fact is exactly the shape that can export a tag.
+        // `critical_call` itself keeps its narrower meaning for its other consumers.
+        relation tag_closure_func(FunctionId);
+        tag_closure_func(f) <-- critical_call(f);
+        tag_closure_func(f) <-- call_target_assign(f, _, _), call(_, _, f);
+
         // Call Target Propagation (function pointers and Java objects alike). The stored
         // target is carried opaquely as a `CallTargetObject`; the variant is only tested
         // downstream, where the call is actually resolved.
         call_target_assign_like(func_id, v.clone(), p.clone(), tgt) <--
             call_target_assign(func_id, vx, tgt), let FlowVertex(v, p) = vx,
-            critical_call(func_id);
+            tag_closure_func(func_id);
 
         call_target_assign_like(func_id, v1.clone(), p_new.clone(), tgt) <--
             // This results in large reduction on some test cases
-            critical_call(func_id),
+            tag_closure_func(func_id),
             call_target_assign_like(func_id, v2, p_context, tgt),
             assign_like(func_id, v1, p1, v2, p2),
             if let Some(p_new) = p_context.substitute_prefix(p2, p1),
             paths(&p_new);
+
+        // Return-direction call-target propagation. Rule 2.1 pushes a caller's tag DOWN onto a
+        // callee's formal; this is its missing twin, carrying a tag a callee holds on an
+        // out-formal UP to the corresponding call-arg vertex in each caller. Without it a target
+        // manufactured inside a callee (a returned function pointer, a returned object whose
+        // concrete type drives dispatch) dies at the return boundary, and the tag only ever
+        // crosses a return when the returned value is reachable from an in-formal (pass-through,
+        // via `summary`).
+        //
+        // Clause order is load-bearing, same reason as the comment at the aliasing summary rule:
+        // drive on the `call_target_assign_like` delta and probe `formal_param` by (func, var)
+        // second, so we prune to tagged out-formals before fanning out over callers. Both probes
+        // reuse indices existing rules already require -- `formal_param` by (func, var), `call` by
+        // its target column -- so no new indices are built.
+        //
+        // No call string is needed: the head names the specific `insn`, so each call site of a
+        // factory gets its own tagged vertex; context sensitivity is inherent to this direction.
+        // `p` rides through unchanged (no `substitute_prefix`), so no path growth and no `paths`
+        // gate. `isout` holds for every negative formal index, so RETURN_INDEX and the multi-return
+        // slots all qualify, and by-ref out-params (a callee installing a target into a
+        // caller-owned object) fall out for free.
+        //
+        // Deliberately NOT seeding `resolvent` here: that is a callee-frame relation keyed on the
+        // callee's formals, so a tuple for a frame whose receiver is a local has no consumer, and
+        // it would bypass the `CallString::new().push(..)` construction. Downstream needs no
+        // change -- the transitive rule above walks this tuple from `call_arg(insn, -1)` to the
+        // receiver over the symmetric call-site `assign_like` edges, the local-dispatch bypass
+        // resolves the indirect call exactly, and if the receiver is passed onward rule 2.1
+        // derives the resolvent with a properly constructed call string.
+        call_target_assign_like(caller, cv, p.clone(), tgt) <--
+            call_target_assign_like(callee, v, p, tgt),
+            formal_param(callee, v, formal_ty),
+            if let Some(n) = v.as_formal(),
+            if isout(&n, *formal_ty, p),
+            call(caller, insn, callee),
+            critical_call(caller),
+            let cv = call_arg!(*insn, n);
 
         critical_call(func_id) <-- callee_info(func_id, _, _, _, _);
         critical_call(func_id) <--
@@ -1286,9 +1416,14 @@ pub fn taint_index_with_config(
     // Declared-struct form (was `ascent_run!`) so we get `run_timeout`. Relation inputs that
     // used to be inline `= <init>` initializers are set here instead, because the declared-struct
     // `Default::default()` where ascent would otherwise place them has no access to these locals.
+    //
+    // The inputs are `collect`ed rather than assigned, which costs nothing here (`Vec` to `Vec`
+    // reuses the allocation) and is what `ascent_par!` needs, where a plain relation's physical
+    // store is a `boxcar::Vec` (a lock-free append-only vector) instead of a `std::vec::Vec`. So
+    // these lines hold for either macro.
     let mut prog = IndexProg::default();
-    prog.formal_param = facts.formal_param;
-    prog.actual_param = facts.actual_param;
+    prog.formal_param = facts.formal_param.into_iter().collect();
+    prog.actual_param = facts.actual_param.into_iter().collect();
     prog.call = call;
     prog.call_target_assign = facts
         .call_target_assign
@@ -1306,12 +1441,15 @@ pub fn taint_index_with_config(
             (func_id, insn_id, vx.0, vx.1, dispatch_key)
         })
         .collect();
-    prog.callee_resolvents = facts.callee_resolvents;
-    prog.summary = facts.summary;
-    prog.config = config_val;
-    prog.assign_like = crate::index_engine::assign_like_trie::SeedVec::from(assign_like);
-    prog.prog_store = prog_store;
-    prog.alias_of_formal = alias_of_formal;
+    prog.callee_resolvents = facts.callee_resolvents.into_iter().collect();
+    prog.summary = facts.summary.into_iter().collect();
+    prog.config = config_val.into_iter().collect();
+    // Seeding goes through the `FromRows` trait rather than naming a store type, so this line is
+    // the same under `ascent!` and `ascent_par!`: the field's type selects the serial `AssignTrie`
+    // or the concurrent `CAssignTrie` impl.
+    prog.__assign_like_ind_common = FromRows::from_rows(assign_like);
+    prog.prog_store = prog_store.into_iter().collect();
+    prog.alias_of_formal = alias_of_formal.into_iter().collect();
     prog.model_paths = summary_paths.into_iter().collect();
     prog.program_paths = program_paths.into_iter().collect();
 
@@ -1333,14 +1471,18 @@ pub fn taint_index_with_config(
             index_timeout
         );
     }
-    log::info!(
+    log::debug!(
         "[mem cp] ascent_run returned (transient input buffers dropped): {:.1} MB",
         phys_footprint_mb()
     );
-    log::info!("index scc times: {}", prog.scc_times_summary());
+    log::debug!("index scc times: {}", prog.scc_times_summary());
     // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
-    log::info!("{}", prog.__locals_ind_common.heap_report());
-    log::info!("{}", prog.__assign_like_ind_common.heap_report());
+    log::debug!("{}", prog.__locals_ind_common.heap_report());
+    log::debug!("{}", prog.__assign_like_ind_common.heap_report());
+    // The formatter reads these through the `Rows` trait, so this call is the same under `ascent!`
+    // (plain `Vec`s) and `ascent_par!` (`boxcar::Vec`s, with lattices as
+    // `boxcar::Vec<RwLock<..>>`): each field's own type selects the impl, and nothing is copied in
+    // either case.
     log::trace!(
         "hybrid inlining relations:\n{}",
         HybridInliningRelations {
@@ -1387,15 +1529,15 @@ pub fn taint_index_with_config(
     stats.log();
 
     let result = IndexResult {
-        summary: prog.summary,
+        summary: prog.summary.into_iter().collect(),
         assign_like: assign_like_out,
-        call_target_assign_like: prog.call_target_assign_like,
-        paths: prog.paths,
+        call_target_assign_like: prog.call_target_assign_like.into_iter().collect(),
+        paths: prog.paths.into_iter().collect(),
         external_function: facts.external_function,
         stats,
     };
     log::trace!("index result: {}", result.display(id_map));
-    log::info!(
+    log::debug!(
         "flow variable size: {}",
         std::mem::size_of::<FlowVariable>()
     );

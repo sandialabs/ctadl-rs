@@ -144,7 +144,7 @@ fn compile_samples(java_samples: &Path, work: &Path) -> Result<Vec<SampleDex>> {
         let mut javac = Command::new("javac");
         javac
             .current_dir(&dir)
-            .args(["--release", "8", "-d", "."])
+            .args(["--release", "8", "-encoding", "UTF-8", "-d", "."])
             .arg(&java);
         exec::run_checked(javac, "javac")?;
 

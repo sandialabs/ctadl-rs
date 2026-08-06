@@ -316,7 +316,7 @@ fn call_arg_flows_through_return() {
             return v;
         }";
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 0, "f1");
+    check_returns_param(&summary, 0, ".f1");
 }
 
 #[test_log::test]
@@ -346,7 +346,7 @@ fn unbraced_if_returns_param_field() {
             return x;
         }";
     let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&summary, 0, "unbraced");
+    check_returns_param(&summary, 0, ".unbraced");
 }
 
 #[test_log::test]
@@ -368,17 +368,17 @@ fn field_write_flows() {
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
     // direct + deep-path field writes
-    check_flow(&s, 2, "", 0, "f2");
-    check_flow(&s, 1, "f2.f3.f4", 0, "f2.nf1.y");
+    check_flow(&s, 2, "", 0, ".f2");
+    check_flow(&s, 1, ".f2.f3.f4", 0, ".f2.nf1.y");
     // blended RHS feeding a field (temp-free)
-    check_flow(&s, 1, "fa", 0, "f5");
-    check_flow(&s, 1, "fb", 0, "f5");
-    check_flow(&s, 2, "", 0, "f3");
-    check_flow(&s, 3, "", 0, "f3");
+    check_flow(&s, 1, ".fa", 0, ".f5");
+    check_flow(&s, 1, ".fb", 0, ".f5");
+    check_flow(&s, 2, "", 0, ".f3");
+    check_flow(&s, 3, "", 0, ".f3");
     // value-field source + field-write-then-return
-    check_flow(&s, 1, "xyz", 0, "f1");
-    check_returns_param(&s, 0, "f1"); // formal field returned
-    check_returns_param(&s, 1, "xyz"); // resolved b.xyz reaches return
+    check_flow(&s, 1, ".xyz", 0, ".f1");
+    check_returns_param(&s, 0, ".f1"); // formal field returned
+    check_returns_param(&s, 1, ".xyz"); // resolved b.xyz reaches return
 }
 
 #[test_log::test]
@@ -637,8 +637,11 @@ fn if_then_while_cfg() {
 #[test_log::test]
 fn subscript_access_paths() {
     // A constant array subscript, read and written (`x = f[3];` and `f[4] = x;`). The subscript
-    // becomes a `.[N]` segment on the access path (a symbol segment, not a numeric offset): the read
-    // is `assign @p2 = f.[3]`, and the write lowers to an `update` of `f` at `.[4]`. (`int x` is @p2.)
+    // becomes a `PathSegment::Symbol("[N]")` — a *symbol whose name contains brackets*, not a
+    // numeric offset — so in the DSL it is written with the bracket escaped, `f.\[3]`. Spelled
+    // `f.[3]` it would be `Offset(3)`, which is a different path and is not what this frontend
+    // emits. The read is `assign @p2 = f.\[3]`, and the write lowers to an `update` of `f` at
+    // `.\[4]`. (`int x` is @p2.)
     let src = r"
         int brackets_simple(Donkey v, Burro* b, int x, int y) {
             int f = 1;
@@ -646,8 +649,8 @@ fn subscript_access_paths() {
             f[4] = x;
         }";
     let prog = program_from_string(src).0;
-    check_loads(&prog, "f.[3]"); // x = f[3]  (read lowers to a load of f.[3])
-    check_assign_or_update(&prog, "f.[4]", ["@p2"], None); // f[4] = x  (store)
+    check_loads(&prog, r"f.\[3]"); // x = f[3]  (read lowers to a load of f.\[3])
+    check_assign_or_update(&prog, r"f.\[4]", ["@p2"], None); // f[4] = x  (store)
 }
 
 #[test_log::test]
@@ -721,9 +724,9 @@ fn field_blend_into_field_update() {
             int x = v->f4 = v->f5 + b;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_flow(&s, 0, "f5", 0, "f4"); // direct
-    check_flow(&s, 0, "f1", 0, "f4"); // via b
-    check_flow(&s, 0, "f3", 0, "f4"); // via b
+    check_flow(&s, 0, ".f5", 0, ".f4"); // direct
+    check_flow(&s, 0, ".f1", 0, ".f4"); // via b
+    check_flow(&s, 0, ".f3", 0, ".f4"); // via b
 }
 
 #[test_log::test]
@@ -2070,8 +2073,9 @@ fn import_c_registers_externs_and_spans() {
 #[test_log::test]
 fn variable_port_selects_lowest_ssa_version() {
     use crate::facts::{Function, TaintDirection};
-    use crate::models::ModelBuilders;
+    use crate::models::ProgramModelMatches;
     use crate::models::json::ModelGeneratorIngest;
+    use crate::models::{ImportScope, ProgramMatchIndex};
     use crate::query_engine::build_query_endpoints;
     use ctadl_ir::ProgramInfo;
     use serde_json::json;
@@ -2097,9 +2101,10 @@ fn variable_port_selects_lowest_ssa_version() {
         program: ingest_prog,
         ..Default::default()
     };
-    let mut mb = ModelBuilders::new();
+    let mut matches = ProgramModelMatches::default();
     {
-        let mut ingest = ModelGeneratorIngest::new(&program_info, &mut mb);
+        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
         let generator = json!({
             "find": "methods",
             "where": [{"constraint": "name", "pattern": "^f$"}],
@@ -2107,9 +2112,8 @@ fn variable_port_selects_lowest_ssa_version() {
         });
         ingest.encode_models(vec![generator]).unwrap();
     }
-    let batch = mb.endpoint.finish().unwrap();
     // Stage 1 recorded exactly one endpoint row, tagged `Local`, carrying the base index.
-    let rows: Vec<_> = batch.iter_endpoints().collect();
+    let rows = &matches.endpoints;
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].selector_ty,
@@ -2163,7 +2167,7 @@ fn variable_port_selects_lowest_ssa_version() {
         endpoints: eps,
         formals,
         ..
-    } = build_query_endpoints(&batch, &facts, &source_info.sites, &assign_like);
+    } = build_query_endpoints(&matches.endpoints, &facts, &source_info.sites, &assign_like);
 
     // Exactly one endpoint (not one per version), anchored in f, forward, and — since a local is
     // not a formal — no formal registered.
@@ -2185,8 +2189,9 @@ fn variable_port_selects_lowest_ssa_version() {
 /// (the other matches still emit) rather than failing the whole model.
 #[test_log::test]
 fn variable_port_resolves_per_matched_function() {
-    use crate::models::ModelBuilders;
+    use crate::models::ProgramModelMatches;
     use crate::models::json::ModelGeneratorIngest;
+    use crate::models::{ImportScope, ProgramMatchIndex};
     use ctadl_ir::ProgramInfo;
     use serde_json::json;
 
@@ -2229,9 +2234,10 @@ fn variable_port_resolves_per_matched_function() {
         program: prog,
         ..Default::default()
     };
-    let mut mb = ModelBuilders::new();
+    let mut matches = ProgramModelMatches::default();
     {
-        let mut ingest = ModelGeneratorIngest::new(&program_info, &mut mb);
+        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut matches);
         let generator = json!({
             "find": "methods",
             "where": [{"constraint": "name", "pattern": "^g[0-9]$"}],
@@ -2240,13 +2246,13 @@ fn variable_port_resolves_per_matched_function() {
         // g3 lacking `buf` is a skip, not an error.
         ingest.encode_models(vec![generator]).unwrap();
     }
-    let batch = mb.endpoint.finish().unwrap();
 
-    let rows: std::collections::BTreeMap<&str, Option<u32>> = batch
-        .iter_endpoints()
+    let rows: std::collections::BTreeMap<&str, Option<u32>> = matches
+        .endpoints
+        .iter()
         .map(|r| {
             assert_eq!(r.selector_ty, crate::models::FormalIndexTypeTag::Local);
-            (r.function, r.local_index)
+            (r.function.as_str(), r.local_index)
         })
         .collect();
     assert_eq!(

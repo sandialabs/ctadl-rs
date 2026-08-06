@@ -1,0 +1,33 @@
+// PORT SEMANTICS 4/6 -- `.[<numeric>]` is a real offset.
+//
+// Before the canonical access-path grammar, every model-port segment became a `Symbol`, so a
+// port `.[12]` was `Symbol("[12]")` and could never match the `Offset(12)` a binary frontend
+// emits. It is now a real `PathSegment::Offset`, and this is the end-to-end half of that: the
+// encoding is pinned by `models_loading.rs::offset_port_produces_a_real_offset`, the taint
+// semantics here.
+//
+// `Argument(0).[12] -> Return` maps `t.[12].X` to `u.X`, so it unwraps the offset exactly the
+// way `port_in_symbol.tnt`'s named field unwraps a level.
+//
+// NOTE for lua and tree-sitter C: a source-level `t[12]` is the *symbol* `[12]` there, so a port
+// aimed at it is `.\[12]`, escaped. Unescaped, as here, it is an offset and matches pcode only.
+def id(v): 1
+where summaries [return <- v.[12]]
+{
+start:
+  w = "nothing";
+  return w;
+}
+
+def main() {
+start:
+  t.[12].g = source(Secret);
+  u = id(t);
+  // Predicted: u.g -- the port consumed the offset.
+  probe = u.g;
+  sink(probe, Secret);
+  // NOT at the offset: it is gone, not preserved.
+  deeper = u.[12].g;
+  errsink(deeper, Secret);
+  return;
+}

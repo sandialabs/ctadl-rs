@@ -1,0 +1,46 @@
+// PORT SEMANTICS 6/6 -- two-segment ports, on both sides.
+//
+// A two-segment port is a TWO-level shift, and it is the case the canonical grammar work was
+// motivated by: `.[8].deref` mixes a real offset with an ordinary symbol in one path. The native
+// default models use the output-side form for `getline`/`getdelim` (`A(2).deref ->
+// A(0).deref.deref`) and `strtok_r` (`A(0).deref -> A(2).deref.deref`), so this row gates those.
+//
+// `unwrap`: `Argument(0).[8].deref -> Return` maps `t.[8].deref.X` to `u.X` -- both segments
+// consumed at once, not one.
+def unwrap(v): 1
+where summaries [return <- v.[8].deref]
+{
+start:
+  w = "nothing";
+  return w;
+}
+
+// `wrap`: `Argument(0) -> Return.deref.deref` maps `t.X` to `u.deref.deref.X` -- the shape a
+// `char **` out-parameter needs.
+def wrap(v): 1
+where summaries [return.deref.deref <- v]
+{
+start:
+  w = "nothing";
+  return w;
+}
+
+def main() {
+start:
+  t.[8].deref.g = source(Secret);
+  u = unwrap(t);
+  // Predicted: u.g. Both segments went, together.
+  probe = u.g;
+  sink(probe, Secret);
+  // Not one-of-two: a partial match is not a match.
+  partial = u.deref.g;
+  errsink(partial, Secret);
+
+  s.g = source(Secret);
+  r = wrap(s);
+  deep = r.deref.deref.g;
+  sink(deep, Secret);
+  shallow = r.deref.g;
+  errsink(shallow, Secret);
+  return;
+}

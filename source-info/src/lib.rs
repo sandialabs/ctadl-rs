@@ -11,6 +11,7 @@ pub mod artifact;
 pub mod artifact_cache;
 pub mod builder;
 pub mod db;
+pub mod decode;
 pub mod error;
 pub mod file_span_table;
 pub mod file_table;
@@ -34,6 +35,7 @@ pub use artifact_cache::ArtifactCache;
 pub use builder::SourceInfoBuilder;
 #[cfg(feature = "sled")]
 pub use db::init as init_db;
+pub use decode::{decode_source, read_source};
 pub use error::{ArtifactMissing, HashMismatch, ValidationError};
 pub use file_span_table::FileSpanTable;
 pub use file_table::{FileEntry, FileTable};

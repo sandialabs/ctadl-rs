@@ -22,7 +22,12 @@ use ctadl_ir::mir::Variable;
 /// Imports a flowy artifact into the store. This also saves the requirements so that they can be
 /// checked at query time.
 pub fn import(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
-    let program = flowy::compile_program(&import.artifact_path)?;
+    let program = flowy::compile_program(&import.artifact_path).err_context(|| {
+        format!(
+            "compiling flowy program: {}",
+            import.artifact_path.display()
+        )
+    })?;
 
     // Save requirements
     let data = bitcode::serialize(&program.requirements).map_err(Error::Bitcode)?;
@@ -42,8 +47,11 @@ pub fn import(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
 fn load_requirements(
     import: &ArtifactImport,
 ) -> Result<(SummaryRequires, EndpointRequires), Error> {
-    let data = std::fs::read(import.requirements_path())?;
-    let reqs: (SummaryRequires, EndpointRequires) = bitcode::deserialize(&data)?;
+    let path = import.requirements_path();
+    let data =
+        std::fs::read(&path).err_context(|| format!("reading requirements: {}", path.display()))?;
+    let reqs: (SummaryRequires, EndpointRequires) = bitcode::deserialize(&data)
+        .err_context(|| format!("decoding requirements: {}", path.display()))?;
     Ok(reqs)
 }
 
@@ -83,7 +91,7 @@ fn index_check_summaries(
                 FlowSpec::FlowPresent => {
                     if !index_result.summary.contains(&record) {
                         fail_count += 1;
-                        println!(
+                        log::warn!(
                             "Function {func_name} required summary flow is absent: {flow_spec}"
                         );
                     } else {
@@ -93,7 +101,7 @@ fn index_check_summaries(
                 FlowSpec::FlowAbsent => {
                     if index_result.summary.contains(&record) {
                         fail_count += 1;
-                        println!(
+                        log::warn!(
                             "Function {func_name} forbidden summary flow is present: {flow_spec}"
                         );
                     } else {
@@ -175,7 +183,7 @@ fn query_check_endpoints(
                 FlowSpec::FlowPresent => {
                     if !present {
                         fail_count += 1;
-                        println!("Required endpoint not found: {}", fx_endpoint.reversed());
+                        log::warn!("Required endpoint not found: {}", fx_endpoint.reversed());
                     } else {
                         pass_count += 1;
                     }
@@ -183,7 +191,7 @@ fn query_check_endpoints(
                 FlowSpec::FlowAbsent => {
                     if present {
                         fail_count += 1;
-                        println!("Forbidden endpoint is present: {}", fx_endpoint.reversed());
+                        log::warn!("Forbidden endpoint is present: {}", fx_endpoint.reversed());
                     } else {
                         pass_count += 1;
                     }
@@ -283,7 +291,7 @@ fn check_human_profile_paths(
                             pass_count += 1;
                         } else {
                             fail_count += 1;
-                            println!(
+                            log::warn!(
                                 "Human profile: expected {expected} path(s) for {kind} endpoint \
                                  but found {path_hits}: {endpoint}"
                             );
@@ -292,7 +300,7 @@ fn check_human_profile_paths(
                         pass_count += 1;
                     } else {
                         fail_count += 1;
-                        println!(
+                        log::warn!(
                             "Human profile: no path found for required {kind} endpoint: {endpoint}"
                         );
                     }
@@ -300,7 +308,7 @@ fn check_human_profile_paths(
                 FlowSpec::FlowAbsent => {
                     if on_path {
                         fail_count += 1;
-                        println!(
+                        log::warn!(
                             "Human profile: forbidden {kind} endpoint appears on a path: {endpoint}"
                         );
                     } else {
@@ -314,11 +322,37 @@ fn check_human_profile_paths(
 }
 
 /// Check a flowy program, running the ctadl index and query steps, and print errors.
-pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow::Result<()> {
+pub fn check<P: AsRef<Path>>(
+    file: P,
+    dump_index_graph: Option<&Path>,
+    models: &[std::path::PathBuf],
+) -> anyhow::Result<()> {
     let file = file.as_ref();
     let program = flowy::compile_program(file)?;
     let mut pass_count = 0;
     let mut fail_count = 0;
+
+    // Models are loaded before `codegen_program`, which consumes the `ProgramInfo`. A flowy
+    // import has `VirtualMethodTable::Unknown`, so a generator matches by the IR function name
+    // directly (`ModelGeneratorIngest::new`'s fallback arm) and gets no default models of its
+    // own. That makes flowy the cheapest place to pin what a *model port* means, which is what
+    // `port_semantics/` uses it for.
+    let match_index = crate::models::ProgramMatchIndex::new(
+        &program.program_info,
+        crate::models::ImportScope {
+            language: Some(crate::project::ArtifactLanguage::Flowy),
+            import: None,
+        },
+    );
+    // One accumulator across every model file, and one phase-2 run over it below. A flowy
+    // check has a single program and no import loop, so there is no ordering hazard here --
+    // but `Argument(*)` still expands over `compute_arg_arity` when phase 2 runs, and running
+    // it once is what keeps that the same expansion the index path performs.
+    let mut model_matches = crate::models::ProgramModelMatches::default();
+    for model_path in models {
+        crate::models::try_load_models(&match_index, model_path, &mut model_matches)?;
+    }
+    drop(match_index);
 
     let mut index_facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -328,6 +362,14 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
         &mut source_info,
         CallResolutionStrategy::Mixed,
     );
+    // No bridge specs, so nothing here can raise the model errors phase 2 reports: every one of
+    // them is about pairing two bridge sides.
+    crate::codegen::model_matches::codegen_model_matches(
+        &model_matches,
+        &[],
+        &mut index_facts,
+        &mut source_info,
+    )?;
     log::debug!("Function ID to Name mapping:");
     for (id, name) in source_info.sites.functions() {
         log::debug!("{}: {}", id.id, name.0);
@@ -353,14 +395,15 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
     );
 
     if let Some(dot_path) = dump_index_graph {
-        let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+        let mut file = std::fs::File::create(dot_path)
+            .err_context(|| format!("creating dot file: {}", dot_path.display()))?;
         crate::graphviz::render_index_graph(
             &index_result.assign_like,
             &source_info.sites,
             &mut file,
         )
-        .err_context(|| "rendering index graph")?;
-        eprintln!("Wrote index graph to '{}'", dot_path.display());
+        .err_context(|| format!("rendering index graph: {}", dot_path.display()))?;
+        log::info!("Wrote index graph to '{}'", dot_path.display());
     }
 
     let (ipass, ifail) = index_check_summaries(

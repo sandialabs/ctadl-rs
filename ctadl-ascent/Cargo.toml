@@ -1,6 +1,6 @@
 [package]
 name = "ctadl-ascent"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 default-run = "ctadl"
 
@@ -36,6 +36,7 @@ libc = "0.2"
 log = "0.4"
 log-once = "0.4"
 memmap = "0.7"
+object = { version = "0.37", default-features = false, features = ["read_core", "elf", "std"] }
 packed_struct = "0.10"
 parquet = "58"
 paste = "1.0"
@@ -59,6 +60,7 @@ url = "2"
 trie = { path = "../trie" }
 tree-sitter = "0.26"
 tree-sitter-c = "0.24"
+tree-sitter-lua = "0.5"
 tempfile = "3"
 which = "6"
 elsa = "1.11"
@@ -66,6 +68,20 @@ immortal = { path = "../immortal" }
 
 [dev-dependencies]
 test-log = "0.2.19"
+# Building the split APKs of an app bundle (native-only, resource-only) as test fixtures.
+zip = "0.6"
+# For `examples/show-regions.rs` only. Examples see dev-dependencies, so putting
+# it here keeps it out of the shipped binary. The example's other crates (clap,
+# serde, serde_json, url) are already ordinary dependencies above.
+percent-encoding = "2.3"
+
+[[bench]]
+name = "locals_trie"
+harness = false
+
+[[bench]]
+name = "hybrid_set"
+harness = false
 
 [lints]
 workspace = true

@@ -29,9 +29,26 @@ pub fn read_expected_lines(config: &Path) -> Result<Vec<i64>> {
 /// written, say. Without it such a case can only assert the lines that *are* tainted,
 /// and would keep passing if the untainted line later became tainted.
 pub fn read_unexpected_lines(config: &Path) -> Result<Vec<i64>> {
+    read_optional_lines(config, "unexpected_lines")
+}
+
+/// Read the optional `expected_native_lines` array from a JNI case config: lines of the
+/// case's *C* source that the flow must reach on the far side of the JNI boundary.
+///
+/// Separate from `expected_lines`, which for these cases names lines of the Java source.
+/// The two halves are different files mapped back by different means -- Java through the dex
+/// linemap, native through `addr2line` over the shared library -- so they cannot share a key.
+/// A missing key means the case claims nothing about the native side.
+pub fn read_expected_native_lines(config: &Path) -> Result<Vec<i64>> {
+    read_optional_lines(config, "expected_native_lines")
+}
+
+/// Read an optional array of source line numbers from a test config, treating a missing key
+/// as an empty claim.
+fn read_optional_lines(config: &Path, key: &str) -> Result<Vec<i64>> {
     let value = read_config(config)?;
-    match value.get("unexpected_lines") {
-        Some(array) => line_array(array, "unexpected_lines", config),
+    match value.get(key) {
+        Some(array) => line_array(array, key, config),
         None => Ok(Vec::new()),
     }
 }
@@ -243,6 +260,43 @@ pub fn collect_codeflow_source_lines(sarif: &Path) -> Result<BTreeSet<i64>> {
                 // Under a code-flow step the only `startLine` is the step's
                 // physical-location region, so a recursive gather here stays
                 // scoped to steps.
+                collect_int_values(flow, "startLine", &mut out);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Collect every `startLine` reached by a code-flow step, i.e. the lines under
+/// `runs[].results[].codeFlows[].threadFlows[].locations[]`.
+///
+/// Source-level frontends (Lua and the other tree-sitter languages) emit UTF-8
+/// regions whose location is a `region.startLine`, not a `byteOffset`, so a
+/// source case's `expected_lines` are checked directly against these rather than
+/// through a linemap. Scoped to code flows for the same reason as
+/// [`collect_codeflow_byte_offsets`]: it stays sensitive to the flow actually
+/// being traced.
+pub fn collect_codeflow_start_lines(sarif: &Path) -> Result<BTreeSet<i64>> {
+    let value = read_json(sarif)?;
+    let mut out = BTreeSet::new();
+    for run in value
+        .get("runs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for result in run
+            .get("results")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            for flow in result
+                .get("codeFlows")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 collect_int_values(flow, "startLine", &mut out);
             }
         }

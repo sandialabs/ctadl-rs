@@ -28,18 +28,21 @@ cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-`--frontend` takes `pcode`, `jvm`, `dex`, or `c` (comma-separated, or repeated)
-and defaults to all four. It selects *before* anything runs, so `--frontend
-pcode` never invokes the Java toolchain, `--frontend jvm,dex` never starts
-Ghidra, and `--frontend c` needs neither Ghidra nor a C compiler. Use it with
-`--filter` to narrow further: `--frontend pcode --filter funcptr`.
+`--frontend` takes `pcode`, `jvm`, `dex`, `c`, `lua`, or `jni` (comma-separated, or
+repeated) and defaults to all of them. It selects *before* anything runs, so
+`--frontend pcode` never invokes the Java toolchain, `--frontend jvm,dex` never
+starts Ghidra, and `--frontend lua` needs no external toolchain at all. `jni` is
+the odd one out: its cases build both halves of a JNI boundary, so they need the
+Java toolchain *and* Ghidra. Use it with `--filter` to narrow further:
+`--frontend pcode --filter funcptr`.
 
-The `pcode` and `c` frontends run over the *same* `tests/c/*.c` sources but are
-independent cases: `pcode` compiles each source and drives it through Ghidra,
-while `c` hands the source straight to the tree-sitter frontend (`ctadl import
--l c`). Each `.c` therefore yields two cases — `foo` (pcode) and `C:foo` — that
-are selected, run, and reported separately, so a `C:` failure never fails or
-masks its `pcode` twin.
+> **Note:** the `lua` frontend lowers its `tests/lua/` cases end to end, including
+> table field-sensitivity, varargs, `ipairs`/`pairs` and `table.insert`, and
+> metatable-based OOP (method calls resolve through the recovered `__index` hierarchy;
+> instance fields flow across calls). All of them are expected to pass — there are no Lua
+> XFAILs. `closure-flow` (a closure returned out of one function and called in another)
+> was one until the engine gained return-direction propagation of call-target objects;
+> `tests/c/funcptrfactory.c` is the language-neutral regression guard on that rule.
 
 Under the hood both paths invoke the `xtask` task runner (`xtask/src/`) over the
 cases. The flake check above remains the canonical path and the one used in CI.
@@ -52,8 +55,33 @@ they are picked up automatically; no list to edit.
   the config name is the kebab-case of the class (`ArrayListIteratorFlow` →
   `array-list-iterator-flow.json`). A `.java` with no matching config is ignored.
 - **Pcode / C** — `tests/c/foo.c` pairs with `tests/c/foo-query.json`, or falls
-  back to a shared `tests/c/query.json`. The pair registers under *both* C
+  back to a shared `tests/c/query.json`.The pair registers under *both* C
   frontends: a `pcode` case named `foo` and a tree-sitter `c` case named `C:foo`.
+
+- **Lua** — `tests/lua/foo.lua` pairs with `tests/lua/foo-query.json`. A `.lua`
+  with no matching config is ignored. Cases report as `Lua:foo`. Because Lua is a
+  source-level frontend, SARIF regions carry source lines directly, so
+  `expected_lines` are checked against the code-flow `startLine`s with no
+  compilation, linemap, or disassembler in the loop.
+- **JNI** — `tests/jni/Foo.java` pairs with its sibling `tests/jni/Foo.c` and the
+  kebab-cased `tests/jni/foo.json`. All three are required. Cases report as
+  `Jni:Foo`. This is the only two-import case kind: the `.java` is imported as a
+  DEX, the `.c` as a pcode shared library, and the two are co-indexed as one
+  project so the JNI bridge has both halves to join.
+
+  Each pair also yields two packaging variants, which make exactly the same
+  claims — so the set is a direct A/B on the importer alone:
+
+  - `Jni:Foo+apk` packages both halves into one APK and imports it once, the way
+    an ordinary Android app ships. It passes only if the APK importer finds,
+    extracts, and disassembles `lib/<abi>` for itself.
+  - `Jni:Foo+split-apks` packages each half into an APK of its own and imports
+    both, the way an app bundle (or an XAPK download) ships. The native APK has
+    no `classes*.dex` in it at all.
+
+  A sibling `foo.bridge.jsonl` adds a third variant, `Jni:Foo+bridge`, which
+  joins the boundary with a declarative model under `--no-jni-bridge` instead of
+  the built-in pass.
 
 ## Adding a Java/DEX test
 
@@ -110,6 +138,46 @@ maturing, so a short quarantine list in `xtask/src/regression.rs`
 (`C_KNOWN_FAILURES`) reports its current gap (pointer arithmetic) as **XFAIL**
 instead of failing the suite; every other `C:` case is enforced. Remove an entry
 once its case passes so a later regression is caught.
+
+## Adding a JNI test
+
+1. Write `tests/jni/Foo.java` with a `source()`, a `sink(...)`, and one or more
+   `native` methods, plus `tests/jni/Foo.c` implementing them under their mangled
+   `Java_…` names. Declare the JNI types locally (`typedef void *jstring;` and
+   friends) rather than including `<jni.h>`: the flake ships no NDK, and only the
+   arity and the dataflow shape matter.
+2. Write `tests/jni/foo.json` exactly as a Java/DEX config. `expected_lines` and
+   `unexpected_lines` there refer to the **Java** source; the optional
+   `expected_native_lines` refers to the **C** source (see below).
+
+**Pass criterion (JNI):** the DEX criterion above — a code flow connecting a
+source to a sink, plus `expected_lines` and `unexpected_lines` through the dex
+linemap — with one difference: `unexpected_lines` is checked against the lines the
+code flows actually visited, not the wider set that includes the machine profile.
+For these cases the connected flow *is* the assertion that the bridge fired, since
+the Java half alone cannot carry the taint from the source to the sink. There is
+no macOS self-skip: every criterion, native lines included, is satisfied on Darwin
+today.
+
+`expected_native_lines` is the same known-answer claim on the far side of the
+boundary: the addresses reported in the shared library are mapped back with
+`addr2line` (exactly as a pcode case's are) and must cover every line listed. It
+says the taint is where it should be *in the artifact it should be in*, which the
+Java-side claims cannot: those hold as soon as a flow exists at all.
+
+Note what is nameable there. CTADL reports a tainted **instruction** at a call
+whose argument is tainted, so only a native *call site* can appear. A body that
+writes the tainted value straight into a global carries the flow just as well but
+contributes no located result, which is why both cases' C halves pass the value
+through a small `keep()` helper: the call is the line the case asserts on.
+
+Shape the case so no per-function propagation model could fake it. `JniFlow` is
+the worked example: the taint enters one native function, survives in a native
+global, and leaves through a *different* one, so nothing short of a real link
+across the boundary produces the answer. `JniArgShift` pins the argument shift
+itself — the same instance native is called twice, once with the taint in the
+argument the implementation returns and once with it in the argument the
+implementation drops, so an off-by-one in the port map flips both assertions.
 
 ## Asserting that a line stays clean
 

@@ -51,7 +51,7 @@ pub fn eliminate_dead_temps(program: &mut Program) {
     for (_, f) in program.functions.iter_enumerated_mut() {
         deleted += eliminate_dead_temps_function(f);
     }
-    log::info!("dead_temps: deleted {deleted} dead temporary def(s)");
+    log::debug!("dead_temps: deleted {deleted} dead temporary def(s)");
 }
 
 /// If `kind` is a side-effect-free def of an unversioned local — the only kind

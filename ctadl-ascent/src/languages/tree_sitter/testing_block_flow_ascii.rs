@@ -33,8 +33,8 @@ pub(crate) fn dump_ir(dump: &str) {
     }
 }
 pub(crate) fn dump_ir_forced(dump: &str) {
-    log::info!("IR dump:\n{dump}");
-    log::info!("BCFG:{}", ascii_block_flow(dump));
+    log::debug!("IR dump:\n{dump}");
+    log::debug!("BCFG:{}", ascii_block_flow(dump));
 }
 
 /// Parses a marked-up `ctadl-ir` dump (as produced by the test logging) and

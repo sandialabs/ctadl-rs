@@ -594,7 +594,7 @@ pub fn taint_analysis_datalog(facts: QueryFacts, id_map: Option<&IdMap>) -> Quer
     engine.run();
 
     if std::env::var("CTADL_QUERY_SIZES").is_ok() {
-        eprintln!(
+        log::info!(
             "QUERY_SIZES taint={} taint_edge={} taint_edge_directed={} alias_of_field={} tainted_var_at_insn={} assign_like={} paths={} sources={}",
             engine.taint.len(),
             engine.taint_edge.len(),

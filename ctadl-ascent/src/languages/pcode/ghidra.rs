@@ -1,15 +1,23 @@
-use crate::error::Error;
+use crate::error::{Error, ErrorContext};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use rayon::prelude::*;
 use std::env;
-use std::fs;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus, Stdio};
 
 const MAXMEM: &str = "40G";
 const LAUNCH_MODE: &str = "fg";
 const VMARG_LIST: &str = "-XX:ParallelGCThreads=4 -XX:CICompilerCount=4 ";
+
+/// Name of the file, inside the import directory, that captures everything Ghidra
+/// writes to its stdout/stderr. See [`run_and_log`].
+const GHIDRA_LOG_NAME: &str = "ghidra.log";
+
+/// How many trailing log lines to quote when Ghidra fails, so the error is
+/// actionable without the user having to go open the log.
+const GHIDRA_LOG_TAIL_LINES: usize = 20;
 
 /// The Ghidra program source that [`ExportPcode.java`](../../../../pcode-reader/ExportPcode.java)
 /// runs against.
@@ -72,7 +80,8 @@ fn detect_local_project(artifact: &Path) -> Result<Option<GhidraSource>, Error> 
     }
     // A directory that holds exactly one `<name>.gpr` is a project too.
     if artifact.is_dir() {
-        let mut gprs = fs::read_dir(artifact)?
+        let mut gprs = fs::read_dir(artifact)
+            .err_context(|| format!("listing directory: {}", artifact.display()))?
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("gpr"));
         if let Some(first) = gprs.next()
@@ -150,7 +159,8 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
     let launch_script = script_dir.join("launch.sh");
 
     let facts_dir = output_dir.join("facts");
-    fs::create_dir_all(&facts_dir)?;
+    fs::create_dir_all(&facts_dir)
+        .err_context(|| format!("creating pcode facts dir: {}", facts_dir.display()))?;
 
     // Write ExportPcode.java to a temporary directory
     let script_temp_dir = tempfile::Builder::new().prefix("ctadl-ghidra").tempdir()?;
@@ -158,7 +168,8 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
     fs::write(
         &export_script_path,
         include_str!("../../../../pcode-reader/ExportPcode.java"),
-    )?;
+    )
+    .err_context(|| format!("writing export script: {}", export_script_path.display()))?;
     let script_path = export_script_path.parent().unwrap().to_path_buf();
 
     // A throwaway project directory is only needed to `-import` a binary; bind it
@@ -221,14 +232,22 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
         .arg("-scriptPath")
         .arg(&script_path);
 
-    log::info!("Running Ghidra: {:?}", command);
+    let log_path = output_dir.join(GHIDRA_LOG_NAME);
 
-    let status = command.status()?;
+    log::info!(
+        "running Ghidra to disassemble; console output -> {}",
+        log_path.display()
+    );
+    log::debug!("Ghidra command: {:?}", command);
+
+    let status = run_and_log(&mut command, &log_path)?;
 
     if !status.success() {
         return Err(Error::PcodeConversion(format!(
-            "Ghidra analyzeHeadless failed with status: {}",
-            status
+            "Ghidra analyzeHeadless failed with status: {}\nGhidra output is in {}\n{}",
+            status,
+            log_path.display(),
+            log_tail(&log_path)
         )));
     }
 
@@ -236,14 +255,54 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
     // load spec for the artifact), leaving the facts directory empty. Detect that
     // here and propagate it, otherwise the failure only surfaces later as a
     // confusing "missing fact file" error while reading the (absent) facts.
-    if fs::read_dir(&facts_dir)?.next().is_none() {
+    if fs::read_dir(&facts_dir)
+        .err_context(|| format!("listing pcode facts dir: {}", facts_dir.display()))?
+        .next()
+        .is_none()
+    {
         return Err(Error::PcodeConversion(format!(
-            "Ghidra produced no pcode facts in {} — check the Ghidra output above for an import error",
-            facts_dir.display()
+            "Ghidra produced no pcode facts in {} — check {} for an import error\n{}",
+            facts_dir.display(),
+            log_path.display(),
+            log_tail(&log_path)
         )));
     }
 
     Ok(())
+}
+
+/// Runs `command` to completion with its stdout and stderr redirected into
+/// `log_path` instead of the terminal.
+fn run_and_log(command: &mut Command, log_path: &Path) -> Result<ExitStatus, Error> {
+    let log_file = File::create(log_path)
+        .err_context(|| format!("creating Ghidra log file: {}", log_path.display()))?;
+    let status = command
+        .stdout(Stdio::from(log_file.try_clone()?))
+        .stderr(Stdio::from(log_file))
+        .status()?;
+    Ok(status)
+}
+
+/// The last [`GHIDRA_LOG_TAIL_LINES`] lines of `log_path`, formatted for
+/// inclusion in an error message. Best-effort: an unreadable or empty log yields
+/// an empty string rather than masking the failure being reported.
+fn log_tail(log_path: &Path) -> String {
+    let Ok(contents) = fs::read(log_path) else {
+        return String::new();
+    };
+    let text = String::from_utf8_lossy(&contents);
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    let start = lines.len().saturating_sub(GHIDRA_LOG_TAIL_LINES);
+    let mut out = format!("last {} line(s) of Ghidra output:\n", lines.len() - start);
+    for line in &lines[start..] {
+        out.push_str("  ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 /// Gzip every `*.facts` file in `facts_dir` in place, replacing it with a
@@ -255,7 +314,8 @@ pub fn run_ghidra_export_source(source: &GhidraSource, output_dir: &Path) -> Res
 /// is written to a `.tmp` sibling and renamed over the final `.gz`, so an
 /// interrupted run never leaves a truncated `.gz` behind.
 pub fn compress_facts_dir(facts_dir: &Path) -> Result<(), Error> {
-    let entries: Vec<PathBuf> = fs::read_dir(facts_dir)?
+    let entries: Vec<PathBuf> = fs::read_dir(facts_dir)
+        .err_context(|| format!("listing pcode facts dir: {}", facts_dir.display()))?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .filter(|path| {
             let name = path.file_name().and_then(|n| n.to_str());
@@ -282,16 +342,34 @@ fn compress_one_fact_file(path: &Path) -> Result<(), Error> {
         PathBuf::from(name)
     };
 
-    let mut input = fs::File::open(path)?;
-    let output = fs::File::create(&tmp_path)?;
+    let mut input =
+        fs::File::open(path).err_context(|| format!("opening fact file: {}", path.display()))?;
+    let output = fs::File::create(&tmp_path)
+        .err_context(|| format!("creating compressed fact file: {}", tmp_path.display()))?;
     let mut encoder = GzEncoder::new(output, Compression::default());
-    std::io::copy(&mut input, &mut encoder)?;
-    encoder.finish()?;
+    std::io::copy(&mut input, &mut encoder)
+        .err_context(|| format!("compressing fact file: {}", path.display()))?;
+    encoder
+        .finish()
+        .err_context(|| format!("compressing fact file: {}", path.display()))?;
 
-    fs::rename(&tmp_path, &gz_path)?;
-    fs::remove_file(path)?;
+    fs::rename(&tmp_path, &gz_path)
+        .err_context(|| format!("renaming compressed fact file to: {}", gz_path.display()))?;
+    fs::remove_file(path).err_context(|| format!("removing fact file: {}", path.display()))?;
 
     Ok(())
+}
+
+/// True when a Ghidra install can be located and it has an `analyzeHeadless`.
+///
+/// Purely a probe: it touches nothing and starts nothing. A caller that would
+/// otherwise do expensive setup (extracting native libraries out of an APK, say)
+/// asks first, so a machine without Ghidra degrades to a warning instead of doing
+/// the work and then failing.
+pub(crate) fn available() -> bool {
+    find_ghidra_base()
+        .and_then(|base| find_analyze_headless(&base))
+        .is_ok()
 }
 
 fn find_ghidra_base() -> Result<PathBuf, Error> {

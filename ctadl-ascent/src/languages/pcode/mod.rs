@@ -10,23 +10,32 @@ use source_info::{ArtifactKey, SourceInfoBuilder};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{Error, ErrorContext};
-use ctadl_ir::mir::call::{NativeFunction, NativeSignature, NativeSimpleName, VirtualMethodTable};
+use ctadl_ir::mir::call::{
+    NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
+};
 use ctadl_ir::*;
 
 use pcode_reader::PcodeFactsReader;
 
-mod ghidra;
+// `pub(crate)` for `GhidraSource::detect`, which the JNI registry scan uses to tell an artifact
+// that is a binary on disk from a `ghidra://` URL or a `.gpr` project.
+pub(crate) mod ghidra;
 
 /// This is hardcoded for now, but should be read from the facts
 const WORD_SIZE: i64 = 8;
 
+/// True when Ghidra is available to lower a binary to pcode. See [`ghidra::available`].
+pub fn ghidra_available() -> bool {
+    ghidra::available()
+}
+
 /// Import pcode facts from an artifact by running Ghidra and then converting the facts
 pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.artifact_path;
-    let import_path = &import.import_path;
+    let import_path = import.import_path();
 
     // Run Ghidra to generate facts
-    ghidra::run_ghidra_export(path, import_path)?;
+    ghidra::run_ghidra_export(path, &import_path)?;
 
     let facts_dir = import_path.join("facts");
 
@@ -39,10 +48,11 @@ pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramIn
     // Persist Ghidra's image base on the import config so downstream consumers
     // (SARIF address mapping, regression line checks) can recover
     // section-relative offsets regardless of the base Ghidra chose.
-    if let Some(image_base) = PcodeFactsReader::new(&facts_dir)
+    let image_base = PcodeFactsReader::new(&facts_dir)
         .read_image_base()
-        .map_err(|e| Error::PcodeFactRead(format!("Failed to read image base: {}", e)))?
-    {
+        .map_err(|e| Error::PcodeFactRead(format!("Failed to read image base: {}", e)))
+        .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?;
+    if let Some(image_base) = image_base {
         let mut updated = import.clone();
         updated.image_base = Some(image_base);
         updated.save()?;
@@ -59,6 +69,15 @@ pub fn import_pcode(import: &crate::project::ArtifactImport) -> Result<ProgramIn
     };
 
     ctx.process(&facts_dir, key, &mut builders)?;
+
+    // Recover this library's `RegisterNatives` tables and write them beside the import's other
+    // artifacts. Here, rather than earlier or later, because this is the first point at which
+    // both halves of the address translation are known: Ghidra's image base was read above, and
+    // `ctx.process` has just populated the entry-point map every recovered `fnPtr` is looked up
+    // in. Scanning is unconditional and costs milliseconds; `--no-jni-registry` ignores the
+    // result at index time, which is what makes a clean A/B possible without re-importing.
+    crate::languages::jni::registry::scan_import(import, image_base, &ctx.entry_points)?;
+
     ctx.finish(builders)
 }
 
@@ -146,6 +165,11 @@ struct Context {
     register_facts: Vec<pcode_reader::RegisterData>,
     // Current function being processed
     current_hfunc: Option<pcode_reader::HighFunc>,
+    // Function entry address -> the fully-qualified IR name of the function there. Keyed by the
+    // address Ghidra reports, which is `image_base + ELF vaddr`. Built alongside `functions` in
+    // `process_functions`; the JNI registry scan is its only consumer, resolving each recovered
+    // `fnPtr` to something `link` can name.
+    entry_points: BTreeMap<i64, String>,
     counter: i64,
 }
 
@@ -161,6 +185,7 @@ impl Context {
             global_vnodes: Default::default(),
             register_facts: Default::default(),
             current_hfunc: None,
+            entry_points: Default::default(),
             counter: 0,
         }
     }
@@ -199,7 +224,8 @@ impl Context {
         let reader = PcodeFactsReader::new(facts_dir);
         let mut pcode_facts = reader
             .read_all_facts()
-            .map_err(|e| Error::PcodeFactRead(format!("Failed to read pcode facts: {}", e)))?;
+            .map_err(|e| Error::PcodeFactRead(format!("Failed to read pcode facts: {}", e)))
+            .err_context(|| format!("reading pcode facts in: {}", facts_dir.display()))?;
 
         // Synthesize stack top varnode and add it to facts
         let stack_top_vn = pcode_reader::PcodeVarnode::from("__stack_top");
@@ -346,7 +372,25 @@ impl Context {
             } else {
                 stripped
             };
+            // The namespace-qualified name, e.g. `Foo::bar`. Ghidra's exporter builds
+            // `func_id` as `getName(true) + "@" + entryPoint` (ExportPcode.java), so the
+            // qualification is recoverable only from the id: `func_data.name` is the bare
+            // name and `func_name` above drops the namespace whenever the bare name happens
+            // to be globally unique. Compute it here, outside that branch, so the value
+            // never depends on which naming branch ran. Split on the LAST `@`: entry points
+            // contain none, so `<EXTERNAL>::system@EXTERNAL:00000007` splits correctly.
+            // Re-attach `simple_name` rather than the id's own tail so a namespace-less
+            // function's qualified name equals its simple name even on Mach-O, where
+            // `simple_name` has stripped a leading `_`.
             let signature = Self::format_native_signature(func_data, proto_facts);
+            let func_id_str: &str = func_id;
+            let qualified_raw = func_id_str
+                .rsplit_once('@')
+                .map_or(func_id_str, |(qualified, _entry_point)| qualified);
+            let qualified_name = match qualified_raw.rfind("::") {
+                Some(sep) => format!("{}::{}", &qualified_raw[..sep], simple_name),
+                None => simple_name.to_string(),
+            };
             let fq_name = func_name.clone();
 
             // Create a new function
@@ -380,11 +424,18 @@ impl Context {
                     NativeSimpleName(simple_name.into()),
                     NativeSignature(signature.as_str().into()),
                     NativeFunction(fq_name.as_str().into()),
+                    NativeQualifiedName(qualified_name.as_str().into()),
                 ));
             }
 
             // Store function mapping
             self.functions.insert(func_id.clone(), func_idx);
+            // And, by entry address, the name `link` resolves to a `FunctionId`: `fq_name` is
+            // exactly the string that went into the `NativeFunction` VMT column above, so a
+            // registry row naming it names the same function the bridge would.
+            if let Some(entry_point) = &func_data.entry_point {
+                self.entry_points.insert(entry_point.0, fq_name);
+            }
         }
         Ok(())
     }
@@ -902,7 +953,7 @@ impl Context {
             "PTRADD" => self.handle_ptradd(pcode, vnode_facts, locals),
             _ => {
                 // For now, treat unknown operations as no-ops
-                log::warn!("Unsupported pcode mnemonic: {}", pcode.mnemonic);
+                log_once::warn_once!("Unsupported pcode mnemonic: {}", pcode.mnemonic);
                 Ok(vec![Statement::new_kind(StatementKind::Nop)])
             }
         }
@@ -977,7 +1028,7 @@ impl Context {
                     Exp::ObjectRef(CallObject::FunctionPtr(func_name.into())),
                     locals,
                 );
-                log::warn!("Found a function pointer, yay");
+                log::debug!("Found a function pointer, yay");
                 return Ok(stmts);
             } else {
                 let src = self.exp_from_const_value(&pcode.outputs[0], vnode_facts, addr);
@@ -1082,7 +1133,13 @@ impl Context {
             (None, Some(idx_c)) => {
                 let mut ap = self.get_lvalue(base_vn, vnode_facts, locals)?;
                 let s_val = size_const.unwrap_or(1);
-                ap.push_offset(idx_c * s_val);
+                // PTRADD is `base + index * size` in the pointer's own width, so the
+                // product wraps on the machine and has to wrap here. Constant
+                // propagation happily hands back a huge index (a folded pointer, a
+                // sentinel like -1), and `*` panics on overflow in a debug build --
+                // which is a crashed import, not a wrong offset. libtmessages.49.so out
+                // of Telegram's arm64 split APK does exactly this.
+                ap.push_offset(idx_c.wrapping_mul(s_val));
                 let mut stmts = Vec::new();
                 let src = Exp::access_path(self.load_ap(&mut stmts, ap, locals));
                 self.push_assign_or_store(&mut stmts, outputs[0].clone(), src, locals);

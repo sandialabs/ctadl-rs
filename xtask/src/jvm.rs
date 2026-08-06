@@ -97,7 +97,10 @@ fn build_samples(samples_dir: &Path, work: &Path) -> Result<Vec<Sample>> {
         exec::fresh_dir(&class_dir)?;
 
         let mut javac = Command::new("javac");
-        javac.arg("-d").arg(&class_dir).arg(&java);
+        javac
+            .args(["-encoding", "UTF-8", "-d"])
+            .arg(&class_dir)
+            .arg(&java);
         exec::run_checked(javac, "javac")?;
 
         let mut classes = Vec::new();

@@ -15,6 +15,13 @@ serde_json = "1"
 # Test configs are JSON5 so they can carry inline comments (e.g. why a line was
 # dropped from `expected_lines`). SARIF/linemap outputs stay plain `serde_json`.
 json5 = "1.3"
+# JSON Schema validator for the `models:*` checks, which hold the shipped model
+# files to `ctadl-model-generator.schema.json`. `boon` over the (faster, more
+# widely used) `jsonschema` crate because of what each drags in: `jsonschema`
+# pulls reqwest/tokio/rustls -- and a C build of aws-lc-sys -- to resolve remote
+# `$ref`s, which this schema does not have and the Nix sandbox could not fetch
+# anyway. `boon` adds regex and url, both of which the workspace already builds.
+boon = "0.6"
 # Used by the jvm-reader regression checks (compile .java -> exercise the
 # library on the resulting .class / .jar). jvm-reader is workspace-excluded, so
 # this is a plain path-dependency library; it does not re-add jvm-reader's bin.
@@ -23,3 +30,7 @@ jvm-reader = { path = "../jvm-reader" }
 # real-world APK). dex-reader is workspace-excluded too, so its bin stays out of
 # the distro; only its library is pulled in here.
 dex-reader = { path = "../dex-reader" }
+# The JNI `+apk` cases package a DEX and a shared library into an APK so the
+# importer can be made to find `lib/<abi>` for itself. Not a new dependency in
+# practice: dex-reader already builds `zip` to read APKs.
+zip = "0.6"

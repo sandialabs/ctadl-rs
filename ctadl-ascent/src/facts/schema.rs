@@ -7,14 +7,18 @@ use std::path;
 
 use source_info::FileSpanId;
 
-use crate::error::{Error, ErrorContext};
+use crate::error::Error;
 use crate::facts::parquet;
 use crate::facts::{
-    FlowEdge, FlowVariable, FormalIndex, FormalType, Function, FunctionId, InsnId, Path, TaintState,
+    FlowEdge, FlowVariable, FormalIndex, FormalType, Function, FunctionId, ImportId, InsnId, Path,
+    TaintState,
 };
 use crate::query_engine::QueryEndpoint;
 
 // Captures the Record type and FILENAME and COLUMNS constants.
+//
+// Neither half adds context of its own: `parquet::Writer`/`parquet::Reader` already name the
+// full path of the file they failed on, which is strictly more than `FILENAME` says.
 macro_rules! save_load {
     () => {
         pub fn try_save<P: AsRef<path::Path>>(
@@ -24,14 +28,11 @@ macro_rules! save_load {
             let path = path.as_ref();
             parquet::Writer::new(path.join(FILENAME))
                 .write_vec(&COLUMNS, items.into_iter().collect())
-                .err_context(|| format!("saving parquet '{FILENAME}'"))
         }
 
         pub fn try_load<P: AsRef<path::Path>>(path: P) -> Result<Vec<Record>, Error> {
             let path = path.as_ref();
-            parquet::Reader::new(path.join(FILENAME))
-                .read_vec(&COLUMNS)
-                .err_context(|| format!("loading parquet '{FILENAME}'"))
+            parquet::Reader::new(path.join(FILENAME)).read_vec(&COLUMNS)
         }
     };
 }
@@ -151,9 +152,34 @@ pub mod taint_edge {
 
 pub mod index_source_map {
     use super::*;
-    pub type Record = (FunctionId, InsnId, FileSpanId);
-    pub const COLUMNS: [&str; 3] = ["func_id", "insn_id", "source_span_id"];
+    /// Where an indexed instruction came from in its artifact's source.
+    ///
+    /// The [`FileSpanId`] is only meaningful *inside* the import named by the [`ImportId`]:
+    /// each import has its own source-info database and numbers its spans from zero, while
+    /// function and instruction ids are project-global. A span read against the wrong
+    /// import's database still resolves -- to an unrelated line in an unrelated artifact --
+    /// so the two travel together and are joined together (see [`import_id`]).
+    pub type Record = (FunctionId, InsnId, FileSpanId, ImportId);
+    pub const COLUMNS: [&str; 4] = ["func_id", "insn_id", "source_span_id", "import_id"];
     pub const FILENAME: &str = "index_source_map.parquet";
+    save_load!();
+}
+
+pub mod import_id {
+    use super::*;
+    /// The artifact import each [`ImportId`] in [`index_source_map`] stands for, by the name
+    /// it has in the store, in the order `ctadl index` walked them.
+    ///
+    /// Recorded rather than recomputed from the project config, so a project whose import
+    /// list changed after it was indexed cannot silently shift every span onto the wrong
+    /// artifact: the index says what it was built from.
+    ///
+    /// A plain `String` rather than the interned `Str` every other name column uses: there is
+    /// one row per import, so interning buys nothing, and `ctadl inspect` prints the name
+    /// instead of the opaque intern id.
+    pub type Record = (ImportId, String);
+    pub const COLUMNS: [&str; 2] = ["id", "name"];
+    pub const FILENAME: &str = "import_id.parquet";
     save_load!();
 }
 
@@ -180,8 +206,10 @@ mod tests {
     };
 
     /// The `call_target_assign` schema encodes a [`CallTargetObject`] into a tag column
-    /// plus nullable function-id and symbol columns; both variants must survive a parquet
-    /// round-trip, and the payload of each variant must land in the right column.
+    /// plus nullable function-id and symbol columns; every variant must survive a parquet
+    /// round-trip, and the payload of each variant must land in the right column. `Symbol` and
+    /// `LuaClass` share the symbol column, so only the tag keeps them apart — the case that
+    /// would silently merge a JVM and a Lua import's classes if the tag were dropped.
     #[test]
     fn call_target_assign_object_round_trips() {
         let var = FlowVariable::default();
@@ -200,6 +228,13 @@ mod tests {
                 Path::empty(),
                 CallTargetObject::Symbol(ctadl_ir::Symbol::from("com/example/Foo")),
             ),
+            (
+                FunctionId::new(3),
+                InsnId::new(30),
+                var,
+                Path::empty(),
+                CallTargetObject::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")),
+            ),
         ];
 
         let dir = tempfile::tempdir().unwrap();
@@ -209,7 +244,8 @@ mod tests {
     }
 
     /// The `callee_info` schema encodes a [`CallDispatchKey`] (tag + nullable name/desc
-    /// symbol columns). Both the `Java` and `C` arms must survive a parquet round-trip.
+    /// symbol columns). The `Java`, `C` and `Lua` arms must all survive a parquet round-trip;
+    /// `Lua` populates the name column but leaves the descriptor null.
     #[test]
     fn callee_info_dispatch_key_round_trips() {
         use crate::facts::CallDispatchKey;
@@ -232,6 +268,13 @@ mod tests {
                 Path::empty(),
                 CallDispatchKey::C,
             ),
+            (
+                FunctionId::new(3),
+                InsnId::new(30),
+                var,
+                Path::empty(),
+                CallDispatchKey::Lua(ctadl_ir::Symbol::from("deposit")),
+            ),
         ];
 
         let dir = tempfile::tempdir().unwrap();
@@ -241,8 +284,9 @@ mod tests {
     }
 
     /// The `callee_resolvents` schema encodes both a [`CallTargetObject`] and a
-    /// [`CallDispatchKey`] (each a tag + nullable columns). The CHA (`Symbol`/`Java`) and
-    /// identity function-pointer (`FunctionId`/`C`) resolutions must both round-trip.
+    /// [`CallDispatchKey`] (each a tag + nullable columns). The JVM CHA (`Symbol`/`Java`), the
+    /// identity function-pointer (`FunctionId`/`C`) and the Lua CHA (`LuaClass`/`Lua`)
+    /// resolutions must all round-trip.
     #[test]
     fn callee_resolvents_round_trips() {
         use crate::facts::CallDispatchKey;
@@ -259,6 +303,11 @@ mod tests {
                 CallTargetObject::FunctionId(FunctionId::new(7)),
                 CallDispatchKey::C,
                 FunctionId::new(7),
+            ),
+            (
+                CallTargetObject::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")),
+                CallDispatchKey::Lua(ctadl_ir::Symbol::from("deposit")),
+                FunctionId::new(42),
             ),
         ];
 

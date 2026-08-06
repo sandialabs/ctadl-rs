@@ -8,3 +8,4 @@ ascent/**
 result
 /.local
 /.envrc.local
+.vscode/tasks.json
