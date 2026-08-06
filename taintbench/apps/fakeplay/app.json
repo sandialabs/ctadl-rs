@@ -1,0 +1,9 @@
+{
+  "name": "fakeplay",
+  "apk": {
+    "url": "https://github.com/TaintBench/fakeplay/releases/download/APK/fakeplay.apk",
+    "sha256": "sha256-mENAIbO5RxJd3XMq7smLcvrBke6w7+1qAAAorTD+Gj4="
+  },
+  "upstream": "https://github.com/TaintBench/fakeplay",
+  "findingsCommit": "master"
+}

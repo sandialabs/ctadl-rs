@@ -1,0 +1,9 @@
+{
+  "name": "sms_google",
+  "apk": {
+    "url": "https://github.com/TaintBench/sms_google/releases/download/APK/sms_google.apk",
+    "sha256": "sha256-N0nxxu9Q24xWLhTVNNMBmvzQJFfgAYU4i+LifqPTyCw="
+  },
+  "upstream": "https://github.com/TaintBench/sms_google",
+  "findingsCommit": "master"
+}

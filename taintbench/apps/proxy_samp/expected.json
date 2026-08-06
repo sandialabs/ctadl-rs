@@ -1,0 +1,5 @@
+{
+  "_comment": "Baseline snapshot: the TaintBench finding IDs ctadl detects today via a connected source->sink path. 9 of the 17 positive flows connect. Every finding's source and sink is recognized as an endpoint. The negative(s) [19] share their callee pair with a positive, so they are shadowed and do not count as false positives. ctadl reports the negative(s) [16, 20] as flows. That is imprecision we have measured and written down here; a negative outside this list still fails the check. See ../../README.md.",
+  "matched_finding_ids": [1, 2, 3, 7, 8, 9, 13, 17, 18],
+  "false_positive_finding_ids": [16, 20]
+}

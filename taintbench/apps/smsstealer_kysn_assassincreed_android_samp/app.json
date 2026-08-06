@@ -1,0 +1,9 @@
+{
+  "name": "smsstealer_kysn_assassincreed_android_samp",
+  "apk": {
+    "url": "https://github.com/TaintBench/smsstealer_kysn_assassincreed_android_samp/releases/download/APK/smsstealer_kysn_assassincreed_android_samp.apk",
+    "sha256": "sha256-yaEJKFKsTjwW+TUz6ycBPcO7l5V88pzxcwhbXfCYxak="
+  },
+  "upstream": "https://github.com/TaintBench/smsstealer_kysn_assassincreed_android_samp",
+  "findingsCommit": "master"
+}

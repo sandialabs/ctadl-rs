@@ -1,0 +1,193 @@
+{
+  "fileName": "phospy.apk",
+  "day": "2019-08-29",
+  "findings": [
+    {
+      "source": {
+        "statement": "String imei = ((TelephonyManager) getSystemService(\"phone\")).getDeviceId();",
+        "methodName": "public void log()",
+        "className": "com.labado.lulaoshi.myService",
+        "lineNo": 92,
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r9.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "dataOutputStream.writeUTF(\"\\\\\" + imei + \"\\\\\");",
+        "methodName": "public void log()",
+        "className": "com.labado.lulaoshi.myService",
+        "lineNo": 113,
+        "targetName": "writeUTF",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.DataOutputStream: void writeUTF(java.lang.String)>($r15)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads device id and sends to a remote server via socket.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "DataInputStream fis = new DataInputStream(new BufferedInputStream(new FileInputStream(((File) jpglist.get(i)).getPath())));",
+        "methodName": "public void log()",
+        "className": "com.labado.lulaoshi.myService",
+        "lineNo": 106,
+        "targetName": "FileInputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r14.<java.io.FileInputStream: void <init>(java.lang.String)>($r15)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "dataOutputStream.write(buf, 0, read);",
+        "methodName": "public void log()",
+        "className": "com.labado.lulaoshi.myService",
+        "lineNo": 131,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.DataOutputStream: void write(byte[],int,int)>($r1, 0, $i4)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "read = fis.read(buf);",
+          "methodName": "public void log()",
+          "className": "com.labado.lulaoshi.myService",
+          "lineNo": 125,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "implicitFlows": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads JPG images from sd card and send to a remote server via socket",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "statement": "String imei = ((TelephonyManager) getSystemService(\"phone\")).getDeviceId();",
+        "methodName": "public void log()",
+        "className": "com.labado.lulaoshi.myService",
+        "lineNo": 92,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r9.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "write",
+        "targetNo": 1,
+        "statement": "dataOutputStream.write(buf, 0, read);",
+        "methodName": "public void log()",
+        "className": "com.labado.lulaoshi.myService",
+        "lineNo": 131,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.DataOutputStream: void write(byte[],int,int)>($r1, 0, $i4)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 3
+    },
+    {
+      "source": {
+        "targetName": "FileInputStream",
+        "targetNo": 1,
+        "statement": "DataInputStream fis = new DataInputStream(new BufferedInputStream(new FileInputStream(((File) jpglist.get(i)).getPath())));",
+        "methodName": "public void log()",
+        "className": "com.labado.lulaoshi.myService",
+        "lineNo": 106,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r14.<java.io.FileInputStream: void <init>(java.lang.String)>($r15)"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "writeUTF",
+        "targetNo": 1,
+        "statement": "dataOutputStream.writeUTF(\"\\\\\" + imei + \"\\\\\");",
+        "methodName": "public void log()",
+        "className": "com.labado.lulaoshi.myService",
+        "lineNo": 113,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.DataOutputStream: void writeUTF(java.lang.String)>($r15)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 4
+    },
+    {
+      "source": {
+        "targetName": "FileInputStream",
+        "targetNo": 1,
+        "statement": "DataInputStream fis = new DataInputStream(new BufferedInputStream(new FileInputStream(((File) jpglist.get(i)).getPath())));",
+        "methodName": "public void log()",
+        "className": "com.labado.lulaoshi.myService",
+        "lineNo": 106,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r14.<java.io.FileInputStream: void <init>(java.lang.String)>($r15)"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "writeUTF",
+        "targetNo": 1,
+        "statement": "dataOutputStream.writeUTF(((File) jpglist.get(i)).getName());",
+        "methodName": "public void log()",
+        "className": "com.labado.lulaoshi.myService",
+        "lineNo": 114,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.DataOutputStream: void writeUTF(java.lang.String)>($r15)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 5
+    }
+  ]
+}

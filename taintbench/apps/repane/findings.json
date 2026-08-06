@@ -1,0 +1,43 @@
+{
+  "fileName": "repane.apk",
+  "day": "2019-10-10",
+  "findings": [
+    {
+      "source": {
+        "statement": "intent.setDataAndType(Uri.fromFile(new File(this._appPath)), \"application/vnd.android.package-archive\");",
+        "methodName": "public void install(Context ctx)",
+        "className": "com.vr.installer.scanner.PackageDescription",
+        "lineNo": 76,
+        "targetName": "File",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r3.<java.io.File: void <init>(java.lang.String)>($r4)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "ctx.startActivity(intent);",
+        "methodName": "public void install(Context ctx)",
+        "className": "com.vr.installer.scanner.PackageDescription",
+        "lineNo": 79,
+        "targetName": "startActivity",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<android.content.Context: void startActivity(android.content.Intent)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "interComponentCommunication": true
+      },
+      "ID": 1,
+      "description": "This malicious flows installs an APK that is shipped with the App.",
+      "isNegative": false
+    }
+  ]
+}

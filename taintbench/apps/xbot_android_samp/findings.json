@@ -1,0 +1,217 @@
+{
+  "fileName": "xbot_android_samp.apk",
+  "day": "2019-10-09",
+  "findings": [
+    {
+      "source": {
+        "statement": "messages[i] = SmsMessage.createFromPdu((byte[]) pdus[i]);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.address.core.SMSHandler",
+        "lineNo": 30,
+        "targetName": "createFromPdu",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = staticinvoke <android.telephony.SmsMessage: android.telephony.SmsMessage createFromPdu(byte[])>($r9)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "Object result = fObj.call(RunService.getService().getScriptLoader().getContext(), this._scope, this._scope, args);",
+        "methodName": "public Object call(String funcName, Object[] args)",
+        "className": "com.address.core.Script",
+        "lineNo": 90,
+        "targetName": "call",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = interfaceinvoke $r7.<org.mozilla.javascript.Function: java.lang.Object call(org.mozilla.javascript.Context,org.mozilla.javascript.Scriptable,org.mozilla.javascript.Scriptable,java.lang.Object[])>($r10, $r4, $r3, $r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "sb.append(messages[i].getMessageBody());",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.address.core.SMSHandler",
+          "lineNo": 31,
+          "ID": 1
+        },
+        {
+          "statement": "if (RunService.getService().onSMSReceived(messages[0].getOriginatingAddress(), sb.toString()).booleanValue()) {",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.address.core.SMSHandler",
+          "lineNo": 37,
+          "ID": 2
+        },
+        {
+          "statement": "getScriptLoader().call(\"onSMS\", num, text);",
+          "methodName": "public Boolean onSMSReceived(String num, String text)",
+          "className": "com.address.core.RunService",
+          "lineNo": 648,
+          "ID": 3
+        },
+        {
+          "statement": "((Script) it.next()).call(funcName, args);",
+          "methodName": "public void call(String funcName, Object... args)",
+          "className": "com.address.core.ScriptLoader",
+          "lineNo": 122,
+          "ID": 4
+        },
+        {
+          "statement": "Function fObj = this._scope.get(funcName, this._scope);",
+          "methodName": "public String getName()",
+          "className": "com.address.core.Script",
+          "lineNo": 83,
+          "ID": 5
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "interComponentCommunication": true,
+        "lifecycle": true,
+        "partialFlow": true,
+        "pathConstraints": true,
+        "reflection": true
+      },
+      "ID": 1,
+      "description": "This malicious partial ICC flow starts by reading the Intent with which the SMSHandler BroadcasReceiver started. The intent contains SMS messagees, which will be sent to a remote server with some script call defined by the malware writer.  ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "ret[0] = this.telemgr.getDeviceId();",
+        "methodName": "public String[] getTelephonyInfo()",
+        "className": "com.address.core.xAPI",
+        "lineNo": 89,
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r3 = virtualinvoke $r2.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "web.addJavascriptInterface(RunService.getService().getAPI(), \"xAPI\");",
+        "methodName": "public void onCreate(Bundle icicle)",
+        "className": "com.address.core.activities.BrowserActivity",
+        "lineNo": 47,
+        "targetName": "addJavascriptInterface",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<android.webkit.WebView: void addJavascriptInterface(java.lang.Object,java.lang.String)>($r10, \"xAPI\")"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "return ret;",
+          "methodName": "public String[] getTelephonyInfo()",
+          "className": "com.address.core.xAPI",
+          "lineNo": 96,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "array": true,
+        "lifecycle": true,
+        "payload": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads the device id and put it into an Array of String, the array is used as the return value of the method getTelephonyInfo() of the class xAPI. An object of xAPI is injected into the WebView by addJavascriptInterface. The method getTelephonyInfo() can be invoked via JavaScript code.  ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "Cursor cursor = cr.query(Contacts.CONTENT_URI, null, null, null, null);",
+        "methodName": "public ArrayList<PhoneContact> getContacts()",
+        "className": "com.address.core.xAPI",
+        "lineNo": 211,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r4.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r5, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "web.addJavascriptInterface(RunService.getService().getAPI(), \"xAPI\");",
+        "methodName": "public void onCreate(Bundle icicle)",
+        "className": "com.address.core.activities.BrowserActivity",
+        "lineNo": 47,
+        "targetName": "addJavascriptInterface",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<android.webkit.WebView: void addJavascriptInterface(java.lang.Object,java.lang.String)>($r10, \"xAPI\")"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "String id = cursor.getString(cursor.getColumnIndex(\"_id\"));",
+          "methodName": "public ArrayList<PhoneContact> getContacts()",
+          "className": "com.address.core.xAPI",
+          "lineNo": 218,
+          "ID": 1
+        },
+        {
+          "statement": "if (Integer.parseInt(cursor.getString(cursor.getColumnIndex(\"has_phone_number\"))) > 0) {",
+          "methodName": "public ArrayList<PhoneContact> getContacts()",
+          "className": "com.address.core.xAPI",
+          "lineNo": 220,
+          "ID": 2
+        },
+        {
+          "statement": "Cursor pCur = cr.query(Phone.CONTENT_URI, null, \"contact_id=?\", new String[]{id}, null);",
+          "methodName": "public ArrayList<PhoneContact> getContacts()",
+          "className": "com.address.core.xAPI",
+          "lineNo": 222,
+          "ID": 3
+        },
+        {
+          "statement": "contact.phone = pCur.getString(pCur.getColumnIndex(\"data1\"));",
+          "methodName": "public ArrayList<PhoneContact> getContacts()",
+          "className": "com.address.core.xAPI",
+          "lineNo": 227,
+          "ID": 4
+        },
+        {
+          "statement": "alContacts.add(contact);",
+          "methodName": "public ArrayList<PhoneContact> getContacts()",
+          "className": "com.address.core.xAPI",
+          "lineNo": 229,
+          "ID": 5
+        },
+        {
+          "statement": "return alContacts;",
+          "methodName": "public ArrayList<PhoneContact> getContacts()",
+          "className": "com.address.core.xAPI",
+          "lineNo": 238,
+          "ID": 6
+        }
+      ],
+      "attributes": {
+        "array": true,
+        "collections": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "pathConstraints": true,
+        "payload": true
+      },
+      "ID": 3,
+      "description": "This malicous reads contacts and store them into an ArrayList, this ArrayList is used as the return value of the method getContacts() of the class xAPI.An object of xAPI is injected into the WebView by addJavascriptInterface. The method getContacts() can be invoked via JavaScript code. ",
+      "isNegative": false
+    }
+  ]
+}

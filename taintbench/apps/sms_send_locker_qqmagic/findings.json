@@ -1,0 +1,376 @@
+{
+  "fileName": "sms_send_locker_qqmagic.apk",
+  "day": "2019-07-25",
+  "findings": [
+    {
+      "source": {
+        "statement": "stringBuilder = stringBuilder3.append(smsMessage.getDisplayMessageBody());",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 43,
+        "targetName": "getDisplayMessageBody",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r13.<android.telephony.SmsMessage: java.lang.String getDisplayMessageBody()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "this.sm.sendTextMessage(this.jj1, (String) null, stringBuilder3.toString(), (PendingIntent) null, (PendingIntent) null);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 35,
+        "targetName": "sendTextMessage",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r7.<android.telephony.SmsManager: void sendTextMessage(java.lang.String,java.lang.String,java.lang.String,android.app.PendingIntent,android.app.PendingIntent)>($r4, null, $r11, null, null)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true
+      },
+      "ID": 1,
+      "description": "This malicious flow exists in the onReceive callback method of a BroadcastReciver, it starts from reading a SMS message to a StringBuilder and ends by sending it via a text message to a strange number.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "stringBuilder = stringBuilder3.append(smsMessage.getDisplayOriginatingAddress());",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 41,
+        "targetName": "getDisplayOriginatingAddress",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r13.<android.telephony.SmsMessage: java.lang.String getDisplayOriginatingAddress()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "this.sm.sendTextMessage(this.jj1, (String) null, stringBuilder3.toString(), (PendingIntent) null, (PendingIntent) null);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 35,
+        "targetName": "sendTextMessage",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r7.<android.telephony.SmsManager: void sendTextMessage(java.lang.String,java.lang.String,java.lang.String,android.app.PendingIntent,android.app.PendingIntent)>($r4, null, $r11, null, null)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true
+      },
+      "ID": 2,
+      "description": "This malicious flow exists in the onReceive callback method of a BroadcastReciver, it starts from reading the SMS sender's address (phone number or email) and ends by sending it via a text message to a strange number.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "stringBuilder = stringBuilder3.append(smsMessage.getDisplayMessageBody());",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 43,
+        "targetName": "getDisplayMessageBody",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r13.<android.telephony.SmsMessage: java.lang.String getDisplayMessageBody()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "ComponentName startService = context2.startService(intent5);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 47,
+        "targetName": "startService",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<android.content.Context: android.content.ComponentName startService(android.content.Intent)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "StringBuilder stringBuilder = r29;",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "qqkj.qqmagic.Fr",
+          "lineNo": 26,
+          "ID": 1
+        },
+        {
+          "statement": "StringBuilder stringBuilder3 = stringBuilder;",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "qqkj.qqmagic.Fr",
+          "lineNo": 26,
+          "ID": 2
+        },
+        {
+          "statement": "StringBuffer stringBuffer = r29;",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "qqkj.qqmagic.Fr",
+          "lineNo": 54,
+          "ID": 3
+        },
+        {
+          "statement": "stringBuffer3 = r29;",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "qqkj.qqmagic.Fr",
+          "lineNo": 63,
+          "ID": 4
+        },
+        {
+          "statement": "intent3 = intent5.putExtra(\"nnr\", stringBuffer2.append(stringBuffer3.append(stringBuffer4.append(stringBuffer5.append(stringBuffer6.append(stringBuffer7.append(this.jj).append(\"!\").toString()).append(substring2).toString()).append(\"&\").toString()).append(substring).toString()).append(\"$\").toString()).append(substring3).toString());",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "qqkj.qqmagic.Fr",
+          "lineNo": 63,
+          "ID": 5
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "interComponentCommunication": true,
+        "lifecycle": true,
+        "partialFlow": true,
+        "pathConstraints": true
+      },
+      "ID": 3,
+      "description": "This malicious ICC flow cross one BroadcastReciver and one Service. This is only the partical flow in the BroadcastReciver. The flow starts in a broadcast receiver by reading SMS message to a StringBuilder, then uses this StringBuilder to construct an intent for a unknown service.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "targetName": "getDisplayMessageBody",
+        "targetNo": 1,
+        "statement": "int indexOf = smsMessage.getDisplayMessageBody().indexOf(\"!\");",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 56,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r13.<android.telephony.SmsMessage: java.lang.String getDisplayMessageBody()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "startService",
+        "targetNo": 1,
+        "statement": "ComponentName startService = context2.startService(intent5);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 47,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<android.content.Context: android.content.ComponentName startService(android.content.Intent)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 4
+    },
+    {
+      "source": {
+        "targetName": "getDisplayMessageBody",
+        "targetNo": 1,
+        "statement": "int indexOf2 = smsMessage.getDisplayMessageBody().indexOf(\"&\");",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 57,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r13.<android.telephony.SmsMessage: java.lang.String getDisplayMessageBody()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "startService",
+        "targetNo": 1,
+        "statement": "ComponentName startService = context2.startService(intent5);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 47,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<android.content.Context: android.content.ComponentName startService(android.content.Intent)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 5
+    },
+    {
+      "source": {
+        "targetName": "getDisplayMessageBody",
+        "targetNo": 1,
+        "statement": "String substring = smsMessage.getDisplayMessageBody().substring(indexOf + 1, indexOf2);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 58,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r13.<android.telephony.SmsMessage: java.lang.String getDisplayMessageBody()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "startService",
+        "targetNo": 1,
+        "statement": "ComponentName startService = context2.startService(intent5);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 47,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<android.content.Context: android.content.ComponentName startService(android.content.Intent)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "intent3 = intent5.putExtra(\"nnr\", stringBuffer2.append(stringBuffer3.append(stringBuffer4.append(stringBuffer5.append(stringBuffer6.append(stringBuffer7.append(this.jj).append(\"!\").toString()).append(substring2).toString()).append(\"&\").toString()).append(substring).toString()).append(\"$\").toString()).append(substring3).toString());",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "qqkj.qqmagic.Fr",
+          "lineNo": 63,
+          "ID": 1
+        }
+      ],
+      "description": "This malicious ICC flow cross one BroadcastReciver and one Service. This is only the partical flow in the BroadcastReciver. The flow starts in a broadcast receiver by reading SMS message to a StringBuilder, then uses this StringBuilder to construct an intent for a unknown service.",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "partialFlow": true,
+        "pathConstraints": true,
+        "interComponentCommunication": true,
+        "appendToString": true
+      },
+      "ID": 6
+    },
+    {
+      "source": {
+        "targetName": "getDisplayMessageBody",
+        "targetNo": 1,
+        "statement": "String substring2 = smsMessage.getDisplayMessageBody().substring(0, indexOf);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 59,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r13.<android.telephony.SmsMessage: java.lang.String getDisplayMessageBody()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "startService",
+        "targetNo": 1,
+        "statement": "ComponentName startService = context2.startService(intent5);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 47,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<android.content.Context: android.content.ComponentName startService(android.content.Intent)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "intent3 = intent5.putExtra(\"nnr\", stringBuffer2.append(stringBuffer3.append(stringBuffer4.append(stringBuffer5.append(stringBuffer6.append(stringBuffer7.append(this.jj).append(\"!\").toString()).append(substring2).toString()).append(\"&\").toString()).append(substring).toString()).append(\"$\").toString()).append(substring3).toString());",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "qqkj.qqmagic.Fr",
+          "lineNo": 63,
+          "ID": 1
+        }
+      ],
+      "description": "This malicious ICC flow cross one BroadcastReciver and one Service. This is only the partical flow in the BroadcastReciver. The flow starts in a broadcast receiver by reading SMS message to a StringBuilder, then uses this StringBuilder to construct an intent for a unknown service.",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "partialFlow": true,
+        "pathConstraints": true,
+        "interComponentCommunication": true,
+        "appendToString": true
+      },
+      "ID": 7
+    },
+    {
+      "source": {
+        "targetName": "getDisplayMessageBody",
+        "targetNo": 1,
+        "statement": "String substring3 = smsMessage.getDisplayMessageBody().substring(indexOf2 + 1);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 60,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r13.<android.telephony.SmsMessage: java.lang.String getDisplayMessageBody()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "startService",
+        "targetNo": 1,
+        "statement": "ComponentName startService = context2.startService(intent5);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "qqkj.qqmagic.Fr",
+        "lineNo": 47,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<android.content.Context: android.content.ComponentName startService(android.content.Intent)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "intent3 = intent5.putExtra(\"nnr\", stringBuffer2.append(stringBuffer3.append(stringBuffer4.append(stringBuffer5.append(stringBuffer6.append(stringBuffer7.append(this.jj).append(\"!\").toString()).append(substring2).toString()).append(\"&\").toString()).append(substring).toString()).append(\"$\").toString()).append(substring3).toString());",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "qqkj.qqmagic.Fr",
+          "lineNo": 63,
+          "ID": 1
+        }
+      ],
+      "description": "This malicious ICC flow cross one BroadcastReciver and one Service. This is only the partical flow in the BroadcastReciver. The flow starts in a broadcast receiver by reading SMS message to a StringBuilder, then uses this StringBuilder to construct an intent for a unknown service.",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "partialFlow": true,
+        "pathConstraints": true,
+        "interComponentCommunication": true,
+        "appendToString": true
+      },
+      "ID": 8
+    }
+  ]
+}

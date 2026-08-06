@@ -1,0 +1,9 @@
+{
+  "name": "save_me",
+  "apk": {
+    "url": "https://github.com/TaintBench/save_me/releases/download/APK/save_me.apk",
+    "sha256": "sha256-kZoBUkXwRajadlLO+sJucYCLImNcbzIX/R8N69YdQzA="
+  },
+  "upstream": "https://github.com/TaintBench/save_me",
+  "findingsCommit": "master"
+}

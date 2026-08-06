@@ -17,11 +17,12 @@
 //! columns -- the match itself requires a connected path.)
 //!
 //! The pass criterion is a **baseline snapshot**: each app dir carries an
-//! `expected.json` listing the finding IDs ctadl currently detects. The check
-//! fails if any baseline finding stops being detected (a regression) or if any
-//! finding flagged `isNegative` (a non-flow) gets reported (a false positive).
-//! Newly detected findings do not fail; they are reported as improvements to
-//! fold into the baseline.
+//! `expected.json` listing the finding IDs ctadl currently detects, plus the
+//! ones flagged `isNegative` (non-flows) it currently reports anyway. The check
+//! fails if any baseline finding stops being detected (a regression) or if a
+//! negative outside the baseline gets reported (a *new* false positive). Newly
+//! detected findings and false positives that go away do not fail; they are
+//! reported as improvements to fold into the baseline.
 //!
 //! An app's `model.json` is passed to both `ctadl index` and `ctadl query`,
 //! since the two phases consume different halves of it: index turns its
@@ -225,6 +226,12 @@ impl Endpoint {
 struct Expected {
     #[serde(rename = "matched_finding_ids", default)]
     matched_finding_ids: Vec<i64>,
+    /// `isNegative` findings ctadl reports today. Each is a call site TaintBench
+    /// says is not a flow; ctadl claiming it is imprecision we have measured and
+    /// accepted, not a reason to fail. A negative *outside* this list still
+    /// fails the check, so no new false positive slips in unnoticed.
+    #[serde(rename = "false_positive_finding_ids", default)]
+    false_positive_finding_ids: Vec<i64>,
 }
 
 /// A callee identified by dotted class plus method name, ignoring the type
@@ -388,16 +395,38 @@ fn run_app(app: &App, apk: &Path) -> Result<Outcome> {
         .copied()
         .collect();
 
+    // Same treatment for the negatives: only a false positive we have not
+    // already measured and written down is a failure.
+    let expected_fps: BTreeSet<i64> = expected
+        .false_positive_finding_ids
+        .iter()
+        .copied()
+        .collect();
+    let new_fps: Vec<i64> = matched_negative
+        .difference(&expected_fps)
+        .copied()
+        .collect();
+    let fixed_fps: Vec<i64> = expected_fps
+        .difference(&matched_negative)
+        .copied()
+        .collect();
+
     let total_positive = findings.findings.iter().filter(|f| !f.is_negative).count();
     let summary = format!(
-        "{}/{} ground-truth flows detected",
+        "{}/{} ground-truth flows detected{}",
         matched_positive.len(),
-        total_positive
+        total_positive,
+        if matched_negative.is_empty() {
+            String::new()
+        } else {
+            format!(", {} known false positive(s)", matched_negative.len())
+        }
     );
 
-    if !matched_negative.is_empty() {
+    if !new_fps.is_empty() {
         return Ok(Outcome::Fail(format!(
-            "false positives: detected non-flow finding(s) {matched_negative:?} (flagged isNegative)"
+            "false positives: detected non-flow finding(s) {new_fps:?} (flagged isNegative) \
+             that are not in the expected.json baseline"
         )));
     }
     if !regressions.is_empty() {
@@ -405,13 +434,23 @@ fn run_app(app: &App, apk: &Path) -> Result<Outcome> {
             "regression: baseline finding(s) {regressions:?} no longer detected ({summary})"
         )));
     }
+    let mut notes = Vec::new();
     if !improvements.is_empty() {
-        return Ok(Outcome::Pass(format!(
-            "{summary}; NEW finding(s) {improvements:?} detected -- update expected.json to {:?}",
+        notes.push(format!(
+            "NEW finding(s) {improvements:?} detected -- set matched_finding_ids to {:?}",
             matched_positive.iter().collect::<Vec<_>>()
-        )));
+        ));
     }
-    Ok(Outcome::Pass(summary))
+    if !fixed_fps.is_empty() {
+        notes.push(format!(
+            "false positive(s) {fixed_fps:?} gone -- set false_positive_finding_ids to {:?}",
+            matched_negative.iter().collect::<Vec<_>>()
+        ));
+    }
+    if notes.is_empty() {
+        return Ok(Outcome::Pass(summary));
+    }
+    Ok(Outcome::Pass(format!("{summary}; {}", notes.join("; "))))
 }
 
 fn callee_or_target(callee: &Option<Callee>, target: &str) -> String {

