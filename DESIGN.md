@@ -46,8 +46,8 @@ Types:
     - `arg(_)` expanded by the engine on all arguments, i.e., the current `Argument(*)` idea. For
       functions, it is expanded using the arity of the function. If the arity is unknown, a warning
       is shown. For callsites, it is expanded using the actuals list of the matching callsites
-    - Port arguments can be bound to variables: `sink(arg(I)@F) :- fun(F), param(F, I);`
-  - Ports can be anchored to a function `anchored-port := port @ F` or a call site (both of which are strings)
+    - Port arguments can be bound to variables: `sink(F::arg(I)) :- fun(F), param(F, I);`
+  - Ports can be anchored to a function `anchored-port := F :: port` or a call site (both of which are strings)
   - Flows are between ports `flow := anchored-port ("<-" | "->" | "<->") anchored-port`
 
 Built-in input relations:
@@ -112,30 +112,30 @@ engine these output relations:
 - `access_paths(path)`, adds strings to analysis access paths, can be just bare e.g.
   `access_paths(".foo.bar")`
 
-Port anchors specify a port anchored in a function: `return@F` means "the return port in F." Ports
+Port anchors specify a port anchored in a function: `F::return` means "the return port in F." Ports
 and port flows are a concise way of specifying source, sink, propagation, bridge models in a unified
 syntax. Access paths in port flows are always literal, never bound to a variable. Multiple ports /
 port flows may be given by comma separating the individual ports / flows. A port anchored at a site
 denotes the actual at that call.
 
 ```
-arg(_)@F // passed to sink, means every argument of F is a sink
-arg(2)@F // passed to source, means arg(2) of F is a source
+F::arg(_) // passed to sink, means every argument of F is a sink
+F::arg(2) // passed to source, means arg(2) of F is a source
 
 // propagation, argument 0 flows to the return value, function F (can be a bound variable)
-return@F <- arg(0)@F
+F::return <- F::arg(0)
 // propagation of F's arg(1) to arg(0)
-arg(1)@F -> arg(0)@F
+F::arg(1) -> F::arg(0)
 // propagation, sugar for two directed flows
-arg(2).foo@F <-> arg(0).bar@F
+F::arg(2).foo <-> F::arg(0).bar
 
 // multiple spec bridge model
-arg(0)@F -> arg(0).stack[0]@G,
-  arg(1)@F -> arg(0).stack[1]@G,
-  arg(2)@F -> arg(0).stack[2]@G
+F::arg(0) -> G::arg(0).stack[0],
+  F::arg(1) -> G::arg(0).stack[1],
+  F::arg(2) -> G::arg(0).stack[2]
 
 // port anchored at callsite
-bridge(arg(1).baz@S -> arg(0).stack[2]@G) :-
+S::bridge(arg(1).baz -> G::arg(0).stack[2]) :-
   callsite(_, S, callee_string = F),
   fun(F, name = "luaCallNativeAdd", language = "lua"),
   fun(G, name = "luaNativeAdd", language = "pcode");
@@ -159,11 +159,11 @@ fun(F, name = "append", parent in {"Ljava/lang/StringBuffer;", "Ljava/lang/Strin
 
 ```
 // Flows java.net.URL.openConnection's "this" argument to return and sets return value source
-source(return@F), propagation(return@F <- arg(0)@F) :-
+source(F::return), propagation(F::return <- F::arg(0)) :-
   fun(F, name = "openConnection", parent = "Ljava/net/URL;");
 
 // {"find":"methods","where":[{"constraint":"signature_match","names":["getAbsolutePath","getAbsoluteFile","getCanonicalFile","getName","getParentFile","getPath"],"parent":"Ljava/io/File;"}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
-propagation(return@F <- arg(0)@F) :-
+propagation(F::return <- F::arg(0)) :-
   fun(F,
     name in {"getAbsolutePath","getAbsoluteFile","getCanonicalFile","getName","getParentFile","getPath"},
     parent = "Ljava/io/File;");
