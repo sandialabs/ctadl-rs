@@ -24,6 +24,11 @@
 //! detected findings and false positives that go away do not fail; they are
 //! reported as improvements to fold into the baseline.
 //!
+//! An app whose `app.json` carries an `excluded` reason is kept but left out of
+//! the default run: `nix/taintbench.nix` does not fetch its APK, and this task
+//! reports it skipped with that reason. Naming its APK with `--apk` still runs
+//! it.
+//!
 //! An app's `model.json` is passed to both `ctadl index` and `ctadl query`,
 //! since the two phases consume different halves of it: index turns its
 //! `propagation` models into function summaries -- several of these apps
@@ -86,9 +91,14 @@ pub fn run(opts: &Options) -> Result<bool> {
 
     let mut results: Vec<(String, Outcome)> = Vec::new();
     for app in &apps {
-        let outcome = match apk_by_name.get(app.name.as_str()) {
-            Some(apk) => run_app(app, apk).unwrap_or_else(|err| Outcome::Fail(format!("{err:#}"))),
-            None => Outcome::Skip("no APK provided (pass --apk <name>=<path>)".to_string()),
+        // An excluded app still runs when its APK is named explicitly -- the
+        // exclusion keeps it out of the default run, it does not retire it.
+        let outcome = match (apk_by_name.get(app.name.as_str()), &app.excluded) {
+            (Some(apk), _) => {
+                run_app(app, apk).unwrap_or_else(|err| Outcome::Fail(format!("{err:#}")))
+            }
+            (None, Some(why)) => Outcome::Skip(format!("excluded: {why}")),
+            (None, None) => Outcome::Skip("no APK provided (pass --apk <name>=<path>)".to_string()),
         };
         results.push((app.name.clone(), outcome));
     }
@@ -130,6 +140,19 @@ pub fn run(opts: &Options) -> Result<bool> {
 struct App {
     name: String,
     dir: PathBuf,
+    /// Why this app is kept but left out of the default run, from `app.json`'s
+    /// `excluded` key. `nix/taintbench.nix` never fetches its APK, so the check
+    /// reports it skipped with this reason. Passing `--apk <name>=<path>`
+    /// explicitly still runs it.
+    excluded: Option<String>,
+}
+
+/// The half of `app.json` this task reads. The rest (APK coordinates,
+/// provenance) is for `nix/taintbench.nix`.
+#[derive(Deserialize, Default)]
+struct AppMeta {
+    #[serde(default)]
+    excluded: Option<String>,
 }
 
 fn resolve_apps_dir(override_dir: Option<&Path>) -> Result<PathBuf> {
@@ -167,9 +190,15 @@ fn discover_apps(apps_dir: &Path) -> Result<Vec<App>> {
                 .and_then(|s| s.to_str())
                 .context("app dir has no name")?
                 .to_string();
+            let meta: AppMeta = match std::fs::read_to_string(dir.join("app.json")) {
+                Ok(text) => serde_json::from_str(&text)
+                    .with_context(|| format!("failed to parse {}/app.json", dir.display()))?,
+                Err(_) => AppMeta::default(),
+            };
             apps.push(App {
                 name,
                 dir: std::fs::canonicalize(&dir)?,
+                excluded: meta.excluded,
             });
         }
     }

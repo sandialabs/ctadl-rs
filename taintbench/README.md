@@ -67,11 +67,25 @@ Thirty-eight TaintBench apps run today — every app in the benchmark except
 - `vibleaker_android_samp`
 - `xbot_android_samp`
 
-One caveat on cost: `remote_control_smack` is the long pole by a wide margin.
-`ctadl index` on it runs for hours where every other app finishes in minutes, and
-a bare index with no model is just as slow, so it is the app and not the model.
-Its `expected.json` is an empty placeholder for that reason. Every other app has
-a measured baseline. Use `--filter` to skip it while iterating.
+Thirty-seven of them run by default. `remote_control_smack` is kept but
+**excluded**: `ctadl index` on it runs for hours where every other app finishes
+in minutes, and a bare index with no model is just as slow, so it is the app and
+not the model. Its `expected.json` is an empty placeholder for that reason;
+every other app has a measured baseline.
+
+An app is excluded by an `excluded` key in its `app.json` whose value says why:
+
+```json
+{ "excluded": "ctadl index runs for hours on this app ..." }
+```
+
+`nix/taintbench.nix` then never fetches its APK, and the report shows
+`SKIP <name> (excluded: <reason>)` rather than a bare missing-APK skip. Naming
+its APK explicitly still runs it, which is how you would establish that baseline:
+
+```sh
+cargo xtask taintbench --apk remote_control_smack=/path/to/app.apk
+```
 
 Ten of them — `backflash`, `beita_com_beita_contact`, `cajino_baidu`, `chulia`,
 `death_ring_materialflow`, `dsencrypt_samp`, `exprespam`, `fakeappstore`,
@@ -94,7 +108,7 @@ Each app is a directory under `apps/<name>/` holding four files:
 | `findings.json`  | TaintBench ground truth, copied verbatim from the app's upstream repo. |
 | `model.json`     | ctadl model (`model_generators`) — the sources/sinks to mark, plus any propagations the app's flows need. |
 | `expected.json`  | Baseline: the finding IDs ctadl currently detects, and the negatives it currently reports anyway (see below). |
-| `app.json`       | APK coordinates (`url` + SRI `sha256`) and provenance, read by `nix/taintbench.nix`. |
+| `app.json`       | APK coordinates (`url` + SRI `sha256`) and provenance, read by `nix/taintbench.nix`; an optional `excluded` reason keeps the app out of the default run. |
 
 `model.json` goes to **both** `ctadl index` and `ctadl query`: index consumes its
 `propagation` models (they become function summaries) and query its sources and

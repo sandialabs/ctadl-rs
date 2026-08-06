@@ -25,28 +25,32 @@
 let
   appsDir = src + "/apps";
 
-  # One entry per app directory that carries an app.json, each with the APK
-  # its coordinates name.
+  # One entry per app directory that carries an app.json, each with the APK its
+  # coordinates name. An app.json with an `excluded` reason is kept in the tree
+  # but left out of the run: its APK is never fetched, and xtask reads the same
+  # key to report it skipped for that reason rather than for a missing APK.
   apps =
     let
       entries = builtins.readDir appsDir;
       names = builtins.filter (
         n: entries.${n} == "directory" && builtins.pathExists (appsDir + "/${n}/app.json")
       ) (builtins.attrNames entries);
+      withMeta = builtins.map (name: {
+        inherit name;
+        meta = builtins.fromJSON (builtins.readFile (appsDir + "/${name}/app.json"));
+      }) names;
+      included = builtins.filter (a: !(a.meta ? excluded)) withMeta;
     in
     builtins.map (
-      name:
-      let
-        meta = builtins.fromJSON (builtins.readFile (appsDir + "/${name}/app.json"));
+      { name, meta }:
+      {
+        inherit name;
         apk = pkgs.fetchurl {
           url = meta.apk.url;
           hash = meta.apk.sha256;
         };
-      in
-      {
-        inherit name apk;
       }
-    ) names;
+    ) included;
 in
 # xtask imports each app's APK, runs the model, and credits a ground-truth
 # finding when ctadl reports a connected source->sink path whose endpoint
