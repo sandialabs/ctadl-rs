@@ -50,7 +50,7 @@ use crate::error::Error;
 use crate::facts::{
     CallArgId, CallDispatchKey, CallString, CallTargetObject, FlowVariable, FlowVariableKind,
     FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg,
-    PackedInsnSiteId, Path, SmallestCallString, isout,
+    PackedInsnSiteId, Path, SmallestCallString, counters, isout,
 };
 use crate::index_engine::assign_like_trie::FromRows;
 
@@ -1141,16 +1141,22 @@ pub fn taint_index_with_config(
             let p1 = Path::empty();
 
         // Forward field propagation (context-free).
+        // The trailing `let _d` clauses are the temporary derivation counters (see
+        // `facts::counters`); they sit last so they count bodies that survive every guard, and
+        // being trailing they leave the first-two-clause adjacency (and so the SIMPLE JOIN plan)
+        // untouched.
         locals(infunc, v1, p13.clone(), a, p4) <--
             locals(infunc, v2, p23, a, p4),
             assign_like(infunc, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(&p13);
+            paths(&p13),
+            let _d = counters::bump(&counters::LOCALS_FWD_DST);
         locals(infunc, v1, p1, a, p43.clone()) <--
             locals(infunc, v2, p2, a, p4),
             assign_like(infunc, v1, p1, v2, p23),
             if let Some(p43) = p23.substitute_prefix(p2, p4),
-            paths(&p43);
+            paths(&p43),
+            let _d = counters::bump(&counters::LOCALS_FWD_FML);
 
         // Compute assignments from call sites
         assign_like(func_id, v.clone(), p, cv.clone(), Path::empty()),
@@ -1289,24 +1295,28 @@ pub fn taint_index_with_config(
             context_locals(infunc, v2, p23, a, p4, cs_lat),
             assign_like(infunc, v1, p1, v2, p2),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(&p13);
+            paths(&p13),
+            let _d = counters::bump(&counters::CTX_LOCALS_FWD_DST);
         context_locals(infunc, v1, p1, a, p43.clone(), cs_lat.clone()) <--
             context_locals(infunc, v2, p2, a, p4, cs_lat),
             assign_like(infunc, v1, p1, v2, p23),
             if let Some(p43) = p23.substitute_prefix(p2, p4),
-            paths(&p43);
+            paths(&p43),
+            let _d = counters::bump(&counters::CTX_LOCALS_FWD_FML);
 
         // 3.3b: The following two rules extend non-contextual flows with contextual assigns.
         context_locals(func_id, v1.clone(), p13.clone(), a.clone(), p4.clone(), cs_lat.clone()) <--
             context_assign(func_id, v1, p1, v2, p2, cs_lat),
             locals(func_id, v2, p23, a, p4),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(&p13);
+            paths(&p13),
+            let _d = counters::bump(&counters::CTX_LOCALS_SEED_DST);
         context_locals(func_id, v1.clone(), p1.clone(), a.clone(), p43.clone(), cs_lat.clone()) <--
             context_assign(func_id, v1, p1, v2, p23, cs_lat),
             locals(func_id, v2, p2, a, p4),
             if let Some(p43) = p23.substitute_prefix(p2, p4),
-            paths(&p43);
+            paths(&p43),
+            let _d = counters::bump(&counters::CTX_LOCALS_SEED_FML);
 
         // 3.4: a context-specific flow that reaches an out-formal becomes a conditional summary
         // tagged with its call string; contextual assignment (chain) pops it back to the caller.
@@ -1460,6 +1470,7 @@ pub fn taint_index_with_config(
         phys_footprint_mb()
     );
     log::debug!("index scc times: {}", prog.scc_times_summary());
+    log::debug!("index counters: {}", counters::report());
     // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
     log::debug!("{}", prog.__locals_ind_common.heap_report());
     log::debug!("{}", prog.__assign_like_ind_common.heap_report());

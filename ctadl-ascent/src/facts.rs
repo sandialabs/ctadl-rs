@@ -362,6 +362,70 @@ impl Display for CallString {
     }
 }
 
+/// Temporary instrumentation for the index-engine cost investigation.
+///
+/// Two questions this answers, both invisible in `scc_times_summary()`:
+///
+///  * How much of the lattice relations' cost is *churn* -- a key that already exists getting a
+///    strictly smaller call string, which re-enters the delta and re-propagates the whole
+///    forward-field closure. [`LAT_CHANGES`] over [`LAT_JOINS`] is that rate; [`LAT_CHANGES`]
+///    minus the relation's final row count is the number of re-derivations.
+///  * How many times each hot rule actually *fires*, as opposed to how many rows survive in the
+///    relation. Rule time over derivations is per-derivation cost (storage); derivations over
+///    final rows is amplification (churn). Those two separate the causes.
+///
+/// The counters are `Relaxed` and the index engine is serial `ascent!`, so each is an
+/// uncontended increment. Delete this module and its call sites when the investigation closes.
+pub mod counters {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+    /// Every call to `SmallestCallString::join_mut`, across all four lattice relations.
+    pub static LAT_JOINS: AtomicU64 = AtomicU64::new(0);
+    /// The subset of those that raised the value, i.e. re-entered the tuple into the delta.
+    pub static LAT_CHANGES: AtomicU64 = AtomicU64::new(0);
+
+    /// `locals` forward-field propagation, substituting into the destination path.
+    pub static LOCALS_FWD_DST: AtomicU64 = AtomicU64::new(0);
+    /// `locals` forward-field propagation, substituting into the formal path.
+    pub static LOCALS_FWD_FML: AtomicU64 = AtomicU64::new(0);
+    /// `context_locals` forward-field propagation, destination path. Twin of [`LOCALS_FWD_DST`].
+    pub static CTX_LOCALS_FWD_DST: AtomicU64 = AtomicU64::new(0);
+    /// `context_locals` forward-field propagation, formal path. Twin of [`LOCALS_FWD_FML`].
+    pub static CTX_LOCALS_FWD_FML: AtomicU64 = AtomicU64::new(0);
+    /// Rule 3.3, seeding `context_locals` from `context_assign`, destination path.
+    pub static CTX_LOCALS_SEED_DST: AtomicU64 = AtomicU64::new(0);
+    /// Rule 3.3, seeding `context_locals` from `context_assign`, formal path.
+    pub static CTX_LOCALS_SEED_FML: AtomicU64 = AtomicU64::new(0);
+
+    /// Counts one derivation. Returns `u64` so it can sit in an `ascent!` `let` clause.
+    #[inline(always)]
+    pub fn bump(c: &AtomicU64) -> u64 {
+        c.fetch_add(1, Relaxed)
+    }
+
+    /// Renders every counter, for one `log::debug!` beside `scc_times_summary()`.
+    pub fn report() -> String {
+        let joins = LAT_JOINS.load(Relaxed);
+        let changes = LAT_CHANGES.load(Relaxed);
+        let pct = if joins == 0 {
+            0.0
+        } else {
+            100.0 * changes as f64 / joins as f64
+        };
+        format!(
+            "lattice join_mut calls={joins} changes={changes} ({pct:.1}% churn)\n\
+             derivations: locals fwd dst={} fml={} | context_locals fwd dst={} fml={} | \
+             context_locals seed dst={} fml={}",
+            LOCALS_FWD_DST.load(Relaxed),
+            LOCALS_FWD_FML.load(Relaxed),
+            CTX_LOCALS_FWD_DST.load(Relaxed),
+            CTX_LOCALS_FWD_FML.load(Relaxed),
+            CTX_LOCALS_SEED_DST.load(Relaxed),
+            CTX_LOCALS_SEED_FML.load(Relaxed),
+        )
+    }
+}
+
 /// Compares two call strings by *lattice height* for [`SmallestCallString`].
 ///
 /// Returns [`Ordering::Greater`] when `a` is the higher (preferred) element — i.e.
@@ -435,8 +499,10 @@ impl Lattice for SmallestCallString {
     /// Least upper bound: moves UP toward the smaller call string. `Bottom` is the
     /// identity; among values the smaller call string wins.
     fn join_mut(&mut self, other: Self) -> bool {
+        counters::bump(&counters::LAT_JOINS);
         if other > *self {
             *self = other;
+            counters::bump(&counters::LAT_CHANGES);
             true
         } else {
             false
