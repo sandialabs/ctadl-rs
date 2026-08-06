@@ -66,7 +66,7 @@ pub(crate) fn program_from_file<P: AsRef<std::path::Path>>(filename: P) -> Resul
     let path = filename.as_ref();
 
     // Read the file, and if it fails, attach a helpful message before returning
-    let contents = std::fs::read_to_string(path)
+    let contents = source_info::read_source(path)
         .with_context(|| format!("Failed to load source file: {}", path.display()))?;
     let program = tree_sitter::parse_c_program(&contents)?;
     Ok(program.0)

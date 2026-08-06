@@ -12,6 +12,9 @@ as parameters.
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+mod model_check;
+pub use model_check::{ModelCheckOutcome, check_models, check_programs};
+
 use itertools::Itertools;
 
 use crate::codegen::{CallResolutionStrategy, codegen_program};
@@ -21,7 +24,7 @@ use crate::facts::FlowVariable;
 use crate::index_engine::{
     IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index_with_config,
 };
-use crate::languages::{apk_native, dex, jni, jvm, lua, pcode, tree_sitter};
+use crate::languages::{apk_native, dex, jni, jvm, lua, pcode, tree_sitter, xapk};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
@@ -123,6 +126,23 @@ pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Er
             }
             program_info
         }
+        Xapk => {
+            let sub_imports = xapk::import_bundle(import, opts)?;
+            if !sub_imports.is_empty() {
+                log::info!(
+                    "'{}': {} sub-import(s) indexed alongside it: {}",
+                    import.name,
+                    sub_imports.len(),
+                    sub_imports.join(", ")
+                );
+                // Reload rather than saving `import` back: each split rewrote its own config in
+                // the meantime, and the caller reloads after this to pick these names up.
+                let mut updated = ArtifactImport::load_by_name(&import.name)?;
+                updated.sub_imports = sub_imports;
+                updated.save()?;
+            }
+            ProgramInfo::default()
+        }
         Jar => jvm::import_jar(&import.artifact_path)?,
         Jvm => jvm::import_class(&import.artifact_path)?,
         Pcode => pcode::import_pcode(import)?,
@@ -140,23 +160,58 @@ pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Er
     Ok(())
 }
 
+/// How to perform one index, beyond the project and the model files.
+///
+/// Follows [`ImportOptions`]. [`Default`] is what `ctadl index` does
+/// with no flags.
+#[derive(Debug, Clone, Copy)]
+pub struct IndexOptions<'a> {
+    /// Suppress the automatic JNI link between Java `native` stubs and their native implementations
+    /// (see [`crate::languages::jni`]). Suppresses the registry with it: the registry is one of the
+    /// bridge's resolution tiers, not a separate feature.
+    pub no_jni_bridge: bool,
+    /// Ignore the `RegisterNatives` tables recovered at import time, leaving the bridge with the
+    /// `Java_…` symbol convention alone. The clean A/B for what the registry contributes, with no
+    /// re-import needed -- scanning happens at import time either way.
+    pub no_jni_registry: bool,
+    pub strategy: CallResolutionStrategy,
+    pub prune_unreachable_cfg_nodes: bool,
+    pub alias_rule: bool,
+    pub dump_index_graph: Option<&'a Path>,
+}
+
+impl Default for IndexOptions<'_> {
+    fn default() -> Self {
+        Self {
+            no_jni_bridge: false,
+            no_jni_registry: false,
+            strategy: CallResolutionStrategy::Mixed,
+            prune_unreachable_cfg_nodes: true,
+            alias_rule: true,
+            dump_index_graph: None,
+        }
+    }
+}
+
 /// Indexes a project
 /// If summary_projects is provided, loads summaries from those projects and maps them into the current project.
 /// `no_default_models` suppresses the built-in per-language defaults, leaving `models` as the
-/// complete set. `no_jni_bridge` suppresses the automatic JNI link between Java `native` stubs and
-/// their native implementations (see [`crate::languages::jni`]).
-#[allow(clippy::too_many_arguments)]
+/// complete set. See [`IndexOptions`] for the rest.
 pub fn index(
     project: &AnalysisProject,
     summary_projects: &[String],
     models: &[std::path::PathBuf],
     no_default_models: bool,
-    no_jni_bridge: bool,
-    strategy: CallResolutionStrategy,
-    prune_unreachable_cfg_nodes: bool,
-    alias_rule: bool,
-    dump_index_graph: Option<&Path>,
+    opts: IndexOptions<'_>,
 ) -> Result<(), Error> {
+    let IndexOptions {
+        no_jni_bridge,
+        no_jni_registry,
+        strategy,
+        prune_unreachable_cfg_nodes,
+        alias_rule,
+        dump_index_graph,
+    } = opts;
     use crate::index_engine::phys_footprint_mb;
     log::info!(
         "indexing project '{}' from {} import(s): {}",
@@ -196,6 +251,12 @@ pub fn index(
         );
         if !no_jni_bridge {
             jni_observer.observe(&program_info, jni::SlotModel::for_language(import.language));
+            if !no_jni_registry {
+                // The `RegisterNatives` tables this import's library was scanned for. Read from
+                // the import directory rather than from the IR: they are a sidecar, so no
+                // import format version moved and every older import simply has none.
+                jni_observer.observe_registry(&import)?;
+            }
         }
 
         // Match this import while its IR is in hand, and retain only the *matches*. The index
@@ -356,6 +417,9 @@ pub fn index(
 #[derive(Debug, Clone, Copy)]
 pub struct QueryStatus {
     pub execution_successful: bool,
+    /// True when there was no index and the run reported on the model files alone. The SARIF
+    /// says so in `CTADL0008`; this is so the caller can say it on the terminal too.
+    pub model_check_only: bool,
 }
 
 /// Runs a taint query and formats the results as SARIF.
@@ -364,24 +428,43 @@ pub struct QueryStatus {
 /// not persisted. The `profile` selects what the SARIF reports: path profiles enumerate
 /// source -> sink paths, closure profiles list every tainted instruction (see
 /// [`query_engine::formatter`]).
+///
+/// # Without an index
+///
+/// Model matching is decided per import and only half of it needs an index (see
+/// [`model_check`]). So when the project has not been indexed -- or is *being* indexed, since
+/// the version stamp is written last -- and model files were given, this reports what those
+/// files match in the imported programs rather than failing outright. The SARIF is the ordinary
+/// one, carrying the same notifications and saying in `CTADL0008` what it could not determine;
+/// the run is still a failure, because the query asked for could not be answered.
 pub fn query(
     project: &AnalysisProject,
     models: &[std::path::PathBuf],
-    compact: bool,
     output: &Path,
     profile: query_engine::formatter::SarifProfile,
     dump_taint_graph: Option<&Path>,
 ) -> Result<QueryStatus, Error> {
     let start_time_utc = query_engine::formatter::utc_timestamp();
     log::info!("querying project '{}'", project.name);
+    if !project.has_index() {
+        if models.is_empty() {
+            return Err(Error::MissingIndex {
+                project: project.name.clone(),
+            });
+        }
+        return query_model_check(project, models, output, profile, start_time_utc);
+    }
     // Before touching a table: the parquet decoders panic on an encoding they cannot read, and
     // this is what turns that into an actionable "re-run `ctadl index`".
     project.check_index_config()?;
     let index_path = project.index_path()?;
-    let ids = facts::IdMap::try_load(&index_path).err_context(|| "loading IdMap")?;
+    let ids = facts::IdMap::try_load(&index_path)
+        .err_context(|| format!("loading IdMap from index: {}", index_path.display()))?;
     // Load the index tables once; they seed the query and are reused to format the results.
-    let index_facts = IndexFacts::try_load(&index_path).err_context(|| "loading index facts")?;
-    let index_result = IndexResult::try_load(&index_path).err_context(|| "loading index result")?;
+    let index_facts = IndexFacts::try_load(&index_path)
+        .err_context(|| format!("loading index facts from: {}", index_path.display()))?;
+    let index_result = IndexResult::try_load(&index_path)
+        .err_context(|| format!("loading index result from: {}", index_path.display()))?;
 
     // Assembled alongside the query itself and handed to the SARIF writer, which turns it
     // into `run.invocations[0]`. See `formatter::QueryDiagnostics`.
@@ -561,7 +644,6 @@ pub fn query(
         project,
         &facts,
         &taint_results,
-        compact,
         output,
         profile,
         &diagnostics,
@@ -577,6 +659,73 @@ pub fn query(
     }
     Ok(QueryStatus {
         execution_successful,
+        model_check_only: false,
+    })
+}
+
+/// [`query`] for a project with no index: report what the model files match against the
+/// imported programs, and say plainly that that is all this is.
+///
+/// The output is the ordinary SARIF, written by the ordinary writer, because the questions it
+/// answers are the ones `ctadl query` always answers -- which generators matched nothing, which
+/// declared ports produced no row -- asked of Stage 1 alone. What is different is stated in the
+/// file: see `CTADL0008`.
+fn query_model_check(
+    project: &AnalysisProject,
+    models: &[std::path::PathBuf],
+    output: &Path,
+    profile: query_engine::formatter::SarifProfile,
+    start_time_utc: String,
+) -> Result<QueryStatus, Error> {
+    log::warn!(
+        "project '{}' has no index, so no taint analysis can run. Checking what the given model \
+         file(s) select in the imported program(s) instead -- partial feedback: call sites, \
+         `Argument(*)` and wildcard sinks need the index. Run `ctadl index {}` for a real query",
+        project.name,
+        project.name
+    );
+    let outcome = model_check::check_models(project, models)?;
+    // The counts, on the terminal; the SARIF is where each of them is named and explained.
+    log::info!(
+        "checked {} model file(s) against {} import(s): {} generator(s) matched something, {} \
+         declaration(s) matched nothing, {} generator(s) admitted by no import",
+        models.len(),
+        outcome.check.imports.len(),
+        outcome.check.matched.len(),
+        outcome.dead_declarations(),
+        outcome.check.scope_excluded.len(),
+    );
+
+    let has_file_errors = outcome.has_file_errors();
+    let mut diagnostics = outcome.into_diagnostics();
+    diagnostics.command_line = std::env::args_os()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
+    diagnostics.arguments = std::env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    diagnostics.start_time_utc = start_time_utc;
+
+    let execution_successful =
+        query_engine::formatter::format_model_check_sarif(project, output, profile, &diagnostics)
+            .err_context(|| "formatting sarif")?;
+    if output.to_str() != Some("-") {
+        log::info!("wrote {}", output.display());
+    }
+    // A file error is reported in the SARIF (`CTADL0012`) rather than raised, so that one typo
+    // does not cost the rest of the check. It still fails the run: `execution_successful` is
+    // already false, since that notification is error-level.
+    if has_file_errors {
+        log::error!(
+            "one or more model files have errors; see {}",
+            output.display()
+        );
+    }
+    Ok(QueryStatus {
+        execution_successful,
+        model_check_only: true,
     })
 }
 
@@ -592,7 +741,8 @@ fn dump_index_graph_dot(
     id_map: &facts::IdMap,
     dot_path: &Path,
 ) -> Result<(), Error> {
-    let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+    let mut file = std::fs::File::create(dot_path)
+        .err_context(|| format!("creating dot file: {}", dot_path.display()))?;
     // Embed the legend as a leading DOT comment so the file documents itself
     // (kept in sync with the log message below).
     {
@@ -612,10 +762,10 @@ fn dump_index_graph_dot(
              // label with no `.field` suffix means \"this vertex, empty path\" -- it does\n\
              // NOT mean paths are omitted from labels.\n"
         )
-        .err_context(|| "writing index graph legend")?;
+        .err_context(|| format!("writing index graph legend: {}", dot_path.display()))?;
     }
     crate::graphviz::render_index_graph(assign_like, id_map, &mut file)
-        .err_context(|| "rendering index graph")?;
+        .err_context(|| format!("rendering index graph: {}", dot_path.display()))?;
     // Multi-line, with its own hanging indentation: the log formatter prepends nothing to
     // an info record, so the block below reaches the terminal as written.
     log::info!(
@@ -726,7 +876,8 @@ fn dump_taint_graph_dot(
             }
         })
         .collect();
-    let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+    let mut file = std::fs::File::create(dot_path)
+        .err_context(|| format!("creating dot file: {}", dot_path.display()))?;
     // Embed the legend as a leading DOT comment so the file documents
     // itself (kept in sync with the log message below).
     {
@@ -751,11 +902,16 @@ fn dump_taint_graph_dot(
              //   red dashed  = backward propagation\n\
              //   bold green  = meet edge (on a source->sink path)\n"
         )
-        .err_context(|| "writing taint graph legend")?;
+        .err_context(|| format!("writing taint graph legend: {}", dot_path.display()))?;
     }
-    let ids = facts::IdMap::try_load(index_path).err_context(|| "loading IdMap for taint graph")?;
+    let ids = facts::IdMap::try_load(index_path).err_context(|| {
+        format!(
+            "loading IdMap for taint graph from index: {}",
+            index_path.display()
+        )
+    })?;
     crate::graphviz::render_taint_graph(node_cone, &edges, &sources, &sinks, &ids, &mut file)
-        .err_context(|| "rendering taint graph")?;
+        .err_context(|| format!("rendering taint graph: {}", dot_path.display()))?;
     // Multi-line; see the note in `dump_index_graph_dot`.
     log::info!(
         "Wrote taint graph to '{}'\n  \
@@ -802,8 +958,10 @@ pub fn save_program_info(
 
     let path = import.source_info_dir();
     let obj = std::mem::take(&mut program_info.source_info);
-    std::fs::create_dir_all(&path)?;
-    source_info::write_parquet_source_info(&path, &obj)?;
+    std::fs::create_dir_all(&path)
+        .err_context(|| format!("creating source info dir: {}", path.display()))?;
+    source_info::write_parquet_source_info(&path, &obj)
+        .err_context(|| format!("writing source info: {}", path.display()))?;
     Ok(())
 }
 
@@ -811,13 +969,16 @@ pub fn save_program_info(
 fn load_program_info_without_source_info(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
     let path = &import.program_path();
     log::debug!("reading {}", path.display());
-    let data = std::fs::read(path)?;
-    let program = ctadl_ir::encode::decode_program(&data)?;
+    let data =
+        std::fs::read(path).err_context(|| format!("reading program: {}", path.display()))?;
+    let program = ctadl_ir::encode::decode_program(&data)
+        .err_context(|| format!("decoding program: {}", path.display()))?;
 
     let path = &import.vmt_path();
     log::debug!("reading {}", path.display());
-    let data = std::fs::read(path)?;
-    let vmt = bitcode::deserialize(&data)?;
+    let data = std::fs::read(path).err_context(|| format!("reading vmt: {}", path.display()))?;
+    let vmt =
+        bitcode::deserialize(&data).err_context(|| format!("decoding vmt: {}", path.display()))?;
 
     Ok(ProgramInfo {
         program,
@@ -1006,8 +1167,11 @@ pub fn list_store_contents() -> Result<(), Error> {
     println!("Imported artifacts:");
     let mut imports = Vec::new();
     if import_path.exists() {
-        for entry in fs::read_dir(import_path)? {
-            let entry = entry?;
+        let entries = fs::read_dir(&import_path)
+            .err_context(|| format!("listing imports: {}", import_path.display()))?;
+        for entry in entries {
+            let entry =
+                entry.err_context(|| format!("listing imports: {}", import_path.display()))?;
             if entry.file_type()?.is_dir()
                 && let Some(name) = entry.file_name().to_str()
             {
@@ -1035,8 +1199,11 @@ pub fn list_store_contents() -> Result<(), Error> {
     println!("Analysis projects:");
     let mut projects = Vec::new();
     if projects_path.exists() {
-        for entry in fs::read_dir(projects_path)? {
-            let entry = entry?;
+        let entries = fs::read_dir(&projects_path)
+            .err_context(|| format!("listing projects: {}", projects_path.display()))?;
+        for entry in entries {
+            let entry =
+                entry.err_context(|| format!("listing projects: {}", projects_path.display()))?;
             if entry.file_type()?.is_dir()
                 && let Some(name) = entry.file_name().to_str()
             {
@@ -1106,6 +1273,16 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
     Ok(())
 }
 
+/// Prints the `RegisterNatives` tables recovered from an import: one row per entry, with the
+/// address it was found at, the function it resolved to, and its Java signature.
+///
+/// # Errors
+///
+/// If the file cannot be read or parsed.
+pub fn inspect_jni_registry<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> {
+    jni::registry::JniRegistry::print(path.as_ref())
+}
+
 pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> {
     let path = path.as_ref();
     let filename = path
@@ -1142,7 +1319,7 @@ pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
             ),
         }
     };
-    let data = std::fs::read(path)?;
+    let data = std::fs::read(path).err_context(|| format!("reading {}", path.display()))?;
     if filename == crate::project::PROGRAM_BITCODE_FILE {
         let program =
             ctadl_ir::encode::decode_program(&data).err_context(|| decode_failed("program"))?;

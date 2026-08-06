@@ -1288,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-ascent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "arrow 58.2.0",
@@ -1319,10 +1319,12 @@ dependencies = [
  "log",
  "log-once",
  "memmap",
+ "object",
  "packed_struct",
  "parquet",
  "paste",
  "pcode-reader",
+ "percent-encoding",
  "pest",
  "pest_derive",
  "rayon",
@@ -1351,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-flowy"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ctadl-ir",
  "hashbrown 0.16.1",
@@ -1367,7 +1369,7 @@ dependencies = [
 
 [[package]]
 name = "ctadl-ir"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arrow 57.3.0",
  "bit-set",
@@ -2185,7 +2187,7 @@ dependencies = [
 
 [[package]]
 name = "dex-reader"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "streaming-iterator",
@@ -2769,7 +2771,7 @@ dependencies = [
 
 [[package]]
 name = "immortal"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hashbrown 0.15.5",
  "parking_lot 0.12.5",
@@ -2912,7 +2914,7 @@ dependencies = [
 
 [[package]]
 name = "jvm-reader"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "zip 8.2.0",
 ]
@@ -3401,7 +3403,7 @@ dependencies = [
 
 [[package]]
 name = "pcode-reader"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ascent",
  "ascent_base",
@@ -3797,7 +3799,7 @@ checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
 
 [[package]]
 name = "rustc_graphviz"
-version = "0.0.0"
+version = "0.1.1"
 
 [[package]]
 name = "rustc_version"
@@ -4058,7 +4060,7 @@ checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
 name = "source-info"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arrow 58.2.0",
  "datafusion",
@@ -4195,7 +4197,7 @@ dependencies = [
 
 [[package]]
 name = "tailshare"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "immortal",
  "parking_lot 0.12.5",
@@ -4500,7 +4502,7 @@ dependencies = [
 
 [[package]]
 name = "trie"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "criterion",
  "parking_lot 0.12.5",
@@ -5155,7 +5157,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "boon",

@@ -20,7 +20,7 @@ use parquet::{
 };
 use paste::paste;
 
-use crate::error::Error;
+use crate::error::{Error, ErrorContext};
 use crate::facts;
 use crate::query_engine;
 
@@ -156,10 +156,13 @@ impl Reader {
     where
         DefaultDecoder: DecodeColumns<T>,
     {
-        let file = File::open(&self.path).map_err(Error::Io)?;
+        let file = File::open(&self.path)
+            .map_err(Error::Io)
+            .err_context(|| format!("opening parquet file: {}", self.path.display()))?;
         let rdr = ParquetRecordBatchReaderBuilder::try_new(file)
             .and_then(|b| b.build())
-            .map_err(Error::Parquet)?;
+            .map_err(Error::Parquet)
+            .err_context(|| format!("reading parquet file: {}", self.path.display()))?;
         let mut result = Vec::new();
         for batch_result in rdr {
             let batch = batch_result.unwrap();
@@ -191,7 +194,9 @@ impl Writer {
         let batch = RecordBatch::try_new(Arc::new(arrowd::Schema::new(fields)), arrays)
             .map_err(Error::Arrow)?;
 
-        let file = File::create(&self.path).map_err(Error::Io)?;
+        let file = File::create(&self.path)
+            .map_err(Error::Io)
+            .err_context(|| format!("creating parquet file: {}", self.path.display()))?;
         let props = WriterProperties::builder()
             .set_compression(Compression::SNAPPY)
             .build();
@@ -200,7 +205,8 @@ impl Writer {
                 wtr.write(&batch)?;
                 wtr.close()
             })
-            .map_err(Error::Parquet)?;
+            .map_err(Error::Parquet)
+            .err_context(|| format!("writing parquet file: {}", self.path.display()))?;
         Ok(())
     }
 }

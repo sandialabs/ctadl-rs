@@ -27,7 +27,7 @@ use crate::facts::{
 };
 use crate::index_engine::IndexFacts;
 use crate::index_engine::source_info::IndexSourceInfo;
-use crate::models::matches::{BridgeSideMatches, ModelPort, PropagationMatch, sample};
+use crate::models::matches::{BridgeSideMatches, ModelPort, PropagationMatch, diagnose};
 use crate::models::spec::{BridgePort, BridgeSpec, PortPair, Severity};
 use crate::models::{FormalIndexTypeTag, ProgramModelMatches};
 
@@ -243,58 +243,13 @@ fn codegen_bridges(
     Ok(stats)
 }
 
-/// Applies the reporting semantics deferred from streaming: `on-unmatched` per side, then
-/// `on-ambiguous`.
+/// Acts on the verdict [`diagnose`] returns: the reporting semantics deferred from streaming.
 ///
-/// Evaluation was eager -- both sides are matched per import as imports stream by -- because
-/// side B's import may arrive before side A's, so whether `from` matched is unknowable at match
-/// time. The conditionality is applied here, once, over the whole project: "unmatched" means
-/// *not matched anywhere*, not "not matched in this import".
+/// The verdict itself needs no fact base -- see [`diagnose`] -- so it lives next to the match
+/// sets it reads. All that is left here is turning a severity into a warning, an error, or
+/// silence.
 fn classify(spec: &BridgeSpec, side: &BridgeSideMatches) -> Result<(), Error> {
-    let where_ = spec.provenance();
-    if side.from.is_empty() {
-        // A scope admitting no import in the project lands here too, which is deliberate: it is
-        // the same observable condition (nothing matched) and gets the same warning, rather
-        // than a separate configuration-error category.
-        return report(
-            spec.from.on_unmatched,
-            format!(
-                "bridge {where_}: the 'from' side matched no function in this project, so \
-                 nothing is bridged. Check the 'where' constraints and the 'in' scope."
-            ),
-        );
-        // Note there is no `to`-side report here. "If the from side doesn't match anything, the
-        // to side isn't even attempted" is exactly this: reporting semantics, not evaluation
-        // order.
-    }
-    if side.to.is_empty() {
-        return report(
-            spec.to.on_unmatched,
-            format!(
-                "bridge {where_}: the 'from' side matched {} function(s) ({}) but the 'to' side \
-                 matched none, so nothing is bridged. Set 'on-unmatched': 'ignore' on the 'to' \
-                 block if the implementation is legitimately absent.",
-                side.from.len(),
-                sample(&side.from, 3)
-            ),
-        );
-    }
-    if !side.is_unique() {
-        return report(
-            spec.on_ambiguous,
-            format!(
-                "bridge {where_}: matched {} 'from' function(s) ({}) and {} 'to' function(s) \
-                 ({}); every combination is bridged, for {} pair(s). Add \
-                 'on-ambiguous': 'ignore' to silence this, or narrow the 'where' constraints.",
-                side.from.len(),
-                sample(&side.from, 3),
-                side.to.len(),
-                sample(&side.to, 3),
-                side.from.len() * side.to.len()
-            ),
-        );
-    }
-    Ok(())
+    diagnose(spec, side).map_or(Ok(()), |(severity, message)| report(severity, message))
 }
 
 fn report(severity: Severity, message: String) -> Result<(), Error> {

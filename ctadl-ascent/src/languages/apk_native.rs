@@ -113,10 +113,26 @@ pub fn import_native_libs(
     // Chosen before the Ghidra probe below so that probe can say how many libraries are
     // actually at stake: an APK shipping one library for four ABIs has four entries but
     // only ever imports one of them.
-    let abi = match opts.native_abi {
-        Some(abi) => abi,
-        None => preferred_abi(&entries).expect("entries is non-empty"),
+    let (abi, unusable) = match opts.native_abi {
+        Some(abi) => (abi, Vec::new()),
+        None => {
+            let choice = preferred_abi(&apk_bytes, &entries).expect("entries is non-empty");
+            (choice.abi, choice.unusable)
+        }
     };
+    if !unusable.is_empty() {
+        log::info!(
+            "{}: skipping {} -- {} no entry that is a loadable object file (an empty \
+             placeholder, say); pass --native-abi to override",
+            apk_path.display(),
+            unusable.join(", "),
+            if unusable.len() == 1 {
+                "it has"
+            } else {
+                "they have"
+            },
+        );
+    }
     let selected = entries.iter().filter(|e| e.abi == abi).count();
     let skipped: Vec<&str> = {
         let mut other: Vec<&str> = entries
@@ -191,7 +207,7 @@ pub fn import_native_libs(
     // The APK is not needed past this point and can be tens of megabytes.
     drop(apk_bytes);
 
-    let dest_dir = parent.import_path.join("native").join(abi);
+    let dest_dir = parent.import_path().join("native").join(abi);
     std::fs::create_dir_all(&dest_dir)
         .map_err(Error::Io)
         .err_context(|| format!("creating native library dir: '{}'", dest_dir.display()))?;
@@ -306,7 +322,7 @@ fn sub_import_name(parent: &str, abi: &str, file_name: &str) -> String {
 /// Where an APK import stashes the libraries it extracted. Exposed so a caller that
 /// wants to look at them (or clean them up) does not have to know the layout.
 pub fn extracted_libs_dir(parent: &ArtifactImport) -> PathBuf {
-    parent.import_path.join("native")
+    parent.import_path().join("native")
 }
 
 #[cfg(test)]

@@ -287,7 +287,7 @@ fn test_cli_import_apk_without_native_libs() {
             reloaded.sub_imports
         );
         // Nothing was extracted, so the staging directory was never created.
-        assert!(!import.import_path.join("native").exists());
+        assert!(!import.import_path().join("native").exists());
     });
 }
 
@@ -470,7 +470,7 @@ fn test_hash_artifact_file_and_dir() {
 
 //        assert!(project.name == "test_index_project");
 //        assert_eq!(project.imports, &["test_index_artifact"]);
-//        assert!(project.dir.is_dir());
+//        assert!(project.dir().is_dir());
 //        assert!(project.index_path().is_ok());
 //        assert!(project.index_path().unwrap().is_dir());
 //        assert!(project.config_path().is_file());
@@ -543,6 +543,68 @@ fn index_version_gate_rejects_a_different_version() {
         assert!(
             msg.contains("ctadl index gate_stale"),
             "message must name the command to run: {msg}"
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// `query` with no index. The rest of the check is covered by `tests/model_check.rs`, which
+// drives `check_programs` with no store at all; what is store-specific is name resolution --
+// and the promise that a query that cannot run writes nothing into the store.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn query_without_an_index_checks_the_models_and_writes_nothing() {
+    run_store_test(|| {
+        let name = "test_model_check";
+        let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+        // Reloaded: `cli::import` records the APK's native sub-imports into the config.
+        let import = ArtifactImport::load_by_name(name).unwrap();
+
+        let mut models = tempfile::NamedTempFile::with_suffix(".json").unwrap();
+        {
+            use std::io::Write as _;
+            write!(
+                models,
+                r#"{{"model_generators": [
+                    {{"find": "methods",
+                      "where": [{{"constraint": "signature_match", "name": "toString"}}],
+                      "model": {{"sources": [{{"kind": "k", "port": "Return"}}]}}}}
+                ]}}"#
+            )
+            .unwrap();
+            models.flush().unwrap();
+        }
+
+        // What `ctadl query <an-import-that-was-never-indexed>` builds: the import list, with
+        // no project written to the store.
+        let project = AnalysisProject::ephemeral(name, &[name]);
+        let outcome = cli::check_models(&project, &[models.path().to_path_buf()]).unwrap();
+
+        // Naming the import names everything imported out of it: the APK plus its native
+        // libraries, the same expansion `AnalysisProject::try_create` does.
+        let checked: Vec<&str> = outcome
+            .check
+            .imports
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let mut expected = vec![name.to_string()];
+        expected.extend(import.sub_imports.iter().cloned());
+        assert_eq!(
+            checked,
+            expected.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+        assert!(!outcome.has_file_errors());
+        assert!(outcome.check.matched[0].total.unwrap() > 0);
+
+        // A query that only checked model files must leave the store as it found it.
+        let project_dir = StorePaths::projects_path().join(name);
+        assert!(
+            !project_dir.exists(),
+            "the model check wrote a project config: {}",
+            project_dir.display()
         );
     });
 }

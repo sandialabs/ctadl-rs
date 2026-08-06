@@ -10,7 +10,7 @@ use hashbrown::hash_map::HashMap;
 use smallvec::{SmallVec, smallvec};
 use source_info::{ArtifactKey, SourceInfoBuilder, SpanLen};
 
-use crate::error::Error;
+use crate::error::{Error, ErrorContext};
 use ctadl_ir::mir::call::{
     CallObject, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
 };
@@ -51,7 +51,8 @@ fn jvm_descriptor_to_params(descriptor: &str, is_instance: bool) -> Vec<Paramete
 
 pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
     //let data = read_file_bytes(file)?;
-    let parser = JarFileParser::open(file)?;
+    let parser =
+        JarFileParser::open(file).err_context(|| format!("reading jar: {}", file.display()))?;
     let mut ctx = Context::new();
     let mut builders = Builders::new();
 
@@ -67,14 +68,17 @@ pub fn import_jar(file: &Path) -> Result<ProgramInfo, Error> {
             hash: Vec::new(),
             encoding: source_info::ArtifactEncoding::Binary,
         };
-        ctx.process(parser, key, &mut builders)?;
+        ctx.process(parser, key, &mut builders)
+            .err_context(|| format!("converting class in jar: {}", file.display()))?;
     }
     ctx.finish(builders)
 }
 
 pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
-    let data = read_file_bytes(file)?;
-    let parser = ClassFileParser::parse(&data)?;
+    let data =
+        read_file_bytes(file).err_context(|| format!("reading class file: {}", file.display()))?;
+    let parser = ClassFileParser::parse(&data)
+        .err_context(|| format!("parsing class file: {}", file.display()))?;
     let mut ctx = Context::new();
     let mut builders = Builders::new();
     let key = ArtifactKey {
@@ -84,7 +88,8 @@ pub fn import_class(file: &Path) -> Result<ProgramInfo, Error> {
         encoding: source_info::ArtifactEncoding::Binary,
     };
 
-    ctx.process(&parser, key, &mut builders)?;
+    ctx.process(&parser, key, &mut builders)
+        .err_context(|| format!("converting class file: {}", file.display()))?;
     ctx.finish(builders)
 }
 

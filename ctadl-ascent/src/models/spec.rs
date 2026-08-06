@@ -457,14 +457,17 @@ where
             let file = std::fs::File::open(path)
                 .err_context(|| format!("opening model JSONL file: {}", path.display()))?;
             let mut n = 0usize;
-            for line in BufReader::new(file).lines() {
-                let line = line?;
+            for (lineno, line) in BufReader::new(file).lines().enumerate() {
+                // Report the line the way an editor counts them, 1-based.
+                let lineno = lineno + 1;
+                let line =
+                    line.err_context(|| format!("reading model JSONL file: {}", path.display()))?;
                 let trimmed = line.trim_start();
                 if trimmed.is_empty() || trimmed.starts_with("//") {
                     continue;
                 }
-                let value: serde_json::Value =
-                    serde_json::from_str(trimmed).err_context(|| "reading model line")?;
+                let value: serde_json::Value = serde_json::from_str(trimmed)
+                    .err_context(|| format!("reading model line {lineno} of {}", path.display()))?;
                 f(n, &value)?;
                 n += 1;
             }

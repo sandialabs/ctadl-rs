@@ -355,7 +355,7 @@ pub enum FlowyError {
 /// The program is returned in SSA form.
 pub fn compile_program<P: AsRef<std::path::Path>>(file: P) -> Result<FlowyProgram, FlowyError> {
     let file = file.as_ref();
-    let contents = std::fs::read_to_string(file)?;
+    let contents = source_info::read_source(file)?;
     compile_program_contents(file.to_string_lossy().as_ref(), contents.as_str())
 }
 

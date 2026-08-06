@@ -32,7 +32,7 @@ rule: **find** some set of program elements, optionally filter them with
 > A Java `native` method is *not* one of these cases. When the library
 > implementing it is indexed alongside the app, CTADL links the two itself and
 > maps the arguments across the JNI ABI; you do not need a propagation model for
-> it. See [The JNI bridge](jni.md).
+> it. See [The JNI bridge](../README.md#the-jni-bridge).
 
 ---
 
@@ -85,6 +85,53 @@ CTADL ships no default sources or sinks. You can scaffold a starter file with:
 ```bash
 ctadl init-model model.json5
 ```
+
+### Checking a model file before you index
+
+Matching is decided **per import**, and only half of it needs an index. Stage 1 evaluates every
+generator's `where` against one program's name / parent / signature / qualified-id tables — it
+reads the import and nothing else. Stage 2 resolves the matched names to function ids, fans
+endpoints out over call sites, and expands wildcard sinks; that half needs the index. Since
+functions are never optimized out, the common case — a source or sink that names a function
+call — is fully decided in Stage 1.
+
+So `ctadl query` runs Stage 1 on its own when there is no index — because the project was never
+indexed, or is being indexed right now — instead of failing. You can find out whether a `where`
+selects anything without waiting for `ctadl index`:
+
+```bash
+ctadl import /path/to/app.apk --name my-app
+ctadl query my-app --models sources-and-sinks.json5 --output check.sarif
+```
+
+The output is the ordinary SARIF, and it reports what it found in the notifications a query
+already uses:
+
+| Notification | What it says |
+| --- | --- |
+| `CTADL0008` | There was no index, so this is a model check; it also lists what a model check cannot decide (below). |
+| `CTADL0004` | A generator declared a source, a sink, or a propagation and matched nothing — and which of the several reasons it was. |
+| `CTADL0009` | A generator's `in` clause admits none of the programs checked, so it was never evaluated. Not the same thing as matching nothing. |
+| `CTADL0010` | A bridge whose sides cannot be paired, in the same words `ctadl index` would use. |
+| `CTADL0011` | What each live generator's `where` selected: the count, and a few of the names. |
+| `CTADL0012` | A model file that could not be read, or a malformed generator. One typo no longer costs the rest of the check. |
+| `CTADL0100` | The totals, in Stage-1 units. |
+
+The run still exits non-zero: the query you asked for could not be answered. The built-in
+default models are not loaded, exactly as `ctadl query` does not load them.
+
+What it deliberately cannot tell you, all of it stated in `CTADL0008` rather than left implicit:
+
+- **`find: callsites`** — Stage 1 matches the callee (and the caller, for `in_function`). The
+  call-site fan-out is Stage 2, so "3 callees" does not mean any call site exists.
+- **`Argument(*)`** — expands over an arity computed from actual parameters and call sites
+  across every import. It is reported as one port, not as its expansion.
+- **A matched name can still vanish.** Stage 2 raises `CTADL0005` for a name the index does not
+  contain.
+- **Bridge pair counts.** The two side counts and the diagnosis need no index; the pair count
+  does, so none is reported.
+- **Cross-import bridges.** A bridge's sides can live in two imports, so a bridge verdict is
+  only meaningful when the project holds every import the real one will index.
 
 ---
 
@@ -557,10 +604,12 @@ loader.
 ### `bridge`
 
 Connects a callee matched in one program to its implementation in another, with an explicit
-argument correspondence. This is the declarative counterpart of [the JNI bridge](jni.md), for
-the boundaries no built-in pass can see: a Lua script calling a C function registered in a
-`luaL_Reg` table, an implementation bound through `RegisterNatives` rather than by symbol name,
-a call through a table field or a `dlsym`'d pointer.
+argument correspondence. This is the declarative counterpart of [the JNI
+bridge](../README.md#the-jni-bridge), for the boundaries no built-in pass can see: a Lua script
+calling a C function registered in a `luaL_Reg` table, a call through a table field or a `dlsym`'d
+pointer, or a `RegisterNatives`-bound implementation whose declaring class the bridge could not
+recover (it recovers most of them, so check the `jni registry:` counts before writing one by
+hand).
 
 ```jsonc
 {
@@ -670,7 +719,8 @@ Two consequences worth internalizing:
 
 #### Interaction with the built-in JNI bridge
 
-A user bridge over a pair the [built-in JNI pass](jni.md) also links **double-bridges** it: two
+A user bridge over a pair the [built-in JNI pass](../README.md#the-jni-bridge) also links
+**double-bridges** it: two
 sites, duplicated flows. If you are writing one for a `Java_…`-named method — which you should
 not normally need to — pass `--no-jni-bridge` to `ctadl index` so exactly one mechanism is in
 play. That is also what makes an A/B measurement between the two meaningful.
@@ -808,6 +858,9 @@ CTADL reports every flow where data returned by `source()` reaches
 
 ## 10. Tips
 
+- **Query before you index.** On a new or edited model file, `ctadl query` against an
+  un-indexed project is the fastest way to learn which generators select something and which
+  select nothing; it needs only the import. See §2.
 - **`signature_match` with `names`/`parents`** is the most maintainable way to
   model families of library methods — group by owning class.
 - **Get the ports right for the language.** Java methods usually taint through

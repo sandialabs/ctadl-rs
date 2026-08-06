@@ -22,7 +22,12 @@ use ctadl_ir::mir::Variable;
 /// Imports a flowy artifact into the store. This also saves the requirements so that they can be
 /// checked at query time.
 pub fn import(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
-    let program = flowy::compile_program(&import.artifact_path)?;
+    let program = flowy::compile_program(&import.artifact_path).err_context(|| {
+        format!(
+            "compiling flowy program: {}",
+            import.artifact_path.display()
+        )
+    })?;
 
     // Save requirements
     let data = bitcode::serialize(&program.requirements).map_err(Error::Bitcode)?;
@@ -42,8 +47,11 @@ pub fn import(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
 fn load_requirements(
     import: &ArtifactImport,
 ) -> Result<(SummaryRequires, EndpointRequires), Error> {
-    let data = std::fs::read(import.requirements_path())?;
-    let reqs: (SummaryRequires, EndpointRequires) = bitcode::deserialize(&data)?;
+    let path = import.requirements_path();
+    let data =
+        std::fs::read(&path).err_context(|| format!("reading requirements: {}", path.display()))?;
+    let reqs: (SummaryRequires, EndpointRequires) = bitcode::deserialize(&data)
+        .err_context(|| format!("decoding requirements: {}", path.display()))?;
     Ok(reqs)
 }
 
@@ -387,13 +395,14 @@ pub fn check<P: AsRef<Path>>(
     );
 
     if let Some(dot_path) = dump_index_graph {
-        let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+        let mut file = std::fs::File::create(dot_path)
+            .err_context(|| format!("creating dot file: {}", dot_path.display()))?;
         crate::graphviz::render_index_graph(
             &index_result.assign_like,
             &source_info.sites,
             &mut file,
         )
-        .err_context(|| "rendering index graph")?;
+        .err_context(|| format!("rendering index graph: {}", dot_path.display()))?;
         log::info!("Wrote index graph to '{}'", dot_path.display());
     }
 
