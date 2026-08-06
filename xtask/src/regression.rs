@@ -615,7 +615,10 @@ fn run_dex(name: &str, java: &Path, config: &Path) -> Result<Outcome> {
         .with_context(|| format!("failed to copy {} into scratch dir", java.display()))?;
 
     let mut javac = Command::new("javac");
-    javac.current_dir(&work).args(["--release", "8"]).arg(&src);
+    javac
+        .current_dir(&work)
+        .args(["--release", "8", "-encoding", "UTF-8"])
+        .arg(&src);
     exec::run_checked(javac, "javac")?;
 
     let classes = class_files(&work)?;
@@ -717,7 +720,7 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path) -> Result<Outcome> {
     let mut javac = Command::new("javac");
     javac
         .current_dir(&work)
-        .args(["--release", "8", "-d"])
+        .args(["--release", "8", "-encoding", "UTF-8", "-d"])
         .arg(&class_dir)
         .arg(&src);
     exec::run_checked(javac, "javac")?;
@@ -1435,7 +1438,10 @@ fn run_jni(
     std::fs::copy(java, &src)
         .with_context(|| format!("failed to copy {} into scratch dir", java.display()))?;
     let mut javac = Command::new("javac");
-    javac.current_dir(&work).args(["--release", "8"]).arg(&src);
+    javac
+        .current_dir(&work)
+        .args(["--release", "8", "-encoding", "UTF-8"])
+        .arg(&src);
     exec::run_checked(javac, "javac")?;
 
     let classes = class_files(&work)?;
