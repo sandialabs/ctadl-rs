@@ -60,10 +60,6 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, ErrorContext};
 use crate::project::ArtifactImport;
 
-// ---------------------------------------------------------------------------
-// The sidecar
-// ---------------------------------------------------------------------------
-
 /// One recovered `JNINativeMethod`.
 ///
 /// Both addresses are ELF virtual addresses, which is what a human spot-checks against the
@@ -118,9 +114,8 @@ pub struct JniRegistry {
 }
 
 impl JniRegistry {
-    /// Reads the sidecar out of an import directory. `Ok(None)` when the import has none --
-    /// every import that is not an ELF shared library, and every import made before this
-    /// existed.
+    /// Reads the registry out of an import directory. `Ok(None)` when the import has none -- every
+    /// import that is not an ELF shared library, and every import made before this existed.
     ///
     /// # Errors
     ///
@@ -139,7 +134,7 @@ impl JniRegistry {
         Ok(Some(registry))
     }
 
-    /// Writes the sidecar into an import directory.
+    /// Writes the registry into an import directory.
     ///
     /// # Errors
     ///
@@ -153,7 +148,7 @@ impl JniRegistry {
         Ok(())
     }
 
-    /// Pretty-prints the sidecar at `path`, for `ctadl inspect`.
+    /// Pretty-prints the registry at `path`, for `ctadl inspect`.
     ///
     /// It takes a raw path rather than an [`ArtifactImport`] for the same reason
     /// [`crate::cli::inspect_bitcode`] does: a store should stay inspectable when its import
@@ -211,7 +206,7 @@ impl JniRegistry {
 ///
 /// # Errors
 ///
-/// Only if the sidecar cannot be written. A file that cannot be read, or is not an ELF, or is
+/// Only if the registry cannot be written. A file that cannot be read, or is not an ELF, or is
 /// truncated, is a quiet no-op.
 pub fn scan_import(
     import: &ArtifactImport,
@@ -814,7 +809,7 @@ pub(super) fn attribute<'a>(registry: &'a JniRegistry, index: &ClassIndex<'a>) -
         let declaring = index.classes(entry.name.as_str(), entry.descriptor.as_str());
 
         if i > start {
-            // A zero entry size means the sidecar predates the field; without it a gap cannot be
+            // A zero entry size means the registry predates the field; without it a gap cannot be
             // told from contiguity, so guard 1 abstains rather than splitting everything.
             let contiguous = registry.entry_size == 0
                 || entry.table_addr == entries[i - 1].table_addr + registry.entry_size;

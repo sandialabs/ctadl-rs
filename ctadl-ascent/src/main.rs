@@ -879,9 +879,6 @@ fn autodetect_import_language<P: AsRef<Path>>(
             match ext {
                 Some("dex") => ImportLanguage::Dex,
                 Some("apk") => ImportLanguage::Apk,
-                // Without this arm a bundle falls through to `file_looks_binary`, which sees the
-                // NULs in the ZIP and hands the whole thing to Ghidra: a slow, confusing failure
-                // rather than an import.
                 Some("xapk") => ImportLanguage::Xapk,
                 Some("class") => ImportLanguage::Jvm,
                 Some("jar") => ImportLanguage::Jar,

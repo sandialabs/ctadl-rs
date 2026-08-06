@@ -36,10 +36,6 @@ libc = "0.2"
 log = "0.4"
 log-once = "0.4"
 memmap = "0.7"
-# ELF section/relocation reading for the JNI `RegisterNatives` table scan
-# (`languages::jni::registry`). No writer, no other formats: the scan only ever
-# looks at ELF shared libraries. 0.37.3 is already in the lock file transitively
-# (psm -> ar_archive_writer), so this adds no new version to the tree.
 object = { version = "0.37", default-features = false, features = ["read_core", "elf", "std"] }
 packed_struct = "0.10"
 parquet = "58"

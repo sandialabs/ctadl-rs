@@ -216,14 +216,6 @@ pub struct AbiChoice<'a> {
 /// lexicographically first ABI present -- skipping any ABI whose every entry fails
 /// [`looks_like_object_file`]. `None` when `entries` is empty.
 ///
-/// The skip is not hypothetical. Chrome ships `lib/arm64-v8a/libplaceholder.so` at **zero bytes**
-/// and its real code as `lib/armeabi-v7a/libelements.so`; picking by preference order alone
-/// selects the placeholder, every entry is then rejected as not-an-object-file, and the import
-/// yields no native libraries at all.
-///
-/// Only the first four bytes of each candidate entry are decompressed, so this costs a handful of
-/// ZIP seeks rather than a pass over a several-hundred-megabyte library.
-///
 /// If *no* ABI is usable, the plain preference order is returned as before: the caller's
 /// per-library reporting is what explains that case, and there is nothing better to pick.
 pub fn preferred_abi<'a>(apk_bytes: &[u8], entries: &'a [NativeLibEntry]) -> Option<AbiChoice<'a>> {

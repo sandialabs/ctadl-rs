@@ -5,12 +5,6 @@ An Android App Bundle is not distributed as one APK. It is a base APK holding th
 count -- one resource-only split per language and screen density. APKPure and the like ship that
 set zipped up as a single `.xapk`.
 
-CTADL already handles the shape correctly once unzipped: [`crate::cli::import`] imports a
-Dex-less native-only split (see [`crate::languages::apk_native`]), and co-indexing joins the
-halves. What was missing was the unzipping, and its absence was not a graceful degradation --
-with no `.xapk` arm in the extension table, a bundle fell through to `file_looks_binary`, which
-sees the NULs in the ZIP and routes the whole thing to the Ghidra frontend.
-
 This module unwraps the bundle: extract each `*.apk`, import each through the ordinary APK path,
 and record the result on the parent.
 

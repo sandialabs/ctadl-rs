@@ -106,11 +106,8 @@ pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
 pub const VMT_BITCODE_FILE: &str = "ir-vmt.bitcode";
 
 /// Filename of the `RegisterNatives` tables recovered from an ELF import, beside the artifacts
-/// above. See [`crate::languages::jni::registry`].
-///
-/// A *sidecar* rather than a new VMT column, deliberately: it carries no `bitcode`, so
-/// [`IMPORT_FORMAT_VERSION`] stays where it is and every existing import keeps loading. An
-/// import without the file simply contributes no registered natives.
+/// above. See [`crate::languages::jni::registry`]. An import without the file simply contributes no
+/// registered natives.
 pub const JNI_REGISTRY_FILE: &str = "jni-registry.json";
 
 /// Filename of an import's config, which records its [`IMPORT_FORMAT_VERSION`].

@@ -127,9 +127,6 @@ pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Er
             program_info
         }
         Xapk => {
-            // A bundle contributes no program of its own -- every class and every library is in
-            // one of its splits -- so this is an empty `ProgramInfo`, the same shape a
-            // native-only split import ends up with.
             let sub_imports = xapk::import_bundle(import, opts)?;
             if !sub_imports.is_empty() {
                 log::info!(
@@ -165,18 +162,17 @@ pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Er
 
 /// How to perform one index, beyond the project and the model files.
 ///
-/// Follows [`ImportOptions`]: the knobs that are neither the project nor its models travel
-/// together rather than as a row of positional booleans. [`Default`] is what `ctadl index` does
+/// Follows [`ImportOptions`]. [`Default`] is what `ctadl index` does
 /// with no flags.
 #[derive(Debug, Clone, Copy)]
 pub struct IndexOptions<'a> {
-    /// Suppress the automatic JNI link between Java `native` stubs and their native
-    /// implementations (see [`crate::languages::jni`]). Suppresses the registry with it: the
-    /// registry is one of the bridge's resolution tiers, not a separate feature.
+    /// Suppress the automatic JNI link between Java `native` stubs and their native implementations
+    /// (see [`crate::languages::jni`]). Suppresses the registry with it: the registry is one of the
+    /// bridge's resolution tiers, not a separate feature.
     pub no_jni_bridge: bool,
     /// Ignore the `RegisterNatives` tables recovered at import time, leaving the bridge with the
-    /// `Java_…` symbol convention alone. The clean A/B for what the registry contributes, with
-    /// no re-import needed -- scanning happens at import time either way.
+    /// `Java_…` symbol convention alone. The clean A/B for what the registry contributes, with no
+    /// re-import needed -- scanning happens at import time either way.
     pub no_jni_registry: bool,
     pub strategy: CallResolutionStrategy,
     pub prune_unreachable_cfg_nodes: bool,
