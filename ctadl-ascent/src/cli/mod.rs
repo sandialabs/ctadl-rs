@@ -24,7 +24,7 @@ use crate::facts::FlowVariable;
 use crate::index_engine::{
     IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index_with_config,
 };
-use crate::languages::{apk_native, dex, jni, jvm, lua, pcode};
+use crate::languages::{apk_native, dex, jni, jvm, lua, pcode, xapk};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
@@ -126,6 +126,23 @@ pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Er
             }
             program_info
         }
+        Xapk => {
+            let sub_imports = xapk::import_bundle(import, opts)?;
+            if !sub_imports.is_empty() {
+                log::info!(
+                    "'{}': {} sub-import(s) indexed alongside it: {}",
+                    import.name,
+                    sub_imports.len(),
+                    sub_imports.join(", ")
+                );
+                // Reload rather than saving `import` back: each split rewrote its own config in
+                // the meantime, and the caller reloads after this to pick these names up.
+                let mut updated = ArtifactImport::load_by_name(&import.name)?;
+                updated.sub_imports = sub_imports;
+                updated.save()?;
+            }
+            ProgramInfo::default()
+        }
         Jar => jvm::import_jar(&import.artifact_path)?,
         Jvm => jvm::import_class(&import.artifact_path)?,
         Pcode => pcode::import_pcode(import)?,
@@ -143,23 +160,58 @@ pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Er
     Ok(())
 }
 
+/// How to perform one index, beyond the project and the model files.
+///
+/// Follows [`ImportOptions`]. [`Default`] is what `ctadl index` does
+/// with no flags.
+#[derive(Debug, Clone, Copy)]
+pub struct IndexOptions<'a> {
+    /// Suppress the automatic JNI link between Java `native` stubs and their native implementations
+    /// (see [`crate::languages::jni`]). Suppresses the registry with it: the registry is one of the
+    /// bridge's resolution tiers, not a separate feature.
+    pub no_jni_bridge: bool,
+    /// Ignore the `RegisterNatives` tables recovered at import time, leaving the bridge with the
+    /// `Java_…` symbol convention alone. The clean A/B for what the registry contributes, with no
+    /// re-import needed -- scanning happens at import time either way.
+    pub no_jni_registry: bool,
+    pub strategy: CallResolutionStrategy,
+    pub prune_unreachable_cfg_nodes: bool,
+    pub alias_rule: bool,
+    pub dump_index_graph: Option<&'a Path>,
+}
+
+impl Default for IndexOptions<'_> {
+    fn default() -> Self {
+        Self {
+            no_jni_bridge: false,
+            no_jni_registry: false,
+            strategy: CallResolutionStrategy::Mixed,
+            prune_unreachable_cfg_nodes: true,
+            alias_rule: true,
+            dump_index_graph: None,
+        }
+    }
+}
+
 /// Indexes a project
 /// If summary_projects is provided, loads summaries from those projects and maps them into the current project.
 /// `no_default_models` suppresses the built-in per-language defaults, leaving `models` as the
-/// complete set. `no_jni_bridge` suppresses the automatic JNI link between Java `native` stubs and
-/// their native implementations (see [`crate::languages::jni`]).
-#[allow(clippy::too_many_arguments)]
+/// complete set. See [`IndexOptions`] for the rest.
 pub fn index(
     project: &AnalysisProject,
     summary_projects: &[String],
     models: &[std::path::PathBuf],
     no_default_models: bool,
-    no_jni_bridge: bool,
-    strategy: CallResolutionStrategy,
-    prune_unreachable_cfg_nodes: bool,
-    alias_rule: bool,
-    dump_index_graph: Option<&Path>,
+    opts: IndexOptions<'_>,
 ) -> Result<(), Error> {
+    let IndexOptions {
+        no_jni_bridge,
+        no_jni_registry,
+        strategy,
+        prune_unreachable_cfg_nodes,
+        alias_rule,
+        dump_index_graph,
+    } = opts;
     use crate::index_engine::phys_footprint_mb;
     log::info!(
         "indexing project '{}' from {} import(s): {}",
@@ -199,6 +251,12 @@ pub fn index(
         );
         if !no_jni_bridge {
             jni_observer.observe(&program_info, jni::SlotModel::for_language(import.language));
+            if !no_jni_registry {
+                // The `RegisterNatives` tables this import's library was scanned for. Read from
+                // the import directory rather than from the IR: they are a sidecar, so no
+                // import format version moved and every older import simply has none.
+                jni_observer.observe_registry(&import)?;
+            }
         }
 
         // Match this import while its IR is in hand, and retain only the *matches*. The index
@@ -382,7 +440,6 @@ pub struct QueryStatus {
 pub fn query(
     project: &AnalysisProject,
     models: &[std::path::PathBuf],
-    compact: bool,
     output: &Path,
     profile: query_engine::formatter::SarifProfile,
     dump_taint_graph: Option<&Path>,
@@ -395,7 +452,7 @@ pub fn query(
                 project: project.name.clone(),
             });
         }
-        return query_model_check(project, models, compact, output, profile, start_time_utc);
+        return query_model_check(project, models, output, profile, start_time_utc);
     }
     // Before touching a table: the parquet decoders panic on an encoding they cannot read, and
     // this is what turns that into an actionable "re-run `ctadl index`".
@@ -587,7 +644,6 @@ pub fn query(
         project,
         &facts,
         &taint_results,
-        compact,
         output,
         profile,
         &diagnostics,
@@ -617,7 +673,6 @@ pub fn query(
 fn query_model_check(
     project: &AnalysisProject,
     models: &[std::path::PathBuf],
-    compact: bool,
     output: &Path,
     profile: query_engine::formatter::SarifProfile,
     start_time_utc: String,
@@ -654,7 +709,7 @@ fn query_model_check(
     diagnostics.start_time_utc = start_time_utc;
 
     let execution_successful =
-        query_engine::formatter::format_model_check_sarif(compact, output, profile, &diagnostics)
+        query_engine::formatter::format_model_check_sarif(project, output, profile, &diagnostics)
             .err_context(|| "formatting sarif")?;
     if output.to_str() != Some("-") {
         log::info!("wrote {}", output.display());
@@ -1218,6 +1273,16 @@ pub fn inspect_parquet<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> 
     );
 
     Ok(())
+}
+
+/// Prints the `RegisterNatives` tables recovered from an import: one row per entry, with the
+/// address it was found at, the function it resolved to, and its Java signature.
+///
+/// # Errors
+///
+/// If the file cannot be read or parsed.
+pub fn inspect_jni_registry<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> {
+    jni::registry::JniRegistry::print(path.as_ref())
 }
 
 pub fn inspect_bitcode<P: AsRef<std::path::Path>>(path: P) -> Result<(), Error> {

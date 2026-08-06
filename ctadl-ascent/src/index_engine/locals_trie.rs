@@ -1,54 +1,65 @@
 //! A flat, CSR-style BYODS data structure for the `locals` relation.
 //!
-//! `locals(FunctionId, FlowVariable, Path, FormalIndex, Path)` is the dominant memory
-//! consumer of the index phase. As a normal Ascent relation it is stored ~6× over: the
-//! physical `Vec`, plus the indices `none`, `0_1`, `0_1_2`, the full existence index
-//! `0_1_2_3_4`, and the inverse `0_3_4`. Every index stores its value columns *inline*, so
-//! the full 5-column tuple is replicated many times.
+//! `locals(FunctionId, FlowVariable, Path, FormalIndex, Path)` uses more memory than anything
+//! else in the index phase. As a normal Ascent relation it is stored about 6 times over: once
+//! in the physical `Vec`, and again in each of the indices `none`, `0_1`, `0_1_2`, the full
+//! existence index `0_1_2_3_4`, and the inverse `0_3_4`. Every index stores its value columns
+//! *inline*, so the full 5-column tuple is copied many times.
 //!
-//! This module replaces all of that with a single shared store (the Ascent BYODS
-//! "ind_common"). Every logical index becomes a lightweight *view* over that one store.
+//! This module replaces all of that with one shared store: the Ascent BYODS "ind_common".
+//! Every logical index becomes a lightweight *view* over that single store.
 //!
 //! ## Why flat, not a nested trie
 //!
 //! The earlier design stored `(F,V) -> P -> {(M,Fp)}` as `HashMap<(F,V), HashMap<P,
-//! HashSet<(M,Fp)>>>`. Measured on a representative workload the groups are *tiny* — ~5
-//! leaves per `(F,V)` group spread over ~2 distinct `P` — so the two inner hash levels are
-//! nearly empty: each pays hashbrown's 8-bucket minimum allocation to hold ~2 elements.
-//! That structural slack, not the payload, was ~91% of the store (36k inner maps ≈ 53%,
-//! 70k leaf sets ≈ 38%, only ~13% real data + outer map).
+//! HashSet<(M,Fp)>>>`. On a representative workload the groups turned out to be *tiny*: about
+//! 5 leaves per `(F,V)` group, spread over about 2 distinct `P`. That left the two inner hash
+//! levels nearly empty. Each one pays hashbrown's minimum **4**-bucket allocation, plus
+//! control bytes, to hold about 2 elements. Most of the store's bytes went to that structural
+//! slack rather than to the data itself: 36k inner maps were about 53%, 70k leaf sets about
+//! 38%, and only about 13% was real data plus the outer map.
 //!
-//! We collapse both inner levels into one **sorted `Vec<(P,M,Fp)>` per `(F,V)` group**:
-//!   - one heap allocation per group instead of `1 + (#distinct P)` tiny hash tables;
-//!   - leaves packed contiguously (24 B each) with no per-element control bytes;
-//!   - the vec is kept sorted by `(P,M,Fp)`, so existence is a `binary_search`, the
-//!     `0_1_2` view is a `partition_point` range over the contiguous `P`-run, and inserts
-//!     keep order with a single shift (groups are ~5 elements, so O(group) is negligible).
+//! Flattening does not win all of that back. The flat form stores `P` inline on every leaf,
+//! where the nested form shared one `P` per leaf set. Measured against a faithful rebuild of
+//! the nested design over identical data, the flat design is 1.1–2.3× smaller, not about 10×.
 //!
-//! ## Large groups: promote to a hash set
+//! We collapse both inner levels into one **[`HybridSet`] of `(P,M,Fp)` per `(F,V)` group**.
+//! That gives us:
+//!   - one heap allocation per group, instead of `1 + (#distinct P)` tiny hash tables;
+//!   - leaves packed 24 B each, with no per-element control bytes. In the small
+//!     representation the whole occupancy map is a single `u64` word beside the slots;
+//!   - a group that is only two words wide, so the outer map entry is 32 B rather than 48.
+//!     One structure changes regime as it grows; it is not an enum over two representations;
+//!   - existence checks that probe rather than scan, at every group size.
 //!
-//! A sorted `Vec` is wrong for the *rare* dense-aliasing function whose `(F,V)` group grows
-//! to tens of thousands of leaves. The per-iteration delta->total merge re-copies the whole
-//! accumulated group every fixpoint round, so building a group of size `G` costs O(G^2) —
-//! the dominant cost on such inputs (profiled at ~55% of index time; see
-//! memory-investigation.md §7/§8). Once a group exceeds [`GROUP_HASHSET_THRESHOLD`] it
-//! switches to a `HashSet`, making the merge O(delta) (insert only the new leaves) and
-//! existence O(1). Small groups keep the `Vec`: one compact allocation, direct sorted
-//! `0_1_2` range probe, and the quadratic never bites because they stay tiny.
+//! ## Large groups
+//!
+//! No single representation serves both ends of the group-size distribution. A function with
+//! dense aliasing is *rare*, but its `(F,V)` group grows to tens of thousands of leaves. If
+//! the delta->total merge re-copies the whole accumulated group, then building a group of size
+//! `G` costs O(G^2). On such inputs that dominates everything else: profiling put it at about
+//! 55% of index time (see memory-investigation.md §7/§8).
+//!
+//! So a group that grows past [`SMALL_THRESHOLD`] switches to Swiss probing, using this
+//! crate's own table (see [`super::hybrid_set::swiss`]). There the merge is O(delta), because
+//! it inserts only the new leaves. Below the threshold the group probes linearly over an
+//! allocation that holds its element slots plus one occupancy word. The switch changes the
+//! regime *within* one structure; it does not change the type. See [`super::hybrid_set`] for
+//! why that is the right small representation, why it is not an enum, and how the transition
+//! is made cheap.
 //!
 //! The forward map `(F,V) -> [ (P,M,Fp) ]` serves `none`, `0_1`, `0_1_2`, existence, and
-//! iteration. The `0_3_4` view is *derived* by scanning (as before) rather than
-//! materializing a full inverse; a small side-index `fidx: F -> {V}` narrows each `0_3_4`
-//! probe to the flow-variables of the probed function.
+//! iteration. We do not materialize a full inverse. As before, the `0_3_4` view is *derived*
+//! by scanning, and a small side-index `fidx: F -> {V}` narrows each `0_3_4` probe to the
+//! flow-variables of the function being probed.
 //!
-//! Correctness note (differs from `ascent_byods_rels::eqrel`): eqrel tolerates Ascent
-//! merging the shared store twice per iteration (once via the ind_common, once via the
-//! full-index write target) because union-find merge is idempotent. `locals` is a plain
-//! relation, so a double merge would corrupt semi-naive evaluation. We therefore make the
-//! *only* real merge live on the ind_common ([`LocalsIndCommon`]); every index write target
+//! Correctness note (we differ here from `ascent_byods_rels::eqrel`): Ascent merges the shared
+//! store twice per iteration, once through the ind_common and once through the full-index
+//! write target. eqrel tolerates that, because union-find merge is idempotent. `locals` is a
+//! plain relation, so a double merge would corrupt semi-naive evaluation. We therefore keep
+//! the *only* real merge on the ind_common ([`LocalsIndCommon`]). Every index write target
 //! ([`FullWrite`], [`NoopWrite`]) has a no-op `RelIndexMerge`.
 
-use std::cmp::Ordering;
 use std::hash::{BuildHasherDefault, Hash};
 use std::marker::PhantomData;
 use std::ops::Index;
@@ -60,260 +71,104 @@ use ascent::internal::{
 };
 use rustc_hash::FxHasher;
 
-// The store keys are trusted, program-derived ids, so key on the fast,
-// deterministic `FxHasher` rather than the std collections' DoS-resistant
-// SipHash.
+use super::hybrid_set::{HybridSet, SMALL_THRESHOLD};
+
+// The store keys are trusted ids derived from the program, so we hash them with
+// the fast, deterministic `FxHasher` instead of the DoS-resistant SipHash the
+// std collections use.
 type Map<K, V> = hashbrown::HashMap<K, V, BuildHasherDefault<FxHasher>>;
 type Set<T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>>;
 
-/// Merge a sorted, deduplicated `src` into a sorted, deduplicated `dst` (both ascending),
-/// keeping `dst` sorted and deduplicated. Returns the number of elements that were *newly*
-/// added to `dst` (i.e. present in `src` but not already in `dst`). Linear two-way merge.
-fn merge_sorted<T: Ord>(dst: &mut Vec<T>, src: Vec<T>) -> usize {
-    if src.is_empty() {
+// ---------------------------------------------------------------------------
+// Sizing hashbrown's own tables, for [`HeapReport`].
+// ---------------------------------------------------------------------------
+//
+// The store's leaves live in `HybridSet`s, and those report their own bytes. But the maps
+// holding those sets are hashbrown's, and hashbrown reports only `capacity()`. These three
+// items turn a capacity into bytes. They live here because this store is what they were
+// written for, and what the counting-allocator bench validates them against. `assign_like_trie`
+// and `hybrid_set`'s tests use them from here.
+
+/// Width in bytes of hashbrown's SIMD control group.
+///
+/// On top of one control byte per bucket, every table's allocation carries `Group::WIDTH`
+/// trailing control bytes. The heap estimators below need that width, and hashbrown does not
+/// export it. hashbrown picks the implementation by target feature
+/// (`hashbrown-0.16.1/src/control/group/mod.rs`); we mirror that choice here.
+pub const HB_GROUP_WIDTH: usize = if cfg!(all(
+    target_feature = "sse2",
+    any(target_arch = "x86", target_arch = "x86_64"),
+    not(miri)
+)) {
+    16 // sse2
+} else if cfg!(all(
+    target_arch = "aarch64",
+    target_feature = "neon",
+    target_endian = "little",
+    not(miri)
+)) {
+    8 // neon
+} else {
+    std::mem::size_of::<usize>() // generic fallback: Group is a usize
+};
+
+/// Number of buckets hashbrown allocated for a table that reports `capacity`. Returns 0 if the
+/// table has never allocated.
+///
+/// This inverts hashbrown's `bucket_mask_to_capacity`. A table of `b >= 8` buckets reports
+/// `b / 8 * 7`, keeping 12.5% of its slots empty. The smallest table has `b == 4` and reports
+/// 3, so the floor is **4** buckets, not 8. `capacity_to_buckets` does lift the minimum to 8 or
+/// 16 buckets for elements narrower than 4 bytes. We do not model that lift, because the
+/// `capacity` the table reports already reflects it.
+pub fn hb_buckets(capacity: usize) -> usize {
+    if capacity == 0 {
         return 0;
     }
-    if dst.is_empty() {
-        let n = src.len();
-        *dst = src;
-        return n;
-    }
-    let old = std::mem::take(dst);
-    let mut merged = Vec::with_capacity(old.len() + src.len());
-    let mut oi = old.into_iter().peekable();
-    let mut si = src.into_iter().peekable();
-    let mut added = 0usize;
-    loop {
-        match (oi.peek(), si.peek()) {
-            (Some(a), Some(b)) => match a.cmp(b) {
-                Ordering::Less => merged.push(oi.next().unwrap()),
-                Ordering::Greater => {
-                    merged.push(si.next().unwrap());
-                    added += 1;
-                }
-                Ordering::Equal => {
-                    merged.push(oi.next().unwrap());
-                    si.next();
-                }
-            },
-            (Some(_), None) => merged.push(oi.next().unwrap()),
-            (None, Some(_)) => {
-                merged.push(si.next().unwrap());
-                added += 1;
-            }
-            (None, None) => break,
-        }
-    }
-    *dst = merged;
-    added
+    (capacity * 8).div_ceil(7).next_power_of_two().max(4)
 }
 
-/// Number of distinct elements in the union of two sorted, deduplicated ascending slices
-/// (i.e. the length `merge_sorted(dst, src)` would produce). O(m+n), allocation-free.
-/// Lets `absorb_group` decide, *before* merging, whether a Small+Small union would exceed
-/// `GROUP_HASHSET_THRESHOLD` — so it can build straight into a `HashSet` instead of merging
-/// into a `Vec` that `promote()` would immediately deallocate.
-fn merge_size<T: Ord>(dst: &[T], src: &[T]) -> usize {
-    let mut oi = dst.iter().peekable();
-    let mut si = src.iter().peekable();
-    let mut count = 0usize;
-    loop {
-        match (oi.peek(), si.peek()) {
-            (Some(a), Some(b)) => {
-                match a.cmp(b) {
-                    Ordering::Less => {
-                        oi.next();
-                    }
-                    Ordering::Greater => {
-                        si.next();
-                    }
-                    Ordering::Equal => {
-                        oi.next();
-                        si.next();
-                    }
-                }
-                count += 1;
-            }
-            (Some(_), None) => {
-                count += oi.count();
-                break;
-            }
-            (None, Some(_)) => {
-                count += si.count();
-                break;
-            }
-            (None, None) => break,
-        }
+/// Estimated heap bytes held by a hashbrown table whose element type is `elem` bytes wide and
+/// whose `capacity()` is `capacity`. The estimate includes load-factor slack, because it prices
+/// the buckets actually allocated rather than the elements stored.
+///
+/// For any element whose alignment is at most [`HB_GROUP_WIDTH`], this reproduces hashbrown's
+/// `calculate_layout_for` exactly: element slots padded up to the control alignment, then one
+/// control byte per bucket, plus a [`HB_GROUP_WIDTH`] mirror. Every type we measure through
+/// this is 8-byte-aligned, so the estimate is exact. An element with a stricter alignment would
+/// allocate slightly more padding than we report.
+pub fn hb_bytes(capacity: usize, elem: usize) -> usize {
+    let buckets = hb_buckets(capacity);
+    if buckets == 0 {
+        return 0;
     }
-    count
+    buckets
+        .saturating_mul(elem)
+        .next_multiple_of(HB_GROUP_WIDTH)
+        + buckets
+        + HB_GROUP_WIDTH
 }
 
 // ---------------------------------------------------------------------------
-// A single `(F,V)` group's leaves. `Small` (the overwhelmingly common case, ~5 leaves)
-// stays a sorted, deduplicated `Vec`; a group that grows past `GROUP_HASHSET_THRESHOLD`
-// switches to a `HashSet` so the per-iteration delta->total merge is O(delta) instead of
-// re-copying the whole accumulated group each round (which made large groups O(N^2)).
+// A single `(F,V)` group's leaves.
 // ---------------------------------------------------------------------------
 
-/// Groups with more than this many leaves switch from a sorted `Vec` to a `HashSet`.
-const GROUP_HASHSET_THRESHOLD: usize = 64;
-
-#[derive(Clone)]
-enum Group<P, M, Fp> {
-    /// Sorted ascending, deduplicated. Existence = `binary_search`; `0_1_2` = `partition_point`.
-    Small(Vec<(P, M, Fp)>),
-    /// Unordered, deduplicated. Existence = hash lookup; merge = per-element insert (O(delta)).
-    Large(Set<(P, M, Fp)>),
-}
-
-/// Iterator over a group's leaves regardless of representation. Order is unspecified for
-/// `Large`; every consumer that uses `iter()` is order-independent (the sorted-only `0_1_2`
-/// range probe reaches into the variants directly instead).
-enum GroupIter<'a, P, M, Fp> {
-    Small(std::slice::Iter<'a, (P, M, Fp)>),
-    Large(hashbrown::hash_set::Iter<'a, (P, M, Fp)>),
-}
-impl<'a, P, M, Fp> Iterator for GroupIter<'a, P, M, Fp> {
-    type Item = &'a (P, M, Fp);
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            GroupIter::Small(i) => i.next(),
-            GroupIter::Large(i) => i.next(),
-        }
-    }
-}
-
-// Bounds-light group ops (no `Ord`): iteration and size, used by the read views.
-impl<P, M, Fp> Group<P, M, Fp>
-where
-    P: Clone + Eq + Hash,
-    M: Clone + Eq + Hash,
-    Fp: Clone + Eq + Hash,
-{
-    #[inline]
-    fn len(&self) -> usize {
-        match self {
-            Group::Small(v) => v.len(),
-            Group::Large(s) => s.len(),
-        }
-    }
-    #[inline]
-    fn iter(&self) -> GroupIter<'_, P, M, Fp> {
-        match self {
-            Group::Small(v) => GroupIter::Small(v.iter()),
-            Group::Large(s) => GroupIter::Large(s.iter()),
-        }
-    }
-}
-
-// Group ops that maintain / query order need `Ord` on the leaf columns.
-impl<P, M, Fp> Group<P, M, Fp>
-where
-    P: Clone + Eq + Hash + Ord,
-    M: Clone + Eq + Hash + Ord,
-    Fp: Clone + Eq + Hash + Ord,
-{
-    #[inline]
-    fn new() -> Self {
-        Group::Small(Vec::new())
-    }
-
-    #[inline]
-    fn contains(&self, leaf: &(P, M, Fp)) -> bool {
-        match self {
-            Group::Small(v) => v.binary_search(leaf).is_ok(),
-            Group::Large(s) => s.contains(leaf),
-        }
-    }
-
-    /// Convert a `Small` group in place to `Large`. No-op if already `Large`.
-    fn promote(&mut self) {
-        if let Group::Small(v) = self {
-            *self = Group::Large(std::mem::take(v).into_iter().collect());
-        }
-    }
-
-    /// Insert one leaf; returns true if newly added. Promotes to `Large` when a `Small`
-    /// group grows past the threshold.
-    fn insert(&mut self, leaf: (P, M, Fp)) -> bool {
-        match self {
-            Group::Small(v) => match v.binary_search(&leaf) {
-                Ok(_) => false,
-                Err(pos) => {
-                    v.insert(pos, leaf);
-                    if v.len() > GROUP_HASHSET_THRESHOLD {
-                        self.promote();
-                    }
-                    true
-                }
-            },
-            Group::Large(s) => s.insert(leaf),
-        }
-    }
-
-    /// Merge `other` into `self` (union). Returns how many leaves were *newly* added to
-    /// `self`. Small+Small stays a sorted linear merge (may promote); any case touching a
-    /// `Large` side builds the union in a `HashSet` (O(other) inserts, no whole-group
-    /// re-copy — this is what removes the O(N^2) merge on dense groups).
-    fn absorb_group(&mut self, other: Group<P, M, Fp>) -> usize {
-        match (std::mem::replace(self, Group::Small(Vec::new())), other) {
-            (Group::Small(mut dst), Group::Small(src)) => {
-                if merge_size(&dst, &src) > GROUP_HASHSET_THRESHOLD {
-                    // Union would become a Large group: build it straight into a HashSet
-                    // rather than merge into a throwaway Vec that promote() would
-                    // immediately deallocate.
-                    let before = dst.len();
-                    let mut set: Set<(P, M, Fp)> = dst.into_iter().collect();
-                    for leaf in src {
-                        set.insert(leaf);
-                    }
-                    let added = set.len() - before;
-                    *self = Group::Large(set);
-                    added
-                } else {
-                    let added = merge_sorted(&mut dst, src);
-                    *self = Group::Small(dst);
-                    added
-                }
-            }
-            (this, other) => {
-                let (mut set, before) = match this {
-                    Group::Large(s) => {
-                        let n = s.len();
-                        (s, n)
-                    }
-                    Group::Small(v) => {
-                        let s: Set<(P, M, Fp)> = v.into_iter().collect();
-                        let n = s.len();
-                        (s, n)
-                    }
-                };
-                match other {
-                    Group::Small(v) => {
-                        for leaf in v {
-                            set.insert(leaf);
-                        }
-                    }
-                    Group::Large(s) => {
-                        for leaf in s {
-                            set.insert(leaf);
-                        }
-                    }
-                }
-                let added = set.len() - before;
-                *self = Group::Large(set);
-                added
-            }
-        }
-    }
-}
+/// The leaves of one `(F,V)` group, held in a [`HybridSet`].
+///
+/// A `HybridSet` is a two-word structure. While the group holds at most [`SMALL_THRESHOLD`]
+/// leaves it probes linearly over its bare element slots. That is by far the common case: 67
+/// to 100% of the groups hold exactly *one* leaf, in every store we have measured, whatever
+/// the largest group in it was. Above the threshold it switches to Swiss probing, which
+/// keeps the per-iteration delta->total merge at O(delta) instead of re-copying the whole
+/// accumulated group every round. Being two words rather than three saves 8 B on *every* entry
+/// of the forward map, whether or not that entry ever gets promoted.
+type Group<P, M, Fp> = HybridSet<(P, M, Fp)>;
 
 // ---------------------------------------------------------------------------
-// Physical `rel!` storage. Stores no tuples (all data lives in the shared
-// ind_common), but tracks the row count so `prog.locals.len()` — the only
-// post-run consumer of the physical relation — still reports the true size.
-// `push` is invoked exactly once per newly-inserted row by the generated code.
+// Physical `rel!` storage. It stores no tuples, since all the data lives in the
+// shared ind_common. It does track the row count, so that `prog.locals.len()`
+// still reports the true size. That call is the only thing that reads the
+// physical relation after a run. The generated code calls `push` exactly once
+// per newly-inserted row.
 // ---------------------------------------------------------------------------
 pub struct CountingVec<T> {
     len: usize,
@@ -353,7 +208,8 @@ impl<T> Index<usize> for CountingVec<T> {
 }
 
 // ---------------------------------------------------------------------------
-// Clone-able boxed iterator (a local copy of byods' private IteratorFromDyn).
+// A boxed iterator we can clone. This is a local copy of byods' private
+// IteratorFromDyn, which we cannot reach from here.
 // ---------------------------------------------------------------------------
 pub struct DynIter<'a, T> {
     iter: Box<dyn Iterator<Item = T> + 'a>,
@@ -387,7 +243,7 @@ impl<T> Clone for DynIter<'_, T> {
 }
 
 // ---------------------------------------------------------------------------
-// The shared store (Ascent's `ind_common`).
+// The shared store, which is Ascent's `ind_common`.
 // ---------------------------------------------------------------------------
 pub struct LocalsIndCommon<F, V, P, M, Fp>
 where
@@ -397,22 +253,22 @@ where
     M: Clone + Eq + Hash,
     Fp: Clone + Eq + Hash,
 {
-    /// forward: (F,V) -> sorted `Vec` of `(P, M, Fp)` (ascending, deduplicated). Serves
-    /// none / 0_1 / 0_1_2 / existence, and the `0_3_4` view by *scanning*. The vec is kept
-    /// sorted so existence is a `binary_search` and `0_1_2` is a `partition_point` range over
-    /// the contiguous `P`-run. One heap allocation per group replaces the old nested
-    /// `HashMap<P, HashSet<(M,Fp)>>` (which was ~91% hashbrown slack on tiny groups).
+    /// Forward map: `(F,V)` -> the set of `(P, M, Fp)` leaves for that group. It serves the
+    /// `none`, `0_1`, `0_1_2`, and existence views directly, and the `0_3_4` view by
+    /// *scanning*. Because a group is a set, existence is a probe, and `0_1_2` filters the
+    /// group for its `P` rather than slicing a run. One heap allocation per group replaces
+    /// the old nested `HashMap<P, HashSet<(M,Fp)>>`, which on tiny groups was mostly
+    /// hashbrown slack.
     fwd: Map<(F, V), Group<P, M, Fp>>,
-    /// side-index: F -> set of V present for that function. Lets a `0_3_4` probe restrict its
-    /// scan to the flow-variables of the probed function instead of walking every `(F,V)` group
-    /// in `fwd`. Maintained in lockstep with `fwd`'s outer keys (exactly one V per `(F,V)`
-    /// group), so it is cheap: one V (8 B + hashbrown slack) per group vs. the multi-GB store.
+    /// Side-index: `F` -> the set of `V` present for that function. It lets a `0_3_4` probe
+    /// restrict its scan to the flow-variables of the function being probed, instead of
+    /// walking every `(F,V)` group in `fwd`. We keep it in lockstep with `fwd`'s outer keys,
+    /// one V per `(F,V)` group. That is cheap: one V (8 B plus hashbrown slack) per group,
+    /// against a store measured in gigabytes.
     fidx: Map<F, Set<V>>,
     len: usize,
 }
 
-// Bounds-light methods (no `Ord` needed): callable from the read views, which are only
-// bounded `Clone + Eq + Hash`.
 impl<F, V, P, M, Fp> LocalsIndCommon<F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
@@ -430,31 +286,24 @@ where
         self.len == 0
     }
 
-    /// Number of distinct `(F, V)` groups — i.e. distinct variables reached by some formal,
-    /// since `fwd`'s outer key is exactly the subject of a `locals` row. O(1): the trie
-    /// already keys on the prefix a scan of the rows would have to rediscover.
+    /// Number of distinct `(F, V)` groups. That is the number of distinct variables reached by
+    /// some formal, because `fwd`'s outer key is exactly the subject of a `locals` row. It
+    /// costs O(1): the trie already keys on the prefix that a scan of the rows would have to
+    /// rediscover.
     #[inline]
     pub fn num_reached_variables(&self) -> usize {
         self.fwd.len()
     }
 
-    /// Phase-0 instrumentation: estimate the heap bytes held by the forward store vs. the
-    /// `fidx` side-index, so we can see *which* structure dominates before optimizing (external
-    /// `phys_footprint` can't attribute bytes to a sub-structure). Estimates are
-    /// allocation-size approximations that include hashbrown load-factor slack; they are for
-    /// *relative* comparison (fwd vs fidx), not exact accounting. O(rows), one pass.
+    /// Phase-0 instrumentation. Estimates the heap bytes held by the forward store against
+    /// those held by the `fidx` side-index, so we can see *which* structure dominates before
+    /// we optimize. An external `phys_footprint` cannot attribute bytes to a sub-structure,
+    /// so we count them here.
+    ///
+    /// Hash-table bytes include load-factor slack ([`hb_bytes`], which is exact for these
+    /// element types), and group bytes come from [`HybridSet::heap_bytes`]. The whole report
+    /// therefore accounts for allocation sizes, not for payload. It takes one pass, O(rows).
     pub fn heap_report(&self) -> HeapReport {
-        // hashbrown allocates `buckets` slots (a power of two sized so that 7/8*buckets >=
-        // capacity), each `size_of::<T>()` bytes, plus one control byte per bucket (+ a
-        // group-width mirror). Approximate that from the map's reported `capacity()`.
-        fn hb_bytes(capacity: usize, elem: usize) -> usize {
-            if capacity == 0 {
-                return 0;
-            }
-            let buckets = (capacity * 8).div_ceil(7).next_power_of_two().max(8);
-            buckets * (elem + 1) + 16
-        }
-
         let sz_outer = std::mem::size_of::<((F, V), Group<P, M, Fp>)>();
         let sz_leaf = std::mem::size_of::<(P, M, Fp)>();
         let sz_fidx_outer = std::mem::size_of::<(F, Set<V>)>();
@@ -470,33 +319,35 @@ where
             fidx_vs: 0,
             fidx_bytes: hb_bytes(self.fidx.capacity(), sz_fidx_outer),
             elem_sizes: (sz_outer, 0, sz_leaf, sz_fidx_outer, sz_fidx_val),
+            max_group: 0,
+            large_groups: 0,
+            group_hist: Vec::new(),
         };
+        // Groups are unordered, so counting distinct `P` needs a scratch set rather than a run
+        // count. We use one set and clear it per group, which keeps the report to a single
+        // extra allocation.
+        let mut ps: Set<&P> = Set::default();
         for group in self.fwd.values() {
             r.leaf_elems += group.len();
-            match group {
-                Group::Small(vec) => {
-                    // Group vec heap buffer: capacity slots of the leaf tuple (no control bytes).
-                    r.fwd_bytes += vec.capacity() * sz_leaf;
-                    // Distinct P = run boundaries in the sorted vec.
-                    let mut last: Option<&P> = None;
-                    for (p, _, _) in vec.iter() {
-                        if last != Some(p) {
-                            r.p_entries += 1;
-                            last = Some(p);
-                        }
-                    }
-                }
-                Group::Large(set) => {
-                    // Hash set buffer: control bytes + leaf slots (with load-factor slack).
-                    r.fwd_bytes += hb_bytes(set.capacity(), sz_leaf);
-                    // Unordered, so count distinct P with a scratch set.
-                    let mut ps: Set<&P> = Set::default();
-                    for (p, _, _) in set.iter() {
-                        ps.insert(p);
-                    }
-                    r.p_entries += ps.len();
-                }
+            r.max_group = r.max_group.max(group.len());
+            // Coarse power-of-two histogram of group sizes: bucket i counts the groups whose
+            // leaf count falls in `[2^i, 2^(i+1))`. This is what tells a benchmark, or a
+            // profile of a real target, which regime the store is in: many tiny groups, which
+            // the small representation is tuned for, or a few huge ones, which get promoted.
+            let bucket = usize::BITS as usize - 1 - group.len().max(1).leading_zeros() as usize;
+            if r.group_hist.len() <= bucket {
+                r.group_hist.resize(bucket + 1, 0);
             }
+            r.group_hist[bucket] += 1;
+            if group.is_large() {
+                r.large_groups += 1;
+            }
+            r.fwd_bytes += group.heap_bytes();
+            ps.clear();
+            for (p, _, _) in group.iter() {
+                ps.insert(p);
+            }
+            r.p_entries += ps.len();
         }
         for vs in self.fidx.values() {
             r.fidx_vs += vs.len();
@@ -504,30 +355,22 @@ where
         }
         r
     }
-}
 
-// Methods that maintain / query the sorted group vecs need `Ord` on the leaf columns.
-impl<F, V, P, M, Fp> LocalsIndCommon<F, V, P, M, Fp>
-where
-    F: Clone + Eq + Hash,
-    V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash + Ord,
-    M: Clone + Eq + Hash + Ord,
-    Fp: Clone + Eq + Hash + Ord,
-{
     #[inline]
     fn contains(&self, f: &F, v: &V, p: &P, m: &M, fp: &Fp) -> bool {
-        // (P,M,Fp) are cheap to clone (8-byte handles + i16); avoids a borrow-key helper.
+        // `(P,M,Fp)` are cheap to clone: 8-byte handles plus an i16. Cloning them lets us skip
+        // a borrow-key helper.
         self.fwd
             .get(&(f.clone(), v.clone()))
             .is_some_and(|group| group.contains(&(p.clone(), m.clone(), fp.clone())))
     }
 
-    /// Insert a full tuple; returns true if newly added to *this* store.
+    /// Insert a full tuple. Returns true if it was new to *this* store.
     fn insert(&mut self, key: &(F, V, P, M, Fp)) -> bool {
         use hashbrown::hash_map::Entry;
         let (f, v, p, m, fp) = key;
-        // Fetch the (F,V) group, recording V in the side-index the first time the group appears.
+        // Fetch the (F,V) group. The first time a group appears, record its V in the
+        // side-index.
         let group = match self.fwd.entry((f.clone(), v.clone())) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
@@ -543,13 +386,13 @@ where
         }
     }
 
-    /// Merge `from` into `self` (union). Used by the delta->total move.
+    /// Merge `from` into `self`, taking the union. The delta->total move uses this.
     fn absorb(&mut self, from: &mut Self) {
         use hashbrown::hash_map::Entry;
         for ((f, v), fromgroup) in from.fwd.drain() {
             match self.fwd.entry((f.clone(), v.clone())) {
                 Entry::Occupied(e) => {
-                    self.len += e.into_mut().absorb_group(fromgroup);
+                    self.len += e.into_mut().merge(fromgroup);
                 }
                 Entry::Vacant(e) => {
                     self.fidx.entry(f).or_default().insert(v);
@@ -563,27 +406,37 @@ where
     }
 }
 
-/// Per-structure byte estimate for the `locals` store (see [`LocalsIndCommon::heap_report`]).
+/// Byte estimate for the `locals` store, broken down per structure. See
+/// [`LocalsIndCommon::heap_report`].
 #[derive(Debug, Clone)]
 pub struct HeapReport {
-    /// Logical row count (== `locals` size).
+    /// Logical row count. Equals the size of `locals`.
     pub rows: usize,
-    /// Number of distinct `(F,V)` groups (outer forward keys).
+    /// Number of distinct `(F,V)` groups, that is, of outer forward keys.
     pub fv_groups: usize,
     /// Number of distinct `(F,V,P)` entries across all groups.
     pub p_entries: usize,
-    /// Number of `(P,M,Fp)` leaf elements across all groups (== rows).
+    /// Number of `(P,M,Fp)` leaf elements across all groups. Equals `rows`.
     pub leaf_elems: usize,
-    /// Estimated bytes for the whole forward store (outer map + per-group leaf vecs).
+    /// Estimated bytes for the whole forward store: the outer map plus every group's leaves.
     pub fwd_bytes: usize,
-    /// Number of distinct functions in the `fidx` side-index (outer keys).
+    /// Number of distinct functions in the `fidx` side-index, that is, of its outer keys.
     pub fidx_funcs: usize,
-    /// Number of `V` entries across all `fidx` sets (== distinct `(F,V)` groups == `fv_groups`).
+    /// Number of `V` entries across all `fidx` sets. Equals the number of distinct `(F,V)`
+    /// groups, which is `fv_groups`.
     pub fidx_vs: usize,
-    /// Estimated bytes for the `fidx` side-index (outer map + per-function V sets).
+    /// Estimated bytes for the `fidx` side-index: the outer map plus every function's V set.
     pub fidx_bytes: usize,
-    /// Element sizes `(outer, _unused, leaf, fidx_outer, fidx_val)` for reference.
+    /// Element sizes `(outer, _unused, leaf, fidx_outer, fidx_val)`, for reference.
     pub elem_sizes: (usize, usize, usize, usize, usize),
+    /// Size in leaves of the largest single `(F,V)` group. This is what tells us whether the
+    /// small, linear-probing representation is still the right one for this store.
+    pub max_group: usize,
+    /// How many groups grew past [`SMALL_THRESHOLD`] and switched to Swiss probing.
+    pub large_groups: usize,
+    /// Power-of-two histogram of group sizes. `group_hist[i]` counts the groups with
+    /// `2^i <= leaves < 2^(i+1)`.
+    pub group_hist: Vec<usize>,
 }
 
 impl std::fmt::Display for HeapReport {
@@ -598,12 +451,22 @@ impl std::fmt::Display for HeapReport {
             }
         };
         let (o, _i, l, fo, fv) = self.elem_sizes;
+        // Read "0:12 1:3 5:1" as: 12 groups of 1 leaf, 3 groups of 2-3, and 1 group of 32-63.
+        let hist = self
+            .group_hist
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| **n > 0)
+            .map(|(i, n)| format!("{i}:{n}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         write!(
             f,
             "locals store estimate: total {:.1} MB over {} rows ({:.0} B/row) | \
              fwd {:.1} MB ({:.0}%): {} (F,V) groups, {} (F,V,P) entries, {} leaves | \
              fidx {:.1} MB ({:.0}%): {} funcs, {} V entries | \
-             elem sizes o={} l={} fo={} fv={} B",
+             groups: max {}, large {}, mean {:.2}, log2hist [{}] | \
+             elem sizes o={} l={} fo={} fv={} B | group set threshold {}",
             mb(total),
             self.rows,
             if self.rows == 0 {
@@ -620,10 +483,19 @@ impl std::fmt::Display for HeapReport {
             pct(self.fidx_bytes),
             self.fidx_funcs,
             self.fidx_vs,
+            self.max_group,
+            self.large_groups,
+            if self.fv_groups == 0 {
+                0.0
+            } else {
+                self.leaf_elems as f64 / self.fv_groups as f64
+            },
+            hist,
             o,
             l,
             fo,
             fv,
+            SMALL_THRESHOLD,
         )
     }
 }
@@ -662,27 +534,28 @@ where
     }
 }
 
-// The ONE real merge lives here (on the ind_common).
+// The one real merge lives here, on the ind_common.
 impl<F, V, P, M, Fp> RelIndexMerge for LocalsIndCommon<F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash + Ord,
-    M: Clone + Eq + Hash + Ord,
-    Fp: Clone + Eq + Hash + Ord,
+    P: Clone + Eq + Hash,
+    M: Clone + Eq + Hash,
+    Fp: Clone + Eq + Hash,
 {
     fn move_index_contents(from: &mut Self, to: &mut Self) {
         to.absorb(from);
     }
-    // default merge_delta_to_total_new_to_delta: move delta->total, swap new<->delta.
+    // We take the default `merge_delta_to_total_new_to_delta`: it moves delta into total, then
+    // swaps new and delta.
 }
 
 // ---------------------------------------------------------------------------
 // Write targets.
 // ---------------------------------------------------------------------------
 
-/// No-op write target for the partial (view) indices: data enters the store only through
-/// the full index, and merging is done only by the ind_common.
+/// No-op write target for the partial (view) indices. Data enters the store only through the
+/// full index, and only the ind_common merges.
 pub struct NoopWrite<K, V>(PhantomData<(K, V)>);
 impl<K, V> Default for NoopWrite<K, V> {
     fn default() -> Self {
@@ -702,8 +575,8 @@ impl<K, V> RelIndexMerge for NoopWrite<K, V> {
     fn merge_delta_to_total_new_to_delta(_new: &mut Self, _delta: &mut Self, _total: &mut Self) {}
 }
 
-/// Write target of the full existence index: performs the real inserts into the store, but
-/// has a NO-OP merge (the real merge is the ind_common's, see module docs).
+/// Write target of the full existence index. It performs the real inserts into the store, but
+/// its merge is a no-op. The real merge belongs to the ind_common; see the module docs.
 pub struct FullWrite<'a, F, V, P, M, Fp>(&'a mut LocalsIndCommon<F, V, P, M, Fp>)
 where
     F: Clone + Eq + Hash,
@@ -716,9 +589,9 @@ impl<'a, F, V, P, M, Fp> RelFullIndexWrite for FullWrite<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash + Ord,
-    M: Clone + Eq + Hash + Ord,
-    Fp: Clone + Eq + Hash + Ord,
+    P: Clone + Eq + Hash,
+    M: Clone + Eq + Hash,
+    Fp: Clone + Eq + Hash,
 {
     type Key = (F, V, P, M, Fp);
     type Value = ();
@@ -731,9 +604,9 @@ impl<'a, F, V, P, M, Fp> RelIndexWrite for FullWrite<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash + Ord,
-    M: Clone + Eq + Hash + Ord,
-    Fp: Clone + Eq + Hash + Ord,
+    P: Clone + Eq + Hash,
+    M: Clone + Eq + Hash,
+    Fp: Clone + Eq + Hash,
 {
     type Key = (F, V, P, M, Fp);
     type Value = ();
@@ -757,14 +630,15 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Read views + their ToRelIndex markers.
+// Read views and their ToRelIndex markers.
 //
-// Each `To*` marker is a zero-sized field in the generated struct; `to_rel_index` borrows
-// the shared store to produce a read view, `to_rel_index_write` produces a write target.
+// Each `To*` marker is a zero-sized field in the generated struct. `to_rel_index` borrows the
+// shared store and produces a read view; `to_rel_index_write` produces a write target.
 // ---------------------------------------------------------------------------
 
 /// Defines a zero-sized `ToRelIndex` marker over the concrete `LocalsIndCommon` store.
-/// `$wrty`/`$wrbody` give the write target (real for the full index, no-op for the views).
+/// `$wrty` and `$wrbody` give the write target: the real one for the full index, a no-op one
+/// for the views.
 macro_rules! marker {
     ($to:ident, $view:ident, $wrty:ty, $rel:ident => $wrbody:expr) => {
         pub struct $to<F, V, P, M, Fp>(PhantomData<(F, V, P, M, Fp)>);
@@ -949,7 +823,7 @@ impl<'a, F, V, P, M, Fp> RelIndexRead<'a> for View012<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash + Ord,
+    P: Clone + Eq + Hash,
     M: Clone + Eq + Hash,
     Fp: Clone + Eq + Hash,
 {
@@ -960,29 +834,21 @@ where
     fn index_get(&'a self, key: &(F, V, P)) -> Option<Self::IteratorType> {
         let group = self.0.fwd.get(&(key.0.clone(), key.1.clone()))?;
         let p = key.2.clone();
-        match group {
-            Group::Small(vec) => {
-                // The vec is sorted by (P,M,Fp), so all leaves sharing this P are contiguous.
-                let lo = vec.partition_point(|(pp, _, _)| *pp < p);
-                let hi = vec.partition_point(|(pp, _, _)| *pp <= p);
-                if lo == hi {
-                    return None;
-                }
-                let slice = &vec[lo..hi];
-                Some(DynIter::new(move || slice.iter().map(|(_, m, fp)| (m, fp))))
-            }
-            Group::Large(set) => {
-                // Unordered: filter the set to leaves carrying this P. Returns `Some` of a
-                // possibly-empty iterator (join-equivalent to `None`); the producer re-scans
-                // on each rebuild, which is fine — `0_1_2` is not a hot driver for the dense
-                // groups that become `Large`.
-                Some(DynIter::new(move || {
-                    let p = p.clone();
-                    set.iter()
-                        .filter_map(move |(pp, m, fp)| (*pp == p).then_some((m, fp)))
-                }))
-            }
+        // A group is a set, not a sorted run, so the leaves carrying this `P` are scattered.
+        // This view therefore filters rather than slicing a range. The one scan up front is
+        // what lets us return `None` for a `P` the group does not hold, which cuts the caller's
+        // whole join. Without it, a miss would hand the planner a `Some` that it has to drive
+        // to exhaustion. The scan costs O(group), it stops at the first match, and the median
+        // group holds a single leaf.
+        if !group.iter().any(|(pp, _, _)| *pp == p) {
+            return None;
         }
+        Some(DynIter::new(move || {
+            let p = p.clone();
+            group
+                .iter()
+                .filter_map(move |(pp, m, fp)| (*pp == p).then_some((m, fp)))
+        }))
     }
     #[inline]
     fn len_estimate(&self) -> usize {
@@ -993,7 +859,7 @@ impl<'a, F, V, P, M, Fp> RelIndexReadAll<'a> for View012<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash + Ord,
+    P: Clone + Eq + Hash,
     M: Clone + Eq + Hash,
     Fp: Clone + Eq + Hash,
 {
@@ -1003,43 +869,19 @@ where
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     #[inline]
     fn iter_all(&'a self) -> Self::AllIteratorType {
+        // Emit one key per distinct (F,V,P), each with all of its (M,Fp) leaves. Groups are
+        // unordered, so we have to bucket the leaves of one `P` rather than slice them off as a
+        // run. This is not a hot path. The rules point-probe `0_1_2`, so we only land here if a
+        // planner chose it as a join driver.
         Box::new(self.0.fwd.iter().flat_map(|((f, v), group)| {
-            // Emit one key per distinct (F,V,P), each with all its (M,Fp) leaves.
-            let inner: Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a> =
-                match group {
-                    Group::Small(vec) => {
-                        // Sorted: split into contiguous runs of equal P.
-                        let mut runs: Vec<(usize, usize)> = Vec::new();
-                        let mut i = 0;
-                        while i < vec.len() {
-                            let p0 = &vec[i].0;
-                            let mut j = i + 1;
-                            while j < vec.len() && &vec[j].0 == p0 {
-                                j += 1;
-                            }
-                            runs.push((i, j));
-                            i = j;
-                        }
-                        Box::new(runs.into_iter().map(move |(s, e)| {
-                            let slice = &vec[s..e];
-                            let p = &vec[s].0;
-                            let it = DynIter::new(move || slice.iter().map(|(_, m, fp)| (m, fp)));
-                            ((f, v, p), it)
-                        }))
-                    }
-                    Group::Large(set) => {
-                        // Unordered: bucket leaves by P into borrowed lists, one key per P.
-                        let mut byp: Map<&'a P, Vec<(&'a M, &'a Fp)>> = Map::default();
-                        for (p, m, fp) in set.iter() {
-                            byp.entry(p).or_default().push((m, fp));
-                        }
-                        Box::new(byp.into_iter().map(move |(p, mfs)| {
-                            let it = DynIter::new(move || mfs.clone().into_iter());
-                            ((f, v, p), it)
-                        }))
-                    }
-                };
-            inner
+            let mut byp: Map<&'a P, Vec<(&'a M, &'a Fp)>> = Map::default();
+            for (p, m, fp) in group.iter() {
+                byp.entry(p).or_default().push((m, fp));
+            }
+            byp.into_iter().map(move |(p, mfs)| {
+                let it = DynIter::new(move || mfs.clone().into_iter());
+                ((f, v, p), it)
+            })
         }))
     }
 }
@@ -1058,16 +900,17 @@ where
     type IteratorType = DynIter<'a, Self::Value>;
     #[inline]
     fn index_get(&'a self, key: &(F, M, Fp)) -> Option<Self::IteratorType> {
-        // Derived (no materialized inverse): for the probed function `f`, visit only its
-        // flow-variables via the `fidx` side-index, then yield every `(v, p)` whose group vec
-        // contains a leaf with this `(m, fp)`. This touches one function's `(F,V)` groups
-        // instead of scanning all of `fwd`. Cold path (rule 2.2, ~tens of probes). Returns
-        // `Some` of a possibly-empty iterator; an empty result is join-equivalent to `None`.
+        // This view is derived; there is no materialized inverse. For the probed function `f`,
+        // we visit only its flow-variables, found through the `fidx` side-index, and yield
+        // every `(v, p)` whose group holds a leaf with this `(m, fp)`. That touches one
+        // function's `(F,V)` groups instead of scanning all of `fwd`. It is a cold path: rule
+        // 2.2 makes on the order of tens of probes. We return `Some` of an iterator that may be
+        // empty, which for a join means the same thing as `None`.
         let c = self.0;
         let (f, m, fp) = key.clone();
         Some(DynIter::new(move || {
             let (f, m, fp) = (f.clone(), m.clone(), fp.clone());
-            // `fidx[f]` and `fwd` are maintained in lockstep, so every V here has an `fwd` group.
+            // We keep `fidx[f]` and `fwd` in lockstep, so every V here has an `fwd` group.
             c.fidx.get(&f).into_iter().flat_map(move |vs| {
                 let (f, m, fp) = (f.clone(), m.clone(), fp.clone());
                 vs.iter().flat_map(move |v| {
@@ -1091,9 +934,10 @@ where
     }
     #[inline]
     fn len_estimate(&self) -> usize {
-        // No materialized inverse to size. `0_3_4` is only ever probed (never a join driver),
-        // so a large estimate is safe — it just discourages the planner from choosing it as a
-        // driver, which is exactly what we want. Use the row count as a conservative upper bound.
+        // There is no materialized inverse to size. `0_3_4` is only ever probed, never used as
+        // a join driver, so a large estimate is safe: it discourages the planner from choosing
+        // it as a driver, which is what we want. We use the row count as a conservative upper
+        // bound.
         self.0.len()
     }
 }
@@ -1110,10 +954,10 @@ where
     type ValueIteratorType = DynIter<'a, Self::Value>;
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        // Not on any hot path: `0_3_4` is only ever point-probed (rule 2.2), never iterated as a
-        // driver. Provide a correct fallback by transiently inverting `fwd` on demand. If this
-        // ever shows up in a profile, it means some rule started iterating `0_3_4` and a
-        // materialized inverse should be reconsidered.
+        // This is not on any hot path. Rule 2.2 only ever point-probes `0_3_4`; nothing
+        // iterates it as a driver. So we give a correct fallback by inverting `fwd` on demand
+        // and throwing the result away. If this ever shows up in a profile, some rule has
+        // started iterating `0_3_4`, and we should reconsider materializing the inverse.
         let mut groups: Map<(&'a F, &'a M, &'a Fp), Vec<(&'a V, &'a P)>> = Map::default();
         for ((f, v), group) in self.0.fwd.iter() {
             for (p, m, fp) in group.iter() {
@@ -1132,9 +976,9 @@ impl<'a, F, V, P, M, Fp> RelFullIndexRead<'a> for ViewFull<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash + Ord,
-    M: Clone + Eq + Hash + Ord,
-    Fp: Clone + Eq + Hash + Ord,
+    P: Clone + Eq + Hash,
+    M: Clone + Eq + Hash,
+    Fp: Clone + Eq + Hash,
 {
     type Key = (F, V, P, M, Fp);
     #[inline]
@@ -1146,9 +990,9 @@ impl<'a, F, V, P, M, Fp> RelIndexRead<'a> for ViewFull<'a, F, V, P, M, Fp>
 where
     F: Clone + Eq + Hash,
     V: Clone + Eq + Hash,
-    P: Clone + Eq + Hash + Ord,
-    M: Clone + Eq + Hash + Ord,
-    Fp: Clone + Eq + Hash + Ord,
+    P: Clone + Eq + Hash,
+    M: Clone + Eq + Hash,
+    Fp: Clone + Eq + Hash,
 {
     type Key = (F, V, P, M, Fp);
     type Value = &'a ();
@@ -1189,12 +1033,18 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// The BYODS provider macros. Codegen calls these as
+// The BYODS provider macros. Codegen calls them as
 //   locals_trie::rel!(Name, (cols), [inds], ser, (args))
 //   locals_trie::rel_ind_common!(Name, (cols), [inds], ser, (args))
 //   locals_trie::rel_full_ind!(Name, (cols), [inds], ser, (args), Key, Val)
 //   locals_trie::rel_ind!(Name, (cols), [inds], ser, (args), [subset], Key, Val)
 //   locals_trie::rel_codegen!(Name, (cols), [inds], ser, (args))
+//
+// The fourth argument is the literal token `ser` under `ascent!` and `par` under `ascent_par!`.
+// Each macro matches on it and selects the serial types here or the concurrent ones in
+// [`super::c_locals_trie`]. Two separate types, rather than one dual-mode type, keeps the serial
+// path at zero overhead and confines the freeze-state machine to the parallel store — the same
+// split Ascent itself makes between `RelFullIndex` and `CRelFullIndex`.
 // ---------------------------------------------------------------------------
 
 #[doc(hidden)]
@@ -1207,8 +1057,11 @@ pub use locals_trie_rel_codegen as rel_codegen;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! locals_trie_rel {
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt) => {
         $crate::index_engine::locals_trie::CountingVec<($f, $v, $p, $m, $fp)>
+    };
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt) => {
+        $crate::index_engine::c_locals_trie::CCountingVec<($f, $v, $p, $m, $fp)>
     };
 }
 pub use locals_trie_rel as rel;
@@ -1216,8 +1069,11 @@ pub use locals_trie_rel as rel;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! locals_trie_rel_ind_common {
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt) => {
         $crate::index_engine::locals_trie::LocalsIndCommon<$f, $v, $p, $m, $fp>
+    };
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt) => {
+        $crate::index_engine::c_locals_trie::CLocalsIndCommon<$f, $v, $p, $m, $fp>
     };
 }
 pub use locals_trie_rel_ind_common as rel_ind_common;
@@ -1225,8 +1081,11 @@ pub use locals_trie_rel_ind_common as rel_ind_common;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! locals_trie_rel_full_ind {
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt, $key:ty, $val:ty) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt, $key:ty, $val:ty) => {
         $crate::index_engine::locals_trie::ToFull<$f, $v, $p, $m, $fp>
+    };
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, $key:ty, $val:ty) => {
+        $crate::index_engine::c_locals_trie::CToFull<$f, $v, $p, $m, $fp>
     };
 }
 pub use locals_trie_rel_full_ind as rel_full_ind;
@@ -1234,69 +1093,249 @@ pub use locals_trie_rel_full_ind as rel_full_ind;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! locals_trie_rel_ind {
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt, [], $key:ty, $val:ty) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt, [], $key:ty, $val:ty) => {
         $crate::index_engine::locals_trie::ToNone<$f, $v, $p, $m, $fp>
     };
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt, [0, 1], $key:ty, $val:ty) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt, [0, 1], $key:ty, $val:ty) => {
         $crate::index_engine::locals_trie::To01<$f, $v, $p, $m, $fp>
     };
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt, [0, 1, 2], $key:ty, $val:ty) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt, [0, 1, 2], $key:ty, $val:ty) => {
         $crate::index_engine::locals_trie::To012<$f, $v, $p, $m, $fp>
     };
-    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, $par:ident, $args:tt, [0, 3, 4], $key:ty, $val:ty) => {
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, ser, $args:tt, [0, 3, 4], $key:ty, $val:ty) => {
         $crate::index_engine::locals_trie::To034<$f, $v, $p, $m, $fp>
+    };
+
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, [], $key:ty, $val:ty) => {
+        $crate::index_engine::c_locals_trie::CToNone<$f, $v, $p, $m, $fp>
+    };
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, [0, 1], $key:ty, $val:ty) => {
+        $crate::index_engine::c_locals_trie::CTo01<$f, $v, $p, $m, $fp>
+    };
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, [0, 1, 2], $key:ty, $val:ty) => {
+        $crate::index_engine::c_locals_trie::CTo012<$f, $v, $p, $m, $fp>
+    };
+    ($name:ident, ($f:ty, $v:ty, $p:ty, $m:ty, $fp:ty), $inds:tt, par, $args:tt, [0, 3, 4], $key:ty, $val:ty) => {
+        $crate::index_engine::c_locals_trie::CTo034<$f, $v, $p, $m, $fp>
     };
 }
 pub use locals_trie_rel_ind as rel_ind;
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_size, merge_sorted};
+    use ascent::internal::{RelFullIndexRead, RelIndexRead, RelIndexReadAll};
 
-    // Build a sorted, deduplicated Vec from arbitrary ints (the invariant both fns require).
-    fn sorted_dedup(mut v: Vec<i32>) -> Vec<i32> {
-        v.sort_unstable();
-        v.dedup();
-        v
+    use super::*;
+
+    type Store = LocalsIndCommon<u32, u64, u64, i16, u64>;
+
+    /// Builds a store from `rows` and checks every read view against those rows.
+    ///
+    /// The views are the part of this module that changed when groups stopped being sorted.
+    /// `0_1_2` now filters where it used to slice a run, and `iter_all` buckets where it used
+    /// to split one. Callers exercise groups on both sides of `SMALL_THRESHOLD`.
+    fn check_views(rows: &[(u32, u64, u64, i16, u64)]) {
+        let mut store = Store::default();
+        for row in rows {
+            store.insert(row);
+        }
+        let mut want: Vec<_> = rows.to_vec();
+        want.sort_unstable();
+        want.dedup();
+        assert_eq!(store.len(), want.len(), "row count");
+
+        // Existence, both present and absent.
+        for &(f, v, p, m, fp) in &want {
+            assert!(
+                store.contains(&f, &v, &p, &m, &fp),
+                "missing {:?}",
+                (f, v, p, m, fp)
+            );
+        }
+        assert!(!store.contains(&999, &0, &0, &0, &0));
+        for &(f, v, p, m, fp) in &want {
+            assert!(!store.contains(&f, &v, &p, &m, &(fp + 1_000_000)));
+        }
+
+        // `none`: () -> every row.
+        let view = ViewNone(&store);
+        let mut got: Vec<_> = RelIndexRead::index_get(&view, &())
+            .unwrap()
+            .map(|(f, v, p, m, fp)| (*f, *v, *p, *m, *fp))
+            .collect();
+        got.sort_unstable();
+        assert_eq!(got, want, "`none` view");
+
+        // `0_1`: (F,V) -> (P,M,Fp).
+        let view = View01(&store);
+        for &(f, v, ..) in &want {
+            let mut got: Vec<_> = view
+                .index_get(&(f, v))
+                .unwrap()
+                .map(|(p, m, fp)| (f, v, *p, *m, *fp))
+                .collect();
+            got.sort_unstable();
+            let expect: Vec<_> = want
+                .iter()
+                .copied()
+                .filter(|r| r.0 == f && r.1 == v)
+                .collect();
+            assert_eq!(got, expect, "`0_1` view at {:?}", (f, v));
+        }
+        assert!(view.index_get(&(999, 0)).is_none());
+
+        // `0_1_2`: (F,V,P) -> (M,Fp). A miss must give `None`, not an empty iterator.
+        let view = View012(&store);
+        for &(f, v, p, ..) in &want {
+            let mut got: Vec<_> = view
+                .index_get(&(f, v, p))
+                .unwrap()
+                .map(|(m, fp)| (f, v, p, *m, *fp))
+                .collect();
+            got.sort_unstable();
+            let expect: Vec<_> = want
+                .iter()
+                .copied()
+                .filter(|r| r.0 == f && r.1 == v && r.2 == p)
+                .collect();
+            assert_eq!(got, expect, "`0_1_2` view at {:?}", (f, v, p));
+            assert!(
+                view.index_get(&(f, v, p + 1_000_000)).is_none(),
+                "`0_1_2` must report a missing P as None"
+            );
+        }
+        let mut got: Vec<_> = view
+            .iter_all()
+            .flat_map(|((f, v, p), vals)| vals.map(move |(m, fp)| (*f, *v, *p, *m, *fp)))
+            .collect();
+        got.sort_unstable();
+        assert_eq!(got, want, "`0_1_2` iter_all");
+
+        // `0_3_4`: (F,M,Fp) -> (V,P), derived by scanning through `fidx`.
+        let view = View034(&store);
+        for &(f, _, _, m, fp) in &want {
+            let mut got: Vec<_> = view
+                .index_get(&(f, m, fp))
+                .unwrap()
+                .map(|(v, p)| (f, *v, *p, m, fp))
+                .collect();
+            got.sort_unstable();
+            let expect: Vec<_> = want
+                .iter()
+                .copied()
+                .filter(|r| r.0 == f && r.3 == m && r.4 == fp)
+                .collect();
+            assert_eq!(got, expect, "`0_3_4` view at {:?}", (f, m, fp));
+        }
+        let mut got: Vec<_> = view
+            .iter_all()
+            .flat_map(|((f, m, fp), vals)| vals.map(move |(v, p)| (*f, *v, *p, *m, *fp)))
+            .collect();
+        got.sort_unstable();
+        assert_eq!(got, want, "`0_3_4` iter_all");
+
+        // The full existence index.
+        let view = ViewFull(&store);
+        for &(f, v, p, m, fp) in &want {
+            assert!(view.contains_key(&(f, v, p, m, fp)));
+        }
+        let mut got: Vec<_> = RelIndexReadAll::iter_all(&view)
+            .map(|((f, v, p, m, fp), _)| (*f, *v, *p, *m, *fp))
+            .collect();
+        got.sort_unstable();
+        assert_eq!(got, want, "full-index iter_all");
     }
 
-    fn check(a: Vec<i32>, b: Vec<i32>) {
-        let a = sorted_dedup(a);
-        let b = sorted_dedup(b);
-        let predicted = merge_size(&a, &b);
-        let mut merged = a.clone();
-        let added = merge_sorted(&mut merged, b.clone());
-        assert_eq!(
-            predicted,
-            merged.len(),
-            "merge_size must equal merged length"
-        );
-        assert_eq!(
-            added,
-            merged.len() - a.len(),
-            "added must equal newly-inserted count"
-        );
+    /// Builds `groups` groups over two functions. Each group holds `group` leaves, spread over
+    /// `paths` distinct `P`.
+    fn rows(groups: usize, group: usize, paths: usize) -> Vec<(u32, u64, u64, i16, u64)> {
+        (0..groups)
+            .flat_map(|g| {
+                (0..group).map(move |i| {
+                    (
+                        (g % 2) as u32,
+                        g as u64,
+                        (i % paths) as u64,
+                        (i / paths) as i16,
+                        i as u64,
+                    )
+                })
+            })
+            .collect()
     }
 
     #[test]
-    fn merge_size_matches_merge_sorted() {
-        check(vec![], vec![]);
-        check(vec![1, 2, 3], vec![]);
-        check(vec![], vec![4, 5]);
-        check(vec![1, 2, 3], vec![1, 2, 3]); // full overlap
-        check(vec![1, 3, 5], vec![2, 4, 6]); // interleaved, disjoint
-        check(vec![1, 2, 3], vec![3, 4, 5]); // partial overlap
-        // A small deterministic sweep (no rand dep) covering many overlap shapes.
-        for i in 0..16u32 {
-            let a = (0..8)
-                .filter(|k| (i >> (k % 4)) & 1 == 0)
-                .map(|k| k as i32)
+    fn views_agree_with_their_rows() {
+        check_views(&[]);
+        check_views(&rows(1, 1, 1));
+        check_views(&rows(3, 5, 2));
+        // Inserting a row twice must change nothing.
+        let mut dup = rows(2, 4, 2);
+        dup.extend_from_slice(&dup.clone());
+        check_views(&dup);
+        // Straddle the small -> Swiss transition inside a group.
+        for group in [
+            SMALL_THRESHOLD - 1,
+            SMALL_THRESHOLD,
+            SMALL_THRESHOLD + 1,
+            SMALL_THRESHOLD * 3,
+        ] {
+            check_views(&rows(2, group, 3));
+        }
+    }
+
+    /// `absorb` is the delta->total merge. It has to keep `len`, `fidx`, and the groups
+    /// consistent, whichever representation the two sides are in.
+    #[test]
+    fn absorb_unions_the_stores() {
+        for (a_group, b_group) in [
+            (2usize, 3usize),
+            (SMALL_THRESHOLD, 2),
+            (2, SMALL_THRESHOLD + 1),
+            (SMALL_THRESHOLD + 1, SMALL_THRESHOLD + 1),
+        ] {
+            let a_rows = rows(4, a_group, 2);
+            // Keys that overlap `a`'s but carry different leaves, plus one key `a` lacks.
+            let b_rows: Vec<_> = rows(6, b_group, 2)
+                .into_iter()
+                .map(|(f, v, p, m, fp)| (f, v, p, m, fp + 7))
                 .collect();
-            let b = (0..8)
-                .filter(|k| (i >> (k % 3)) & 1 == 1)
-                .map(|k| (k as i32) + 2)
-                .collect();
-            check(a, b);
+
+            let mut total = Store::default();
+            for row in &a_rows {
+                total.insert(row);
+            }
+            let mut delta = Store::default();
+            for row in &b_rows {
+                delta.insert(row);
+            }
+            total.absorb(&mut delta);
+
+            assert_eq!(delta.len(), 0, "absorbed delta must be empty");
+            assert_eq!(delta.fidx.len(), 0, "absorbed delta must drop its fidx");
+
+            let mut want: Vec<_> = a_rows.iter().chain(b_rows.iter()).copied().collect();
+            want.sort_unstable();
+            want.dedup();
+            assert_eq!(total.len(), want.len(), "union row count");
+            for &(f, v, p, m, fp) in &want {
+                assert!(total.contains(&f, &v, &p, &m, &fp));
+            }
+            // `fidx` must list the V of every group, or `0_3_4` can no longer find them.
+            for ((f, v), _) in total.fwd.iter() {
+                assert!(
+                    total.fidx[f].contains(v),
+                    "fidx missing {v} of function {f}"
+                );
+            }
+            assert_eq!(
+                total.fidx.values().map(|vs| vs.len()).sum::<usize>(),
+                total.fwd.len(),
+                "fidx must hold exactly one V per group"
+            );
+            let report = total.heap_report();
+            assert_eq!(report.rows, total.len());
+            assert_eq!(report.leaf_elems, total.len(), "heap_report leaf count");
         }
     }
 }

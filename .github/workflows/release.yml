@@ -71,6 +71,8 @@ jobs:
           # On a tag this is the version; on a manual run it is the branch,
           # whose name may contain characters a filename should not.
           version="${GITHUB_REF_NAME//\//-}"
+          # The upload step below names the artifact after it too.
+          echo "version=$version" >> "$GITHUB_ENV"
           mkdir -p dist
           # The store is read-only, so copy rather than link, and restore the
           # executable bit that copying out of it loses.
@@ -81,7 +83,7 @@ jobs:
       - name: Upload the binary
         uses: actions/upload-artifact@v4
         with:
-          name: ctadl-${{ matrix.target }}
+          name: ctadl-${{ env.version }}-${{ matrix.target }}
           path: dist/
           if-no-files-found: error
 

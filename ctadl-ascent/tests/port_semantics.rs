@@ -30,7 +30,6 @@
 //! segment it is, and on `.[<numeric>]`, pinned by `tests/tnt/port_in_offset.tnt`.
 
 use ctadl_ascent::cli;
-use ctadl_ascent::codegen::CallResolutionStrategy;
 use ctadl_ascent::project::{AnalysisProject, ArtifactImport, ArtifactLanguage, init_store_path};
 use ctadl_ascent::query_engine::formatter::SarifProfile;
 use std::path::{Path, PathBuf};
@@ -131,24 +130,12 @@ fn flows(case: &str, store: &str, index_model: &str, probe: &str) -> bool {
         // but a case about what is *not* modeled should not also depend on that staying true.
         true,
         // No Java or native import here, so the JNI bridge has nothing to do either way.
-        false,
-        CallResolutionStrategy::Mixed,
-        true,
-        true,
-        None,
+        cli::IndexOptions::default(),
     )
     .expect("indexing");
 
     let sarif: PathBuf = dir.join(format!("{case}.sarif"));
-    cli::query(
-        &project,
-        &[query_models],
-        false,
-        &sarif,
-        SarifProfile::Human,
-        None,
-    )
-    .expect("querying");
+    cli::query(&project, &[query_models], &sarif, SarifProfile::Human, None).expect("querying");
 
     let text = std::fs::read_to_string(&sarif).expect("reading sarif");
     let value: serde_json::Value = serde_json::from_str(&text).expect("parsing sarif");

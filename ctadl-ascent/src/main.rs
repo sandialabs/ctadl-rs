@@ -186,6 +186,10 @@ pub enum ImportLanguage {
     Dex,
     /// Treat as Android APK inputs
     Apk,
+    /// Treat as an Android app bundle (`.xapk`), a ZIP of split APKs. Each split is imported
+    /// through the APK path, so the Dex in the base and the libraries in `config.<abi>.apk`
+    /// are co-indexed by naming the bundle.
+    Xapk,
     /// Treat as C files
     C,
     /// Treat as Lua source files (parsed with the tree-sitter Lua grammar)
@@ -251,9 +255,19 @@ pub struct IndexArgs {
     /// When a Java/Dex artifact is co-indexed with native code, CTADL joins each `native` method
     /// to the `Java_…` symbol implementing it, mapping arguments across the JNI ABI's two-slot
     /// shift so taint flows both ways. Pass this to reproduce the pre-bridge behaviour, or to
-    /// measure what the bridge contributes. See `docs/jni.md`.
+    /// measure what the bridge contributes. See `ctadl_ascent::languages::jni`.
     #[arg(long)]
     pub no_jni_bridge: bool,
+
+    /// Ignore the `RegisterNatives` tables recovered from a native library at import time.
+    ///
+    /// Most Android apps bind their natives at run time, from `JNI_OnLoad`, rather than through
+    /// the `Java_…` symbol convention; CTADL recovers those bindings out of the library's data
+    /// sections when it imports it. Pass this to link by symbol name alone -- an A/B measurement
+    /// of what the registry contributes, with no re-import needed. Implied by
+    /// `--no-jni-bridge`. See `ctadl_ascent::languages::jni::registry`.
+    #[arg(long)]
+    pub no_jni_registry: bool,
 
     /// Call resolution strategy: cha, hi, mixed
     #[arg(long, value_enum, default_value_t = CallResolutionStrategy::Mixed)]
@@ -291,16 +305,12 @@ pub struct QueryArgs {
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
-    /// Output as compact as possible (for the sarif extension)
-    #[arg(long, short, action)]
-    pub compact: bool,
-
     /// Output file path (defaults to results.sarif)
     #[arg(long, short, default_value = "results.sarif")]
     pub output: PathBuf,
 
     /// SARIF profile
-    #[arg(long, value_enum, default_value_t = SarifProfile::Human)]
+    #[arg(long, short, value_enum, default_value_t = SarifProfile::Human)]
     pub sarif_profile: SarifProfile,
 
     /// Dump the taint graph to a dot file
@@ -329,20 +339,21 @@ pub struct GoArgs {
     #[arg(long)]
     pub no_jni_bridge: bool,
 
+    /// Ignore the `RegisterNatives` tables recovered at import time.
+    /// See `ctadl index --help`.
+    #[arg(long)]
+    pub no_jni_registry: bool,
+
     /// One or more artifacts to import in this one-shot flow
     #[arg(required = true)]
     pub artifacts: Vec<PathBuf>,
-
-    /// Output as compact as possible (for the sarif extension)
-    #[arg(long, short, action)]
-    pub compact: bool,
 
     /// Output file path (defaults to results.sarif)
     #[arg(long, short, default_value = "results.sarif")]
     pub output: PathBuf,
 
     /// SARIF profile
-    #[arg(long, value_enum, default_value_t = SarifProfile::Human)]
+    #[arg(long, short, value_enum, default_value_t = SarifProfile::Human)]
     pub sarif_profile: SarifProfile,
 
     /// Dump the taint graph to a dot file
@@ -462,6 +473,7 @@ fn main() -> anyhow::Result<()> {
                 models: args.models.clone(),
                 no_default_models: args.no_default_models,
                 no_jni_bridge: args.no_jni_bridge,
+                no_jni_registry: args.no_jni_registry,
                 strategy: args.strategy,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
@@ -472,7 +484,6 @@ fn main() -> anyhow::Result<()> {
             query_project(&QueryArgs {
                 name: name.clone(),
                 models: args.models.clone(),
-                compact: args.compact,
                 output: args.output.clone(),
                 sarif_profile: args.sarif_profile,
                 dump_taint_graph: args.dump_taint_graph.clone(),
@@ -606,6 +617,7 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
                 models: args.models.clone(),
                 no_default_models: false,
                 no_jni_bridge: false,
+                no_jni_registry: false,
                 strategy: CallResolutionStrategy::Mixed,
                 prune_unreachable_cfg_nodes: None,
                 alias_rule: None,
@@ -627,11 +639,9 @@ fn handle_legacy_pcode_cli(args: &LegacyPcodeCliArgs) -> anyhow::Result<()> {
 
             let mut models = args.models.clone();
             models.push(query_args.query_file.clone());
-            // Run the query and format the output (compact=true for Ghidra).
             let q_args = QueryArgs {
                 name: legacy_name.to_string(),
                 models,
-                compact: true,
                 output: PathBuf::from("results.sarif"),
                 sarif_profile: SarifProfile::Human,
                 dump_taint_graph: None,
@@ -655,6 +665,7 @@ fn import_artifact_to_store(args: &ImportArgs) -> anyhow::Result<String> {
         use project::ArtifactLanguage::*;
         match autodetect_import_language(path, args.language)? {
             ImportLanguage::Apk => Apk,
+            ImportLanguage::Xapk => Xapk,
             ImportLanguage::Dex => Dex,
             ImportLanguage::Jar => Jar,
             ImportLanguage::Jvm => Jvm,
@@ -725,11 +736,14 @@ fn index_artifacts_to_store(args: &IndexArgs) -> anyhow::Result<()> {
         &args.summary,
         &args.models,
         args.no_default_models,
-        args.no_jni_bridge,
-        args.strategy,
-        args.prune_unreachable_cfg_nodes.unwrap_or(true),
-        args.alias_rule.unwrap_or(true),
-        args.dump_index_graph.as_deref(),
+        cli::IndexOptions {
+            no_jni_bridge: args.no_jni_bridge,
+            no_jni_registry: args.no_jni_registry,
+            strategy: args.strategy,
+            prune_unreachable_cfg_nodes: args.prune_unreachable_cfg_nodes.unwrap_or(true),
+            alias_rule: args.alias_rule.unwrap_or(true),
+            dump_index_graph: args.dump_index_graph.as_deref(),
+        },
     )?;
     Ok(())
 }
@@ -739,7 +753,6 @@ fn query_project(args: &QueryArgs) -> anyhow::Result<()> {
     let status = cli::query(
         &project,
         &args.models,
-        args.compact,
         &args.output,
         args.sarif_profile,
         args.dump_taint_graph.as_deref(),
@@ -802,6 +815,11 @@ fn inspect_artifact(args: &InspectArgs) -> anyhow::Result<()> {
                 {
                     return cli::inspect_bitcode(path).map_err(Into::into);
                 }
+                // The JNI registry is JSON, not bitcode, so it gets its own printer rather than
+                // a third branch inside `inspect_bitcode`.
+                if path.file_name().and_then(|n| n.to_str()) == Some(project::JNI_REGISTRY_FILE) {
+                    return cli::inspect_jni_registry(path).map_err(Into::into);
+                }
             }
         }
 
@@ -849,6 +867,7 @@ fn autodetect_import_language<P: AsRef<Path>>(
             match ext {
                 Some("dex") => ImportLanguage::Dex,
                 Some("apk") => ImportLanguage::Apk,
+                Some("xapk") => ImportLanguage::Xapk,
                 Some("class") => ImportLanguage::Jvm,
                 Some("jar") => ImportLanguage::Jar,
                 Some("lua") => ImportLanguage::Lua,
