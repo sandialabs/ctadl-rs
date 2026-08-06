@@ -1,0 +1,9 @@
+{
+  "name": "phospy",
+  "apk": {
+    "url": "https://github.com/TaintBench/phospy/releases/download/APK/phospy.apk",
+    "sha256": "sha256-stp1BqIi27p9NbQYU1SQmEgcucp5aDEe4T1YpZTdZA4="
+  },
+  "upstream": "https://github.com/TaintBench/phospy",
+  "findingsCommit": "master"
+}

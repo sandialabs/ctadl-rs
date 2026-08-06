@@ -1,0 +1,9 @@
+{
+  "name": "threatjapan_uracto",
+  "apk": {
+    "url": "https://github.com/TaintBench/threatjapan_uracto/releases/download/APK/threatjapan_uracto.apk",
+    "sha256": "sha256-W2QCzH4uNyce4U6QfljCicKAzXE5GyiAcobwOTwSRIY="
+  },
+  "upstream": "https://github.com/TaintBench/threatjapan_uracto",
+  "findingsCommit": "master"
+}

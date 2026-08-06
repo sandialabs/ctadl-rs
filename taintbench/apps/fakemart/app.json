@@ -1,0 +1,9 @@
+{
+  "name": "fakemart",
+  "apk": {
+    "url": "https://github.com/TaintBench/fakemart/releases/download/APK/fakemart.apk",
+    "sha256": "sha256-5rvmeTk+li6laSvHI09extR1WZKZ40statagozBKYtE="
+  },
+  "upstream": "https://github.com/TaintBench/fakemart",
+  "findingsCommit": "master"
+}

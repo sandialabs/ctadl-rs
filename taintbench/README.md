@@ -25,7 +25,8 @@ cargo xtask taintbench --filter beita        # only matching apps
 
 ## The apps
 
-Ten TaintBench apps run today:
+Thirty-eight TaintBench apps run today — every app in the benchmark except
+`chat_hook`:
 
 - `backflash`
 - `beita_com_beita_contact`
@@ -36,7 +37,53 @@ Ten TaintBench apps run today:
 - `exprespam`
 - `fakeappstore`
 - `fakebank_android_samp`
+- `fakedaum`
+- `fakemart`
+- `fakeplay`
+- `faketaobao`
+- `godwon_samp`
 - `hummingbad_android_samp`
+- `jollyserv`
+- `overlay_android_samp`
+- `overlaylocker2_android_samp`
+- `phospy`
+- `proxy_samp`
+- `remote_control_smack`
+- `repane`
+- `roidsec`
+- `samsapo`
+- `save_me`
+- `scipiex`
+- `slocker_android_samp`
+- `sms_google`
+- `sms_send_locker_qqmagic`
+- `smssend_packageInstaller`
+- `smssilience_fake_vertu`
+- `smsstealer_kysn_assassincreed_android_samp`
+- `stels_flashplayer_android_update`
+- `tetus`
+- `the_interview_movieshow`
+- `threatjapan_uracto`
+- `vibleaker_android_samp`
+- `xbot_android_samp`
+
+One caveat on cost: `remote_control_smack` is the long pole by a wide margin.
+`ctadl index` on it runs for hours where every other app finishes in minutes, and
+a bare index with no model is just as slow, so it is the app and not the model.
+Its `expected.json` is an empty placeholder for that reason. Every other app has
+a measured baseline. Use `--filter` to skip it while iterating.
+
+Ten of them — `backflash`, `beita_com_beita_contact`, `cajino_baidu`, `chulia`,
+`death_ring_materialflow`, `dsencrypt_samp`, `exprespam`, `fakeappstore`,
+`fakebank_android_samp`, and `hummingbad_android_samp` — carry hand-written
+models. The other twenty-eight carry models derived mechanically from their own
+`findings.json`: every framework method named in a finding's source IR is marked
+a source (on its `Return`, or on `Argument(0)` for a constructor, whose result is
+the object being built), every method named in a sink IR is marked a sink on
+`Argument(*)`, and a shared block of framework propagations — the apache-http
+request plumbing above all — is appended so the taint can reach the exfiltration
+call. Sharpening one of these by hand is welcome; re-run the suite and commit the
+new baseline.
 
 ## Layout
 
@@ -46,7 +93,7 @@ Each app is a directory under `apps/<name>/` holding four files:
 | ---------------- | ---------------------------------------------------------------- |
 | `findings.json`  | TaintBench ground truth, copied verbatim from the app's upstream repo. |
 | `model.json`     | ctadl model (`model_generators`) — the sources/sinks to mark, plus any propagations the app's flows need. |
-| `expected.json`  | Baseline: the finding IDs ctadl currently detects (see below).   |
+| `expected.json`  | Baseline: the finding IDs ctadl currently detects, and the negatives it currently reports anyway (see below). |
 | `app.json`       | APK coordinates (`url` + SRI `sha256`) and provenance, read by `nix/taintbench.nix`. |
 
 `model.json` goes to **both** `ctadl index` and `ctadl query`: index consumes its
@@ -91,18 +138,24 @@ between them.)
 
 ## Pass criterion: baseline snapshot
 
-`expected.json` lists the finding IDs ctadl detects today:
+`expected.json` lists the finding IDs ctadl detects today, and the `isNegative`
+findings it reports anyway:
 
 ```json
-{ "matched_finding_ids": [1] }
+{ "matched_finding_ids": [1], "false_positive_finding_ids": [7] }
 ```
 
 The check **fails on a regression** — a baseline finding that stops being
-detected — and on a **false positive** — any finding flagged `isNegative` in the
-ground truth that gets reported. Newly detected findings do **not** fail the
-check; they are reported as improvements with the suggested new baseline, which
-you then commit to `expected.json`. To (re)establish a baseline, run the suite
-and read the matched IDs off the report.
+detected — and on a **new false positive** — a finding flagged `isNegative` in
+the ground truth that gets reported and is not already listed in
+`false_positive_finding_ids`. Newly detected findings and false positives that
+go away do **not** fail the check; they are reported as improvements with the
+suggested new baseline, which you then commit to `expected.json`. To
+(re)establish a baseline, run the suite and read the IDs off the report.
+
+Listing a false positive is not forgiving it. It is imprecision we have measured
+and written down, so the report shows the count and any *new* one still fails.
+Omit the key entirely when an app has none.
 
 ### Shadowed negatives
 
@@ -117,3 +170,11 @@ source→sink pair means it found the positive, not the negative. We therefore
 positive finding's pair — the report marks it `MATCH(shadowed-by-positive)`. The
 false-positive check only has teeth for negatives that are callee-distinguishable
 from every positive.
+
+A related case survives the shadowing rule and shows up as a real false
+positive: an app whose positives *cross*, so that no single positive has the
+negative's pair but each of its endpoints belongs to some positive. `phospy` is
+the clearest one — its device ID goes to `writeUTF` and its file contents to
+`write`, and TaintBench's negatives are the two crossed combinations. ctadl
+reports both, because the same output stream carries both values. Those go in
+`false_positive_finding_ids`.

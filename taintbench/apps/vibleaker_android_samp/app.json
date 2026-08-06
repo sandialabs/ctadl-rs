@@ -1,0 +1,9 @@
+{
+  "name": "vibleaker_android_samp",
+  "apk": {
+    "url": "https://github.com/TaintBench/vibleaker_android_samp/releases/download/APK/vibleaker_android_samp.apk",
+    "sha256": "sha256-pwfLduVmMhwIuLqPXInLDPQRJUaDZvW4/a2Mb6Um3rQ="
+  },
+  "upstream": "https://github.com/TaintBench/vibleaker_android_samp",
+  "findingsCommit": "master"
+}

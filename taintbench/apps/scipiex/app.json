@@ -1,0 +1,9 @@
+{
+  "name": "scipiex",
+  "apk": {
+    "url": "https://github.com/TaintBench/scipiex/releases/download/APK/scipiex.apk",
+    "sha256": "sha256-JlXdspnOIU9npg4Tmwu6ATPIgqm5wrDtiBIRckx7rNI="
+  },
+  "upstream": "https://github.com/TaintBench/scipiex",
+  "findingsCommit": "master"
+}

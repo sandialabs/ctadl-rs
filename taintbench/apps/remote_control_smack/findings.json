@@ -1,0 +1,835 @@
+{
+  "fileName": "remote_control_smack.apk",
+  "day": "2019-03-15",
+  "findings": [
+    {
+      "source": {
+        "statement": "this.location = this.locationManager.getLastKnownLocation(\"network\");",
+        "methodName": "public Location getLocation()",
+        "className": "com.android.service.view.GPSTracker",
+        "lineNo": 80,
+        "targetName": "getLastKnownLocation",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r4.<android.location.LocationManager: android.location.Location getLastKnownLocation(java.lang.String)>(\"network\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(AlarmReceiver.this.strLocation);",
+        "methodName": "public void run()",
+        "className": "com.android.service.AlarmReceiver.AnonymousClass1",
+        "lineNo": 129,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "return this.location;",
+          "methodName": "public Location getLocation()",
+          "className": "com.android.service.view.GPSTracker",
+          "lineNo": 112,
+          "ID": 1
+        },
+        {
+          "statement": "getLocation();",
+          "methodName": "public GPSTracker(Context context)",
+          "className": "com.android.service.view.GPSTracker",
+          "lineNo": 50,
+          "ID": 2
+        },
+        {
+          "statement": "if (this.location != null) {",
+          "methodName": "public double getLatitude()",
+          "className": "com.android.service.view.GPSTracker",
+          "lineNo": 141,
+          "ID": 3
+        },
+        {
+          "statement": "this.longitude = this.location.getLongitude();",
+          "methodName": "public double getLongitude()",
+          "className": "com.android.service.view.GPSTracker",
+          "lineNo": 142,
+          "ID": 4
+        },
+        {
+          "statement": "return this.longitude;",
+          "methodName": "public double getLongitude()",
+          "className": "com.android.service.view.GPSTracker",
+          "lineNo": 146,
+          "ID": 5
+        },
+        {
+          "statement": "AlarmReceiver.this.longitude = AlarmReceiver.this.gpsObj.getLongitude();",
+          "methodName": "public void run()",
+          "className": "com.android.service.AlarmReceiver.AnonymousClass1",
+          "lineNo": 99,
+          "ID": 6
+        },
+        {
+          "statement": "AlarmReceiver.this.strLonObj = Double.toString(AlarmReceiver.this.longitude);",
+          "methodName": "public void run()",
+          "className": "com.android.service.AlarmReceiver.AnonymousClass1",
+          "lineNo": 101,
+          "ID": 7
+        },
+        {
+          "statement": "AlarmReceiver.this.strLocation = new StringBuilder(String.valueOf(AlarmReceiver.this.strLonObj)).append(XmppService.strCheckTag).append(AlarmReceiver.this.strLatObj).append(XmppService.strCheckTag).append(AlarmReceiver.this.strLonObj).append(XmppService.strCheckTag).append(AlarmReceiver.this.strLatObj).toString();",
+          "methodName": "public void run()",
+          "className": "com.android.service.AlarmReceiver.AnonymousClass1",
+          "lineNo": 116,
+          "ID": 8
+        }
+      ],
+      "attributes": {
+        "callbacks": true,
+        "nonStaticField": true,
+        "partialFlow": true,
+        "threading": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads location information (longitude) and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "this.location = this.locationManager.getLastKnownLocation(\"gps\");",
+        "methodName": "public Location getLocation()",
+        "className": "com.android.service.view.GPSTracker",
+        "lineNo": 98,
+        "targetName": "getLastKnownLocation",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r4.<android.location.LocationManager: android.location.Location getLastKnownLocation(java.lang.String)>(\"gps\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(AlarmReceiver.this.strLocation);",
+        "methodName": "public void run()",
+        "className": "com.android.service.AlarmReceiver.AnonymousClass1",
+        "lineNo": 129,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "return this.location;",
+          "methodName": "public Location getLocation()",
+          "className": "com.android.service.view.GPSTracker",
+          "lineNo": 112,
+          "ID": 1
+        },
+        {
+          "statement": "getLocation();",
+          "methodName": "public GPSTracker(Context context)",
+          "className": "com.android.service.view.GPSTracker",
+          "lineNo": 50,
+          "ID": 2
+        },
+        {
+          "statement": "AlarmReceiver.this.latitude = AlarmReceiver.this.gpsObj.getLatitude();",
+          "methodName": "public void run()",
+          "className": "com.android.service.AlarmReceiver.AnonymousClass1",
+          "lineNo": 100,
+          "ID": 3
+        },
+        {
+          "statement": "if (this.location != null) {",
+          "methodName": "public void stopUsingGPS()",
+          "className": "com.android.service.view.GPSTracker",
+          "lineNo": 129,
+          "ID": 4
+        },
+        {
+          "statement": "this.latitude = this.location.getLatitude();",
+          "methodName": "public double getLatitude()",
+          "className": "com.android.service.view.GPSTracker",
+          "lineNo": 130,
+          "ID": 5
+        },
+        {
+          "statement": "return this.latitude;",
+          "methodName": "public double getLatitude()",
+          "className": "com.android.service.view.GPSTracker",
+          "lineNo": 134,
+          "ID": 6
+        },
+        {
+          "statement": "AlarmReceiver.this.strLatObj = Double.toString(AlarmReceiver.this.latitude);",
+          "methodName": "public void run()",
+          "className": "com.android.service.AlarmReceiver.AnonymousClass1",
+          "lineNo": 102,
+          "ID": 7
+        },
+        {
+          "statement": "AlarmReceiver.this.strLocation = new StringBuilder(String.valueOf(AlarmReceiver.this.strLonObj.substring(0, 9))).append(XmppService.strCheckTag).append(AlarmReceiver.this.strLatObj.substring(0, 9)).append(XmppService.strCheckTag).append(AlarmReceiver.this.strLonObj.substring(0, 9)).append(XmppService.strCheckTag).append(AlarmReceiver.this.strLatObj.substring(0, 9)).toString();",
+          "methodName": "public void run()",
+          "className": "com.android.service.AlarmReceiver.AnonymousClass1",
+          "lineNo": 112,
+          "ID": 8
+        }
+      ],
+      "attributes": {
+        "callbacks": true,
+        "nonStaticField": true,
+        "partialFlow": true,
+        "threading": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads location information (latitude) and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String sPhoneNo = cursorSmsObj.getString(cursorSmsObj.getColumnIndex(\"address\"));",
+        "methodName": "public void sms_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 748,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = interfaceinvoke $r8.<android.database.Cursor: java.lang.String getString(int)>($i1)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(strType)).append(strCheckTag).append(sPhoneNo.trim()).append(strCheckTag).append(sMsgBody.trim()).append(strCheckTag).append(sMsgDate.trim()).append(\"\\r\\n\").toString());",
+        "methodName": "public void sms_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 773,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r5)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "partialFlow": true
+      },
+      "ID": 3,
+      "description": "This malicious flow reads SMS information (address) and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String sMsgBody = cursorSmsObj.getString(cursorSmsObj.getColumnIndexOrThrow(\"body\"));",
+        "methodName": "public void sms_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 750,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = interfaceinvoke $r8.<android.database.Cursor: java.lang.String getString(int)>($i1)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(strType)).append(strCheckTag).append(sPhoneNo.trim()).append(strCheckTag).append(sMsgBody.trim()).append(strCheckTag).append(sMsgDate.trim()).append(\"\\r\\n\").toString());",
+        "methodName": "public void sms_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 773,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r5)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "partialFlow": true
+      },
+      "ID": 4,
+      "description": "This malicious flow reads SMS information (message body) and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "int intType = cursorSmsObj.getInt(cursorSmsObj.getColumnIndexOrThrow(\"type\"));",
+        "methodName": "public void sms_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 752,
+        "targetName": "getInt",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$i1 = interfaceinvoke $r8.<android.database.Cursor: int getInt(int)>($i1)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(strType)).append(strCheckTag).append(sPhoneNo.trim()).append(strCheckTag).append(sMsgBody.trim()).append(strCheckTag).append(sMsgDate.trim()).append(\"\\r\\n\").toString());",
+        "methodName": "public void sms_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 773,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r5)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "strType = \"in\";",
+          "methodName": "public void sms_saveFile()",
+          "className": "com.android.service.XmppService",
+          "lineNo": 759,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "implicitFlows": true,
+        "partialFlow": true
+      },
+      "ID": 5,
+      "description": "This malicious flow reads SMS information (message type) and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "long logDate = cursorSmsObj.getLong(cursorSmsObj.getColumnIndex(\"date\"));",
+        "methodName": "public void sms_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 754,
+        "targetName": "getLong",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$l3 = interfaceinvoke $r8.<android.database.Cursor: long getLong(int)>($i2)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(strType)).append(strCheckTag).append(sPhoneNo.trim()).append(strCheckTag).append(sMsgBody.trim()).append(strCheckTag).append(sMsgDate.trim()).append(\"\\r\\n\").toString());",
+        "methodName": "public void sms_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 773,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r1.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r5)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "this.date = new Date(logDate);",
+          "methodName": "public void sms_saveFile()",
+          "className": "com.android.service.XmppService",
+          "lineNo": 766,
+          "ID": 1
+        },
+        {
+          "statement": "String sMsgDate = new SimpleDateFormat(\"yyyy-MM-dd hh:mm:ss\").format(this.date);",
+          "methodName": "public void sms_saveFile()",
+          "className": "com.android.service.XmppService",
+          "lineNo": 769,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "nonStaticField": true,
+        "partialFlow": true
+      },
+      "ID": 6,
+      "description": "This malicious flow reads SMS information (date) and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String number = cursorObj.getString(0);",
+        "methodName": "public void call_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 840,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r7 = interfaceinvoke $r11.<android.database.Cursor: java.lang.String getString(int)>(0)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(numbertype)).append(strCheckTag).append(numberOrName).append(\":\").append(number).append(strCheckTag).append(callDate).append(\"\\r\\n\").toString());",
+        "methodName": "public void call_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 870,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "partialFlow": true,
+        "staticField": true
+      },
+      "ID": 7,
+      "description": "This malicious partial flow reads call record (number) and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String numberOrName = cursorObj.getString(1);",
+        "methodName": "public void call_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 841,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r13 = interfaceinvoke $r11.<android.database.Cursor: java.lang.String getString(int)>(1)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(numbertype)).append(strCheckTag).append(numberOrName).append(\":\").append(number).append(strCheckTag).append(callDate).append(\"\\r\\n\").toString());",
+        "methodName": "public void call_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 870,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "partialFlow": true
+      },
+      "ID": 8,
+      "description": "This malicious partial flow reads call record (name) and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "int type = cursorObj.getInt(2);",
+        "methodName": "public void call_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 842,
+        "targetName": "getInt",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$i1 = interfaceinvoke $r11.<android.database.Cursor: int getInt(int)>(2)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(numbertype)).append(strCheckTag).append(numberOrName).append(\":\").append(number).append(strCheckTag).append(callDate).append(\"\\r\\n\").toString());",
+        "methodName": "public void call_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 870,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "numbertype = \"not\";",
+          "methodName": "public void call_saveFile()",
+          "className": "com.android.service.XmppService",
+          "lineNo": 854,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "implicitFlows": true,
+        "partialFlow": true
+      },
+      "ID": 9,
+      "description": "This malicious flow reads call record (type) and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "long time_mills = Long.parseLong(cursorObj.getString(3));",
+        "methodName": "public void call_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 843,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r15 = interfaceinvoke $r11.<android.database.Cursor: java.lang.String getString(int)>(3)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(numbertype)).append(strCheckTag).append(numberOrName).append(\":\").append(number).append(strCheckTag).append(callDate).append(\"\\r\\n\").toString());",
+        "methodName": "public void call_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 870,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "this.date = new Date(time_mills);",
+          "methodName": "public void call_saveFile()",
+          "className": "com.android.service.XmppService",
+          "lineNo": 846,
+          "ID": 1
+        },
+        {
+          "statement": "callDate = simpleDateFormat.format(this.date);",
+          "methodName": "public void call_saveFile()",
+          "className": "com.android.service.XmppService",
+          "lineNo": 849,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "nonStaticField": true,
+        "partialFlow": true
+      },
+      "ID": 10,
+      "description": "This malicious flow reads call record (date) and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String id = contactCurObj.getString(contactCurObj.getColumnIndex(\"_id\"));",
+        "methodName": "public void contacts_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 921,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = interfaceinvoke $r6.<android.database.Cursor: java.lang.String getString(int)>($i0)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(name)).append(strCheckTag).append(pCur.getString(pCur.getColumnIndex(\"data1\"))).append(\"\\r\\n\").toString());",
+        "methodName": "public void contacts_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 974,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r10)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "Cursor pCur = getContentResolver().query(Phone.CONTENT_URI, null, \"contact_id = \" + id, null, null);",
+          "methodName": "public void contacts_saveFile()",
+          "className": "com.android.service.XmppService",
+          "lineNo": 930,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "partialFlow": true
+      },
+      "ID": 11,
+      "description": "This malicious flow reads contact information and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String name = contactCurObj.getString(contactCurObj.getColumnIndex(\"display_name\"));",
+        "methodName": "public void contacts_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 924,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = interfaceinvoke $r6.<android.database.Cursor: java.lang.String getString(int)>($i0)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(name)).append(strCheckTag).append(pCur.getString(pCur.getColumnIndex(\"data1\"))).append(\"\\r\\n\").toString());",
+        "methodName": "public void contacts_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 974,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r10)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "partialFlow": true
+      },
+      "ID": 12,
+      "description": "This malicious flow reads contact information and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String id = eventCursor.getString(0);",
+        "methodName": "public void Calendar_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 1180,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r12 = interfaceinvoke $r10.<android.database.Cursor: java.lang.String getString(int)>(0)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(id)).append(strCheckTag).append(title).append(strCheckTag).append(description).append(strCheckTag).append(beginString).append(strCheckTag).append(endString).append(strCheckTag).append(eventLocation).append(\"\\r\\n\").toString());",
+        "methodName": "public void Calendar_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 1208,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "partialFlow": true
+      },
+      "ID": 13,
+      "description": "This malicious flow reads calender information and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String title = eventCursor.getString(1);",
+        "methodName": "public void Calendar_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 1182,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r13 = interfaceinvoke $r10.<android.database.Cursor: java.lang.String getString(int)>(1)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(id)).append(strCheckTag).append(title).append(strCheckTag).append(description).append(strCheckTag).append(beginString).append(strCheckTag).append(endString).append(strCheckTag).append(eventLocation).append(\"\\r\\n\").toString());",
+        "methodName": "public void Calendar_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 1208,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "partialFlow": true
+      },
+      "ID": 14,
+      "description": "This malicious flow reads calender information and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String description = eventCursor.getString(2);",
+        "methodName": "public void Calendar_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 1186,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = interfaceinvoke $r10.<android.database.Cursor: java.lang.String getString(int)>(2)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(id)).append(strCheckTag).append(title).append(strCheckTag).append(description).append(strCheckTag).append(beginString).append(strCheckTag).append(endString).append(strCheckTag).append(eventLocation).append(\"\\r\\n\").toString());",
+        "methodName": "public void Calendar_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 1208,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "partialFlow": true
+      },
+      "ID": 15,
+      "description": "This malicious flow reads calender information and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "this.date = new Date(eventCursor.getLong(4));",
+        "methodName": "public void Calendar_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 1198,
+        "targetName": "getLong",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$l1 = interfaceinvoke $r10.<android.database.Cursor: long getLong(int)>(4)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(id)).append(strCheckTag).append(title).append(strCheckTag).append(description).append(strCheckTag).append(beginString).append(strCheckTag).append(endString).append(strCheckTag).append(eventLocation).append(\"\\r\\n\").toString());",
+        "methodName": "public void Calendar_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 1208,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "endString = simpleDateFormat.format(this.date);",
+          "methodName": "public void Calendar_saveFile()",
+          "className": "com.android.service.XmppService",
+          "lineNo": 1201,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "nonStaticField": true,
+        "partialFlow": true
+      },
+      "ID": 16,
+      "description": "This malicious flow reads calender information and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "String eventLocation = eventCursor.getString(5);",
+        "methodName": "public void Calendar_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 1204,
+        "targetName": "getString",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r18 = interfaceinvoke $r10.<android.database.Cursor: java.lang.String getString(int)>(5)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "fw.append(new StringBuilder(String.valueOf(id)).append(strCheckTag).append(title).append(strCheckTag).append(description).append(strCheckTag).append(beginString).append(strCheckTag).append(endString).append(strCheckTag).append(eventLocation).append(\"\\r\\n\").toString());",
+        "methodName": "public void Calendar_saveFile()",
+        "className": "com.android.service.XmppService",
+        "lineNo": 1208,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r2.<java.io.FileWriter: java.io.Writer append(java.lang.CharSequence)>($r6)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "partialFlow": true
+      },
+      "ID": 17,
+      "description": "This malicious flow reads calender information and saves it a text file which will be later uploaded to a remote server.",
+      "isNegative": false
+    }
+  ]
+}

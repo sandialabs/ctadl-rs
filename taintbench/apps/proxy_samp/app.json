@@ -1,0 +1,9 @@
+{
+  "name": "proxy_samp",
+  "apk": {
+    "url": "https://github.com/TaintBench/proxy_samp/releases/download/APK/proxy_samp.apk",
+    "sha256": "sha256-ADQb8cBIlWIj2yvAgLzw6f3yt2R4D4W8p32FIBDQ7AQ="
+  },
+  "upstream": "https://github.com/TaintBench/proxy_samp",
+  "findingsCommit": "master"
+}

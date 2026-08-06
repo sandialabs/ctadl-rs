@@ -1,0 +1,9 @@
+{
+  "name": "tetus",
+  "apk": {
+    "url": "https://github.com/TaintBench/tetus/releases/download/APK/tetus.apk",
+    "sha256": "sha256-fpI/o5+J5nn442wol7kU1usC9GQmW4IMhgAqVAz+JhI="
+  },
+  "upstream": "https://github.com/TaintBench/tetus",
+  "findingsCommit": "master"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "overlaylocker2_android_samp",
+  "apk": {
+    "url": "https://github.com/TaintBench/overlaylocker2_android_samp/releases/download/APK/overlaylocker2_android_samp.apk",
+    "sha256": "sha256-fQR/PemgzH1gvI1vO+O8UtVOu/pukHLv9cGTjtENJNU="
+  },
+  "upstream": "https://github.com/TaintBench/overlaylocker2_android_samp",
+  "findingsCommit": "master"
+}

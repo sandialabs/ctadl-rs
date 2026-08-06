@@ -1,0 +1,9 @@
+{
+  "name": "smssilience_fake_vertu",
+  "apk": {
+    "url": "https://github.com/TaintBench/smssilience_fake_vertu/releases/download/APK/smssilience_fake_vertu.apk",
+    "sha256": "sha256-zVi1w9nYfbRgB7n5fYTj4OkOZn40mC/ZqdAJMYkclVc="
+  },
+  "upstream": "https://github.com/TaintBench/smssilience_fake_vertu",
+  "findingsCommit": "master"
+}

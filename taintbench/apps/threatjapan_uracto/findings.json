@@ -1,0 +1,103 @@
+{
+  "fileName": "threatjapan_uracto.apk",
+  "day": "2019-10-24",
+  "findings": [
+    {
+      "source": {
+        "statement": "Cursor dataAddressTable = getContentResolver().query(Data.CONTENT_URI, null, null, null, null);",
+        "methodName": "public void postMailList()",
+        "className": "solution.newsandroid.MainviewActivity",
+        "lineNo": 110,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = virtualinvoke $r12.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r13, null, null, null, null)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "printWriter.append(strMailList);",
+        "methodName": "public void postMailList()",
+        "className": "solution.newsandroid.MainviewActivity",
+        "lineNo": 159,
+        "targetName": "append",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r9.<java.io.PrintWriter: java.io.PrintWriter append(java.lang.CharSequence)>($r15)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "strMailList = new StringBuilder(String.valueOf(strMailList)).append(dataAddressTable.getString(dataAddressTable.getColumnIndex(\"data1\"))).toString();",
+          "methodName": "public void postMailList()",
+          "className": "solution.newsandroid.MainviewActivity",
+          "lineNo": 129,
+          "ID": 1
+        },
+        {
+          "statement": "strMailList = new StringBuilder(String.valueOf(strMailList)).append(\",\").toString();",
+          "methodName": "public void postMailList()",
+          "className": "solution.newsandroid.MainviewActivity",
+          "lineNo": 163,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "partialFlow": true
+      },
+      "ID": 1,
+      "description": "This partial flow writes mail data into a file.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "entity.addPart(\"data\", new FileBody(new File(SDFile)));",
+        "methodName": "public void postMailList()",
+        "className": "solution.newsandroid.MainviewActivity",
+        "lineNo": 181,
+        "targetName": "File",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r3.<java.io.File: void <init>(java.lang.String)>($r16)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "HttpResponse httpResponse = client.execute(httpPost);",
+        "methodName": "public void postMailList()",
+        "className": "solution.newsandroid.MainviewActivity",
+        "lineNo": 186,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r19 = virtualinvoke $r1.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r8)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "httpPost.setEntity(entity);",
+          "methodName": "public void postMailList()",
+          "className": "solution.newsandroid.MainviewActivity",
+          "lineNo": 183,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "partialFlow": true
+      },
+      "ID": 2,
+      "description": "This malicious flow sends a log file storing mail data to a remote server.",
+      "isNegative": false
+    }
+  ]
+}

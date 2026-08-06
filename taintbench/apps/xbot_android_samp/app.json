@@ -1,0 +1,9 @@
+{
+  "name": "xbot_android_samp",
+  "apk": {
+    "url": "https://github.com/TaintBench/xbot_android_samp/releases/download/APK/xbot_android_samp.apk",
+    "sha256": "sha256-S173yBUOdkzAeC6rfKc0nALHj86xA2zjBk01A3kT9bY="
+  },
+  "upstream": "https://github.com/TaintBench/xbot_android_samp",
+  "findingsCommit": "master"
+}

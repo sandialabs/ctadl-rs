@@ -1,0 +1,255 @@
+{
+  "description": [
+    "ctadl query model for the TaintBench `xbot_android_samp` app, derived from the",
+    "framework methods named in the source/sink IR (Jimple) signatures of its",
+    "3 positive and 0 negative ground-truth findings: each source",
+    "callee is marked a ctadl source on its Return (on Argument(0), the object",
+    "under construction, for a constructor) and each sink callee a sink on",
+    "Argument(*). Negatives are modelled too, so the suite's false-positive",
+    "check has teeth. The trailing propagation models summarize framework",
+    "plumbing that has no body in the APK -- the apache-http request builders",
+    "above all -- without which the taint never reaches the exfiltration call.",
+    "ctadl ignores the non-schema `description` key."
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "query",
+          "parent": "Landroid/content/ContentResolver;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "DatabaseData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "createFromPdu",
+          "parent": "Landroid/telephony/SmsMessage;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "SmsData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "getDeviceId",
+          "parent": "Landroid/telephony/TelephonyManager;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "DeviceData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "addJavascriptInterface",
+          "parent": "Landroid/webkit/WebView;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "JsBridge",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "call",
+          "parent": "Lorg/mozilla/javascript/Function;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "CodeExecution",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "<init>",
+          "parents": [
+            "Lorg/apache/http/message/BasicNameValuePair;"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1)",
+            "output": "Argument(0)"
+          },
+          {
+            "input": "Argument(2)",
+            "output": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "<init>",
+          "parents": [
+            "Lorg/apache/http/client/entity/UrlEncodedFormEntity;",
+            "Lorg/apache/http/entity/StringEntity;",
+            "Lorg/apache/http/entity/ByteArrayEntity;",
+            "Lorg/apache/http/client/methods/HttpPost;",
+            "Lorg/apache/http/client/methods/HttpGet;"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1)",
+            "output": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "setEntity",
+            "addHeader",
+            "setURI"
+          ],
+          "parents": [
+            "Lorg/apache/http/client/methods/HttpPost;",
+            "Lorg/apache/http/client/methods/HttpGet;",
+            "Lorg/apache/http/client/methods/HttpEntityEnclosingRequestBase;",
+            "Lorg/apache/http/client/methods/HttpRequestBase;",
+            "Lorg/apache/http/HttpEntityEnclosingRequest;"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1)",
+            "output": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "toString",
+          "parents": [
+            "Ljava/io/ByteArrayOutputStream;",
+            "Landroid/text/Editable;",
+            "Ljava/lang/CharSequence;"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0)",
+            "output": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "setDataAndType",
+            "setData",
+            "putExtra"
+          ],
+          "parents": [
+            "Landroid/content/Intent;"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1)",
+            "output": "Argument(0)"
+          },
+          {
+            "input": "Argument(2)",
+            "output": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "fromFile",
+            "parse"
+          ],
+          "parents": [
+            "Landroid/net/Uri;"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(*)",
+            "output": "Return"
+          }
+        ]
+      }
+    }
+  ]
+}

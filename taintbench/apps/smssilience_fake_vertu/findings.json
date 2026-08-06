@@ -1,0 +1,167 @@
+{
+  "fileName": "smssilience_fake_vertu.apk",
+  "day": "2019-10-10",
+  "findings": [
+    {
+      "source": {
+        "statement": "String str1 = ((TelephonyManager) getSystemService(\"phone\")).getLine1Number();",
+        "methodName": "public void onCreate(Bundle savedInstanceState)",
+        "className": "com.vertu.jp.MainActivity",
+        "lineNo": 36,
+        "targetName": "getLine1Number",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r11 = virtualinvoke $r10.<android.telephony.TelephonyManager: java.lang.String getLine1Number()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "localPrintWriter.write(localStringBuffer.toString());",
+        "methodName": "public void onCreate(Bundle savedInstanceState)",
+        "className": "com.vertu.jp.MainActivity",
+        "lineNo": 52,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r4.<java.io.PrintWriter: void write(java.lang.String)>($r11)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "localStringBuffer.append(\"mobile\").append(\"=\").append(str1);",
+          "methodName": "public void onCreate(Bundle savedInstanceState)",
+          "className": "com.vertu.jp.MainActivity",
+          "lineNo": 40,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "lifecycle": true
+      },
+      "ID": 1,
+      "description": "This malicious flow leaks the users phone number to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "msgs[i] = SmsMessage.createFromPdu((byte[]) pdus[i]);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.vertu.jp.catchsms2",
+        "lineNo": 46,
+        "targetName": "createFromPdu",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r16 = staticinvoke <android.telephony.SmsMessage: android.telephony.SmsMessage createFromPdu(byte[])>($r15)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "localPrintWriter.write(localStringBuffer.toString());",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.vertu.jp.catchsms2",
+        "lineNo": 68,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<java.io.PrintWriter: void write(java.lang.String)>($r17)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "localStringBuffer.append(\"revsms\").append(\"=\").append(msgs[i].getMessageBody().toString());",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.vertu.jp.catchsms2",
+          "lineNo": 57,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "array": true,
+        "lifecycle": true
+      },
+      "ID": 2,
+      "description": "This malicous flow sends the contents of the retrieved sms to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "targetName": "getLine1Number",
+        "targetNo": 1,
+        "statement": "String str1 = ((TelephonyManager) context.getSystemService(\"phone\")).getLine1Number();",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.vertu.jp.catchsms2",
+        "lineNo": 34,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r10.<android.telephony.TelephonyManager: java.lang.String getLine1Number()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "write",
+        "targetNo": 1,
+        "statement": "localPrintWriter.write(localStringBuffer.toString());",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.vertu.jp.catchsms2",
+        "lineNo": 68,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<java.io.PrintWriter: void write(java.lang.String)>($r17)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 3
+    },
+    {
+      "source": {
+        "targetName": "getLine1Number",
+        "targetNo": 1,
+        "statement": "String myNumber = ((TelephonyManager) context.getSystemService(\"phone\")).getLine1Number();",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.vertu.jp.catchsms2",
+        "lineNo": 51,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r17 = virtualinvoke $r10.<android.telephony.TelephonyManager: java.lang.String getLine1Number()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "write",
+        "targetNo": 1,
+        "statement": "localPrintWriter.write(localStringBuffer.toString());",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.vertu.jp.catchsms2",
+        "lineNo": 68,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r5.<java.io.PrintWriter: void write(java.lang.String)>($r17)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 4
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "repane",
+  "apk": {
+    "url": "https://github.com/TaintBench/repane/releases/download/APK/repane.apk",
+    "sha256": "sha256-FVlYkzRH8IUkyFw5cuD32k8wDMdxbWpM5fXKGC9sn9M="
+  },
+  "upstream": "https://github.com/TaintBench/repane",
+  "findingsCommit": "master"
+}

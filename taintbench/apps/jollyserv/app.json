@@ -1,0 +1,9 @@
+{
+  "name": "jollyserv",
+  "apk": {
+    "url": "https://github.com/TaintBench/jollyserv/releases/download/APK/jollyserv.apk",
+    "sha256": "sha256-MctNERx1QHf8/69Etc2yINLBKrPl0pfoKQcqebtMtEw="
+  },
+  "upstream": "https://github.com/TaintBench/jollyserv",
+  "findingsCommit": "master"
+}

