@@ -1,0 +1,4 @@
+{
+  "_comment": "Baseline snapshot: TaintBench finding IDs ctadl currently detects via a connected source->sink path. #2 and #3 (SIM serial posted to the C2 server) and #5 (the staged APK reaching the package installer) connect. #1 and #4 do not: both start in a framework callback the app never calls itself -- the View.OnClickListener that reads the typed credentials (#1) and the Thread.run() that posts the intercepted SMS (#4). All five findings' sources and sinks are recognized as endpoints. See ../../README.md.",
+  "matched_finding_ids": [2, 3, 5]
+}

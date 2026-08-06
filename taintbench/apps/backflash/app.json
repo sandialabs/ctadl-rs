@@ -1,0 +1,9 @@
+{
+  "name": "backflash",
+  "apk": {
+    "url": "https://github.com/TaintBench/backflash/releases/download/APK/backflash.apk",
+    "sha256": "sha256-MkNX9ijVNO6uFnTmw6+fPU+tPg3aW8P7eC8e07mjfdg="
+  },
+  "upstream": "https://github.com/TaintBench/backflash",
+  "findingsCommit": "master"
+}

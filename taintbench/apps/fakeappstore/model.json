@@ -1,0 +1,234 @@
+{
+  "description": [
+    "ctadl query model for the TaintBench `fakeappstore` app. Sources and sinks are derived",
+    "from the framework methods named in the source/sink IR (Jimple) signatures of",
+    "fakeappstore_findings.json: ContentResolver.query() reads the contacts,",
+    "HttpEntity.getContent() reads the C2 server's reply (the premium number and message to",
+    "send), and TelephonyManager.getDeviceId() reads the IMEI (sources);",
+    "SmsManager.sendTextMessage() sends the premium-rate SMS and HttpClient.execute()",
+    "uploads to the C2 server (sinks). The findings name the `HttpClient` interface at one",
+    "call site, so that is the class the generator matches.",
+    "The `propagation` models summarize the apache-http request plumbing the leaked data",
+    "travels through -- BasicNameValuePair, UrlEncodedFormEntity/StringEntity,",
+    "HttpPost.<init> and HttpPost.setEntity all forward their argument into the object they",
+    "build. None of those classes has a body in the APK, so without a summary the taint stops",
+    "before it reaches `execute`. `ctadl index` consumes these (they become function",
+    "summaries) and `ctadl query` the sources and sinks; xtask passes this file to both.",
+    "The last two propagations carry the server's reply along the first half of finding #2:",
+    "the response bytes are accumulated in a ByteArrayOutputStream and its toString() is",
+    "parsed by a JSONTokener before the message is read back out of the JSON. That flow, and",
+    "finding #3, still stop at an AsyncTask boundary (the data is packed into the String[]",
+    "passed to execute() and read back out of `params` in doInBackground, or returned",
+    "through onPostExecute), which needs a framework callback bridge rather than a model.",
+    "ctadl ignores the non-schema `description` key, as it does `expected_lines` in the",
+    "nightly models."
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "query",
+          "parent": "Landroid/content/ContentResolver;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "ContactData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "getContent",
+          "parent": "Lorg/apache/http/HttpEntity;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "NetworkData",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "getDeviceId",
+          "parent": "Landroid/telephony/TelephonyManager;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "DeviceId",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "sendTextMessage",
+          "parent": "Landroid/telephony/SmsManager;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "execute",
+          "parent": "Lorg/apache/http/client/HttpClient;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "Exfiltration",
+            "port": "Argument(*)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "<init>",
+          "parents": [
+            "Lorg/apache/http/message/BasicNameValuePair;"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1)",
+            "output": "Argument(0)"
+          },
+          {
+            "input": "Argument(2)",
+            "output": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "<init>",
+          "parents": [
+            "Lorg/apache/http/client/entity/UrlEncodedFormEntity;",
+            "Lorg/apache/http/entity/StringEntity;",
+            "Lorg/apache/http/client/methods/HttpPost;",
+            "Lorg/apache/http/client/methods/HttpGet;"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1)",
+            "output": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "setEntity",
+          "parents": [
+            "Lorg/apache/http/client/methods/HttpPost;",
+            "Lorg/apache/http/client/methods/HttpEntityEnclosingRequestBase;",
+            "Lorg/apache/http/HttpEntityEnclosingRequest;"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1)",
+            "output": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "toString",
+          "parents": [
+            "Ljava/io/ByteArrayOutputStream;"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0)",
+            "output": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "<init>",
+            "nextValue"
+          ],
+          "parents": [
+            "Lorg/json/JSONTokener;"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1)",
+            "output": "Argument(0)"
+          },
+          {
+            "input": "Argument(0)",
+            "output": "Return"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "_comment": "Baseline snapshot: TaintBench finding IDs ctadl currently detects via a connected source->sink path. None of the 4 flows connects, though every source and sink is recognized as an endpoint: each flow crosses a component boundary, putting the collected data in a Bundle, broadcasting it with sendBroadcast(), and reading it back out of the Intent extras in a BroadcastReceiver. ctadl does not model that inter-component hop. The app is kept in the suite as a false-positive guard and to record when that changes. See ../../README.md.",
+  "matched_finding_ids": []
+}

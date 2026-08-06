@@ -22,6 +22,12 @@
 //! finding flagged `isNegative` (a non-flow) gets reported (a false positive).
 //! Newly detected findings do not fail; they are reported as improvements to
 //! fold into the baseline.
+//!
+//! An app's `model.json` is passed to both `ctadl index` and `ctadl query`,
+//! since the two phases consume different halves of it: index turns its
+//! `propagation` models into function summaries -- several of these apps
+//! exfiltrate through framework classes with no body in the APK, and the taint
+//! stops there without one -- and query reads its sources and sinks.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -259,7 +265,14 @@ fn run_app(app: &App, apk: &Path) -> Result<Outcome> {
         &state,
         &["import", "-l", "apk", "-n", &project, &apk_str],
     )?;
-    run_ctadl(&work, &state, &["index", &project])?;
+    // The model goes to both phases: `index` consumes its propagations (they
+    // become function summaries) and `query` its sources and sinks. Each phase
+    // warns about the part it ignores.
+    run_ctadl(
+        &work,
+        &state,
+        &["index", &project, "-m", &model.to_string_lossy()],
+    )?;
     run_ctadl(
         &work,
         &state,
