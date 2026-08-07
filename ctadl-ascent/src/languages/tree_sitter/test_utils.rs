@@ -440,7 +440,7 @@ pub(crate) fn check_assign_or_update<I>(
 }
 
 /* Asserts the (single) function contains a `Load` that reads `source_str` (an access-path DSL
-string like `f.\[3]` or `$globals.a`). Field reads lower to loads through a temporary, so this is
+string like `f.[3]` or `$globals.a`). Field reads lower to loads through a temporary, so this is
 the load-based complement to `check_assign_or_update`'s field-path source. Panics if not found. */
 #[track_caller]
 pub(crate) fn check_loads(prog: &Program, source_str: &str) {
@@ -967,8 +967,9 @@ mod ap_tests {
 
     #[test]
     fn subscript_is_symbol_segment() {
-        // The C frontend lowers `f[3]` to `PathSegment::Symbol("[3]")` (not a real Offset), so a
-        // fixture that wants what the frontend emits escapes the bracket: `"f.\[3]"`.
+        // An escaped bracket is a *symbol whose name contains brackets*, which is how a field
+        // genuinely called `[3]` is written. It is not how an array index should be spelled --
+        // see SUBSCRIPT_OFFSET_GAP in `tests.rs` -- but the grammar has to be able to express it.
         let mut locals = Locals::default();
         let f = locals.get_or_intern("f");
         assert_eq!(

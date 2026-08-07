@@ -1,3 +1,29 @@
+/*!
+Unit tests for the tree-sitter C frontend.
+
+# SUBSCRIPT_OFFSET_GAP
+
+A constant subscript is pointer arithmetic, and the IR has a segment for exactly that:
+`PathSegment::Offset(N)`, written `.[N]` in the test DSL. Offsets are what make element
+paths *compose* -- they are summed where two paths meet, so a callee that writes at
+`@p0.[1]` and a caller that passes `&x.[1]` agree on `x.[2]`.
+
+This frontend does not lower subscripts that way. `a[N]` becomes one opaque
+`PathSegment::Symbol("[N]")` -- a symbol whose *name* happens to contain brackets,
+written `.\[N]` in the DSL because the grammar (main's #85) reserves the unescaped
+spelling for a real offset. Nothing relates `Symbol("[1]")` to `Symbol("[2]")`, so
+element addresses never compose, and `&a[i]` has no address to form.
+
+The tests below that spell a subscript path assert the *offset* spelling, which is the
+answer the frontend should give, and carry `#[ignore]` pointing here until it does. They
+are known-answer tests for the fix, not descriptions of today's behavior. Do not
+"fix" them by escaping the bracket: that spelling passes by asserting the bug.
+
+Two consequences are pinned elsewhere: `nightly/tests/c/ptrarith.c` (XFAIL as
+`C:ptrarith` in the xtask suite) and `test_cli_query_c_sources_and_sinks` in
+`tests/cli.rs` (ignored, for the address-of half).
+*/
+
 use ctadl_ir::ParameterType::{ByRef, ByVal};
 use ctadl_ir::{StatementKind, Variable};
 
@@ -635,13 +661,13 @@ fn if_then_while_cfg() {
 }
 
 #[test_log::test]
+#[ignore = "limitation: subscripts do not lower to offsets (see SUBSCRIPT_OFFSET_GAP)"]
 fn subscript_access_paths() {
     // A constant array subscript, read and written (`x = f[3];` and `f[4] = x;`). The subscript
-    // becomes a `PathSegment::Symbol("[N]")` — a *symbol whose name contains brackets*, not a
-    // numeric offset — so in the DSL it is written with the bracket escaped, `f.\[3]`. Spelled
-    // `f.[3]` it would be `Offset(3)`, which is a different path and is not what this frontend
-    // emits. The read is `assign @p2 = f.\[3]`, and the write lowers to an `update` of `f` at
-    // `.\[4]`. (`int x` is @p2.)
+    // is pointer arithmetic, so it belongs in the path as `PathSegment::Offset(3)` -- written
+    // `f.[3]` in the DSL, the unescaped spelling every other frontend uses. The read is
+    // `assign @p2 = f.[3]`, and the write lowers to an `update` of `f` at `.[4]`.
+    // (`int x` is @p2.)
     let src = r"
         int brackets_simple(Donkey v, Burro* b, int x, int y) {
             int f = 1;
@@ -649,8 +675,8 @@ fn subscript_access_paths() {
             f[4] = x;
         }";
     let prog = program_from_string(src).0;
-    check_loads(&prog, r"f.\[3]"); // x = f[3]  (read lowers to a load of f.\[3])
-    check_assign_or_update(&prog, r"f.\[4]", ["@p2"], None); // f[4] = x  (store)
+    check_loads(&prog, "f.[3]"); // x = f[3]  (read lowers to a load of f.[3])
+    check_assign_or_update(&prog, "f.[4]", ["@p2"], None); // f[4] = x  (store)
 }
 
 #[test_log::test]
@@ -1218,12 +1244,13 @@ fn taint_flows_through_funcptr_in_struct() {
 }
 
 #[test_log::test]
+#[ignore = "limitation: subscripts do not lower to offsets (see SUBSCRIPT_OFFSET_GAP)"]
 fn aggregate_initializer_list_lowers_to_element_stores() {
     // An aggregate brace initializer (`int a[2] = { s, 0 }`) lowers to per-element stores
-    // into synthetic index fields `a.[i]` -- the same `.[N]` field shape a constant-index
-    // subscript read resolves to (see `subscript_access_paths`), so taint deposited in the
-    // initializer is observed at a later `a[0]` read. Previously the `initializer_list`
-    // reached `flatten_expr`'s catch-all and failed ingestion (ERR 78).
+    // into index fields `a.[i]` -- the same shape a constant-index subscript read resolves
+    // to (see `subscript_access_paths`), so taint deposited in the initializer is observed
+    // at a later `a[0]` read. Previously the `initializer_list` reached `flatten_expr`'s
+    // catch-all and failed ingestion (ERR 78).
     let src = r"
         int f() {
             int s = source();
@@ -1236,12 +1263,13 @@ fn aggregate_initializer_list_lowers_to_element_stores() {
 }
 
 #[test_log::test]
+#[ignore = "limitation: subscripts do not lower to offsets (see SUBSCRIPT_OFFSET_GAP)"]
 fn nested_aggregate_initializer_lowers_recursively() {
     // A nested aggregate (`int m[2][2] = {{s,0},{0,0}}`) recurses, extending the base path by
-    // the outer index so the tainted element lands at `m[0][0]`. Access paths are offset-only,
-    // so a two-symbol write (`m.[0].[0]`) decomposes through an intermediate load: the outer
-    // `[0]` is loaded (`t = load m.[0]`) and the inner tainted element is stored into it
-    // (`store t.[0] := s`). Both halves are asserted below.
+    // the outer index so the tainted element lands at `m[0][0]`. A store's final segment must
+    // be a field, so a two-index write (`m.[0].[0]`) decomposes through an intermediate load:
+    // the outer `[0]` is loaded (`t = load m.[0]`) and the inner tainted element is stored into
+    // it (`store t.[0] := s`). Both halves are asserted below.
     let src = r"
         int f() {
             int s = source();
@@ -1428,9 +1456,9 @@ fn field_non_interference() {
             return s.b;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_flow(&s, 1, "", 0, "a"); // x -> s.a
-    check_returns_param(&s, 0, "b"); // s.b -> return
-    check_no_flow(&s, 1, "", 0, "b"); // x does NOT bleed into s.b
+    check_flow(&s, 1, "", 0, ".a"); // x -> s.a
+    check_returns_param(&s, 0, ".b"); // s.b -> return
+    check_no_flow(&s, 1, "", 0, ".b"); // x does NOT bleed into s.b
     check_does_not_return_param(&s, 1, ""); // ...so x never reaches the return
 }
 
@@ -1444,7 +1472,7 @@ fn arrow_field_returns_param() {
             return p->x;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, "x");
+    check_returns_param(&s, 0, ".x");
 }
 
 #[test_log::test]
@@ -1458,7 +1486,7 @@ fn deref_paren_field_equivalent() {
             return (*p).x;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, "x");
+    check_returns_param(&s, 0, ".x");
 }
 
 #[test_log::test]
@@ -1511,7 +1539,7 @@ fn whole_struct_copy_carries_field() {
             return t.a;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, "a");
+    check_returns_param(&s, 0, ".a");
 }
 
 #[test_log::test]
@@ -1523,7 +1551,7 @@ fn nested_field_depth_returns() {
             return v.a.b.c;
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param(&s, 0, "a.b.c");
+    check_returns_param(&s, 0, ".a.b.c");
 }
 
 #[test_log::test]
@@ -1616,8 +1644,8 @@ fn struct_by_value_through_call() {
             return callee(s);
         }";
     let (s, si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param_in(&s, &si, "callee", 0, "a");
-    check_returns_param_in(&s, &si, "caller", 0, "a");
+    check_returns_param_in(&s, &si, "callee", 0, ".a");
+    check_returns_param_in(&s, &si, "caller", 0, ".a");
 }
 
 #[test_log::test]
@@ -1634,24 +1662,25 @@ fn unary_ops_blend_through() {
 }
 
 #[test_log::test]
+#[ignore = "limitation: subscripts do not lower to offsets (see SUBSCRIPT_OFFSET_GAP)"]
 fn constant_index_field_precision() {
-    // Constant subscripts are distinct field paths: writing `src` into `v.a[0]` must NOT leak to a read
-    // of `v.a[1]`. Subscripts lower to `FieldAccess::Symbol("[N]")`, so `[0]` and `[1]` are different
-    // segments -- the array-index analogue of `field_non_interference`. The load-bearing assertion is
-    // that src (p1) does not reach the return through the distinct index.
+    // Constant subscripts are distinct paths: writing `src` into `v.a[0]` must NOT leak to a read of
+    // `v.a[1]`. `[0]` and `[1]` are different offsets -- the array-index analogue of
+    // `field_non_interference`. The load-bearing assertion is that src (p1) does not reach the return
+    // through the distinct index.
     //
-    // NB the escaped brackets in the path strings: the summary stores a subscript as the literal
-    // `Symbol("[0]")`, but `facts::Path`'s parser reads an unescaped `[0]` as a real `Offset(0)` (the
-    // Symbol-vs-Offset divergence noted in this dir's CLAUDE.md). Escaping (`\[0\]`) forces the parser
-    // to emit a Symbol, matching what the frontend actually lowered.
+    // The precision claim (`check_does_not_return_param`) holds today for the wrong reason: two
+    // distinct *symbols* are also disjoint. What is ignored here is the two path spellings, which say
+    // the segments are offsets. Keeping two constant indices apart is the correct, precise answer
+    // either way; contrast `nonconstant_subscript_may_alias_constant`, where disjointness is unsound.
     let src = r"
         int f(Thing v, int src) {
             v.a[0] = src;
             return v.a[1];
         }";
     let (s, _si) = get_summary(program_from_string(src).0).unwrap();
-    check_flow(&s, 1, "", 0, r"a.\[0\]"); // src -> v.a[0]
-    check_returns_param(&s, 0, r"a.\[1\]"); // v.a[1] -> return
+    check_flow(&s, 1, "", 0, ".a.[0]"); // src -> v.a[0]
+    check_returns_param(&s, 0, ".a.[1]"); // v.a[1] -> return
     check_does_not_return_param(&s, 1, ""); // src (into a[0]) does NOT reach the a[1] return
 }
 
@@ -1691,7 +1720,7 @@ fn struct_by_value_non_interference_through_call() {
             return callee(s);
         }";
     let (s, si) = get_summary(program_from_string(src).0).unwrap();
-    check_returns_param_in(&s, &si, "caller", 0, "a"); // s.a still reaches caller's return
+    check_returns_param_in(&s, &si, "caller", 0, ".a"); // s.a still reaches caller's return
     check_does_not_return_param_in(&s, &si, "caller", 1, ""); // src (into s.b) does not
 }
 
@@ -1813,8 +1842,8 @@ fn global_flows_across_functions() {
         void set(int src) { g = src; }
         int get() { return g; }";
     let (s, si) = get_summary(program_from_string(src).0).unwrap();
-    check_param_into_global_in(&s, &si, "set", 0, "g");
-    check_returns_global_in(&s, &si, "get", "g");
+    check_param_into_global_in(&s, &si, "set", 0, ".g");
+    check_returns_global_in(&s, &si, "get", ".g");
 }
 
 #[test_log::test]

@@ -135,9 +135,17 @@ code-flow regions — no compiler, no Ghidra, no `addr2line`, and no macOS skip
 `expected_lines` entry is among the reached lines, a code flow connects a source
 to a sink, and no `unexpected_lines` entry is reached. The `c` frontend is still
 maturing, so a short quarantine list in `xtask/src/regression.rs`
-(`C_KNOWN_FAILURES`) reports its current gap (pointer arithmetic) as **XFAIL**
-instead of failing the suite; every other `C:` case is enforced. Remove an entry
-once its case passes so a later regression is caught.
+(`C_KNOWN_FAILURES`) reports its current gaps as **XFAIL** instead of failing the
+suite; every other `C:` case is enforced. Remove an entry once its case passes so
+a later regression is caught. Two cases are quarantined today:
+
+- `C:ptrarith` — taint is not yet resolved through pointer arithmetic
+  (`*(p + 2)`) back to the aliased array slot.
+- `C:defaultmodels` — a known-answer test for the *shipped* propagation defaults,
+  which only a Native (pcode) import loads. Its chain lives in
+  `native-index.jsonl`, and a `-l c` import has no method table, so it gets no
+  default model file. The Pcode twin (`defaultmodels`) is what enforces those
+  defaults, and it is enforced.
 
 ## Adding a JNI test
 

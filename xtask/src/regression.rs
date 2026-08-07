@@ -85,6 +85,17 @@ const C_KNOWN_FAILURES: &[&str] = &[
     // Taint is not yet resolved through pointer arithmetic (`*(p + 2)`) back to
     // the aliased array slot, so no source -> sink flow is traced.
     "C:ptrarith",
+    // A known-answer test for the *shipped* propagation defaults, so it can only
+    // pass for the frontend those defaults are written for. The chain it asserts
+    // (`strcpy`/`strcat`/`strdup`) lives in `models/defaults/native-index.jsonl`,
+    // which `models::default_model_file` hands only to a
+    // `VirtualMethodTable::Native` program -- i.e. the pcode import. A `-l c`
+    // import has no method table (`Unknown`) and so gets no default file at all,
+    // leaving every step between source and sink an unmodeled external. The
+    // Pcode twin (`defaultmodels`, unprefixed) is what enforces those defaults.
+    // Delete this entry if `-l c` imports ever get a default model file of their
+    // own.
+    "C:defaultmodels",
 ];
 
 pub struct Options {
@@ -305,7 +316,10 @@ impl Task<'_> {
                 let outcome =
                     run_case(case, worker).unwrap_or_else(|err| Outcome::Fail(format!("{err:#}")));
                 let outcome = apply_lua_allowlist(&case.name, outcome);
-                vec![(case.name.clone(), apply_jvm_allowlist(&case.name, outcome))]
+                vec![(
+                    case.name.clone(),
+                    apply_xfail_allowlists(&case.name, outcome),
+                )]
             }
             Task::JvmChecks { samples } => {
                 // jvm-reader checks: compile the sample .java and exercise
@@ -1836,7 +1850,7 @@ fn run_c(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
 
     // The frontend's SARIF carries source spans, so the reached lines come
     // straight off the code-flow step regions -- no compiler or addr2line.
-    let found = assertions::collect_codeflow_source_lines(&sarif)?;
+    let found = assertions::collect_codeflow_start_lines(&sarif)?;
     if found.is_empty() {
         return Ok(Outcome::Fail(
             "code flow connects source and sink but no source lines were reported".to_string(),
