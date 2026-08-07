@@ -21,7 +21,7 @@ use crate::facts::Path;
 use ctadl_ir::graph::{DirectedGraph, Successors};
 use ctadl_ir::mir::TerminatorKind;
 use ctadl_ir::mir::call::{CallEdges, CallStyle};
-use ctadl_ir::mir::{LocalIdx, Locals};
+use ctadl_ir::mir::{FieldAccess, LocalIdx, Locals};
 use ctadl_ir::{
     AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, Statement, StatementKind, VariableRef, ssa,
 };
@@ -123,6 +123,36 @@ pub(crate) fn local_render(prog: &Program, func: &str, local: &str) -> String {
         .map(|(idx, _)| idx)
         .unwrap_or_else(|| panic!("no local named {local:?} in function {func:?}\n{prog}"));
     format!("%L{}", idx.index())
+}
+
+/* The `VariableRef` of the local named `local` in function `func`, for assertions that compare a
+statement's variable directly (a call argument, a store destination) rather than through the dump.
+The name-to-`LocalIdx` lookup is `local_render`'s, minus the rendering. Panics if the function or
+local does not exist. */
+#[track_caller]
+pub(crate) fn local_ref(prog: &Program, func: &str, local: &str) -> VariableRef {
+    let f =
+        function_named(prog, func).unwrap_or_else(|| panic!("no function named {func:?}\n{prog}"));
+    let idx = f
+        .locals
+        .iter_enumerated()
+        .find(|(_, decl)| decl.name.as_str() == local)
+        .map(|(idx, _)| idx)
+        .unwrap_or_else(|| panic!("no local named {local:?} in function {func:?}\n{prog}"));
+    VariableRef::new_local_idx(idx)
+}
+
+/* The argument list of the (first) direct call to `callee` in function `caller`. The narrow
+extraction behind argument-shape assertions -- unlike `check_loads` and friends it works on a
+multi-function fixture, which any call site necessarily is. Panics if there is no such call. */
+#[track_caller]
+pub(crate) fn call_args(prog: &Program, caller: &str, callee: &str) -> Vec<Exp> {
+    let calls = direct_calls_in(prog, caller);
+    calls
+        .into_iter()
+        .find(|(callees, _)| callees.iter().any(|c| c == callee))
+        .map(|(_, args)| args)
+        .unwrap_or_else(|| panic!("no direct call to {callee:?} in {caller:?}\n{prog}"))
 }
 
 /* Asserts the function `name` has the given return arity (the `N` in the dump's `define name() ->
@@ -406,16 +436,26 @@ pub(crate) fn check_assign_or_update<I>(
             1,
             "update destination requires exactly one source expression"
         );
-        assert_eq!(
-            dst_ap.fields.len(),
-            1,
-            "update destination must have exactly one (symbolic) field: {dst}"
-        );
-        let PathSegment::Symbol(sym) = dst_ap.fields.into_iter().next().unwrap() else {
-            panic!("update destination field must be symbolic: {dst}")
+        // A store's destination is an *address* (any number of pointer-arithmetic offsets)
+        // plus the single symbolic field written there, so the DSL path splits the same way:
+        // `f.[4].deref` is the address `f.[4]` and the field `deref`. A destination with more
+        // than one symbol would need intermediate loads and is not a single statement.
+        let mut fields = dst_ap.fields;
+        let Some(PathSegment::Symbol(sym)) = fields.pop() else {
+            panic!("update destination must end in a (symbolic) field: {dst}")
         };
+        let offsets: Vec<FieldAccess> = fields
+            .into_iter()
+            .map(|seg| match seg {
+                PathSegment::Offset(off) => FieldAccess::Offset(off),
+                PathSegment::Symbol(_) => panic!(
+                    "update destination may only have offsets before its field (an interior \
+                     symbol is a load, not part of one store): {dst}"
+                ),
+            })
+            .collect();
         StatementKind::store(
-            AccessPath::without_fields(dst_ap.base),
+            AccessPath::new(dst_ap.base, offsets),
             FieldPath::new(sym),
             srcs.into_iter().next().unwrap(),
         )
@@ -440,7 +480,7 @@ pub(crate) fn check_assign_or_update<I>(
 }
 
 /* Asserts the (single) function contains a `Load` that reads `source_str` (an access-path DSL
-string like `f.[3]` or `$globals.a`). Field reads lower to loads through a temporary, so this is
+string like `f.[3].deref` or `$globals.a`). Field reads lower to loads through a temporary, so this is
 the load-based complement to `check_assign_or_update`'s field-path source. Panics if not found. */
 #[track_caller]
 pub(crate) fn check_loads(prog: &Program, source_str: &str) {
@@ -967,9 +1007,10 @@ mod ap_tests {
 
     #[test]
     fn subscript_is_symbol_segment() {
-        // An escaped bracket is a *symbol whose name contains brackets*, which is how a field
-        // genuinely called `[3]` is written. It is not how an array index should be spelled --
-        // see SUBSCRIPT_OFFSET_GAP in `tests.rs` -- but the grammar has to be able to express it.
+        // A bracketed *name* is a symbol, not an offset, and the DSL says so by escaping the
+        // leading bracket: `"f.\[3]"` is `Symbol("[3]")`. (The C frontend lowers `f[3]` to
+        // `Offset(3), Symbol("deref")` -- see `subscript_access_paths` -- but lua still emits a
+        // bracketed symbol, and either way this spelling has to stay writable.)
         let mut locals = Locals::default();
         let f = locals.get_or_intern("f");
         assert_eq!(

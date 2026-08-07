@@ -82,8 +82,10 @@ const JVM_E2E_ENFORCED: &[&str] = &[
 /// reporting names, so they cannot collide with the Pcode case over the same
 /// source, and quarantining one never affects that Pcode case.
 const C_KNOWN_FAILURES: &[&str] = &[
-    // Taint is not yet resolved through pointer arithmetic (`*(p + 2)`) back to
-    // the aliased array slot, so no source -> sink flow is traced.
+    // A subscript lowers to an offset address (`arr[2]` is `arr.[2].[]`), so
+    // element paths compose, but the binary `+` in `*(p + 2)` does not lower to
+    // an offset address yet. Taint stored that way is not resolved back to the
+    // aliased array slot, so no source -> sink flow is traced.
     "C:ptrarith",
     // A known-answer test for the *shipped* propagation defaults, so it can only
     // pass for the frontend those defaults are written for. The chain it asserts

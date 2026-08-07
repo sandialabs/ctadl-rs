@@ -414,11 +414,15 @@ port must match:
 | Frontend | Array element segment | Port spelling |
 | --- | --- | --- |
 | dex, jvm | `Symbol("[]")` | `Argument(0).\[]` — JSON `"Argument(0).\\[]"` |
-| lua, C (tree-sitter) | `Symbol("[_elem_]")`, and `Symbol("[3]")` for a literal index | `Argument(0).\[_elem_]`, `Argument(0).\[3]` |
+| lua | `Symbol("[_elem_]")`, and `Symbol("[3]")` for a literal key | `Argument(0).\[_elem_]`, `Argument(0).\[3]` |
+| C (tree-sitter) | a real `Offset` then `Symbol("[]")` — `a[3]` is `.[3].\[]`, and `a[0]` and `a[n]` are both a bare `.\[]` | `Argument(0).[3].\[]`, `Argument(0).\[]` |
 | pcode | a real `Offset` | `Argument(0).[8]` |
 
-Note the pcode row is the only one where `.[n]` (unescaped) is right; on lua and
-the tree-sitter C frontend a source-level `t[3]` is the *symbol* `[3]`, not offset 3.
+Note that on lua a source-level `t[3]` is the *symbol* `[3]`, not offset 3, so the
+escaped spelling is the right one there. The tree-sitter C frontend lowers a
+subscript as the pointer arithmetic it is, so both spellings appear in one path:
+the index is an unescaped offset and the element read at that address is the
+escaped symbol `[]`.
 
 There is no wildcard segment. `.*` is a field literally named `*`, and `.[*]` is a
 load error — use the sink-side `wildcard` flag or a `saturating` source instead.

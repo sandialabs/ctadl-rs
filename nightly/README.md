@@ -139,8 +139,9 @@ maturing, so a short quarantine list in `xtask/src/regression.rs`
 suite; every other `C:` case is enforced. Remove an entry once its case passes so
 a later regression is caught. Two cases are quarantined today:
 
-- `C:ptrarith` — taint is not yet resolved through pointer arithmetic
-  (`*(p + 2)`) back to the aliased array slot.
+- `C:ptrarith` — a *subscript* now lowers to an offset address, so `arr[2]` and
+  `&arr[2]` compose, but the binary `+` in `*(p + 2)` does not yet, so taint
+  stored that way is not resolved back to the aliased array slot.
 - `C:defaultmodels` — a known-answer test for the *shipped* propagation defaults,
   which only a Native (pcode) import loads. Its chain lives in
   `native-index.jsonl`, and a `-l c` import has no method table, so it gets no
