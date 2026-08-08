@@ -46,7 +46,7 @@ cd ~/.local/state/ctadl/projects/backflash/index && duckdb
 See summaries from the index:
 
 ```sql
-select * from summary.parquet join function_id.parquet on summary.function_id = function_id.function_id limit 10;
+select * from summary.parquet join function_id.parquet on summary.func_id = function_id.id limit 10;
 ```
 
 Get functions endpoints are in:
@@ -181,4 +181,3 @@ ORDER BY target."column1", idx."column1";
 cd ~/.local/state/ctadl/imports/ls/facts
 cat pcode_schema.sql | sqlite3 facts.db
 ```
-
