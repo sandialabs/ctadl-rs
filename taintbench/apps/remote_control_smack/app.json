@@ -5,6 +5,5 @@
     "sha256": "sha256-qaIFU8ALILGHJLtbPahJryTZAzLr4JSG41ZZ2ZJ/4Cg="
   },
   "upstream": "https://github.com/TaintBench/remote_control_smack",
-  "findingsCommit": "master",
-  "excluded": "ctadl index runs for hours on this app and had not finished after two; a bare index with no model is just as slow, so the cost is the app, not the model. Run it deliberately with --apk remote_control_smack=<path>."
+  "findingsCommit": "master"
 }

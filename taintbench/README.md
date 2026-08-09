@@ -67,11 +67,15 @@ Thirty-eight TaintBench apps run today — every app in the benchmark except
 - `vibleaker_android_samp`
 - `xbot_android_samp`
 
-Thirty-seven of them run by default. `remote_control_smack` is kept but
-**excluded**: `ctadl index` on it runs for hours where every other app finishes
-in minutes, and a bare index with no model is just as slow, so it is the app and
-not the model. Its `expected.json` is an empty placeholder for that reason;
-every other app has a measured baseline.
+All thirty-eight run by default. `remote_control_smack` used to be **excluded**,
+because `ctadl index` on it ran for hours where every other app finishes in
+minutes. The cause was the ARM C++ exception unwinder in its native libraries:
+the three `__aeabi_unwind_cpp_pr*` personality routines each summarized to about
+50,000 rows against a median of 1 row per function, and they are legitimate
+indirect-call targets, so hybrid inlining instantiated those summaries and the
+result multiplied. `native-index.jsonl` now models the unwinder with
+`modes: ["skip-analysis"]` and the app reaches a fixpoint in about 30 s. See
+`../hybrid-inlining-plateau.md`.
 
 An app is excluded by an `excluded` key in its `app.json` whose value says why:
 
@@ -81,7 +85,8 @@ An app is excluded by an `excluded` key in its `app.json` whose value says why:
 
 `nix/taintbench.nix` then never fetches its APK, and the report shows
 `SKIP <name> (excluded: <reason>)` rather than a bare missing-APK skip. Naming
-its APK explicitly still runs it, which is how you would establish that baseline:
+its APK explicitly still runs it, which is how a baseline for an excluded app
+gets established. No app carries the key today:
 
 ```sh
 cargo xtask taintbench --apk remote_control_smack=/path/to/app.apk
