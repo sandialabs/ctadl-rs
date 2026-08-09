@@ -381,8 +381,9 @@ fn call_string_height_cmp(a: &CallString, b: &CallString) -> std::cmp::Ordering 
 /// higher, and among equal lengths the lexicographically smaller is higher. The
 /// empty call string (length 0) is therefore the top element, so a key converges to
 /// the empty / fully-resolved context whenever it is derivable. This guarantees the
-/// `cs.is_empty()` feedback (e.g. index_engine rule 3.5) is never missed merely
-/// because some longer call string happened to be recorded first.
+/// `cs.is_empty()` feedback — the bare `assign_like` head beside index_engine rule
+/// 3.2 — is never missed merely because some longer call string happened to be
+/// recorded first.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum SmallestCallString {
     /// No value yet — the lattice bottom and the identity for `join`.

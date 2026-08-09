@@ -1094,27 +1094,26 @@ pub fn taint_index_with_config(
         relation model_paths(Path);
         relation program_paths(Path);
 
-        // Hybrid Inlining relations:
-        // critical_summary(f, n, p). f(n.p = obj) invokes obj at some critical
-        // call site. The critical site itself is not tracked here; it can be
-        // recovered in rule 3.1 (Contextual Assignment).
+        // Hybrid Inlining relations: critical_summary(f, n, p). f(n.p = obj) invokes obj at some
+        // critical call site. The critical site itself is not tracked here; it can be recovered by
+        // the Contextual Assignment rule.
         relation critical_summary(FunctionId, FormalIndex, Path);
         // Critical call occurs inside this function
         relation critical_call(FunctionId);
         // Resolvent reaches the formals of Function. The call string is a lattice value so the
         // remaining columns functionally determine at most one call string: (func_id, formal_index,
         // path, object) -> call-string. This way we don't get the same object resolved through
-        // multiple stack configuration paths.
+        // multiple stack configuration paths. Invariant: the call string is non-empty.
         lattice resolvent(FunctionId, FormalIndex, Path, CallTargetObject, SmallestCallString);
-        // Like `resolvent`, the call string is a `SmallestCallString` lattice value in
-        // the last column, so the remaining (key) columns determine one call string per
-        // tuple — the *smallest* one (shortest, then lexicographically least).
+        // Assignment due to instantiating a summary from a resolvent. Invariant: call string is
+        // non-empty.
         lattice context_assign(FunctionId, FlowVariable, Path, FlowVariable, Path, SmallestCallString);
-        // Context-carrying field-sensitive reachability (non-empty call string). Seeded by rule
-        // 3.2 from `context_assign` and propagated by its own forward-field rules below. Rare on C
-        // targets (0 rows when there is no resolvable indirect/virtual dispatch); the lattice
-        // column keeps the smallest call string per (func,var,path,formal,fpath).
+        // Context-carrying field-sensitive reachability. Seeded from `context_assign` and
+        // propagated by its own forward-field rules below. Rare on C targets (0 rows when there is
+        // no resolvable indirect/virtual dispatch); the lattice column keeps the smallest call
+        // string per (func,var,path,formal,fpath). Invariant: call string is non-empty.
         lattice context_locals(FunctionId, FlowVariable, Path, FormalIndex, Path, SmallestCallString);
+        // Invariant: call string is non-empty.
         lattice context_summary(FunctionId, FormalIndex, Path, FormalIndex, Path, SmallestCallString);
 
         // Sets up paths from input program with static info. Paths must remain finite so we
@@ -1149,20 +1148,6 @@ pub fn taint_index_with_config(
             paths(&p13);
         locals(infunc, v1, p1, a, p43.clone()) <--
             locals(infunc, v2, p2, a, p4),
-            assign_like(infunc, v1, p1, v2, p23),
-            if let Some(p43) = p23.substitute_prefix(p2, p4),
-            paths(&p43);
-
-        // Forward field propagation (context-carrying) -- identical shape to the two rules above,
-        // threading the call string through so a context-specific flow keeps its context as it
-        // moves across assignments.
-        context_locals(infunc, v1, p13.clone(), a, p4, cs_lat.clone()) <--
-            context_locals(infunc, v2, p23, a, p4, cs_lat),
-            assign_like(infunc, v1, p1, v2, p2),
-            if let Some(p13) = p23.substitute_prefix(p2, p1),
-            paths(&p13);
-        context_locals(infunc, v1, p1, a, p43.clone(), cs_lat.clone()) <--
-            context_locals(infunc, v2, p2, a, p4, cs_lat),
             assign_like(infunc, v1, p1, v2, p23),
             if let Some(p43) = p23.substitute_prefix(p2, p4),
             paths(&p43);
@@ -1222,7 +1207,7 @@ pub fn taint_index_with_config(
             callee_info(func_id, _, v, p_call, _),
             locals(func_id, v, p_call, n, p_n);
 
-        // 1.2: Propagate Critical Summary (context-free)
+        // 1.2: Propagate Critical Summary (context-free) up the stack.
         critical_summary(caller_func_id, n, p_n) <--
             call(caller_func_id, caller_insn_id, tgt),
             critical_summary(tgt, n_tgt, p_tgt),
@@ -1232,22 +1217,24 @@ pub fn taint_index_with_config(
         // 2.1: Base Resolvent. A stored call target locally reaches a critical summary, so
         // instantiate the resolvent in the parameters of the summary. The target is carried
         // opaquely as a `CallTargetObject`; its variant is only tested later at call resolution.
-        resolvent(f, n, p.clone(), cto.clone(), SmallestCallString::Value(new_cs)) <--
+        resolvent(f, n, p.clone(), cto.clone(), cs_lat) <--
             critical_summary(f, n, p),
             call(caller, call_insn, f),
             let arg = call_arg!(*call_insn, *n),
             call_target_assign_like(caller, arg, p, cto),
             let call_site_id = PackedInsnSiteId::try_from_parts(*caller, *call_insn).unwrap(),
-            if let Some(new_cs) = CallString::new().push(call_site_id);
+            if let Some(new_cs) = CallString::new().push(call_site_id),
+            let cs_lat = SmallestCallString::Value(new_cs);
 
-        // Tracks resolvent to the call arg
+        // Tracks resolvent to the call arg. Invariant: `call_arg_resolvent` call string is
+        // non-empty.
         relation call_arg_resolvent(PackedCallArg, Path, CallTargetObject, SmallestCallString);
         call_arg_resolvent(arg_p, p, obj, cs_lat) <--
             resolvent(f, n2, p2, obj, cs_lat),
             locals(f, v, p, n2, p2),
             if let Some(arg_p) = v.as_call_arg();
 
-        // 2.2: Propagate Resolvent
+        // 2.2: Propagate Resolvent down the critical summaries, pushing call site
         resolvent(f, n, p.clone(), resolvent_obj, SmallestCallString::Value(new_cs)) <--
             call_arg_resolvent(arg_p, p, resolvent_obj, cs_lat),
             let arg = CallArgId::unpack_from_slice(&**arg_p).unwrap(),
@@ -1258,82 +1245,79 @@ pub fn taint_index_with_config(
             let call_site_id = PackedInsnSiteId::try_from_parts(*caller, arg.insn_id).unwrap(),
             if let Some(new_cs) = cs.push(call_site_id);
 
-        // 3.1: Contextual Assignment (instantiate)
-        // The critical call site is recovered here by joining the resolvent's reached formal
-        // (n.p) back to a `callee_info` receiver in func_id, rather than carrying the site
-        // through critical_summary/resolvent. The `callee_resolvents(resolvent_obj, dispatch_key, ...)`
-        // join is the frontend-agnostic replacement for what were two rules (a `Symbol` +
-        // `java_resolvents` java case and a `FunctionId`-matches-itself C case): the call
-        // site's `dispatch_key` and the reached object together select the concrete callee, and the
-        // cross-terms produce no tuple exactly as the old per-variant guards produced nothing.
-        context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(cs.clone())) <--
+        // 3.1: Contextual Assignment (seed). Given a resolvent that reaches a call site,
+        // instantiate a contextual assignment doing normal summary instantiation. The resolvent
+        // object itself and the dispatch key from the call site are used to determine the resolvent
+        // function. The context of the resolvent is associated with the assign.
+        context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), cs_lat.clone()) <--
             callee_info(caller, call_insn, v_rec, p_rec, dispatch_key),
             locals(caller, v_rec, p_rec, n, p),
             resolvent(caller, n, p, resolvent_obj, cs_lat),
-            if let SmallestCallString::Value(cs) = cs_lat,
-            if !cs.is_empty(),
             callee_resolvents(resolvent_obj, dispatch_key, resolvent_func),
             summary(resolvent_func, n1_sum, p1_sum, n2_sum, p2_sum),
             let v2 = call_arg!(*call_insn, *n2_sum),
             let v1 = call_arg!(*call_insn, *n1_sum);
 
-        // 3.2: Seed `locals` with the context-specific flow from an instantiated callee summary
-        // (`context_assign`), with the call string. The base `locals` propagation rules then carry
-        // the context forward THROUGH locals. Guards kept AFTER both relations so `context_assign`
-        // and `locals` are adjacent first-two clauses => Ascent treats it as a SIMPLE JOIN and
-        // drives by the smaller (delta) side instead of full-scanning `context_assign`.
+        // 3.2: Contextual assignment (chain). Instantiate contextual summaries and pop call string,
+        // either creating a new contextual assign or a bare, uncontextual assign
+        context_assign(caller, v1, p1_sum.clone(), v2, p2_sum.clone(), new_cs_lat) <--
+            context_summary(f, n1, p1_sum, n2, p2_sum, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat,
+            if let (new_cs, Some(call_site_id)) = cs.pop(),
+            if !new_cs.is_empty(), // keep call string invariant
+            let InsnSiteId {func_id: caller, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
+            call(caller, insn_id, f),
+            let v1 = call_arg!(insn_id, *n1),
+            let v2 = call_arg!(insn_id, *n2),
+            let new_cs_lat = SmallestCallString::Value(new_cs);
+
+        assign_like(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone()) <--
+            context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
+            if let SmallestCallString::Value(cs) = cs_lat,
+            if let (new_cs, Some(call_site_id)) = cs.pop(),
+            if new_cs.is_empty(),
+            let InsnSiteId {func_id: caller, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
+            call(caller, insn_id, tgt),
+            let v1 = call_arg!(insn_id, *n1),
+            let v2 = call_arg!(insn_id, *n2);
+
+        // 3.3a: We have to reason about contextual local reachability. This involves reasoning
+        // about flows composed of hops, some of which are non-contextual and some of which are
+        // contextual. The following two rules extend contextual flows with built-in assigns using
+        // the same shape as forward/backward propagation.
+        context_locals(infunc, v1, p13.clone(), a, p4, cs_lat.clone()) <--
+            context_locals(infunc, v2, p23, a, p4, cs_lat),
+            assign_like(infunc, v1, p1, v2, p2),
+            if let Some(p13) = p23.substitute_prefix(p2, p1),
+            paths(&p13);
+        context_locals(infunc, v1, p1, a, p43.clone(), cs_lat.clone()) <--
+            context_locals(infunc, v2, p2, a, p4, cs_lat),
+            assign_like(infunc, v1, p1, v2, p23),
+            if let Some(p43) = p23.substitute_prefix(p2, p4),
+            paths(&p43);
+
+        // 3.3b: The following two rules extend non-contextual flows with contextual assigns.
         context_locals(func_id, v1.clone(), p13.clone(), a.clone(), p4.clone(), cs_lat.clone()) <--
             context_assign(func_id, v1, p1, v2, p2, cs_lat),
             locals(func_id, v2, p23, a, p4),
-            if let SmallestCallString::Value(cs) = cs_lat,
-            if !cs.is_empty(),
             if let Some(p13) = p23.substitute_prefix(p2, p1),
             paths(&p13);
         context_locals(func_id, v1.clone(), p1.clone(), a.clone(), p43.clone(), cs_lat.clone()) <--
             context_assign(func_id, v1, p1, v2, p23, cs_lat),
             locals(func_id, v2, p2, a, p4),
-            if let SmallestCallString::Value(cs) = cs_lat,
-            if !cs.is_empty(),
             if let Some(p43) = p23.substitute_prefix(p2, p4),
             paths(&p43);
 
-        // 3.3: a context-specific flow (non-empty cs) that reaches an out-formal becomes a
-        // conditional summary tagged with its call string; 3.4 pops it back to the caller.
+        // 3.4: a context-specific flow that reaches an out-formal becomes a conditional summary
+        // tagged with its call string; contextual assignment (chain) pops it back to the caller.
         context_summary(func_id, n1.clone(), p1.clone(), n2.clone(), p2.clone(), cs_lat.clone()) <--
             context_locals(func_id, dst_var, p1, n2, p2, cs_lat),
-            if let SmallestCallString::Value(cs) = cs_lat,
-            if !cs.is_empty(),
             formal_param(func_id, dst_var, formal_ty),
             if let Some(n1) = dst_var.as_formal(),
             if isout(&n1, *formal_ty, p1),
             if n1 != *n2 || p1 != p2;
 
-        // 3.4: Instantiate Summaries and pop call string, either creating a new contextual assign
-        // or a bare, uncontextual assign
-        context_assign(caller, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone(), SmallestCallString::Value(new_cs)) <--
-            context_summary(f, n1, p1_sum, n2, p2_sum, cs_lat),
-            if let SmallestCallString::Value(cs) = cs_lat,
-            if let (new_cs, Some(call_site_id)) = cs.pop(),
-            if !new_cs.is_empty(),
-            let InsnSiteId {func_id: caller, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
-            call(caller, insn_id, f),
-            let v1 = call_arg!(insn_id, *n1),
-            let v2 = call_arg!(insn_id, *n2);
-
-        assign_like(func_id, v1.clone(), p1_sum.clone(), v2.clone(), p2_sum.clone()) <--
-            context_summary(tgt, n1, p1_sum, n2, p2_sum, cs_lat),
-            if let SmallestCallString::Value(cs) = cs_lat,
-            if let (new_cs, Some(call_site_id)) = cs.pop(),
-            if new_cs.is_empty(),
-            let InsnSiteId {func_id, insn_id} = InsnSiteId::unpack_from_slice(&*call_site_id).unwrap(),
-            call(func_id, insn_id, tgt),
-            let v1 = call_arg!(insn_id, *n1),
-            let v2 = call_arg!(insn_id, *n2);
-
-        // Local virtual / indirect call and resolvent, bypassing the summary machinery. The
-        // reached call target (`cto`) resolved under the call site's dispatch key (`dispatch_key`)
-        // via `callee_resolvents` gives the concrete callee, unifying the former java (Symbol +
-        // `java_resolvents` lookup) and C (FunctionId-matches-itself) bypass rules.
+        // Local virtual / indirect call and resolvent, bypassing the resolvent / summary machinery
         assign_like(func_id, v1.into(), p1, v2.into(), p2) <--
             callee_info(func_id, insn_id, arg, arg_p, dispatch_key),
             call_target_assign_like(func_id, arg, arg_p, cto),
