@@ -212,16 +212,19 @@ pub struct IndexTimeModelCounts {
     pub propagations: usize,
     /// Generators carrying a `bridge`.
     pub bridges: usize,
+    /// Generators carrying a `modes` directive.
+    pub modes: usize,
 }
 
 impl IndexTimeModelCounts {
     pub fn merge(&mut self, other: &Self) {
         self.propagations = self.propagations.max(other.propagations);
         self.bridges = self.bridges.max(other.bridges);
+        self.modes = self.modes.max(other.modes);
     }
 
     pub fn is_empty(&self) -> bool {
-        self.propagations == 0 && self.bridges == 0
+        self.propagations == 0 && self.bridges == 0 && self.modes == 0
     }
 
     /// How to name what was ignored, for the one warning a query-time load emits.
@@ -232,6 +235,9 @@ impl IndexTimeModelCounts {
         }
         if self.bridges > 0 {
             parts.push(format!("{} bridging model(s)", self.bridges));
+        }
+        if self.modes > 0 {
+            parts.push(format!("{} analysis-mode directive(s)", self.modes));
         }
         parts.join(" and ")
     }
@@ -1057,6 +1063,66 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
                 }
                 Err(e) => self.add_json_error(e),
             }
+        }
+    }
+
+    /// Records the functions a `modes` directive applies to.
+    ///
+    /// `skip-analysis` is the one defined value: the indexer derives nothing from the matched
+    /// function's body, so whatever the same generator's `propagation` list says is that
+    /// function's entire behaviour. Without it a model *adds* to the body-derived summary rather
+    /// than replacing it, which is what makes a hand-written model unable to cut a degenerate
+    /// function down (see `docs/model-generators.md` §`modes`).
+    ///
+    /// Matching is the generator's own `where`, exactly as for a propagation, so this reads the
+    /// same `self.methods[n]` set. A generator carrying `modes` and no `propagation` is legal and
+    /// means "this function moves nothing" -- the honest model for a routine whose only job is
+    /// control flow.
+    fn visit_modes(&mut self, n: usize, value: &serde_json::Value) {
+        let Some(items) = value.as_array() else {
+            self.report_not_array(n, "modes");
+            return;
+        };
+        // Counted whether or not it matches anything, mirroring `visit_propagation`: what a
+        // query-time load reports is that the *file* declared an index-time construct.
+        self.index_time_models.modes += 1;
+        // A mode is a property of a function, not of one call of it. `find: callsites` selects
+        // call sites, so there is nothing to attach it to.
+        if let Some(FindMethod::Callsites) = self.find_method.get(&n) {
+            self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                index: n,
+                field_name: "modes".to_string(),
+                message: "'modes' is not supported with find: callsites".to_string(),
+            });
+            return;
+        }
+        let mut skip = false;
+        for item in items {
+            let Some(text) = item.as_str() else {
+                self.add_json_error(crate::error::JsonModelError::FieldNotString {
+                    index: n,
+                    field_name: "modes".to_string(),
+                });
+                continue;
+            };
+            match text {
+                "skip-analysis" => skip = true,
+                other => self.add_json_error(crate::error::JsonModelError::UnexpectedField {
+                    index: n,
+                    field_name: "modes".to_string(),
+                    message: format!(
+                        "unknown mode '{other}'; the defined value is 'skip-analysis'"
+                    ),
+                }),
+            }
+        }
+        if !skip {
+            return;
+        }
+        for func in matched_functions(&self.methods[n], self.index.vmt) {
+            self.out
+                .skip_analysis
+                .insert(facts::Str::from(func.as_str()));
         }
     }
 
@@ -2334,10 +2400,21 @@ pub trait ModelGeneratorVisitor {
         if let Some(paths) = value.get("access_paths") {
             self.visit_access_paths(n, paths);
         }
+        if let Some(modes) = value.get("modes") {
+            self.visit_modes(n, modes);
+        }
         if let Some(bridge) = value.get("bridge") {
             self.visit_bridge(n, bridge);
         }
     }
+
+    #[inline]
+    fn visit_modes(&mut self, n: usize, value: &serde_json::Value) {
+        self.super_modes(n, value)
+    }
+
+    #[inline]
+    fn super_modes(&mut self, _n: usize, _value: &serde_json::Value) {}
 
     #[inline]
     fn visit_access_paths(&mut self, n: usize, value: &serde_json::Value) {

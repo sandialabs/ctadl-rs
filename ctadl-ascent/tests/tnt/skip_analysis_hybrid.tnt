@@ -1,0 +1,40 @@
+// A skipped body stops feeding hybrid inlining.
+//
+// `dispatch` calls its first argument. That is the shape hybrid inlining exists for: rule 1.1
+// reads `locals` at the receiver vertex to build a `critical_summary`, the caller's `ptr<polyY>`
+// resolves it, and `dispatch` ends up with `return <- obj` -- which is what `hybrid_inlining.tnt`
+// asserts for the same shape.
+//
+// Here `dispatch` carries `modes: ["skip-analysis"]` and no propagation at all, the honest model
+// for a routine that moves nothing. With no `locals` inside it, rule 1.1 has nothing to read, the
+// indirect call never resolves, and neither the summary nor the flow through it exists.
+//
+// This is the case the ARM unwinder models in `native-index.jsonl` rely on: it is not enough to
+// suppress the summary rows: the resolvents the body manufactures are what multiply through
+// `context_assign` and dominate the run.
+def polyY(obj): 1
+where summaries [return <- obj]
+{
+start:
+  return obj;
+}
+
+def dispatch(poly, obj): 1
+where summaries [return </- obj]
+{
+start:
+  tmp = poly(obj);
+  return tmp;
+}
+
+// `polyY` is called directly as well as through `dispatch`, so the source has a path of its own
+// and the absence check cannot pass by the source having gone missing.
+def service() {
+start:
+  first = source(Obj);
+  direct = polyY(first);
+  sink(direct, Obj);
+  indirect = dispatch(ptr<polyY>, first);
+  errsink(indirect, Obj);
+  return;
+}

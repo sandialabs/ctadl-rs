@@ -100,6 +100,32 @@
 // `realloc(ptr, size)` KEEPS the old contents. Modeling it like `malloc` drops them, which ends
 // a flow through every grow-the-buffer loop in a parser.
 {"find":"methods","where":[{"constraint":"signature_match","names":["realloc","reallocarray","reallocf"]}],"model":{"propagation":[{"input":"Argument(0).deref","output":"Return.deref"}]}}
+// ---- the C++ exception unwinder ----
+// These carry NO propagation and exist purely for `modes: ["skip-analysis"]`, which tells the
+// indexer to derive nothing from their bodies. That is the whole model: an unwinder moves
+// register and stack state to resume at a landing pad, not application data between a caller's
+// arguments, so "this function propagates nothing" is the accurate summary rather than a
+// convenient one. Taint arriving in a thrown object and leaving at a `catch` never crossed these
+// frames as a data-flow edge anyway -- the personality routine writes it into a register the
+// handler reads, which no access path in the IR names.
+//
+// The cost of NOT modeling them is not a missed flow, it is the analysis not finishing. On
+// `remote_control_smack` (TaintBench, ARM native libraries) the three `__aeabi_unwind_cpp_pr*`
+// personality routines summarize to ~50,000 rows EACH -- against a median of 1 row per function
+// -- because an unwinder makes nearly everything reachable from nearly everything. They are also
+// legitimate indirect-call targets, reached through a pointer in the exception table, so hybrid
+// inlining instantiates those summaries at their call sites and the result multiplies through
+// `context_assign` / `context_locals`. See `hybrid-inlining-plateau.md`.
+//
+// `skip-analysis` and not a `propagation` list: a model ADDS to what a body derives. Only this
+// directive replaces it. And the seed is the point -- suppressing just the summary rows would
+// leave the body's `critical_summary` resolvents, which are what multiply.
+//
+// NAMES have their leading underscores stripped, per the SYMBOL ALIASES note at the top of this
+// file: `__aeabi_unwind_cpp_pr0` reaches the matcher as `aeabi_unwind_cpp_pr0` and
+// `_Unwind_RaiseException` as `Unwind_RaiseException`. Capital `U` in the `_Unwind_*` family is
+// deliberate -- `signature_match` is exact, not case-folded.
+{"find":"methods","where":[{"constraint":"signature_match","names":["aeabi_unwind_cpp_pr0","aeabi_unwind_cpp_pr1","aeabi_unwind_cpp_pr2","gnu_unwind_frame","gnu_unwind_execute","gnu_unwind_pr_common","gnu_Unwind_Resume","gnu_Unwind_Resume_or_Rethrow","gnu_Unwind_RaiseException","gnu_Unwind_ForcedUnwind","gnu_Unwind_Backtrace","unwind_phase1","unwind_phase2","unwind_phase2_forced","Unwind_RaiseException","Unwind_Resume","Unwind_Resume_or_Rethrow","Unwind_ForcedUnwind","Unwind_DeleteException","Unwind_Backtrace","Unwind_Complete","Unwind_VRS_Get","Unwind_VRS_Set","Unwind_VRS_Pop","Unwind_GetLanguageSpecificData","Unwind_GetRegionStart","Unwind_GetDataRelBase","Unwind_GetTextRelBase","cxa_begin_cleanup","cxa_end_cleanup","cxa_type_match","cxa_call_unexpected"]}],"model":{"modes":["skip-analysis"]}}
 // ---- deliberately absent ----
 // `qsort`/`heapsort`/`mergesort` used to carry `Argument(0).deref -> Argument(0).deref`, a
 // self-loop that derives nothing: the taint it would propagate is already at the vertex it

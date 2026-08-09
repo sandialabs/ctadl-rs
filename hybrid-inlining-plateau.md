@@ -1,8 +1,18 @@
 # The hybrid-inlining plateau
 
-`ctadl index remote_control_smack` does not finish. It is excluded from the TaintBench
+**Resolved.** `ctadl index remote_control_smack` reaches a fixpoint in **26.5 s** (33 s wall
+clock for the whole command), against a run that had not converged after 1200 s and was
+projected to take hours. The fix is item 1 of *What is left to try* — modeling the ARM C++
+exception unwinder — and it needed one new engine feature to work at all. See
+*The fix: `modes: ["skip-analysis"]`* at the end. The app is back in the TaintBench suite.
+
+Everything between here and that section describes the run **before** the fix, and is kept
+because it is the measurement that identified the cause. Every relation size and rule time
+below is a pre-fix number.
+
+`ctadl index remote_control_smack` did not finish. It was excluded from the TaintBench
 suite for that reason (`taintbench/apps/remote_control_smack/app.json`). This note records
-what the run is actually doing, which explanations turned out to be wrong, and what is
+what the run was actually doing, which explanations turned out to be wrong, and what is
 left to try.
 
 Everything below comes from seven capped runs at 1200 s on the same machine and the same
@@ -23,6 +33,11 @@ CTADL_INDEX_TIMEOUT_SECS=1200 \
 the deadline and returns as if it had converged, so the per-SCC and per-rule times get
 logged for a run that would otherwise never print them. The index block carries
 `#![measure_rule_times]`, so `scc_times_summary()` reports every rule.
+
+Run this command today and it converges in 33 s, because the unwinder is modelled. To
+reproduce the plateau, add `--no-default-models` (which drops every native default, not only
+the unwinder) or delete the `skip-analysis` generator from
+`ctadl-ascent/src/models/defaults/native-index.jsonl`.
 
 Adding `CTADL_DUMP_JOIN_DIR=<dir>` writes the join-density files described under *The join,
 measured*. It costs 544 s of extra rule time, and **the relation sizes come out unchanged
@@ -503,7 +518,7 @@ changed, against ±3% drift on families that did not. Noise.
 
 ## What is left to try
 
-1. **Model the unwinder routines.** This is what propagation models are for: give
+1. **Model the unwinder routines.** ***Done — see the next section.*** This is what propagation models are for: give
    `__aeabi_unwind_cpp_pr0/1/2`, `__gnu_unwind_frame`, `__gnu_unwind_pr_common`,
    `__gnu_Unwind_Resume`, `unwind_phase2` and `__gnu_unwind_execute` a hand-written summary
    instead of computing one. No shipped model file mentions `aeabi` or `unwind` today.
@@ -566,6 +581,119 @@ changed, against ±3% drift on families that did not. Noise.
    relation is still declared `lattice context_locals`), so the work is mostly done. The
    delta-driven instances, which hold 638 s of the 856 s, spend **0%** in the index; a trie
    cannot improve them at all.
+
+## The fix: `modes: ["skip-analysis"]`
+
+Item 1 above, carried out. Two things had to change, and the first is the one that was not
+obvious.
+
+### A model ADDS to a body; it does not replace it
+
+The premise of item 1 was "give the unwinder a hand-written summary instead of computing one".
+The engine had no way to express *instead of*. `summary` is both an input relation -- the rows
+`codegen::model_matches` pushes from a `propagation` -- **and** a derived one, computed from
+`locals` by the two summary rules. Nothing about matching a function stopped the second, so a
+model on a function CTADL can see left the ~50,000-row derived summary exactly where it was and
+added its own rows on top. Writing the model without checking this would have made the run
+*slower*, and the reason would have been invisible.
+
+Measured before anything else was built, with a two-line flowy fixture: a function whose body
+gives `return <- src`, plus a `propagation` saying `Argument(0) -> Return`. Both summaries came
+out. The pair `ctadl-ascent/tests/tnt/model_adds_to_summary.tnt` and `skip_analysis.tnt` is that
+experiment, kept as a regression test -- one asserts the union, the other asserts the
+replacement.
+
+### What was implemented
+
+`modes: ["skip-analysis"]` was in the JSON schema and the docs, marked *not yet implemented*. It
+now works, end to end:
+
+| piece | file |
+| --- | --- |
+| `modes` parsed, validated, matched functions recorded | `models/json.rs` (`visit_modes`), `models/matches.rs` |
+| names resolved to ids, `facts.skip_analysis` emitted | `codegen/model_matches.rs` |
+| the guard | `index_engine/mod.rs`, the `locals`-from-formals seed rule |
+| the unwinder generator | `models/defaults/native-index.jsonl` |
+
+**The guard is one clause, and it is deliberately on the cheapest rule in the block.** Adding
+`!skip_analysis(infunc)` to the rule that seeds `locals` from a function's formals leaves a
+skipped function with no `locals` at all, and every body-derived relation drives on `locals`:
+both summary rules, rule 1.1 for `critical_summary`, rule 3.3b for `context_locals`. Guarding
+the summary rules instead would have been both redundant and wrong-headed -- redundant because
+they drive on `locals`, and wrong-headed because **suppressing the summary rows is not the win**.
+The resolvents the body manufactures are. A skipped function's own call sites are untouched: the
+instantiation rule reads `summary(tgt, ..)` without ever touching `locals(tgt, ..)`, so callers
+still compose with the hand-written behaviour.
+
+`skip_analysis` is an input relation nothing derives, so its negation sits in an earlier stratum
+and the fixpoint pays nothing for it.
+
+The unwinder generator carries **no propagation at all** -- 32 names, `modes` and nothing else.
+That is the accurate model rather than a convenient one: an unwinder moves register and stack
+state to resume at a landing pad, not application data between a caller's arguments. Taint
+arriving in a thrown object and leaving at a `catch` never crossed those frames as a data-flow
+edge the IR could name.
+
+### What it bought
+
+Same machine, same imports, same app model. The before column is the 1200 s capped run this note
+documents, which had **not** converged -- so its relation sizes are lower bounds, not totals.
+
+| | before (capped at 1200 s, 29 iterations) | after (converged, 1957 iterations) |
+| --- | ---: | ---: |
+| scc 10 | 1321.9 s, no fixpoint | **26.5 s, fixpoint** |
+| `summary` | 358,695 and climbing | **53,005** |
+| `context_assign` | 396,961 | **497** |
+| `context_locals` | 2,537,958 | **3,575** |
+| `context_summary` | 75,642 | **228** |
+| `resolvent` | 220 | 208 |
+| `critical_summary` | 2,933 | 3,669 |
+| `locals` | 14,439,746 | 40,763,914 |
+| `assign_like` | (destroyed by the cap) | 3,286,730 |
+
+`locals` is *larger* after, and that is not a regression: the before column stopped at iteration
+29 of a fixpoint that never arrived. The right reading of the table is the context-sensitive
+half. `context_assign` fell 800x, and the chain under *The chain, end to end* multiplies straight
+through it.
+
+Where the time goes now, by head relation, over the 23.1 s of summed rule time:
+
+| head | time | share |
+| --- | ---: | ---: |
+| `locals` | 15.4 s | 66.5% |
+| `context_assign` | 3.2 s | 13.8% |
+| `critical_summary` | 2.7 s | 11.7% |
+| `summary` | 1.1 s | 4.9% |
+| everything else | 0.7 s | 3.1% |
+
+**The context-sensitive half is 14% of the run, down from 61%.** Items 3, 4 and 6 above are
+untouched by this fix and still apply -- they are about `substitute_prefix` and the join
+structure, which is now `locals`' bill rather than `context_locals`'.
+
+Peak memory for the converged run is 3.9 GB, read off `/usr/bin/time -l`'s maximum resident set
+size -- **not** the physical-footprint gauge the rest of this note uses, so it is not directly
+comparable to the 1.6 GB plateau. The converged run holds 2.8x the `locals` rows of the capped
+one, so more memory is the cost of finishing rather than a regression.
+
+### Correctness
+
+`cargo xtask taintbench --apk remote_control_smack=<apk>` passes: 6 of the 17 ground-truth flows
+connect and every finding's source and sink is recognized as an endpoint. (The app carries 17
+positive and 0 negative findings, so it exercises no false-positive check.) That baseline is now
+recorded in the app's `expected.json` and the `excluded` key is gone from its `app.json`, so the
+app is back in the default suite.
+
+The shipped default model file changed, so the whole suite was re-run rather than argued about:
+**38 of 38 apps pass**, every app's recorded `matched_finding_ids` baseline unchanged
+(`cargo xtask taintbench` with every APK named). The generator matches unwinder symbols only,
+and nothing else in the benchmark moved.
+
+The three flowy fixtures pin the semantics rather than the numbers:
+
+- `model_adds_to_summary.tnt` -- a model without `modes` adds to the body-derived summary.
+- `skip_analysis.tnt` -- the same model with `modes` replaces it, and flows follow the model.
+- `skip_analysis_hybrid.tnt` -- a skipped body's indirect call no longer resolves, which is the
+  half that actually mattered here. Drop the directive and both checks fail.
 
 ## Ascent mechanics worth knowing
 

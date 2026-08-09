@@ -342,9 +342,11 @@ pub fn index(
         &mut source_info,
     )?;
     log::info!(
-        "models: {} summary row(s), {} declared access path(s)",
+        "models: {} summary row(s), {} declared access path(s), {} function(s) with analysis \
+         skipped",
         model_report.summaries,
-        model_report.declared_paths
+        model_report.declared_paths,
+        model_report.skipped
     );
     // Unconditionally, at info, even when nothing went wrong: a bridge-only generator appears on
     // no other surface, and this line is what catches the mis-paired case (wrong slot, wrong
@@ -1372,6 +1374,7 @@ pub fn inspect_index_facts(
     log::debug!("  callee_resolvents: {}", facts.callee_resolvents.len());
     log::debug!("  call_target_assign:{}", facts.call_target_assign.len());
     log::debug!("  external_function: {}", facts.external_function.len());
+    log::debug!("  skip_analysis:  {}", facts.skip_analysis.len());
 
     use crate::facts::InsnSiteId;
 
