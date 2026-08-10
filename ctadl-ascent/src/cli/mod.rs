@@ -197,6 +197,40 @@ impl Default for IndexOptions<'_> {
 /// If summary_projects is provided, loads summaries from those projects and maps them into the current project.
 /// `no_default_models` suppresses the built-in per-language defaults, leaving `models` as the
 /// complete set. See [`IndexOptions`] for the rest.
+/// What a DSL load did, said once, for whichever phase just ran.
+///
+/// Three things, and they answer three different questions. The *counts* are the design's
+/// "count of matched model heads kept for that phase" — the number to look at when a model
+/// should be matching and is not. The *phase warning* separates a rule that belongs to the
+/// other command from one that is broken. The *dead rules* are the ones that ran and selected
+/// nothing, which is the failure mode that otherwise looks exactly like a clean program.
+fn report_dsl(report: &crate::models::DslReport) {
+    if report.is_empty() {
+        return;
+    }
+    let totals = report.totals();
+    log::info!(
+        "model DSL: {} source, {} sink, {} propagation, {} bridge, {} access-path head(s) kept \
+         for this phase",
+        totals.sources,
+        totals.sinks,
+        totals.propagations,
+        totals.bridges,
+        totals.access_paths
+    );
+    if let Some(warning) = report.phase_warning() {
+        log::warn!("{warning}");
+    }
+    let dead = report.dead_rules();
+    if !dead.is_empty() {
+        log::warn!(
+            "{} model rule(s) are live for this phase and matched nothing: {}",
+            dead.len(),
+            dead.join(", ")
+        );
+    }
+}
+
 pub fn index(
     project: &AnalysisProject,
     summary_projects: &[String],
@@ -224,6 +258,12 @@ pub fn index(
     let mut source_info = IndexSourceInfo::default();
 
     let file_specs = crate::models::scan_model_files(models)?;
+    // DSL files are parsed and checked once, before any artifact is read, and matched by a
+    // single accumulator across the whole loop. That is not symmetry with the JSON path for its
+    // own sake: a rule whose body names two programs — a bridge — is satisfied by no single
+    // import, so its components have to be collected as the imports stream by and joined after.
+    let dsl_models = crate::models::DslModelSet::scan(models)?;
+    let mut dsl_matcher = crate::models::DslMatcher::new(&dsl_models);
     // Every matched model, instantiated against the IR being indexed. It persists across the import
     // loop and is codegen'd after it. Matches are a function of (artifact x models files) while the
     // import cache is a pure function of the artifact, and persisting them would let `ctadl index
@@ -269,12 +309,17 @@ pub fn index(
                 crate::models::try_load_default_models(&match_index, &mut model_matches)?;
             }
             for model_path in models {
+                // The DSL files are the matcher's, not this loop's; see above.
+                if crate::models::is_dsl_path(model_path) {
+                    continue;
+                }
                 let report =
                     crate::models::try_load_models(&match_index, model_path, &mut model_matches)?;
                 if !report.endpoint_stats.is_empty() {
                     files_declaring_endpoints.insert(model_path);
                 }
             }
+            dsl_matcher.observe_import(&match_index);
             crate::models::matches::observe_import(
                 &match_index,
                 &file_specs.bridges,
@@ -307,6 +352,12 @@ pub fn index(
             phys_footprint_mb()
         );
     }
+    // Every import has been seen, so a rule whose two components matched in two different
+    // programs can finally be joined. Index time keeps the propagation / bridge / access-path
+    // heads and says how many rules declared only the other phase's.
+    let dsl_report = dsl_matcher.finish(crate::models::DslPhase::Index, &mut model_matches)?;
+    report_dsl(&dsl_report);
+
     // Measured, not assumed. Streaming matching retains only the *matches* -- one interned
     // name plus two (tag, index, path) triples per propagation -- and drops each import's
     // match index and IR with the import. On a 6.4 MB APK (`com.noto_54.apk`, 1224 propagation
@@ -492,6 +543,10 @@ pub fn query(
         // Import outer, model file inner: one `ProgramInfo` decode and one match index per
         // import, reused across every model file, rather than one of each per (file, import)
         // pair. The match tables are a function of the program alone.
+        // Parsed and checked once, before any import is read; see `cli::index` for why the DSL
+        // needs one accumulator across the whole loop rather than one load per (file, import).
+        let dsl_models = crate::models::DslModelSet::scan(models)?;
+        let mut dsl_matcher = crate::models::DslMatcher::new(&dsl_models);
         if !models.is_empty() {
             for import in project.iter_imports() {
                 let import = import?;
@@ -500,7 +555,11 @@ pub fn query(
                     &program_info,
                     crate::models::ImportScope::new(import.language, &import.name),
                 );
+                dsl_matcher.observe_import(&match_index);
                 for model_path in models {
+                    if crate::models::is_dsl_path(model_path) {
+                        continue;
+                    }
                     let report = crate::models::try_load_models(
                         &match_index,
                         model_path,
@@ -518,6 +577,42 @@ pub fn query(
                             .entry((model_path.clone(), *index, *direction))
                             .or_default()
                             .merge(stats);
+                    }
+                }
+            }
+        }
+        // Query time keeps the source/sink heads. The rules whose heads are all index-time are
+        // counted and reported, exactly as the JSON half's `ignored` counters are.
+        let dsl_report = dsl_matcher.finish(crate::models::DslPhase::Query, &mut model_matches)?;
+        report_dsl(&dsl_report);
+        for file in &dsl_report.files {
+            for (rule, stats) in file.rules.iter().enumerate() {
+                for (declared, matched, direction) in [
+                    (
+                        stats.source_heads,
+                        stats.sources,
+                        crate::facts::TaintDirection::Forward,
+                    ),
+                    (
+                        stats.sink_heads,
+                        stats.sinks,
+                        crate::facts::TaintDirection::Backward,
+                    ),
+                ] {
+                    if declared == 0 {
+                        continue;
+                    }
+                    let entry = diagnostics
+                        .generator_stats
+                        .entry((file.path.clone(), rule, direction))
+                        .or_default();
+                    entry.ports_declared += declared;
+                    entry.endpoints_matched += matched;
+                    entry.functions_matched = entry.functions_matched.max(stats.groundings);
+                    if matched == 0 {
+                        entry
+                            .unmatched
+                            .insert(crate::models::UnmatchedReason::NoFunctionMatched);
                     }
                 }
             }

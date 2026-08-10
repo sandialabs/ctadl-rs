@@ -336,6 +336,9 @@ impl FileState {
     /// read to the end.
     fn take_inventory(&mut self) -> bool {
         let path = self.path.clone();
+        if models::is_dsl_path(&path) {
+            return self.take_dsl_inventory();
+        }
         let outcome = spec::visit_model_file(&path, |n, value| {
             // The errors are dropped: the matching pass parses the same clause and reports
             // them, once, as the model errors they are. What is wanted here is only whether
@@ -371,6 +374,56 @@ impl FileState {
                 false
             }
         }
+    }
+
+    /// [`Self::take_inventory`] for a model DSL file: one entry per rule.
+    ///
+    /// A rule has no `in` clause — a DSL rule scopes itself with `fun(F, language = …)`, which
+    /// is an ordinary attribute and cannot be read off without a program. So every rule is
+    /// reported as applicable and `CTADL0009` ("this generator's scope admits no import") never
+    /// fires for one. The rule that matched nothing is still reported, through `CTADL0004`,
+    /// which is the diagnostic that actually distinguishes the two cases.
+    fn take_dsl_inventory(&mut self) -> bool {
+        let file = match models::dsl::DslFile::read(&self.path) {
+            Ok(file) => file,
+            Err(e) => {
+                self.record_error(render_chain(&e));
+                return false;
+            }
+        };
+        for rule in &file.program.rules {
+            use models::dsl::ast::HeadKind;
+            let state = GeneratorState {
+                index: rule.index,
+                find: Some("rule".to_string()),
+                scope_text: None,
+                scope: ProgramScope::default(),
+                scope_malformed: false,
+                applicable: true,
+                declares_endpoints: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::Source { .. } | HeadKind::Sink { .. })),
+                declares_propagation: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::Propagation { .. })),
+                declares_access_paths: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::AccessPath { .. })),
+                has_bridge: rule
+                    .heads
+                    .iter()
+                    .any(|h| matches!(h.kind, HeadKind::Bridge { .. })),
+                matched: None,
+                endpoint_stats: BTreeMap::new(),
+                propagation_stats: PropagationStats::default(),
+            };
+            self.positions.insert(rule.index, self.generators.len());
+            self.generators.push(state);
+        }
+        true
     }
 
     /// Records whether this import's scope admits each generator.

@@ -351,3 +351,63 @@ fn jsonl_comments_are_skipped_without_consuming_an_index() {
     assert_eq!(bare.propagations.len(), commented.propagations.len());
     assert!(!bare.propagations.is_empty());
 }
+
+/// The `.ctadl` defaults an index loads and the `.jsonl` originals they were migrated from
+/// must match the *same things*.
+///
+/// This is the check the design asks for by name: a migrated model file has to produce
+/// semantically equivalent matching results. It is also the only thing keeping the pair from
+/// drifting — edit one and not the other and this fails, naming the file.
+#[test]
+fn the_dsl_defaults_match_what_the_json_defaults_matched() {
+    use ctadl_ascent::models::{DEFAULT_DSL_MODELS, dsl};
+
+    let programs = [
+        ("java", java_program()),
+        ("native", native_program()),
+        ("lua", lua_program()),
+        ("unknown", unknown_program()),
+    ];
+    for (i, (json_name, json_contents)) in DEFAULT_MODEL_FILES.iter().enumerate() {
+        let (dsl_name, dsl_source) = DEFAULT_DSL_MODELS[i];
+        for (vmt_name, program_info) in &programs {
+            let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
+
+            let mut from_json = ProgramModelMatches::default();
+            try_load_jsonl_models(&match_index, BufReader::new(*json_contents), &mut from_json)
+                .unwrap_or_else(|e| panic!("{json_name} on {vmt_name}: {e}"));
+
+            let mut from_dsl = ProgramModelMatches::default();
+            let file = dsl::DslFile::from_text(dsl_name, dsl_source)
+                .unwrap_or_else(|e| panic!("{dsl_name}: {e}"));
+            let set = dsl::DslModelSet { files: vec![file] };
+            let mut matcher = dsl::DslMatcher::new(&set);
+            matcher.observe_import(&match_index);
+            matcher
+                .finish(dsl::Phase::All, &mut from_dsl)
+                .unwrap_or_else(|e| panic!("{dsl_name} on {vmt_name}: {e}"));
+
+            // Compared as sets: the two loaders visit in different orders, and a duplicate row
+            // is inert (codegen pushes the same summary twice).
+            let key = |p: &ctadl_ascent::models::PropagationMatch| {
+                (
+                    p.function.to_string(),
+                    format!("{:?}{:?}", p.dst.tag, p.dst.index),
+                    p.dst.path.to_dot_string(),
+                    format!("{:?}{:?}", p.src.tag, p.src.index),
+                    p.src.path.to_dot_string(),
+                )
+            };
+            let json_rows: BTreeSet<_> = from_json.propagations.iter().map(key).collect();
+            let dsl_rows: BTreeSet<_> = from_dsl.propagations.iter().map(key).collect();
+            assert_eq!(
+                json_rows, dsl_rows,
+                "{dsl_name} and {json_name} disagree on a {vmt_name} program"
+            );
+            assert_eq!(
+                from_json.access_paths, from_dsl.access_paths,
+                "{dsl_name} and {json_name} declare different access paths on {vmt_name}"
+            );
+        }
+    }
+}

@@ -212,6 +212,11 @@ pub enum Error {
     TreeSitterParse(String),
     #[error("JSON model parsing error")]
     JsonModel(#[from] JsonModelErrors),
+    /// A model DSL file that does not parse, or whose rules do not mean anything. Already
+    /// rendered with `path:line:col` prefixes, because only the loader still has the file text
+    /// to resolve a byte span against.
+    #[error("model DSL error\n{0}")]
+    DslModel(String),
     /// A model was well-formed but could not be applied: a bridge side that matched nothing
     /// under `on-unmatched: error`, or an ambiguous pairing under `on-ambiguous: error`.
     /// Distinct from [`Error::JsonModel`], which is about the file's *syntax*; this one needs a

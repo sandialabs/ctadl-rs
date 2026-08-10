@@ -51,6 +51,14 @@ pub enum Command {
     /// external function behavior (see the 'index' command)
     InitModel(InitModelArgs),
 
+    /// Rewrite a JSON/JSON5/JSONL model-generator file in the model DSL.
+    ///
+    /// The DSL is the format the engine executes; a JSON file is translated through this and
+    /// then run, so migrating one changes nothing about what it matches. What it buys is a file
+    /// you can read: the migrator also reports every construct that does not carry across,
+    /// which a silent translation would hide.
+    MigrateModels(MigrateModelsArgs),
+
     /// Inspect the CTADL store
     Inspect(InspectArgs),
 
@@ -64,6 +72,21 @@ pub struct InitModelArgs {
     /// Path where the template model file will be written (defaults to model.json5)
     #[arg(default_value = "model.json5")]
     pub output: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct MigrateModelsArgs {
+    /// The JSON / JSON5 / JSONL model file to translate.
+    pub input: PathBuf,
+
+    /// Where to write the DSL. Defaults to the input with a `.ctadl` extension; `-` writes to
+    /// standard output.
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+
+    /// Check the translated file loads, and report what it says, without writing anything.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -234,10 +257,13 @@ pub struct IndexArgs {
     #[arg(long, short, action = clap::ArgAction::Append, id = "NAME")]
     pub summary: Vec<String>,
 
-    /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
-    /// multiple times to load multiple model files. This option is use primarily to provide
-    /// propagation models, which provide function summaries for indexing external or
-    /// hard-to-analyze code.
+    /// Load additional models from one or more files. Can be specified multiple times to load
+    /// multiple model files. This option is used primarily to provide propagation models, which
+    /// provide function summaries for indexing external or hard-to-analyze code.
+    ///
+    /// A `.ctadl` (or `.dl`) file is written in the model DSL, which is what the engine runs;
+    /// `.json`, `.json5` and `.jsonl` are the older model-generator format and still work.
+    /// `ctadl migrate-models` converts one to the other.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -300,8 +326,9 @@ pub struct QueryArgs {
     /// Analysis project (index) name
     pub name: String,
 
-    /// The query to run, or load additional models from one or more JSON, JSON5, or JSONL files.
-    /// Can be specified multiple times to load multiple model files.
+    /// The query to run, or load additional models from one or more files. Can be specified
+    /// multiple times to load multiple model files. A `.ctadl` (or `.dl`) file is written in the
+    /// model DSL; `.json`, `.json5` and `.jsonl` are the older model-generator format.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -324,8 +351,9 @@ pub struct GoArgs {
     #[arg(long, short)]
     pub name: Option<String>,
 
-    /// Load additional models from one or more JSON, JSON5, or JSONL files. Can be specified
-    /// multiple times to load multiple model files.
+    /// Load additional models from one or more files. Can be specified multiple times to load
+    /// multiple model files. A `.ctadl` (or `.dl`) file is written in the model DSL; `.json`,
+    /// `.json5` and `.jsonl` are the older model-generator format.
     #[arg(long, short, action = clap::ArgAction::Append)]
     pub models: Vec<PathBuf>,
 
@@ -496,8 +524,49 @@ fn main() -> anyhow::Result<()> {
         Command::InitModel(args) => {
             handle_init_model(args).context("running 'init-model'")?;
         }
+        Command::MigrateModels(args) => {
+            handle_migrate_models(args).context("running 'migrate-models'")?;
+        }
     };
 
+    Ok(())
+}
+
+fn handle_migrate_models(args: &MigrateModelsArgs) -> anyhow::Result<()> {
+    use ctadl_ascent::models::dsl;
+
+    let (text, report) = dsl::migrate::migrate_file(&args.input)
+        .with_context(|| format!("migrating {}", args.input.display()))?;
+
+    // Loading it is part of migrating it. A file that translates but does not check is worse
+    // than a failure: it would be discovered on the next index, against an artifact, with the
+    // original no longer in play.
+    dsl::DslFile::from_text(args.input.clone(), text.clone())
+        .with_context(|| format!("the migration of {} does not load", args.input.display()))?;
+
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
+    }
+    eprintln!(
+        "{}: {} generator(s) -> {} rule(s)",
+        args.input.display(),
+        report.generators,
+        report.rules
+    );
+
+    if args.dry_run {
+        return Ok(());
+    }
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| args.input.with_extension("ctadl"));
+    if output == std::path::Path::new("-") {
+        print!("{text}");
+    } else {
+        std::fs::write(&output, &text).with_context(|| format!("writing {}", output.display()))?;
+        eprintln!("wrote {}", output.display());
+    }
     Ok(())
 }
 
