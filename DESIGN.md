@@ -175,7 +175,8 @@ propagation(F::return <- F::arg(0)) :-
 
 All existing tests get migrated to use this new format. All existing builtin models as well.
 
-Build a model migrator that takes existing json files and re-expresses them in this format.
+Build a model migrator that takes existing json files and re-expresses them in this format. It can
+be used for backward compatibility, so that the existing models in the wild can still be used.
 
 The existing jsonl built-in models and their schema will be replaced wholesale by this new modeling
 capability and a grammar defining the Datalog DSL. The json model matchers will disappear.
