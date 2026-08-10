@@ -193,6 +193,8 @@ The existing tests must all pass, including regression.
 
 ### Implementation
 
+The pest parser is a dependency of this system; parsing should be done with pest.
+
 Rules must be well-moded otherwise it is a load-time error. Operators on variables must have all
 variables bound or the rule isn't executable, and will throw an error message to that effect. The
 execution engine may evaluate in any binding-consistent order. So, for example `... :-
