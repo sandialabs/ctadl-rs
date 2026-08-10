@@ -327,6 +327,10 @@ pub struct ProgramModelMatches {
     /// framework name is something an obfuscator cannot touch, so the two together cover what
     /// either alone misses.
     pub closure_shaped: BTreeSet<DispatchKey>,
+    /// Bridges the DSL engine already grounded: both sides are function names, so there is no
+    /// spec to pair and nothing to diagnose. Phase 2 emits them through the same path as a
+    /// paired [`BridgeSpec`].
+    pub resolved_bridges: Vec<crate::models::spec::ResolvedBridge>,
 }
 
 impl ProgramModelMatches {
@@ -367,6 +371,7 @@ impl ProgramModelMatches {
             && self.bridges.is_empty()
             && self.dispatch.is_empty()
             && self.closure_shaped.is_empty()
+            && self.resolved_bridges.is_empty()
     }
 }
 

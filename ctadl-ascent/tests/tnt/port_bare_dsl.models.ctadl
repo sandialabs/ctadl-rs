@@ -1,0 +1,3 @@
+// Loaded by `flowy_tests.rs` for the sibling `port_bare_dsl.tnt`, as `ctadl index --models`
+// would. The DSL twin of `port_bare.models.jsonl`: one propagation, `arg(0) -> return`.
+propagation(F::return <- F::arg(0)) :- fun(F, name = "id");

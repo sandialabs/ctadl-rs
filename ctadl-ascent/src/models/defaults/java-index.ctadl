@@ -1,0 +1,269 @@
+// Migrated from java-index.jsonl by `ctadl migrate-models`. Edit this file, not the original.
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name = "toString"),
+  fun(F, signature = Sig0),
+  regex_match(Sig0, ".*\\(\\)Ljava/lang/String;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "toString", parent in {"Ljava/lang/String;", "Ljava/lang/StringBuffer;", "Ljava/lang/StringBuilder;"});
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0) <- F::arg(0)),
+  propagation(F::return <- F::arg(1)),
+  propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "append", parent in {"Ljava/lang/StringBuffer;", "Ljava/lang/StringBuilder;"});
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name = "valueOf", parent in {"Ljava/lang/Character;", "Ljava/lang/String;", "Ljava/lang/Boolean;", "Ljava/lang/Byte;", "Ljava/lang/Short;", "Ljava/lang/Integer;", "Ljava/lang/Long;", "Ljava/lang/Float;", "Ljava/lang/Double;", "Ljava/lang/BigInteger;"});
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name = "forDigit", parent = "Ljava/lang/Character;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "booleanValue", parent = "Ljava/lang/Boolean;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "readLine", parent = "Ljava/io/BufferedReader;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "ordinal", parent = "Ljava/lang/Enum;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"getBytes", "indexOf", "isEmpty", "lastIndexOf", "replace", "split", "subSequence", "toCharArray", "charAt", "indexOf", "subSequence"}, parent in {"Ljava/lang/String;", "Ljava/lang/StringBuffer;", "Ljava/lang/StringBuilder;"});
+
+propagation(F::return <- F::arg(1)),
+  propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "insert", parent = "Ljava/lang/StringBuilder;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"substring", "toLowerCase", "toUpperCase", "trim"}, parent = "Ljava/lang/String;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "getOutputStream", parent = "Ljava/net/HttpURLConnection;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "getAddress", parent = "Ljava/net/InetAddress;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "openConnection", parent = "Ljava/net/URL;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "getString", parent = "Lorg/json/JSONObject;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "next", parent = "Ljava/util/Iterator;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "toJson", parent = "Lcom/android/ad/du/DuAdData;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"getAbsolutePath", "getAbsoluteFile", "getCanonicalFile", "getName", "getParentFile", "getPath"}, parent = "Ljava/io/File;");
+
+propagation(F::arg(1) <- F::arg(0)) :-
+  fun(F, name = "read", parent in {"Ljava/io/ByteArrayInputStream;", "Ljava/io/BufferedInputStream;", "Ljava/io/FileInputStream;", "Ljava/io/InputStream;", "Ljava/io/RandomAccessFile;"});
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "<init>", parent = "Lorg/apache/http/entity/ByteArrayEntity;");
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name in {"write", "writeBoolean", "writeByte", "writeBytes", "writeChars", "writeChar", "writeDouble", "writeFloat", "writeInt", "writeLong", "writeShort", "writeUTF"}, parent in {"Ljava/io/RandomAccessFile;", "Ljava/io/OutputStream;", "Ljava/io/FilterOutputStream;", "Ljava/io/BufferedOutputStream;", "Ljava/io/DataOutputStream;", "Ljava/io/ByteArrayOutputStream;", "Ljava/io/PipedOutputStream;"});
+
+propagation(F::arg(0) <- F::arg(1)),
+  propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "<init>", parent in {"Ljava/io/BufferedReader;", "Ljava/io/ByteArrayInputStream;", "Ljava/io/DataOutputStream;", "Ljava/io/File;", "Ljava/io/FileInputStream;", "Ljava/io/InputStreamReader;", "Ljava/lang/String;", "Ljavax/activation/DataHandler;", "Ljava/net/URL;", "Ljava/lang/Integer;", "Ljava/lang/Short;", "Ljava/lang/Long;", "Ljava/lang/Byte;", "Ljava/lang/Float;", "Ljava/lang/Double;", "Ljava/lang/Exception;", "Ljava/lang/Throwable;"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "getMessage", parent in {"Ljava/lang/Throwable;", "Ljava/lang/Exception;"});
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "<init>", parent in {"Ljava/io/BufferedReader;", "Ljava/io/ByteArrayInputStream;", "Ljava/io/ObjectInputStream;"});
+
+propagation(F::arg(_) <- F::arg(0)) :-
+  fun(F, name = "<init>", parent = "Ljava/io/ObjectOutputStream;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "normalize", parent = "Ljava/text/Normalizer;");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"parseByte", "parseShort", "parseInt", "parseLong", "parseFloat", "parseDouble", "toHexString", "toBinaryString", "toOctalString"}, parent in {"Ljava/lang/Byte;", "Ljava/lang/Short;", "Ljava/lang/Integer;", "Ljava/lang/Long;", "Ljava/lang/Float;", "Ljava/lang/Double;"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"highestOneBit", "numberOfTrailingZeros", "parseLong"}, parent = "Ljava/lang/Long;");
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::return <- F::arg(1)) :-
+  fun(F, name in {"min", "max"}, parent in {"Ljava/lang/Math;", "Ljava/lang/Byte;", "Ljava/lang/Short;", "Ljava/lang/Integer;", "Ljava/lang/Long;", "Ljava/lang/Float;", "Ljava/lang/Double;"});
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"format", "concat", "replaceAll", "replace"}, parent = "Ljava/lang/String;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "toASCII", parent = "Ljava/net/IDN;");
+
+propagation(F::arg(2) <- F::arg(0)) :-
+  fun(F, name = "arraycopy", parent = "Ljava/lang/System;");
+
+// generator 32: produced no rule
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"add", "and", "andNot", "divide", "divideAndRemainder", "gcd", "max", "min", "mod", "modInverse", "modPow", "multiply", "or", "xor"}, parent = "Ljava/lang/BigInteger;");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name = "obtain", parent = "Landroid/os/Message;");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name = "create", parent = "Ljava/net/URI;");
+
+propagation(F::arg(0) <- F::arg(2)) :-
+  fun(F, name in {"addFlags", "setFlags", "parseIntent", "parseUri"}, parent = "Landroid/content/Intent;");
+
+propagation(F::arg(0) <- F::arg(2)) :-
+  fun(F, name in {"asList", "copyOf"}, parent = "Ljava/util/Arrays;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "toString", parent = "Ljava/util/Arrays;");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"put", "putChar", "putDouble", "putFloat", "putInt", "putLong", "putShort"}, parent = "Ljava/nio/ByteBuffer;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "unmarshall", parent = "Landroid/os/Parcel;");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name = "createFromPdu", parent in {"Landroid/telephony/SmsMessage;", "Landroid/telephony/gsm/SmsMessage;"});
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name = "toByteArray", parent = "Ljava/io/ByteArrayOutputStream;");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name = "matcher", parent = "Ljava/util/regex/Pattern;");
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::return <- F::arg(1)) :-
+  fun(F, name = "equalsIgnoreCase", parent = "Ljava/lang/String;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "getExtras", parent = "Landroid/content/Intent;");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, signature = Sig0),
+  regex_match(Sig0, ".*get.*"),
+  fun(F, parent = "Landroid/os/Bundle;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "getString", parent = "Landroid/database/Cursor;");
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "update", parent = "Ljava/security/MessageDigest;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "digest", parent = "Ljava/security/MessageDigest;");
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "setEntity", parent = "Lorg/apache/http/client/methods/HttpPost;");
+
+propagation(F::return."[]" <- F::arg(0)."[]") :-
+  fun(F, name = "iterator", parent in {"Ljava/util/Iterable;", "Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/ArrayList;", "Ljava/util/LinkedList;", "Ljava/util/HashSet;", "Ljava/util/TreeSet;"});
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name = "next", parent = "Ljava/util/Iterator;");
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"get", "getOrDefault", "remove"}, parent in {"Ljava/util/Map;", "Ljava/util/HashMap;", "Ljava/util/LinkedHashMap;", "Ljava/util/TreeMap;", "Ljava/util/Hashtable;", "Ljava/util/concurrent/ConcurrentHashMap;"});
+
+propagation(F::arg(0)."[]" <- F::arg(1)),
+  propagation(F::arg(0)."[]" <- F::arg(2)) :-
+  fun(F, name in {"put", "putIfAbsent"}, parent in {"Ljava/util/Map;", "Ljava/util/HashMap;", "Ljava/util/LinkedHashMap;", "Ljava/util/TreeMap;", "Ljava/util/Hashtable;", "Ljava/util/concurrent/ConcurrentHashMap;"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"keySet", "values", "entrySet"}, parent in {"Ljava/util/Map;", "Ljava/util/HashMap;", "Ljava/util/LinkedHashMap;", "Ljava/util/TreeMap;", "Ljava/util/Hashtable;", "Ljava/util/concurrent/ConcurrentHashMap;"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"getKey", "getValue"}, parent = "Ljava/util/Map$Entry;");
+
+propagation(F::return <- F::arg(0)."[]") :-
+  fun(F, name in {"get", "peek", "poll", "pop", "remove", "getFirst", "getLast", "element"}, parent in {"Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/ArrayList;", "Ljava/util/LinkedList;", "Ljava/util/Vector;", "Ljava/util/Stack;", "Ljava/util/HashSet;", "Ljava/util/TreeSet;", "Ljava/util/ArrayDeque;"});
+
+propagation(F::arg(0)."[]" <- F::arg(1)),
+  propagation(F::arg(0)."[]" <- F::arg(2)) :-
+  fun(F, name in {"add", "addAll", "push", "offer", "addFirst", "addLast", "set"}, parent in {"Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/ArrayList;", "Ljava/util/LinkedList;", "Ljava/util/Vector;", "Ljava/util/Stack;", "Ljava/util/HashSet;", "Ljava/util/TreeSet;", "Ljava/util/ArrayDeque;"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"toArray", "subList", "stream"}, parent in {"Ljava/util/Collection;", "Ljava/util/List;", "Ljava/util/Set;", "Ljava/util/Queue;", "Ljava/util/Deque;", "Ljava/util/ArrayList;", "Ljava/util/LinkedList;", "Ljava/util/Vector;", "Ljava/util/Stack;", "Ljava/util/HashSet;", "Ljava/util/TreeSet;", "Ljava/util/ArrayDeque;"});
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"unmodifiableList", "unmodifiableMap", "unmodifiableSet", "unmodifiableCollection", "singletonList", "singleton", "nCopies"}, parent = "Ljava/util/Collections;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"copyOfRange", "stream"}, parent = "Ljava/util/Arrays;");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"join", "copyValueOf", "strip", "stripLeading", "stripTrailing", "repeat", "intern"}, parent = "Ljava/lang/String;");
+
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0) <- F::arg(_)) :-
+  fun(F, name in {"reverse", "deleteCharAt", "replace", "setCharAt", "substring"}, parent in {"Ljava/lang/StringBuilder;", "Ljava/lang/StringBuffer;"});
+
+propagation(F::return <- F::arg(1)) :-
+  fun(F, name in {"encode", "encodeToString", "decode"}, parent in {"Ljava/util/Base64$Encoder;", "Ljava/util/Base64$Decoder;"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"encode", "encodeToString", "decode", "decodeToString"}, parent = "Landroid/util/Base64;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"encode", "decode"}, parent in {"Ljava/net/URLEncoder;", "Ljava/net/URLDecoder;"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"next", "nextLine", "nextInt", "nextLong", "nextDouble", "nextBoolean"}, parent = "Ljava/util/Scanner;");
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "<init>", parent = "Ljava/util/Scanner;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "getProperty", parent = "Ljava/util/Properties;");
+
+propagation(F::arg(0) <- F::arg(2)) :-
+  fun(F, name = "setProperty", parent = "Ljava/util/Properties;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"readAllBytes", "readNBytes", "lines"}, parent in {"Ljava/io/InputStream;", "Ljava/io/Reader;", "Ljava/io/BufferedReader;", "Ljava/io/InputStreamReader;"});
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name in {"print", "println", "printf", "format", "append"}, parent in {"Ljava/io/PrintStream;", "Ljava/io/PrintWriter;", "Ljava/io/Writer;", "Ljava/io/BufferedWriter;"});
+
+propagation(F::arg(0) <- F::arg(1)) :-
+  fun(F, name = "<init>", parent in {"Ljava/util/zip/GZIPInputStream;", "Ljava/util/zip/InflaterInputStream;", "Ljava/util/zip/ZipInputStream;"});
+
+propagation(F::return <- F::arg(_)),
+  propagation(F::arg(0) <- F::arg(1)),
+  propagation(F::arg(0) <- F::arg(2)) :-
+  fun(F, name in {"get", "getJSONObject", "getJSONArray", "getString", "optString", "put", "<init>"}, parent in {"Lorg/json/JSONObject;", "Lorg/json/JSONArray;"});
+
+propagation(F::return <- F::arg(1)) :-
+  fun(F, name in {"toJson", "fromJson"}, parent = "Lcom/google/gson/Gson;");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"toString", "requireNonNull", "requireNonNullElse", "requireNonNullElseGet"}, parent = "Ljava/util/Objects;");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"of", "ofNullable", "get", "orElse", "orElseGet"}, parent = "Ljava/util/Optional;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "name", parent = "Ljava/lang/Enum;");
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"getStringExtra", "getData", "getAction"}, parent = "Landroid/content/Intent;");
+
+propagation(F::arg(0) <- F::arg(2)) :-
+  fun(F, name = "putExtra", parent = "Landroid/content/Intent;");
+
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name in {"parse", "toString", "getQueryParameter", "buildUpon", "build"}, parent in {"Landroid/net/Uri;", "Landroid/net/Uri$Builder;"});
+
+propagation(F::return <- F::arg(0)) :-
+  fun(F, name in {"getString", "getStringSet"}, parent = "Landroid/content/SharedPreferences;");
+
+propagation(F::arg(0) <- F::arg(2)) :-
+  fun(F, name in {"putString", "putStringSet"}, parent = "Landroid/content/SharedPreferences$Editor;");
+
