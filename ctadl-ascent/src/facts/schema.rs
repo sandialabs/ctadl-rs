@@ -5,17 +5,20 @@ schemas and functions to save and load them.
 */
 use std::path;
 
-use ctadl_ir::Symbol;
 use source_info::FileSpanId;
 
-use crate::error::{Error, ErrorContext};
+use crate::error::Error;
 use crate::facts::parquet;
 use crate::facts::{
-    FlowVariable, FormalIndex, FormalType, Function, FunctionId, InsnId, Path, TaintState,
+    FlowEdge, FlowVariable, FormalIndex, FormalType, Function, FunctionId, ImportId, InsnId, Path,
+    TaintState,
 };
 use crate::query_engine::QueryEndpoint;
 
 // Captures the Record type and FILENAME and COLUMNS constants.
+//
+// Neither half adds context of its own: `parquet::Writer`/`parquet::Reader` already name the
+// full path of the file they failed on, which is strictly more than `FILENAME` says.
 macro_rules! save_load {
     () => {
         pub fn try_save<P: AsRef<path::Path>>(
@@ -25,14 +28,11 @@ macro_rules! save_load {
             let path = path.as_ref();
             parquet::Writer::new(path.join(FILENAME))
                 .write_vec(&COLUMNS, items.into_iter().collect())
-                .err_context(|| format!("saving parquet '{FILENAME}'"))
         }
 
         pub fn try_load<P: AsRef<path::Path>>(path: P) -> Result<Vec<Record>, Error> {
             let path = path.as_ref();
-            parquet::Reader::new(path.join(FILENAME))
-                .read_vec(&COLUMNS)
-                .err_context(|| format!("loading parquet '{FILENAME}'"))
+            parquet::Reader::new(path.join(FILENAME)).read_vec(&COLUMNS)
         }
     };
 }
@@ -69,34 +69,37 @@ pub mod assign {
     save_load!();
 }
 
-pub mod java_obj_assign {
+pub mod call_target_assign {
     use super::*;
-    pub type Record = (FunctionId, InsnId, FlowVariable, Path, Symbol);
-    pub const COLUMNS: [&str; 5] = ["func_id", "insn_id", "dst_var", "dst_path", "class_name"];
-    pub const FILENAME: &str = "java_obj_assign.parquet";
+    use crate::facts::CallTargetObject;
+    pub type Record = (FunctionId, InsnId, FlowVariable, Path, CallTargetObject);
+    pub const COLUMNS: [&str; 5] = ["func_id", "insn_id", "dst_var", "dst_path", "target"];
+    pub const FILENAME: &str = "call_target_assign.parquet";
     save_load!();
 }
 
-pub mod java_call {
+pub mod callee_info {
     use super::*;
-    pub type Record = (FunctionId, InsnId, FlowVariable, Path, Symbol, Symbol);
-    pub const COLUMNS: [&str; 6] = [
-        "func_id",
-        "insn_id",
-        "recv_var",
-        "recv_path",
-        "name",
-        "desc",
-    ];
-    pub const FILENAME: &str = "java_call.parquet";
+    use crate::facts::CallDispatchKey;
+    /// An indirect / virtual call site awaiting resolution: the receiver vertex
+    /// (`recv_var`, `recv_path`) plus the frontend-specific [`CallDispatchKey`].
+    /// Unifies the former `java_call` and `indirect_call` relations.
+    pub type Record = (FunctionId, InsnId, FlowVariable, Path, CallDispatchKey);
+    pub const COLUMNS: [&str; 5] = ["func_id", "insn_id", "recv_var", "recv_path", "context"];
+    pub const FILENAME: &str = "callee_info.parquet";
     save_load!();
 }
 
-pub mod java_resolvents {
+pub mod callee_resolvents {
     use super::*;
-    pub type Record = (Symbol, Symbol, Symbol, FunctionId);
-    pub const COLUMNS: [&str; 4] = ["class", "name", "desc", "target_id"];
-    pub const FILENAME: &str = "java_resolvents.parquet";
+    use crate::facts::{CallDispatchKey, CallTargetObject};
+    /// How a stored call-target [`CallTargetObject`] resolves, under a given
+    /// [`CallDispatchKey`], to a concrete callee `target`. Unifies the former
+    /// `java_resolvents` (CHA) relation and the identity resolution of C function
+    /// pointers.
+    pub type Record = (CallTargetObject, CallDispatchKey, FunctionId);
+    pub const COLUMNS: [&str; 3] = ["object", "context", "target_id"];
+    pub const FILENAME: &str = "callee_resolvents.parquet";
     save_load!();
 }
 
@@ -124,11 +127,59 @@ pub mod taint {
     save_load!();
 }
 
+pub mod taint_edge {
+    use super::*;
+    /// An edge of the taint graph in execution / data-flow order: the source
+    /// vertex `(src_func, src_var, src_path)` flows to the destination vertex
+    /// `(dst_func, dst_var, dst_path)`. `edge` classifies the step as a
+    /// flow-insensitive intraprocedural (assign/alias) edge or as an
+    /// interprocedural call/return edge anchored at a call instruction.
+    pub type Record = (
+        FlowEdge,
+        FunctionId,
+        FlowVariable,
+        Path,
+        FunctionId,
+        FlowVariable,
+        Path,
+    );
+    pub const COLUMNS: [&str; 7] = [
+        "edge", "src_func", "src_var", "src_path", "dst_func", "dst_var", "dst_path",
+    ];
+    pub const FILENAME: &str = "taint_edge.parquet";
+    save_load!();
+}
+
 pub mod index_source_map {
     use super::*;
-    pub type Record = (FunctionId, InsnId, FileSpanId);
-    pub const COLUMNS: [&str; 3] = ["func_id", "insn_id", "source_span_id"];
+    /// Where an indexed instruction came from in its artifact's source.
+    ///
+    /// The [`FileSpanId`] is only meaningful *inside* the import named by the [`ImportId`]:
+    /// each import has its own source-info database and numbers its spans from zero, while
+    /// function and instruction ids are project-global. A span read against the wrong
+    /// import's database still resolves -- to an unrelated line in an unrelated artifact --
+    /// so the two travel together and are joined together (see [`import_id`]).
+    pub type Record = (FunctionId, InsnId, FileSpanId, ImportId);
+    pub const COLUMNS: [&str; 4] = ["func_id", "insn_id", "source_span_id", "import_id"];
     pub const FILENAME: &str = "index_source_map.parquet";
+    save_load!();
+}
+
+pub mod import_id {
+    use super::*;
+    /// The artifact import each [`ImportId`] in [`index_source_map`] stands for, by the name
+    /// it has in the store, in the order `ctadl index` walked them.
+    ///
+    /// Recorded rather than recomputed from the project config, so a project whose import
+    /// list changed after it was indexed cannot silently shift every span onto the wrong
+    /// artifact: the index says what it was built from.
+    ///
+    /// A plain `String` rather than the interned `Str` every other name column uses: there is
+    /// one row per import, so interning buys nothing, and `ctadl inspect` prints the name
+    /// instead of the opaque intern id.
+    pub type Record = (ImportId, String);
+    pub const COLUMNS: [&str; 2] = ["id", "name"];
+    pub const FILENAME: &str = "import_id.parquet";
     save_load!();
 }
 
@@ -146,4 +197,177 @@ pub mod external_function {
     pub const COLUMNS: [&str; 1] = ["func_id"];
     pub const FILENAME: &str = "external_function.parquet";
     save_load!();
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::facts::{
+        CallTargetObject, FlowEdge, FlowVariable, FunctionId, InsnId, PackedInsnSiteId, Path,
+    };
+
+    /// The `call_target_assign` schema encodes a [`CallTargetObject`] into a tag column
+    /// plus nullable function-id and symbol columns; every variant must survive a parquet
+    /// round-trip, and the payload of each variant must land in the right column. `Symbol` and
+    /// `LuaClass` share the symbol column, so only the tag keeps them apart — the case that
+    /// would silently merge a JVM and a Lua import's classes if the tag were dropped.
+    #[test]
+    fn call_target_assign_object_round_trips() {
+        let var = FlowVariable::default();
+        let records: Vec<super::call_target_assign::Record> = vec![
+            (
+                FunctionId::new(1),
+                InsnId::new(10),
+                var,
+                Path::empty(),
+                CallTargetObject::FunctionId(FunctionId::new(99)),
+            ),
+            (
+                FunctionId::new(2),
+                InsnId::new(20),
+                var,
+                Path::empty(),
+                CallTargetObject::Symbol(ctadl_ir::Symbol::from("com/example/Foo")),
+            ),
+            (
+                FunctionId::new(3),
+                InsnId::new(30),
+                var,
+                Path::empty(),
+                CallTargetObject::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")),
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::call_target_assign::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::call_target_assign::try_load(dir.path()).unwrap();
+        assert_eq!(loaded, records);
+    }
+
+    /// The `callee_info` schema encodes a [`CallDispatchKey`] (tag + nullable name/desc
+    /// symbol columns). The `Java`, `C` and `Lua` arms must all survive a parquet round-trip;
+    /// `Lua` populates the name column but leaves the descriptor null.
+    #[test]
+    fn callee_info_dispatch_key_round_trips() {
+        use crate::facts::CallDispatchKey;
+        let var = FlowVariable::default();
+        let records: Vec<super::callee_info::Record> = vec![
+            (
+                FunctionId::new(1),
+                InsnId::new(10),
+                var,
+                Path::empty(),
+                CallDispatchKey::Java(
+                    ctadl_ir::Symbol::from("doThing"),
+                    ctadl_ir::Symbol::from("(I)V"),
+                ),
+            ),
+            (
+                FunctionId::new(2),
+                InsnId::new(20),
+                var,
+                Path::empty(),
+                CallDispatchKey::C,
+            ),
+            (
+                FunctionId::new(3),
+                InsnId::new(30),
+                var,
+                Path::empty(),
+                CallDispatchKey::Lua(ctadl_ir::Symbol::from("deposit")),
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::callee_info::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::callee_info::try_load(dir.path()).unwrap();
+        assert_eq!(loaded, records);
+    }
+
+    /// The `callee_resolvents` schema encodes both a [`CallTargetObject`] and a
+    /// [`CallDispatchKey`] (each a tag + nullable columns). The JVM CHA (`Symbol`/`Java`), the
+    /// identity function-pointer (`FunctionId`/`C`) and the Lua CHA (`LuaClass`/`Lua`)
+    /// resolutions must all round-trip.
+    #[test]
+    fn callee_resolvents_round_trips() {
+        use crate::facts::CallDispatchKey;
+        let records: Vec<super::callee_resolvents::Record> = vec![
+            (
+                CallTargetObject::Symbol(ctadl_ir::Symbol::from("com/example/Foo")),
+                CallDispatchKey::Java(
+                    ctadl_ir::Symbol::from("doThing"),
+                    ctadl_ir::Symbol::from("(I)V"),
+                ),
+                FunctionId::new(99),
+            ),
+            (
+                CallTargetObject::FunctionId(FunctionId::new(7)),
+                CallDispatchKey::C,
+                FunctionId::new(7),
+            ),
+            (
+                CallTargetObject::LuaClass(ctadl_ir::Symbol::from("lua$class$Account")),
+                CallDispatchKey::Lua(ctadl_ir::Symbol::from("deposit")),
+                FunctionId::new(42),
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::callee_resolvents::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::callee_resolvents::try_load(dir.path()).unwrap();
+        assert_eq!(loaded, records);
+    }
+
+    /// The `taint_edge` schema encodes a [`FlowEdge`] into a tag column plus a
+    /// nullable site column; every variant must survive a parquet round-trip,
+    /// including the anchoring call site of `Call`/`Return` edges.
+    #[test]
+    fn taint_edge_flow_edge_round_trips() {
+        let site = PackedInsnSiteId::try_from_parts(FunctionId::new(7), InsnId::new(42)).unwrap();
+        let var = FlowVariable::default();
+        let node = |f: u32| (FunctionId::new(f), var, Path::empty());
+        let records: Vec<super::taint_edge::Record> = vec![
+            (
+                FlowEdge::Intra,
+                node(1).0,
+                node(1).1,
+                node(1).2,
+                node(2).0,
+                node(2).1,
+                node(2).2,
+            ),
+            (
+                FlowEdge::Call(site),
+                node(2).0,
+                node(2).1,
+                node(2).2,
+                node(3).0,
+                node(3).1,
+                node(3).2,
+            ),
+            (
+                FlowEdge::Return(site),
+                node(3).0,
+                node(3).1,
+                node(3).2,
+                node(4).0,
+                node(4).1,
+                node(4).2,
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        super::taint_edge::try_save(dir.path(), records.clone()).unwrap();
+        let loaded = super::taint_edge::try_load(dir.path()).unwrap();
+
+        let edges: Vec<FlowEdge> = loaded.iter().map(|r| r.0).collect();
+        assert_eq!(
+            edges,
+            vec![
+                FlowEdge::Intra,
+                FlowEdge::Call(site),
+                FlowEdge::Return(site)
+            ]
+        );
+        assert_eq!(loaded, records);
+    }
 }

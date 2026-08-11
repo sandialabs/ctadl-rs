@@ -1,6 +1,6 @@
 [package]
 name = "source-info"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 
 [dependencies]
@@ -8,6 +8,7 @@ sled  = { version = "0.34", optional = true }
 serde = { version = "1",    optional = true, features = ["derive"] }
 parquet = "58"
 arrow = "58"
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile   = "3"

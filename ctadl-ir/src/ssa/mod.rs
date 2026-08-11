@@ -22,6 +22,15 @@ use crate::mir::*;
 #[cfg(test)]
 mod tests;
 
+mod coalesce;
+pub use coalesce::{coalesce_copies, coalesce_function};
+
+mod dead_temps;
+pub use dead_temps::{eliminate_dead_temps, eliminate_dead_temps_function};
+
+mod copy_prop;
+pub use copy_prop::{propagate_copies, propagate_copies_function};
+
 #[derive(Debug)]
 struct PhiPlace {
     variables: HashSet<ArcIntern<Variable>>,
@@ -71,7 +80,7 @@ pub fn transform(function: &mut FunctionData, prune: bool) {
         let variable = VariableRef::new_parameter(idx);
         blocks[BasicBlockIdx::START_BLOCK].push_front(Statement::new_kind(StatementKind::Assign {
             dest: variable.with_version(0),
-            sources: smallvec![Exp::AccessPath(AccessPath::without_fields(variable))],
+            sources: smallvec![Exp::Variable(variable)],
         }));
     }
     // Set version 0 of global heap to global
@@ -83,7 +92,7 @@ pub fn transform(function: &mut FunctionData, prune: bool) {
         };
         blocks[BasicBlockIdx::START_BLOCK].push_front(Statement::new_kind(StatementKind::Assign {
             dest: variable.with_version(0),
-            sources: smallvec![Exp::AccessPath(AccessPath::without_fields(variable))],
+            sources: smallvec![Exp::Variable(variable)],
         }));
     }
     log::trace!("assume that version 0 is initial version");
@@ -162,7 +171,10 @@ fn complete(function: &mut FunctionData) {
     // blocks to add the assignments and gotos, we don't actually wire up the exit block until the
     // end of this function.
     let retvars: Vec<_> = (0..function.return_type.arity)
-        .map(|i| VariableRef::new_local(format!("_$ret{i}").to_string()))
+        .map(|i| {
+            let idx = function.intern_local(&format!("_$ret{i}"));
+            VariableRef::new_local_idx(idx)
+        })
         .collect();
 
     // Exit block observes parameters and returns retvars
@@ -173,10 +185,7 @@ fn complete(function: &mut FunctionData) {
         .into_iter()
         .collect(),
         Some(Terminator::new_kind(TerminatorKind::Return {
-            args: retvars
-                .iter()
-                .map(|v| Exp::new_access_path(AccessPath::without_fields(v.clone())))
-                .collect(),
+            args: retvars.iter().map(|v| Exp::Variable(v.clone())).collect(),
         })),
     );
 

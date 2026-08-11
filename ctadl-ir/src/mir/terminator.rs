@@ -19,7 +19,7 @@ pub struct Terminator {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TerminatorKind {
     /// Return instruction. All returns must return the same number of values.
-    Return { args: SmallVec<[Exp; 4]> },
+    Return { args: SmallVec<[Exp; 1]> },
 
     /// Non-deterministic jumps to successor blocks.
     Goto {
@@ -85,16 +85,7 @@ impl TerminatorKind {
     pub fn iter_src_var<'s>(&'s self) -> Box<dyn DoubleEndedIterator<Item = &'s VariableRef> + 's> {
         use TerminatorKind::*;
         match self {
-            Return { args } => Box::new(args.iter().filter_map(|arg| {
-                if matches!(arg, Exp::AccessPath(_)) {
-                    let Exp::AccessPath(ap) = arg else {
-                        unreachable!()
-                    };
-                    Some(&ap.variable_ref)
-                } else {
-                    None
-                }
-            })),
+            Return { args } => Box::new(args.iter().filter_map(Exp::base_variable)),
             Goto { .. } => Box::new(std::iter::empty()),
         }
     }
@@ -105,16 +96,7 @@ impl TerminatorKind {
     ) -> Box<dyn DoubleEndedIterator<Item = &'s mut VariableRef> + 's> {
         use TerminatorKind::*;
         match self {
-            Return { args } => Box::new(args.iter_mut().filter_map(|arg| {
-                if matches!(arg, Exp::AccessPath(_)) {
-                    let Exp::AccessPath(ap) = arg else {
-                        unreachable!()
-                    };
-                    Some(&mut ap.variable_ref)
-                } else {
-                    None
-                }
-            })),
+            Return { args } => Box::new(args.iter_mut().filter_map(Exp::base_variable_mut)),
             Goto { .. } => Box::new(std::iter::empty()),
         }
     }

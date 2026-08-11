@@ -41,12 +41,12 @@ fn test_file() -> PathBuf {
 }
 
 /// Wrap the body of your store tests in this. See the note at the top of the file.
-fn run_store_test<F>(test: F) -> ()
+fn run_store_test<F>(test: F)
 where
-    F: FnOnce() -> () + std::panic::UnwindSafe,
+    F: FnOnce() + std::panic::UnwindSafe,
 {
     initialize();
-    let result = std::panic::catch_unwind(|| test());
+    let result = std::panic::catch_unwind(test);
     assert!(result.is_ok())
 }
 
@@ -58,16 +58,394 @@ fn test_cli_import() {
         let result = ArtifactImport::try_create("test_import", ArtifactLanguage::Apk, &test_file());
         assert!(result.is_ok());
         let import = result.unwrap();
-        let result = cli::import(&import);
+        let result = cli::import(&import, cli::ImportOptions::default());
         assert!(result.is_ok());
 
         assert!(import.name == "test_import");
         assert!(import.program_path().is_file());
         assert!(import.config_path().is_file());
-        let data = std::fs::read(&import.program_path()).unwrap();
+        let data = std::fs::read(import.program_path()).unwrap();
         assert!(ctadl_ir::encode::decode_program(&data).is_ok());
         assert!(ArtifactImport::load_by_name("test_import").is_ok());
     });
+}
+
+#[test]
+fn test_cli_import_skip_existing() {
+    run_store_test(|| {
+        let name = "test_import_skip";
+        // Before any import exists, nothing is up to date.
+        assert!(!ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
+
+        let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
+        // Destination not yet written and no hash recorded: still not up to date.
+        assert!(!ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
+
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+        // Destination exists, but the hash has not been recorded yet.
+        assert!(!ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
+
+        // Recording the hash (as the import command does on success) makes the
+        // import up to date so a `--skip-existing` re-import is skipped.
+        let mut import = ArtifactImport::load_by_name(name).unwrap();
+        import.record_artifact_hash().unwrap();
+        assert!(import.hash.is_some());
+        assert!(ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
+
+        // A reloaded config still reflects the recorded hash and path.
+        let reloaded = ArtifactImport::load_by_name(name).unwrap();
+        assert_eq!(reloaded.hash, import.hash);
+        assert!(ArtifactImport::is_up_to_date(name, &test_file()).unwrap());
+    });
+}
+
+/// Importing a single `.c` file parses it into an IR program and stores it.
+#[test]
+fn test_cli_import_c_file() {
+    run_store_test(|| {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("xfer.c");
+        std::fs::write(
+            &file,
+            "int source();\nvoid sink(int);\nint transfer(int a) { return a; }\n",
+        )
+        .unwrap();
+
+        let import =
+            ArtifactImport::try_create("test_import_c_file", ArtifactLanguage::C, &file).unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+
+        assert!(import.program_path().is_file());
+        let data = std::fs::read(import.program_path()).unwrap();
+        assert!(ctadl_ir::encode::decode_program(&data).is_ok());
+    });
+}
+
+/// Importing a directory of C sources and headers parses every `.c`/`.h` file
+/// underneath it as one translation unit.
+#[test]
+fn test_cli_import_c_directory() {
+    run_store_test(|| {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("c_sources");
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        // A header (declarations) and two .c files, one nested, that reference it.
+        std::fs::write(root.join("util.h"), "int helper(int z);\n").unwrap();
+        std::fs::write(
+            root.join("main.c"),
+            "int helper(int z) { return z; }\nint main() { return helper(1); }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("nested").join("more.c"),
+            "int other(int a) { return a; }\n",
+        )
+        .unwrap();
+        // A non-C file that must be ignored by the importer.
+        std::fs::write(root.join("README.md"), "not C\n").unwrap();
+
+        let import =
+            ArtifactImport::try_create("test_import_c_dir", ArtifactLanguage::C, &root).unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+
+        assert!(import.program_path().is_file());
+        let data = std::fs::read(import.program_path()).unwrap();
+        assert!(ctadl_ir::encode::decode_program(&data).is_ok());
+    });
+}
+
+/// Absolute path to a checked-in C test fixture under `tests/c/`.
+fn c_fixture(name: &str) -> PathBuf {
+    [env!("CARGO_MANIFEST_DIR"), "tests", "c", name]
+        .iter()
+        .collect()
+}
+
+/// End-to-end: import `xfer.c`, index it, and run the `xfer.json` taint query. This
+/// exercises the C-specific model wiring: `source`/`sink` are only *declared* in the C
+/// source (no body), so the importer must register them as external functions for the
+/// model's `signature` patterns to match them; the query must then find the
+/// source -> sink flow through `transfer`. Also confirms imported C carries source
+/// locations: the reported result resolves to a line in `xfer.c`.
+///
+/// This is also the end-to-end check on element-address composition: `transfer(&x[1], s)`
+/// passes the *address* `x.[1]`, `transfer` writes its parameter at `@p0.[1].deref`, and
+/// `sink(x[2])` reads `x.[2].deref`. The flow exists only if those two paths compose --
+/// offsets are summed where they meet -- which is why the fixture indexes two different
+/// slots rather than one. The unit-test version of the same shape is
+/// `address_of_element_composes_with_callee_index` in the tree-sitter frontend's `tests.rs`.
+#[test]
+fn test_cli_query_c_sources_and_sinks() {
+    use ctadl_ascent::cli;
+    use ctadl_ascent::codegen::CallResolutionStrategy;
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+
+    run_store_test(|| {
+        let import =
+            ArtifactImport::try_create("test_xfer_c", ArtifactLanguage::C, &c_fixture("xfer.c"))
+                .unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+
+        let project = AnalysisProject::try_create("test_xfer_c_proj", &["test_xfer_c"]).unwrap();
+        let models = vec![c_fixture("xfer.json")];
+        cli::index(
+            &project,
+            &[],
+            &models,
+            false,
+            cli::IndexOptions {
+                strategy: CallResolutionStrategy::default(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let out_dir = tempdir().unwrap();
+        let sarif = out_dir.path().join("out.sarif");
+        cli::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
+
+        let text = std::fs::read_to_string(&sarif).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let results = doc["runs"][0]["results"].as_array().unwrap();
+
+        // Every profile also emits informational `taint-source`/`taint-sink` results
+        // describing which endpoints matched, and `tainted-path` itself reports a non-`fail`
+        // result when the query ran but found nothing. Those are context, not findings, so
+        // the flow assertions look only at the `fail` `tainted-path` results.
+        let paths: Vec<_> = results
+            .iter()
+            .filter(|r| {
+                r["ruleId"]
+                    .as_str()
+                    .is_some_and(|id| id.contains("tainted-path"))
+                    && r["kind"].as_str() == Some("fail")
+            })
+            .collect();
+
+        // The source (`s = source()`) flows through `transfer` to the sink (`sink(x[2])`),
+        // so there is exactly one tainted-path result.
+        assert_eq!(
+            paths.len(),
+            1,
+            "expected exactly one source->sink flow, got: {text}"
+        );
+        let result = paths[0];
+
+        // The reported location resolves back to a line in the C source, proving the
+        // importer attached source-info spans that survive to SARIF.
+        let region = &result["locations"][0]["physicalLocation"]["region"];
+        assert!(
+            region["startLine"].as_u64().is_some_and(|n| n > 0),
+            "result has no source line: {result}"
+        );
+
+        // The code flow must visit the summarized interprocedural call itself, not
+        // just its source and sink endpoints. `transfer` is analyzed by summary (the
+        // flow links its actual-arg vertices by an intra edge rather than descending
+        // into it), so its call on line 12 -- between `s = source()` on 11 and
+        // `sink(x[2])` on 13 -- is on no Call/Return path edge and would be elided
+        // unless the formatter surfaces the interior call-arg vertex. Assert all
+        // three lines appear as code-flow steps.
+        let mut step_lines = std::collections::BTreeSet::new();
+        for flow in result["codeFlows"].as_array().into_iter().flatten() {
+            for thread in flow["threadFlows"].as_array().into_iter().flatten() {
+                for loc in thread["locations"].as_array().into_iter().flatten() {
+                    if let Some(line) =
+                        loc["location"]["physicalLocation"]["region"]["startLine"].as_u64()
+                    {
+                        step_lines.insert(line);
+                    }
+                }
+            }
+        }
+        for line in [11, 12, 13] {
+            assert!(
+                step_lines.contains(&line),
+                "code flow is missing line {line} (steps at lines {step_lines:?}); \
+                 line 12 is the summarized `transfer(&x[1], s)` call: {text}"
+            );
+        }
+    });
+}
+
+/// The fixture APK ships no `lib/<abi>` entries, so the native-library pass is a no-op
+/// and the import records no sub-imports. This is the path every APK without native
+/// code takes, and the one that must not need Ghidra.
+#[test]
+fn test_cli_import_apk_without_native_libs() {
+    run_store_test(|| {
+        let name = "test_import_no_native";
+        let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+
+        let reloaded = ArtifactImport::load_by_name(name).unwrap();
+        assert!(
+            reloaded.sub_imports.is_empty(),
+            "an APK with no native libraries records no sub-imports, got {:?}",
+            reloaded.sub_imports
+        );
+        // Nothing was extracted, so the staging directory was never created.
+        assert!(!import.import_path().join("native").exists());
+    });
+}
+
+/// Writes an APK built from `(entry name, contents)` pairs into `dir`, and returns its
+/// path. Enough of an APK for the import path: a ZIP whose entry names are what the Dex
+/// and native-library passes look for.
+fn write_apk(dir: &std::path::Path, name: &str, entries: &[(&str, &[u8])]) -> PathBuf {
+    use std::io::Write;
+    let path = dir.join(name);
+    let mut writer = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    let options =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (entry, contents) in entries {
+        writer.start_file(*entry, options).unwrap();
+        writer.write_all(contents).unwrap();
+    }
+    writer.finish().unwrap();
+    path
+}
+
+/// A split APK out of an app bundle -- `config.arm64_v8a.apk` inside an XAPK -- carries
+/// native libraries and no `classes*.dex` at all. It imports: the Java half is simply
+/// empty, and the libraries are what the import is for.
+///
+/// `native_libs: false` keeps this test off Ghidra, which the native half needs and
+/// which no unit-test worker is guaranteed to have. What is under test here is that a
+/// Dex-less APK is accepted at all -- before this, it failed outright on "APK contains
+/// no classes*.dex entries" and the libraries went with it.
+#[test]
+fn test_cli_import_native_only_split_apk() {
+    run_store_test(|| {
+        let dir = tempdir().unwrap();
+        let apk = write_apk(
+            dir.path(),
+            "config.arm64_v8a.apk",
+            &[
+                ("AndroidManifest.xml", b"\x03\x00\x08\x00"),
+                ("lib/arm64-v8a/libfoo.so", b"\x7fELFstub"),
+            ],
+        );
+
+        let name = "test_import_native_only";
+        let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &apk).unwrap();
+        cli::import(
+            &import,
+            cli::ImportOptions {
+                native_libs: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // The parent import is real and its (empty) Java program round-trips.
+        let data = std::fs::read(import.program_path()).unwrap();
+        assert!(ctadl_ir::encode::decode_program(&data).is_ok());
+        assert!(ArtifactImport::load_by_name(name).is_ok());
+    });
+}
+
+/// The other splits of the same bundle hold only resources -- no Dex, no `lib/<abi>/`.
+/// Importing one can only produce an empty program that indexes to nothing, so it is
+/// rejected with a message that says where the code actually is.
+#[test]
+fn test_cli_import_resource_only_split_apk_is_rejected() {
+    run_store_test(|| {
+        let dir = tempdir().unwrap();
+        let apk = write_apk(
+            dir.path(),
+            "config.en.apk",
+            &[
+                ("AndroidManifest.xml", b"\x03\x00\x08\x00"),
+                ("res/values/strings.xml", b"<resources/>"),
+            ],
+        );
+
+        let import =
+            ArtifactImport::try_create("test_import_res_only", ArtifactLanguage::Apk, &apk)
+                .unwrap();
+        let err = cli::import(&import, cli::ImportOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, ctadl_ascent::error::Error::NothingToImport { .. }),
+            "expected NothingToImport, got {err:?}"
+        );
+        // The message has to name both halves it looked for; that is what tells the user
+        // this APK is a split rather than a broken one.
+        let message = err.to_string();
+        assert!(message.contains("classes*.dex"), "{message}");
+        assert!(message.contains("lib/<abi>/"), "{message}");
+    });
+}
+
+/// Naming an import in a project also co-indexes whatever was imported out of it --
+/// this is what makes `ctadl import app.apk && ctadl index p app` see the APK's native
+/// libraries without the user naming them.
+#[test]
+fn test_project_expands_sub_imports() {
+    run_store_test(|| {
+        let dir = tempdir().unwrap();
+        let artifact = dir.path().join("libfoo.so");
+        std::fs::write(&artifact, b"\x7fELF").unwrap();
+
+        for name in ["expand_child_a", "expand_child_b"] {
+            ArtifactImport::try_create(name, ArtifactLanguage::Pcode, &artifact).unwrap();
+        }
+        let mut parent =
+            ArtifactImport::try_create("expand_parent", ArtifactLanguage::Apk, &artifact).unwrap();
+        parent.sub_imports = vec!["expand_child_a".into(), "expand_child_b".into()];
+        parent.save().unwrap();
+
+        let project = AnalysisProject::try_create("expand_proj", &["expand_parent"]).unwrap();
+        // Parent first, then its sub-imports in order.
+        assert_eq!(
+            project.imports,
+            ["expand_parent", "expand_child_a", "expand_child_b"]
+        );
+
+        // Naming a sub-import explicitly alongside its parent does not index it twice.
+        let project =
+            AnalysisProject::try_create("expand_proj_dedup", &["expand_parent", "expand_child_b"])
+                .unwrap();
+        assert_eq!(
+            project.imports,
+            ["expand_parent", "expand_child_a", "expand_child_b"]
+        );
+    });
+}
+
+/// A project may name an import that does not exist yet; `index` has its own preflight
+/// gates that report that properly, so expansion must not turn it into an error here.
+#[test]
+fn test_project_expansion_tolerates_a_missing_import() {
+    run_store_test(|| {
+        let project = AnalysisProject::try_create("expand_missing", &["no_such_import"]).unwrap();
+        assert_eq!(project.imports, ["no_such_import"]);
+    });
+}
+
+#[test]
+fn test_hash_artifact_file_and_dir() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    // A single file hashes deterministically and is sensitive to content.
+    let file = root.join("a.bin");
+    std::fs::write(&file, b"hello").unwrap();
+    let h1 = hash_artifact(&file).unwrap();
+    assert_eq!(h1, hash_artifact(&file).unwrap());
+    std::fs::write(&file, b"hello!").unwrap();
+    assert_ne!(h1, hash_artifact(&file).unwrap());
+
+    // A directory hashes over its files deterministically, independent of
+    // creation order, and changes when a file changes.
+    let sub = root.join("tree");
+    std::fs::create_dir_all(sub.join("nested")).unwrap();
+    std::fs::write(sub.join("nested").join("y.txt"), b"world").unwrap();
+    std::fs::write(sub.join("x.txt"), b"foo").unwrap();
+    let d1 = hash_artifact(&sub).unwrap();
+    assert_eq!(d1, hash_artifact(&sub).unwrap());
+    std::fs::write(sub.join("x.txt"), b"bar").unwrap();
+    assert_ne!(d1, hash_artifact(&sub).unwrap());
 }
 
 //#[test]
@@ -78,7 +456,7 @@ fn test_cli_import() {
 //            ArtifactImport::try_create("test_index_artifact", ArtifactLanguage::Dex, &test_file());
 //        assert!(result.is_ok());
 //        let import = result.unwrap();
-//        let result = cli::import(&import);
+//        let result = cli::import(&import, cli::ImportOptions::default());
 //        assert!(result.is_ok());
 //        //let import = result.unwrap();
 
@@ -90,7 +468,7 @@ fn test_cli_import() {
 
 //        assert!(project.name == "test_index_project");
 //        assert_eq!(project.imports, &["test_index_artifact"]);
-//        assert!(project.dir.is_dir());
+//        assert!(project.dir().is_dir());
 //        assert!(project.index_path().is_ok());
 //        assert!(project.index_path().unwrap().is_dir());
 //        assert!(project.config_path().is_file());
@@ -102,3 +480,129 @@ fn test_cli_import() {
 //        assert!(contents.len() > 1);
 //    });
 //}
+
+// ---------------------------------------------------------------------------
+// The index format-version gate.
+//
+// `index` and `query` are separate processes and every access path crosses the
+// parquet boundary between them. The decoders are infallible-by-construction for
+// anything this build wrote and panic on anything else, so this gate is what turns
+// a stale `index/` into an actionable "re-run `ctadl index`" instead of a panic --
+// or, before the encoding was fixed, into silently-wrong analysis results.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn index_version_gate_accepts_what_this_build_wrote() {
+    run_store_test(|| {
+        let project = AnalysisProject::try_create("gate_ok", &["nonexistent_import"]).unwrap();
+        project.write_index_config().unwrap();
+        assert!(
+            project.check_index_config().is_ok(),
+            "an index this build just stamped must be readable"
+        );
+    });
+}
+
+#[test]
+fn index_version_gate_rejects_an_index_from_before_the_gate() {
+    run_store_test(|| {
+        let project = AnalysisProject::try_create("gate_missing", &["nonexistent_import"]).unwrap();
+        // An `index/` with no config is one written before the gate existed -- exactly the
+        // stale-encoding case, since those builds wrote unescaped `.[]` / `.[_elem_]`.
+        std::fs::create_dir_all(project.index_path().unwrap()).unwrap();
+        match project.check_index_config() {
+            Err(ctadl_ascent::error::Error::IncompatibleIndex {
+                project: p,
+                expected,
+                ..
+            }) => {
+                assert_eq!(p, "gate_missing");
+                assert_eq!(expected, INDEX_FORMAT_VERSION);
+            }
+            other => panic!("expected IncompatibleIndex, got: {other:?}"),
+        }
+    });
+}
+
+#[test]
+fn index_version_gate_rejects_a_different_version() {
+    run_store_test(|| {
+        let project = AnalysisProject::try_create("gate_stale", &["nonexistent_import"]).unwrap();
+        let path = project.index_path().unwrap().join(INDEX_CONFIG_FILE);
+        std::fs::write(&path, r#"{"version":"1"}"#).unwrap();
+        match project.check_index_config() {
+            Err(ctadl_ascent::error::Error::IncompatibleIndex { found, .. }) => {
+                assert_eq!(found, "1");
+            }
+            other => panic!("expected IncompatibleIndex, got: {other:?}"),
+        }
+        // The message must name the fix -- it is the whole point of the variant.
+        let msg = project.check_index_config().unwrap_err().to_string();
+        assert!(
+            msg.contains("ctadl index gate_stale"),
+            "message must name the command to run: {msg}"
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// `query` with no index. The rest of the check is covered by `tests/model_check.rs`, which
+// drives `check_programs` with no store at all; what is store-specific is name resolution --
+// and the promise that a query that cannot run writes nothing into the store.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn query_without_an_index_checks_the_models_and_writes_nothing() {
+    run_store_test(|| {
+        let name = "test_model_check";
+        let import = ArtifactImport::try_create(name, ArtifactLanguage::Apk, &test_file()).unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+        // Reloaded: `cli::import` records the APK's native sub-imports into the config.
+        let import = ArtifactImport::load_by_name(name).unwrap();
+
+        let mut models = tempfile::NamedTempFile::with_suffix(".json").unwrap();
+        {
+            use std::io::Write as _;
+            write!(
+                models,
+                r#"{{"model_generators": [
+                    {{"find": "methods",
+                      "where": [{{"constraint": "signature_match", "name": "toString"}}],
+                      "model": {{"sources": [{{"kind": "k", "port": "Return"}}]}}}}
+                ]}}"#
+            )
+            .unwrap();
+            models.flush().unwrap();
+        }
+
+        // What `ctadl query <an-import-that-was-never-indexed>` builds: the import list, with
+        // no project written to the store.
+        let project = AnalysisProject::ephemeral(name, &[name]);
+        let outcome = cli::check_models(&project, &[models.path().to_path_buf()]).unwrap();
+
+        // Naming the import names everything imported out of it: the APK plus its native
+        // libraries, the same expansion `AnalysisProject::try_create` does.
+        let checked: Vec<&str> = outcome
+            .check
+            .imports
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let mut expected = vec![name.to_string()];
+        expected.extend(import.sub_imports.iter().cloned());
+        assert_eq!(
+            checked,
+            expected.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+        assert!(!outcome.has_file_errors());
+        assert!(outcome.check.matched[0].total.unwrap() > 0);
+
+        // A query that only checked model files must leave the store as it found it.
+        let project_dir = StorePaths::projects_path().join(name);
+        assert!(
+            !project_dir.exists(),
+            "the model check wrote a project config: {}",
+            project_dir.display()
+        );
+    });
+}

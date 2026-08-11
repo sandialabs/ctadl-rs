@@ -58,8 +58,8 @@ mod test {
 
     #[test]
     fn test_median() {
-        let mut nums = vec![1, 2, 3];
-        let the_median = median(&mut nums);
+        let nums = vec![1, 2, 3];
+        let the_median = median(&nums);
         assert_eq!(the_median, Some(2));
     }
 

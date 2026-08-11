@@ -77,6 +77,36 @@ impl<T: Hash + Eq + Ord> UniverseSet<T> {
             }
         };
     }
+
+    /// Set difference `self \ other`.
+    ///
+    /// The left-hand side must be materialized (`Explicit`); computing
+    /// `All \ other` would require enumerating the universe, which this
+    /// type is deliberately agnostic about (callers materialize `All`
+    /// against the known universe first — see `ModelGeneratorIngest`). An
+    /// `All` left-hand side is a caller bug and yields the empty set.
+    #[inline]
+    pub fn difference(self, other: UniverseSet<T>) -> Self {
+        match (self, other) {
+            // Removing the entire universe leaves nothing.
+            (_, Self::All) => Self::empty(),
+            (Self::All, _) => {
+                debug_assert!(false, "UniverseSet::difference: lhs must be materialized");
+                Self::empty()
+            }
+            (Self::Explicit(mut a), Self::Explicit(b)) => {
+                a.retain(|x| !b.contains(x));
+                Self::Explicit(a)
+            }
+        }
+    }
+
+    /// In-place set difference; see [`Self::difference`].
+    #[inline]
+    pub fn difference_with(&mut self, other: UniverseSet<T>) {
+        let this = std::mem::take(self);
+        *self = this.difference(other);
+    }
 }
 
 impl<T: Hash + Eq + Ord> From<BTreeSet<T>> for UniverseSet<T> {

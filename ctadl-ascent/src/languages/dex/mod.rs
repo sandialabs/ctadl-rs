@@ -28,10 +28,26 @@ use dex_reader::{APKParser, DexParser};
 #[cfg(test)]
 mod tests;
 
-pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
+/// The Java half of an APK import: the IR, plus the number of `classes*.dex` entries it
+/// was built from.
+pub struct ApkImport {
+    pub program_info: ProgramInfo,
+    pub dex_count: usize,
+}
+
+/// Imports the Dex code out of an APK.
+///
+/// An APK with no `classes*.dex` yields an empty program rather than an error: a split
+/// APK out of an Android App Bundle -- `config.arm64_v8a.apk` inside an XAPK, as
+/// distributed by APKPure and friends -- puts the native libraries in one APK and the
+/// Dex in another, and the native half is still worth importing on its own. Callers that
+/// need to distinguish the two check [`ApkImport::dex_count`].
+pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ApkImport, Error> {
     let file = file.as_ref();
-    let data = read_file_bytes(file)?;
-    let parser = APKParser::new(&data)?;
+    let data = read_file_bytes(file).err_context(|| format!("reading APK: {}", file.display()))?;
+    let parser =
+        APKParser::new(&data).err_context(|| format!("parsing APK: {}", file.display()))?;
+    let dex_count = parser.dex_count();
     let mut ctx = Context::new();
     let mut builders = Builders::new();
 
@@ -46,15 +62,21 @@ pub fn import_apk<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
             hash: Vec::new(),
             encoding: source_info::ArtifactEncoding::Binary,
         };
-        ctx.process(&parser, key, &mut builders)?;
+        ctx.process(&parser, key, &mut builders)
+            .err_context(|| format!("converting '{}' in APK: {}", dex_file_name, file.display()))?;
     }
-    ctx.finish(builders)
+    Ok(ApkImport {
+        program_info: ctx.finish(builders)?,
+        dex_count,
+    })
 }
 
 pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
     let file = file.as_ref();
-    let data = read_file_bytes(file)?;
-    let parser = DexParser::new(&data)?;
+    let data =
+        read_file_bytes(file).err_context(|| format!("reading Dex file: {}", file.display()))?;
+    let parser =
+        DexParser::new(&data).err_context(|| format!("parsing Dex file: {}", file.display()))?;
     let mut ctx = Context::new();
     let mut builders = Builders::new();
     let key = ArtifactKey {
@@ -64,7 +86,8 @@ pub fn import_dex<P: AsRef<Path>>(file: P) -> Result<ProgramInfo, Error> {
         encoding: source_info::ArtifactEncoding::Binary,
     };
 
-    ctx.process(&parser, key, &mut builders)?;
+    ctx.process(&parser, key, &mut builders)
+        .err_context(|| format!("converting Dex file: {}", file.display()))?;
     ctx.finish(builders)
 }
 
@@ -184,6 +207,40 @@ impl Context {
                     &mut builders.program[fidx]
                 };
                 fdat.name = sig.clone();
+
+                // A `native` method is bodyless (`code_off == 0`), so the VMT push in the
+                // `code` branch below never runs for it, and the extern-stub loop at the end
+                // of `process` skips it too because it is in `self.defined`. Without a row
+                // here it reaches the fact base with no table entry at all.
+                if ACC_NATIVE.is_set_in(enc.access_flags) {
+                    let (class_name, method_name, method_descr) = parser.method_triple(mi)?;
+                    let cls = JavaClass(class_name.into());
+                    let simple = JavaSimpleName(method_name.into());
+                    let descr = JavaSignature(method_descr.into());
+                    let method = JavaMethod(sig.as_str().into());
+                    if let VirtualMethodTable::Java {
+                        methods, natives, ..
+                    } = &mut builders.vmt
+                    {
+                        // In `methods` because CHA builds its resolvent map from that column:
+                        // without a row there, an `invoke-virtual` of a native method resolves
+                        // to nothing and the call site is lost -- bridge or no bridge. (A
+                        // `static` native is reached by `invoke-static`, which resolves by name
+                        // and never consults the table.) The jvm frontend lists native methods
+                        // there for the same reason, because it walks every declared method.
+                        methods.push((cls.clone(), simple.clone(), descr.clone(), method.clone()));
+                        // ... and in `natives` because that is where the JNI bridge looks, and
+                        // it is the only column carrying the staticness the bridge needs.
+                        natives.push((
+                            cls,
+                            simple,
+                            descr,
+                            method,
+                            ACC_STATIC.is_set_in(enc.access_flags),
+                        ));
+                    }
+                }
+
                 // Handle instructions
 
                 // Parse the instruction stream for the method.
@@ -262,11 +319,18 @@ impl Context {
                                         item_offset.try_into().unwrap(),
                                         SpanLen::ByteLen(2),
                                     ));
-                                if let Some(mut stmt) = self.decode_call(parser, &code, inst) {
+                                if let Some(mut stmt) =
+                                    self.decode_call(parser, &code, inst, &mut fdat.locals)
+                                {
                                     stmt.source_info = source_info;
                                     fdat.blocks[block_idx].push_back(stmt);
                                 } else {
-                                    for mut stmt in self.dataflow_to_assign(parser, &code, inst)? {
+                                    for mut stmt in self.dataflow_to_assign(
+                                        parser,
+                                        &code,
+                                        inst,
+                                        &mut fdat.locals,
+                                    )? {
                                         stmt.source_info = source_info;
                                         fdat.blocks[block_idx].push_back(stmt);
                                     }
@@ -295,9 +359,9 @@ impl Context {
                                         .collect::<SmallVec<[BasicBlockIdx; 4]>>();
 
                                     if succs.is_empty() {
-                                        let throw_exp = Exp::new_access_path(
-                                            AccessPath::without_fields(reg_to_var(&code, f.a)),
-                                        );
+                                        let throw_exp = Exp::from(AccessPath::without_fields(
+                                            reg_to_var(&code, f.a, &mut fdat.locals),
+                                        ));
                                         let empty_exp = Exp::new_bytes(Vec::new());
                                         TerminatorKind::Return {
                                             args: smallvec![empty_exp, throw_exp],
@@ -310,8 +374,8 @@ impl Context {
                                 Instruction::Return(reg)
                                 | Instruction::ReturnWide(reg)
                                 | Instruction::ReturnObject(reg) => {
-                                    let ret_exp = Exp::new_access_path(AccessPath::without_fields(
-                                        reg_to_var(&code, reg.a),
+                                    let ret_exp = Exp::from(AccessPath::without_fields(
+                                        reg_to_var(&code, reg.a, &mut fdat.locals),
                                     ));
                                     let empty_exp = Exp::new_bytes(Vec::new());
                                     TerminatorKind::Return {
@@ -422,7 +486,10 @@ impl Context {
         log::trace!("program: {program}");
         // Verify the generated program.
         program.verify()?;
-        for (_sig, entry) in self.ext.drain() {
+        let mut ext: Vec<_> = self.ext.drain().collect();
+        // Sort for determinism
+        ext.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+        for (_sig, entry) in ext {
             if let VirtualMethodTable::Java { methods, .. } = &mut builders.vmt {
                 methods.push(entry);
             }
@@ -446,6 +513,7 @@ impl Context {
         parser: &DexParser<'_>,
         code: &CodeItem,
         inst: &Instruction,
+        locals: &mut Locals,
     ) -> Option<Statement> {
         // If this instruction is not a call, bail out.
         let args_regs = inst.call_args()?; // returns &[Reg]
@@ -477,9 +545,9 @@ impl Context {
         };
 
         // Convert argument registers into IR expressions.
-        let args: SmallVec<[Exp; 4]> = args_regs
+        let args: ctadl_ir::ThinVec<Exp> = args_regs
             .iter()
-            .map(|reg| AccessPath::without_fields(reg_to_var(code, *reg)).into())
+            .map(|reg| AccessPath::without_fields(reg_to_var(code, *reg, locals)).into())
             .collect();
         let style = if is_static {
             CallStyle::DirectCall {
@@ -487,7 +555,7 @@ impl Context {
             }
         } else {
             CallStyle::JavaCall {
-                receiver: args[0].access_path().unwrap().variable_ref.clone(),
+                receiver: args[0].variable_ref().unwrap().clone(),
                 cls: cls.into(),
                 simple_name: simple_name.into(),
                 descriptor: descriptor.into(),
@@ -495,13 +563,13 @@ impl Context {
         };
 
         // Dex returns into a special register, so just create a temporary.
-        let retval = Context::ret();
-        let throwval = Context::except();
+        let retval = Context::ret(locals);
+        let throwval = Context::except(locals);
         self.call_result = Some(retval.clone());
         self.catch_result = Some(throwval.clone());
         Some(Statement::new_kind(StatementKind::CallAssign {
             style,
-            rets: smallvec![retval, throwval],
+            rets: ctadl_ir::thin_vec![retval, throwval],
             args: if is_static {
                 args
             } else {
@@ -515,6 +583,7 @@ impl Context {
         parser: &DexParser<'_>,
         code_item: &CodeItem,
         inst: &Instruction,
+        locals: &mut Locals,
     ) -> Result<Vec<Statement>, DexError> {
         let DataFlow {
             source,
@@ -608,7 +677,7 @@ impl Context {
         } {
             for d in dest {
                 stmts.push(Statement::new_kind(StatementKind::assign(
-                    reg_to_var(code_item, d),
+                    reg_to_var(code_item, d, locals),
                     [const_exp.clone()],
                 )));
             }
@@ -617,13 +686,13 @@ impl Context {
 
         match inst {
             Instruction::ArrayLength(f) => {
-                let src = Exp::AccessPath(AccessPath {
-                    variable_ref: reg_to_var(code_item, f.b),
-                    path: ["length"].into_iter().collect(),
-                });
-                let dest = reg_to_var(code_item, f.a);
-                let sources = smallvec![src];
-                stmts.push(Statement::new_kind(StatementKind::Assign { dest, sources }));
+                let source = reg_to_var(code_item, f.b, locals);
+                let dest = reg_to_var(code_item, f.a, locals);
+                stmts.push(Statement::new_kind(StatementKind::load(
+                    dest,
+                    source,
+                    ctadl_ir::mir::FieldPath::symbol("length"),
+                )));
                 return Ok(stmts);
             }
             Instruction::SPut(f)
@@ -635,18 +704,18 @@ impl Context {
             | Instruction::SPutWide(f) => {
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
-                let temp_var = self.counter.temp();
+                let temp_var = self.counter.temp(locals);
                 // flow sources to temp
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
-                    source.cloned().map(|r| reg_to_var(code_item, r).into()),
+                    source
+                        .cloned()
+                        .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
                 // flow temp into field update
-                stmts.push(Statement::new_kind(StatementKind::update(
-                    AccessPath::new(
-                        VariableRef::new_global(),
-                        [mir::FieldAccess::Symbol(name.into())],
-                    ),
+                stmts.push(Statement::new_kind(StatementKind::store(
+                    AccessPath::without_fields(VariableRef::new_global()),
+                    ctadl_ir::mir::FieldPath::symbol(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -660,13 +729,16 @@ impl Context {
             | Instruction::SGetWide(f) => {
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
-                for dest in dest.iter().cloned().map(|d| reg_to_var(code_item, d)) {
-                    let source = AccessPath::new(
+                for dest in dest
+                    .iter()
+                    .cloned()
+                    .map(|d| reg_to_var(code_item, d, locals))
+                {
+                    stmts.push(Statement::new_kind(StatementKind::load(
+                        dest,
                         VariableRef::new_global(),
-                        [mir::FieldAccess::Symbol(name.clone().into())],
-                    )
-                    .into();
-                    stmts.push(Statement::new_kind(StatementKind::assign(dest, [source])));
+                        ctadl_ir::mir::FieldPath::symbol(name.clone()),
+                    )));
                 }
                 return Ok(stmts);
             }
@@ -677,21 +749,22 @@ impl Context {
             | Instruction::IPutShort(f)
             | Instruction::IPutObject(f)
             | Instruction::IPutWide(f) => {
-                let temp_var = self.counter.temp();
+                let temp_var = self.counter.temp(locals);
                 // flow sources to temp
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
                     source
                         .cloned()
                         .filter(|r| *r != f.b)
-                        .map(|r| reg_to_var(code_item, r).into()),
+                        .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
-                let object = reg_to_var(code_item, f.b);
+                let object = reg_to_var(code_item, f.b, locals);
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
                 // flow temp into field update
-                stmts.push(Statement::new_kind(StatementKind::update(
-                    AccessPath::new(object, [mir::FieldAccess::Symbol(name.into())]),
+                stmts.push(Statement::new_kind(StatementKind::store(
+                    AccessPath::without_fields(object),
+                    ctadl_ir::mir::FieldPath::symbol(name),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
@@ -703,16 +776,19 @@ impl Context {
             | Instruction::IGetShort(f)
             | Instruction::IGetObject(f)
             | Instruction::IGetWide(f) => {
-                let object = reg_to_var(code_item, f.b);
+                let object = reg_to_var(code_item, f.b, locals);
                 let fld = parser.get_field(f.idx.0 as usize).unwrap();
                 let name = format!("<{}>", fld.pretty_name(parser.constant_pool())?);
-                for dest in dest.iter().cloned().map(|d| reg_to_var(code_item, d)) {
-                    let source = AccessPath::new(
+                for dest in dest
+                    .iter()
+                    .cloned()
+                    .map(|d| reg_to_var(code_item, d, locals))
+                {
+                    stmts.push(Statement::new_kind(StatementKind::load(
+                        dest,
                         object.clone(),
-                        [mir::FieldAccess::Symbol(name.clone().into())],
-                    )
-                    .into();
-                    stmts.push(Statement::new_kind(StatementKind::assign(dest, [source])));
+                        ctadl_ir::mir::FieldPath::symbol(name.clone()),
+                    )));
                 }
                 return Ok(stmts);
             }
@@ -723,15 +799,13 @@ impl Context {
             | Instruction::AGetShort(f)
             | Instruction::AGetObject(f)
             | Instruction::AGetWide(f) => {
-                let array_var = reg_to_var(code_item, f.b);
+                let array_var = reg_to_var(code_item, f.b, locals);
                 for d in dest.iter().cloned() {
-                    let dest_var = reg_to_var(code_item, d);
-                    let source =
-                        AccessPath::new(array_var.clone(), [mir::FieldAccess::Symbol("[]".into())])
-                            .into();
-                    stmts.push(Statement::new_kind(StatementKind::assign(
+                    let dest_var = reg_to_var(code_item, d, locals);
+                    stmts.push(Statement::new_kind(StatementKind::load(
                         dest_var,
-                        [source],
+                        array_var.clone(),
+                        ctadl_ir::mir::FieldPath::symbol("[]"),
                     )));
                 }
                 return Ok(stmts);
@@ -743,26 +817,26 @@ impl Context {
             | Instruction::APutShort(f)
             | Instruction::APutObject(f)
             | Instruction::APutWide(f) => {
-                let temp_var = self.counter.temp();
+                let temp_var = self.counter.temp(locals);
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     temp_var.clone(),
                     source
                         .cloned()
                         .filter(|r| *r != f.b && *r != f.c)
-                        .map(|r| reg_to_var(code_item, r).into()),
+                        .map(|r| reg_to_var(code_item, r, locals).into()),
                 )));
-                let array_var = reg_to_var(code_item, f.b);
-                let dest_path = AccessPath::new(array_var, [mir::FieldAccess::Symbol("[]".into())]);
-                stmts.push(Statement::new_kind(StatementKind::update(
-                    dest_path,
+                let array_var = reg_to_var(code_item, f.b, locals);
+                stmts.push(Statement::new_kind(StatementKind::store(
+                    AccessPath::without_fields(array_var),
+                    ctadl_ir::mir::FieldPath::symbol("[]"),
                     temp_var.into(),
                 )));
                 return Ok(stmts);
             }
             Instruction::Throw(f) => {
-                let src_var = reg_to_var(code_item, f.a);
+                let src_var = reg_to_var(code_item, f.a, locals);
                 stmts.push(Statement::new_kind(StatementKind::assign(
-                    Context::except(),
+                    Context::except(locals),
                     [src_var.into()],
                 )));
                 return Ok(stmts);
@@ -772,10 +846,12 @@ impl Context {
                 let sources: Vec<_> = source.copied().collect();
                 if !sources.is_empty() {
                     for dest in dest.iter() {
-                        let dst_var = reg_to_var(code_item, *dest);
+                        let dst_var = reg_to_var(code_item, *dest, locals);
                         stmts.push(Statement::new_kind(StatementKind::assign(
                             dst_var,
-                            sources.iter().map(|s| reg_to_var(code_item, *s).into()),
+                            sources
+                                .iter()
+                                .map(|s| reg_to_var(code_item, *s, locals).into()),
                         )));
                     }
                 }
@@ -790,10 +866,10 @@ impl Context {
         let catch_res = std::mem::take(&mut self.catch_result);
 
         if is_move_result {
-            let result = call_res.unwrap_or_else(Context::ret);
+            let result = call_res.unwrap_or_else(|| Context::ret(locals));
             for d_reg in dest.iter().cloned() {
                 let src_exp = result.clone().into();
-                let dst_var = reg_to_var(code_item, d_reg);
+                let dst_var = reg_to_var(code_item, d_reg, locals);
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     dst_var,
                     [src_exp],
@@ -802,10 +878,10 @@ impl Context {
         }
 
         if is_move_exception {
-            let result = catch_res.unwrap_or_else(Context::except);
+            let result = catch_res.unwrap_or_else(|| Context::except(locals));
             for d_reg in dest.iter().cloned() {
                 let src_exp = result.clone().into();
-                let dst_var = reg_to_var(code_item, d_reg);
+                let dst_var = reg_to_var(code_item, d_reg, locals);
                 stmts.push(Statement::new_kind(StatementKind::assign(
                     dst_var,
                     [src_exp],
@@ -817,20 +893,20 @@ impl Context {
     }
 
     /// Returns 'ret' temporary for move-result
-    fn ret() -> VariableRef {
-        VariableRef::new_local("retval".to_string())
+    fn ret(locals: &mut Locals) -> VariableRef {
+        VariableRef::new_local_idx(locals.get_or_intern("retval"))
     }
 
-    fn except() -> VariableRef {
-        VariableRef::new_local("throwval".to_string())
+    fn except(locals: &mut Locals) -> VariableRef {
+        VariableRef::new_local_idx(locals.get_or_intern("throwval"))
     }
 }
 
-fn reg_to_var(code_item: &CodeItem, reg: Reg) -> VariableRef {
+fn reg_to_var(code_item: &CodeItem, reg: Reg, locals: &mut Locals) -> VariableRef {
     if let Some(pidx) = code_item.reg_to_p(reg.0.try_into().expect("reg too big")) {
         VariableRef::new_parameter(pidx.into())
     } else {
-        VariableRef::new_local(format!("v{}", reg.0))
+        VariableRef::new_local_idx(locals.get_or_intern(&format!("v{}", reg.0)))
     }
 }
 
@@ -861,8 +937,8 @@ impl Counter {
     }
 
     /// Make a new temporary with 't' prefix
-    fn temp(&mut self) -> VariableRef {
+    fn temp(&mut self, locals: &mut Locals) -> VariableRef {
         let i = self.next();
-        VariableRef::new_local(format!("t{i}"))
+        VariableRef::new_local_idx(locals.get_or_intern(&format!("t{i}")))
     }
 }

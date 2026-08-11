@@ -1,0 +1,18 @@
+// jni-arg-shift.bridge.jsonl -- the JniArgShift boundary, joined by hand.
+//
+// The A/B counterpart of `Jni:JniArgShift`; see `jni-flow.bridge.jsonl` for what the sibling
+// file does and why `--no-jni-bridge` is not optional.
+//
+// This is the case that makes the port map earn its keep. `nativeCat` is an *instance* native,
+// so its implementation takes `JNIEnv *` at 0, the receiver `jobject` at 1, and the declared
+// parameters at 2 and 3. The Java side is a DEX: `this` is register slot 0 and the two String
+// parameters are slots 1 and 2 (both references, one slot each).
+//
+// The C body returns `b` and drops `a`, and the Java half calls `nativeCat` twice with the
+// taint in the other argument each time -- so exactly one of the two sinks may be reached. An
+// off-by-one anywhere below flips both of the case's assertions at once: `expected_lines`
+// stops being reached and `unexpected_lines` starts being. A bare call edge with no port map
+// would mis-wire the pair silently, which is the whole reason the map is the feature rather
+// than a refinement.
+
+{"find":"methods","in":{"languages":["dex","apk"]},"where":[{"constraint":"signature_match","qualified-id":"LJniArgShift;->nativeCat(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"}],"model":{"bridge":{"to":{"in":{"language":"pcode"},"where":[{"constraint":"signature_match","name":"Java_JniArgShift_nativeCat"}]},"arguments":[{"from":"Argument(0)","to":"Argument(1)"},{"from":"Argument(1)","to":"Argument(2)"},{"from":"Argument(2)","to":"Argument(3)"},{"from":"Return","to":"Return"}]}}}

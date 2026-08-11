@@ -1,32 +1,33 @@
 // Comprehensive test for numeric field access syntax
+// A numeric-offset memory access spells its dereference (e.g. `a.[0].deref`).
 var global_var;
 
 def TestAllNumericPatterns(a, b) {
 start:
     // Test 1: Basic numeric field access
-    c = a.[0];
-    
-    // Test 2: Numeric field update
-    a.[1] = b;
-    
+    c = a.[0].deref;
+
+    // Test 2: Numeric field update (memory write spells the dereference)
+    a.[1].deref = b;
+
     // Test 3: Global variable with numeric field access
-    d = global_var.[2];
-    
+    d = global_var.[2].deref;
+
     // Test 4: Mixed symbolic and numeric field access
-    e = a.field.[3].another.[4];
-    
+    e = a.field.[3].another.[4].deref;
+
     // Test 5: Numeric field access in function parameters
-    f = b.[5];
-    
+    f = b.[5].deref;
+
     // Test 6: Multiple numeric field accesses in one statement
-    g = a.[6], b.[7];
-    
+    g = a.[6].deref, b.[7].deref;
+
     // Test 7: Chained numeric field accesses
-    h = a.[8].[9].[10];
-    
+    h = a.[8].[9].[10].deref;
+
     // Test 8: Large numeric offsets
-    i = a.[1000];
-    a.[9999] = i;
-    
+    i = a.[1000].deref;
+    a.[9999].deref = i;
+
     return;
 }

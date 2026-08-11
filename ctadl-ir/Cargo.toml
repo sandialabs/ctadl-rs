@@ -1,6 +1,6 @@
 [package]
 name = "ctadl-ir"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 
 [dependencies]
@@ -15,11 +15,12 @@ parquet = { version = "58", features = ["arrow"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
 smallvec = { version = "1" }
 source-info = { path = "../source-info" }
+thin-vec = { version = "0.2" }
 thiserror = "2"
 u64_dyn = "0.1"
 
 [features]
-serde = ["dep:serde", "hashbrown/serde", "smallvec/serde", "bitcode/serde", "internment/serde", "source-info/serde"]
+serde = ["dep:serde", "hashbrown/serde", "smallvec/serde", "bitcode/serde", "internment/serde", "source-info/serde", "thin-vec/serde"]
 
 [dev-dependencies]
 tempfile = "3.20"

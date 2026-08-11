@@ -48,7 +48,7 @@ fn bench_union_10k(c: &mut Criterion) {
 
     c.bench_function("union_10k", |b| {
         b.iter(|| {
-            let mut t = t1.clone();
+            let mut t = t1;
             t.union(&t2);
             black_box(t);
         })
@@ -103,7 +103,7 @@ fn bench_intersection_10k(c: &mut Criterion) {
 
     c.bench_function("intersection_10k", |b| {
         b.iter(|| {
-            let mut t = t1.clone();
+            let mut t = t1;
             t.intersection(&t2);
             black_box(t);
         })

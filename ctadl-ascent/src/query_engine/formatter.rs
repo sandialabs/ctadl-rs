@@ -5,38 +5,30 @@ this module is to compute location information for each tainted vertex and instr
 most frontends only store instruction location information (as opposed to locations for each
 variable access), we focus on instruction locations.
 
-The schema of tables for formatting is:
+The main entry point is [`format_sarif`]. It reads the last query and formats its results in SARIF.
 
-```text
-function_id:
-id (int), function_name (string)
+Format has four profiles:
+- Human (the default)
+- Machine
+- Agent
+- Debug
 
-
-source-info:
-metadata:
-hash_algorithm, hash_len, version
-
-artifacts:
-artifact_id, canonical_path, sub_artifact_id, encoding, content_hash
-
-files:
-file_id, artifact_id
-
-spans:
-span_id, start, len_tag, len_value
-
-file_spans:
-file_span_id, file_id, span_id
-```
+The human profile is designed for loading results into a visualizer for a human to look at.
+It emphasizes clarity and the important steps that explain the finding.
+The agent profile is almost an extension of the human, including sources & sinks found &
+details of exactly what is tainted in each place. It's intended to communicate high level
+findings as well as how exactly to reason about the chain. It also includes functions that
+absorb taint, which allows agents to produce their own models to further the analysis.
+The machine profile contains explicit detail about each individual finding -- tainted
+instructions -- while keeping the SARIF output compact for programmatic consumers.
+The debug profile contains as much information as has been useful for debugging.
 
 */
 use std::fs::File;
 use std::path;
 use std::sync::Arc;
 
-use ascent::ascent;
-use ctadl_ir::Idx;
-use ctadl_ir::graph::{DirectedGraph, Predecessors, Successors, find_path};
+use ctadl_ir::graph::{Annotation, DirectedGraph, LabeledSuccessors, find_annotated_path_to_set};
 use datafusion::arrow::array::{StringViewArray, UInt8Array, UInt32Array, UInt64Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -47,8 +39,9 @@ use memmap::MmapOptions;
 use packed_struct::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_sarif::sarif::{
-    Address, ArtifactLocation, CodeFlow, Location, LogicalLocation, Message,
-    MultiformatMessageString, PhysicalLocation, PropertyBag, Region, ReportingDescriptor,
+    Address, ArtifactLocation, CodeFlow, ConfigurationOverride, Invocation, Location,
+    LogicalLocation, Message, MultiformatMessageString, Notification, PhysicalLocation,
+    PropertyBag, Region, ReportingConfiguration, ReportingDescriptor, ReportingDescriptorReference,
     Result as SarifResult, ResultKind, ResultLevel, Run, Sarif, ThreadFlow, ThreadFlowLocation,
     Tool, ToolComponent,
 };
@@ -59,9 +52,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::{Error, ErrorContext};
 use crate::facts::schema;
 use crate::facts::{
-    CallArgId, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, InsnId, InsnSiteId,
-    Label, PackedCallArg, PackedInsnSiteId, Path, TaintDirection, TaintState, isout,
+    CallArgId, FlowEdge, FlowVariable, FlowVertex, FormalIndex, FunctionId, ImportId, InsnId,
+    InsnSiteId, Label, PackedInsnSiteId, Path, TaintDirection, TaintState,
 };
+use crate::models::{EndpointStats, UnmatchedReason};
 use crate::project::{AnalysisProject, ArtifactLanguage};
 use crate::query_engine::QueryEndpoint;
 
@@ -74,23 +68,78 @@ pub enum SarifProfile {
     Debug,
 }
 
-pub struct ProjectContext<'a, P: AsRef<path::Path>> {
-    pub source_spans: &'a [(FileSpanId, FunctionId, InsnId)],
-    pub index_dir: P,
-    pub source_info_dir: P,
-    pub details_by_span: &'a BTreeMap<u32, Vec<(Label, FunctionId, FlowVariable, Path)>>,
-    pub facts: &'a FormatFacts,
-    pub taint_results: &'a TaintAnalysisResults,
+/// One instruction's source location, as the index recorded it.
+///
+/// The [`FileSpanId`] indexes the source-info database of `import` and of no other (see
+/// [`crate::facts::ImportId`]); `(func, insn)` identify the instruction project-wide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SourceSpan {
+    pub span: FileSpanId,
+    pub import: ImportId,
+    pub func: FunctionId,
+    pub insn: InsnId,
+}
+
+impl SourceSpan {
+    /// What identifies this location among the project's imports. Two imports number their
+    /// spans independently, so the span alone is not a key: span 7 exists in each of them and
+    /// denotes a different line in every one.
+    pub fn key(&self) -> SpanKey {
+        (self.import, self.span)
+    }
+}
+
+/// A source span qualified by the import that numbered it. See [`SourceSpan::key`].
+pub type SpanKey = (ImportId, FileSpanId);
+
+/// One import of the project being formatted, as [`ImportId`] resolves it.
+pub struct ImportSource {
+    pub id: ImportId,
+    /// Name in the store, as `ctadl index` recorded it.
+    pub name: String,
+    /// Directory holding this import's source-info parquet tables.
+    pub source_info_dir: path::PathBuf,
     pub language: ArtifactLanguage,
     /// Base address the disassembler loaded the artifact at, if known. Used to
     /// emit `relativeAddress` (the section-relative offset) alongside the
     /// absolute instruction address in binary SARIF locations.
     pub image_base: Option<i64>,
+    /// Absolute path of the artifact this import was made from, as `ctadl import` resolved it.
+    /// It is what makes a source location's URI mean something to a reader: see
+    /// [`Self::uri_base`]. `None` for an artifact that is not a filesystem path (a
+    /// `ghidra://` project URL).
+    pub artifact_path: Option<path::PathBuf>,
 }
 
-pub struct FormatConfig {
-    pub compact: bool,
-    pub profile: SarifProfile,
+impl ImportSource {
+    /// The directory this import's SARIF URIs are written relative to: the artifact's *parent*,
+    /// so every URI leads with the artifact's own name.
+    ///
+    /// A URI is supposed to say where a finding is *within the thing that was scanned*, not
+    /// where that thing happened to sit on the machine that scanned it. The absolute path is
+    /// not thrown away: it is published once per import in `run.originalUriBaseIds`, under
+    /// [`Self::uri_base_id`], which is exactly the indirection SARIF §3.4.4 defines for this.
+    fn uri_base(&self) -> Option<&path::Path> {
+        self.artifact_path.as_deref().and_then(|p| p.parent())
+    }
+
+    /// The `uriBaseId` symbol naming [`Self::uri_base`] in `run.originalUriBaseIds`. One per
+    /// import: a project's imports are rooted in unrelated directories, so a single base
+    /// would only be right for one of them.
+    fn uri_base_id(&self) -> String {
+        format!("IMPORT_{}", self.name)
+    }
+}
+
+pub struct ProjectContext<'a, P: AsRef<path::Path>> {
+    pub source_spans: &'a [SourceSpan],
+    pub index_dir: P,
+    /// Every import of the project, each holding the source-info database its own spans are
+    /// numbered in. Results are rendered once, against the right one.
+    pub imports: &'a [ImportSource],
+    pub details_by_span: &'a BTreeMap<SpanKey, Vec<(Label, FunctionId, FlowVariable, Path)>>,
+    pub facts: &'a FormatFacts,
+    pub taint_results: &'a TaintAnalysisResults,
 }
 
 // SARIF rule identifier for any tainted path result
@@ -113,11 +162,11 @@ const TAINT_SINK_RULE_NAME: &str = "Tainted data sink";
 const TAINT_SINK_RULE_DESCRIPTION: &str = "Tainted data sinks";
 
 // SARIF rule identifiers for tainted data and almost-path functions
-const TAINTED_DATA_RULE_ID: &str = "C0005";
+const TAINTED_DATA_RULE_ID: &str = "C0005.tainted-data";
 const TAINTED_DATA_RULE_NAME: &str = "Tainted data";
 const TAINTED_DATA_RULE_DESCRIPTION: &str = "Tainted variables and fields";
 
-const ALMOST_PATH_FUNCTION_RULE_ID: &str = "C0006";
+const ALMOST_PATH_FUNCTION_RULE_ID: &str = "C0006.almost-path-function";
 const ALMOST_PATH_FUNCTION_RULE_NAME: &str = "Almost-path function";
 const ALMOST_PATH_FUNCTION_RULE_DESCRIPTION: &str = "A function which contains source-tainted and sink-tainted data, which means there's 'almost' a path between them.";
 
@@ -125,23 +174,1343 @@ const ABSORBING_FUNCTION_RULE_ID: &str = "C0007.absorbing-function";
 const ABSORBING_FUNCTION_RULE_NAME: &str = "Absorbing functions";
 const ABSORBING_FUNCTION_RULE_DESCRIPTION: &str = "An external function that receives tainted data";
 
+// Notification descriptor ids (SARIF §3.19.24, referenced from
+// `invocation.toolConfigurationNotifications` / `toolExecutionNotifications`). The
+// `CTADL00xx` block describes how the query was *configured*; the `CTADL01xx` block
+// describes what running it *did*. See `notification_descriptors` for the message
+// strings, and `build_invocation` for the conditions.
+const NOTIF_NO_ENDPOINTS: &str = "CTADL0001.no-endpoints-configured";
+const NOTIF_NO_SOURCES_CONFIGURED: &str = "CTADL0002.no-sources-configured";
+const NOTIF_NO_SINKS_CONFIGURED: &str = "CTADL0003.no-sinks-configured";
+const NOTIF_GENERATOR_DEAD: &str = "CTADL0004.generator-matched-nothing";
+const NOTIF_FUNCTION_NOT_INDEXED: &str = "CTADL0005.endpoint-function-not-indexed";
+const NOTIF_NO_SOURCES_MATCHED: &str = "CTADL0006.no-sources-matched";
+const NOTIF_NO_SINKS_MATCHED: &str = "CTADL0007.no-sinks-matched";
+const NOTIF_NO_INDEX: &str = "CTADL0008.no-index-model-check-only";
+const NOTIF_SCOPE_EXCLUDED: &str = "CTADL0009.generator-scope-excluded";
+const NOTIF_BRIDGE_DIAGNOSIS: &str = "CTADL0010.bridge-model-diagnosis";
+const NOTIF_GENERATOR_MATCHED: &str = "CTADL0011.generator-matched";
+const NOTIF_MODEL_FILE_ERROR: &str = "CTADL0012.model-file-error";
+const NOTIF_MATCH_SUMMARY: &str = "CTADL0100.endpoint-match-summary";
+const NOTIF_PATHS_DISABLED: &str = "CTADL0101.path-generation-disabled";
+const NOTIF_NO_PATHS: &str = "CTADL0102.no-paths-found";
+const NOTIF_PATH_DROPPED: &str = "CTADL0103.path-dropped-no-location";
+
+/// Everything the SARIF writer needs to explain what the query *did*, independent of what
+/// it *found*. Assembled in `cli::query`, which is the only place that sees both the model
+/// files and the resolved endpoints.
+///
+/// The `_declared` counts are model *ports* — one per `sources`/`sinks` entry, plus one per
+/// flowy endpoint; the `_matched` counts are the post-fan-out `QueryEndpoint`s those ports
+/// resolved to. One port can match many functions, so the two are not equal, but they are
+/// the two ends of one fan-out and every message that prints them names which is which.
+#[derive(Debug, Default, Clone)]
+pub struct QueryDiagnostics {
+    /// What Stage 1 did, keyed by (model file, generator index, direction). A zero
+    /// `endpoints_matched` is a generator that declared a port and matched nothing.
+    pub generator_stats: BTreeMap<(path::PathBuf, usize, TaintDirection), EndpointStats>,
+    /// Names Stage 1 matched that the index does not contain (see [`BuiltEndpoints`]).
+    ///
+    /// [`BuiltEndpoints`]: crate::query_engine::BuiltEndpoints
+    pub unresolved_functions: BTreeSet<String>,
+    pub sources_declared: usize,
+    pub sinks_declared: usize,
+    pub sources_matched: usize,
+    pub sinks_matched: usize,
+    pub command_line: String,
+    pub arguments: Vec<String>,
+    /// SARIF-format UTC timestamp; see [`utc_timestamp`].
+    pub start_time_utc: String,
+    /// Set only when the project had no index and the run checked the model files against the
+    /// imported programs instead. See [`ModelCheck`], and `cli::query` for when that happens.
+    pub model_check: Option<ModelCheck>,
+}
+
+/// What Stage 1 alone could say about the model files, when there was no index to run Stage 2
+/// against.
+///
+/// Everything here is a *configuration* fact -- what the files declare and what the imported
+/// programs matched -- which is why it lands in `invocation.toolConfigurationNotifications`
+/// beside the ordinary `CTADL00xx` block rather than in a report of its own. The counts in
+/// [`QueryDiagnostics`] mean the same thing they always did, with one caveat this type's
+/// `CTADL0008` states in the file: `sources_matched`/`sinks_matched` are Stage-1 rows, before
+/// the call-site fan-out and wildcard expansion that need an index.
+#[derive(Debug, Default, Clone)]
+pub struct ModelCheck {
+    /// Each import the files were matched against, as `(name, functions in its IR)`.
+    pub imports: Vec<(String, usize)>,
+    /// A file that could not be read, or a generator whose shape is wrong. Neither ends the
+    /// check: the rest of the file, and every other file, is still reported.
+    pub file_errors: Vec<ModelFileError>,
+    /// Generators whose `in` clause admits none of the imports. Not the same condition as
+    /// matching nothing, and reported separately so it cannot be read as one.
+    pub scope_excluded: Vec<ScopeExcluded>,
+    /// What each generator's `where` selected. Note-level: this is the answer to "does this
+    /// `where` select anything", which is the question the check exists to answer.
+    pub matched: Vec<GeneratorMatch>,
+    /// Generators declaring an index-time construct that matched nothing.
+    pub index_time_dead: Vec<IndexTimeDead>,
+    /// A bridge whose sides cannot be paired, as `models::matches::diagnose` describes it.
+    pub bridges: Vec<BridgeDiagnosis>,
+}
+
+/// A model file that could not be read, or a generator in it whose shape is wrong.
+#[derive(Debug, Clone)]
+pub struct ModelFileError {
+    /// `None` for an error that belongs to the run rather than to one file -- an import that
+    /// would not load, say. It then gets no location, because there is no file to point at.
+    pub file: Option<path::PathBuf>,
+    pub message: String,
+}
+
+/// A generator no named import's scope admits.
+#[derive(Debug, Clone)]
+pub struct ScopeExcluded {
+    pub file: path::PathBuf,
+    pub index: usize,
+    /// The `in` clause as the file spells it, when there is one.
+    pub scope: Option<String>,
+}
+
+/// What one generator's `where` selected, summed over the imports.
+#[derive(Debug, Clone)]
+pub struct GeneratorMatch {
+    pub file: path::PathBuf,
+    pub index: usize,
+    /// The generator's `find`, which says what unit `total` counts: functions, or the callees
+    /// of call sites.
+    pub find: Option<String>,
+    /// `None` for a generator no `where` narrowed: it matches every function in the import,
+    /// a count that exists only relative to that import and must never be reported as zero.
+    pub total: Option<usize>,
+    /// A few of the matched names, for a reader checking that the `where` selected what was
+    /// meant.
+    pub sample: Vec<String>,
+}
+
+/// A generator declaring a construct `ctadl index` consumes, which matched nothing.
+#[derive(Debug, Clone)]
+pub struct IndexTimeDead {
+    pub file: path::PathBuf,
+    pub index: usize,
+    /// What it declares, as the notification names it: `propagation`.
+    pub kind: String,
+}
+
+/// One bridge's verdict, carried verbatim from `models::matches::diagnose`.
+#[derive(Debug, Clone)]
+pub struct BridgeDiagnosis {
+    pub file: path::PathBuf,
+    pub index: usize,
+    /// The spec's own `on-unmatched`/`on-ambiguous` setting, which is what decides whether this
+    /// is an error or a warning -- exactly as it does at index time.
+    pub error: bool,
+    pub message: String,
+}
+
+/// What happened to the `C0001.tainted-path` rule this run. Exactly one of these holds, and
+/// it is what the single non-`fail` `C0001` result (if any) reports — see
+/// [`path_status_result`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PathOutcome {
+    /// The profile does not perform path search at all, so the rule did not run.
+    Disabled,
+    /// One end of the query was empty, so the rule could not be evaluated. Carries the
+    /// human-readable reason.
+    NotApplicable(String),
+    /// Both ends matched and the search completed without finding a flow.
+    NoneFound,
+    /// Flows were found and reported as `kind: "fail"` results.
+    Found(usize),
+}
+
+/// Counts collected while assembling path results, for the `CTADL01xx` notifications.
+#[derive(Debug, Default, Clone, Copy)]
+struct PathStats {
+    /// `C0001` results actually emitted.
+    reported: usize,
+    /// Paths that were found but discarded for want of a resolvable reporting location.
+    dropped_no_location: usize,
+}
+
+/// Assemble `run.invocations[0]`: the configuration and execution notifications, the rules
+/// the profile turned off, and the whole-run status.
+///
+/// Per SARIF §3.20.21/§3.20.22 the presence of any `error`-level notification means the run
+/// failed, so `execution_successful` is exactly "no error notification was emitted", and the
+/// caller sets a non-zero process exit code to match (§3.58.6).
+fn build_invocation(
+    diagnostics: &QueryDiagnostics,
+    profile: SarifProfile,
+    outcome: &PathOutcome,
+    path_stats: PathStats,
+) -> Invocation {
+    let mut config_notifications: Vec<Notification> = Vec::new();
+    let mut exec_notifications: Vec<Notification> = Vec::new();
+
+    let model_files: BTreeSet<&path::Path> = diagnostics
+        .generator_stats
+        .keys()
+        .map(|(f, _, _)| f.as_path())
+        .collect();
+
+    // --- Configuration: what the models declared (§3.20.22). ---
+    // First, because it says what every count below it does and does not mean. `associatedRule`
+    // for the same reason `CTADL0006`/`CTADL0007` carry it: this is why `C0001` was not
+    // evaluated.
+    if let Some(check) = &diagnostics.model_check {
+        // "no program" is a real outcome -- every import failed to load, and the errors below
+        // say why -- so it gets said rather than rendered as an empty list.
+        let described = if check.imports.is_empty() {
+            "no program could be loaded".to_string()
+        } else {
+            check
+                .imports
+                .iter()
+                .map(|(name, functions)| format!("{name} ({functions} function(s))"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let mut notif = notification(
+            NOTIF_NO_INDEX,
+            "error",
+            vec![described.clone(), check.imports.len().to_string()],
+            format!(
+                "The project has no index, so no taint analysis ran. The model files were \
+                 matched against the imported program(s) instead -- {described} -- and the \
+                 notifications below report what they select. These are model-matching results \
+                 only: call-site fan-out, 'Argument(*)' expansion and sink wildcard expansion \
+                 need the index, a matched name can still be absent from it, and bridge pairs \
+                 are not counted. Run `ctadl index` for a real query."
+            ),
+            BTreeMap::from([
+                (
+                    "imports".to_string(),
+                    serde_json::json!(
+                        check
+                            .imports
+                            .iter()
+                            .map(|(name, _)| name.clone())
+                            .collect::<Vec<_>>()
+                    ),
+                ),
+                (
+                    "functions".to_string(),
+                    serde_json::json!(check.imports.iter().map(|(_, n)| n).sum::<usize>()),
+                ),
+            ]),
+        );
+        notif.associated_rule = Some(
+            ReportingDescriptorReference::builder()
+                .id(TAINTED_PATH_RULE_ID.to_string())
+                .build(),
+        );
+        config_notifications.push(notif);
+
+        // CTADL0012: a file the check could not read, or a generator whose shape is wrong.
+        // `ctadl query` normally fails on these; here they are reported and the check goes on,
+        // because a linter that stops at the first typo is no linter.
+        for error in &check.file_errors {
+            let file = error.file.as_ref().map(|f| f.display().to_string());
+            let notif = notification(
+                NOTIF_MODEL_FILE_ERROR,
+                "error",
+                vec![file.clone().unwrap_or_default(), error.message.clone()],
+                match &file {
+                    Some(file) => format!("Model file '{file}': {}", error.message),
+                    None => format!("Checking the model files: {}", error.message),
+                },
+                match &file {
+                    Some(file) => {
+                        BTreeMap::from([("modelFile".to_string(), serde_json::json!(file))])
+                    }
+                    None => BTreeMap::new(),
+                },
+            );
+            config_notifications.push(match &error.file {
+                Some(file) => at_file(notif, file),
+                None => notif,
+            });
+        }
+    }
+
+    if diagnostics.sources_declared == 0 && diagnostics.sinks_declared == 0 {
+        config_notifications.push(notification(
+            NOTIF_NO_ENDPOINTS,
+            "error",
+            vec![model_files.len().to_string()],
+            format!(
+                "No taint sources or sinks were configured ({} model file(s) loaded, no \
+                 built-in endpoints), so the query has nothing to search for.",
+                model_files.len()
+            ),
+            BTreeMap::from([(
+                "modelFiles".to_string(),
+                serde_json::json!(model_files.len()),
+            )]),
+        ));
+    } else if diagnostics.sources_declared == 0 {
+        config_notifications.push(notification(
+            NOTIF_NO_SOURCES_CONFIGURED,
+            "error",
+            vec![diagnostics.sinks_declared.to_string()],
+            format!(
+                "No taint sources were configured, but {} sink port(s) were declared. A taint \
+                 query with no source is vacuous.",
+                diagnostics.sinks_declared
+            ),
+            BTreeMap::from([(
+                "sinksDeclared".to_string(),
+                serde_json::json!(diagnostics.sinks_declared),
+            )]),
+        ));
+    } else if diagnostics.sinks_declared == 0 {
+        config_notifications.push(notification(
+            NOTIF_NO_SINKS_CONFIGURED,
+            "error",
+            vec![diagnostics.sources_declared.to_string()],
+            format!(
+                "No taint sinks were configured, but {} source port(s) were declared. A taint \
+                 query with no sink is vacuous.",
+                diagnostics.sources_declared
+            ),
+            BTreeMap::from([(
+                "sourcesDeclared".to_string(),
+                serde_json::json!(diagnostics.sources_declared),
+            )]),
+        ));
+    }
+
+    // CTADL0004: a generator that declared a port and produced no endpoint. The
+    // notification points at the model *file* — `EndpointMatch` carries no provenance and
+    // serde_json gives no spans, so there is no line/column to point at. Which of the
+    // several ways it can produce nothing happened is what `unmatched_message` reports:
+    // "matched no function" is only one of them.
+    let mut unmatched_declarations = 0usize;
+    let mut ports_unmatched = 0usize;
+    for ((file, index, direction), stats) in &diagnostics.generator_stats {
+        if stats.endpoints_matched > 0 {
+            continue;
+        }
+        unmatched_declarations += 1;
+        ports_unmatched += stats.ports_declared;
+        let direction = match direction {
+            TaintDirection::Forward => "source",
+            TaintDirection::Backward => "sink",
+        };
+        let file_display = file.display().to_string();
+        let detail = unmatched_message(*index, &file_display, direction, stats);
+        let mut properties = BTreeMap::from([
+            ("generatorIndex".to_string(), serde_json::json!(index)),
+            ("direction".to_string(), serde_json::json!(direction)),
+            (
+                "portsDeclared".to_string(),
+                serde_json::json!(stats.ports_declared),
+            ),
+            (
+                "functionsMatched".to_string(),
+                serde_json::json!(stats.functions_matched),
+            ),
+            ("reason".to_string(), serde_json::json!(detail.message_id)),
+        ]);
+        if let Some(name) = &detail.variable {
+            properties.insert("variableName".to_string(), serde_json::json!(name));
+        }
+        config_notifications.push(at_file(
+            notification_with_message_id(
+                NOTIF_GENERATOR_DEAD,
+                detail.message_id,
+                "warning",
+                detail.arguments,
+                detail.text,
+                properties,
+            ),
+            file,
+        ));
+    }
+
+    // The rest of what the no-index check found. Every one of these points at a model file and
+    // names a generator by the same index the JSON errors and `CTADL0004` use.
+    if let Some(check) = &diagnostics.model_check {
+        // CTADL0009: never evaluated, which is not the same as evaluated and matching nothing.
+        // Stage 1 returns early for a generator whose scope excludes the import, leaving no
+        // stats at all -- indistinguishable from dead if this went unsaid.
+        for excluded in &check.scope_excluded {
+            let file = excluded.file.display().to_string();
+            let index = excluded.index;
+            let scope = excluded.scope.clone().unwrap_or_default();
+            config_notifications.push(at_file(
+                notification(
+                    NOTIF_SCOPE_EXCLUDED,
+                    "warning",
+                    vec![index.to_string(), file.clone(), scope.clone()],
+                    format!(
+                        "Model generator {index} in '{file}' has an 'in' scope ({scope}) that \
+                         admits none of the programs checked, so it was never evaluated against \
+                         any of them."
+                    ),
+                    BTreeMap::from([
+                        ("generatorIndex".to_string(), serde_json::json!(index)),
+                        ("scope".to_string(), serde_json::json!(scope)),
+                    ]),
+                ),
+                &excluded.file,
+            ));
+        }
+
+        // CTADL0004, for the half of a model file `ctadl index` consumes rather than `ctadl
+        // query`. Same condition, same descriptor, its own message: what it contributes
+        // nothing to is the *index*.
+        for dead in &check.index_time_dead {
+            let file = dead.file.display().to_string();
+            let (index, kind) = (dead.index, &dead.kind);
+            config_notifications.push(at_file(
+                notification_with_message_id(
+                    NOTIF_GENERATOR_DEAD,
+                    DEAD_INDEX_TIME,
+                    "warning",
+                    vec![index.to_string(), file.clone(), kind.clone()],
+                    format!(
+                        "Model generator {index} in '{file}' declares a {kind}, but no function \
+                         in the program matched its 'where' constraints, so it will contribute \
+                         nothing when the project is indexed."
+                    ),
+                    BTreeMap::from([
+                        ("generatorIndex".to_string(), serde_json::json!(index)),
+                        ("declarationKind".to_string(), serde_json::json!(kind)),
+                        ("reason".to_string(), serde_json::json!(DEAD_INDEX_TIME)),
+                    ]),
+                ),
+                &dead.file,
+            ));
+        }
+
+        // CTADL0010: `diagnose`'s verdict, verbatim, at the severity the spec itself set --
+        // the same text and the same severity `ctadl index` would raise. No pair count: pairing
+        // needs the fact base.
+        for bridge in &check.bridges {
+            let file = bridge.file.display().to_string();
+            config_notifications.push(at_file(
+                notification(
+                    NOTIF_BRIDGE_DIAGNOSIS,
+                    if bridge.error { "error" } else { "warning" },
+                    vec![
+                        bridge.index.to_string(),
+                        file.clone(),
+                        bridge.message.clone(),
+                    ],
+                    format!(
+                        "Model generator {} in '{file}': {}",
+                        bridge.index, bridge.message
+                    ),
+                    BTreeMap::from([(
+                        "generatorIndex".to_string(),
+                        serde_json::json!(bridge.index),
+                    )]),
+                ),
+                &bridge.file,
+            ));
+        }
+
+        // CTADL0011: the live generators. A count of what a `where` selected is the answer a
+        // reader came for, and it is not deducible from the silence of the notifications above.
+        for matched in &check.matched {
+            let file = matched.file.display().to_string();
+            let index = matched.index;
+            let unit = if matched.find.as_deref() == Some("callsites") {
+                "callee"
+            } else {
+                "function"
+            };
+            let sample = if matched.sample.is_empty() {
+                String::new()
+            } else {
+                format!(" (e.g. {})", matched.sample.join(", "))
+            };
+            // "all functions" rather than a number: an unnarrowed generator's count exists only
+            // relative to one import, and printing it as a number invites subtracting it.
+            let count = match matched.total {
+                Some(total) => format!("{total} {unit}(s)"),
+                None => format!("every {unit} in the program(s) checked"),
+            };
+            let mut properties = BTreeMap::from([
+                ("generatorIndex".to_string(), serde_json::json!(index)),
+                ("unit".to_string(), serde_json::json!(unit)),
+                ("sample".to_string(), serde_json::json!(matched.sample)),
+            ]);
+            if let Some(total) = matched.total {
+                properties.insert("matched".to_string(), serde_json::json!(total));
+            }
+            config_notifications.push(at_file(
+                notification(
+                    NOTIF_GENERATOR_MATCHED,
+                    "note",
+                    vec![
+                        index.to_string(),
+                        file.clone(),
+                        count.clone(),
+                        sample.clone(),
+                    ],
+                    format!("Model generator {index} in '{file}' matched {count}{sample}."),
+                    properties,
+                ),
+                &matched.file,
+            ));
+        }
+    }
+
+    // CTADL0005: Stage 1 matched a name that Stage 2 could not resolve against the index.
+    for name in &diagnostics.unresolved_functions {
+        config_notifications.push(notification(
+            NOTIF_FUNCTION_NOT_INDEXED,
+            "warning",
+            vec![name.clone()],
+            format!(
+                "Function '{name}' was matched by a model but is not present in the index, so \
+                 its source/sink endpoints were dropped."
+            ),
+            BTreeMap::from([("function".to_string(), serde_json::json!(name))]),
+        ));
+    }
+
+    // CTADL0006/0007: declared but nothing survived to a `QueryEndpoint`. These carry
+    // `associatedRule` (§3.58.3) because they explain why `C0001` could not be evaluated.
+    let associate_c0001 = |mut notif: Notification| -> Notification {
+        notif.associated_rule = Some(
+            ReportingDescriptorReference::builder()
+                .id(TAINTED_PATH_RULE_ID.to_string())
+                .build(),
+        );
+        notif
+    };
+    if diagnostics.sources_declared > 0 && diagnostics.sources_matched == 0 {
+        config_notifications.push(associate_c0001(notification(
+            NOTIF_NO_SOURCES_MATCHED,
+            "error",
+            vec![diagnostics.sources_declared.to_string()],
+            format!(
+                "{} source port(s) were declared but none of them matched anything in the \
+                 program, so no taint could be seeded.",
+                diagnostics.sources_declared
+            ),
+            BTreeMap::from([(
+                "sourcesDeclared".to_string(),
+                serde_json::json!(diagnostics.sources_declared),
+            )]),
+        )));
+    }
+    if diagnostics.sinks_declared > 0 && diagnostics.sinks_matched == 0 {
+        config_notifications.push(associate_c0001(notification(
+            NOTIF_NO_SINKS_MATCHED,
+            "error",
+            vec![diagnostics.sinks_declared.to_string()],
+            format!(
+                "{} sink port(s) were declared but none of them matched anything in the \
+                 program, so no flow could be detected.",
+                diagnostics.sinks_declared
+            ),
+            BTreeMap::from([(
+                "sinksDeclared".to_string(),
+                serde_json::json!(diagnostics.sinks_declared),
+            )]),
+        )));
+    }
+
+    // --- Execution: what running the query did (§3.20.21). ---
+    // Declared and matched are the two ends of one fan-out — ports in, endpoints out — so
+    // the message states both units rather than printing the numbers side by side as though
+    // they were the same thing. `ports_unmatched` is in port units too: it sums the ports of
+    // every declaration that produced no endpoint.
+    exec_notifications.push(notification_with_message_id(
+        NOTIF_MATCH_SUMMARY,
+        // Without an index the matched half is Stage-1 rows, before the fan-out that would
+        // turn one of them into many. Same numbers, a different unit -- so a different message
+        // rather than the same sentence quietly meaning something else.
+        if diagnostics.model_check.is_some() {
+            SUMMARY_MODEL_CHECK
+        } else {
+            SUMMARY_DEFAULT
+        },
+        "note",
+        vec![
+            diagnostics.sources_declared.to_string(),
+            diagnostics.sinks_declared.to_string(),
+            diagnostics.sources_matched.to_string(),
+            diagnostics.sinks_matched.to_string(),
+            ports_unmatched.to_string(),
+        ],
+        if diagnostics.model_check.is_some() {
+            format!(
+                "Declared {} source and {} sink port(s), which matched {} source and {} sink \
+                 model row(s) in the program(s) checked -- before the call-site fan-out and \
+                 wildcard expansion an index would apply; {} declared port(s) matched nothing.",
+                diagnostics.sources_declared,
+                diagnostics.sinks_declared,
+                diagnostics.sources_matched,
+                diagnostics.sinks_matched,
+                ports_unmatched
+            )
+        } else {
+            format!(
+                "Declared {} source and {} sink port(s), which matched {} source and {} sink \
+                 endpoint(s) in the program; {} declared port(s) matched nothing.",
+                diagnostics.sources_declared,
+                diagnostics.sinks_declared,
+                diagnostics.sources_matched,
+                diagnostics.sinks_matched,
+                ports_unmatched
+            )
+        },
+        BTreeMap::from([
+            (
+                "sourcesDeclared".to_string(),
+                serde_json::json!(diagnostics.sources_declared),
+            ),
+            (
+                "sinksDeclared".to_string(),
+                serde_json::json!(diagnostics.sinks_declared),
+            ),
+            (
+                "sourcesMatched".to_string(),
+                serde_json::json!(diagnostics.sources_matched),
+            ),
+            (
+                "sinksMatched".to_string(),
+                serde_json::json!(diagnostics.sinks_matched),
+            ),
+            (
+                "portsDeclared".to_string(),
+                serde_json::json!(diagnostics.sources_declared + diagnostics.sinks_declared),
+            ),
+            (
+                "portsUnmatched".to_string(),
+                serde_json::json!(ports_unmatched),
+            ),
+            // One per `CTADL0004` above: the (generator, direction) declarations that
+            // produced no endpoint. In generator-direction units, not ports.
+            (
+                "unmatchedDeclarations".to_string(),
+                serde_json::json!(unmatched_declarations),
+            ),
+        ]),
+    ));
+
+    match outcome {
+        PathOutcome::Disabled => {
+            let profile = format!("{:?}", profile).to_lowercase();
+            exec_notifications.push(notification(
+                NOTIF_PATHS_DISABLED,
+                "note",
+                vec![profile.clone(), TAINTED_PATH_RULE_ID.to_string()],
+                format!(
+                    "The '{profile}' SARIF profile does not perform source-to-sink path search, \
+                     so this run cannot produce '{TAINTED_PATH_RULE_ID}' results."
+                ),
+                BTreeMap::from([("profile".to_string(), serde_json::json!(profile))]),
+            ));
+        }
+        PathOutcome::NoneFound => {
+            exec_notifications.push(notification(
+                NOTIF_NO_PATHS,
+                "note",
+                vec![
+                    diagnostics.sources_matched.to_string(),
+                    diagnostics.sinks_matched.to_string(),
+                ],
+                format!(
+                    "Path search completed over {} source and {} sink endpoints and found no \
+                     source-to-sink flow.",
+                    diagnostics.sources_matched, diagnostics.sinks_matched
+                ),
+                BTreeMap::new(),
+            ));
+        }
+        PathOutcome::NotApplicable(_) | PathOutcome::Found(_) => {}
+    }
+
+    if path_stats.dropped_no_location > 0 {
+        exec_notifications.push(notification(
+            NOTIF_PATH_DROPPED,
+            "warning",
+            vec![path_stats.dropped_no_location.to_string()],
+            format!(
+                "{} source-to-sink path(s) were found but discarded because no reporting \
+                 location could be resolved for them.",
+                path_stats.dropped_no_location
+            ),
+            BTreeMap::from([(
+                "droppedPaths".to_string(),
+                serde_json::json!(path_stats.dropped_no_location),
+            )]),
+        ));
+    }
+
+    // §3.20.22 / §3.20.21: an error-level notification in either array means the run failed.
+    let is_error = |n: &Notification| n.level.as_ref().and_then(|l| l.as_str()) == Some("error");
+    let execution_successful =
+        !config_notifications.iter().any(is_error) && !exec_notifications.iter().any(is_error);
+
+    let rule_configuration_overrides: Vec<ConfigurationOverride> = disabled_rules(profile)
+        .into_iter()
+        .map(|rule_id| {
+            ConfigurationOverride::builder()
+                .descriptor(
+                    ReportingDescriptorReference::builder()
+                        .id(rule_id.to_string())
+                        .build(),
+                )
+                .configuration(ReportingConfiguration::builder().enabled(false).build())
+                .build()
+        })
+        .collect();
+
+    Invocation::builder()
+        .execution_successful(execution_successful)
+        .exit_code(if execution_successful { 0 } else { 1 })
+        .exit_code_description(if execution_successful {
+            "query completed".to_string()
+        } else {
+            "query configuration produced no analyzable endpoints".to_string()
+        })
+        .command_line(diagnostics.command_line.clone())
+        .arguments(diagnostics.arguments.clone())
+        .start_time_utc(diagnostics.start_time_utc.clone())
+        .end_time_utc(utc_timestamp())
+        .tool_configuration_notifications(config_notifications)
+        .tool_execution_notifications(exec_notifications)
+        .rule_configuration_overrides(rule_configuration_overrides)
+        // No `environmentVariables`: §3.20.20 NOTE 2 — it leaks credentials.
+        .build()
+}
+
+/// Why the taint query has an empty end, if it does. `Some` means `C0001` cannot be
+/// evaluated at all: there is nothing to search from, or nothing to search for.
+pub fn empty_end_reason(diagnostics: &QueryDiagnostics) -> Option<String> {
+    match (
+        diagnostics.sources_declared,
+        diagnostics.sinks_declared,
+        diagnostics.sources_matched,
+        diagnostics.sinks_matched,
+    ) {
+        (0, 0, _, _) => Some("no taint sources or sinks were configured".to_string()),
+        (0, _, _, _) => Some("no taint sources were configured".to_string()),
+        (_, 0, _, _) => Some("no taint sinks were configured".to_string()),
+        (_, _, 0, 0) => Some("no configured source or sink matched the program".to_string()),
+        (_, _, 0, _) => Some("no configured source matched the program".to_string()),
+        (_, _, _, 0) => Some("no configured sink matched the program".to_string()),
+        _ => None,
+    }
+}
+
+/// The single `C0001` result reporting the rule's *evaluation state* when no path result
+/// was emitted (§3.27.9).
+///
+/// `notApplicable` means the rule was not evaluated because one end of the query was empty.
+/// `open` means it *was* evaluated and the tool has insufficient information to decide —
+/// CTADL does not prove the absence of a flow, so `pass` would overclaim. When the profile
+/// disabled path search there is no result at all; the `ruleConfigurationOverride` and
+/// `CTADL0101` say why.
+fn path_status_result(outcome: &PathOutcome) -> Option<SarifResult> {
+    let (kind, text) = match outcome {
+        PathOutcome::Disabled | PathOutcome::Found(_) => return None,
+        PathOutcome::NotApplicable(reason) => (
+            ResultKind::NotApplicable,
+            format!("Taint path analysis was not applicable: {reason}."),
+        ),
+        PathOutcome::NoneFound => (
+            ResultKind::Open,
+            "Taint path analysis ran to completion and found no source-to-sink flow. CTADL \
+             does not prove the absence of a flow, so this is reported as 'open' rather than \
+             'pass'."
+                .to_string(),
+        ),
+    };
+    Some(
+        SarifResult::builder()
+            .rule_id(TAINTED_PATH_RULE_ID.to_string())
+            .kind(kind)
+            // §3.27.10: when `kind` is not "fail", `level` SHALL be "none".
+            .level(ResultLevel::None)
+            .message(Message::builder().text(text).build())
+            .build(),
+    )
+}
+
+/// Points a notification at a model file.
+///
+/// The file, and not a line in it: `EndpointMatch` carries no provenance and `serde_json` gives
+/// no spans, so there is no line/column to point at. The generator index in the message is what
+/// stands in for one.
+fn at_file(mut notif: Notification, file: &path::Path) -> Notification {
+    notif.locations = Some(vec![
+        Location::builder()
+            .physical_location(
+                PhysicalLocation::builder()
+                    .artifact_location(ArtifactLocation::builder().uri(artifact_uri(file)).build())
+                    .build(),
+            )
+            .build(),
+    ]);
+    notif
+}
+
+/// A `file:` URI for a path a notification points at, falling back to the lossy display
+/// form when the path cannot be made absolute (SARIF wants a URI, but a readable relative
+/// path beats no location at all).
+fn artifact_uri(p: &path::Path) -> String {
+    path::absolute(p)
+        .ok()
+        .and_then(|abs| url::Url::from_file_path(abs).ok())
+        .map(|u| u.to_string())
+        .unwrap_or_else(|| p.to_string_lossy().replace('\\', "/"))
+}
+
+/// Where a source file is, as SARIF says a location: relative to the import it belongs to.
+///
+/// A path inside the import root is written relative to [`ImportSource::uri_base`] and tagged
+/// with the import's `uriBaseId`, whose absolute value is registered in `uri_bases` (and from
+/// there into `run.originalUriBaseIds`).
+///
+/// Two kinds of path fall outside that root, and each keeps the only form it has: a relative
+/// path (a frontend that names sources by their in-artifact path, e.g. Dex debug info) is
+/// already artifact-relative and stands alone, and an absolute path elsewhere on disk is
+/// written as the `file:` URI it is, rather than as a slash-stripped imitation of a relative
+/// one -- which is what every path used to get, and what made the URIs unreadable.
+fn source_artifact_location(
+    import: &ImportSource,
+    canonical_path: &str,
+    uri_bases: &mut BTreeMap<String, String>,
+) -> ArtifactLocation {
+    let path = path::Path::new(canonical_path);
+    if let Some(rel) = import
+        .uri_base()
+        .and_then(|base| path.strip_prefix(base).ok())
+    {
+        let id = import.uri_base_id();
+        if let Some(base) = import.uri_base() {
+            uri_bases
+                .entry(id.clone())
+                .or_insert_with(|| directory_uri(base));
+        }
+        let mut location = ArtifactLocation::builder().uri(uri_reference(rel)).build();
+        location.uri_base_id = Some(id);
+        return location;
+    }
+    let uri = if path.is_absolute() {
+        artifact_uri(path)
+    } else {
+        uri_reference(path)
+    };
+    ArtifactLocation::builder().uri(uri).build()
+}
+
+/// A relative path as a URI reference: `/`-separated, whatever the platform separator is.
+fn uri_reference(p: &path::Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
+/// A `file:` URI for a directory. SARIF requires the value of an `originalUriBaseIds` entry to
+/// end with a slash (§3.14.14), which is what distinguishes it from a URI for the directory
+/// *as a file*.
+fn directory_uri(dir: &path::Path) -> String {
+    path::absolute(dir)
+        .ok()
+        .and_then(|abs| url::Url::from_directory_path(abs).ok())
+        .map(|u| u.to_string())
+        .unwrap_or_else(|| {
+            let mut uri = uri_reference(dir);
+            if !uri.ends_with('/') {
+                uri.push('/');
+            }
+            uri
+        })
+}
+
+/// A UTC timestamp in the `date-time` form SARIF requires (§3.9).
+pub fn utc_timestamp() -> String {
+    chrono::Utc::now()
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string()
+}
+
+/// Whether `profile` runs the source → sink path search that produces `C0001` results.
+/// This is the same condition the graph construction and the path-result loop use.
+fn profile_finds_paths(profile: SarifProfile) -> bool {
+    matches!(
+        profile,
+        SarifProfile::Human | SarifProfile::Debug | SarifProfile::Agent
+    )
+}
+
+/// The rules `profile` does not evaluate, reported as `invocation.ruleConfigurationOverrides`
+/// so the SARIF says why a rule produced nothing instead of leaving it to be inferred from
+/// an absence. Mirrors the profile gates in `format_source_info_results`; keep in sync.
+fn disabled_rules(profile: SarifProfile) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if !profile_finds_paths(profile) {
+        out.push(TAINTED_PATH_RULE_ID);
+    }
+    if !matches!(profile, SarifProfile::Machine | SarifProfile::Debug) {
+        out.push(TAINTED_INSTRUCTION_RULE_ID);
+    }
+    // C0003/C0004 are emitted in every profile and so are never overridden.
+    // C0005 and C0006 are declared in the rules array but no code path emits them; marking
+    // them permanently disabled stops the log advertising results the tool cannot produce.
+    out.push(TAINTED_DATA_RULE_ID);
+    out.push(ALMOST_PATH_FUNCTION_RULE_ID);
+    if profile != SarifProfile::Agent {
+        out.push(ABSORBING_FUNCTION_RULE_ID);
+    }
+    out
+}
+
+/// Build a notification carrying `message.id` + `arguments` (so consumers can read it
+/// structurally rather than by parsing prose) plus a `properties` bag of raw counts.
+fn notification(
+    descriptor_id: &str,
+    level: &str,
+    arguments: Vec<String>,
+    text: String,
+    properties: BTreeMap<String, serde_json::Value>,
+) -> Notification {
+    notification_with_message_id(descriptor_id, "default", level, arguments, text, properties)
+}
+
+/// [`notification`] for a descriptor that declares more than one message string. `message_id`
+/// selects which (§3.11.7) and must be a key of the descriptor's `messageStrings`, otherwise
+/// a consumer re-rendering the message from `arguments` has nothing to render.
+fn notification_with_message_id(
+    descriptor_id: &str,
+    message_id: &str,
+    level: &str,
+    arguments: Vec<String>,
+    text: String,
+    properties: BTreeMap<String, serde_json::Value>,
+) -> Notification {
+    let mut notif = Notification::builder()
+        .descriptor(
+            ReportingDescriptorReference::builder()
+                .id(descriptor_id.to_string())
+                .build(),
+        )
+        // `level` is `Option<serde_json::Value>` in serde-sarif (unlike `ResultLevel`), so
+        // the enum value goes in as a JSON string.
+        .level(serde_json::json!(level))
+        .message(
+            // Both forms: `text` for a human reading the file, `id` + `arguments` so a
+            // consumer can read the condition without parsing prose.
+            Message::builder()
+                .id(message_id.to_string())
+                .arguments(arguments)
+                .text(text)
+                .build(),
+        )
+        .build();
+    // Set after building: the generated builder is type-state, so an optional field cannot
+    // be assigned conditionally.
+    if !properties.is_empty() {
+        notif.properties = Some(
+            PropertyBag::builder()
+                .additional_properties(properties)
+                .build(),
+        );
+    }
+    notif
+}
+
+/// Declare a notification descriptor with a single `default` message string. The `{n}`
+/// placeholders are filled from each notification's `message.arguments`.
+fn notification_descriptor(
+    id: &str,
+    name: &str,
+    description: &str,
+    message: &str,
+) -> ReportingDescriptor {
+    notification_descriptor_multi(id, name, description, &[("default", message)])
+}
+
+/// [`notification_descriptor`] for a notification whose prose depends on which of several
+/// conditions fired, one `messageStrings` entry per condition (§3.49.11). The entry a given
+/// notification selects is its `message.id`; `default` is the one used when the condition is
+/// not known more precisely.
+fn notification_descriptor_multi(
+    id: &str,
+    name: &str,
+    description: &str,
+    messages: &[(&str, &str)],
+) -> ReportingDescriptor {
+    ReportingDescriptor::builder()
+        .id(id.to_string())
+        .name(name.to_string())
+        .short_description(
+            MultiformatMessageString::builder()
+                .text(description.to_string())
+                .build(),
+        )
+        .message_strings(
+            messages
+                .iter()
+                .map(|(key, text)| {
+                    (
+                        (*key).to_string(),
+                        MultiformatMessageString::builder()
+                            .text((*text).to_string())
+                            .build(),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>(),
+        )
+        .build()
+}
+
+/// The `message.id`s [`unmatched_message`] can select on `CTADL0004`, one per way a declared
+/// port can produce no endpoint. Also the notification's `properties.reason`, so a consumer
+/// can branch on the cause without parsing prose.
+const DEAD_UNKNOWN: &str = "default";
+const DEAD_NO_FUNCTION: &str = "noFunctionMatched";
+const DEAD_LOCAL_NOT_FOUND: &str = "localNotFound";
+const DEAD_NO_CALLER: &str = "noCallerMatched";
+const DEAD_PORT_REJECTED: &str = "portRejected";
+const DEAD_MIXED: &str = "mixedReasons";
+/// The one condition that is not about a source/sink port at all: a `propagation` that matched
+/// no function. Its own id because what it contributes nothing to is the *index*, not the query.
+const DEAD_INDEX_TIME: &str = "indexTimeDeclaration";
+
+/// The `message.id`s of `CTADL0100`. The numbers are the same either way; what the matched half
+/// *counts* is not, so each unit gets its own sentence.
+const SUMMARY_DEFAULT: &str = "default";
+const SUMMARY_MODEL_CHECK: &str = "modelCheckOnly";
+
+/// The prose, `message.id` and `message.arguments` for one `CTADL0004`.
+struct UnmatchedMessage {
+    message_id: &'static str,
+    arguments: Vec<String>,
+    text: String,
+    /// The `Variable(name)` the port named, when that is what failed to resolve.
+    variable: Option<String>,
+}
+
+/// Explain *why* a generator's declaration produced no endpoint.
+///
+/// The count reaching zero is not by itself evidence that nothing matched the generator's
+/// `where` constraints: functions can match and the port still resolve in none of them.
+/// Saying "matched no function" in that case sends the reader to rewrite a constraint that
+/// was working. Every arm shares `{0}` = generator index, `{1}` = model file, `{2}` =
+/// direction; later placeholders are arm-specific.
+fn unmatched_message(
+    index: usize,
+    file: &str,
+    direction: &str,
+    stats: &EndpointStats,
+) -> UnmatchedMessage {
+    let head = vec![index.to_string(), file.to_string(), direction.to_string()];
+    let functions = stats.functions_matched;
+    // A generator declaring several ports of one direction can fail for several reasons at
+    // once; naming one of them would misreport the others.
+    let mut reasons = stats.unmatched.iter();
+    let (first, rest) = (reasons.next(), reasons.next());
+    match (first, rest) {
+        (Some(UnmatchedReason::NoFunctionMatched), None) => UnmatchedMessage {
+            message_id: DEAD_NO_FUNCTION,
+            arguments: head,
+            text: format!(
+                "Model generator {index} in '{file}' declares a {direction}, but no function in \
+                 the program matched its 'where' constraints, so it contributes nothing to the \
+                 query."
+            ),
+            variable: None,
+        },
+        (Some(UnmatchedReason::LocalNotFound(name)), None) => UnmatchedMessage {
+            message_id: DEAD_LOCAL_NOT_FOUND,
+            arguments: {
+                let mut a = head;
+                a.push(name.clone());
+                a.push(functions.to_string());
+                a
+            },
+            text: format!(
+                "Model generator {index} in '{file}' declares a {direction} on port \
+                 'Variable({name})': its 'where' constraints matched {functions} function(s), but \
+                 none of them has a local variable named '{name}', so it contributes nothing to \
+                 the query."
+            ),
+            variable: Some(name.clone()),
+        },
+        (Some(UnmatchedReason::NoCallerMatched), None) => UnmatchedMessage {
+            message_id: DEAD_NO_CALLER,
+            arguments: {
+                let mut a = head;
+                a.push(functions.to_string());
+                a
+            },
+            text: format!(
+                "Model generator {index} in '{file}' declares a {direction} at call sites: its \
+                 'where' constraints matched {functions} function(s), but no caller of them \
+                 satisfied its 'in_function' constraint, so it contributes nothing to the query."
+            ),
+            variable: None,
+        },
+        (Some(UnmatchedReason::PortRejected), None) => UnmatchedMessage {
+            message_id: DEAD_PORT_REJECTED,
+            arguments: head,
+            text: format!(
+                "Model generator {index} in '{file}' declares a {direction} on a port that is not \
+                 valid for its 'find' method, so it contributes nothing to the query."
+            ),
+            variable: None,
+        },
+        (Some(_), Some(_)) => {
+            let joined = stats
+                .unmatched
+                .iter()
+                .map(unmatched_reason_phrase)
+                .collect::<Vec<_>>()
+                .join("; ");
+            UnmatchedMessage {
+                message_id: DEAD_MIXED,
+                arguments: {
+                    let mut a = head;
+                    a.push(stats.ports_declared.to_string());
+                    a.push(joined.clone());
+                    a
+                },
+                text: format!(
+                    "Model generator {index} in '{file}' declares {} {direction} port(s), none of \
+                     which matched anything in the program ({joined}), so it contributes nothing \
+                     to the query.",
+                    stats.ports_declared
+                ),
+                variable: None,
+            }
+        }
+        // Unreachable in practice: Stage 1 records a reason on every zero-row path. Fall back
+        // to prose that claims no cause rather than to one that might be wrong.
+        (None, _) => UnmatchedMessage {
+            message_id: DEAD_UNKNOWN,
+            arguments: head,
+            text: format!(
+                "Model generator {index} in '{file}' declares a {direction} that matched nothing \
+                 in the program, so it contributes nothing to the query."
+            ),
+            variable: None,
+        },
+    }
+}
+
+/// One clause of the `mixedReasons` list.
+fn unmatched_reason_phrase(reason: &UnmatchedReason) -> String {
+    match reason {
+        UnmatchedReason::NoFunctionMatched => {
+            "no function matched its 'where' constraints".to_string()
+        }
+        UnmatchedReason::LocalNotFound(name) => {
+            format!("no matched function has a local named '{name}'")
+        }
+        UnmatchedReason::NoCallerMatched => {
+            "no caller satisfied its 'in_function' constraint".to_string()
+        }
+        UnmatchedReason::PortRejected => "a port is not valid for its 'find' method".to_string(),
+    }
+}
+
+/// The `CTADL00xx`/`CTADL01xx` descriptors, declared once in `tool.driver.notifications`
+/// (§3.19.24) so every notification's `message.id` resolves.
+fn notification_descriptors() -> Vec<ReportingDescriptor> {
+    vec![
+        notification_descriptor(
+            NOTIF_NO_ENDPOINTS,
+            "No endpoints configured",
+            "Neither a source nor a sink was declared anywhere",
+            "No taint sources or sinks were configured ({0} model file(s) loaded, no built-in \
+             endpoints), so the query has nothing to search for.",
+        ),
+        notification_descriptor(
+            NOTIF_NO_SOURCES_CONFIGURED,
+            "No sources configured",
+            "Sinks were declared but no source was",
+            "No taint sources were configured, but {0} sink endpoint(s) were. A taint query \
+             with no source is vacuous.",
+        ),
+        notification_descriptor(
+            NOTIF_NO_SINKS_CONFIGURED,
+            "No sinks configured",
+            "Sources were declared but no sink was",
+            "No taint sinks were configured, but {0} source endpoint(s) were. A taint query \
+             with no sink is vacuous.",
+        ),
+        notification_descriptor_multi(
+            NOTIF_GENERATOR_DEAD,
+            "Model generator matched nothing",
+            "A model generator declared a port that produced no endpoint",
+            // One message per cause; see `unmatched_message`. `{0}` = generator index,
+            // `{1}` = model file, `{2}` = direction throughout.
+            &[
+                (
+                    DEAD_UNKNOWN,
+                    "Model generator {0} in '{1}' declares a {2} that matched nothing in the \
+                     program, so it contributes nothing to the query.",
+                ),
+                (
+                    DEAD_NO_FUNCTION,
+                    "Model generator {0} in '{1}' declares a {2}, but no function in the program \
+                     matched its 'where' constraints, so it contributes nothing to the query.",
+                ),
+                (
+                    DEAD_LOCAL_NOT_FOUND,
+                    "Model generator {0} in '{1}' declares a {2} on port 'Variable({3})': its \
+                     'where' constraints matched {4} function(s), but none of them has a local \
+                     variable named '{3}', so it contributes nothing to the query.",
+                ),
+                (
+                    DEAD_NO_CALLER,
+                    "Model generator {0} in '{1}' declares a {2} at call sites: its 'where' \
+                     constraints matched {3} function(s), but no caller of them satisfied its \
+                     'in_function' constraint, so it contributes nothing to the query.",
+                ),
+                (
+                    DEAD_PORT_REJECTED,
+                    "Model generator {0} in '{1}' declares a {2} on a port that is not valid for \
+                     its 'find' method, so it contributes nothing to the query.",
+                ),
+                (
+                    DEAD_MIXED,
+                    "Model generator {0} in '{1}' declares {3} {2} port(s), none of which matched \
+                     anything in the program ({4}), so it contributes nothing to the query.",
+                ),
+                (
+                    DEAD_INDEX_TIME,
+                    "Model generator {0} in '{1}' declares a {2}, but no function in the program \
+                     matched its 'where' constraints, so it will contribute nothing when the \
+                     project is indexed.",
+                ),
+            ],
+        ),
+        notification_descriptor(
+            NOTIF_FUNCTION_NOT_INDEXED,
+            "Endpoint function not indexed",
+            "A matched function name is absent from the index",
+            "Function '{0}' was matched by a model but is not present in the index, so its \
+             source/sink endpoints were dropped.",
+        ),
+        notification_descriptor(
+            NOTIF_NO_SOURCES_MATCHED,
+            "No sources matched",
+            "Sources were declared but none matched the program",
+            "{0} source port(s) were declared but none of them matched anything in the program, \
+             so no taint could be seeded.",
+        ),
+        notification_descriptor(
+            NOTIF_NO_SINKS_MATCHED,
+            "No sinks matched",
+            "Sinks were declared but none matched the program",
+            "{0} sink port(s) were declared but none of them matched anything in the program, so \
+             no flow could be detected.",
+        ),
+        notification_descriptor(
+            NOTIF_NO_INDEX,
+            "No index; model check only",
+            "The project has no index, so only the model files were checked",
+            "The project has no index, so no taint analysis ran. The model files were matched \
+             against the imported program(s) instead -- {0} -- and the notifications below \
+             report what they select. These are model-matching results only: call-site fan-out, \
+             'Argument(*)' expansion and sink wildcard expansion need the index, a matched name \
+             can still be absent from it, and bridge pairs are not counted. Run `ctadl index` \
+             for a real query.",
+        ),
+        notification_descriptor(
+            NOTIF_SCOPE_EXCLUDED,
+            "Model generator out of scope",
+            "A generator's 'in' clause admits none of the programs checked",
+            "Model generator {0} in '{1}' has an 'in' scope ({2}) that admits none of the \
+             programs checked, so it was never evaluated against any of them.",
+        ),
+        notification_descriptor(
+            NOTIF_BRIDGE_DIAGNOSIS,
+            "Bridge model cannot be paired",
+            "A bridge's sides matched nothing, or matched ambiguously",
+            "Model generator {0} in '{1}': {2}",
+        ),
+        notification_descriptor(
+            NOTIF_GENERATOR_MATCHED,
+            "Model generator matched",
+            "What a generator's 'where' constraints selected",
+            "Model generator {0} in '{1}' matched {2}{3}.",
+        ),
+        notification_descriptor(
+            NOTIF_MODEL_FILE_ERROR,
+            "Model file error",
+            "A model file could not be read, or a generator in it is malformed",
+            "Model file '{0}': {1}",
+        ),
+        notification_descriptor_multi(
+            NOTIF_MATCH_SUMMARY,
+            "Endpoint match summary",
+            "How many ports the models declared and how many endpoints they matched",
+            &[
+                (
+                    SUMMARY_DEFAULT,
+                    "Declared {0} source and {1} sink port(s), which matched {2} source and {3} \
+                     sink endpoint(s) in the program; {4} declared port(s) matched nothing.",
+                ),
+                (
+                    SUMMARY_MODEL_CHECK,
+                    "Declared {0} source and {1} sink port(s), which matched {2} source and {3} \
+                     sink model row(s) in the program(s) checked -- before the call-site fan-out \
+                     and wildcard expansion an index would apply; {4} declared port(s) matched \
+                     nothing.",
+                ),
+            ],
+        ),
+        notification_descriptor(
+            NOTIF_PATHS_DISABLED,
+            "Path generation disabled",
+            "The selected SARIF profile does not perform path search",
+            "The '{0}' SARIF profile does not perform source-to-sink path search, so this run \
+             cannot produce '{1}' results.",
+        ),
+        notification_descriptor(
+            NOTIF_NO_PATHS,
+            "No paths found",
+            "Path search completed without finding a flow",
+            "Path search completed over {0} source and {1} sink endpoints and found no \
+             source-to-sink flow.",
+        ),
+        notification_descriptor(
+            NOTIF_PATH_DROPPED,
+            "Path dropped for want of a location",
+            "A path was found but could not be reported",
+            "{0} source-to-sink path(s) were found but discarded because no reporting location \
+             could be resolved for them.",
+        ),
+    ]
+}
+
 #[derive(Default, Builder, Clone)]
 pub struct FormatFacts {
     /// Taint results on variables
     #[builder(default)]
     pub taint: Vec<(FunctionId, TaintState, FlowVariable, Path, QueryEndpoint)>,
+    /// Taint-graph edges in execution / data-flow order, exactly as the query
+    /// engine produced and persisted them (`schema::taint_edge`): the source
+    /// vertex `(src_func, src_var, src_path)` flows to the destination vertex
+    /// `(dst_func, dst_var, dst_path)`, and `edge` is the [`FlowEdge`]
+    /// classifying the step (`Intra`/`Call`/`Return`). The formatter loads these
+    /// rather than recomputing them, and drives its realizable-path search off
+    /// them (see [`build_taint_flow_graph`]).
     #[builder(default)]
-    pub formal_param: Vec<(FunctionId, FlowVariable, FormalType)>,
+    pub taint_edge: Vec<(
+        FlowEdge,
+        FunctionId,
+        FlowVariable,
+        Path,
+        FunctionId,
+        FlowVariable,
+        Path,
+    )>,
     #[builder(default)]
     pub actual_param: Vec<(PackedInsnSiteId, FormalIndex, FlowVariable, Path)>,
     #[builder(default)]
     pub call: Vec<(PackedInsnSiteId, FunctionId)>,
-    #[builder(default)]
-    pub assign: Vec<(FunctionId, FlowVariable, Path, FlowVariable, Path)>,
-    #[builder(default)]
-    pub paths: Vec<(Path,)>,
-    #[builder(default)]
-    pub external_function: Vec<(FunctionId,)>,
     #[builder(default)]
     pub id_to_name: BTreeMap<u32, String>,
 }
@@ -152,27 +1521,22 @@ pub struct TaintedInstructions {
 }
 
 pub struct TaintAnalysisResults {
-    /// Taint-flow edges. Each tuple is
-    /// `(df, dts, dv, dp, sf, sts, sv, sp, direction, site)`: the node
-    /// `(df,dts,dv,dp)` was tainted *from* `(sf,sts,sv,sp)` while propagating in
-    /// `direction`. Each endpoint carries its [`TaintState`] (second column, as
-    /// in the `taint` relation) so the call/return-matching distinction survives
-    /// into the graph and `FlowNode`s can be rebuilt unambiguously. The data-flow
-    /// orientation depends on `direction` — see the consumers (SARIF path graph,
-    /// `--dump-taint-graph`). `site` is the call instruction anchoring the edge
-    /// when it is a call/return propagation, and `None` for the flow-insensitive
-    /// assign/alias edges.
+    /// Taint-graph edges in execution / data-flow order, as loaded from the query
+    /// engine's persisted `taint_edge` (see [`FormatFacts::taint_edge`]). Each
+    /// tuple is `(edge, src_func, src_var, src_path, dst_func, dst_var,
+    /// dst_path)`: the source vertex flows to the destination vertex, and `edge`
+    /// is the [`FlowEdge`] classifying the step as `Intra`, `Call`, or `Return`.
+    /// Call/return matching is *not* baked into the vertices (they carry no taint
+    /// state); it is recovered on the fly by the realizable-path search, which
+    /// carries a [`TaintState`] annotation that evolves along these edge labels.
     pub edges: Vec<(
+        FlowEdge,
         FunctionId,
-        TaintState,
         FlowVariable,
         Path,
         FunctionId,
-        TaintState,
         FlowVariable,
         Path,
-        TaintDirection,
-        Option<PackedInsnSiteId>,
     )>,
     pub tainted_insns: TaintedInstructions,
     pub absorbing_functions: Vec<(FunctionId, QueryEndpoint, FormalIndex)>,
@@ -196,136 +1560,119 @@ impl FormatFactsBuilder {
     }
 }
 
-pub fn compute_taint_results(facts: &FormatFacts) -> TaintAnalysisResults {
-    ascent! {
-        struct FormatterEngine;
-        macro produce_taint($df:expr, $dts:expr, $dv:expr, $dp:expr, $a:expr, $sf:expr, $sts:expr, $sv:expr, $sp:expr, $site:expr) {
-            taint($df, $dts, $dv, $dp, $a),
-            taint_edge($df, $dts, $dv, $dp, $sf, $sts, $sv, $sp, ($a).direction, $site)
+impl TaintAnalysisResults {
+    /// Repackages the taint pass's output for the formatter. The taint closure,
+    /// taint graph, and instruction-level facts are all computed in a single
+    /// [`taint_analysis`](crate::query_engine::taint_analysis) pass; this just
+    /// borrows the pieces the formatter reads. No taint is (re)computed here.
+    pub fn from_query_result(result: &crate::query_engine::QueryResult) -> Self {
+        TaintAnalysisResults {
+            edges: result.taint_edge.clone(),
+            tainted_insns: TaintedInstructions {
+                tainted_insn: result.tainted_insn.clone(),
+            },
+            absorbing_functions: result.absorbing_functions.clone(),
         }
-        // Each taint-flow edge carries the call instruction that anchors it, when
-        // there is one. Call/return propagation (the formal<->actual rules) records
-        // the call site; the flow-insensitive assign/alias rules have no instruction
-        // and record `None`. This is what lets `codeFlows` attribute each step of a
-        // path to its own call site instead of guessing from the variable alone.
-        relation taint_edge(FunctionId, TaintState, FlowVariable, Path, FunctionId, TaintState, FlowVariable, Path, TaintDirection, Option<PackedInsnSiteId>);
-        relation tainted_var_at_insn(PackedInsnSiteId, Label, FlowVariable, Path);
-        relation external_function(FunctionId);
-        relation absorbing_functions(FunctionId, QueryEndpoint, FormalIndex);
-
-        include_source!(crate::query_engine::ascent_code::taint_analysis_rules);
-
-        absorbing_functions(target, src, formal.clone()) <--
-            taint(infunc, _, v, _, src),
-            if let Some(packed) = v.as_call_arg(),
-            let call_arg_id = CallArgId::try_from(packed).unwrap(),
-            let formal = call_arg_id.formal(),
-            let id = PackedInsnSiteId::try_from_parts(*infunc, call_arg_id.insn_id).unwrap(),
-            call(id, target),
-            external_function(target);
-
-        // taint call sites
-        tainted_var_at_insn(id, label, v2, p2) <--
-            taint(infunc, _, v2, p2, src),
-            if !v2.is_globals(),
-            if let Some(packed) = v2.as_call_arg(),
-            let call_arg_id = CallArgId::try_from(packed).unwrap(),
-            let id = PackedInsnSiteId::try_from_parts(*infunc, call_arg_id.insn_id).unwrap(),
-            if *call_arg_id.formal() >= 0,
-            let label = src.label.clone();
-    }
-
-    let mut engine = FormatterEngine {
-        taint: facts.taint.clone(),
-        formal_param: facts.formal_param.clone(),
-        call: facts.call.clone(),
-        assign_like: facts.assign.clone(),
-        paths: facts.paths.clone(),
-        external_function: facts.external_function.clone(),
-        ..Default::default()
-    };
-    engine.run();
-
-    TaintAnalysisResults {
-        edges: engine.taint_edge,
-        tainted_insns: TaintedInstructions {
-            tainted_insn: engine.tainted_var_at_insn.into_iter().collect(),
-        },
-        absorbing_functions: engine.absorbing_functions.into_iter().collect(),
     }
 }
 
-/// A simple graph implementation for taint analysis.
-pub struct TaintGraph<N: Idx> {
+/// A taint dataflow graph whose edges are labeled with a [`FlowEdge`]. The
+/// labels are what a realizable-path search inspects: it carries a [`TaintState`]
+/// annotation that evolves across `Intra`/`Call`/`Return` edges (see the
+/// [`Annotation`] impl for [`TaintState`]) to keep call/return matching, so the
+/// graph nodes themselves need not be taint-state-qualified.
+pub struct LabeledTaintGraph {
     num_nodes: usize,
-    successors: Vec<Vec<N>>,
-    predecessors: Vec<Vec<N>>,
+    successors: Vec<Vec<(u32, FlowEdge)>>,
 }
 
-impl<N: Idx> TaintGraph<N> {
-    pub fn new(num_nodes: usize, edges: Vec<(N, N)>) -> Self {
+impl LabeledTaintGraph {
+    pub fn new(num_nodes: usize, edges: Vec<(u32, u32, FlowEdge)>) -> Self {
         let mut successors = vec![Vec::new(); num_nodes];
-        let mut predecessors = vec![Vec::new(); num_nodes];
-        for (src, dst) in edges {
-            successors[src.index()].push(dst);
-            predecessors[dst.index()].push(src);
+        for (src, dst, label) in edges {
+            successors[src as usize].push((dst, label));
         }
         Self {
             num_nodes,
             successors,
-            predecessors,
         }
     }
 }
 
-impl<N: Idx> DirectedGraph for TaintGraph<N> {
-    type Node = N;
+impl DirectedGraph for LabeledTaintGraph {
+    type Node = u32;
 
     fn num_nodes(&self) -> usize {
         self.num_nodes
     }
 }
 
-impl<N: Idx> Successors for TaintGraph<N> {
-    fn successors(&self, node: Self::Node) -> impl Iterator<Item = Self::Node> {
-        self.successors[node.index()].iter().cloned()
+impl LabeledSuccessors for LabeledTaintGraph {
+    type Label = FlowEdge;
+
+    fn labeled_successors(&self, node: Self::Node) -> impl Iterator<Item = (Self::Node, FlowEdge)> {
+        self.successors[node as usize].iter().copied()
     }
 }
 
-impl<N: Idx> Predecessors for TaintGraph<N> {
-    fn predecessors(&self, node: Self::Node) -> impl Iterator<Item = Self::Node> {
-        self.predecessors[node.index()].iter().cloned()
+/// A [`TaintState`] carried along a search path to enforce call/return matching.
+///
+/// The search starts `Free` at a source. Along an edge it evolves per the query
+/// engine's realizability rules: an `Intra` step preserves the state; a `Call`
+/// step (descending into a callee) enters `Restricted`; and a `Return` step
+/// (leaving a callee) is only traversable while `Free` — a `Restricted` return
+/// would leave the call it descended through unmatched, so that edge is pruned —
+/// and keeps the state `Free`. This one-bit discipline admits exactly the paths
+/// that ascend to callers before descending into callees, i.e. the realizable
+/// (call/return-balanced) ones.
+impl Annotation<LabeledTaintGraph> for TaintState {
+    fn start() -> Self {
+        TaintState::Free
+    }
+
+    fn expand(
+        &self,
+        _graph: &LabeledTaintGraph,
+        _from: u32,
+        label: &FlowEdge,
+        _to: u32,
+    ) -> Option<Self> {
+        match label {
+            FlowEdge::Intra => Some(*self),
+            FlowEdge::Call(_) => Some(TaintState::Restricted),
+            FlowEdge::Return(_) => match self {
+                TaintState::Free => Some(TaintState::Free),
+                TaintState::Restricted => None,
+            },
+        }
     }
 }
 
 /// A node in the taint dataflow graph: a function-local vertex (a variable
-/// together with its access path) *qualified by its taint state*. The
-/// [`TaintState`] is part of the node identity, not incidental data: the query
-/// engine uses Free/Restricted to enforce call/return matching, so the same
-/// `(function, variable, path)` vertex reached `Free` versus `Restricted` is two
-/// distinct nodes. Keeping them distinct is what makes the formatter's plain
-/// graph search yield realizable (call/return-balanced) paths instead of
-/// splicing a call edge into an unrelated return edge.
-pub type FlowNode = (FunctionId, TaintState, FlowVariable, Path);
+/// together with its access path). Unlike before, the node carries no taint
+/// state — call/return matching is enforced by the [`TaintState`] annotation the
+/// realizable-path search threads along the [`FlowEdge`] labels, not by splitting
+/// a vertex into per-state copies.
+pub type FlowNode = (FunctionId, FlowVariable, Path);
 
 /// The taint dataflow graph the formatter walks to emit path (code-flow)
 /// results, together with the maps needed to translate between interned node
 /// ids and the `(function, variable, path)` vertices they stand for.
 pub struct TaintFlowGraph {
-    /// Reachability graph over interned nodes, oriented source -> derived.
-    pub graph: TaintGraph<u32>,
-    /// Vertex -> node id.
+    /// Labeled reachability graph over interned nodes, oriented source -> derived,
+    /// each edge tagged with its [`FlowEdge`].
+    pub graph: LabeledTaintGraph,
+    /// Vertex -> node id. Because nodes are bare vertices, this is exactly how a
+    /// source/sink endpoint vertex resolves to its (single) graph node.
     pub node_to_id: BTreeMap<FlowNode, u32>,
     /// Node id -> vertex (the id indexes this vector).
     pub id_to_node: Vec<FlowNode>,
     /// Call instruction anchoring each `(src_id, dst_id)` edge, when the edge is
     /// a call/return propagation. Assign/alias edges contribute nothing.
     pub site_by_edge: BTreeMap<(u32, u32), InsnSiteId>,
-    /// All node ids sharing a given `(function, variable, path)` vertex, across
-    /// taint states. A source/sink endpoint names a vertex, not a taint state,
-    /// so path search resolves an endpoint vertex to every state-distinguished
-    /// node it might start or end at via this map.
-    pub ids_by_vertex: BTreeMap<(FunctionId, FlowVariable, Path), Vec<u32>>,
+    /// [`FlowEdge`] label for every `(src_id, dst_id)` edge, so a code-flow step
+    /// can report whether taint crossed a call, returned, or stayed intra-procedural.
+    pub edge_by_edge: BTreeMap<(u32, u32), FlowEdge>,
 }
 
 /// Builds the taint dataflow graph from the format facts and the computed taint
@@ -341,71 +1688,61 @@ pub fn build_taint_flow_graph(
     let mut node_to_id: BTreeMap<FlowNode, u32> = BTreeMap::new();
     let mut id_to_node: Vec<FlowNode> = Vec::new();
     let mut site_by_edge: BTreeMap<(u32, u32), InsnSiteId> = BTreeMap::new();
+    let mut edge_by_edge: BTreeMap<(u32, u32), FlowEdge> = BTreeMap::new();
+
+    let intern =
+        |n: FlowNode, node_to_id: &mut BTreeMap<FlowNode, u32>, id_to_node: &mut Vec<FlowNode>| {
+            if let Entry::Vacant(e) = node_to_id.entry(n) {
+                e.insert(id_to_node.len() as u32);
+                id_to_node.push(n);
+            }
+        };
 
     let taint_edge = &taint_results.edges;
     // Collect all nodes into node_to_id first: every tainted vertex and the
-    // endpoint that tainted it, then both ends of every propagation edge. Nodes
-    // are qualified by taint state (see `FlowNode`); the source/sink endpoint
-    // that originates taint is, by construction, in the `Free` state.
-    for (f, ts, v, p, src) in &facts.taint {
-        let n = (*f, *ts, *v, *p);
-        if let Entry::Vacant(e) = node_to_id.entry(n) {
-            e.insert(id_to_node.len() as u32);
-            id_to_node.push(n);
-        }
-        let src_n = (src.infunc, TaintState::Free, src.vertex.0, src.vertex.1);
-        if let Entry::Vacant(e) = node_to_id.entry(src_n) {
-            e.insert(id_to_node.len() as u32);
-            id_to_node.push(src_n);
-        }
+    // endpoint that tainted it (so an endpoint always resolves to a node even if
+    // it has no incident edge), then both ends of every propagation edge. Nodes
+    // are bare vertices; the taint state is not part of node identity.
+    for (f, _ts, v, p, src) in &facts.taint {
+        intern((*f, *v, *p), &mut node_to_id, &mut id_to_node);
+        intern(
+            (src.infunc, src.vertex.0, src.vertex.1),
+            &mut node_to_id,
+            &mut id_to_node,
+        );
     }
-    for (df, dts, dv, dp, sf, sts, sv, sp, _dir, _site) in taint_edge {
-        let src_n = (*sf, *sts, *sv, *sp);
-        if let Entry::Vacant(e) = node_to_id.entry(src_n) {
-            e.insert(id_to_node.len() as u32);
-            id_to_node.push(src_n);
-        }
-        let dst_n = (*df, *dts, *dv, *dp);
-        if let Entry::Vacant(e) = node_to_id.entry(dst_n) {
-            e.insert(id_to_node.len() as u32);
-            id_to_node.push(dst_n);
-        }
+    for (_edge, sf, sv, sp, df, dv, dp) in taint_edge {
+        intern((*sf, *sv, *sp), &mut node_to_id, &mut id_to_node);
+        intern((*df, *dv, *dp), &mut node_to_id, &mut id_to_node);
     }
 
-    let mut edges: Vec<(u32, u32)> = Vec::with_capacity(taint_edge.len());
-    for (df, dts, dv, dp, sf, sts, sv, sp, _dir, site) in taint_edge {
-        let src_n = (*sf, *sts, *sv, *sp);
-        let dst_n = (*df, *dts, *dv, *dp);
-        let src_id = *node_to_id.get(&src_n).unwrap();
-        let dst_id = *node_to_id.get(&dst_n).unwrap();
-        edges.push((src_id, dst_id));
+    // The persisted edges are already in execution / data-flow order
+    // (source -> derived), so every edge is walked as-is. Realizability is
+    // enforced during the search by the taint-state annotation evolving along the
+    // edge labels, not by pre-filtering edges here.
+    let mut edges: Vec<(u32, u32, FlowEdge)> = Vec::with_capacity(taint_edge.len());
+    for (edge, sf, sv, sp, df, dv, dp) in taint_edge {
+        let src_id = *node_to_id.get(&(*sf, *sv, *sp)).unwrap();
+        let dst_id = *node_to_id.get(&(*df, *dv, *dp)).unwrap();
+        edges.push((src_id, dst_id, *edge));
+        edge_by_edge.insert((src_id, dst_id), *edge);
         // Anchor this edge to its call instruction so the code-flow step walking
         // src_id -> dst_id resolves to *this* call site rather than whatever site
-        // happened to be recorded first for the variable.
-        if let Some(packed) = site
+        // happened to be recorded first for the variable. Only Call/Return edges
+        // carry a site; Intra edges contribute nothing.
+        if let Some(packed) = edge.site()
             && let Ok(s) = InsnSiteId::try_from(packed)
         {
             site_by_edge.insert((src_id, dst_id), s);
         }
     }
 
-    // Index the state-qualified nodes by their bare vertex so endpoint lookups
-    // (which know a vertex but not its taint state) can find every node id the
-    // vertex resolves to.
-    let mut ids_by_vertex: BTreeMap<(FunctionId, FlowVariable, Path), Vec<u32>> = BTreeMap::new();
-    for (id, (f, _ts, v, p)) in id_to_node.iter().enumerate() {
-        ids_by_vertex
-            .entry((*f, *v, *p))
-            .or_default()
-            .push(id as u32);
-    }
-
     TaintFlowGraph {
-        graph: TaintGraph::new(id_to_node.len(), edges),
+        graph: LabeledTaintGraph::new(id_to_node.len(), edges),
         node_to_id,
         id_to_node,
         site_by_edge,
-        ids_by_vertex,
+        edge_by_edge,
     }
 }
 
@@ -452,76 +1789,187 @@ pub fn find_endpoint_paths(
     let mut paths = Vec::new();
     for sink in &sinks {
         let end_vertex = (sink.infunc, sink.vertex.0, sink.vertex.1);
-        let Some(end_ids) = fg.ids_by_vertex.get(&end_vertex) else {
+        // Nodes are bare vertices, so a sink endpoint resolves to a single node.
+        let Some(&target_id) = fg.node_to_id.get(&end_vertex) else {
             continue;
         };
         for src in &sources {
             let start_vertex = (src.infunc, src.vertex.0, src.vertex.1);
-            let Some(start_ids) = fg.ids_by_vertex.get(&start_vertex) else {
+            let Some(&start_id) = fg.node_to_id.get(&start_vertex) else {
                 continue;
             };
             // Endpoints are anchored at their call sites: a sink on a callee's
             // formal becomes one endpoint per caller call site, each on the
             // distinct call-arg vertex that call passes. Two flows that differ
             // only in their call site are therefore distinct (source, sink) pairs
-            // already, so a single graph search per pair suffices -- no stitching
-            // through shared formal vertices. Searching to the exact call-arg
-            // vertex also pins the specific parameter, so a call into the sink's
-            // function on an unrelated argument is not mistaken for this flow.
-            'pair: for &sv in start_ids {
-                for &kv in end_ids {
-                    if let Some(nodes) = find_path(&fg.graph, sv, kv) {
-                        paths.push(EndpointPath {
-                            source: (*src).clone(),
-                            sink: (*sink).clone(),
-                            nodes,
-                        });
-                        break 'pair;
-                    }
-                }
+            // already, so a single search per pair suffices. The search carries a
+            // `TaintState` annotation that evolves along the edge labels, so only
+            // realizable (call/return-balanced) walks reach the target.
+            if let Some(path) =
+                find_annotated_path_to_set(&fg.graph, start_id, |n, _s: &TaintState| n == target_id)
+            {
+                paths.push(EndpointPath {
+                    source: (*src).clone(),
+                    sink: (*sink).clone(),
+                    nodes: path.into_iter().map(|(n, _s)| n).collect(),
+                });
             }
         }
     }
     paths
 }
 
+/// Path string for DataFusion / object_store local parquet reads.
+///
+/// Project paths on Windows are often canonicalized to verbatim `\\?\` form. Naive
+/// backslash-to-slash rewriting breaks absolute-path detection, so DataFusion treats
+/// the path as relative to the process cwd (e.g. a scratch dir containing
+/// `ArrayFlow.class`) and object_store fails URL conversion. Returns an absolute path.
+fn object_store_path(path: &path::Path) -> String {
+    let absolutized = path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = absolutized.as_path();
+    let parsed = url::Url::from_file_path(path);
+    #[cfg(windows)]
+    let parsed = parsed.or_else(|_| {
+        let s = path.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            url::Url::from_file_path(stripped)
+        } else {
+            Err(())
+        }
+    });
+    parsed.map(|url| url.to_string()).unwrap_or_else(|_| {
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        let normalized = normalized.strip_prefix("//?/").unwrap_or(&normalized);
+        format!("file:///{normalized}")
+    })
+}
+
+/// Register a local parquet file and fail loudly if it is unreadable.
+///
+/// DataFusion's `register_parquet` happily accepts a non-existent path and infers
+/// an empty (zero-column) schema instead of erroring. A downstream query against
+/// that table then fails with a misleading "No field named ..." schema error far
+/// from the real cause. Catch it here by checking the inferred schema and surface
+/// a clear message naming the offending path.
+async fn register_parquet_checked(
+    ctx: &SessionContext,
+    table_name: &str,
+    path: String,
+) -> Result<(), Error> {
+    ctx.register_parquet(table_name, &path, ParquetReadOptions::default())
+        .await
+        .err_context(|| format!("reading {table_name} from {path}"))?;
+    let table = ctx
+        .table(table_name)
+        .await
+        .err_context(|| format!("reading {table_name} from {path}"))?;
+    if table.schema().fields().is_empty() {
+        return Err(Error::Path {
+            message: format!(
+                "cannot read parquet for table `{table_name}`: no columns found at {path} \
+                 (the file is missing or unreadable)"
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Formats the query results as SARIF and writes them to `output`.
+///
+/// Returns `invocation.executionSuccessful`: false when an `error`-level notification was
+/// emitted, which per §3.58.6 the caller turns into a non-zero exit code — *after* the file
+/// has been written, since the file is what explains the failure.
 pub fn format_sarif(
     project: &AnalysisProject,
-    facts: FormatFacts,
-    compact: bool,
+    facts: &FormatFacts,
+    taint_results: &TaintAnalysisResults,
     output: &path::Path,
     profile: SarifProfile,
-) -> Result<(), Error> {
+    diagnostics: &QueryDiagnostics,
+) -> Result<bool, Error> {
     log::trace!("format_sarif entry");
-    let taint_results = compute_taint_results(&facts);
     let rt = tokio::runtime::Runtime::new()?;
-    let config = FormatConfig { compact, profile };
-    let final_sarif =
-        rt.block_on(async { async_format_sarif(project, &taint_results, &facts, &config).await })?;
+    let (final_sarif, execution_successful) = rt.block_on(async {
+        async_format_sarif(project, taint_results, facts, profile, diagnostics).await
+    })?;
+    write_sarif(&final_sarif, profile, output)?;
+    Ok(execution_successful)
+}
 
+/// Writes the SARIF a run with no index could produce: the model check's notifications, and no
+/// results but `C0001`'s own not-applicable status.
+///
+/// The same tool descriptor, the same invocation, the same notification vocabulary as
+/// [`format_sarif`] -- a consumer reads this file the way it reads any other. What is missing is
+/// missing because it needs an index: there are no source locations to resolve against, so
+/// nothing here touches the project directory.
+pub fn format_model_check_sarif(
+    project: &AnalysisProject,
+    output: &path::Path,
+    profile: SarifProfile,
+    diagnostics: &QueryDiagnostics,
+) -> Result<bool, Error> {
+    // Not `Disabled`, whatever the profile says: path search did not run because there was
+    // nothing to run it over, and naming the profile as the cause would send a reader to change
+    // a flag that would not have helped.
+    let outcome = PathOutcome::NotApplicable(
+        "the project has no index, so only the model files were checked".to_string(),
+    );
+    let invocation = build_invocation(diagnostics, profile, &outcome, PathStats::default());
+    let execution_successful = invocation.execution_successful;
+    let results: Vec<SarifResult> = path_status_result(&outcome).into_iter().collect();
+    let sarif = sarif_document(
+        project,
+        invocation,
+        results,
+        SarifData::default(),
+        Vec::new(),
+    );
+    write_sarif(&sarif, profile, output)?;
+    Ok(execution_successful)
+}
+
+/// Writes the assembled document to `output`, or to stdout for `-`.
+fn write_sarif(
+    sarif: &serde_json::Value,
+    profile: SarifProfile,
+    output: &path::Path,
+) -> Result<(), Error> {
     let writer: Box<dyn std::io::Write> = if output.to_str() == Some("-") {
         Box::new(std::io::stdout())
     } else {
-        Box::new(File::create(output).err_context(|| "creating sarif output file")?)
+        Box::new(
+            File::create(output)
+                .err_context(|| format!("creating sarif output file: {}", output.display()))?,
+        )
     };
 
-    if compact {
-        serde_json::to_writer(writer, &final_sarif).err_context(|| "writing sarif")
+    if matches!(profile, SarifProfile::Machine) {
+        serde_json::to_writer(writer, sarif)
+            .err_context(|| format!("writing sarif: {}", output.display()))?;
     } else {
-        serde_json::to_writer_pretty(writer, &final_sarif).err_context(|| "writing sarif")
+        serde_json::to_writer_pretty(writer, sarif)
+            .err_context(|| format!("writing sarif: {}", output.display()))?;
     }
+    Ok(())
 }
 
 #[derive(Default)]
 pub struct SarifData {
     pub global_logical_locations_map: BTreeMap<String, usize>,
     pub global_logical_locations: Vec<LogicalLocation>,
+    /// Every `uriBaseId` a location used, mapped to the absolute directory URI it stands for.
+    /// Written out as `run.originalUriBaseIds`; see [`ImportSource::uri_base`]. Only imports
+    /// that actually produced a location appear.
+    pub uri_bases: BTreeMap<String, String>,
 }
 
 #[derive(Default)]
 pub struct SourceLocationData {
     pub all_locations: BTreeMap<(u32, u64), Location>,
-    pub batch_data: Vec<(u32, u32, u64, Location)>,
+    /// Every resolved location, as `(span key, func id, insn id, location)`.
+    pub batch_data: Vec<(SpanKey, u32, u64, Location)>,
     pub id_to_name: BTreeMap<u32, String>,
 }
 
@@ -529,8 +1977,9 @@ async fn async_format_sarif(
     project: &AnalysisProject,
     taint_results: &TaintAnalysisResults,
     facts: &FormatFacts,
-    config: &FormatConfig,
-) -> Result<serde_json::Value, Error> {
+    profile: SarifProfile,
+    diagnostics: &QueryDiagnostics,
+) -> Result<(serde_json::Value, bool), Error> {
     let path = project
         .index_path()?
         .join(schema::index_source_map::FILENAME);
@@ -550,48 +1999,75 @@ async fn async_format_sarif(
             .push((label.clone(), *var, *pth));
     }
     // Build a map from each file span to its associated taint details.
-    let mut details_by_span: BTreeMap<u32, Vec<(Label, FunctionId, FlowVariable, Path)>> =
+    let mut details_by_span: BTreeMap<SpanKey, Vec<(Label, FunctionId, FlowVariable, Path)>> =
         BTreeMap::new();
-    for (fs, func_id, insn_id) in source_spans.iter() {
-        let key = (func_id.id, insn_id.id);
+    for span in source_spans.iter() {
+        let key = (span.func.id, span.insn.id);
         if let Some(details) = instr_to_details.get(&key) {
             for (label, var, pth) in details {
-                details_by_span.entry(fs.0).or_default().push((
+                details_by_span.entry(span.key()).or_default().push((
                     label.clone(),
-                    *func_id,
+                    span.func,
                     *var,
                     *pth,
                 ));
             }
         }
     }
-    let mut results = Vec::new();
     let mut sarif_data = SarifData::default();
     let index_dir = project.index_path()?;
-    // projects should have only one set of parquet files, so just take the last one
-    let mut parquet_dir = String::from("");
-    for import in project.iter_imports() {
-        let import = import?;
-        let dir = import.source_info_dir();
-        parquet_dir = String::from(dir.to_string_lossy());
-        let ctx = ProjectContext {
-            source_spans: &source_spans,
-            index_dir: index_dir.clone(),
-            source_info_dir: dir,
-            details_by_span: &details_by_span,
-            facts,
-            taint_results,
-            language: import.language,
-            image_base: import.image_base,
-        };
-        let sarif_results = format_source_info_results(&ctx, config, &mut sarif_data)
-            .await
-            .err_context(|| "formatting results")?;
-        results.extend(sarif_results);
-    }
+    let imports = load_import_sources(&index_dir)?;
+    // The source-info tables this run read locations out of, one directory per import.
+    let parquet_dirs: Vec<String> = imports
+        .iter()
+        .map(|i| object_store_path(&i.source_info_dir))
+        .collect();
+    // Results are built once for the whole project, not once per import: a taint path is a
+    // fact about the project's fact base, and each of its locations is resolved against the
+    // one import that numbered it (see `populate_source_info`). Rendering per import instead
+    // emitted every result once per import, each copy carrying whatever line the other
+    // artifact happened to have at that span id.
+    let ctx = ProjectContext {
+        source_spans: &source_spans,
+        index_dir: index_dir.clone(),
+        imports: &imports,
+        details_by_span: &details_by_span,
+        facts,
+        taint_results,
+    };
+    let (mut results, path_stats) = format_source_info_results(&ctx, profile, &mut sarif_data)
+        .await
+        .err_context(|| "formatting results")?;
 
+    // What happened to `C0001` this run. Decided here rather than per import: the profile
+    // gate and the endpoint counts are run-wide, and exactly one status result may be
+    // emitted no matter how many imports the project has.
+    let path_outcome = if !profile_finds_paths(profile) {
+        PathOutcome::Disabled
+    } else if let Some(reason) = empty_end_reason(diagnostics) {
+        PathOutcome::NotApplicable(reason)
+    } else if path_stats.reported == 0 {
+        PathOutcome::NoneFound
+    } else {
+        PathOutcome::Found(path_stats.reported)
+    };
+    results.extend(path_status_result(&path_outcome));
+
+    let invocation = build_invocation(diagnostics, profile, &path_outcome, path_stats);
+    let execution_successful = invocation.execution_successful;
+
+    Ok((
+        sarif_document(project, invocation, results, sarif_data, parquet_dirs),
+        execution_successful,
+    ))
+}
+
+/// The `tool` object every CTADL SARIF run carries: the `C000x` rules, and the `CTADL00xx` /
+/// `CTADL01xx` notification descriptors declared once (§3.19.24) so that every `message.id` a
+/// notification selects resolves.
+fn ctadl_tool() -> Tool {
     const CTADL_FULL_DESCRIPTION: &str = "CTADL (Compositional Taint Analysis in Datalog).";
-    let tool = Tool::builder()
+    Tool::builder()
         .driver(
             ToolComponent::builder()
                 .name("ctadl")
@@ -709,31 +2185,83 @@ async fn async_format_sarif(
                         )]))
                         .build(),
                 ])
+                .notifications(notification_descriptors())
                 .build(),
         )
-        .build();
+        .build()
+}
 
+/// Assembles the run, and the document around it, out of what a run produced.
+///
+/// Shared by the indexed path and the model-check one so that the two files differ only in what
+/// they *say* -- same tool, same key order, same shape.
+fn sarif_document(
+    project: &AnalysisProject,
+    invocation: Invocation,
+    results: Vec<SarifResult>,
+    sarif_data: SarifData,
+    parquet_dirs: Vec<String>,
+) -> serde_json::Value {
+    let tool = ctadl_tool();
+
+    // `parquet_dir` names the source-info tables the locations above came out of. A project has
+    // one such directory per import, so `parquet_dirs` carries them all and `parquet_dir` keeps
+    // naming a single one (the last) for consumers written when only one could exist.
     let properties = PropertyBag::builder()
-        .additional_properties(BTreeMap::from([(
-            "parquet_dir".to_string(),
-            serde_json::json!(parquet_dir),
-        )]))
+        .additional_properties(BTreeMap::from([
+            (
+                "parquet_dir".to_string(),
+                serde_json::json!(parquet_dirs.last().cloned().unwrap_or_default()),
+            ),
+            ("parquet_dirs".to_string(), serde_json::json!(parquet_dirs)),
+            ("project_name".to_string(), serde_json::json!(project.name)),
+        ]))
         .build();
 
-    let run = if sarif_data.global_logical_locations.is_empty() {
-        Run::builder().tool(tool).results(results).build()
+    // What each `uriBaseId` the locations reference stands for on this machine. Locations are
+    // written relative to their import (see `source_artifact_location`); this is where the
+    // absolute directory each one is relative to is said, once.
+    let original_uri_base_ids: BTreeMap<String, ArtifactLocation> = sarif_data
+        .uri_bases
+        .iter()
+        .map(|(id, uri)| {
+            (
+                id.clone(),
+                ArtifactLocation::builder().uri(uri.clone()).build(),
+            )
+        })
+        .collect();
+
+    // `results` is always set, never omitted: per the JSON schema it "must be present (but
+    // may be empty) if a log file represents an actual scan".
+    let mut run = if sarif_data.global_logical_locations.is_empty() {
+        Run::builder()
+            .tool(tool)
+            .invocations(vec![invocation])
+            .results(results)
+            .build()
     } else {
         Run::builder()
             .tool(tool)
+            .invocations(vec![invocation])
             .results(results)
             .logical_locations(sarif_data.global_logical_locations)
             .build()
     };
+    if !original_uri_base_ids.is_empty() {
+        run.original_uri_base_ids = Some(original_uri_base_ids);
+    }
     // we need to deconstruct and rebuild the run to ensure a certain order (needs serde_json feature preserve_order)
     let final_run = match serde_json::to_value(&run).unwrap() {
         serde_json::Value::Object(mut old_map) => {
             let mut new_map = serde_json::Map::new();
             new_map.insert("tool".to_string(), old_map.remove("tool").unwrap());
+            // `invocations` right after `tool`: it is the run's status, and pinning it here
+            // keeps diffs between runs stable.
+            new_map.insert(
+                "invocations".to_string(),
+                old_map.remove("invocations").unwrap(),
+            );
             // the order of the rest doesn't matter
             for (k, v) in old_map {
                 new_map.insert(k, v);
@@ -749,7 +2277,7 @@ async fn async_format_sarif(
         .properties(properties)
         .build();
     // rebuild sarif to preserve order
-    let final_sarif = match serde_json::to_value(&sarif).unwrap() {
+    match serde_json::to_value(&sarif).unwrap() {
         serde_json::Value::Object(mut old_map) => {
             // remove the default (empty array) in the old map
             old_map.remove("runs");
@@ -775,61 +2303,80 @@ async fn async_format_sarif(
             serde_json::Value::Object(new_map)
         }
         _ => panic!("Failed to extract serde_json sarif map"),
-    };
-    Ok(final_sarif)
+    }
 }
 
+/// Resolves every needed span to a SARIF [`Location`], each against the source-info database of
+/// the import that numbered it.
+///
+/// Span ids are per-import indices, so this dispatch is what makes them mean anything: the same
+/// id resolves in *every* import's database, to an unrelated line in an unrelated artifact. An
+/// import no span points into is skipped, tables and all.
 async fn populate_source_info<P: AsRef<path::Path>>(
     ctx: &ProjectContext<'_, P>,
-    config: &FormatConfig,
+    profile: SarifProfile,
     sarif_data: &mut SarifData,
     source_data: &mut SourceLocationData,
-    needed_spans: &[(FileSpanId, FunctionId, InsnId)],
+    needed_spans: &[SourceSpan],
 ) -> Result<(), Error> {
-    let dir = ctx.source_info_dir.as_ref();
+    for import in ctx.imports {
+        let spans: Vec<SourceSpan> = needed_spans
+            .iter()
+            .copied()
+            .filter(|s| s.import == import.id)
+            .collect();
+        if spans.is_empty() {
+            continue;
+        }
+        populate_import_source_info(ctx, import, profile, sarif_data, source_data, &spans)
+            .await
+            .err_context(|| format!("resolving source locations in import '{}'", import.name))?;
+    }
+    Ok(())
+}
+
+async fn populate_import_source_info<P: AsRef<path::Path>>(
+    ctx: &ProjectContext<'_, P>,
+    import: &ImportSource,
+    profile: SarifProfile,
+    sarif_data: &mut SarifData,
+    source_data: &mut SourceLocationData,
+    needed_spans: &[SourceSpan],
+) -> Result<(), Error> {
+    let dir = import.source_info_dir.as_path();
     let index_dir = ctx.index_dir.as_ref();
     let ctx_session = SessionContext::new();
 
-    ctx_session
-        .register_parquet(
-            "file_spans",
-            dir.join("file_spans.parquet").to_string_lossy(),
-            ParquetReadOptions::default(),
-        )
-        .await
-        .err_context(|| "reading file_spans")?;
-    ctx_session
-        .register_parquet(
-            "spans",
-            dir.join("spans.parquet").to_string_lossy(),
-            ParquetReadOptions::default(),
-        )
-        .await
-        .err_context(|| "reading spans")?;
-    ctx_session
-        .register_parquet(
-            "files",
-            dir.join("files.parquet").to_string_lossy(),
-            ParquetReadOptions::default(),
-        )
-        .await
-        .err_context(|| "reading files")?;
-    ctx_session
-        .register_parquet(
-            "artifacts",
-            dir.join("artifacts.parquet").to_string_lossy(),
-            ParquetReadOptions::default(),
-        )
-        .await
-        .err_context(|| "reading artifacts")?;
-    ctx_session
-        .register_parquet(
-            "function_id",
-            index_dir.join("function_id.parquet").to_string_lossy(),
-            ParquetReadOptions::default(),
-        )
-        .await
-        .err_context(|| "reading function_id")?;
+    register_parquet_checked(
+        &ctx_session,
+        "file_spans",
+        object_store_path(&dir.join("file_spans.parquet")),
+    )
+    .await?;
+    register_parquet_checked(
+        &ctx_session,
+        "spans",
+        object_store_path(&dir.join("spans.parquet")),
+    )
+    .await?;
+    register_parquet_checked(
+        &ctx_session,
+        "files",
+        object_store_path(&dir.join("files.parquet")),
+    )
+    .await?;
+    register_parquet_checked(
+        &ctx_session,
+        "artifacts",
+        object_store_path(&dir.join("artifacts.parquet")),
+    )
+    .await?;
+    register_parquet_checked(
+        &ctx_session,
+        "function_id",
+        object_store_path(&index_dir.join("function_id.parquet")),
+    )
+    .await?;
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("file_span_id", DataType::UInt32, false),
@@ -837,9 +2384,9 @@ async fn populate_source_info<P: AsRef<path::Path>>(
         Field::new("insn_id", DataType::UInt64, false),
     ]));
 
-    let file_span_id_array: UInt32Array = needed_spans.iter().map(|(s, _, _)| s.0).collect();
-    let func_id_array: UInt32Array = needed_spans.iter().map(|(_, f, _)| f.id).collect();
-    let insn_id_array: UInt64Array = needed_spans.iter().map(|(_, _, i)| i.id).collect();
+    let file_span_id_array: UInt32Array = needed_spans.iter().map(|s| s.span.0).collect();
+    let func_id_array: UInt32Array = needed_spans.iter().map(|s| s.func.id).collect();
+    let insn_id_array: UInt64Array = needed_spans.iter().map(|s| s.insn.id).collect();
 
     let batch = RecordBatch::try_new(
         schema.clone(),
@@ -936,16 +2483,21 @@ async fn populate_source_info<P: AsRef<path::Path>>(
             let region = match encoding {
                 source_info::ArtifactEncoding::Binary => {
                     let builder = Region::builder().byte_offset(start);
-                    if config.compact {
+                    if matches!(profile, SarifProfile::Machine) {
                         builder.build()
                     } else {
                         builder.byte_length(len_value).build()
                     }
                 }
                 source_info::ArtifactEncoding::Utf8 | source_info::ArtifactEncoding::Utf16 => {
-                    let file = File::open(canonical_path)?;
+                    let file = File::open(canonical_path)
+                        .err_context(|| format!("opening source file: {canonical_path}"))?;
                     // SAFETY: This is inherently unsafe because of mmap(). *shrug*
-                    let contents = unsafe { MmapOptions::new().map(&file)? };
+                    let contents = unsafe {
+                        MmapOptions::new()
+                            .map(&file)
+                            .err_context(|| format!("mapping source file: {canonical_path}"))?
+                    };
                     let line_map = LineMap::from_bytes(&contents);
                     let end_byte = match len_tag {
                         0 => start,
@@ -969,13 +2521,10 @@ async fn populate_source_info<P: AsRef<path::Path>>(
                 }
             };
 
-            let uri_str = canonical_path.to_string();
-            let uri_stripped = uri_str.strip_prefix('/').unwrap_or(&uri_str);
-            let artifact_location = ArtifactLocation::builder()
-                .uri(uri_stripped.to_string())
-                .build();
+            let artifact_location =
+                source_artifact_location(import, canonical_path, &mut sarif_data.uri_bases);
 
-            let is_pcode = ctx.language == ArtifactLanguage::Pcode;
+            let is_pcode = import.language == ArtifactLanguage::Pcode;
             let physical_location = match encoding {
                 source_info::ArtifactEncoding::Binary if is_pcode => {
                     // `start` is the absolute instruction address (it includes
@@ -985,7 +2534,7 @@ async fn populate_source_info<P: AsRef<path::Path>>(
                     // unknown, the relative offset degenerates to the absolute.
                     let address = Address::builder()
                         .absolute_address(start as i64)
-                        .relative_address(start as i64 - ctx.image_base.unwrap_or(0))
+                        .relative_address(start as i64 - import.image_base.unwrap_or(0))
                         .kind("instruction")
                         .build();
                     PhysicalLocation::builder()
@@ -1029,9 +2578,12 @@ async fn populate_source_info<P: AsRef<path::Path>>(
             source_data
                 .all_locations
                 .insert((func_id, insn_id), location.clone());
-            source_data
-                .batch_data
-                .push((file_span_id, func_id, insn_id, location));
+            source_data.batch_data.push((
+                (import.id, FileSpanId(file_span_id)),
+                func_id,
+                insn_id,
+                location,
+            ));
         }
     }
     Ok(())
@@ -1040,31 +2592,39 @@ async fn populate_source_info<P: AsRef<path::Path>>(
 #[allow(clippy::too_many_arguments)]
 async fn format_source_info_results<P: AsRef<path::Path>>(
     ctx: &ProjectContext<'_, P>,
-    config: &FormatConfig,
+    profile: SarifProfile,
     sarif_data: &mut SarifData,
-) -> Result<Vec<SarifResult>, Error> {
+) -> Result<(Vec<SarifResult>, PathStats), Error> {
     // Prepare graph for path finding when the selected profile emits path traces.
     let mut id_to_node: Vec<FlowNode> = Vec::new();
     // The call instruction anchoring each graph edge, keyed by `(src_id, dst_id)`
     // node-id pair (same orientation as the graph edges, i.e. origin -> derived).
     // Only call/return edges have a site; assign/alias edges contribute nothing.
     let mut site_by_edge: BTreeMap<(u32, u32), InsnSiteId> = BTreeMap::new();
-    // Endpoint vertex -> the (state-qualified) node ids it resolves to.
-    let mut ids_by_vertex: BTreeMap<(FunctionId, FlowVariable, Path), Vec<u32>> = BTreeMap::new();
+    // FlowEdge label per edge, so a code-flow step can name it as a call/return.
+    let mut edge_by_edge: BTreeMap<(u32, u32), FlowEdge> = BTreeMap::new();
+    // Endpoint vertex -> its (single) graph node id.
+    let mut node_to_id: BTreeMap<FlowNode, u32> = BTreeMap::new();
 
     let graph = if matches!(
-        config.profile,
+        profile,
         SarifProfile::Human | SarifProfile::Debug | SarifProfile::Agent
     ) {
         // Same graph the human-profile path check uses; see `build_taint_flow_graph`.
         let fg = build_taint_flow_graph(ctx.facts, ctx.taint_results);
         id_to_node = fg.id_to_node;
         site_by_edge = fg.site_by_edge;
-        ids_by_vertex = fg.ids_by_vertex;
+        edge_by_edge = fg.edge_by_edge;
+        node_to_id = fg.node_to_id;
         Some(fg.graph)
     } else {
         None
     };
+
+    // Call site -> callee, used to name a call-site-anchored source/sink by the
+    // framework method it models rather than the caller `infunc` now holds.
+    let call_callee: BTreeMap<PackedInsnSiteId, FunctionId> =
+        ctx.facts.call.iter().copied().collect();
 
     // Map each node to its endpoints
     let mut node_to_endpoint: BTreeMap<(FunctionId, FlowVariable, Path), Vec<QueryEndpoint>> =
@@ -1096,57 +2656,59 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
 
     let mut results_by_path: BTreeMap<
         Vec<u32>,
-        (u32, Vec<(QueryEndpoint, Option<QueryEndpoint>, Label)>),
+        (SpanKey, Vec<(QueryEndpoint, Option<QueryEndpoint>, Label)>),
     > = BTreeMap::new();
     if let Some(ref g) = graph {
-        for (fs_id, details) in ctx.details_by_span {
-            let mut seen_pairs = BTreeSet::new();
+        // Each distinct (source vertex, sink vertex) pair is searched once.
+        let mut tested_pairs: BTreeSet<(
+            (FunctionId, FlowVariable, Path),
+            (FunctionId, FlowVariable, Path),
+        )> = BTreeSet::new();
+        for (span_key, details) in ctx.details_by_span {
+            if !has_sinks {
+                break;
+            }
             for (lbl, func_id, var, pth) in details {
                 let node = (*func_id, *var, *pth);
-                if let Some(sources) = node_to_endpoint.get(&node) {
-                    let (fwd_sources, bwd_sinks): (Vec<_>, Vec<_>) = sources
-                        .iter()
-                        .partition(|s| s.direction == crate::facts::TaintDirection::Forward);
+                let Some(sources) = node_to_endpoint.get(&node) else {
+                    continue;
+                };
+                let (fwd_sources, bwd_sinks): (Vec<_>, Vec<_>) = sources
+                    .iter()
+                    .partition(|s| s.direction == crate::facts::TaintDirection::Forward);
 
-                    if has_sinks {
-                        for sink in &bwd_sinks {
-                            for src in &fwd_sources {
-                                let start_vertex = (src.infunc, src.vertex.0, src.vertex.1);
-                                let end_vertex = (sink.infunc, sink.vertex.0, sink.vertex.1);
-                                let start_ids = ids_by_vertex
-                                    .get(&start_vertex)
-                                    .map(Vec::as_slice)
-                                    .unwrap_or(&[]);
-                                let end_ids = ids_by_vertex
-                                    .get(&end_vertex)
-                                    .map(Vec::as_slice)
-                                    .unwrap_or(&[]);
-                                // Endpoints are anchored at their call sites: a sink
-                                // on a callee's formal is one endpoint per caller call
-                                // site, each on the distinct call-arg vertex that call
-                                // passes. Two flows differing only in their call site
-                                // are thus distinct (source, sink) pairs already, so a
-                                // single graph search per pair suffices -- no stitching
-                                // through the shared formal vertex they funnel into.
-                                if seen_pairs.insert((start_vertex, end_vertex)) {
-                                    'pair: for &sv in start_ids {
-                                        for &kv in end_ids {
-                                            if let Some(p) = find_path(g, sv, kv) {
-                                                results_by_path
-                                                    .entry(p)
-                                                    .or_insert((*fs_id, Vec::new()))
-                                                    .1
-                                                    .push((
-                                                        (*src).clone(),
-                                                        Some((*sink).clone()),
-                                                        lbl.clone(),
-                                                    ));
-                                                break 'pair;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                for sink in &bwd_sinks {
+                    let end_vertex = (sink.infunc, sink.vertex.0, sink.vertex.1);
+                    // Nodes are bare vertices, so a sink resolves to one node.
+                    let Some(&target_id) = node_to_id.get(&end_vertex) else {
+                        continue;
+                    };
+                    for src in &fwd_sources {
+                        let start_vertex = (src.infunc, src.vertex.0, src.vertex.1);
+                        if !tested_pairs.insert((start_vertex, end_vertex)) {
+                            continue;
+                        }
+                        let Some(&start_id) = node_to_id.get(&start_vertex) else {
+                            continue;
+                        };
+                        // A real source -> sink flow is a realizable walk from the
+                        // source seed to the node the sink names (its call-arg).
+                        // The `TaintState` annotation threaded along the edge
+                        // labels prunes unrealizable (call/return-mismatched)
+                        // walks, and pinning the target to this sink's call-arg
+                        // keeps a call into the sink's function on an unrelated
+                        // argument from being mistaken for this flow.
+                        if let Some(path) =
+                            find_annotated_path_to_set(g, start_id, |n, _s: &TaintState| {
+                                n == target_id
+                            })
+                        {
+                            let nodes: Vec<u32> = path.into_iter().map(|(n, _s)| n).collect();
+                            results_by_path
+                                .entry(nodes)
+                                .or_insert((*span_key, Vec::new()))
+                                .1
+                                .push(((*src).clone(), Some((*sink).clone()), lbl.clone()));
                         }
                     }
                 }
@@ -1158,13 +2720,39 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     let mut seen_sites: BTreeSet<(u32, u64)> = ctx
         .source_spans
         .iter()
-        .map(|(_, f, i)| (f.id, i.id))
+        .map(|s| (s.func.id, s.insn.id))
         .collect();
+
+    // The call instruction a *call-arg* vertex belongs to. A call-arg vertex is an
+    // actual argument at a call and encodes that call's instruction directly (its
+    // `insn_id`), which lives in the vertex's own function (the caller). This is how
+    // a summarized callee -- linked by an intra summary edge between its actual-arg
+    // vertices rather than a Call/Return edge -- is anchored back to its call line.
+    let call_arg_site = |node: &FlowNode| -> Option<InsnSiteId> {
+        let packed = node.1.as_call_arg()?;
+        let CallArgId { insn_id, .. } = CallArgId::try_from(packed).ok()?;
+        Some(InsnSiteId::new(node.0, insn_id))
+    };
 
     let mut path_sites = BTreeSet::new();
     for (path, (_fs, details)) in &results_by_path {
         for window in path.windows(2) {
             if let Some(site) = site_by_edge.get(&(window[0], window[1]))
+                && seen_sites.insert((site.func_id.id, site.insn_id.id))
+            {
+                path_sites.insert((site.func_id, site.insn_id));
+            }
+        }
+        // An interprocedural transfer whose callee was summarized (not descended
+        // into) shows up as an *intra* summary edge between the call's actual-arg
+        // vertices -- e.g. `transfer(&x.b, y)` links `call-arg(3, 1)` (the tainted
+        // input) to `call-arg(3, 0).d` (the tainted output) with no Call/Return edge
+        // to anchor. The call instruction is therefore on no path *edge*, but each
+        // such call-arg *node* encodes it (see `call_arg_site`). Load those sites so
+        // the summarized call line is reported rather than silently elided.
+        for &n in path {
+            let node = &id_to_node[n as usize];
+            if let Some(site) = call_arg_site(node)
                 && seen_sites.insert((site.func_id.id, site.insn_id.id))
             {
                 path_sites.insert((site.func_id, site.insn_id));
@@ -1215,50 +2803,90 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     for (&id, name) in &ctx.facts.id_to_name {
         source_data.id_to_name.insert(id, name.clone());
     }
-    populate_source_info(ctx, config, sarif_data, &mut source_data, &needed_spans).await?;
+    populate_source_info(ctx, profile, sarif_data, &mut source_data, &needed_spans).await?;
 
-    let mut span_to_location: BTreeMap<u32, Location> = BTreeMap::new();
-    for (file_span_id, _, _, location) in &source_data.batch_data {
-        span_to_location.insert(*file_span_id, location.clone());
+    let mut span_to_location: BTreeMap<SpanKey, Location> = BTreeMap::new();
+    for (span_key, _, _, location) in &source_data.batch_data {
+        span_to_location.insert(*span_key, location.clone());
     }
 
-    let mut code_flows_by_span: BTreeMap<u32, Vec<CodeFlow>> = BTreeMap::new();
-    for (path, (file_span_id, details)) in &results_by_path {
+    let mut code_flows_by_span: BTreeMap<SpanKey, Vec<CodeFlow>> = BTreeMap::new();
+    for (path, (span_key, details)) in &results_by_path {
         let mut thread_flow_locations = Vec::new();
         let mut last_loc_id: Option<(String, Option<String>)> = None;
+        // Monotonic step counter for the whole flow, surfaced as SARIF `executionOrder`
+        // so a viewer/`jq` can order steps unambiguously across the (possibly several)
+        // code flows a result carries.
+        let mut exec_order: i64 = 0;
+        // Resolve a function id to its (possibly obfuscated) fully-qualified name so a
+        // step reads as `... in LX/09h;->A02(...)` rather than a bare vertex token.
+        let fname = |fid: FunctionId| -> String {
+            source_data
+                .id_to_name
+                .get(&fid.id)
+                .cloned()
+                .unwrap_or_else(|| format!("func#{}", fid.id))
+        };
         // Emit a located code-flow step for a call instruction, deduping against the
-        // previous step's location. `label` describes the step (a vertex or endpoint).
+        // previous step's location. `message` describes the step (the full vertex —
+        // variable *and* access path — its function, and the edge kind); `kinds` are the
+        // SARIF well-known step categories (`call`/`return`/`taint`); `exec_order` is
+        // bumped so every emitted step carries its temporal order.
         let push_site_step = |thread_flow_locations: &mut Vec<ThreadFlowLocation>,
                               last_loc_id: &mut Option<(String, Option<String>)>,
+                              exec_order: &mut i64,
                               site: &InsnSiteId,
-                              label: String| {
+                              kinds: Vec<String>,
+                              message: String| {
             let Some(loc) = source_data
                 .all_locations
                 .get(&(site.func_id.id, site.insn_id.id))
             else {
                 return;
             };
+            // Identity of a physical location for step deduping. Different artifact kinds
+            // locate an instruction differently: native code by `address.absoluteAddress`,
+            // source by `region.startLine:startColumn`, bytecode (e.g. a `.dex`) by
+            // `region.byteOffset`. Build the key from *every* dimension that is present
+            // rather than picking one — a first-wins fallback would collapse two steps that
+            // agree on one dimension but differ on another (and an all-`None` key collapses
+            // every step in a file to `(uri, None)`, which once flattened whole `.dex` flows
+            // down to a lone source step).
             let current_loc_id = loc.physical_location.as_ref().and_then(|p| {
                 let uri = p.artifact_location.as_ref()?.uri.as_ref()?.clone();
-                let pos = p
-                    .address
-                    .as_ref()
-                    .and_then(|a| a.absolute_address.as_ref().map(|v| v.to_string()))
-                    .or_else(|| {
-                        p.region
-                            .as_ref()
-                            .and_then(|r| Some(format!("{}:{}", r.start_line?, r.start_column?)))
-                    });
+                let mut parts: Vec<String> = Vec::new();
+                if let Some(a) = p.address.as_ref().and_then(|a| a.absolute_address.as_ref()) {
+                    parts.push(format!("addr:{a}"));
+                }
+                if let Some(r) = p.region.as_ref() {
+                    if let (Some(l), Some(c)) = (r.start_line, r.start_column) {
+                        parts.push(format!("line:{l}:{c}"));
+                    }
+                    if let Some(b) = r.byte_offset {
+                        parts.push(format!("byte:{b}"));
+                    }
+                }
+                let pos = if parts.is_empty() {
+                    None
+                } else {
+                    Some(parts.join("|"))
+                };
                 Some((uri, pos))
             });
             if current_loc_id.is_some() && current_loc_id == *last_loc_id {
                 return;
             }
             *last_loc_id = current_loc_id;
+            *exec_order += 1;
             let mut loc_with_msg = loc.clone();
-            loc_with_msg.message = Some(Message::builder().text(label).build());
-            thread_flow_locations
-                .push(ThreadFlowLocation::builder().location(loc_with_msg).build());
+            loc_with_msg.message = Some(Message::builder().text(message).build());
+            thread_flow_locations.push(
+                ThreadFlowLocation::builder()
+                    .location(loc_with_msg)
+                    .execution_order(*exec_order)
+                    .kinds(kinds)
+                    .build(),
+            );
         };
 
         // Lead with the source endpoints' call sites: because the endpoints are
@@ -1267,14 +2895,49 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         // would otherwise be absent from the code flow.
         for (src, _sink, _lbl) in details {
             if let Some(site) = src.call_site.and_then(|p| InsnSiteId::try_from(&p).ok()) {
+                let callee = endpoint_callee(src, &call_callee);
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
+                    &mut exec_order,
                     &site,
-                    format!("{}", src.vertex.0),
+                    vec!["taint".to_string()],
+                    format!(
+                        "source {}{} in {}",
+                        src.vertex.0,
+                        src.vertex.1.to_dot_string(),
+                        fname(callee)
+                    ),
                 );
             }
         }
+        // The source and sink endpoints are reported by the leading/trailing steps
+        // above and below; interior call-arg steps must not collide with them.
+        // `push_site_step` dedups by *location*, so an interior step must be skipped
+        // whenever it lands on a source/sink endpoint's node OR its call *instruction*
+        // -- otherwise, emitted first, its `call ...` message pre-empts the endpoint's
+        // `source ...`/`sink ...` step (the code-flow integrity check keys on those).
+        // The instruction guard matters because a call passes several actual-arg
+        // vertices at one site: the flow can visit a *non-endpoint* formal of the very
+        // call the sink is anchored on (e.g. `call-arg(43, -2)` when the sink is
+        // `call-arg(43, 0)`), which shares the sink's location and would otherwise
+        // swallow its step.
+        let endpoint_node_ids: BTreeSet<u32> = details
+            .iter()
+            .flat_map(|(src, sink, _)| std::iter::once(src).chain(sink.as_ref()))
+            .filter_map(|ep| {
+                node_to_id
+                    .get(&(ep.infunc, ep.vertex.0, ep.vertex.1))
+                    .copied()
+            })
+            .collect();
+        let endpoint_sites: BTreeSet<(FunctionId, InsnId)> = details
+            .iter()
+            .flat_map(|(src, sink, _)| std::iter::once(src).chain(sink.as_ref()))
+            .filter_map(|ep| ep.call_site.and_then(|p| InsnSiteId::try_from(&p).ok()))
+            .map(|s| (s.func_id, s.insn_id))
+            .collect();
+
         // Walk the path edge-by-edge: each consecutive `(src_id, dst_id)` pair is
         // a graph edge, and `site_by_edge` gives the call instruction that edge
         // flowed through. Attributing per edge keeps each call site distinct even
@@ -1283,31 +2946,88 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             let (src_id, dst_id) = (window[0], window[1]);
             if let Some(site) = site_by_edge.get(&(src_id, dst_id)) {
                 let dst_node = &id_to_node[dst_id as usize];
+                let kind = match edge_by_edge.get(&(src_id, dst_id)) {
+                    Some(FlowEdge::Call(_)) => "call",
+                    Some(FlowEdge::Return(_)) => "return",
+                    _ => "taint",
+                };
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
+                    &mut exec_order,
                     site,
-                    format!("{}", dst_node.2),
+                    vec![kind.to_string()],
+                    format!(
+                        "{} {}{} in {}",
+                        kind,
+                        dst_node.1,
+                        dst_node.2.to_dot_string(),
+                        fname(dst_node.0)
+                    ),
+                );
+            }
+            // A summarized callee contributes no Call/Return edge, so its call line
+            // would be skipped by the `site_by_edge` walk above. Surface it from the
+            // destination *node* instead: an interior *call-arg* vertex is an actual
+            // argument at a call and encodes that call's instruction, so emitting a
+            // step there reports the summarized call (e.g. `transfer(&x.b, y)`) that
+            // the taint flowed through. Deduping by location collapses the call's
+            // several actual-arg vertices to one step.
+            //
+            // Restricting to call-arg vertices is what keeps this precise: the locals
+            // and formals a summary threads through include ones that merely feed the
+            // final sink, and surfacing those would both pre-empt that sink's
+            // `sink ...` step and, in a case whose point is a *clean* sibling sink,
+            // wrongly report its line.
+            let dst_node = &id_to_node[dst_id as usize];
+            if !endpoint_node_ids.contains(&dst_id)
+                && let Some(site) = call_arg_site(dst_node)
+                && !endpoint_sites.contains(&(site.func_id, site.insn_id))
+            {
+                let callee = InsnSiteId::new(site.func_id, site.insn_id)
+                    .try_into()
+                    .ok()
+                    .and_then(|packed| call_callee.get(&packed).copied())
+                    .unwrap_or(dst_node.0);
+                push_site_step(
+                    &mut thread_flow_locations,
+                    &mut last_loc_id,
+                    &mut exec_order,
+                    &site,
+                    vec!["call".to_string()],
+                    format!(
+                        "call {}{} in {}",
+                        dst_node.1,
+                        dst_node.2.to_dot_string(),
+                        fname(callee)
+                    ),
                 );
             }
         }
         // Close with the sink endpoints' call sites, for the same reason.
         for (_src, sink, _lbl) in details {
-            if let Some(site) = sink
-                .as_ref()
-                .and_then(|s| s.call_site)
-                .and_then(|p| InsnSiteId::try_from(&p).ok())
+            if let Some(s) = sink.as_ref()
+                && let Some(site) = s.call_site.and_then(|p| InsnSiteId::try_from(&p).ok())
             {
-                let label = sink
-                    .as_ref()
-                    .map(|s| format!("{}", s.vertex.0))
-                    .unwrap_or_default();
-                push_site_step(&mut thread_flow_locations, &mut last_loc_id, &site, label);
+                let callee = endpoint_callee(s, &call_callee);
+                push_site_step(
+                    &mut thread_flow_locations,
+                    &mut last_loc_id,
+                    &mut exec_order,
+                    &site,
+                    vec!["taint".to_string()],
+                    format!(
+                        "sink {}{} in {}",
+                        s.vertex.0,
+                        s.vertex.1.to_dot_string(),
+                        fname(callee)
+                    ),
+                );
             }
         }
 
         if !thread_flow_locations.is_empty() {
-            code_flows_by_span.entry(*file_span_id).or_default().push(
+            code_flows_by_span.entry(*span_key).or_default().push(
                 CodeFlow::builder()
                     .thread_flows(vec![
                         ThreadFlow::builder()
@@ -1320,22 +3040,22 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     }
 
     // Now build results for tainted instructions (only for Debug or Machine profiles)
-    if config.profile == SarifProfile::Debug || config.profile == SarifProfile::Machine {
-        let tainted_span_ids: BTreeSet<u32> =
-            ctx.source_spans.iter().map(|(fs, _, _)| fs.0).collect();
+    if matches!(profile, SarifProfile::Debug | SarifProfile::Machine) {
+        let tainted_span_ids: BTreeSet<SpanKey> =
+            ctx.source_spans.iter().map(|s| s.key()).collect();
 
-        let mut results_by_span: BTreeMap<u32, SarifResult> = BTreeMap::new();
-        for (file_span_id, func_id, insn_id, location) in &source_data.batch_data {
-            if !tainted_span_ids.contains(file_span_id) {
+        let mut results_by_span: BTreeMap<SpanKey, SarifResult> = BTreeMap::new();
+        for (span_key, func_id, insn_id, location) in &source_data.batch_data {
+            if !tainted_span_ids.contains(span_key) {
                 continue;
             }
-            if results_by_span.contains_key(file_span_id) {
+            if results_by_span.contains_key(span_key) {
                 continue;
             }
 
             let mut all_labels = BTreeSet::new();
             let mut labels_to_vertices: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-            if let Some(details) = ctx.details_by_span.get(file_span_id) {
+            if let Some(details) = ctx.details_by_span.get(span_key) {
                 for (lbl, _func_id, var, pth) in details {
                     all_labels.insert(lbl.clone());
                     let vertex = format!("{}{}", var, pth.to_dot_string());
@@ -1351,13 +3071,13 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             sorted_labels.sort();
 
             let msg_text = if sorted_labels.is_empty() {
-                format!("span {file_span_id}")
+                format!("span {}", span_key.1.0)
             } else {
                 format!("Taint flow labelled '{}'", sorted_labels.join("', '"))
             };
 
             let mut final_msg_text = msg_text;
-            if config.compact {
+            if matches!(profile, SarifProfile::Machine) {
                 const COMPACT_MAX_MESSAGE_CHARS: usize = 100;
                 if let Some((byte_idx, _)) =
                     final_msg_text.char_indices().nth(COMPACT_MAX_MESSAGE_CHARS)
@@ -1373,9 +3093,15 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     serde_json::json!(labels_to_vertices),
                 ),
             ]);
-            if config.profile == SarifProfile::Debug {
+            if profile == SarifProfile::Debug {
+                // The span id alone does not identify a location in a multi-import project --
+                // each import numbers its spans from zero -- so name the import beside it.
                 additional_properties
-                    .insert("fileSpanId".to_string(), serde_json::json!(*file_span_id));
+                    .insert("fileSpanId".to_string(), serde_json::json!(span_key.1.0));
+                additional_properties.insert(
+                    "import".to_string(),
+                    serde_json::json!(import_name(ctx.imports, span_key.0)),
+                );
                 additional_properties.insert("funcId".to_string(), serde_json::json!(*func_id));
                 additional_properties.insert("insnId".to_string(), serde_json::json!(*insn_id));
             }
@@ -1392,23 +3118,24 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 .properties(properties)
                 .build();
 
-            results_by_span.insert(*file_span_id, result);
+            results_by_span.insert(*span_key, result);
         }
         results.extend(results_by_span.into_values());
     }
 
-    // Add source and sink location results (for Debug and Agent profiles)
-    if matches!(config.profile, SarifProfile::Debug | SarifProfile::Agent) {
-        results.extend(format_source_sink_results(
-            sarif_data,
-            &endpoints,
-            &source_data.id_to_name,
-            &site_by_var,
-            &source_data.all_locations,
-        ));
-    }
+    // Which sources and sinks actually matched is part of what the run *did*, so it is
+    // reported in every profile rather than only where the extra detail was wanted. These
+    // stay `kind: "informational"` / `level: "none"`: they are context, not findings.
+    results.extend(format_source_sink_results(
+        sarif_data,
+        &endpoints,
+        &source_data.id_to_name,
+        &call_callee,
+        &site_by_var,
+        &source_data.all_locations,
+    ));
 
-    if config.profile == SarifProfile::Agent {
+    if profile == SarifProfile::Agent {
         results.extend(format_absorbing_function_results(
             sarif_data,
             &ctx.taint_results.absorbing_functions,
@@ -1417,14 +3144,15 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     }
 
     // Now build results for paths (for Human, Debug, or Agent profiles, one per path)
-    if matches!(
-        config.profile,
-        SarifProfile::Human | SarifProfile::Debug | SarifProfile::Agent
-    ) {
-        for (_path, (file_span_id, details)) in results_by_path {
-            let location = if let Some(loc) = span_to_location.get(&file_span_id) {
+    let mut path_stats = PathStats::default();
+    if profile_finds_paths(profile) {
+        for (_path, (span_key, details)) in results_by_path {
+            let location = if let Some(loc) = span_to_location.get(&span_key) {
                 loc.clone()
             } else {
+                // A path was found but has nowhere to be reported. Counted so the run can
+                // say so via `CTADL0103` instead of dropping it in silence.
+                path_stats.dropped_no_location += 1;
                 continue;
             };
 
@@ -1438,7 +3166,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             sorted_labels.sort();
 
             let mut labels_to_vertices: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-            if let Some(details) = ctx.details_by_span.get(&file_span_id) {
+            if let Some(details) = ctx.details_by_span.get(&span_key) {
                 for (lbl, _func_id, var, pth) in details {
                     let vertex = format!("{}{}", var, pth.to_dot_string());
                     labels_to_vertices
@@ -1451,7 +3179,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             let msg_text = format!("Taint flow labelled '{}'", sorted_labels.join("', '"));
 
             let mut final_msg_text = msg_text;
-            if config.compact {
+            if matches!(profile, SarifProfile::Machine) {
                 const COMPACT_MAX_MESSAGE_CHARS: usize = 100;
                 if let Some((byte_idx, _)) =
                     final_msg_text.char_indices().nth(COMPACT_MAX_MESSAGE_CHARS)
@@ -1463,18 +3191,23 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             // Resolve the source/sink callee name(s) so consumers can match on
             // the function directly instead of reconstructing it from the taint
             // statement vertex. The model attaches an endpoint to the callee
-            // method (e.g. `nvram_get` / `system`), so the endpoint's `infunc`
-            // is that callee; resolve it via the same id_to_name map used for
-            // source/sink results. `taintLabels` carries the source *kind*; this
-            // adds the source/sink *function names*.
+            // method (e.g. `nvram_get` / `system`); after call-site anchoring the
+            // endpoint's `infunc` is the *caller*, so the modeled method is the
+            // callee at its `call_site` -- see `endpoint_callee`. `taintLabels`
+            // carries the source *kind*; this adds the source/sink *function names*.
             let mut source_functions: BTreeSet<String> = BTreeSet::new();
             let mut sink_functions: BTreeSet<String> = BTreeSet::new();
             for (src, sink_opt, _lbl) in &details {
-                if let Some(name) = source_data.id_to_name.get(&src.infunc.id) {
+                if let Some(name) = source_data
+                    .id_to_name
+                    .get(&endpoint_callee(src, &call_callee).id)
+                {
                     source_functions.insert(name.clone());
                 }
                 if let Some(sink) = sink_opt
-                    && let Some(name) = source_data.id_to_name.get(&sink.infunc.id)
+                    && let Some(name) = source_data
+                        .id_to_name
+                        .get(&endpoint_callee(sink, &call_callee).id)
                 {
                     sink_functions.insert(name.clone());
                 }
@@ -1507,11 +3240,15 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 .additional_properties(additional_properties)
                 .build();
 
-            if let Some(code_flows) = code_flows_by_span.get(&file_span_id) {
+            if let Some(code_flows) = code_flows_by_span.get(&span_key) {
                 let result = SarifResult::builder()
                     .rule_id(TAINTED_PATH_RULE_ID.to_string())
-                    .kind(ResultKind::Informational)
-                    .level(ResultLevel::None)
+                    // A reported taint path is a finding, not a note: `kind: "fail"` puts
+                    // it on the same axis as the `open`/`notApplicable` states the rule
+                    // reports when it finds nothing (§3.27.9). `informational` there and
+                    // `open` here would be incoherent.
+                    .kind(ResultKind::Fail)
+                    .level(ResultLevel::Warning)
                     .message(Message::builder().text(final_msg_text).build())
                     .locations(vec![location])
                     .properties(properties)
@@ -1519,17 +3256,42 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     .build();
 
                 results.push(result);
+                path_stats.reported += 1;
+            } else {
+                // Same silent drop as above, one step later: located, but no code flow
+                // survived to describe it.
+                path_stats.dropped_no_location += 1;
             }
         }
     }
 
-    Ok(results)
+    Ok((results, path_stats))
+}
+
+/// The callee function an endpoint denotes for source/sink *naming*.
+///
+/// A source/sink is modeled on the framework method it calls (e.g.
+/// `ContentResolver.query`), so before call-site anchoring an endpoint's `infunc`
+/// was that callee and naming read straight off it. After anchoring (8fbc7ca),
+/// `infunc` is the *caller* (the app method containing the call) and `vertex` is
+/// the call-arg vertex; the modeled method is now the callee at `call_site`.
+/// Recover it via the static call graph so reported source/sink callees stay the
+/// framework method, not the caller. Function-anchored endpoints (no call site:
+/// a local/global port or a callee with no callers) keep `infunc`.
+fn endpoint_callee(
+    ep: &QueryEndpoint,
+    call_callee: &BTreeMap<PackedInsnSiteId, FunctionId>,
+) -> FunctionId {
+    ep.call_site
+        .and_then(|site| call_callee.get(&site).copied())
+        .unwrap_or(ep.infunc)
 }
 
 fn format_source_sink_results(
     sarif_data: &mut SarifData,
     endpoints: &BTreeSet<&QueryEndpoint>,
     id_to_name: &BTreeMap<u32, String>,
+    call_callee: &BTreeMap<PackedInsnSiteId, FunctionId>,
     site_by_var: &BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)>,
     all_locations: &BTreeMap<(u32, u64), Location>,
 ) -> Vec<SarifResult> {
@@ -1555,8 +3317,11 @@ fn format_source_sink_results(
             // "formal(1) in function main" lines. The label (taint kind) is the
             // other distinguishing field; carry it in `properties` below.
             let vertex = format!("{}{}", node.1, node.2.to_dot_string());
+            // Name the source/sink by the framework method it models (the callee
+            // at its anchored call site), not the caller `infunc` holds post-8fbc7ca.
+            let callee_id = endpoint_callee(endpoint, call_callee);
             let func_name = id_to_name
-                .get(&node.0.id)
+                .get(&callee_id.id)
                 .cloned()
                 .unwrap_or_else(|| "unknown".to_string());
             let label = endpoint.label.0.to_string();
@@ -1567,7 +3332,7 @@ fn format_source_sink_results(
             };
 
             let fully_qualified_name = id_to_name
-                .get(&node.0.id)
+                .get(&callee_id.id)
                 .cloned()
                 .unwrap_or_else(|| "unknown".to_string());
             let loc_idx = *sarif_data
@@ -1698,32 +3463,30 @@ fn format_absorbing_function_results(
     results
 }
 
-/// Look up the sites in the index source map and returns the span ids
+/// Look up the sites in the index source map and return their source spans.
+///
+/// Each span comes back with the import it was numbered in: the id alone is meaningless
+/// project-wide (see [`SourceSpan`]).
 pub async fn find_source_ids(
     source_map: &path::Path,
     tainted: &TaintedInstructions,
-) -> Result<Vec<(FileSpanId, FunctionId, InsnId)>, Error> {
+) -> Result<Vec<SourceSpan>, Error> {
     let mut ctx = SessionContext::new();
-    ctx.register_parquet(
-        "index_source_map",
-        source_map.to_string_lossy(),
-        ParquetReadOptions::default(),
-    )
-    .await
-    .err_context(|| "register index_source_map")?;
+    register_parquet_checked(&ctx, "index_source_map", object_store_path(source_map)).await?;
 
     build_selector_table(&mut ctx, tainted)
         .await
         .err_context(|| "building selector tables")?;
 
     let sql = "
-        SELECT index_source_map.source_span_id, index_source_map.func_id, index_source_map.insn_id
+        SELECT index_source_map.source_span_id, index_source_map.import_id,
+               index_source_map.func_id, index_source_map.insn_id
         FROM index_source_map
         JOIN site_id
         ON index_source_map.func_id = site_id.func_id
         AND index_source_map.insn_id = site_id.insn_id
         WHERE index_source_map.source_span_id != 0
-        ORDER BY index_source_map.source_span_id
+        ORDER BY index_source_map.import_id, index_source_map.source_span_id
     ";
 
     let mut batches = ctx.sql(sql).await?.collect().await?;
@@ -1735,29 +3498,83 @@ pub async fn find_source_ids(
             .as_any()
             .downcast_ref::<UInt32Array>()
             .unwrap();
-        let func_ids = batch
+        let import_ids = batch
             .column(1)
             .as_any()
             .downcast_ref::<UInt32Array>()
             .unwrap();
-        let insn_ids = batch
+        let func_ids = batch
             .column(2)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .unwrap();
+        let insn_ids = batch
+            .column(3)
             .as_any()
             .downcast_ref::<UInt64Array>()
             .unwrap();
 
         for i in 0..batch.num_rows() {
-            let span_id = span_ids.value(i);
-            let func_id = func_ids.value(i);
-            let insn_id = insn_ids.value(i);
-            result.push((
-                FileSpanId(span_id),
-                FunctionId::new(func_id),
-                InsnId::new(insn_id),
-            ));
+            result.push(SourceSpan {
+                span: FileSpanId(span_ids.value(i)),
+                import: ImportId(import_ids.value(i)),
+                func: FunctionId::new(func_ids.value(i)),
+                insn: InsnId::new(insn_ids.value(i)),
+            });
         }
     }
     Ok(result)
+}
+
+/// The imports an index was built from, in the order it walked them, each paired with the
+/// source-info database its spans are numbered in.
+///
+/// The names come from the index (`import_id.parquet`), not from the project config: a project
+/// whose import list changed since it was indexed would otherwise shift every span onto the
+/// wrong artifact, silently. An import named there but no longer loadable from the store is
+/// kept as a hole, so the ids of the imports after it still line up; spans landing in that hole
+/// simply go unresolved, exactly as they did before this table existed.
+fn load_import_sources(index_dir: &path::Path) -> Result<Vec<ImportSource>, Error> {
+    let names = schema::import_id::try_load(index_dir)?;
+    let mut imports = Vec::with_capacity(names.len());
+    for (id, name) in names {
+        let import = match crate::project::ArtifactImport::load_by_name(&name) {
+            Ok(import) => import,
+            Err(e) => {
+                log::warn!(
+                    "index was built from import '{name}', which cannot be loaded now ({e}); \
+                     source locations from it will be missing"
+                );
+                continue;
+            }
+        };
+        // A `ghidra://…` artifact is a project URL, not a path, so it roots nothing; its
+        // locations fall back to whatever the frontend recorded (see
+        // `source_artifact_location`).
+        let artifact_path = import
+            .artifact_path
+            .is_absolute()
+            .then(|| import.artifact_path.clone());
+        imports.push(ImportSource {
+            id,
+            name,
+            source_info_dir: import.source_info_dir(),
+            language: import.language,
+            image_base: import.image_base,
+            artifact_path,
+        });
+    }
+    Ok(imports)
+}
+
+/// The store name of an import, for reporting. Falls back to the raw id for an import the
+/// index named but the store no longer has (see [`load_import_sources`]).
+fn import_name(imports: &[ImportSource], id: ImportId) -> String {
+    imports
+        .iter()
+        .find(|i| i.id == id)
+        .map(|i| i.name.clone())
+        .unwrap_or_else(|| format!("import#{}", id.0))
 }
 
 /// Creates and registers a selector table 'site_id' with two columns: 'function_id' and 'insn_id'.
@@ -1795,6 +3612,49 @@ mod tests {
     use super::*;
     use crate::facts::FormalIndex;
 
+    #[test]
+    fn object_store_path_absolutizes_relative_input() {
+        // A relative path must be resolved to an absolute `file://` URL, not left
+        // as a bogus `file:///<relative>` rooted at the filesystem root. Compute
+        // the expectation from the cwd the same way the function does.
+        let rel = path::Path::new("mystore/imports/bt/file_spans.parquet");
+        let expected = url::Url::from_file_path(path::absolute(rel).unwrap())
+            .unwrap()
+            .to_string();
+        assert_eq!(object_store_path(rel), expected);
+        assert!(object_store_path(rel).starts_with("file:///"));
+        // The relative components survive absolutization.
+        assert!(object_store_path(rel).ends_with("mystore/imports/bt/file_spans.parquet"));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn object_store_path_preserves_absolute_input() {
+        let abs = path::Path::new("/var/data/store/file_spans.parquet");
+        assert_eq!(
+            object_store_path(abs),
+            "file:///var/data/store/file_spans.parquet"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn object_store_path_handles_windows_verbatim() {
+        // Verbatim `\\?\` paths are absolute; the `\\?\` prefix is stripped so
+        // object_store gets a clean drive-letter URL.
+        let verbatim = path::Path::new(r"\\?\C:\proj\store\file_spans.parquet");
+        assert_eq!(
+            object_store_path(verbatim),
+            "file:///C:/proj/store/file_spans.parquet"
+        );
+        // A plain absolute Windows path round-trips too.
+        let plain = path::Path::new(r"C:\proj\store\file_spans.parquet");
+        assert_eq!(
+            object_store_path(plain),
+            "file:///C:/proj/store/file_spans.parquet"
+        );
+    }
+
     fn formal(i: i16) -> FlowVariable {
         FlowVariable::formal_index(FormalIndex::new(i))
     }
@@ -1817,31 +3677,46 @@ mod tests {
             label: Label(label.into()),
             direction: dir,
             call_site: None,
+            saturating: false,
         }
     }
 
-    /// A taint fact placing endpoint `ep` on node `(func, state, var)`.
+    /// A taint fact placing endpoint `ep` on the vertex `(func, var)`. The taint
+    /// state is incidental now (the graph nodes are bare vertices), so it is
+    /// always `Free`.
     fn taint_fact(
         func: u32,
-        state: TaintState,
         var: FlowVariable,
         ep: QueryEndpoint,
     ) -> (FunctionId, TaintState, FlowVariable, Path, QueryEndpoint) {
-        (FunctionId::new(func), state, var, Path::empty(), ep)
+        (
+            FunctionId::new(func),
+            TaintState::Free,
+            var,
+            Path::empty(),
+            ep,
+        )
+    }
+
+    /// A graph vertex `(func, var)` (with the empty access path).
+    fn node(func: u32, var: FlowVariable) -> FlowNode {
+        (FunctionId::new(func), var, Path::empty())
+    }
+
+    /// An arbitrary call instruction to anchor `Call`/`Return` edges in tests.
+    fn a_site() -> crate::facts::PackedInsnSiteId {
+        crate::facts::PackedInsnSiteId::try_from_parts(FunctionId::new(9), InsnId::new(1)).unwrap()
     }
 
     fn taint_results(
         edges: Vec<(
+            FlowEdge,
             FunctionId,
-            TaintState,
             FlowVariable,
             Path,
             FunctionId,
-            TaintState,
             FlowVariable,
             Path,
-            TaintDirection,
-            Option<PackedInsnSiteId>,
         )>,
     ) -> TaintAnalysisResults {
         TaintAnalysisResults {
@@ -1853,38 +3728,23 @@ mod tests {
         }
     }
 
-    /// A propagation edge along which data flows `src -> dst`, recorded the way
-    /// `compute_taint_results` emits it: the *derived* node first, then the
-    /// *origin*, each carrying its own taint state. `build_taint_flow_graph`
-    /// re-orients it source -> derived in the graph.
+    /// A `label`-classified edge along which data flows `src -> dst`, in the same
+    /// execution / data-flow order the query engine persists.
     #[allow(clippy::type_complexity)]
     fn edge(
-        dst: FlowNode,
+        label: FlowEdge,
         src: FlowNode,
+        dst: FlowNode,
     ) -> (
+        FlowEdge,
         FunctionId,
-        TaintState,
         FlowVariable,
         Path,
         FunctionId,
-        TaintState,
         FlowVariable,
         Path,
-        TaintDirection,
-        Option<PackedInsnSiteId>,
     ) {
-        (
-            dst.0,
-            dst.1,
-            dst.2,
-            dst.3,
-            src.0,
-            src.1,
-            src.2,
-            src.3,
-            TaintDirection::Forward,
-            None,
-        )
+        (label, src.0, src.1, src.2, dst.0, dst.1, dst.2)
     }
 
     /// A source in function 1 connected by one propagation edge to a sink in
@@ -1894,36 +3754,20 @@ mod tests {
     fn finds_path_for_connected_source_and_sink() {
         let source = endpoint(1, "X", TaintDirection::Forward);
         let sink = endpoint(2, "X", TaintDirection::Backward);
-        let src_node: FlowNode = (
-            FunctionId::new(1),
-            TaintState::Free,
-            formal(0),
-            Path::empty(),
-        );
-        let sink_node: FlowNode = (
-            FunctionId::new(2),
-            TaintState::Free,
-            formal(0),
-            Path::empty(),
-        );
+        let src_node = node(1, formal(0));
+        let sink_node = node(2, formal(0));
 
         let facts = FormatFacts {
             taint: vec![
                 // sink node is forward-tainted by the source endpoint
-                (
-                    sink_node.0,
-                    sink_node.1,
-                    sink_node.2,
-                    sink_node.3,
-                    source.clone(),
-                ),
+                taint_fact(2, formal(0), source.clone()),
                 // source node is backward-tainted by the sink endpoint
-                (src_node.0, src_node.1, src_node.2, src_node.3, sink.clone()),
+                taint_fact(1, formal(0), sink.clone()),
             ],
             ..Default::default()
         };
         // One edge, oriented as data flows: source node -> sink node.
-        let results = taint_results(vec![edge(sink_node, src_node)]);
+        let results = taint_results(vec![edge(FlowEdge::Intra, src_node, sink_node)]);
 
         let paths = find_endpoint_paths(&facts, &results);
         assert_eq!(paths.len(), 1, "expected exactly one source->sink path");
@@ -1941,23 +3785,11 @@ mod tests {
     fn finds_no_path_when_disconnected() {
         let source = endpoint(1, "X", TaintDirection::Forward);
         let sink = endpoint(2, "X", TaintDirection::Backward);
-        let src_node: FlowNode = (
-            FunctionId::new(1),
-            TaintState::Free,
-            formal(0),
-            Path::empty(),
-        );
-        let sink_node: FlowNode = (
-            FunctionId::new(2),
-            TaintState::Free,
-            formal(0),
-            Path::empty(),
-        );
 
         let facts = FormatFacts {
             taint: vec![
-                (sink_node.0, sink_node.1, sink_node.2, sink_node.3, source),
-                (src_node.0, src_node.1, src_node.2, src_node.3, sink),
+                taint_fact(2, formal(0), source),
+                taint_fact(1, formal(0), sink),
             ],
             ..Default::default()
         };
@@ -1970,74 +3802,39 @@ mod tests {
         );
     }
 
-    /// Taint that enters a callee through a call (becoming `Restricted`) must not
-    /// be spliced onto a *return* edge that leaves the callee in the `Free`
-    /// state: that splice is exactly the unrealizable call/return mismatch the
-    /// `TaintState` qualifier exists to prevent.
+    /// Taint that enters a callee through a `Call` edge (moving the search's
+    /// [`TaintState`] annotation to `Restricted`) must not then be spliced onto a
+    /// `Return` edge: a `Restricted` return is exactly the unrealizable
+    /// call/return mismatch the annotation prunes.
     ///
-    /// Layout (forward analysis): source `S` in func 1 flows through a call into
-    /// callee formal `F` in func 2 (so `F` is reached `Restricted`). Separately,
-    /// `F` returns to `T` in func 1 along a *return* edge that, per the query
-    /// engine's rules, leaves `F` only in the `Free` state. The sink is on `T`.
-    ///
-    /// Because `F`-reached-`Restricted` and `F`-as-`Free` are distinct
-    /// `FlowNode`s, the `Restricted` `F` has no outgoing return edge, so no
-    /// source -> sink path exists. If `FlowNode` dropped the taint state (the
-    /// bug), the two `F`s would collapse and the search would report a spurious
-    /// path `S -> F -> T`.
+    /// Layout (forward analysis): source `S` in func 1 flows through a `Call`
+    /// into callee formal `F` in func 2 (so the annotation becomes `Restricted`).
+    /// From `F` a `Return` edge leads to `T` in func 1, where the sink lives.
+    /// Because the annotation is `Restricted` at `F`, `TaintState::expand` prunes
+    /// the `Return`, so no source -> sink path exists.
     #[test]
     fn taint_state_blocks_unrealizable_call_return() {
         let source = endpoint_on(1, formal(0), "X", TaintDirection::Forward);
         let sink = endpoint_on(1, formal(1), "X", TaintDirection::Backward);
 
         // s: source in caller; f: callee formal; t: returned-to vertex in caller.
-        let s = (
-            FunctionId::new(1),
-            TaintState::Free,
-            formal(0),
-            Path::empty(),
-        );
-        let f_restricted = (
-            FunctionId::new(2),
-            TaintState::Restricted,
-            formal(0),
-            Path::empty(),
-        );
-        let f_free = (
-            FunctionId::new(2),
-            TaintState::Free,
-            formal(0),
-            Path::empty(),
-        );
-        let t = (
-            FunctionId::new(1),
-            TaintState::Free,
-            formal(1),
-            Path::empty(),
-        );
+        let s = node(1, formal(0));
+        let f = node(2, formal(0));
+        let t = node(1, formal(1));
 
         let facts = FormatFacts {
             taint: vec![
-                taint_fact(1, TaintState::Free, formal(0), source.clone()),
-                taint_fact(1, TaintState::Free, formal(1), sink.clone()),
+                taint_fact(1, formal(0), source.clone()),
+                taint_fact(1, formal(1), sink.clone()),
             ],
             ..Default::default()
         };
         let results = taint_results(vec![
-            // call: S flows into the callee formal, which becomes Restricted.
-            edge(f_restricted, s),
-            // return: F flows back out to T, but only from the Free F.
-            edge(t, f_free),
+            // call: S flows into the callee formal (annotation -> Restricted).
+            edge(FlowEdge::Call(a_site()), s, f),
+            // return: F flows back out to T, but a Restricted return is pruned.
+            edge(FlowEdge::Return(a_site()), f, t),
         ]);
-
-        // The callee formal F is two distinct nodes (Free and Restricted).
-        let fg = build_taint_flow_graph(&facts, &results);
-        let f_vertex = (FunctionId::new(2), formal(0), Path::empty());
-        assert_eq!(
-            fg.ids_by_vertex[&f_vertex].len(),
-            2,
-            "F must be two nodes, one per taint state, for matching to work"
-        );
 
         let paths = find_endpoint_paths(&facts, &results);
         assert!(
@@ -2046,46 +3843,67 @@ mod tests {
         );
     }
 
-    /// The realizable counterpart: a source in the caller flows through a call
-    /// into a callee, where the sink lives. The meet happens on the callee
-    /// formal in the `Restricted` state it was actually reached in, so the path
-    /// is found.
+    /// The realizable counterpart: a source in the caller flows through a `Call`
+    /// into a callee, where the sink lives. The `Call` moves the annotation to
+    /// `Restricted` but the sink is right there, so the path is found.
     #[test]
     fn finds_realizable_path_through_call() {
         let source = endpoint_on(1, formal(0), "X", TaintDirection::Forward);
         let sink = endpoint_on(2, formal(0), "X", TaintDirection::Backward);
 
-        let s = (
-            FunctionId::new(1),
-            TaintState::Free,
-            formal(0),
-            Path::empty(),
-        );
-        let f_restricted = (
-            FunctionId::new(2),
-            TaintState::Restricted,
-            formal(0),
-            Path::empty(),
-        );
+        let s = node(1, formal(0));
+        let f = node(2, formal(0));
 
         let facts = FormatFacts {
             taint: vec![
-                taint_fact(1, TaintState::Free, formal(0), source.clone()),
+                taint_fact(1, formal(0), source.clone()),
                 // The sink endpoint sits on the callee formal.
-                taint_fact(2, TaintState::Free, formal(0), sink.clone()),
+                taint_fact(2, formal(0), sink.clone()),
             ],
             ..Default::default()
         };
-        // call: S flows into the callee formal, which becomes Restricted.
-        let results = taint_results(vec![edge(f_restricted, s)]);
+        // call: S flows into the callee formal.
+        let results = taint_results(vec![edge(FlowEdge::Call(a_site()), s, f)]);
 
         let paths = find_endpoint_paths(&facts, &results);
         assert_eq!(paths.len(), 1, "expected the realizable call path");
         assert_eq!(paths[0].source, source);
         assert_eq!(paths[0].sink, sink);
 
-        // The path ends on the Restricted F, the state it was reached in.
+        // The path ends on the callee formal F.
         let fg = build_taint_flow_graph(&facts, &results);
-        assert_eq!(paths[0].nodes.last(), Some(&fg.node_to_id[&f_restricted]));
+        assert_eq!(paths[0].nodes.last(), Some(&fg.node_to_id[&f]));
+    }
+
+    /// A `Return` taken while still `Free` (the search has not descended through
+    /// a `Call`) is realizable: entering a callee's returned value and flowing
+    /// back to an unknown caller is allowed, and keeps the annotation `Free`.
+    #[test]
+    fn finds_realizable_return_path() {
+        let source = endpoint_on(2, formal(0), "X", TaintDirection::Forward);
+        let sink = endpoint_on(1, formal(1), "X", TaintDirection::Backward);
+
+        // f: source on a callee vertex; t: returned-to vertex in the caller.
+        let f = node(2, formal(0));
+        let t = node(1, formal(1));
+
+        let facts = FormatFacts {
+            taint: vec![
+                taint_fact(2, formal(0), source.clone()),
+                taint_fact(1, formal(1), sink.clone()),
+            ],
+            ..Default::default()
+        };
+        // return: F flows out to T while the annotation is still Free.
+        let results = taint_results(vec![edge(FlowEdge::Return(a_site()), f, t)]);
+
+        let paths = find_endpoint_paths(&facts, &results);
+        assert_eq!(paths.len(), 1, "expected the realizable return path");
+        assert_eq!(paths[0].source, source);
+        assert_eq!(paths[0].sink, sink);
+
+        let fg = build_taint_flow_graph(&facts, &results);
+        assert_eq!(paths[0].nodes.first(), Some(&fg.node_to_id[&f]));
+        assert_eq!(paths[0].nodes.last(), Some(&fg.node_to_id[&t]));
     }
 }

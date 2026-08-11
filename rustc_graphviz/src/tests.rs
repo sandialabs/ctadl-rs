@@ -410,9 +410,8 @@ fn simple_id_construction() {
 #[test]
 fn badly_formatted_id() {
     let id2 = Id::new("Weird { struct : ure } !!!");
-    match id2 {
-        Ok(_) => panic!("graphviz id suddenly allows spaces, brackets and stuff"),
-        Err(..) => {}
+    if id2.is_ok() {
+        panic!("graphviz id suddenly allows spaces, brackets and stuff")
     }
 }
 
