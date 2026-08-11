@@ -25,8 +25,22 @@
 //!
 //! ## Non constant subscript indices
 //!
-//! We do not handle x.y[n].yada   x.y[1] makes a variable named [1] but [n] doesn't make [n]...
-//! TODO what does denbuen says about this?
+//! A subscript is lowered as the pointer arithmetic it is: `a[3]` is the address `a.[3]` plus
+//! the dereference performed there, `deref` (see [`DEREF_FIELD`]). A non-constant index has no
+//! offset to name, so `a[n]` becomes a bare dereference of the base address -- literally the
+//! path `a[0]` produces. A write through `a[n]` is therefore observed at a read of `a[0]`, but
+//! *not* at a nonzero constant index: `a[n] = v` does not reach `a[2]`. That is the remaining
+//! half of the F5 gap. Closing it means over-approximating the index here -- for instance,
+//! lowering *every* subscript on a base the function also indexes non-constantly to the bare
+//! dereference -- and not asking the path matcher to alias two spellings, which it does not do.
+//!
+//! ## Addresses of struct members
+//!
+//! [`Context::flatten_address_of`] can form the address of an array element (`&a[1]`), because
+//! an address in the IR is a base variable plus numeric offsets. A member address (`&s.f`) has
+//! no such spelling -- it would need `f`'s byte offset, which this frontend, having no type
+//! information, cannot compute -- so `&s.f` falls back to the value-copy model and a callee's
+//! write through that pointer is dropped.
 //!
 //!
 //! ## Pointer references feel the same a values
@@ -50,12 +64,15 @@
 //!
 
 use hashbrown::hash_map::HashMap;
+use hashbrown::hash_set::HashSet;
 
 use crate::error::Error;
 
 use ctadl_ir::ThinVec;
 use ctadl_ir::index::index_vec::IndexVec;
 use ctadl_ir::mir::*;
+
+use source_info::{ArtifactEncoding, ArtifactKey, ArtifactMetadata, SourceInfoBuilder, SpanLen};
 
 use internment::ArcIntern;
 use streaming_iterator::{IntoStreamingIterator, StreamingIterator};
@@ -370,6 +387,8 @@ fn add_scoped_block(
         blidx,
         sidx,
         continuation_blidx: scope_view.continuation_blidx,
+        break_target: scope_view.break_target,
+        continue_target: scope_view.continue_target,
         explainer: format!("{}.{}", blidx.get(), debug_explainer),
     };
     if link_the_blocks {
@@ -395,6 +414,8 @@ fn add_block(
         blidx,
         sidx: scope_view.sidx,
         continuation_blidx: scope_view.continuation_blidx,
+        break_target: scope_view.break_target,
+        continue_target: scope_view.continue_target,
         explainer: format!("{}.{}", blidx.get(), debug_explainer),
     };
     if link_the_blocks {
@@ -418,6 +439,8 @@ fn add_scope(
         blidx: scope_view.blidx,
         sidx,
         continuation_blidx: scope_view.continuation_blidx,
+        break_target: scope_view.break_target,
+        continue_target: scope_view.continue_target,
         explainer: format!("{}.{}", scope_view.blidx.get(), debug_explainer),
     }
 }
@@ -426,12 +449,185 @@ fn add_scope(
 #[repr(transparent)]
 struct FunctionName<'a>(&'a str);
 
+/// Synthetic field name that all members of a `union` variable collapse to, so they share a
+/// single access path (union members alias -- they occupy the same storage). The `$` keeps it
+/// out of the C identifier space, so it can never collide with a real source-level field.
+const UNION_FIELD: &str = "$union";
+
+/// Field name for the *memory* an address names -- the dereference itself. An `Offset(N)` in a
+/// path is pointer arithmetic and nothing else: it moves an address, it never reads. Every
+/// access that actually touches memory ends in this symbol, so `a[3]`, which is `*(a + 3)`,
+/// lowers to two segments: `Offset(3)` on the address, then `deref` for the read or write
+/// performed there -- the path `a.[3].deref`.
+///
+/// Splitting the two is what makes element addresses composable. Offsets are summed when paths
+/// meet (`facts::Path::from_accesses`), so an address formed by `&a[1]` (`a.[1]`) that a callee
+/// writes at `.[1].deref` lands on `a.[2].deref` -- the same path a caller's `a[2]` reads. A
+/// single symbolic `[N]` field, which is what this frontend used to emit, cannot compose that
+/// way: no arithmetic relates `Symbol("[1]")` to `Symbol("[2]")`. The name and the
+/// `base.[off].deref` shape are the pcode frontend's, so the two C frontends spell a memory
+/// access the same way. (The dex and jvm frontends spell their element field `[]`; those are
+/// typed array loads, not pointer arithmetic, so they have no offset to keep separate.)
+///
+/// This is the *only* dereference field the frontend emits: a non-constant index lowers to it
+/// with no offset, so `a[n]` and `a[0]` are one path. See [`push_element`].
+const DEREF_FIELD: &str = "deref";
+
+/// True for the synthetic dereference field ([`DEREF_FIELD`]) -- the memory at an address, as
+/// opposed to a struct member. Taking the address of such an access (`&a[i]`) drops this field,
+/// leaving the address itself.
+fn is_deref_field(seg: &PathSegment) -> bool {
+    matches!(seg, PathSegment::Symbol(s) if &**s == DEREF_FIELD)
+}
+
+/// The compile-time value of a lowered subscript index, if it has one. Only an integer literal
+/// counts: [`Context::flatten_expr`] lowers every constant to its source text (`Exp::Str`), so
+/// this is where `a[0x10]`, `a[3u]` and `a[3]` become the same offset and `a['c']`, `a["s"]`,
+/// `a[n]` become none. C integer suffixes (`u`, `l`, and their combinations) are dropped; a
+/// negative index is a real (if unusual) offset and is kept.
+fn constant_index(exp: &Exp) -> Option<i64> {
+    let Exp::Str(text) = exp else {
+        return None;
+    };
+    let text = text.trim();
+    let digits = text.trim_end_matches(['u', 'U', 'l', 'L']);
+    let (radix, digits) = match digits.strip_prefix(['-', '+']) {
+        // Sign is re-attached below by parsing the whole (suffix-stripped) text in base 10.
+        Some(_) => (10, digits),
+        None => match digits.get(..2) {
+            Some("0x") | Some("0X") => (16, &digits[2..]),
+            Some("0b") | Some("0B") => (2, &digits[2..]),
+            _ => (10, digits),
+        },
+    };
+    i64::from_str_radix(digits, radix).ok()
+}
+
+/// The location a dereference of `pointee` names, for a pointer bound by address-of
+/// ([`Context::addr_alias`]). An interior element address (`p = &x[1]` binds the address
+/// `x.[1]`) is dereferenced by reading the memory there, so `*p` is `x.[1].deref`. A pointee
+/// that is a bare variable (`p = &x`) has no address path: CTADL models it as the variable
+/// itself (the value-copy model), so there is nothing to add and this returns `None`.
+fn deref_of_pointee(pointee: &AccessPath) -> Option<RawPath> {
+    if pointee.path.is_empty() {
+        return None;
+    }
+    let mut fields: ThinVec<PathSegment> = pointee
+        .path
+        .fields
+        .iter()
+        .cloned()
+        .map(PathSegment::from)
+        .collect();
+    fields.push(PathSegment::symbol(DEREF_FIELD));
+    Some(RawPath::new(pointee.variable_ref.clone(), fields))
+}
+
+/// Appends the path segments a subscript contributes: a pointer-arithmetic offset for a constant
+/// index (elided when it is zero -- `a[0]` *is* `*a`, and the analysis drops `Offset(0)` anyway)
+/// followed by the dereference the subscript performs. See [`DEREF_FIELD`].
+///
+/// An index that is not a compile-time constant has no offset to name, so it lowers to the bare
+/// dereference -- the same path `a[0]` produces. That is deliberate: the two *are* the same path,
+/// so a write through `a[n]` is observed at a read of `a[0]` and vice versa, with no help from the
+/// path matcher, which treats every symbol as an opaque name. Approximating the unknown index by
+/// the base address is the frontend's own choice of over-approximation; see the module-level
+/// "Non constant subscript indices" note for what it still misses.
+fn push_element(fields: &mut ThinVec<PathSegment>, index: Option<i64>) {
+    match index {
+        Some(n) if n != 0 => {
+            fields.push(PathSegment::offset(n));
+            fields.push(PathSegment::symbol(DEREF_FIELD));
+        }
+        Some(_) | None => fields.push(PathSegment::symbol(DEREF_FIELD)),
+    }
+}
+
 #[derive(Debug, Default)]
 struct Context<'a> {
     functions: HashMap<FunctionName<'a>, FunctionIdx>,
     param_names: HashMap<FunctionName<'a>, IndexVec<ParameterIdx, &'a str>>,
     scope_tree: ScopeTree,
     allocator: TempAllocator,
+    /// Block that each `goto` label maps to, for the function currently being walked.
+    /// Labels are function-scoped and can be jumped to before they are defined, so
+    /// (unlike `break`/`continue` targets, which ride on `ScopeView`) the blocks are
+    /// created in a pre-scan over the whole body and looked up here. Reset per function.
+    label_blocks: HashMap<String, BasicBlockIdx>,
+    /// Intraprocedural must-points-to for address-taken locals: maps a pointer variable
+    /// `p` to the access path it was taken to (`x` after `p = &x`) together with the basic
+    /// block in which that binding was established. Used to resolve a dereference `*p` --
+    /// as a store LHS (`*p = v`) or a load RHS (`y = *p`) -- to the pointee `x`, so a write
+    /// through the alias taints `x` (the F3 soundness gap: CTADL models pointers as value
+    /// copies, which is sound for reads but drops the write-back). The block key confines
+    /// each binding to the straight-line region it was recorded in: a lookup only trusts an
+    /// entry whose block matches the current `blidx`, so once control flow moves to another
+    /// block the alias is dropped and we fall back to the value-copy model. That keeps the
+    /// must-points-to exact (no cross-branch may-alias reasoning) and never less sound than
+    /// before. Reset per function.
+    addr_alias: HashMap<VariableRef, (AccessPath, BasicBlockIdx)>,
+    /// Variables declared with a `union` type. A union's members share storage, so every
+    /// member access aliases the others (`u.a = v` is observable at a read of `u.b`). CTADL
+    /// is otherwise field-sensitive -- correct for structs, whose members are disjoint --
+    /// so union members are collapsed to a single synthetic field (see `UNION_FIELD`) when a
+    /// `field_expression` is lowered off one of these variables, making all members the same
+    /// access path (the F4 soundness gap). Populated from `union_specifier`-typed local
+    /// declarations; reset per function.
+    union_vars: HashSet<VariableRef>,
+    /// Builder that interns source spans, or `None` when spans are not being recorded
+    /// (the `parse_c_program` path used by tests and the marked-up dump). `import_c`
+    /// installs a builder so imported IR carries locations back to the C source.
+    source_info: Option<SourceInfoBuilder>,
+    /// Maps offsets in the parsed buffer back to the original file(s). Empty (and thus
+    /// span-less) unless `import_c` populated it. See [`read_c_source`].
+    file_map: FileMap,
+    /// Span attached to every IR statement emitted while lowering the C statement currently
+    /// being walked. Set once per source statement in [`Context::walk_statement`] so that all
+    /// the IR it expands into (calls, loads, stores) points back at that statement.
+    cur_span: SourceInfo,
+}
+
+/// One source file's placement inside the combined parse buffer produced by
+/// [`read_c_source`].
+#[derive(Debug)]
+struct FileSlice {
+    /// Offset in the combined buffer where this file's content begins.
+    combined_start: usize,
+    /// Length in bytes of this file's content within the combined buffer.
+    len: usize,
+    /// Path of the original file (as displayed).
+    path: String,
+    /// SHA-256 of the file's content, matching the store's artifact-hash scheme.
+    hash: Vec<u8>,
+}
+
+/// Maps offsets in the combined parse buffer back to the original source file and the
+/// offset within it, so IR spans reference real files even when a directory is parsed
+/// as one concatenated translation unit. Slices are non-overlapping; the marker lines
+/// inserted between files are gaps that map to no file.
+#[derive(Debug, Default)]
+struct FileMap {
+    slices: Vec<FileSlice>,
+}
+
+impl FileMap {
+    /// Locate the file containing combined-buffer offset `off`, returning that file's
+    /// artifact key, the offset within the file, and the number of bytes remaining in
+    /// the file from that offset (so a span can be clamped to the file boundary).
+    fn locate(&self, off: usize) -> Option<(ArtifactKey, u32, usize)> {
+        let slice = self
+            .slices
+            .iter()
+            .find(|s| off >= s.combined_start && off < s.combined_start + s.len)?;
+        let local = off - slice.combined_start;
+        let key = ArtifactKey {
+            path: slice.path.clone(),
+            sub_artifact_id: 0,
+            hash: slice.hash.clone(),
+            encoding: ArtifactEncoding::Utf8,
+        };
+        Some((key, local as u32, slice.len - local))
+    }
 }
 
 pub struct MatchExtractor<'q, 'cursor, 'tree> {
@@ -603,6 +799,148 @@ pub fn parse_c_program(source: &str) -> anyhow::Result<(Program, bool, String), 
     Ok((program, tree.root_node().has_error(), marked_up))
 }
 
+/// Import C source at `path` into a [`ProgramInfo`], ready for [`crate::cli::import`].
+///
+/// `path` may be a single C source file (`.c`) or header (`.h`), or a directory
+/// tree containing such files. A directory is imported as one translation unit:
+/// every `.h` and `.c` file it contains (recursively) is concatenated -- headers
+/// first, then `.c` files, each group in sorted path order -- and parsed together,
+/// so declarations in the headers are in scope for the definitions that use them
+/// and references resolve across files.
+///
+/// The frontend expects post-preprocessor C source: `#include` directives are not
+/// expanded here, so a directory should already contain preprocessed translation
+/// units (or self-contained sources).
+pub fn import_c(path: &std::path::Path) -> Result<ProgramInfo, Error> {
+    let (source, file_map) = read_c_source(path)?;
+    let (program, source_info, has_error, _marked_up) =
+        parse_c_with_source_info(&source, file_map)?;
+    if has_error {
+        log::warn!(
+            "tree-sitter reported syntax errors while parsing C source at '{}'; \
+             the imported IR may be incomplete (is the input already preprocessed?)",
+            path.display()
+        );
+    }
+    Ok(ProgramInfo {
+        program,
+        source_info,
+        ..Default::default()
+    })
+}
+
+/// Parse `source` into a [`Program`] together with the [`source_info::SourceInfo`] that maps
+/// its IR statements back to the original files described by `file_map`. This is the
+/// span-recording variant of [`parse_c_program`], used by [`import_c`].
+fn parse_c_with_source_info(
+    source: &str,
+    file_map: FileMap,
+) -> Result<(Program, source_info::SourceInfo, bool, String), Error> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_c::LANGUAGE.into())
+        .expect("error loading C grammar");
+
+    let mut ctx = Context {
+        source_info: Some(SourceInfoBuilder::new(ArtifactMetadata::new())),
+        file_map,
+        ..Default::default()
+    };
+    let mut program = Program::default();
+    let tree = parser
+        .parse(source, None)
+        .expect("tree‐sitter failed to parse");
+    ctx.parse(source, &tree, &mut program)?;
+    // Give called-but-undefined functions (external declarations like `int source();`) a
+    // function id so taint models can match them by name. Only the import path needs this;
+    // the in-memory `parse_c_program` used by unit tests deliberately omits these stubs.
+    define_extern_functions(&mut program);
+    let marked_up = markup(&program, &ctx);
+    let has_error = tree.root_node().has_error();
+    let source_info = ctx
+        .source_info
+        .take()
+        .expect("builder is Some in this path")
+        .finish();
+    Ok((program, source_info, has_error, marked_up))
+}
+
+/// Read the C source for [`import_c`], returning the buffer to parse and a [`FileMap`]
+/// mapping offsets in that buffer back to the original files. A single file maps to
+/// itself; a directory is concatenated into one translation unit -- every header and
+/// `.c` file underneath it (headers first, then `.c` files, each group in sorted path
+/// order) -- and the map records where each file landed so IR spans still name it.
+fn read_c_source(path: &std::path::Path) -> Result<(String, FileMap), Error> {
+    if !path.is_dir() {
+        let contents = std::fs::read_to_string(path)?;
+        let mut map = FileMap::default();
+        map.slices.push(FileSlice {
+            combined_start: 0,
+            len: contents.len(),
+            path: path.display().to_string(),
+            hash: source_info::sha256(contents.as_bytes()),
+        });
+        return Ok((contents, map));
+    }
+
+    let mut headers = Vec::new();
+    let mut sources = Vec::new();
+    collect_c_files(path, &mut headers, &mut sources)?;
+    if headers.is_empty() && sources.is_empty() {
+        return Err(Error::Path {
+            message: format!("no .c or .h files found under '{}'", path.display()),
+        });
+    }
+    headers.sort();
+    sources.sort();
+
+    let mut combined = String::new();
+    let mut map = FileMap::default();
+    for file in headers.iter().chain(sources.iter()) {
+        let contents = std::fs::read_to_string(file)?;
+        // Mark where each file's contents begin (aids debugging the merged unit)
+        // and separate files with newlines so tokens across a boundary never merge.
+        combined.push_str(&format!("// ==== {} ====\n", file.display()));
+        // The file's content begins *after* the marker line; record that so spans
+        // land at the right offset within the original file.
+        let combined_start = combined.len();
+        let hash = source_info::sha256(contents.as_bytes());
+        combined.push_str(&contents);
+        map.slices.push(FileSlice {
+            combined_start,
+            len: contents.len(),
+            path: file.display().to_string(),
+            hash,
+        });
+        combined.push('\n');
+    }
+    Ok((combined, map))
+}
+
+/// Recursively collect `.h` files into `headers` and `.c` files into `sources`
+/// under `dir`. Any other file is ignored.
+fn collect_c_files(
+    dir: &std::path::Path,
+    headers: &mut Vec<std::path::PathBuf>,
+    sources: &mut Vec<std::path::PathBuf>,
+) -> Result<(), Error> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.is_dir() {
+            collect_c_files(&path, headers, sources)?;
+        } else if metadata.is_file() {
+            match path.extension().and_then(|e| e.to_str()) {
+                Some("h") => headers.push(path),
+                Some("c") => sources.push(path),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn compile_query(query_src: &str) -> Query {
     Query::new(&tree_sitter_c::LANGUAGE.into(), query_src).unwrap_or_else(|e| {
         let header = "--- Query Syntax Error ---";
@@ -624,6 +962,79 @@ fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
     n.utf8_text(source.as_bytes()).unwrap().trim()
 }
 
+/// Collect the names of every `labeled_statement` label reachable under `node`
+/// (recursing through nested blocks/ifs/loops). Used to pre-create a block per label
+/// before the body is walked, so a `goto` to a not-yet-seen label still resolves.
+fn collect_labels(node: Node<'_>, source: &str, out: &mut Vec<String>) {
+    if node.kind() == "labeled_statement"
+        && let Some(label) = node.child_by_field_name("label")
+    {
+        out.push(to_str(&label, source).to_string());
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_labels(child, source, out);
+    }
+}
+
+/// Register every directly-called function that has no definition in this translation unit
+/// as an empty-body (external) function.
+///
+/// Taint models identify sources, sinks, and propagators by name (`source`, `sink`,
+/// `malloc`, ...), and both the model engine and query-time endpoint resolution look the
+/// name up among the program's functions. A function that is only *declared* in C (e.g.
+/// `int source();`) never reaches `collect_functions` -- which matches `function_definition`
+/// nodes -- so without this pass its calls have edges pointing at a name that no IR function
+/// carries, and every model targeting it silently matches nothing. Creating an empty-body
+/// function gives the name a function id the model/query can resolve; the empty body also
+/// marks it external during indexing (see codegen's `external_function`). Mirrors the extern
+/// pass in the dex/jvm frontends. Runs on the import path only (see `parse_c_with_source_info`).
+fn define_extern_functions(program: &mut Program) {
+    use std::collections::BTreeMap;
+
+    // Direct-call target name -> the largest argument count seen at any call site, so an
+    // `AnyArgument`/by-index model has enough formal parameters to anchor to. A BTreeMap
+    // keeps creation order deterministic.
+    let mut called: BTreeMap<String, usize> = BTreeMap::new();
+    // Names that already have a body; these must not be recreated.
+    let mut defined: HashSet<String> = HashSet::new();
+    for func in program.functions.iter() {
+        if !func.blocks.is_empty() {
+            defined.insert(func.name.clone());
+        }
+        for block in func.blocks.iter() {
+            for stmt in &block.statements {
+                if let StatementKind::CallAssign {
+                    style:
+                        CallStyle::DirectCall {
+                            call_edges: CallEdges::Explicit(names),
+                        },
+                    args,
+                    ..
+                } = &stmt.kind
+                {
+                    for name in names {
+                        let slot = called.entry(name.clone()).or_insert(0);
+                        *slot = (*slot).max(args.len());
+                    }
+                }
+            }
+        }
+    }
+
+    for (name, arity) in called {
+        if defined.contains(&name) {
+            continue;
+        }
+        let fidx = program.new_function();
+        let fdat = &mut program.functions[fidx];
+        fdat.name = name;
+        for _ in 0..arity {
+            fdat.params.push(ParameterType::ByVal);
+        }
+    }
+}
+
 // This struct temporarily holds the specific book keeping needs of a function parse
 #[derive(Debug, Clone)]
 pub struct ScopeView {
@@ -634,6 +1045,16 @@ pub struct ScopeView {
     // `None` is the fall-off-the-end sentinel: a continuation link to `None` becomes
     // an implicit `return` rather than a `goto` back to the entry block.
     pub continuation_blidx: Option<BasicBlockIdx>,
+    // Where a `break` jumps: the innermost enclosing `switch`/loop continuation.
+    // `None` means there is no enclosing breakable construct (a `break` here is an
+    // error). Like `continuation_blidx`, this rides along by value as we descend, so
+    // a child scope that overrides it has the parent's value automatically restored
+    // on return — no explicit stack/push/pop is needed.
+    pub break_target: Option<BasicBlockIdx>,
+    // Where a `continue` jumps: the innermost enclosing loop's re-test/update block.
+    // A `switch` deliberately leaves this untouched, so a `continue` inside a switch
+    // arm still targets the enclosing loop (matching C semantics).
+    pub continue_target: Option<BasicBlockIdx>,
     pub explainer: String,
 }
 
@@ -673,6 +1094,44 @@ impl<'a> Context<'a> {
         };
 
         self.add_assign_to_program(program, scope_view, &target_ap, &rhs_var, right_op.as_ref());
+
+        // Maintain the address-of must-points-to map (see `Context::addr_alias`). Only a
+        // plain, whole assignment to a variable (`p = &x`, or a declarator initializer)
+        // updates it; a store through a dereference (`*p = ...`, whose `target_node` is
+        // itself a `pointer_expression`) writes *through* the alias and must not disturb it.
+        if target_node.kind() != "pointer_expression" && target_ap.is_pathless() {
+            let is_plain_assign = operator_node.is_none_or(|op| op.kind() == "=");
+            let addr_of_pointee = if is_plain_assign
+                && expr_node.kind() == "pointer_expression"
+                && expr_node
+                    .child_by_field_name("operator")
+                    .is_some_and(|op| to_str(&op, source) == "&")
+            {
+                // `p = &x`: `rhs_var` is the pointee (`&x` flattened to `x`). A plain local
+                // pointee is an `Exp::Variable`; a field/global pointee is an `Exp::AccessPath`.
+                match &rhs_var {
+                    Exp::Variable(v) => Some(AccessPath::without_fields(v.clone())),
+                    Exp::AccessPath(pointee) => Some(pointee.clone()),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            match addr_of_pointee {
+                Some(pointee) => {
+                    self.addr_alias
+                        .insert(target_ap.base.clone(), (pointee, scope_view.blidx));
+                }
+                // Any other assignment to `p` (a different pointer, a computed value, a
+                // compound `+=`) makes its pointee unknown -- drop the stale binding so a
+                // later `*p` falls back to the value-copy model instead of resolving to the
+                // wrong local.
+                None => {
+                    self.addr_alias.remove(&target_ap.base);
+                }
+            }
+        }
+
         // The value of an assignment expression is the assigned location, so a chained
         // assignment (`b = a = 5`) flows the target `a` into `b`. A field target (a store) has
         // no bare-variable value, so fall back to the assigned value there.
@@ -681,6 +1140,85 @@ impl<'a> Context<'a> {
         } else {
             Ok(rhs_var)
         }
+    }
+
+    /// Lower an aggregate brace initializer (`int a[2] = { s, 0 }`,
+    /// `struct P p = { s, 0 }`) into per-element stores. `decl_ident` is the declarator
+    /// being initialized (an `array_declarator` for arrays, an `identifier` for structs
+    /// / scalars); flattening it yields -- and registers -- the base access path.
+    fn collect_initializer_list(
+        &mut self,
+        source: &str,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        decl_ident: Node<'_>,
+        init_list: Node<'_>,
+    ) -> Result<(), Error> {
+        let base_ap = self.flatten_lvalue(program, decl_ident, source, scope_view)?;
+        self.lower_initializer_list(source, program, scope_view, &base_ap, init_list)
+    }
+
+    /// Walk the elements of an `initializer_list`, storing each into a successive element of
+    /// `base_ap` -- the same offset + `deref` shape a constant-index subscript read (`a[0]`)
+    /// resolves to (see `push_element` and `flatten_subscript`), so taint deposited here is
+    /// later observed at the read. Positional struct fields reuse the same element synthesis (no
+    /// type info to recover member names). Nested aggregates (`{{..},{..}}`) recurse, extending
+    /// the base path by the outer index.
+    fn lower_initializer_list(
+        &mut self,
+        source: &str,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        base_ap: &RawPath,
+        init_list: Node<'_>,
+    ) -> Result<(), Error> {
+        let mut cursor = init_list.walk();
+        let mut idx = 0usize;
+        for elem in init_list.children(&mut cursor) {
+            if !elem.is_named() {
+                continue; // skip the `{`, `,`, `}` tokens
+            }
+            // Pick this element's target sub-path + its value node.
+            let (fields, value_node) = if elem.kind() == "initializer_pair" {
+                // Designated: `.member = e` or `[n] = e`.
+                let designator = elem
+                    .child_by_field_name("designator")
+                    .expect("initializer_pair always has a designator");
+                let value = elem
+                    .child_by_field_name("value")
+                    .expect("initializer_pair always has a value");
+                let dtext = to_str(&designator, source);
+                let mut fields = ThinVec::new();
+                if let Some(member) = dtext.strip_prefix('.') {
+                    // `.a` -> Symbol("a"), matching how a `.a` field read is lowered.
+                    fields.push(PathSegment::symbol(member.trim()));
+                } else {
+                    // `[n]` array designator -> the same offset + dereference a subscript read
+                    // of that index resolves to.
+                    let index = dtext.trim().trim_start_matches('[').trim_end_matches(']');
+                    push_element(
+                        &mut fields,
+                        constant_index(&Exp::Str(ArcIntern::<str>::from(index))),
+                    );
+                }
+                (fields, value)
+            } else {
+                // Positional element -> successive indices.
+                let mut fields = ThinVec::new();
+                push_element(&mut fields, Some(idx as i64));
+                idx += 1;
+                (fields, elem)
+            };
+            let mut elem_ap = base_ap.clone();
+            elem_ap.fields.extend(fields);
+            if value_node.kind() == "initializer_list" {
+                self.lower_initializer_list(source, program, scope_view, &elem_ap, value_node)?;
+            } else {
+                let rhs = self.flatten_expr(program, value_node, source, scope_view)?;
+                self.add_assign_to_program(program, scope_view, &elem_ap, &rhs, None);
+            }
+        }
+        Ok(())
     }
 
     fn setup_compound<'b>(
@@ -753,74 +1291,14 @@ impl<'a> Context<'a> {
     ) -> Result<(), Error> {
         let mut scope_view = scope_view_meowsers.clone();
 
-        /*  let mut cursor = compound.walk();
-
-        for child in compound.children(&mut cursor) {
-        */
         for &child in &compound.nodes {
             if !child.is_named() {
                 continue; // we skip , ( stuff like that...
             }
-            let kind = child.kind();
-            match kind {
-                "comment" => {}
-                "compound_statement" => {
-                    let (inner_view, cp) = self.setup_compound(
-                        program,
-                        &mut scope_view,
-                        child,
-                        BlockTypeRequest::JustScope,
-                        true,
-                        "compound_statement",
-                    )?;
-                    self.walk_compound_statement(source, program, &inner_view, &cp)?;
-                }
-                "declaration" => {
-                    self.walk_declaration(source, program, &scope_view, child)?;
-                }
-                "assignment_expression" => {
-                    self.flatten_expr(program, child, source, &scope_view)?;
-                }
-                "expression_statement" | "update_expression" => {
-                    if let Some(inner_child) = child.child(0) {
-                        self.flatten_expr(program, inner_child, source, &scope_view)?;
-                    }
-                }
-                "parenthesized_expression" => {
-                    if let Some(inner_child) = child.child(1) {
-                        self.flatten_expr(program, inner_child, source, &scope_view)?;
-                    }
-                }
-                "if_statement" => self.walk_if(source, program, &mut scope_view, child)?,
-                "while_statement" => {
-                    self.walk_while(source, program, &mut scope_view, child)?;
-                }
-                "do_statement" => {
-                    self.walk_do_while(source, program, &mut scope_view, child)?;
-                }
-                "for_statement" => {
-                    self.walk_for(source, program, &mut scope_view, child)?;
-                }
-                "return_statement" => {
-                    return self.walk_return(source, program, &mut scope_view, child);
-                }
-                "ERROR" => {
-                    let node_str = to_str(&child, source);
-                    log::warn!("Unknown token(2): {kind}: {node_str}");
-                }
-                _ => {
-                    self.flatten_expr(program, child, source, &scope_view)?;
-                    /*
-                    let node_str = to_str(&child, source);
-                    log::error!(
-                        "Unknown token?maybe? or we fall through now(2): {kind}: {node_str}"
-                    );*/
-
-                    /*debug_print_tree(child, 0, None, Some(5));
-                    return Err(Error::TreeSitterParse(
-                        format!("Unknown Token({})", kind).to_owned(),
-                    ));*/
-                }
+            // A statement that diverges (return/break/continue, or a label whose body
+            // diverges) ends the compound; the trailing fall-through link is skipped.
+            if self.walk_statement(source, program, &mut scope_view, child)? {
+                return Ok(());
             }
         }
 
@@ -831,6 +1309,122 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
+    /// Lower a single statement, threading `scope_view` (so control-flow statements can
+    /// move the "current block" for following statements). Returns `true` if the
+    /// statement *diverged* — i.e. it terminated the current block with no fall-through
+    /// (`return`/`break`/`continue`, or a `labeled_statement` whose body diverges) — so
+    /// the enclosing compound should stop and skip its end-of-compound link.
+    /// Intern a span for `node`'s byte range (mapped back to the original file via
+    /// [`FileMap`]) and return the [`SourceInfo`] pointing at it. Returns the default
+    /// (no-span) `SourceInfo` when span recording is off or the offset falls outside any
+    /// known file (e.g. the marker lines between concatenated files).
+    fn span_for_node(&mut self, node: Node<'_>) -> SourceInfo {
+        let start = node.start_byte();
+        let end = node.end_byte();
+        let Some((key, local_start, max_len)) = self.file_map.locate(start) else {
+            return SourceInfo::default();
+        };
+        let len = end.saturating_sub(start).min(max_len) as u32;
+        match self.source_info.as_mut() {
+            Some(builder) => {
+                SourceInfo::new(builder.span_for(key, local_start, SpanLen::ByteLen(len)))
+            }
+            None => SourceInfo::default(),
+        }
+    }
+
+    fn walk_statement(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        child: Node<'_>,
+    ) -> Result<bool, Error> {
+        let kind = child.kind();
+        // Every IR statement lowered from this C statement inherits its source span.
+        self.cur_span = self.span_for_node(child);
+        match kind {
+            "comment" => {}
+            "compound_statement" => {
+                let (inner_view, cp) = self.setup_compound(
+                    program,
+                    scope_view,
+                    child,
+                    BlockTypeRequest::JustScope,
+                    true,
+                    "compound_statement",
+                )?;
+                self.walk_compound_statement(source, program, &inner_view, &cp)?;
+            }
+            "declaration" => {
+                self.walk_declaration(source, program, scope_view, child)?;
+            }
+            "assignment_expression" => {
+                self.flatten_expr(program, child, source, scope_view)?;
+            }
+            "expression_statement" | "update_expression" => {
+                // An empty statement (`;`) -- e.g. the body of a label, `done: ;` --
+                // parses as an `expression_statement` whose only child is the `;` token.
+                // There is no expression to lower, so skip it; otherwise the bare `;`
+                // falls through to `flatten_expr`'s catch-all and fails ingestion (ERR 78).
+                if let Some(inner_child) = child.child(0)
+                    && !_is_empty(&inner_child)
+                {
+                    self.flatten_expr(program, inner_child, source, scope_view)?;
+                }
+            }
+            "parenthesized_expression" => {
+                if let Some(inner_child) = child.child(1) {
+                    self.flatten_expr(program, inner_child, source, scope_view)?;
+                }
+            }
+            "if_statement" => self.walk_if(source, program, scope_view, child)?,
+            "while_statement" => {
+                self.walk_while(source, program, scope_view, child)?;
+            }
+            "do_statement" => {
+                self.walk_do_while(source, program, scope_view, child)?;
+            }
+            "for_statement" => {
+                self.walk_for(source, program, scope_view, child)?;
+            }
+            "switch_statement" => {
+                self.walk_switch(source, program, scope_view, child)?;
+            }
+            // `return`/`break`/`continue` terminate the current block and have no
+            // fall-through, so they end the compound (skipping its end link).
+            "return_statement" => {
+                self.walk_return(source, program, scope_view, child)?;
+                return Ok(true);
+            }
+            "break_statement" => {
+                self.walk_break(program, scope_view)?;
+                return Ok(true);
+            }
+            "continue_statement" => {
+                self.walk_continue(program, scope_view)?;
+                return Ok(true);
+            }
+            // Unlike break/continue, a `goto` does NOT end the compound: code after it
+            // is unreachable but may hold labels that must still lower, so it updates
+            // `scope_view` (to a fresh block) and we fall through to the next sibling.
+            "goto_statement" => self.walk_goto(source, program, scope_view, child)?,
+            // A label's body diverges iff its inner statement does; propagate that so a
+            // `L: return x;` at the tail of a compound doesn't leave a dangling block.
+            "labeled_statement" => {
+                return self.walk_labeled_statement(source, program, scope_view, child);
+            }
+            "ERROR" => {
+                let node_str = to_str(&child, source);
+                log::warn!("Unknown token(2): {kind}: {node_str}");
+            }
+            _ => {
+                self.flatten_expr(program, child, source, scope_view)?;
+            }
+        }
+        Ok(false)
+    }
+
     fn walk_declaration(
         &mut self,
         source: &'a str,
@@ -839,6 +1433,13 @@ impl<'a> Context<'a> {
         node: Node<'_>,
     ) -> Result<(), Error> {
         let mut cursor = node.walk();
+
+        // A `union`-typed declaration (`union U u;`, inline `union U { .. } u;`, or anonymous
+        // `union { .. } u;`) has a `union_specifier` as its type. Its members share storage, so
+        // record the declared variables to collapse their member accesses (see `union_vars`).
+        let is_union = node
+            .child_by_field_name("type")
+            .is_some_and(|t| t.kind() == "union_specifier");
 
         for nest_decl in node.children_by_field_name("declarator", &mut cursor) {
             let decl_kind = nest_decl.kind();
@@ -872,8 +1473,30 @@ impl<'a> Context<'a> {
                 None,
                 None,
             );
+            // Mark a plainly-declared union variable so its member accesses collapse. Only a
+            // bare identifier declarator is handled (pointer/array union declarators take the
+            // `continue` path above and are left to the value-copy model).
+            if is_union && decl_ident.kind() == "identifier" {
+                let vref = self
+                    .build_access_path(
+                        var_name,
+                        Default::default(),
+                        scope_view,
+                        &mut program[scope_view.fidx].locals,
+                    )
+                    .base;
+                self.union_vars.insert(vref);
+            }
             if let Some(vc) = nest_decl.child_by_field_name("value") {
-                self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;
+                if vc.kind() == "initializer_list" {
+                    // Aggregate brace initializer, e.g. `int a[2] = { s, 0 }`. Lower it
+                    // to per-element stores `a[i] = elem_i` so taint flows into the
+                    // indexed access paths a later `a[0]` read resolves to. (Without this
+                    // the `initializer_list` reaches `flatten_expr`'s catch-all -> ERR 78.)
+                    self.collect_initializer_list(source, program, scope_view, decl_ident, vc)?;
+                } else {
+                    self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;
+                }
             };
         }
         Ok(())
@@ -931,6 +1554,8 @@ impl<'a> Context<'a> {
             blidx: scope_view.blidx,
             sidx: for_sidx,
             continuation_blidx: scope_view.continuation_blidx,
+            break_target: scope_view.break_target,
+            continue_target: scope_view.continue_target,
             explainer: "for_loop".to_string(),
         };
 
@@ -988,6 +1613,11 @@ impl<'a> Context<'a> {
         link_blocks(program, &condition_scope, &continuation, false)?;
         //what is the difference between walk_compound_statemnet and walk_compound_statement?
         body_scope.continuation_blidx = Some(update_scope.blidx);
+        // `break` leaves the loop; `continue` jumps to the update expression (which
+        // then re-tests the condition). Set on the body view so they ride into every
+        // nested non-loop block and are restored after the loop.
+        body_scope.break_target = Some(continuation.blidx);
+        body_scope.continue_target = Some(update_scope.blidx);
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
         self.walk_compound_statement(source, program, &update_scope, &update_cp)?;
         *scope_view = continuation;
@@ -1043,6 +1673,9 @@ impl<'a> Context<'a> {
         // continuation was already added by the condition's end-of-compound link.
         link_blocks(program, &condition_sv, &body_scope, false)?;
         body_scope.continuation_blidx = Some(condition_sv.blidx);
+        // `break` leaves the loop; `continue` jumps to the post-body condition test.
+        body_scope.break_target = Some(continuation.blidx);
+        body_scope.continue_target = Some(condition_sv.blidx);
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
         *scope_view = continuation;
         Ok(())
@@ -1095,9 +1728,222 @@ impl<'a> Context<'a> {
         )?;
 
         body_scope.continuation_blidx = Some(condition_sv.blidx);
+        // `break` leaves the loop; `continue` jumps back to the condition re-test.
+        body_scope.break_target = Some(continuation.blidx);
+        body_scope.continue_target = Some(condition_sv.blidx);
         self.walk_compound_statement(source, program, &body_scope, &cp)?;
         *scope_view = continuation;
         Ok(())
+    }
+
+    /// Lower a `switch` the way `if` is lowered: path-insensitively. The scrutinee
+    /// is flattened for its side effects but does not select a branch — the entry
+    /// block jumps non-deterministically to every arm. Arms fall through to the
+    /// next arm (C semantics) unless a `break` redirects to the continuation.
+    fn walk_switch(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        child: Node<'_>,
+    ) -> Result<(), Error> {
+        // `switch ( <condition> ) <body>`. Flatten the scrutinee for side effects.
+        let condition = child
+            .child_by_field_name("condition")
+            .expect("switch always has a condition");
+        self.flatten_expr(program, condition, source, &*scope_view)?;
+
+        let body = child
+            .child_by_field_name("body")
+            .expect("switch always has a body");
+
+        // Where control resumes after the switch, and the target of every `break`.
+        // `add_block` inherits the enclosing continuation, so a fall-off the end of
+        // the post-switch code still links correctly.
+        let continuation = add_block(
+            program,
+            &*scope_view,
+            &mut self.scope_tree,
+            false,
+            format!("switch_continuation(of)::{}", get_line_num(&child)).as_str(),
+        )?;
+
+        // The arms. `default:` is a valueless `case_statement`; there is no separate
+        // `default` node kind.
+        let mut cursor = body.walk();
+        let arms: Vec<Node<'_>> = body
+            .children(&mut cursor)
+            .filter(|n| n.kind() == "case_statement")
+            .collect();
+        let has_default = arms
+            .iter()
+            .any(|a| a.child_by_field_name("value").is_none());
+
+        // One block per arm, created up front so each arm can fall through to the
+        // next one. They inherit the switch's scope view, so each arm's
+        // `continue_target` is the enclosing loop's (a `switch` is transparent to
+        // `continue`); only `break_target` is overridden below.
+        let mut arm_svs: Vec<ScopeView> = Vec::with_capacity(arms.len());
+        for i in 0..arms.len() {
+            arm_svs.push(add_block(
+                program,
+                &*scope_view,
+                &mut self.scope_tree,
+                false,
+                format!("switch_case{i}(of)::{}", get_line_num(&child)).as_str(),
+            )?);
+        }
+
+        // Entry branches (non-deterministically) to every arm, plus straight to the
+        // continuation when no `default` guarantees an arm runs (covers an empty
+        // switch and the "value matched no case" path).
+        for sv in &arm_svs {
+            link_blocks(program, &*scope_view, sv, false)?;
+        }
+        if !has_default {
+            link_blocks(program, &*scope_view, &continuation, false)?;
+        }
+
+        for (i, arm) in arms.iter().enumerate() {
+            // Fall through to the next arm, or out of the switch on the last arm.
+            let fallthrough = arm_svs
+                .get(i + 1)
+                .map(|sv| sv.blidx)
+                .unwrap_or(continuation.blidx);
+            let mut arm_sv = arm_svs[i].clone();
+            arm_sv.continuation_blidx = Some(fallthrough);
+            // `break` in any arm jumps to the continuation. `continue_target` is left
+            // inherited so a `continue` here still targets the enclosing loop.
+            arm_sv.break_target = Some(continuation.blidx);
+
+            // Arm body = the case_statement's statement children (everything except
+            // the `case` value expression).
+            let value_id = arm.child_by_field_name("value").map(|v| v.id());
+            let mut body_cursor = arm.walk();
+            let stmts: Vec<Node<'_>> = arm
+                .children(&mut body_cursor)
+                .filter(|n| n.is_named() && Some(n.id()) != value_id)
+                .collect();
+            let cp = CompoundProxy {
+                nodes: stmts,
+                was_compound: false,
+            };
+            self.walk_compound_statement(source, program, &arm_sv, &cp)?;
+        }
+
+        *scope_view = continuation;
+        Ok(())
+    }
+
+    /// `break`: terminate the current block with a goto to the innermost enclosing
+    /// `switch`/loop continuation. The target rides on the scope view, so it is just
+    /// `scope_view.break_target` — no stack to consult.
+    fn walk_break(&self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
+        match scope_view.break_target {
+            Some(target) => {
+                let mut to = scope_view.clone();
+                to.blidx = target;
+                link_blocks(program, scope_view, &to, false)
+            }
+            None => Err(Error::TreeSitterParse(
+                "`break` outside of a switch or loop".to_string(),
+            )),
+        }
+    }
+
+    /// `continue`: terminate the current block with a goto to the innermost enclosing
+    /// loop's re-test/update block (`scope_view.continue_target`).
+    fn walk_continue(&self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
+        match scope_view.continue_target {
+            Some(target) => {
+                let mut to = scope_view.clone();
+                to.blidx = target;
+                link_blocks(program, scope_view, &to, false)
+            }
+            None => Err(Error::TreeSitterParse(
+                "`continue` outside of a loop".to_string(),
+            )),
+        }
+    }
+
+    /// `goto L`: terminate the current block with a jump to label `L`'s block (created
+    /// up front by the per-function pre-scan, so forward jumps resolve too). Unlike
+    /// `break`/`continue`, this does NOT end the compound — statements after a `goto`
+    /// are unreachable but may contain labels, so we keep lowering them into a fresh
+    /// (unlinked) block.
+    fn walk_goto(
+        &mut self,
+        source: &str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        child: Node<'_>,
+    ) -> Result<(), Error> {
+        let label_node = child
+            .child_by_field_name("label")
+            .expect("goto_statement always has a label");
+        let label = to_str(&label_node, source);
+        let target = *self.label_blocks.get(label).ok_or_else(|| {
+            Error::TreeSitterParse(format!("`goto` to undefined label `{label}`"))
+        })?;
+        let mut to = scope_view.clone();
+        to.blidx = target;
+        link_blocks(program, scope_view, &to, false)?;
+        // Anything after the goto is unreachable until the next label; lower it into a
+        // fresh block so following labels/statements still parse.
+        let dead = add_block(
+            program,
+            scope_view,
+            &mut self.scope_tree,
+            false,
+            &format!("after_goto::{}", get_line_num(&child)),
+        )?;
+        *scope_view = dead;
+        Ok(())
+    }
+
+    /// `L: <stmt>`: control falls through into label `L`'s (pre-created) block, the
+    /// inner statement is lowered there, and subsequent statements continue in an
+    /// after-block. The label block is also the target of any `goto L`.
+    fn walk_labeled_statement(
+        &mut self,
+        source: &'a str,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        child: Node<'_>,
+    ) -> Result<bool, Error> {
+        let label_node = child
+            .child_by_field_name("label")
+            .expect("labeled_statement always has a label");
+        let label = to_str(&label_node, source);
+        let label_blidx = *self
+            .label_blocks
+            .get(label)
+            .expect("label block pre-created in collect_functions");
+
+        // Fall through from the current block into the (pre-created) label block, then
+        // make it the current block — the inner statement and any following siblings
+        // continue from here, exactly as if the label weren't there.
+        let mut label_sv = scope_view.clone();
+        label_sv.blidx = label_blidx;
+        link_blocks(program, scope_view, &label_sv, false)?;
+        *scope_view = label_sv;
+
+        // Lower the labeled statement's inner statement(s) (everything but the label),
+        // threading `scope_view` so control flow continues naturally. The label
+        // diverges iff its body does (e.g. `L: return x;`), which we propagate up so a
+        // trailing labeled-return doesn't leave a dangling fall-through block.
+        let label_id = label_node.id();
+        let mut cursor = child.walk();
+        let inner: Vec<Node<'_>> = child
+            .children(&mut cursor)
+            .filter(|n| n.is_named() && n.id() != label_id)
+            .collect();
+        for stmt in inner {
+            if self.walk_statement(source, program, scope_view, stmt)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn walk_if(
@@ -1374,10 +2220,16 @@ impl<'a> Context<'a> {
                 self.flatten_expr(program, ch1, source, scope_view)?;
                 self.flatten_expr(program, ch2, source, scope_view)
             }
-            "pointer_declarator" | "function_declarator" => {
+            "pointer_declarator" | "function_declarator" | "array_declarator" => {
                 self.flatten_nested_decl(program, node, source, scope_view)
             }
-            "number_literal" | "string_literal" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
+            // A character literal (`'a'`, `'\n'`) is a compile-time constant, exactly like a
+            // numeric literal, so lower it to an `Exp::Str` constant (carries no taint). Without
+            // this arm any program containing a char literal hit `flatten_expr`'s catch-all and
+            // failed ingestion (ERR 78) -- a broad gap, since char literals are everyday C.
+            "number_literal" | "string_literal" | "char_literal" => {
+                Ok(Exp::Str(ArcIntern::<str>::from(text)))
+            }
             "unary_expression" => {
                 let ch = node
                     .child_by_field_name("argument")
@@ -1404,16 +2256,13 @@ impl<'a> Context<'a> {
                 self.flatten_expr(program, inner_node, source, scope_view)
             }
             "field_expression" => {
-                // A field read on the RHS: lower it to a sequence of loads and yield the loaded
-                // value. (As an lvalue it is handled by `flatten_lvalue` instead.)
-                let mut path_vec = Vec::<&str>::new();
-                let final_ident = extract_field_expression(node, source, &mut path_vec)?;
-                let ap = self.build_access_path(
-                    final_ident,
-                    path_vec.into_iter().map(PathSegment::symbol).collect(),
-                    scope_view,
-                    &mut program[scope_view.fidx].locals,
-                );
+                // A field read on the RHS. Resolve the location as an lvalue -- which composes
+                // this field onto any base (variable, array element, deref) and applies the
+                // union-member collapse -- then lower it to loads and yield the loaded value,
+                // exactly as `flatten_subscript` does for `a[i]`. Keeping the read and lvalue
+                // paths on the same resolver is what lets `a[i].f` (a field of an array element)
+                // work on both sides of an assignment.
+                let ap = self.flatten_lvalue(program, node, source, scope_view)?;
                 Ok(Exp::access_path(self.emit_loads(program, scope_view, ap)))
             }
             "assignment_expression" => self.collect_assignment(
@@ -1427,17 +2276,99 @@ impl<'a> Context<'a> {
                     .expect("always has operator"),*/
                 node.child_by_field_name("operator"),
             ),
-            "pointer_expression" => self.flatten_expr(
-                program,
-                node.child_by_field_name("argument")
-                    .expect("always a argument for the * operator"),
-                source,
-                scope_view,
-            ),
+            // Both dereference (`*p`) and address-of (`&x`) parse as `pointer_expression`;
+            // the operator child distinguishes them. Historically CTADL passed the operand
+            // straight through for both (`*p` -> `p`, `&x` -> `x`), a value-copy model that
+            // is sound for reads but drops writes through a pointer (F3). For a dereference
+            // whose operand is a plain variable with a known same-block address-of alias
+            // (`p = &x`), resolve `*p` to the pointee `x` so a store `*p = v` becomes a real
+            // write to `x` (and a load `y = *p` reads the current `x`). `&a[i]` forms the
+            // element's address (see `flatten_address_of`). Everything else -- `&x`, `&s.f`,
+            // a dereference of a non-aliased/compound operand -- keeps the pass-through.
+            "pointer_expression" => {
+                let arg = node
+                    .child_by_field_name("argument")
+                    .expect("always a argument for the * operator");
+                let is_deref = node
+                    .child_by_field_name("operator")
+                    .is_some_and(|op| to_str(&op, source) == "*");
+                if !is_deref
+                    && let Some(addr) = self.flatten_address_of(program, arg, source, scope_view)?
+                {
+                    return Ok(Exp::access_path(addr));
+                }
+                let arg_exp = self.flatten_expr(program, arg, source, scope_view)?;
+                // A plain local pointer is an `Exp::Variable`; a pathless access path also names
+                // a bare pointer. Either can carry a same-block address-of alias.
+                let ptr_ref = match &arg_exp {
+                    Exp::Variable(v) => Some(v.clone()),
+                    Exp::AccessPath(ptr_ap) if ptr_ap.path.is_empty() => {
+                        Some(ptr_ap.variable_ref.clone())
+                    }
+                    _ => None,
+                };
+                if is_deref
+                    && let Some(ptr_ref) = ptr_ref
+                    && let Some((pointee, blk)) = self.addr_alias.get(&ptr_ref)
+                    && *blk == scope_view.blidx
+                {
+                    let pointee = pointee.clone();
+                    // A pointee that is a bare variable *is* the value (the pass-through model);
+                    // one that is an interior address (`p = &x[1]` binds `x.[1]`) names memory,
+                    // so reading `*p` loads the `deref` field at that address.
+                    return match deref_of_pointee(&pointee) {
+                        Some(ap) => Ok(Exp::access_path(self.emit_loads(program, scope_view, ap))),
+                        None => Ok(Exp::access_path(pointee)),
+                    };
+                }
+                Ok(arg_exp)
+            }
             "subscript_expression" => self.flatten_subscript(program, node, source, scope_view),
             "call_expression" => {
                 let x = self.allocator.next_temp();
                 self.collect_call(program, node, source, scope_view, x)
+            }
+            // A cast is value-preserving for taint: the target type is irrelevant to
+            // dataflow, so lower the cast operand and pass it straight through
+            // (`(long)x` carries `x`). Mirrors the `unary_expression` pass-through.
+            "cast_expression" => {
+                let value = node
+                    .child_by_field_name("value")
+                    .expect("cast_expression always has a value");
+                self.flatten_expr(program, value, source, scope_view)
+            }
+            // `sizeof` does NOT evaluate its operand -- it yields a compile-time size --
+            // so it must not carry taint from the operand. Lower it as a constant (the
+            // source text), exactly like a numeric literal; the operand is never visited.
+            "sizeof_expression" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
+            // A ternary `c ? a : b` is path-insensitive here: either arm may be the
+            // value, so blend both into a temp (like `flatten_binary`). The condition is
+            // a control dependence, not a data source -- evaluate it for side effects but
+            // don't blend it into the result.
+            "conditional_expression" => {
+                let cond = node
+                    .child_by_field_name("condition")
+                    .expect("conditional_expression always has a condition");
+                let cons = node
+                    .child_by_field_name("consequence")
+                    .expect("conditional_expression always has a consequence");
+                let alt = node
+                    .child_by_field_name("alternative")
+                    .expect("conditional_expression always has an alternative");
+                self.flatten_expr(program, cond, source, scope_view)?;
+                let cons_val = self.flatten_expr(program, cons, source, scope_view)?;
+                let alt_val = self.flatten_expr(program, alt, source, scope_view)?;
+                let temp_name = self.allocator.next_temp();
+                let target = self.build_access_path(
+                    temp_name.as_str(),
+                    Default::default(),
+                    scope_view,
+                    &mut program[scope_view.fidx].locals,
+                );
+                self.add_assign_to_program(program, scope_view, &target, &cons_val, Some(&alt_val));
+                Ok(Exp::Variable(VariableRef::new_local_idx(
+                    program[scope_view.fidx].locals.get_or_intern(&temp_name),
+                )))
             }
             _ => {
                 debug_print_tree(node, 0, None, None);
@@ -1677,12 +2608,13 @@ impl<'a> Context<'a> {
 
         let ret =
             VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name));
-        program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+        program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
             StatementKind::CallAssign {
                 style,
                 rets: vec![ret].into(),
                 args,
             },
+            self.cur_span,
         ));
         //we return the temp_name, so that the assignment expression for the actual int x = foo() gets the result of foo()
         Ok(Exp::Variable(
@@ -1772,6 +2704,8 @@ impl<'a> Context<'a> {
                 blidx,
                 sidx: param_sidx,
                 continuation_blidx: None,
+                break_target: None,
+                continue_target: None,
                 explainer: "params".to_string(),
             };
 
@@ -1786,10 +2720,32 @@ impl<'a> Context<'a> {
                 blidx,
                 sidx: block_scope,
                 continuation_blidx: None,
+                break_target: None,
+                continue_target: None,
                 explainer: "initial_block".to_string(),
             };
             self.scope_tree.blocks.push(block_scope_view.clone());
             let cp = CompoundProxy::from_node(body_node);
+
+            // Pre-create a block for every `goto` label in this function so forward
+            // jumps (a `goto L` appearing before `L:`) resolve. Reset per function.
+            self.label_blocks.clear();
+            // Address-of aliases are function-local and confined to a straight-line block.
+            self.addr_alias.clear();
+            // Union-typed locals are function-scoped.
+            self.union_vars.clear();
+            let mut labels = Vec::new();
+            collect_labels(body_node, source, &mut labels);
+            for label in labels {
+                let label_block = add_block(
+                    program,
+                    &block_scope_view,
+                    &mut self.scope_tree,
+                    false,
+                    &format!("label:{label}"),
+                )?;
+                self.label_blocks.insert(label, label_block.blidx);
+            }
 
             self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
         }
@@ -1811,27 +2767,85 @@ impl<'a> Context<'a> {
             if let Some(righty) = right_op {
                 fa.push(righty.clone());
             }
-            program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new_kind(
+            program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
                 StatementKind::assign(target.base.clone(), fa),
+                self.cur_span,
             ));
         } else {
             // A store writes a single value into the field path; the field read is not
             // expressible as an operand, so a compound op's second operand is dropped here
             // (matching the prior behavior for field stores). Any intermediate dereferences are
             // materialized as loads by `store_access_path`.
+            //
+            // A store must end in a symbolic field: a target that is a pure *address*
+            // (offsets only, e.g. the pointee of `p = &x[1]` reached through `*p = v`) names
+            // memory, so terminate it with the dereference field, exactly as the pcode frontend
+            // terminates an offset-only address with `.deref`. Without this the write would
+            // trip `assign_or_store`'s "storing to an offset address with no field" assertion.
+            let mut fields = target.fields.clone();
+            if fields.iter().all(PathSegment::is_offset) {
+                fields.push(PathSegment::symbol(DEREF_FIELD));
+            }
             let mut stmts = Vec::new();
             let allocator = &mut self.allocator;
             let locals = &mut program[scope_view.fidx].locals;
             ctadl_ir::mir::store_access_path(
                 target.base.clone(),
-                target.fields.iter().cloned(),
+                fields,
                 val_exp.clone(),
                 &mut stmts,
                 || VariableRef::new_local_idx(locals.get_or_intern(&allocator.next_temp())),
             );
-            for s in stmts {
+            for mut s in stmts {
+                s.source_info = self.cur_span;
                 program[scope_view.fidx].blocks[scope_view.blidx].push_back(s);
             }
+        }
+    }
+
+    /// Lowers `&e` to the *address* of the location `e` names, or `None` when this frontend has
+    /// no way to name that address (the caller then falls back to the historical value-copy
+    /// model, which lowers `&e` to a read of `e`).
+    ///
+    /// An address in the IR is a base variable plus pointer-arithmetic offsets, so the addresses
+    /// that *are* nameable are exactly the element accesses: `&a[1]` is `a.[1]`, the same address
+    /// a subscript computes before dereferencing it. Forming it -- rather than loading the
+    /// element -- is what preserves pointer identity across a call: a callee that stores at
+    /// `.[1].deref` through the parameter writes `a.[2].deref`, which is where the caller's `a[2]`
+    /// reads (offsets are summed when the paths meet). Loading the element instead hands the
+    /// callee a *copy*, and the write is lost.
+    ///
+    /// Not nameable, and so left to the value model: `&x` (a whole variable, which is already its
+    /// own address in this IR -- the pass-through in `flatten_expr` handles it), and `&s.f`, whose
+    /// address would need the byte offset of a struct member that this frontend, having no type
+    /// information, cannot compute; it names members symbolically instead.
+    fn flatten_address_of(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        source: &str,
+        scope_view: &ScopeView,
+    ) -> Result<Option<AccessPath>, Error> {
+        match node.kind() {
+            "parenthesized_expression" => {
+                let inner = node.child(1).expect("missing inner expr");
+                self.flatten_address_of(program, inner, source, scope_view)
+            }
+            "subscript_expression" => {
+                let mut ap = self.flatten_lvalue(program, node, source, scope_view)?;
+                // Drop the dereference field: the address is everything up to the dereference the
+                // subscript performs. Whatever symbolic fields remain in the prefix (`&s.a[1]`,
+                // `&a[1][2]`) are still real dereferences, so `emit_loads` materializes them and
+                // returns the residual base + offsets -- the address. (`flatten_lvalue` of a
+                // subscript always ends in a dereference, so the pop only fails if that ever
+                // stops holding.)
+                match ap.fields.pop() {
+                    Some(seg) if is_deref_field(&seg) => {}
+                    _ => return Ok(None),
+                }
+                Ok(Some(self.emit_loads(program, scope_view, ap)))
+            }
+            _ => Ok(None),
         }
     }
 
@@ -1853,14 +2867,33 @@ impl<'a> Context<'a> {
                 &mut program[scope_view.fidx].locals,
             )),
             "field_expression" => {
-                let mut path_vec = Vec::<&str>::new();
-                let final_ident = extract_field_expression(node, source, &mut path_vec)?;
-                Ok(self.build_access_path(
-                    final_ident,
-                    path_vec.into_iter().map(PathSegment::symbol).collect(),
-                    scope_view,
-                    &mut program[scope_view.fidx].locals,
-                ))
+                // Resolve the object being accessed as an lvalue *first*, then append this
+                // field. Recursing through `flatten_lvalue` (rather than walking an
+                // identifier-rooted chain of `field_expression`s) lets a field be composed on
+                // top of ANY location -- a plain variable (`s.f`), an array element
+                // (`a[i].f`), a pointer deref (`p->f` / `(*p).f`) -- so the base's own path
+                // (e.g. the `[i]` index segment a subscript contributes) is preserved and the
+                // field is layered onto it.
+                let argument = node
+                    .child_by_field_name("argument")
+                    .expect("field_expression always has an argument");
+                let field = node
+                    .child_by_field_name("field")
+                    .expect("field_expression always has a field");
+                let mut base = self.flatten_lvalue(program, argument, source, scope_view)?;
+                // Collapse a union member access to the shared `$union` field so a write to one
+                // member is observed at a read of another (union members alias; F4). Only the
+                // access *on the union variable itself* collapses -- detected by the resolved
+                // base being the bare union variable -- so a struct field nested inside a union
+                // member (`u.a.b`) keeps its own name. This matches the prior behavior of
+                // rewriting only the first path segment.
+                let seg = if base.is_pathless() && self.union_vars.contains(&base.base) {
+                    PathSegment::symbol(UNION_FIELD)
+                } else {
+                    PathSegment::symbol(to_str(&field, source))
+                };
+                base.fields.push(seg);
+                Ok(base)
             }
             "subscript_expression" => {
                 let base = self.flatten_lvalue(
@@ -1875,26 +2908,39 @@ impl<'a> Context<'a> {
                     source,
                     scope_view,
                 )?;
-                let s = if let Exp::Str(esp) = &index {
-                    format!("[{}]", esp)
-                } else {
-                    "[_elem_]".to_string()
-                };
+                // `a[N]` is `*(a + N)`: the index is pointer arithmetic on the address and the
+                // element itself is the memory read/written there (see `DEREF_FIELD`).
                 let mut ap = base;
-                ap.fields.push(PathSegment::symbol(s));
+                push_element(&mut ap.fields, constant_index(&index));
                 Ok(ap)
             }
             "parenthesized_expression" | "parenthesized_declarator" => {
                 let inner = node.child(1).expect("missing inner expr");
                 self.flatten_lvalue(program, inner, source, scope_view)
             }
-            "pointer_expression" => self.flatten_lvalue(
-                program,
-                node.child_by_field_name("argument")
-                    .expect("always a argument"),
-                source,
-                scope_view,
-            ),
+            "pointer_expression" => {
+                let arg = node
+                    .child_by_field_name("argument")
+                    .expect("always a argument");
+                let is_deref = node
+                    .child_by_field_name("operator")
+                    .is_some_and(|op| to_str(&op, source) == "*");
+                let ptr = self.flatten_lvalue(program, arg, source, scope_view)?;
+                // A store through `*p` where `p` has a known same-block address-of alias
+                // (`p = &x`) targets the pointee `x` directly (F3), so the write is observed at
+                // reads of `x`. Mirrors the read path in `flatten_expr`, including the `deref`
+                // field an interior pointee (`p = &x[1]`) needs to name its memory.
+                if is_deref
+                    && ptr.is_pathless()
+                    && let Some((pointee, blk)) = self.addr_alias.get(&ptr.base)
+                    && *blk == scope_view.blidx
+                {
+                    return Ok(deref_of_pointee(pointee).unwrap_or_else(|| {
+                        RawPath::new(pointee.variable_ref.clone(), ThinVec::new())
+                    }));
+                }
+                Ok(ptr)
+            }
             _ => match self.flatten_expr(program, node, source, scope_view)? {
                 Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
                 _ => Err(Error::TreeSitterParse(format!(
@@ -1921,7 +2967,8 @@ impl<'a> Context<'a> {
         let v = ctadl_ir::mir::load_access_path(ap.base, ap.fields, &mut stmts, || {
             VariableRef::new_local_idx(locals.get_or_intern(&allocator.next_temp()))
         });
-        for s in stmts {
+        for mut s in stmts {
+            s.source_info = self.cur_span;
             program[scope_view.fidx].blocks[scope_view.blidx].push_back(s);
         }
         v
@@ -2029,33 +3076,4 @@ pub fn debug_print_tree(
         // Increase the depth by 1 for the next level down
         debug_print_tree(child, depth + 1, child_field, depth_limit);
     }
-}
-
-// this returns the field expresion chained from the 1st field_expression,
-// The final argument of kind "identifier" is returned, as it needs to be stuffed
-// in the variable field, while the rest (the out_vec) is the path
-
-fn extract_field_expression<'a>(
-    chain: Node<'a>,
-    source: &'a str,
-    out_vec: &mut Vec<&'a str>,
-) -> anyhow::Result<&'a str, Error> {
-    if chain.kind() == "identifier" {
-        return Ok(to_str(&chain, source));
-    }
-    //otherwise, we have a field expression, and expect 2 children.
-    assert!(
-        chain.kind() == "field_expression",
-        "Expected only nodes of kind field_expression"
-    );
-    let argument = chain
-        .child_by_field_name("argument")
-        .expect("expected all field_expressions have argument,field children");
-    let field = chain
-        .child_by_field_name("field")
-        .expect("expected all field_expressions have argument,field children");
-
-    let final_res = extract_field_expression(argument, source, out_vec);
-    out_vec.push(to_str(&field, source));
-    final_res
 }

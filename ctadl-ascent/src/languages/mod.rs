@@ -4,5 +4,5 @@ pub mod jni;
 pub mod jvm;
 pub mod lua;
 pub mod pcode;
-pub mod tree_sitter;
+pub mod tree_sitter_c;
 pub mod xapk;

@@ -24,7 +24,7 @@ use crate::facts::FlowVariable;
 use crate::index_engine::{
     IndexFacts, IndexResult, source_info::IndexSourceInfo, taint_index_with_config,
 };
-use crate::languages::{apk_native, dex, jni, jvm, lua, pcode, xapk};
+use crate::languages::{apk_native, dex, jni, jvm, lua, pcode, tree_sitter_c, xapk};
 use crate::project::{AnalysisProject, ArtifactImport, ArtifactLanguage};
 use crate::query_engine;
 use crate::query_engine::{QueryFactsBuilder, taint_analysis};
@@ -148,7 +148,7 @@ pub fn import(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Er
         Pcode => pcode::import_pcode(import)?,
         Lua => lua::import_lua(&import.artifact_path)?,
         Flowy => crate::codegen::flowy::import(import)?,
-        _ => unimplemented!(),
+        C => tree_sitter_c::import_c(&import.artifact_path)?,
     };
     log::info!(
         "'{}': imported {} function(s)",

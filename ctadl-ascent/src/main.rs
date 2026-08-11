@@ -872,7 +872,13 @@ fn autodetect_import_language<P: AsRef<Path>>(
                 Some("jar") => ImportLanguage::Jar,
                 Some("lua") => ImportLanguage::Lua,
                 Some("tnt") => ImportLanguage::Flowy,
+                // A Ghidra project file: export pcode from the existing project.
                 Some("gpr") => ImportLanguage::Pcode,
+                // A C source file or header.
+                Some("c") | Some("h") => ImportLanguage::C,
+                // A directory with no recognized extension is treated as a tree
+                // of C sources (headers and `.c` files).
+                _ if path.is_dir() => ImportLanguage::C,
                 // No recognized extension: if the file's contents look binary,
                 // route it through the pcode (Ghidra) frontend.
                 _ if file_looks_binary(path) => ImportLanguage::Pcode,

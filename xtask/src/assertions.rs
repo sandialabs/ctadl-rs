@@ -228,12 +228,12 @@ pub fn collect_codeflow_byte_offsets(sarif: &Path) -> Result<BTreeSet<i64>> {
 /// Collect every `startLine` reached by a code-flow step, i.e. the lines under
 /// `runs[].results[].codeFlows[].threadFlows[].locations[]`.
 ///
-/// Source-level frontends (Lua and the other tree-sitter languages) emit UTF-8
-/// regions whose location is a `region.startLine`, not a `byteOffset`, so a
+/// Source-level frontends (Lua and the tree-sitter languages, C among them) emit
+/// UTF-8 regions whose location is a `region.startLine`, not a `byteOffset`, so a
 /// source case's `expected_lines` are checked directly against these rather than
-/// through a linemap. Scoped to code flows for the same reason as
-/// [`collect_codeflow_byte_offsets`]: it stays sensitive to the flow actually
-/// being traced.
+/// through a linemap -- no compiler or `addr2line` in the loop. Scoped to code
+/// flows for the same reason as [`collect_codeflow_byte_offsets`]: it stays
+/// sensitive to the flow actually being traced.
 pub fn collect_codeflow_start_lines(sarif: &Path) -> Result<BTreeSet<i64>> {
     let value = read_json(sarif)?;
     let mut out = BTreeSet::new();

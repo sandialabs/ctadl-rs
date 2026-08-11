@@ -1,7 +1,11 @@
 /out
 /target
 ascent/**
+/.opencode
+/results.sarif
 .scratch/
+.claude/**
 result
 /.local
 /.envrc.local
+.vscode/tasks.json

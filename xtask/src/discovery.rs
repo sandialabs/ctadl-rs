@@ -24,6 +24,9 @@ pub enum Kind {
     Jvm { java: PathBuf, config: PathBuf },
     /// C compiled to an ELF object, mapped back to lines via `addr2line`.
     Pcode { source: PathBuf, query: PathBuf },
+    /// C parsed directly by the tree-sitter frontend, with source lines read
+    /// straight off the SARIF regions (no compiler, no Ghidra).
+    C { source: PathBuf, query: PathBuf },
     /// Lua source imported directly; SARIF regions carry source lines, so no
     /// linemap or compilation step is needed.
     Lua { source: PathBuf, query: PathBuf },
@@ -65,6 +68,7 @@ impl Kind {
             Kind::Dex { .. } => Frontend::Dex,
             Kind::Jvm { .. } => Frontend::Jvm,
             Kind::Pcode { .. } => Frontend::Pcode,
+            Kind::C { .. } => Frontend::C,
             Kind::Lua { .. } => Frontend::Lua,
             Kind::Jni { .. } => Frontend::Jni,
         }
@@ -80,6 +84,10 @@ pub enum Frontend {
     Dex,
     Jvm,
     Pcode,
+    /// The tree-sitter C frontend (`ctadl import -l c`). Exercises the same
+    /// `tests/c/*.c` sources as `Pcode`, but parses them directly and reads
+    /// source lines off the SARIF regions instead of going through Ghidra.
+    C,
     Lua,
     /// Not a frontend of its own: the JNI bridge, which needs the dex *and*
     /// pcode toolchains at once. It selects separately so `--frontend jni` runs
@@ -94,6 +102,7 @@ impl Frontend {
         Frontend::Pcode,
         Frontend::Lua,
         Frontend::Jni,
+        Frontend::C,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -101,6 +110,7 @@ impl Frontend {
             Frontend::Dex => "dex",
             Frontend::Jvm => "jvm",
             Frontend::Pcode => "pcode",
+            Frontend::C => "c",
             Frontend::Lua => "lua",
             Frontend::Jni => "jni",
         }
@@ -115,10 +125,11 @@ impl FromStr for Frontend {
             "dex" => Ok(Frontend::Dex),
             "jvm" => Ok(Frontend::Jvm),
             "pcode" => Ok(Frontend::Pcode),
+            "c" => Ok(Frontend::C),
             "lua" => Ok(Frontend::Lua),
             "jni" => Ok(Frontend::Jni),
             other => {
-                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, lua, jni)")
+                bail!("unknown frontend `{other}` (expected one of: dex, jvm, pcode, c, lua, jni)")
             }
         }
     }
@@ -192,8 +203,15 @@ fn discover_dex(java_dir: &Path) -> Result<Vec<TestCase>> {
     Ok(cases)
 }
 
-/// Pair each `foo.c` with a query JSON. We prefer `foo-query.json`, falling back
-/// to a shared `query.json` (the single C case here uses the latter).
+/// Pair each `foo.c` with a query JSON, then register it against *both* C
+/// frontends. We prefer `foo-query.json`, falling back to a shared `query.json`.
+///
+/// The same source drives the `Pcode` frontend (compiled through Ghidra) and the
+/// tree-sitter `C` frontend, mirroring how a single `.java` yields both a `Dex`
+/// and a `Jvm` case. The two are distinct `TestCase`s with distinct names, so
+/// each is selected, run, and reported on its own -- a C failure cannot mask or
+/// fail a Pcode case and vice versa. The Pcode case keeps the bare stem so
+/// existing `--filter`/names are unchanged; the C case is prefixed `C:`.
 fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
     let mut cases = Vec::new();
     if !c_dir.is_dir() {
@@ -213,12 +231,18 @@ fn discover_pcode(c_dir: &Path) -> Result<Vec<TestCase>> {
         } else {
             continue;
         };
+        let source = absolute(&entry)?;
+        let query = absolute(&query)?;
         cases.push(TestCase {
-            name: stem,
+            name: stem.clone(),
             kind: Kind::Pcode {
                 source: absolute(&entry)?,
                 query: absolute(&query)?,
             },
+        });
+        cases.push(TestCase {
+            name: format!("C:{stem}"),
+            kind: Kind::C { source, query },
         });
     }
     Ok(cases)
@@ -500,9 +524,11 @@ mod tests {
         assert_eq!("pcode".parse::<Frontend>().unwrap(), Frontend::Pcode);
         assert_eq!("jvm".parse::<Frontend>().unwrap(), Frontend::Jvm);
         assert_eq!("dex".parse::<Frontend>().unwrap(), Frontend::Dex);
+        assert_eq!("c".parse::<Frontend>().unwrap(), Frontend::C);
         assert_eq!("jni".parse::<Frontend>().unwrap(), Frontend::Jni);
         // Tolerate stray whitespace/case from a comma-separated list.
         assert_eq!(" Pcode ".parse::<Frontend>().unwrap(), Frontend::Pcode);
+        assert_eq!(" C ".parse::<Frontend>().unwrap(), Frontend::C);
         assert!("bogus".parse::<Frontend>().is_err());
         // Every variant round-trips through its own name, so `--frontend <x>`
         // accepts anything the report prints.

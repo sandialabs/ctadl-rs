@@ -1,5 +1,5 @@
-use crate::languages::tree_sitter::test_utils::*;
-use crate::languages::tree_sitter::testing_block_flow_ascii::*;
+use crate::languages::tree_sitter_c::test_utils::*;
+use crate::languages::tree_sitter_c::testing_block_flow_ascii::*;
 
 use ctadl_ir::ProgramInfo;
 
@@ -143,8 +143,6 @@ fn simple_for() {
 //todo:  comma operator
 //
 
-// `simple_elif` promoted to tests.rs (structural CFG assertions via check_successors).
-
 //this tests whether we die on this unchilded expression_statement
 // while(y==5);  <--- just a semi colon. sounds like a good way to
 // spin the processor ;)
@@ -160,14 +158,6 @@ fn no_child_while() {
         ";
     let (_program, dump) = program_from_string(src);
     dump_ir(&dump);
-    /*
-    let program_info = ProgramInfo {
-        program,
-        ..Default::default()
-    };
-
-    let (summary, source_info) = get_summary(program_info.program).unwrap();
-    */
 }
 
 #[test_log::test]
@@ -187,10 +177,6 @@ fn brackets_commutative() {
         "TODO: we need to check whether the index/lhs are swapped"
     ));
 }
-
-//TODO_JDB:  I don't think i handled *(p+1) = f; or (p+1)->f()
-
-// `return_arity` promoted to tests.rs (structural check_return_arity / function_named).
 
 #[test_log::test]
 fn params_and_simple_assign_in_example_2() {

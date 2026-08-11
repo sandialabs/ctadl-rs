@@ -7,7 +7,7 @@
 //!
 //! # What it does
 //!
-//! The lowering mirrors the C tree-sitter frontend ([`crate::languages::tree_sitter`]):
+//! The lowering mirrors the C tree-sitter frontend ([`crate::languages::tree_sitter_c`]):
 //! walk the parse tree, build a [`Program`](ctadl_ir::mir::Program) of functions and
 //! basic blocks, and lower Lua assignments, calls, table constructors, field/index
 //! accesses, and control flow into IR statements with access paths.

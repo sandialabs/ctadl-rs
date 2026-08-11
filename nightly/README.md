@@ -28,7 +28,7 @@ cargo xtask regression --frontend pcode        # only the pcode/C cases
 cargo xtask regression --filter ArrayFlow      # only cases whose name contains this
 ```
 
-`--frontend` takes `pcode`, `jvm`, `dex`, `lua`, or `jni` (comma-separated, or
+`--frontend` takes `pcode`, `jvm`, `dex`, `c`, `lua`, or `jni` (comma-separated, or
 repeated) and defaults to all of them. It selects *before* anything runs, so
 `--frontend pcode` never invokes the Java toolchain, `--frontend jvm,dex` never
 starts Ghidra, and `--frontend lua` needs no external toolchain at all. `jni` is
@@ -55,7 +55,9 @@ they are picked up automatically; no list to edit.
   the config name is the kebab-case of the class (`ArrayListIteratorFlow` →
   `array-list-iterator-flow.json`). A `.java` with no matching config is ignored.
 - **Pcode / C** — `tests/c/foo.c` pairs with `tests/c/foo-query.json`, or falls
-  back to a shared `tests/c/query.json`.
+  back to a shared `tests/c/query.json`.The pair registers under *both* C
+  frontends: a `pcode` case named `foo` and a tree-sitter `c` case named `C:foo`.
+
 - **Lua** — `tests/lua/foo.lua` pairs with `tests/lua/foo-query.json`. A `.lua`
   with no matching config is ignored. Cases report as `Lua:foo`. Because Lua is a
   source-level frontend, SARIF regions carry source lines directly, so
@@ -117,11 +119,34 @@ flow is reported (see `Reassignment.java` / `reassignment.json`).
 2. Add `expected_lines` + `model_generators` to `tests/c/query.json` (or a
    dedicated `tests/c/foo-query.json`).
 
+The same two files also drive the tree-sitter `c` case; nothing extra is needed
+to add one.
+
 **Pass criterion (pcode):** addresses are mapped to lines with `addr2line`
 (after subtracting Ghidra's `0x100000` base). The test **passes only if every**
 `expected_lines` entry is found. On macOS, if Ghidra reports no tainted
 instructions the case is **skipped** (cross-platform decompiler differences);
 the strict check runs on Linux/CI.
+
+**Pass criterion (c):** the tree-sitter frontend parses the source directly and
+emits real source spans, so the reached lines are read straight off the SARIF
+code-flow regions — no compiler, no Ghidra, no `addr2line`, and no macOS skip
+(it runs identically everywhere). Like pcode, the case **passes only if every**
+`expected_lines` entry is among the reached lines, a code flow connects a source
+to a sink, and no `unexpected_lines` entry is reached. The `c` frontend is still
+maturing, so a short quarantine list in `xtask/src/regression.rs`
+(`C_KNOWN_FAILURES`) reports its current gaps as **XFAIL** instead of failing the
+suite; every other `C:` case is enforced. Remove an entry once its case passes so
+a later regression is caught. Two cases are quarantined today:
+
+- `C:ptrarith` — a *subscript* now lowers to an offset address, so `arr[2]` and
+  `&arr[2]` compose, but the binary `+` in `*(p + 2)` does not yet, so taint
+  stored that way is not resolved back to the aliased array slot.
+- `C:defaultmodels` — a known-answer test for the *shipped* propagation defaults,
+  which only a Native (pcode) import loads. Its chain lives in
+  `native-index.jsonl`, and a `-l c` import has no method table, so it gets no
+  default model file. The Pcode twin (`defaultmodels`) is what enforces those
+  defaults, and it is enforced.
 
 ## Adding a JNI test
 

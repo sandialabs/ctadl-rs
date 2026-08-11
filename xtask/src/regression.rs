@@ -70,6 +70,36 @@ const JVM_E2E_ENFORCED: &[&str] = &[
     "Jvm:StringBuilderFlow",
 ];
 
+/// Tree-sitter C cases known to fail today, quarantined as XFAIL so the suite
+/// stays green while that frontend matures.
+///
+/// This is the inverse of [`JVM_E2E_ENFORCED`]: the JVM E2E frontend is mostly
+/// still maturing, so it opts *in* to enforcement case by case; the C frontend
+/// already passes the bulk of the suite, so enforcement is the *default* and
+/// only these named gaps are exempt. Each entry is a current limitation, not a
+/// permanent waiver -- delete it once the case passes so a later regression is
+/// caught rather than silently re-quarantined. These names are the `C:`-prefixed
+/// reporting names, so they cannot collide with the Pcode case over the same
+/// source, and quarantining one never affects that Pcode case.
+const C_KNOWN_FAILURES: &[&str] = &[
+    // A subscript lowers to an offset address (`arr[2]` is `arr.[2].[]`), so
+    // element paths compose, but the binary `+` in `*(p + 2)` does not lower to
+    // an offset address yet. Taint stored that way is not resolved back to the
+    // aliased array slot, so no source -> sink flow is traced.
+    "C:ptrarith",
+    // A known-answer test for the *shipped* propagation defaults, so it can only
+    // pass for the frontend those defaults are written for. The chain it asserts
+    // (`strcpy`/`strcat`/`strdup`) lives in `models/defaults/native-index.jsonl`,
+    // which `models::default_model_file` hands only to a
+    // `VirtualMethodTable::Native` program -- i.e. the pcode import. A `-l c`
+    // import has no method table (`Unknown`) and so gets no default file at all,
+    // leaving every step between source and sink an unmodeled external. The
+    // Pcode twin (`defaultmodels`, unprefixed) is what enforces those defaults.
+    // Delete this entry if `-l c` imports ever get a default model file of their
+    // own.
+    "C:defaultmodels",
+];
+
 pub struct Options {
     pub filter: Option<String>,
     /// Frontends to exercise. Defaults to all of them, so an unqualified
@@ -288,7 +318,10 @@ impl Task<'_> {
                 let outcome =
                     run_case(case, worker).unwrap_or_else(|err| Outcome::Fail(format!("{err:#}")));
                 let outcome = apply_lua_allowlist(&case.name, outcome);
-                vec![(case.name.clone(), apply_jvm_allowlist(&case.name, outcome))]
+                vec![(
+                    case.name.clone(),
+                    apply_xfail_allowlists(&case.name, outcome),
+                )]
             }
             Task::JvmChecks { samples } => {
                 // jvm-reader checks: compile the sample .java and exercise
@@ -564,6 +597,14 @@ fn apply_lua_allowlist(name: &str, outcome: Outcome) -> Outcome {
     }
 }
 
+/// Convert a failure to XFAIL when it belongs to a frontend's maturity
+/// allowlist, leaving passes, skips, and enforced failures untouched. Applied to
+/// every case so a maturing frontend's known gaps keep the suite green without
+/// hiding regressions in the cases that are enforced.
+fn apply_xfail_allowlists(name: &str, outcome: Outcome) -> Outcome {
+    apply_c_allowlist(name, apply_jvm_allowlist(name, outcome))
+}
+
 /// Non-enforced JVM E2E failures are reported as XFAIL so the suite can stay
 /// green while the frontend matures. This covers the *taint* answer only:
 /// [`Outcome::HardFail`] (invalid SARIF) is never demoted, since the shape of
@@ -577,11 +618,22 @@ fn apply_jvm_allowlist(name: &str, outcome: Outcome) -> Outcome {
     }
 }
 
+/// Known-failing tree-sitter C cases are reported as XFAIL; every other C case
+/// is enforced. See [`C_KNOWN_FAILURES`] for why enforcement is the default for
+/// this frontend (the opposite of the JVM allowlist above).
+fn apply_c_allowlist(name: &str, outcome: Outcome) -> Outcome {
+    match outcome {
+        Outcome::Fail(why) if C_KNOWN_FAILURES.contains(&name) => Outcome::Xfail(why),
+        other => other,
+    }
+}
+
 fn run_case(case: &TestCase, worker: &Worker) -> Result<Outcome> {
     match &case.kind {
         Kind::Dex { java, config } => run_dex(&case.name, java, config),
         Kind::Jvm { java, config } => run_jvm(&case.name, java, config),
         Kind::Pcode { source, query } => run_pcode(&case.name, source, query, worker),
+        Kind::C { source, query } => run_c(&case.name, source, query),
         Kind::Lua { source, query } => run_lua(&case.name, source, query),
         Kind::Jni {
             java,
@@ -1726,6 +1778,104 @@ fn native_lines(
     }
     let offsets: Vec<i64> = offsets.into_iter().collect();
     addr2line_lines(&offsets, lib, work, addr2line)
+}
+
+// --- C (tree-sitter) ------------------------------------------------------
+
+/// Run one C case through the tree-sitter frontend.
+///
+/// This is the Pcode case's twin over the very same `.c` source and query JSON,
+/// but a much shorter pipeline: the tree-sitter frontend parses the source
+/// directly, so there is no compiler, no Ghidra, and no `addr2line`. The source
+/// lines a flow reaches are read straight off the SARIF regions the frontend
+/// emits (it carries real source spans), and matched against `expected_lines`.
+///
+/// It shares no state with `run_pcode` -- its own scratch dir, project name, and
+/// SARIF -- so its outcome is entirely independent: a C failure never touches the
+/// Pcode case for the same source, and vice versa.
+fn run_c(name: &str, source: &Path, query: &Path) -> Result<Outcome> {
+    let work = scratch_dir(name)?;
+    let state = work.join("state");
+    let outdir = work.join("test-output");
+    std::fs::create_dir_all(&state)?;
+    std::fs::create_dir_all(&outdir)?;
+
+    // `name` is the reporting name (`C:foo`); derive a filesystem-safe stem for
+    // the project and output names.
+    let stem = name.replace(':', "_");
+    let project = format!("{stem}_c");
+    let sarif = outdir.join(format!("{stem}_results.sarif"));
+    let source_str = source.to_string_lossy().into_owned();
+
+    run_ctadl(
+        &work,
+        &state,
+        &["import", "-l", "c", &source_str, "-n", &project],
+    )?;
+    run_ctadl(&work, &state, &["index", &project])?;
+    run_ctadl(
+        &work,
+        &state,
+        &[
+            "query",
+            &project,
+            "-m",
+            &query.to_string_lossy(),
+            "-o",
+            &sarif.to_string_lossy(),
+        ],
+    )?;
+
+    // Read the known answer up front so a negative case (`expected_lines: []`)
+    // can be judged purely on code-flow connectivity.
+    let expected = assertions::read_expected_lines(query)?;
+
+    // Code-flow integrity, at parity with the DEX/JVM/pcode checks (see
+    // `check_flow_case`): a code flow must connect a source to a sink. A negative
+    // case inverts it -- no such flow may exist.
+    let connects = assertions::codeflow_connects_source_and_sink(&sarif)?;
+    if expected.is_empty() {
+        return Ok(if connects {
+            Outcome::Fail(
+                "expected no flow, but a code flow connects a source to a sink".to_string(),
+            )
+        } else {
+            Outcome::Pass
+        });
+    }
+
+    if !connects {
+        return Ok(Outcome::Fail(
+            "no code flow connects a source to a sink".to_string(),
+        ));
+    }
+
+    // The frontend's SARIF carries source spans, so the reached lines come
+    // straight off the code-flow step regions -- no compiler or addr2line.
+    let found = assertions::collect_codeflow_start_lines(&sarif)?;
+    if found.is_empty() {
+        return Ok(Outcome::Fail(
+            "code flow connects source and sink but no source lines were reported".to_string(),
+        ));
+    }
+
+    let missing: Vec<i64> = expected
+        .iter()
+        .copied()
+        .filter(|l| !found.contains(l))
+        .collect();
+    if !missing.is_empty() {
+        return Ok(Outcome::Fail(format!(
+            "expected lines {missing:?} not found among {found:?}"
+        )));
+    }
+
+    let unexpected = assertions::read_unexpected_lines(query)?;
+    if let Some(why) = assertions::check_unexpected_lines(&unexpected, &found) {
+        return Ok(Outcome::Fail(why));
+    }
+
+    Ok(Outcome::Pass)
 }
 
 // --- Ghidra existing-project import ---------------------------------------

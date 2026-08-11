@@ -1491,6 +1491,40 @@ mod tests {
     }
 
     #[test]
+    fn symbol_segments_match_only_themselves() {
+        // A symbol segment is an opaque name here: two symbols match when they are equal and
+        // never otherwise. Nothing in this module reads a symbol's *spelling*, so a frontend that
+        // wants two accesses to may-alias (a non-constant subscript and the element it might be,
+        // say) must spell them the same path -- that choice belongs to the frontend, not here.
+        // Offsets, which the IR does give arithmetic meaning, are covered by the tests below.
+        use ctadl_ir::mir::PathSegment;
+        let sym = |s: &str| Path::from_accesses([PathSegment::symbol(s)]);
+        let elem = sym("[_elem_]"); // the lua frontend's non-constant key
+        let c0 = sym("[0]");
+        let c1 = sym("[1]");
+        let field = sym("a"); // a struct member
+
+        assert!(match_prefix(&elem, &elem).is_some());
+        assert!(match_prefix(&c0, &c0).is_some());
+        // Every distinct pair, bracketed or not, stays disjoint.
+        for (ap, prefix) in [
+            (&c0, &elem),
+            (&elem, &c0),
+            (&c0, &c1),
+            (&c1, &c0),
+            (&field, &elem),
+            (&elem, &field),
+        ] {
+            assert!(
+                match_prefix(ap, prefix).is_none(),
+                "{} must not match {}",
+                ap.to_dot_string(),
+                prefix.to_dot_string()
+            );
+        }
+    }
+
+    #[test]
     fn test_substitute_prefix() {
         let p: Path = Path::empty();
         assert_eq!(p, p.substitute_prefix(&p, &p).unwrap());

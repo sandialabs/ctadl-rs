@@ -34,7 +34,7 @@ store it in a binary format.
 - [crate::project] - manages how CTADL stores all its information
 - [crate::languages::dex] - DEX language frontend
 - [crate::languages::jvm] - JVM language frontend
-- [crate::languages::tree_sitter] - C language frontend
+- [crate::languages::tree_sitter_c] - C language frontend
 - [crate::codegen] - Frontend language to Datalog code generation
 - [crate::models] - Handles loading models for index/query
 - [crate::index_engine] - datalog, datatypes for core CTADL index phase

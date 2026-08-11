@@ -99,6 +99,175 @@ fn test_cli_import_skip_existing() {
     });
 }
 
+/// Importing a single `.c` file parses it into an IR program and stores it.
+#[test]
+fn test_cli_import_c_file() {
+    run_store_test(|| {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("xfer.c");
+        std::fs::write(
+            &file,
+            "int source();\nvoid sink(int);\nint transfer(int a) { return a; }\n",
+        )
+        .unwrap();
+
+        let import =
+            ArtifactImport::try_create("test_import_c_file", ArtifactLanguage::C, &file).unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+
+        assert!(import.program_path().is_file());
+        let data = std::fs::read(import.program_path()).unwrap();
+        assert!(ctadl_ir::encode::decode_program(&data).is_ok());
+    });
+}
+
+/// Importing a directory of C sources and headers parses every `.c`/`.h` file
+/// underneath it as one translation unit.
+#[test]
+fn test_cli_import_c_directory() {
+    run_store_test(|| {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("c_sources");
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        // A header (declarations) and two .c files, one nested, that reference it.
+        std::fs::write(root.join("util.h"), "int helper(int z);\n").unwrap();
+        std::fs::write(
+            root.join("main.c"),
+            "int helper(int z) { return z; }\nint main() { return helper(1); }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("nested").join("more.c"),
+            "int other(int a) { return a; }\n",
+        )
+        .unwrap();
+        // A non-C file that must be ignored by the importer.
+        std::fs::write(root.join("README.md"), "not C\n").unwrap();
+
+        let import =
+            ArtifactImport::try_create("test_import_c_dir", ArtifactLanguage::C, &root).unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+
+        assert!(import.program_path().is_file());
+        let data = std::fs::read(import.program_path()).unwrap();
+        assert!(ctadl_ir::encode::decode_program(&data).is_ok());
+    });
+}
+
+/// Absolute path to a checked-in C test fixture under `tests/c/`.
+fn c_fixture(name: &str) -> PathBuf {
+    [env!("CARGO_MANIFEST_DIR"), "tests", "c", name]
+        .iter()
+        .collect()
+}
+
+/// End-to-end: import `xfer.c`, index it, and run the `xfer.json` taint query. This
+/// exercises the C-specific model wiring: `source`/`sink` are only *declared* in the C
+/// source (no body), so the importer must register them as external functions for the
+/// model's `signature` patterns to match them; the query must then find the
+/// source -> sink flow through `transfer`. Also confirms imported C carries source
+/// locations: the reported result resolves to a line in `xfer.c`.
+///
+/// This is also the end-to-end check on element-address composition: `transfer(&x[1], s)`
+/// passes the *address* `x.[1]`, `transfer` writes its parameter at `@p0.[1].deref`, and
+/// `sink(x[2])` reads `x.[2].deref`. The flow exists only if those two paths compose --
+/// offsets are summed where they meet -- which is why the fixture indexes two different
+/// slots rather than one. The unit-test version of the same shape is
+/// `address_of_element_composes_with_callee_index` in the tree-sitter frontend's `tests.rs`.
+#[test]
+fn test_cli_query_c_sources_and_sinks() {
+    use ctadl_ascent::cli;
+    use ctadl_ascent::codegen::CallResolutionStrategy;
+    use ctadl_ascent::query_engine::formatter::SarifProfile;
+
+    run_store_test(|| {
+        let import =
+            ArtifactImport::try_create("test_xfer_c", ArtifactLanguage::C, &c_fixture("xfer.c"))
+                .unwrap();
+        cli::import(&import, cli::ImportOptions::default()).unwrap();
+
+        let project = AnalysisProject::try_create("test_xfer_c_proj", &["test_xfer_c"]).unwrap();
+        let models = vec![c_fixture("xfer.json")];
+        cli::index(
+            &project,
+            &[],
+            &models,
+            false,
+            cli::IndexOptions {
+                strategy: CallResolutionStrategy::default(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let out_dir = tempdir().unwrap();
+        let sarif = out_dir.path().join("out.sarif");
+        cli::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
+
+        let text = std::fs::read_to_string(&sarif).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let results = doc["runs"][0]["results"].as_array().unwrap();
+
+        // Every profile also emits informational `taint-source`/`taint-sink` results
+        // describing which endpoints matched, and `tainted-path` itself reports a non-`fail`
+        // result when the query ran but found nothing. Those are context, not findings, so
+        // the flow assertions look only at the `fail` `tainted-path` results.
+        let paths: Vec<_> = results
+            .iter()
+            .filter(|r| {
+                r["ruleId"]
+                    .as_str()
+                    .is_some_and(|id| id.contains("tainted-path"))
+                    && r["kind"].as_str() == Some("fail")
+            })
+            .collect();
+
+        // The source (`s = source()`) flows through `transfer` to the sink (`sink(x[2])`),
+        // so there is exactly one tainted-path result.
+        assert_eq!(
+            paths.len(),
+            1,
+            "expected exactly one source->sink flow, got: {text}"
+        );
+        let result = paths[0];
+
+        // The reported location resolves back to a line in the C source, proving the
+        // importer attached source-info spans that survive to SARIF.
+        let region = &result["locations"][0]["physicalLocation"]["region"];
+        assert!(
+            region["startLine"].as_u64().is_some_and(|n| n > 0),
+            "result has no source line: {result}"
+        );
+
+        // The code flow must visit the summarized interprocedural call itself, not
+        // just its source and sink endpoints. `transfer` is analyzed by summary (the
+        // flow links its actual-arg vertices by an intra edge rather than descending
+        // into it), so its call on line 12 -- between `s = source()` on 11 and
+        // `sink(x[2])` on 13 -- is on no Call/Return path edge and would be elided
+        // unless the formatter surfaces the interior call-arg vertex. Assert all
+        // three lines appear as code-flow steps.
+        let mut step_lines = std::collections::BTreeSet::new();
+        for flow in result["codeFlows"].as_array().into_iter().flatten() {
+            for thread in flow["threadFlows"].as_array().into_iter().flatten() {
+                for loc in thread["locations"].as_array().into_iter().flatten() {
+                    if let Some(line) =
+                        loc["location"]["physicalLocation"]["region"]["startLine"].as_u64()
+                    {
+                        step_lines.insert(line);
+                    }
+                }
+            }
+        }
+        for line in [11, 12, 13] {
+            assert!(
+                step_lines.contains(&line),
+                "code flow is missing line {line} (steps at lines {step_lines:?}); \
+                 line 12 is the summarized `transfer(&x[1], s)` call: {text}"
+            );
+        }
+    });
+}
+
 /// The fixture APK ships no `lib/<abi>` entries, so the native-library pass is a no-op
 /// and the import records no sub-imports. This is the path every APK without native
 /// code takes, and the one that must not need Ghidra.

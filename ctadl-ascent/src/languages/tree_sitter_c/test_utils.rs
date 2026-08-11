@@ -10,8 +10,8 @@ use crate::facts as fx;
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::{FunctionSummary, IndexFacts, taint_index};
 use crate::{
-    codegen::{CallResolutionStrategy, RETURN_INDEX, codegen_program},
-    languages::tree_sitter,
+    codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program},
+    languages::tree_sitter_c,
 };
 use anyhow::{Context, Result};
 // `DirectedGraph`/`Successors` are trait imports: they provide `num_nodes()` (used by
@@ -21,7 +21,7 @@ use crate::facts::Path;
 use ctadl_ir::graph::{DirectedGraph, Successors};
 use ctadl_ir::mir::TerminatorKind;
 use ctadl_ir::mir::call::{CallEdges, CallStyle};
-use ctadl_ir::mir::{LocalIdx, Locals};
+use ctadl_ir::mir::{FieldAccess, LocalIdx, Locals};
 use ctadl_ir::{
     AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, Statement, StatementKind, VariableRef, ssa,
 };
@@ -46,7 +46,7 @@ pub(crate) fn get_full_path(filename: &str) -> Result<std::path::PathBuf> {
 
 /* Compile a program from a string. */
 pub(crate) fn program_from_string(src: &str) -> (Program, String) {
-    let result = tree_sitter::parse_c_program(src).expect("Failed to parse C program.");
+    let result = tree_sitter_c::parse_c_program(src).expect("Failed to parse C program.");
     assert!(
         !result.1,
         "Input Program failed to parse without error from Tree-sitter"
@@ -68,7 +68,7 @@ pub(crate) fn program_from_file<P: AsRef<std::path::Path>>(filename: P) -> Resul
     // Read the file, and if it fails, attach a helpful message before returning
     let contents = source_info::read_source(path)
         .with_context(|| format!("Failed to load source file: {}", path.display()))?;
-    let program = tree_sitter::parse_c_program(&contents)?;
+    let program = tree_sitter_c::parse_c_program(&contents)?;
     Ok(program.0)
 }
 
@@ -123,6 +123,36 @@ pub(crate) fn local_render(prog: &Program, func: &str, local: &str) -> String {
         .map(|(idx, _)| idx)
         .unwrap_or_else(|| panic!("no local named {local:?} in function {func:?}\n{prog}"));
     format!("%L{}", idx.index())
+}
+
+/* The `VariableRef` of the local named `local` in function `func`, for assertions that compare a
+statement's variable directly (a call argument, a store destination) rather than through the dump.
+The name-to-`LocalIdx` lookup is `local_render`'s, minus the rendering. Panics if the function or
+local does not exist. */
+#[track_caller]
+pub(crate) fn local_ref(prog: &Program, func: &str, local: &str) -> VariableRef {
+    let f =
+        function_named(prog, func).unwrap_or_else(|| panic!("no function named {func:?}\n{prog}"));
+    let idx = f
+        .locals
+        .iter_enumerated()
+        .find(|(_, decl)| decl.name.as_str() == local)
+        .map(|(idx, _)| idx)
+        .unwrap_or_else(|| panic!("no local named {local:?} in function {func:?}\n{prog}"));
+    VariableRef::new_local_idx(idx)
+}
+
+/* The argument list of the (first) direct call to `callee` in function `caller`. The narrow
+extraction behind argument-shape assertions -- unlike `check_loads` and friends it works on a
+multi-function fixture, which any call site necessarily is. Panics if there is no such call. */
+#[track_caller]
+pub(crate) fn call_args(prog: &Program, caller: &str, callee: &str) -> Vec<Exp> {
+    let calls = direct_calls_in(prog, caller);
+    calls
+        .into_iter()
+        .find(|(callees, _)| callees.iter().any(|c| c == callee))
+        .map(|(_, args)| args)
+        .unwrap_or_else(|| panic!("no direct call to {callee:?} in {caller:?}\n{prog}"))
 }
 
 /* Asserts the function `name` has the given return arity (the `N` in the dump's `define name() ->
@@ -271,6 +301,15 @@ pub(crate) fn check_successors(prog: &Program, block: usize, expected: &[usize])
 }
 
 // A debugging aid for inspecting parsed blocks.
+/* Diagnostic helper: logs all basic blocks of the first function in `prog` at INFO level. Not a
+test assertion -- use it temporarily when debugging a failing CFG test to inspect the block
+structure the lowering actually produced. Typical usage:
+
+    debug_output_blocks(&prog);  // add to the failing test body
+    // then run:  RUST_LOG=info cargo test -p ctadl-ascent <test_name> -- --nocapture
+
+Only covers the first function; for multi-function programs extend this or use
+`function_named` + iterate `fun.blocks` directly. Remove the call before committing. */
 pub(crate) fn debug_output_blocks(prog: &Program) {
     let Some(fun) = prog.functions.functions.raw.first() else {
         log::warn!("No functions in program");
@@ -352,7 +391,7 @@ fn access_path_from_str(s: &str, locals: &Locals) -> DslPath {
 /* Builds a source expression from the DSL. A `#`-prefixed string is a constant literal (`"#7"` =>
 `Exp::Str("7")`, matching how the C frontend lowers a literal — see `flatten_expr` in mod.rs);
 anything else is an access path (variable / param / global / field). */
-fn exp_from_str(s: &str, locals: &Locals) -> Exp {
+pub(crate) fn exp_from_str(s: &str, locals: &Locals) -> Exp {
     match s.strip_prefix('#') {
         Some(lit) => Exp::new_str(lit),
         None => {
@@ -397,16 +436,26 @@ pub(crate) fn check_assign_or_update<I>(
             1,
             "update destination requires exactly one source expression"
         );
-        assert_eq!(
-            dst_ap.fields.len(),
-            1,
-            "update destination must have exactly one (symbolic) field: {dst}"
-        );
-        let PathSegment::Symbol(sym) = dst_ap.fields.into_iter().next().unwrap() else {
-            panic!("update destination field must be symbolic: {dst}")
+        // A store's destination is an *address* (any number of pointer-arithmetic offsets)
+        // plus the single symbolic field written there, so the DSL path splits the same way:
+        // `f.[4].deref` is the address `f.[4]` and the field `deref`. A destination with more
+        // than one symbol would need intermediate loads and is not a single statement.
+        let mut fields = dst_ap.fields;
+        let Some(PathSegment::Symbol(sym)) = fields.pop() else {
+            panic!("update destination must end in a (symbolic) field: {dst}")
         };
+        let offsets: Vec<FieldAccess> = fields
+            .into_iter()
+            .map(|seg| match seg {
+                PathSegment::Offset(off) => FieldAccess::Offset(off),
+                PathSegment::Symbol(_) => panic!(
+                    "update destination may only have offsets before its field (an interior \
+                     symbol is a load, not part of one store): {dst}"
+                ),
+            })
+            .collect();
         StatementKind::store(
-            AccessPath::without_fields(dst_ap.base),
+            AccessPath::new(dst_ap.base, offsets),
             FieldPath::new(sym),
             srcs.into_iter().next().unwrap(),
         )
@@ -431,7 +480,7 @@ pub(crate) fn check_assign_or_update<I>(
 }
 
 /* Asserts the (single) function contains a `Load` that reads `source_str` (an access-path DSL
-string like `f.\[3]` or `$globals.a`). Field reads lower to loads through a temporary, so this is
+string like `f.[3].deref` or `$globals.a`). Field reads lower to loads through a temporary, so this is
 the load-based complement to `check_assign_or_update`'s field-path source. Panics if not found. */
 #[track_caller]
 pub(crate) fn check_loads(prog: &Program, source_str: &str) {
@@ -525,9 +574,18 @@ pub(crate) fn check_match(prog_str: &str, needle: &str) -> bool {
     false
 }
 
-/// Inverse of [`check_match`]: passes (returns true) when `needle` is ABSENT, and
-/// only logs a failure when it is unexpectedly present. Use this for negative
-/// assertions so a passing test doesn't emit a misleading "expected ..." line.
+/* Inverse of `check_match`: returns `true` when `needle` is ABSENT from the program dump string,
+and logs a failure via `check_fail_str` when it is unexpectedly present.
+
+**Footgun warning:** this returns `bool`, not a panic. A bare call in a test body silently no-ops
+the "must be absent" assertion if the return value is dropped. Always wrap in `assert!`:
+
+    assert!(check_no_match(&prog_str, "ERR 78"), "…");
+
+Prefer IR-level negatives (`check_no_flow`, `check_does_not_return_param`) over dump-string checks
+where possible -- those assert on the real dataflow, not the pretty-printer output. Reserve this
+for cases where the IR query is not expressive enough, e.g. asserting that a particular temp name
+or keyword never appears in the lowering (useful for debugging unexpected code-generation artifacts). */
 pub(crate) fn check_no_match(prog_str: &str, needle: &str) -> bool {
     if prog_str.contains(needle) {
         check_fail_str(prog_str, &format!("did not expect {}", needle));
@@ -594,10 +652,24 @@ pub(crate) fn index_program(
     (facts, source_info, result.assign_like)
 }
 
+/* Predicate: returns `true` iff the summary slice contains exactly `count` flow records. This is
+the raw predicate underlying `check_summary_count` (which panics with a diff on mismatch); prefer
+that for standalone assertions. Use `summary_count` for composition -- e.g. asserting an exact
+edge count alongside other conditions in a single expression, or building a custom assertion that
+needs the boolean value rather than a panic. Example future use: a precision test that asserts a
+specific lowering produces *exactly* N edges (no more), guarding against over-approximation that
+inflates the summary. */
 pub(crate) fn summary_count(summary: &[FunctionSummary], count: usize) -> bool {
     summary.len() == count
 }
 
+/* Searches a summary slice for a specific flow edge, scanning records across ALL functions in the
+summary (matches if *any* function has the edge). Several tests rely on this: they build a
+multi-function fixture and disambiguate by choosing a (param-index, path) endpoint only one
+function could produce (e.g. routing taint through param 1 so a `return <- @p1` edge can only come
+from the wrapper). When you instead need to pin the assertion to a *named* function -- because more
+than one could match, or to guard against matching the wrong one -- use the per-function variants
+`flow_present_in` / `check_flow_in` / `check_returns_param_in` etc. */
 pub(crate) fn summary_search(
     summary: &[FunctionSummary],
     from_index: i16,
@@ -702,6 +774,180 @@ pub(crate) fn check_does_not_return_param(
     check_no_flow(summary, param_num, param_path, RETURN_INDEX, "");
 }
 
+/* Per-function variant of `summary_search`: only matches summary records belonging to function
+`name`. The plain `summary_search` scans every function's summary, so on a multi-function fixture it
+can match a flow in the *wrong* function (e.g. assert "caller returns its param" but match the
+callee). This resolves `name` to its `FunctionId` via the source_info `sites` map and filters on it.
+Panics if `name` is not a known function -- a not-found function must fail loudly, never silently
+pass a `check_no_flow_in`. */
+#[track_caller]
+fn flow_present_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    from_index: i16,
+    from_path: &str,
+    to_index: i16,
+    to_path: &str,
+) -> bool {
+    let func_id = source_info
+        .sites
+        .get_function_id(fx::Function(fx::Str::from(name)))
+        .unwrap_or_else(|| panic!("no function named {name:?} in index summary"));
+    let from_path: Path = from_path.parse().unwrap();
+    let to_path: Path = to_path.parse().unwrap();
+    summary.iter().any(|r| {
+        r.0 == func_id
+            && r.1 == fx::FormalIndex::new(to_index)
+            && r.2 == to_path
+            && r.3 == fx::FormalIndex::new(from_index)
+            && r.4 == from_path
+    })
+}
+
+/* Asserting per-function flow (presence), the multi-function analogue of `check_flow`. Resolves
+`name` to its function and asserts the flow is present *in that function's* summary. Prints the full
+summary on failure. */
+#[track_caller]
+pub(crate) fn check_flow_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    from_index: i16,
+    from_path: &str,
+    to_index: i16,
+    to_path: &str,
+) {
+    assert!(
+        flow_present_in(
+            summary,
+            source_info,
+            name,
+            from_index,
+            from_path,
+            to_index,
+            to_path
+        ),
+        "expected flow {} -> {} in {name:?}, but it is absent.\nsummary: {summary:#?}",
+        fmt_endpoint(from_index, from_path),
+        fmt_endpoint(to_index, to_path),
+    );
+}
+
+/* Asserting per-function flow (absence), the multi-function analogue of `check_no_flow`. */
+#[track_caller]
+pub(crate) fn check_no_flow_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    from_index: i16,
+    from_path: &str,
+    to_index: i16,
+    to_path: &str,
+) {
+    assert!(
+        !flow_present_in(
+            summary,
+            source_info,
+            name,
+            from_index,
+            from_path,
+            to_index,
+            to_path
+        ),
+        "unexpected flow {} -> {} in {name:?} is present.\nsummary: {summary:#?}",
+        fmt_endpoint(from_index, from_path),
+        fmt_endpoint(to_index, to_path),
+    );
+}
+
+/* `check_returns_param` for a named function in a multi-function fixture: asserts param `param_num`
+(path `param_path`) reaches the return *of that function*. */
+#[track_caller]
+pub(crate) fn check_returns_param_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    param_num: i16,
+    param_path: &str,
+) {
+    check_flow_in(
+        summary,
+        source_info,
+        name,
+        param_num,
+        param_path,
+        RETURN_INDEX,
+        "",
+    );
+}
+
+/* `check_does_not_return_param` for a named function in a multi-function fixture: asserts param
+`param_num` (path `param_path`) does NOT reach the return *of that function*. The per-function
+return-endpoint negative -- use it for non-interference-through-a-call cases. */
+#[track_caller]
+pub(crate) fn check_does_not_return_param_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    param_num: i16,
+    param_path: &str,
+) {
+    check_no_flow_in(
+        summary,
+        source_info,
+        name,
+        param_num,
+        param_path,
+        RETURN_INDEX,
+        "",
+    );
+}
+
+/* Asserts function `name` writes parameter `param_num` into the global `field` -- the summary flow
+`@pN -> $globals.field` (e.g. `void set(int src){ g = src; }` summarizes `@p0 -> $globals.g`). The
+global heap is the special `GLOBALS_INDEX` summary endpoint; this hides that constant. Pairs with
+`check_returns_global_in` to pin a cross-function flow-through-a-global as two summary halves. */
+#[track_caller]
+pub(crate) fn check_param_into_global_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    param_num: i16,
+    field: &str,
+) {
+    check_flow_in(
+        summary,
+        source_info,
+        name,
+        param_num,
+        "",
+        GLOBALS_INDEX,
+        field,
+    );
+}
+
+/* Asserts function `name` returns the global `field` -- the summary flow `$globals.field -> return`
+(e.g. `int get(){ return g; }` summarizes `$globals.g -> return`). The other half of a
+flow-through-a-global; see `check_param_into_global_in`. */
+#[track_caller]
+pub(crate) fn check_returns_global_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    field: &str,
+) {
+    check_flow_in(
+        summary,
+        source_info,
+        name,
+        GLOBALS_INDEX,
+        field,
+        RETURN_INDEX,
+        "",
+    );
+}
+
 // Unit tests for the access-path string DSL itself. These helpers contain real parsing logic, so a
 // bug here would silently weaken every test that relies on them.
 #[cfg(test)]
@@ -761,8 +1007,10 @@ mod ap_tests {
 
     #[test]
     fn subscript_is_symbol_segment() {
-        // The C frontend lowers `f[3]` to `PathSegment::Symbol("[3]")` (not a real Offset), so a
-        // fixture that wants what the frontend emits escapes the bracket: `"f.\[3]"`.
+        // A bracketed *name* is a symbol, not an offset, and the DSL says so by escaping the
+        // leading bracket: `"f.\[3]"` is `Symbol("[3]")`. (The C frontend lowers `f[3]` to
+        // `Offset(3), Symbol("deref")` -- see `subscript_access_paths` -- but lua still emits a
+        // bracketed symbol, and either way this spelling has to stay writable.)
         let mut locals = Locals::default();
         let f = locals.get_or_intern("f");
         assert_eq!(
