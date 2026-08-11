@@ -28,7 +28,7 @@ to an offset address too, which it does not yet.
 use ctadl_ir::ParameterType::{ByRef, ByVal};
 use ctadl_ir::{Exp, StatementKind, Variable};
 
-use crate::languages::tree_sitter::test_utils::*;
+use crate::languages::tree_sitter_c::test_utils::*;
 
 #[test_log::test]
 fn simple_function() {

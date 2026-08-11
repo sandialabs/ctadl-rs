@@ -11,7 +11,7 @@ use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::{FunctionSummary, IndexFacts, taint_index};
 use crate::{
     codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program},
-    languages::tree_sitter,
+    languages::tree_sitter_c,
 };
 use anyhow::{Context, Result};
 // `DirectedGraph`/`Successors` are trait imports: they provide `num_nodes()` (used by
@@ -46,7 +46,7 @@ pub(crate) fn get_full_path(filename: &str) -> Result<std::path::PathBuf> {
 
 /* Compile a program from a string. */
 pub(crate) fn program_from_string(src: &str) -> (Program, String) {
-    let result = tree_sitter::parse_c_program(src).expect("Failed to parse C program.");
+    let result = tree_sitter_c::parse_c_program(src).expect("Failed to parse C program.");
     assert!(
         !result.1,
         "Input Program failed to parse without error from Tree-sitter"
@@ -68,7 +68,7 @@ pub(crate) fn program_from_file<P: AsRef<std::path::Path>>(filename: P) -> Resul
     // Read the file, and if it fails, attach a helpful message before returning
     let contents = source_info::read_source(path)
         .with_context(|| format!("Failed to load source file: {}", path.display()))?;
-    let program = tree_sitter::parse_c_program(&contents)?;
+    let program = tree_sitter_c::parse_c_program(&contents)?;
     Ok(program.0)
 }
 
