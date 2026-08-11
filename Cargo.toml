@@ -7,7 +7,7 @@ members = ["ctadl-ascent", "ctadl-flowy", "ctadl-ir", "pcode-reader", "trie", "t
 # number. It is what `ctadl --version` prints, and it is what any of these
 # crates would carry if we ever publish them. Bump it here and nowhere else.
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 
 # Section defining rustc compiler lint rules for the workspace
 [workspace.lints.rust]
