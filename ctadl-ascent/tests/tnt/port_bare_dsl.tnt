@@ -1,0 +1,34 @@
+// PORT SEMANTICS 1/6, IN THE DSL -- the same fixture as `port_bare.tnt`, modelled in the
+// model DSL rather than in JSON. Both files must reach the same summaries, which is what makes
+// this an end-to-end check of the engine through the real index pipeline rather than a
+// re-statement of the unit tests.
+//
+// A propagation `In -> Out` becomes `assign_like(out_var, out_path, in_var, in_path)`, and the
+// forward field-propagation rules fire through `Path::substitute_prefix`: taint at `in_var.p`,
+// for any `p` extending `in_path`, lands at `out_path` followed by the remaining suffix. A port
+// pair is therefore a PREFIX SUBSTITUTION -- a level shift, not a filter. Each fixture in this
+// series probes at the level its port *predicts*, and asserts the level next door is clean.
+//
+// `Argument(0) -> Return` maps `t.X` to `u.X` for every `X`, so `t.f` reaches `u.f` and nothing
+// lands on bare `u`. `id`'s body propagates nothing, so the model is the only cause: drop
+// `port_bare_dsl.models.ctadl` and every check here fails.
+def id(v): 1
+where summaries [return <- v]
+{
+start:
+  w = "nothing";
+  return w;
+}
+
+def main() {
+start:
+  t.f = source(Secret);
+  u = id(t);
+  // Predicted: u.f
+  probe = u.f;
+  sink(probe, Secret);
+  // One level up is clean -- the port shifts nothing.
+  shallow = u;
+  errsink(shallow, Secret);
+  return;
+}

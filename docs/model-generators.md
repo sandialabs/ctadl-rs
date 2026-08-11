@@ -1,5 +1,13 @@
 # CTADL Model Generators
 
+> **There is a newer format.** The engine executes the **model DSL** —
+> [`model-dsl.md`](model-dsl.md) — and a JSON file is translated into it and then run. Write new
+> models in the DSL; `ctadl migrate-models my-models.jsonl` converts an existing one and reports
+> anything that does not carry across. The JSON format keeps working, and this document is still
+> the reference for it. The *semantics* below — ports, access paths, the prefix-substitution
+> reading of a port pair, what a bridge does — are shared by both formats and are documented
+> here.
+
 The **model generator** is CTADL's declarative language for telling the taint
 analyzer things it can't discover on its own: which functions produce tainted
 data, which functions consume it dangerously, and how data flows through code
@@ -72,10 +80,14 @@ chosen by the frontend's method table:
 
 | Frontend | File |
 | --- | --- |
-| dex, apk, jvm, jar | `java-index.jsonl` |
-| pcode | `native-index.jsonl` |
-| lua | `lua-index.jsonl` |
+| dex, apk, jvm, jar | `java-index.ctadl` |
+| pcode | `native-index.ctadl` |
+| lua | `lua-index.ctadl` |
 | flowy | *(none)* |
+
+Each `.ctadl` file sits next to the `.jsonl` it was migrated from. The `.ctadl` is what an index
+loads; the `.jsonl` is kept as the migrator's input and as the oracle a test checks it against,
+so the two cannot drift.
 
 Your `--models` files are unioned on top of the selected default. Pass
 `--no-default-models` to `ctadl index` or `ctadl go` to suppress it, leaving

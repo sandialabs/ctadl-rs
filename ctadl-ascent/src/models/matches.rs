@@ -228,6 +228,10 @@ pub struct ProgramModelMatches {
     pub access_paths: BTreeSet<facts::Path>,
     /// Matched bridge sides, parallel to the scanned specs.
     pub bridges: BridgeMatches,
+    /// Bridges the DSL engine already grounded: both sides are function names, so there is no
+    /// spec to pair and nothing to diagnose. Phase 2 emits them through the same path as a
+    /// paired [`BridgeSpec`].
+    pub resolved_bridges: Vec<crate::models::spec::ResolvedBridge>,
 }
 
 impl ProgramModelMatches {
@@ -250,6 +254,7 @@ impl ProgramModelMatches {
             && self.endpoints.is_empty()
             && self.access_paths.is_empty()
             && self.bridges.is_empty()
+            && self.resolved_bridges.is_empty()
     }
 }
 

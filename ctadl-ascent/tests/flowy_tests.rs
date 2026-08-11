@@ -4,17 +4,24 @@ use ctadl_ascent::codegen::flowy;
 
 /// Indexes a .tnt file and ensures the summary requirements are met.
 ///
-/// A sibling `<stem>.models.jsonl` is loaded as if passed to `ctadl index --models`. That is how
-/// a `.tnt` fixture pins what a *model port* means: flowy needs no toolchain, gets no default
-/// models of its own, and its `where summaries [...]` clause asserts on the index summary
-/// relation directly — so a fixture can say where taint lands, not merely whether one fixed
-/// probe fires.
+/// A sibling `<stem>.models.jsonl` or `<stem>.models.ctadl` is loaded as if passed to
+/// `ctadl index --models`. That is how a `.tnt` fixture pins what a *model port* means: flowy
+/// needs no toolchain, gets no default models of its own, and its `where summaries [...]` clause
+/// asserts on the index summary relation directly — so a fixture can say where taint lands, not
+/// merely whether one fixed probe fires.
+///
+/// Both extensions are picked up so a fixture can be written in either format, which is what
+/// makes `port_bare_dsl.tnt` (the DSL twin of `port_bare.tnt`) an end-to-end check that the two
+/// front ends reach the same summaries through the real index pipeline.
 fn tnt_test<P: AsRef<std::path::Path>>(filename: P) -> anyhow::Result<()> {
     let filename = filename.as_ref();
-    let models: Vec<std::path::PathBuf> = vec![filename.with_extension("models.jsonl")]
-        .into_iter()
-        .filter(|p| p.exists())
-        .collect();
+    let models: Vec<std::path::PathBuf> = vec![
+        filename.with_extension("models.jsonl"),
+        filename.with_extension("models.ctadl"),
+    ]
+    .into_iter()
+    .filter(|p| p.exists())
+    .collect();
     flowy::check(filename, None, &models)
         .map(|_| ())
         .with_context(|| {
