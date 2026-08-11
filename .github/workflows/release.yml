@@ -1,6 +1,6 @@
 name: Release
 
-# Pushing an x.y.z tag publishes a GitHub release carrying a `ctadl` binary for
+# Pushing a vX.Y.Z tag publishes a GitHub release carrying a `ctadl` binary for
 # each supported platform and a checksum for each binary.
 #
 # workflow_dispatch runs the same builds and leaves the binaries as workflow
@@ -9,7 +9,7 @@ name: Release
 on:
   push:
     tags:
-      - "[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
 
 permissions:
@@ -118,9 +118,12 @@ jobs:
           binary="ctadl-$GITHUB_REF_NAME-x86_64-unknown-linux-musl"
           # Downloading an artifact does not preserve the executable bit.
           chmod +x "$binary"
-          # `ctadl --version` prints "ctadl <version>".
+          # `ctadl --version` prints "ctadl <version>". The tag carries a
+          # leading `v` that a Cargo version never does, so drop it before
+          # comparing.
+          expected="${GITHUB_REF_NAME#v}"
           reported=$(./"$binary" --version | awk '{ print $2 }')
-          if [ "$reported" != "$GITHUB_REF_NAME" ]; then
+          if [ "$reported" != "$expected" ]; then
             echo "error: tag is $GITHUB_REF_NAME but the binary reports $reported" >&2
             echo "Either tag [workspace.package] version, or bump it to match the tag." >&2
             exit 1
