@@ -1394,36 +1394,12 @@ pub fn match_prefix(ap: &Path, prefix: &Path) -> Option<tailshare::Seq<mir::Path
             let adjust = an - pn;
             Some(ap_seq.map_head(|_| PathSegment::Offset(Offset(adjust))))
         }
-        // A non-constant array subscript lowers to the field symbol `[_elem_]` (see the
-        // tree-sitter frontend's `flatten_subscript`); at runtime it can index any element,
-        // so it may-aliases every concrete `[N]` sibling. Treat `[_elem_]` and a concrete
-        // bracketed index as matching (in either position), so a write/read through one is
-        // observed at the other (the F5 soundness gap). Two *distinct constant* indices
-        // (`[0]` vs `[1]`) are never `[_elem_]`, so this arm does not fire and their
-        // disjointness -- sound precision -- is preserved.
-        (FieldAccess::Symbol(a), FieldAccess::Symbol(p)) if subscripts_may_alias(a, p) => {
-            Some(ap_seq.tail().unwrap())
-        }
         (a, p) if a == p => {
             // Exact match for the last prefix component
             Some(ap_seq.tail().unwrap())
         }
         _ => None,
     }
-}
-
-/// Whether two array-subscript field symbols may refer to the same element. A non-constant
-/// subscript lowers to the sentinel symbol `[_elem_]` (the frontend can't name the concrete
-/// index), which at runtime may be any element, so it may-aliases every concrete bracketed
-/// index (`[0]`, `[1]`, ...). Distinct *constant* indices are never `[_elem_]` and so never
-/// alias here -- keeping them disjoint is sound precision. Equal symbols are handled by the
-/// exact-match arm, not this helper. The bracket check keeps `[_elem_]` from aliasing
-/// non-subscript field symbols (struct members, etc.), which carry no brackets.
-fn subscripts_may_alias(a: &mir::Symbol, b: &mir::Symbol) -> bool {
-    const ELEM: &str = "[_elem_]";
-    let is_index = |s: &str| s.starts_with('[') && s.ends_with(']');
-    let (a, b) = (a.as_ref(), b.as_ref());
-    (a == ELEM && is_index(b)) || (b == ELEM && is_index(a))
 }
 
 /// Keeps track of the mapping of intern'd function names to index ID's, which are generated at
@@ -1546,32 +1522,6 @@ mod tests {
                 prefix.to_dot_string()
             );
         }
-    }
-
-    #[test]
-    fn test_subscript_may_alias() {
-        // A non-constant subscript lowers to the symbol `[_elem_]`; it may-alias any concrete
-        // `[N]` (F5), so `match_prefix` matches them in either direction -- while distinct
-        // constant indices stay disjoint and `[_elem_]` never aliases a non-subscript field.
-        use ctadl_ir::mir::FieldAccess;
-        use internment::ArcIntern;
-        let sym = |s: &str| Path::from_accesses([FieldAccess::Symbol(ArcIntern::<str>::from(s))]);
-        let elem = sym("[_elem_]");
-        let c0 = sym("[0]");
-        let c1 = sym("[1]");
-        let field = sym("a"); // a struct member, not a subscript
-
-        // `[_elem_]` may-alias a concrete index, both directions.
-        assert!(match_prefix(&c0, &elem).is_some(), "[_elem_] should match [0]");
-        assert!(match_prefix(&elem, &c0).is_some(), "[0] should match [_elem_]");
-        // Distinct constant indices stay disjoint (sound precision preserved).
-        assert!(match_prefix(&c0, &c1).is_none(), "[0] must not match [1]");
-        assert!(match_prefix(&c1, &c0).is_none(), "[1] must not match [0]");
-        // `[_elem_]` must not alias a non-subscript (struct) field symbol.
-        assert!(match_prefix(&field, &elem).is_none(), "[_elem_] must not match .a");
-        // Exact matches still hold.
-        assert!(match_prefix(&elem, &elem).is_some());
-        assert!(match_prefix(&c0, &c0).is_some());
     }
 
     #[test]
