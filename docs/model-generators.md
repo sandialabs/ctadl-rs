@@ -618,12 +618,27 @@ What a skipped function contributes:
 | `summary` rows derived from the body | yes | **no** |
 | the body's indirect calls feed hybrid inlining | yes | **no** |
 | flow *through* the body, including through the calls it makes | tracked | **not tracked** |
+| the calls the body makes appear in the call graph | yes | **no** |
 | call sites *of* the function instantiate the model | yes | yes |
 
-Mechanically it is one guard, on the rule that seeds `locals` from a function's
-formals. Everything derived from a body drives on `locals`, so a function with
-none contributes nothing; call sites are untouched because they instantiate
-`summary(callee, …)` without reading the callee's `locals`.
+Mechanically, codegen lowers the function's signature and drops its body: the
+matched function's blocks never become facts. So there is no `assign` row to
+derive a summary from, no `callee_info` or `call_target_assign` row to
+manufacture a resolvent from, and no instruction site at all. Call sites are
+untouched because they live in the *caller* and instantiate `summary(callee, …)`,
+which the model supplied.
+
+This is why the last table row above says what it does, and it is the one place
+the directive reaches past "don't derive from the body": the calls a skipped
+function makes are gone from the fact base, so they are gone from the call graph
+too. That is the point rather than a side effect — for a dispatcher or an
+unwinder, those edges are exactly the cost being avoided — but if you want a
+function's call edges kept and only its dataflow suppressed, `skip-analysis` is
+not the tool.
+
+Because the mechanism is codegen, matching runs per import *before* that import's
+IR is lowered, and the directive costs the fixpoint nothing: it makes the fact
+base smaller rather than adding a relation for the solver to test.
 
 Reach for it in two situations:
 

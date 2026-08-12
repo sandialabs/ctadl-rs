@@ -6,8 +6,9 @@
 // asserts for the same shape.
 //
 // Here `dispatch` carries `modes: ["skip-analysis"]` and no propagation at all, the honest model
-// for a routine that moves nothing. With no `locals` inside it, rule 1.1 has nothing to read, the
-// indirect call never resolves, and neither the summary nor the flow through it exists.
+// for a routine that moves nothing. Its body is never lowered, so there is no `callee_info` row
+// for rule 1.1 to read, the indirect call never resolves, and neither the summary nor the flow
+// through it exists.
 //
 // This is the case the ARM unwinder models in `native-index.jsonl` rely on: it is not enough to
 // suppress the summary rows: the resolvents the body manufactures are what multiply through

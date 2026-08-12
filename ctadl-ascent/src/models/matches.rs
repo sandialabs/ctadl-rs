@@ -11,8 +11,9 @@ This is one structure spanning two phases, and each field is consumed by exactly
   ([`crate::codegen::model_matches`]) turns them into `facts.summary` rows.
 - [`ProgramModelMatches::access_paths`] -- index time. Phase 2 seeds them into the initial
   indexer paths.
-- [`ProgramModelMatches::skip_analysis`] -- index time. Phase 2 turns them into
-  `facts.skip_analysis` rows, which stop the indexer analyzing those bodies.
+- [`ProgramModelMatches::skip_analysis`] -- index time, and the one field phase *1* reads:
+  [`crate::codegen::codegen_program`] lowers those functions' signatures and drops their bodies,
+  so nothing about them ever enters the fact base.
 - [`ProgramModelMatches::bridges`] -- index time. Phase 2 pairs the two sides and emits the
   `call`/`actual_param`/`assign`/`formal_param` rows.
 - [`ProgramModelMatches::endpoints`] -- query time. Stage 2
@@ -228,12 +229,10 @@ pub struct ProgramModelMatches {
     /// here. Flows needing residues nobody declared are dropped, silently -- that is the
     /// documented default, not an oversight.
     pub access_paths: BTreeSet<facts::Path>,
-    /// Functions a `modes: ["skip-analysis"]` generator matched. Phase 2 resolves the names to
-    /// ids and pushes `facts.skip_analysis`, which stops the indexer from deriving anything from
-    /// those bodies -- the model's own `propagation` rows become the function's whole behaviour.
-    ///
-    /// A set, not a `Vec`: the directive is idempotent, and two generators naming the same
-    /// function say one thing.
+    /// Functions a `modes: ["skip-analysis"]` generator matched. Codegen reads this set as it
+    /// lowers each function and simply does not lower the body of one that is in it, so nothing
+    /// derived from those bodies exists to begin with -- the model's own `propagation` rows
+    /// become the function's whole behaviour.
     pub skip_analysis: BTreeSet<facts::Str>,
     /// Matched bridge sides, parallel to the scanned specs.
     pub bridges: BridgeMatches,

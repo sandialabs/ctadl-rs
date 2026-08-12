@@ -238,6 +238,11 @@ pub fn index(
     // Collects both halves of every JNI boundary as the imports go by; the link itself can only
     // happen after the loop, when one `IdMap` holds every program's functions.
     let mut jni_observer = jni::JniObserver::new();
+
+    // Bodies `modes: ["skip-analysis"]` kept out of the fact base, summed over the imports.
+    // Counted by codegen rather than from the matched names, which is the only place that knows
+    // a name belonged to a function this project actually lowered.
+    let mut skipped_bodies = 0usize;
     for import in project.iter_imports() {
         let import = import?;
         // Everything codegen records from here to the next import belongs to this one. Source
@@ -301,7 +306,16 @@ pub fn index(
             "[mem cp] after SSA transform: {:.1} MB",
             phys_footprint_mb()
         );
-        codegen_program(program_info, &mut facts, &mut source_info, strategy);
+        // The match block above has already contributed every `modes: ["skip-analysis"]` name
+        // this import can, so codegen can drop those bodies as it goes rather than lowering
+        // facts the analysis would then have to ignore.
+        skipped_bodies += codegen_program(
+            program_info,
+            &mut facts,
+            &mut source_info,
+            strategy,
+            &model_matches.skip_analysis,
+        );
         log::debug!(
             "[mem cp] after codegen_program (IR dropped, facts built): {:.1} MB",
             phys_footprint_mb()
@@ -342,11 +356,11 @@ pub fn index(
         &mut source_info,
     )?;
     log::info!(
-        "models: {} summary row(s), {} declared access path(s), {} function(s) with analysis \
-         skipped",
+        "models: {} summary row(s), {} declared access path(s), {} function body(ies) not \
+         analyzed",
         model_report.summaries,
         model_report.declared_paths,
-        model_report.skipped
+        skipped_bodies
     );
     // Unconditionally, at info, even when nothing went wrong: a bridge-only generator appears on
     // no other surface, and this line is what catches the mis-paired case (wrong slot, wrong
@@ -1367,7 +1381,6 @@ pub fn inspect_index_facts(
     log::debug!("  callee_resolvents: {}", facts.callee_resolvents.len());
     log::debug!("  call_target_assign:{}", facts.call_target_assign.len());
     log::debug!("  external_function: {}", facts.external_function.len());
-    log::debug!("  skip_analysis:  {}", facts.skip_analysis.len());
 
     use crate::facts::InsnSiteId;
 

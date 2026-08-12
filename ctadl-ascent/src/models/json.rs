@@ -1068,9 +1068,9 @@ impl<'p, 'b> ModelGeneratorVisitor for ModelGeneratorIngest<'p, 'b> {
 
     /// Records the functions a `modes` directive applies to.
     ///
-    /// `skip-analysis` is the one defined value: the indexer derives nothing from the matched
-    /// function's body, so whatever the same generator's `propagation` list says is that
-    /// function's entire behaviour. Without it a model *adds* to the body-derived summary rather
+    /// `skip-analysis` is the one defined value: codegen never lowers the matched function's
+    /// body, so whatever the same generator's `propagation` list says is that function's entire
+    /// behaviour. Without it a model *adds* to the body-derived summary rather
     /// than replacing it, which is what makes a hand-written model unable to cut a degenerate
     /// function down (see `docs/model-generators.md` §`modes`).
     ///

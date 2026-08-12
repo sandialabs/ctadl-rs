@@ -610,6 +610,7 @@ pub(crate) fn get_summary(
         &mut facts,
         &mut source_info,
         CallResolutionStrategy::Mixed,
+        &Default::default(),
     );
     let result = taint_index(facts);
     Ok((result.summary, source_info))
@@ -646,6 +647,7 @@ pub(crate) fn index_program(
         &mut facts,
         &mut source_info,
         CallResolutionStrategy::Mixed,
+        &Default::default(),
     );
     // `taint_index` consumes the facts; clone so the caller keeps them for Stage 2.
     let result = taint_index(facts.clone());

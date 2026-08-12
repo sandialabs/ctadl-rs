@@ -65,8 +65,6 @@ impl std::fmt::Display for BridgeStats {
 pub struct ModelCodegenReport {
     pub summaries: usize,
     pub declared_paths: usize,
-    /// Functions `modes: ["skip-analysis"]` matched *and* resolved to an id in this project.
-    pub skipped: usize,
     pub bridges: Vec<BridgeStats>,
 }
 
@@ -92,7 +90,6 @@ pub fn codegen_model_matches(
     Ok(ModelCodegenReport {
         summaries: codegen_propagations(&matches.propagations, &arg_arity, facts, source_info),
         declared_paths: codegen_declared_paths(matches, facts),
-        skipped: codegen_skip_analysis(matches, facts, source_info),
         bridges: codegen_bridges(specs, matches, &num_params, facts, source_info)?,
     })
 }
@@ -195,36 +192,6 @@ fn codegen_declared_paths(matches: &ProgramModelMatches, facts: &mut IndexFacts)
         facts.paths.push((*path,));
     }
     matches.access_paths.len()
-}
-
-// ---------------------------------------------------------------------------
-// Analysis modes
-// ---------------------------------------------------------------------------
-
-/// Turns matched `modes: ["skip-analysis"]` generators into `facts.skip_analysis` rows.
-///
-/// The engine reads that relation in one place -- it refuses to seed `locals` for a skipped
-/// function -- and everything else follows: with no `locals` there, no body-derived `summary`,
-/// no `critical_summary`, and no `context_locals` can be derived inside it either. The rows this
-/// phase's `codegen_propagations` pushed are untouched, so a skipped function's behaviour is
-/// exactly what its model says and nothing more.
-///
-/// Names that resolve to no function are skipped in silence, exactly as a propagation's are: a
-/// model file names functions that may or may not be in this project.
-fn codegen_skip_analysis(
-    matches: &ProgramModelMatches,
-    facts: &mut IndexFacts,
-    source_info: &mut IndexSourceInfo,
-) -> usize {
-    let mut emitted = 0usize;
-    for name in &matches.skip_analysis {
-        let Some(func_id) = source_info.sites.get_function_id(facts::Function(*name)) else {
-            continue;
-        };
-        facts.skip_analysis.push((func_id,));
-        emitted += 1;
-    }
-    emitted
 }
 
 // ---------------------------------------------------------------------------

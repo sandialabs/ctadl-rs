@@ -442,7 +442,7 @@
                 }
               },
               "modes": {
-                "description": "Analysis directives. 'skip-analysis' makes the indexer derive nothing from the matched function's body, so this generator's propagation list (which may be empty, meaning the function moves nothing) becomes its entire behaviour. Without it a model ADDS to the body-derived summary rather than replacing it. Index time only.",
+                "description": "Analysis directives. 'skip-analysis' means the matched function's body is never lowered into facts, so this generator's propagation list (which may be empty, meaning the function moves nothing) becomes its entire behaviour and the calls the body made are gone from the call graph too. Without it a model ADDS to the body-derived summary rather than replacing it. Index time only.",
                 "type": "array",
                 "items": {
                   "type": "string",
