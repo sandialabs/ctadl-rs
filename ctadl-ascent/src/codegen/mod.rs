@@ -645,12 +645,16 @@ impl Visitor for CodegenVisitor<'_> {
                 }
                 // pass parameters
                 for (i, arg_exp) in args.iter().enumerate() {
-                    let index: Result<i8, _> = i.try_into();
-                    let Ok(idx_i8) = index else {
-                        log::warn!("found > 127 parameters in function call; skipping rest");
+                    // The negative half is reserved for the engine (returns at -1, -2, ...; globals
+                    // at `GLOBALS_INDEX`), which is why this stops at `i16::MAX` rather than
+                    // wrapping into it.
+                    let Ok(formal_index) = FormalIndex::try_from(i) else {
+                        log::warn!(
+                            "found > {} parameters in function call; skipping rest",
+                            i16::MAX
+                        );
                         break;
                     };
-                    let formal_index = FormalIndex::new(idx_i8.into());
 
                     if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = arg_exp {
                         let target = fx::Function(name.clone().into());
