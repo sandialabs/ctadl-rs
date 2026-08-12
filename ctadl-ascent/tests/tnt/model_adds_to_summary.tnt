@@ -1,0 +1,22 @@
+// A propagation model ADDS to a body-derived summary; it does not replace it.
+//
+// This is the control for `skip_analysis.tnt`, and it is here because the answer is not
+// obvious from the model files: `summary` is both an input relation (the model's rows, pushed
+// by `codegen::model_matches`) and a derived one (the two summary rules in `index_engine`,
+// driven by `locals`). Nothing about matching a function stops the second, so a modelled
+// function with a body ends up with the union.
+//
+// That matters for anyone reaching for a model to make a degenerate function cheap: on its own,
+// a model makes the analysis *bigger*. `modes: ["skip-analysis"]` is what turns the union into a
+// replacement -- see the sibling fixture.
+def transfer(dst, src): 1
+where summaries [return <- src, return <- dst]
+{
+start:
+  return src;
+}
+
+def main() {
+start:
+  return;
+}

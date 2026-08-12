@@ -1,0 +1,3 @@
+// Loaded by `flowy_tests.rs` for the sibling `model_adds_to_summary.tnt`, as `ctadl index
+// --models` would. No `modes`: the body is analyzed as usual and this row joins what it derives.
+{"find":"methods","where":[{"constraint":"signature_match","name":"transfer"}],"model":{"propagation":[{"input":"Argument(0)","output":"Return"}]}}
