@@ -308,10 +308,7 @@ struct GeneratorState {
     declares_endpoints: bool,
     declares_propagation: bool,
     declares_access_paths: bool,
-    /// A `modes` directive. Counts as declaring a model on its own: a generator carrying
-    /// `modes: ["skip-analysis"]` and nothing else changes the analysis (it removes what a body
-    /// contributes), so a check that ignored it would report nothing about the one generator
-    /// whose failure to match is invisible everywhere else.
+    /// A `modes` directive.
     declares_modes: bool,
     has_bridge: bool,
     matched: Option<MatchedFunctions>,
