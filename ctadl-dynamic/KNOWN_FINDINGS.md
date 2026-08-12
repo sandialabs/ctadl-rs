@@ -12,12 +12,12 @@ frontend ingestion gaps — and tracks their disposition.
 | switch_statement not ingested | frontend | 25–29 | ✅ resolved (`5d5a695`) |
 | F2 — multiple funcptr stores into an aggregate drop taint | soundness | 30, 33 | ✅ resolved (index-engine path fix) |
 | **initializer_list (`{...}`) not ingested** | frontend | 31 | 🟠 open |
-| **labeled_empty_statement (`L: ;`) not ingested** | frontend | 32 | 🟡 open |
+| labeled_empty_statement (`L: ;`) not ingested | frontend | 32 | ✅ resolved (spec 018) |
 
-F2 and the two open frontend findings were surfaced by the **broadened M7 generator** (it threads
+F2 and the two frontend findings above were surfaced by the **broadened M7 generator** (it threads
 taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at volume).
-Resolved entries are kept as a record of what the approach caught and how each was fixed. **2
-findings remain open** (both frontend ingestion gaps — `initializer_list`, `labeled_empty_statement`).
+Resolved entries are kept as a record of what the approach caught and how each was fixed. **1
+finding remains open** (the `initializer_list` frontend ingestion gap).
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
 (soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see
@@ -155,17 +155,30 @@ compare against the moment the frontend learns to ingest it (the harness will th
 - **Found by:** the broadened M7 generator (its array-of-function-pointers transform used a brace
   initializer; switching to element assignment dodged this and exposed F2).
 
-## labeled_empty_statement — a label on an empty statement (`L: ;`) doesn't parse (OPEN)
+## labeled_empty_statement — the null statement (`;`, incl. `L: ;`) is now ingested (RESOLVED)
 
-- **Status:** **open.** Allowlisted as `"known_frontend_gap": "labeled_empty_statement"` in
-  [`cases/32_label_empty_statement`](cases/32_label_empty_statement/).
-- **Symptom:** a `labeled_statement` whose body is the null statement (`done: ;`) fails — the bare
-  `;` reaches `flatten_expr`'s catch-all (`ERR 78`). A label on a **real** statement
-  (`done: r = r;`) ingests fine, so the gap is specific to the empty-statement body. (`goto` and
-  labels generally work — added in `d1ccd07`; this is the one residual form.)
-- **Reproduces with:** [`cases/32_label_empty_statement`](cases/32_label_empty_statement/) →
-  `known-frontend-gap (labeled_empty_statement)`. The `goto` jumps over the kill, so DFSan observes
-  the flow; expected result once it parses is `flow`.
+- **Status:** **resolved** (spec 018). The `known_frontend_gap: "labeled_empty_statement"`
+  allowlist has been removed from `cases/32_label_empty_statement` **and**
+  `cases/CPP_32_label_empty_statement`, which now run as plain `OK`.
+- **Was:** a `labeled_statement` whose body is the null statement (`done: ;`) failed — the bare
+  `;` reached `flatten_expr`'s catch-all (`ERR 78`), taking the whole program down. A bare `;`
+  anywhere in a body failed the same way; a label on a **real** statement (`done: r = r;`)
+  ingested fine, so the gap was specific to the empty-statement body. (`goto` and labels
+  generally worked — added in `d1ccd07`; this was the one residual form.)
+- **Fix:** `walk_statement`'s `expression_statement` arm in
+  [`ctadl-ascent/src/languages/tree_sitter/mod.rs`](../ctadl-ascent/src/languages/tree_sitter/mod.rs)
+  now reads the **named** child instead of `child(0)`. The null statement parses as an
+  `expression_statement` whose only child is the anonymous `;` token, so it now has no named child
+  and lowers to a no-op (nothing emitted, control falls through unchanged) rather than handing the
+  `;` to `flatten_expr`. Every non-empty expression statement is unaffected — its first child is
+  always the expression. The node shape is identical in tree-sitter-c and tree-sitter-cpp, so this
+  one shared-core change (no hook, no language branch) closed both mirrors.
+- **Verified resolved by:** [`cases/32_label_empty_statement`](cases/32_label_empty_statement/) and
+  [`cases/CPP_32_label_empty_statement`](cases/CPP_32_label_empty_statement/) now report
+  `static=flow dynamic=flow` (`OK`) — the harness first flagged both `resolved-known-frontend-gap`
+  with the allowlists still in place. Unit-covered by `null_statement_is_noop`,
+  `labeled_null_statement_goto_target`, `trailing_labeled_null_statement` (C) and
+  `cpp_null_statement_is_noop`, `cpp_labeled_null_statement_goto_target` (C++).
 - **Found by:** the broadened M7 generator (its goto transform labeled an empty statement).
 
 ## array_declarator — array declarations are now ingested (RESOLVED)

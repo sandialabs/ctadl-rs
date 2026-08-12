@@ -2389,3 +2389,50 @@ fn cpp_heap_pointer_gets_no_scope_exit_destructor() {
          with no spurious scope-exit destructor\n{prog}"
     );
 }
+
+#[test_log::test]
+fn cpp_labeled_null_statement_goto_target() {
+    // The `CPP_32_label_empty_statement` shape: `goto done;` jumps over a kill into a label whose
+    // body is the null statement (`done: ;`), then the value reaches the sink. tree-sitter-cpp
+    // parses the bare `;` into exactly the same node shape as tree-sitter-c (an
+    // `expression_statement` with no named child), so the shared core's no-op lowering covers both
+    // grammars with no hook and no language branch -- this test pins that parity. CFG mirrors the C
+    // frontend's `labeled_null_statement_goto_target`: the pre-created label block is 1, the
+    // unreachable post-`goto` statements land in block 2, which still links into the label.
+    let src = r#"
+        extern "C" int source();
+        extern "C" void sink(int);
+        int main() {
+            int s = source();
+            int r = s;
+            goto done;
+            r = 0;
+        done:
+            ;
+            sink(r);
+            return 0;
+        }
+    "#;
+    let prog = program_from_cpp_string(src).0;
+    check_block_count(&prog, 3);
+    check_successors(&prog, 0, &[1]); // goto jumps straight to the label block
+    check_successors(&prog, 1, &[]); // label block runs the sink call and returns
+    check_successors(&prog, 2, &[1]); // unreachable `r = 0;` falls through into the label
+    check_assign_or_update(&prog, "r", ["s"], None);
+    check_has_direct_call(&prog, "main", "sink");
+}
+
+#[test_log::test]
+fn cpp_null_statement_is_noop() {
+    // A bare `;` mid-body is a no-op under the C++ grammar too: the body stays a single
+    // straight-line block and the surrounding assignment is unaffected.
+    let src = r"
+        int f(int a) {
+            int r = a;
+            ;
+            return r;
+        }";
+    let prog = program_from_cpp_string(src).0;
+    check_block_count(&prog, 1);
+    check_assign_or_update(&prog, "r", ["@p0"], None);
+}

@@ -1,10 +1,9 @@
-/* Frontend ingestion gap: a label on an EMPTY statement (`done: ;`). A `goto` whose
-   target label has the null statement as its body fails ingestion -- the bare `;`
-   reaches the expression flattener's catch-all (ERR 78). Labeling a *real* statement
-   (e.g. `done: r = r;`) ingests fine, so this is specific to the empty-statement body.
-   At runtime the `r = 0;` kill is jumped over, so DFSan observes the flow; the expected
-   result once it parses is `flow`. Found by the broadened generator (M7).
-   See ctadl-dynamic/KNOWN_FINDINGS.md. */
+/* A label on an EMPTY statement (`done: ;`), the body of a `goto` target. This was the
+   `labeled_empty_statement` frontend ingestion gap: the bare `;` reached the expression
+   flattener's catch-all (ERR 78) and failed the whole program. The null statement now
+   lowers to a no-op, so the case runs as a plain regression test. At runtime the
+   `r = 0;` kill is jumped over, so DFSan observes the flow, and CTADL agrees.
+   Found by the broadened generator (M7). See ctadl-dynamic/KNOWN_FINDINGS.md. */
 int source();
 void sink(int);
 

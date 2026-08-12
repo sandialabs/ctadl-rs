@@ -964,3 +964,319 @@ fn field_increment_is_update() {
     // an unpinnable flatten temp, so we assert only that exactly one such update exists.
     check_writes_to(&prog, "@p0.x", 1);
 }
+
+// The three tests below pin the **null statement** (a bare `;`). It parses as an
+// `expression_statement` with no named child -- its only child is the anonymous `;` token -- and
+// executes nothing, so it must lower to a no-op rather than reach `flatten_expr` (which errors
+// `Unsupported expression type: ;`). The labeled forms are the shape the DFSan corpus hit
+// (case 32): `goto` over a kill into `done: ;`.
+
+#[test_log::test]
+fn null_statement_is_noop() {
+    // A bare `;` between two real statements lowers to nothing: the body stays one straight-line
+    // block and the param still reaches the return through the assignment that surrounds it.
+    let src = r"
+        int f(int a) {
+            int r = a;
+            ;
+            return r;
+        }";
+    let prog = program_from_string(src).0;
+    check_block_count(&prog, 1);
+    check_assign_or_update(&prog, "r", ["@p0"], None);
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn labeled_null_statement_goto_target() {
+    // Case 32's shape: `goto done;` jumps over a kill into a label whose body is the null
+    // statement, then the value is returned. The label block is a real `goto` target and the empty
+    // body falls through to the following sibling, so the param still reaches the return. (CTADL is
+    // path-insensitive: the jumped-over `r = 0;` kill does not remove the flow established by
+    // `r = a`, which is exactly what DFSan observes at runtime.)
+    let src = r"
+        int f(int a) {
+            int r = a;
+            goto done;
+            r = 0;
+        done:
+            ;
+            return r;
+        }";
+    let prog = program_from_string(src).0;
+    // The label block is pre-created as block 1; the statements after the `goto` are unreachable
+    // and lower into their own block 2, which the label still links out of.
+    check_block_count(&prog, 3);
+    check_successors(&prog, 0, &[1]); // goto jumps straight to the label block
+    check_successors(&prog, 1, &[]); // label block returns -- terminal, empty body emitted nothing
+    check_successors(&prog, 2, &[1]); // unreachable `r = 0;` falls through into the label
+    let (s, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&s, 0, "");
+}
+
+#[test_log::test]
+fn trailing_labeled_null_statement() {
+    // `L: ;` as the **last** statement of a function body. The label block has no following
+    // sibling to fall into, so it must be terminated by the end-of-compound link rather than left
+    // dangling -- `program_from_string` fails the test if any block carries `<no terminator>`.
+    let src = r"
+        void f(int a) {
+            sink(a);
+            goto done;
+        done:
+            ;
+        }";
+    let prog = program_from_string(src).0;
+    check_has_direct_call(&prog, "f", "sink");
+    check_block_count(&prog, 3);
+    check_successors(&prog, 0, &[1]); // goto jumps to the label block
+    check_successors(&prog, 1, &[]); // label block terminates (return) -- no dangling block
+    check_successors(&prog, 2, &[1]); // the after-goto block still links into the label
+}
+
+// ---------------------------------------------------------------------------------------
+// Aggregate (brace) initializers — spec 019. A `{ … }` initializer desugars into the element
+// assignments it stands for, so it reuses the existing subscript-/field-/funcptr-store
+// lowering rather than an aggregate model.
+// ---------------------------------------------------------------------------------------
+
+/* Statement kinds of the named function, in block-then-statement order. Used by the
+function-pointer test below to assert that a brace-initialized array lowers to *exactly* the
+statements the element-assignment form does (the multi-function programs there rule out
+`statements_of`, which wants a single function). */
+fn stmt_kinds_of(prog: &ctadl_ir::Program, name: &str) -> Vec<StatementKind> {
+    function_named(prog, name)
+        .unwrap_or_else(|| panic!("no function named {name}"))
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .map(|s| s.kind.clone())
+        .collect()
+}
+
+#[test_log::test]
+fn array_aggregate_initializer() {
+    // `int a[2] = { x, 0 };` (the case-31 shape) desugars element-wise into the same `a.[i]`
+    // stores `a[i] = e` builds, so the tainted element reaches the array and `a[0]` carries it
+    // to the return.
+    let src = r"
+            int array_aggregate_initializer(int x) {
+                int a[2] = { x, 0 };
+                return a[0];
+            }
+        ";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "a.[0]", ["@p0"], None);
+    check_assign_or_update(&prog, "a.[1]", ["#0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn array_aggregate_initializer_untainted() {
+    // The negative: an all-constant brace initializer introduces no flow of its own. The
+    // parameter is live in the function (copied into a local) but never reaches the array, so
+    // returning `a[0]` must not report a param→return flow.
+    let src = r"
+            int array_aggregate_initializer_untainted(int x) {
+                int a[2] = { 1, 2 };
+                int b = x;
+                return a[0];
+            }
+        ";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "a.[0]", ["#1"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_does_not_return_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn struct_aggregate_initializer_positional() {
+    // `struct P p = { x, 0 };` maps its elements positionally onto the fields in declaration
+    // order (from the struct-layout registry), so the tainted element lands on `p.x` — the same
+    // field write `p.x = e` produces — and reaches the return through `p.x`.
+    let src = r"
+            struct P { int x; int y; };
+            int struct_aggregate_initializer_positional(int v) {
+                struct P p = { v, 0 };
+                return p.x;
+            }
+        ";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "p.x", ["@p0"], None);
+    check_assign_or_update(&prog, "p.y", ["#0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn struct_aggregate_initializer_distinct_member() {
+    // The distinct-member negative that positional mapping buys: `{ 0, v }` taints `p.y`, so
+    // reading the *other* member (`p.x`) must report no flow. Over-approximating the aggregate
+    // here (assigning both elements to `p`) would pass the positive test above and fail this one.
+    let src = r"
+            struct P { int x; int y; };
+            int struct_aggregate_initializer_distinct_member(int v) {
+                struct P p = { 0, v };
+                return p.x;
+            }
+        ";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "p.x", ["#0"], None);
+    check_assign_or_update(&prog, "p.y", ["@p0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_does_not_return_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn funcptr_array_aggregate_initializer() {
+    // `int (*fps[2])(int) = { id, id };` must produce exactly the facts the element-assignment
+    // form (`fps[0] = id; fps[1] = id;`) produces -- that is what makes the indirect call through
+    // `fps[0]` resolve (the F2 shape, cases 30/33). Comparing the lowered statements pins that
+    // equivalence rather than restating the expected funcptr store.
+    let brace = r"
+            int id(int p) { return p; }
+            int via_brace(int x) {
+                int (*fps[2])(int) = { id, id };
+                return fps[0](x);
+            }
+        ";
+    let elemwise = r"
+            int id(int p) { return p; }
+            int via_brace(int x) {
+                int (*fps[2])(int);
+                fps[0] = id;
+                fps[1] = id;
+                return fps[0](x);
+            }
+        ";
+    let brace_prog = program_from_string(brace).0;
+    let elemwise_prog = program_from_string(elemwise).0;
+    assert_eq!(
+        stmt_kinds_of(&brace_prog, "via_brace"),
+        stmt_kinds_of(&elemwise_prog, "via_brace"),
+        "brace-initialized funcptr array must lower like element assignment\nbrace:\n{brace_prog}\nelement-wise:\n{elemwise_prog}"
+    );
+}
+
+#[test_log::test]
+fn typedef_struct_aggregate_initializer_positional() {
+    // A `typedef struct { … } P;` is the everyday spelling of a record with no tag of its own.
+    // The layout registry records it under the typedef name, so `P p = { v, 0 }` maps positionally
+    // exactly like the tagged form -- including the distinct-member negative below.
+    let src = r"
+            typedef struct { int x; int y; } P;
+            int typedef_struct_aggregate_initializer_positional(int v) {
+                P p = { v, 0 };
+                return p.x;
+            }
+        ";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "p.x", ["@p0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn typedef_struct_aggregate_initializer_distinct_member() {
+    let src = r"
+            typedef struct { int x; int y; } P;
+            int typedef_struct_aggregate_initializer_distinct_member(int v) {
+                P p = { 0, v };
+                return p.x;
+            }
+        ";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "p.y", ["@p0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_does_not_return_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn nested_array_aggregate_initializer() {
+    // A nested brace on a multi-dimensional array is the next subscript level, so the element
+    // slots stay precise: `{ { x, 0 }, … }` writes `a[0][0]`, matching an `a[0][0] = x` store.
+    let src = r"
+            int nested_array_aggregate_initializer(int x) {
+                int a[2][2] = { { x, 0 }, { 0, 0 } };
+                return a[0][0];
+            }
+        ";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "a.[0].[0]", ["@p0"], None);
+    check_assign_or_update(&prog, "a.[0].[1]", ["#0"], None);
+    check_assign_or_update(&prog, "a.[1].[0]", ["#0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn braced_scalar_initializer() {
+    // `int x = { v };` is a braced *scalar*, not an aggregate: its single element writes the
+    // variable itself, so it lowers to the same plain assignment `int x = v;` does.
+    let src = r"
+            int braced_scalar_initializer(int v) {
+                int x = { v };
+                return x;
+            }
+        ";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "x", ["@p0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn unmapped_aggregate_initializer_still_reports_the_gap() {
+    // The shapes this slice does not place -- a designated initializer, and a brace nested inside
+    // a record (whose member's own layout is not tracked) -- keep reporting the `initializer_list`
+    // ingestion gap. That is deliberate: writing their elements to the aggregate's own access path
+    // would not over-approximate, it would *drop* the taint (a write at a variable's root does not
+    // reach a later read of a field under it), turning a loud frontend gap into a silent soundness
+    // false negative. See `Context::lower_aggregate_initializer`.
+    let designated = r"
+            struct P { int x; int y; };
+            int designated(int v) {
+                struct P p = { .x = v };
+                return p.x;
+            }
+        ";
+    let nested_record = r"
+            struct Q { int a; int b; };
+            struct R { struct Q q; int z; };
+            int nested_record(int v) {
+                struct R r = { { v, 0 }, 0 };
+                return r.q.a;
+            }
+        ";
+    for src in [designated, nested_record] {
+        let err = crate::languages::tree_sitter::parse_c_program(src)
+            .expect_err("shape is not lowered by this slice");
+        assert!(
+            err.to_string().contains("initializer_list"),
+            "expected the initializer_list ingestion gap, got: {err}"
+        );
+    }
+}
+
+#[test_log::test]
+fn string_literal_array_initializer_unchanged() {
+    // Guard on the interception's narrowness: `char s[] = "..."` has a `string_literal` value,
+    // not an `initializer_list`, so it keeps its existing whole-array assignment lowering.
+    let src = r#"
+            void string_literal_array_initializer_unchanged() {
+                char s[] = "hi";
+            }
+        "#;
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "s", ["#\"hi\""], None);
+}
