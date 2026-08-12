@@ -8,10 +8,6 @@ default-run = "ctadl"
 name = "ctadl"
 path = "src/main.rs"
 
-[[bin]]
-name = "get-paths"
-path = "src/bin/get-paths.rs"
-
 [dependencies]
 anyhow = "1.0"
 arrow = "58"

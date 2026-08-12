@@ -54,9 +54,43 @@ pub enum Command {
     /// Inspect the CTADL store
     Inspect(InspectArgs),
 
+    /// Find taint graph paths from binary URI + byte offset pairs. (See 'index' for prerequisites)
+    ///
+    /// Each pair names a program point. The paths running through those points, to or from the
+    /// project's sources and sinks, are written to stdout as JSON. This is what an editor
+    /// integration calls to show the flows through the line under the cursor.
+    #[command(name = "get-paths")]
+    GetPaths(GetPathsArgs),
+
     /// Legacy Ghidra Pcode CLI: index and query commands for Ghidra integration.
     #[command(name = "legacy-pcode-cli")]
     LegacyPcodeCli(LegacyPcodeCliArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct GetPathsArgs {
+    /// Project to query. (See 'index' for how a project is made)
+    #[arg(value_name = "PROJECT_NAME")]
+    pub project_name: String,
+
+    /// Program points to find paths through, as a binary URI and a byte offset into it
+    ///
+    /// The offset is decimal, or hex with an explicit `0x` prefix. Offsets in the output JSON
+    /// are always decimal.
+    #[arg(value_name = "BINARY_URI,BYTE_OFFSET", required = true, num_args = 1..)]
+    pub pairs: Vec<String>,
+
+    /// Directions to search from each program point
+    #[arg(long, short, value_enum, default_value_t = cli::GetPathsDirection::All)]
+    pub taint_direction: cli::GetPathsDirection,
+
+    /// Optional source endpoints to filter by (e.g. "call-arg(1234, -1)")
+    #[arg(long = "source")]
+    pub sources: Vec<String>,
+
+    /// Optional sink endpoints to filter by (e.g. "call-arg(5678, 0)")
+    #[arg(long = "sink")]
+    pub sinks: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -428,6 +462,16 @@ fn main() -> anyhow::Result<()> {
         Command::Inspect(args) => {
             inspect_artifact(args)
                 .with_context(|| format!("running 'inspect' artifact: {:?}", args.name))?;
+        }
+        Command::GetPaths(args) => {
+            cli::get_paths(
+                &args.project_name,
+                &args.pairs,
+                args.taint_direction,
+                &args.sources,
+                &args.sinks,
+            )
+            .with_context(|| format!("running 'get-paths' project: {:?}", args.project_name))?;
         }
         Command::Go(args) => {
             // Use the user-provided name or one derived from the first artifact.

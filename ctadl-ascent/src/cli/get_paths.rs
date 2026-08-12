@@ -1,8 +1,18 @@
+/*! Taint paths through a program point named by binary URI and byte offset.
+
+This backs `ctadl get-paths`, which an editor integration calls to ask "what taint paths run
+through this address?". Each `BINARY_URI,BYTE_OFFSET` pair is resolved to the instructions the
+index recorded at that offset, those instructions' flow vertices become extra query endpoints
+alongside the project's model-defined sources and sinks, and the taint graph is searched for a
+path joining a target to a sink (forward) or a source to a target (backward). The result is
+JSON on stdout: one entry per path, each a list of edges carrying the variable, method, class,
+access path, and byte offset an editor needs to draw the flow.
+*/
+
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::{Parser, ValueEnum};
 use datafusion::arrow::array::{StringViewArray, UInt32Array, UInt64Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -11,47 +21,27 @@ use datafusion::prelude::*;
 use packed_struct::prelude::*;
 use serde::Serialize;
 
-use ctadl_ascent::error::Error;
-use ctadl_ascent::facts::{
+use crate::error::Error;
+use crate::facts::{
     FlowVariable, FlowVariableKind, FunctionId, InsnId, InsnSiteId, Label, Path,
     TaintDirection as FactsTaintDirection, TaintState,
 };
-use ctadl_ascent::index_engine::{IndexFacts, IndexResult};
-use ctadl_ascent::query_engine::formatter::{
+use crate::index_engine::{IndexFacts, IndexResult};
+use crate::query_engine::formatter::{
     FormatFactsBuilder, TaintAnalysisResults, build_taint_flow_graph,
 };
-use ctadl_ascent::query_engine::{QueryEndpoint, QueryFacts, taint_analysis};
+use crate::query_engine::{QueryEndpoint, QueryFacts, taint_analysis};
 use ctadl_ir::graph::{DirectedGraph, LabeledSuccessors, find_annotated_path_to_set};
 
-#[derive(Debug, Clone, ValueEnum, Copy)]
+/// Which taint directions to search from the queried program points.
+#[derive(Debug, Clone, clap::ValueEnum, Copy)]
 pub enum TaintDirection {
     All,
     Fwd,
     Bwd,
 }
 
-#[derive(Debug, Parser)]
-#[command(name = "get-paths")]
-#[command(about = "Find taint graph paths from binary URI + byte offset pairs")]
-struct Args {
-    #[arg(value_name = "PROJECT_NAME")]
-    project_name: String,
-
-    #[arg(value_name = "BINARY_URI,BYTE_OFFSET", required = true, num_args = 1..)]
-    pairs: Vec<String>,
-
-    #[arg(long, short, value_enum, default_value_t = TaintDirection::All)]
-    pub taint_direction: TaintDirection,
-
-    /// Optional source endpoints to filter by (e.g. "call-arg(1234, -1)")
-    #[arg(long = "source")]
-    pub sources: Vec<String>,
-
-    /// Optional sink endpoints to filter by (e.g. "call-arg(5678, 0)")
-    #[arg(long = "sink")]
-    pub sinks: Vec<String>,
-}
-
+/// One `BINARY_URI,BYTE_OFFSET` pair off the command line.
 #[derive(Debug, Clone)]
 pub struct OffsetQuery {
     pub binary_uri: String,
@@ -73,7 +63,17 @@ fn parse_pair(input: &str) -> Result<OffsetQuery, Error> {
             format!("invalid pair '{input}': empty binary_uri"),
         )));
     }
-    let byte_offset = off_str.parse::<u64>().map_err(|e| {
+    // Hex needs the `0x` prefix. Disassemblers print addresses bare, but a bare number is
+    // already a decimal offset here, and `1505856` is a valid figure in both bases naming two
+    // different addresses -- so the prefix is what makes the base explicit rather than guessed.
+    let byte_offset = match off_str
+        .strip_prefix("0x")
+        .or_else(|| off_str.strip_prefix("0X"))
+    {
+        Some(hex) => u64::from_str_radix(hex, 16),
+        None => off_str.parse::<u64>(),
+    }
+    .map_err(|e| {
         Error::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("invalid pair '{input}': failed to parse byte_offset '{off_str}': {e}"),
@@ -113,16 +113,39 @@ pub struct Output {
     pub bwd: Vec<Vec<CtadlDataResult>>,
 }
 
-async fn run() -> Result<(), Error> {
-    let args = Args::parse();
-    let direction = args.taint_direction;
-    let queries: Vec<OffsetQuery> = args
-        .pairs
+/// Find the taint paths through each `BINARY_URI,BYTE_OFFSET` pair and write them to stdout
+/// as JSON.
+///
+/// `sources` and `sinks` are optional `call-arg(INSN, FORMAL)` endpoints. Giving any source
+/// replaces the model-defined sources, and giving any sink replaces the model-defined sinks.
+///
+/// # Errors
+///
+/// If the project or its index cannot be read, a pair is malformed, or the analysis fails.
+pub fn get_paths(
+    project_name: &str,
+    pairs: &[String],
+    direction: TaintDirection,
+    sources: &[String],
+    sinks: &[String],
+) -> Result<(), Error> {
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(run(project_name, pairs, direction, sources, sinks))
+}
+
+async fn run(
+    project_name: &str,
+    pairs: &[String],
+    direction: TaintDirection,
+    sources: &[String],
+    sinks: &[String],
+) -> Result<(), Error> {
+    let queries: Vec<OffsetQuery> = pairs
         .iter()
         .map(|s| parse_pair(s))
         .collect::<Result<_, _>>()?;
 
-    let project = match ctadl_ascent::project::AnalysisProject::try_load_name(&args.project_name) {
+    let project = match crate::project::AnalysisProject::try_load_name(project_name) {
         Ok(p) => p,
         Err(e) => {
             let mut err_msg = format!("{}", e);
@@ -131,7 +154,7 @@ async fn run() -> Result<(), Error> {
                 err_msg.push_str(&format!(": {}", source));
                 current_err = source;
             }
-            eprintln!("Error loading project '{}': {}", args.project_name, err_msg);
+            eprintln!("Error loading project '{}': {}", project_name, err_msg);
             eprintln!("This may be missing if run on a different machine or as a different user.");
             eprintln!("Changing XDG_STATE_HOME can override the default state path.");
             std::process::exit(1);
@@ -141,7 +164,7 @@ async fn run() -> Result<(), Error> {
 
     let mut parquet_source_info_path = PathBuf::new();
     for import_name in &project.imports {
-        let import = match ctadl_ascent::project::ArtifactImport::load_by_name(import_name) {
+        let import = match crate::project::ArtifactImport::load_by_name(import_name) {
             Ok(i) => i,
             Err(e) => {
                 let mut err_msg = format!("{}", e);
@@ -410,14 +433,14 @@ async fn run() -> Result<(), Error> {
             if *f != func_id.id {
                 return false;
             }
-            if let ctadl_ascent::facts::FlowVariableKind::CallArg(packed) = v1.kind()
-                && let Ok(call_arg) = ctadl_ascent::facts::CallArgId::try_from(packed)
+            if let crate::facts::FlowVariableKind::CallArg(packed) = v1.kind()
+                && let Ok(call_arg) = crate::facts::CallArgId::try_from(packed)
                 && call_arg.insn_id.id == *i
             {
                 return true;
             }
-            if let ctadl_ascent::facts::FlowVariableKind::CallArg(packed) = v2.kind()
-                && let Ok(call_arg) = ctadl_ascent::facts::CallArgId::try_from(packed)
+            if let crate::facts::FlowVariableKind::CallArg(packed) = v2.kind()
+                && let Ok(call_arg) = crate::facts::CallArgId::try_from(packed)
                 && call_arg.insn_id.id == *i
             {
                 return true;
@@ -426,18 +449,18 @@ async fn run() -> Result<(), Error> {
         });
 
         if is_target {
-            target_vertices.push((*func_id, None, ctadl_ascent::facts::FlowVertex(*v1, *p1)));
-            target_vertices.push((*func_id, None, ctadl_ascent::facts::FlowVertex(*v2, *p2)));
+            target_vertices.push((*func_id, None, crate::facts::FlowVertex(*v1, *p1)));
+            target_vertices.push((*func_id, None, crate::facts::FlowVertex(*v2, *p2)));
         }
     }
 
     let mut insn_to_func = BTreeMap::new();
     for (site_packed, _, _) in &index_facts.actual_param {
-        let site = ctadl_ascent::facts::InsnSiteId::unpack(site_packed).unwrap();
+        let site = crate::facts::InsnSiteId::unpack(site_packed).unwrap();
         insn_to_func.insert(site.insn_id.id, site.func_id);
     }
     for (site_packed, _) in &index_facts.call {
-        let site = ctadl_ascent::facts::InsnSiteId::unpack(site_packed).unwrap();
+        let site = crate::facts::InsnSiteId::unpack(site_packed).unwrap();
         insn_to_func.insert(site.insn_id.id, site.func_id);
     }
     let mut endpoints = Vec::new();
@@ -447,25 +470,24 @@ async fn run() -> Result<(), Error> {
     // what actually define the true sources and sinks we search for.
     let mut model_endpoints = Vec::new();
     let index_path = project.index_path()?;
-    let ids = ctadl_ascent::facts::IdMap::try_load(&index_path)?;
+    let ids = crate::facts::IdMap::try_load(&index_path)?;
     // First pass: load shipped default models into a match accumulator.
     // We'll run Stage 2 (index-dependent endpoint resolution + expansion) once, after the
     // loop, because it also needs the union-find over the whole `assign_like` relation.
-    let mut model_matches = ctadl_ascent::models::ProgramModelMatches::default();
+    let mut model_matches = crate::models::ProgramModelMatches::default();
     for import in project.iter_imports() {
         let import = import?;
-        let program_info = ctadl_ascent::cli::load_program_info_without_source_info(&import)?;
-        let match_index = ctadl_ascent::models::ProgramMatchIndex::new(
+        let program_info = super::load_program_info_without_source_info(&import)?;
+        let match_index = crate::models::ProgramMatchIndex::new(
             &program_info,
-            ctadl_ascent::models::ImportScope::new(import.language, &import.name),
+            crate::models::ImportScope::new(import.language, &import.name),
         );
         // Load whatever defaults apply for this program's VMT.
-        ctadl_ascent::models::try_load_default_models(&match_index, &mut model_matches)?;
+        crate::models::try_load_default_models(&match_index, &mut model_matches)?;
 
         // Flowy endpoints are already resolved against the call graph and don't need Stage 2.
-        if import.language == ctadl_ascent::project::ArtifactLanguage::Flowy {
-            let eps =
-                ctadl_ascent::codegen::flowy::get_endpoints(&import, &ids, &index_facts.call)?;
+        if import.language == crate::project::ArtifactLanguage::Flowy {
+            let eps = crate::codegen::flowy::get_endpoints(&import, &ids, &index_facts.call)?;
             for (ep,) in eps {
                 model_endpoints.push(ep);
             }
@@ -474,7 +496,7 @@ async fn run() -> Result<(), Error> {
 
     // Stage 2: resolve default (name-based) matched endpoints against the index and expand
     // call-site fan-out / wildcard sinks.
-    let built = ctadl_ascent::query_engine::build_query_endpoints(
+    let built = crate::query_engine::build_query_endpoints(
         &model_matches.endpoints,
         &index_facts,
         &ids,
@@ -485,17 +507,17 @@ async fn run() -> Result<(), Error> {
     }
     let built_formals = built.formals;
 
-    if !args.sources.is_empty() {
+    if !sources.is_empty() {
         model_endpoints.retain(|ep| ep.direction != FactsTaintDirection::Forward);
-        for s in &args.sources {
+        for s in sources {
             if let Some((var, path)) = parse_vertex_str(s) {
-                if let ctadl_ascent::facts::FlowVariableKind::CallArg(packed) = var.kind() {
-                    let call_arg_id = ctadl_ascent::facts::CallArgId::try_from(packed).unwrap();
+                if let crate::facts::FlowVariableKind::CallArg(packed) = var.kind() {
+                    let call_arg_id = crate::facts::CallArgId::try_from(packed).unwrap();
                     let insn_id = call_arg_id.insn_id.id;
                     if let Some(&func_id) = insn_to_func.get(&insn_id) {
                         model_endpoints.push(QueryEndpoint {
                             infunc: func_id,
-                            vertex: ctadl_ascent::facts::FlowVertex(var, path),
+                            vertex: crate::facts::FlowVertex(var, path),
                             label: Label("user_source".into()),
                             direction: FactsTaintDirection::Forward,
                             call_site: None,
@@ -513,17 +535,17 @@ async fn run() -> Result<(), Error> {
         }
     }
 
-    if !args.sinks.is_empty() {
+    if !sinks.is_empty() {
         model_endpoints.retain(|ep| ep.direction != FactsTaintDirection::Backward);
-        for s in &args.sinks {
+        for s in sinks {
             if let Some((var, path)) = parse_vertex_str(s) {
-                if let ctadl_ascent::facts::FlowVariableKind::CallArg(packed) = var.kind() {
-                    let call_arg_id = ctadl_ascent::facts::CallArgId::try_from(packed).unwrap();
+                if let crate::facts::FlowVariableKind::CallArg(packed) = var.kind() {
+                    let call_arg_id = crate::facts::CallArgId::try_from(packed).unwrap();
                     let insn_id = call_arg_id.insn_id.id;
                     if let Some(&func_id) = insn_to_func.get(&insn_id) {
                         model_endpoints.push(QueryEndpoint {
                             infunc: func_id,
-                            vertex: ctadl_ascent::facts::FlowVertex(var, path),
+                            vertex: crate::facts::FlowVertex(var, path),
                             label: Label("user_sink".into()),
                             direction: FactsTaintDirection::Backward,
                             call_site: None,
@@ -612,15 +634,15 @@ async fn run() -> Result<(), Error> {
     for i in 0..graph.num_nodes() {
         for (succ, label) in graph.labeled_successors(i as u32) {
             let rev_label = match label {
-                ctadl_ascent::facts::FlowEdge::Call(s) => ctadl_ascent::facts::FlowEdge::Return(s),
-                ctadl_ascent::facts::FlowEdge::Return(s) => ctadl_ascent::facts::FlowEdge::Call(s),
-                ctadl_ascent::facts::FlowEdge::Intra => ctadl_ascent::facts::FlowEdge::Intra,
+                crate::facts::FlowEdge::Call(s) => crate::facts::FlowEdge::Return(s),
+                crate::facts::FlowEdge::Return(s) => crate::facts::FlowEdge::Call(s),
+                crate::facts::FlowEdge::Intra => crate::facts::FlowEdge::Intra,
             };
             rev_edges.push((succ, i as u32, rev_label));
         }
     }
     let rev_graph =
-        ctadl_ascent::query_engine::formatter::LabeledTaintGraph::new(graph.num_nodes(), rev_edges);
+        crate::query_engine::formatter::LabeledTaintGraph::new(graph.num_nodes(), rev_edges);
 
     let mut all_sources: BTreeSet<&QueryEndpoint> = BTreeSet::new();
     let mut all_sinks: BTreeSet<&QueryEndpoint> = BTreeSet::new();
@@ -778,17 +800,7 @@ fn build_path(
     path
 }
 
-fn main() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    if let Err(e) = rt.block_on(run()) {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
-    }
-}
-
-fn parse_vertex_str(
-    s: &str,
-) -> Option<(ctadl_ascent::facts::FlowVariable, ctadl_ascent::facts::Path)> {
+fn parse_vertex_str(s: &str) -> Option<(crate::facts::FlowVariable, crate::facts::Path)> {
     if let Some(rest) = s.strip_prefix("call-arg(")
         && let Some(idx) = rest.find(')')
     {
@@ -799,18 +811,18 @@ fn parse_vertex_str(
         let insn_id = insn_str.parse::<u64>().ok()?;
         let formal = formal_str.parse::<i16>().ok()?;
 
-        let call_arg_id = ctadl_ascent::facts::CallArgId::new(
-            ctadl_ascent::facts::InsnId { id: insn_id },
-            ctadl_ascent::facts::FormalIndex::from(formal),
+        let call_arg_id = crate::facts::CallArgId::new(
+            crate::facts::InsnId { id: insn_id },
+            crate::facts::FormalIndex::from(formal),
         );
-        let packed = ctadl_ascent::facts::PackedCallArg::try_from(call_arg_id).ok()?;
-        let var = ctadl_ascent::facts::FlowVariableKind::CallArg(packed).into();
+        let packed = crate::facts::PackedCallArg::try_from(call_arg_id).ok()?;
+        let var = crate::facts::FlowVariableKind::CallArg(packed).into();
 
         let path_str = &rest[idx + 1..];
         let path = if path_str.is_empty() {
-            ctadl_ascent::facts::Path::empty()
+            crate::facts::Path::empty()
         } else {
-            path_str.parse::<ctadl_ascent::facts::Path>().ok()?
+            path_str.parse::<crate::facts::Path>().ok()?
         };
 
         return Some((var, path));
