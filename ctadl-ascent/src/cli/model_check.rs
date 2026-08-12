@@ -308,6 +308,11 @@ struct GeneratorState {
     declares_endpoints: bool,
     declares_propagation: bool,
     declares_access_paths: bool,
+    /// A `modes` directive. Counts as declaring a model on its own: a generator carrying
+    /// `modes: ["skip-analysis"]` and nothing else changes the analysis (it removes what a body
+    /// contributes), so a check that ignored it would report nothing about the one generator
+    /// whose failure to match is invisible everywhere else.
+    declares_modes: bool,
     has_bridge: bool,
     matched: Option<MatchedFunctions>,
     endpoint_stats: BTreeMap<TaintDirection, EndpointStats>,
@@ -355,6 +360,7 @@ impl FileState {
                 declares_endpoints: has_entries(value, "sources") || has_entries(value, "sinks"),
                 declares_propagation: has_entries(value, "propagation"),
                 declares_access_paths: has_entries(value, "access_paths"),
+                declares_modes: has_entries(value, "modes"),
                 has_bridge: value.pointer("/model/bridge").is_some(),
                 matched: None,
                 endpoint_stats: BTreeMap::new(),
@@ -439,6 +445,7 @@ impl FileState {
             let declares_a_model = generator.declares_endpoints
                 || generator.declares_propagation
                 || generator.declares_access_paths
+                || generator.declares_modes
                 || generator.has_bridge;
             // Reported only for a generator that declares a model: a scoped-out generator
             // declaring nothing is nothing to act on.
@@ -459,6 +466,18 @@ impl FileState {
                     file: self.path.clone(),
                     index: generator.index,
                     kind: "propagation".to_string(),
+                });
+            }
+            // A `modes` directive that matched no function. Reported off the match set rather
+            // than an emitted-row count, because the directive emits no rows at all: what it
+            // does is take rows *away*. `MatchedFunctions::All` has no count and is never dead.
+            if generator.declares_modes
+                && generator.matched.as_ref().and_then(MatchedFunctions::total) == Some(0)
+            {
+                outcome.check.index_time_dead.push(IndexTimeDead {
+                    file: self.path.clone(),
+                    index: generator.index,
+                    kind: "modes directive".to_string(),
                 });
             }
             // What the `where` selected, for the generators that selected something. A zero is

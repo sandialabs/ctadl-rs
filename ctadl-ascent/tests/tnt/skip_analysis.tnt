@@ -1,0 +1,33 @@
+// `modes: ["skip-analysis"]` -- the model REPLACES the body.
+//
+// Same function as `model_adds_to_summary.tnt`, same propagation, one extra directive. The
+// body's `return <- src` is gone and only the model's `return <- dst` survives, so the two
+// fixtures together pin both halves of the semantics: a model alone adds, a model with
+// `skip-analysis` replaces.
+//
+// The mechanism is one guard, on the rule that seeds `locals` from a function's formals
+// (`index_engine::mod`). Everything a body contributes -- both summary rules, `critical_summary`,
+// `context_locals` -- drives on `locals`, so a function with no `locals` contributes nothing.
+// Call sites are unaffected: they instantiate `summary(tgt, ..)`, which the model supplied.
+def transfer(dst, src): 1
+where summaries [return </- src, return <- dst]
+{
+start:
+  return src;
+}
+
+// One source, taken through the same function twice. Both checks read the same taint, so
+// neither can pass by the source having gone missing.
+def main() {
+start:
+  a = source(Secret);
+  clean = "nothing";
+  // The model's port: Argument(0) reaches the return.
+  viaModel = transfer(a, clean);
+  sink(viaModel, Secret);
+
+  // The body's flow, which the model does not declare and the directive suppresses.
+  viaBody = transfer(clean, a);
+  errsink(viaBody, Secret);
+  return;
+}

@@ -1,0 +1,5 @@
+// Loaded by `flowy_tests.rs` for the sibling `skip_analysis_hybrid.tnt`, as `ctadl index
+// --models` would. A generator with `modes` and no `propagation` is legal and says "this function
+// moves nothing"; without it the fixture's two checks both fail, because hybrid inlining resolves
+// the indirect call in `dispatch` and carries `obj` to its return.
+{"find":"methods","where":[{"constraint":"signature_match","name":"dispatch"}],"model":{"modes":["skip-analysis"]}}

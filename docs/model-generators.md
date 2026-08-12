@@ -595,11 +595,52 @@ at its vertex, so a sink written `Return` also seeds `Return.f`. Reading a whole
 object observes taint in its fields; a sink port cannot express "the object itself,
 but not its fields".
 
-### `modes` *(schema-only, not yet implemented)*
+### `modes`
 
-Analysis directives. Defined value: `["skip-analysis"]` — don't analyze the body
-of the matched function (rely on the model alone). Not currently consumed by the
-loader.
+Analysis directives. One defined value: `["skip-analysis"]` — don't analyze the
+body of the matched function. Index time only; `ctadl query` reports it as
+ignored, like a `propagation`.
+
+**A model without it ADDS to a body; a model with it REPLACES the body.** That is
+the whole feature, and it is not obvious from the outside: `summary` is both an
+input relation (your model's rows) and a derived one (computed from each
+function's `locals`), and matching a function does nothing to the second. So a
+propagation model on a function CTADL *can* see leaves the derived summary in
+place and makes the analysis strictly bigger. The pair
+`ctadl-ascent/tests/tnt/model_adds_to_summary.tnt` and `skip_analysis.tnt` pins
+both halves.
+
+What a skipped function contributes:
+
+| | without `skip-analysis` | with it |
+| --- | --- | --- |
+| `summary` rows from the model | yes | yes |
+| `summary` rows derived from the body | yes | **no** |
+| the body's indirect calls feed hybrid inlining | yes | **no** |
+| flow *through* the body, including through the calls it makes | tracked | **not tracked** |
+| call sites *of* the function instantiate the model | yes | yes |
+
+Mechanically it is one guard, on the rule that seeds `locals` from a function's
+formals. Everything derived from a body drives on `locals`, so a function with
+none contributes nothing; call sites are untouched because they instantiate
+`summary(callee, …)` without reading the callee's `locals`.
+
+Reach for it in two situations:
+
+- **The model is more accurate than the body.** Ordinary library modeling, where
+  CTADL sees a wrapper or a stub whose real behaviour lives elsewhere.
+- **The body is degenerate.** A function whose summary blows up — an unwinder, a
+  dispatcher, a hand-written assembly thunk — costs the fixpoint far more than it
+  contributes. Suppressing just its summary rows is not enough: the resolvents
+  its body manufactures are usually what multiply. This is why the ARM C++
+  exception unwinder is modelled in `native-index.jsonl`, and
+  `skip_analysis_hybrid.tnt` is the case that pins it.
+
+A generator carrying `modes` and no `propagation` is legal and says *this
+function moves nothing* — the honest model for a routine whose only job is
+control flow. An unrecognized mode is a load error, not an ignored key: a
+misspelling that loaded clean would read exactly like a directive that did
+nothing.
 
 ### `bridge`
 
@@ -822,7 +863,7 @@ source/sink at a precise location without over-tainting every call.
 | Apply a model to only some of a project's imports | any | `in` (a generator key, not a model key) |
 | Register a composed access path the code never writes | `methods` | `access_paths` |
 | Frameworks that call your override indirectly | `methods` | `forward_self` *(not yet implemented)* |
-| Skip analyzing a body and trust the model | `methods` | `modes: ["skip-analysis"]` *(not yet implemented)* |
+| Skip analyzing a body and trust the model | `methods` | `modes: ["skip-analysis"]` |
 
 ### End-to-end example
 

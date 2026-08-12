@@ -99,6 +99,14 @@ pub struct IndexFacts {
     pub paths: Vec<(Path,)>,
     #[builder(default)]
     pub external_function: Vec<(FunctionId,)>,
+    /// Functions a `modes: ["skip-analysis"]` model marked. The indexer derives nothing from
+    /// their bodies; their `summary` rows are whatever the model gave them.
+    ///
+    /// Not saved with the other facts, and deliberately: it is a *model* input, and the model
+    /// files are re-read on every `ctadl index`. Nothing loads the fact base back to re-run the
+    /// fixpoint.
+    #[builder(default)]
+    pub skip_analysis: Vec<(FunctionId,)>,
 }
 
 impl IndexFacts {
@@ -903,13 +911,15 @@ fn compute_alias_of_formal(
 }
 
 // The `ascent!` datalog block below expands to code that trips several style lints
-// (`.clone()` on Copy types, auto-borrows, unit-valued lets, and Default field
-// reassignment). These are artifacts of the macro's generated code, not the
+// (`.clone()` on Copy types, auto-borrows, unit-valued lets, Default field
+// reassignment, and a unit binding per negation clause -- `!rel(..)` desugars to
+// `agg () = not() in rel(..)`). These are artifacts of the macro's generated code, not the
 // hand-written rules, so silence them for this function.
 #[allow(
     clippy::clone_on_copy,
     clippy::needless_borrow,
     clippy::let_unit_value,
+    clippy::unused_unit,
     clippy::field_reassign_with_default
 )]
 pub fn taint_index_with_config(
@@ -1071,6 +1081,9 @@ pub fn taint_index_with_config(
         relation paths(Path);
         relation summary(FunctionId, FormalIndex, Path, FormalIndex, Path);
         relation config(IndexConfig);
+        // Functions a `modes: ["skip-analysis"]` model marked. An input relation: nothing derives
+        // it, so its negation below sits in an earlier stratum and costs the fixpoint nothing.
+        relation skip_analysis(FunctionId);
 
         // Derived:
 
@@ -1134,10 +1147,24 @@ pub fn taint_index_with_config(
         paths(p1.concat(p2)) <-- model_paths(p1), program_paths(p2);
         paths(p2.concat(p1)) <-- program_paths(p2), model_paths(p1);
 
-        // Initialize locals with formals (context-free)
+        // Initialize locals with formals (context-free).
+        //
+        // The `!skip_analysis` guard is the ONE place a `modes: ["skip-analysis"]` model takes
+        // effect, and everything else follows from it. `locals` is what every body-derived
+        // relation drives on -- the two forward-field rules below, both `summary` rules, rule 1.1
+        // for `critical_summary`, and rule 3.3b for `context_locals` -- so refusing the seed
+        // leaves a skipped function with no `locals` at all and therefore no derivation from its
+        // body. What survives is exactly the model: `facts.summary` rows are an input, and the
+        // call-site instantiation rule reads `summary(tgt, ..)` without touching `locals(tgt, ..)`,
+        // so callers still compose with the hand-written behaviour.
+        //
+        // Guarding here rather than on each of those rules is not just economy: the guard sits on
+        // a rule that fires once per formal, off the hot path entirely, where a guard on the
+        // forward-field rules would be tested billions of times.
         locals(infunc, v1, p1.clone(), i, p1.clone()) <--
             formal_param(infunc, v1, _),
             if let Some(i) = v1.as_formal(),
+            !skip_analysis(infunc),
             let p1 = Path::empty();
 
         // Forward field propagation (context-free).
@@ -1427,6 +1454,7 @@ pub fn taint_index_with_config(
         .collect();
     prog.callee_resolvents = facts.callee_resolvents.into_iter().collect();
     prog.summary = facts.summary.into_iter().collect();
+    prog.skip_analysis = facts.skip_analysis.into_iter().collect();
     prog.config = config_val.into_iter().collect();
     // Seeding goes through the `FromRows` trait rather than naming a store type, so this line is
     // the same under `ascent!` and `ascent_par!`: the field's type selects the serial `AssignTrie`
