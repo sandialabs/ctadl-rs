@@ -72,13 +72,19 @@ def git_version(repo: Path) -> str:
 def classify(returncode: Optional[int], timed_out: bool, stderr: str) -> tuple[str, Optional[str]]:
     if timed_out:
         return "timeout", None
-    low = stderr.lower()
+    if not returncode:
+        # Exit 0 means CTADL handled the artifact, whatever it warned about.
+        return "ok", None
+    # Only a failed run can be "unsupported". Scan the failure text with
+    # `warning:` lines dropped -- benign warnings use these words too, e.g.
+    # "warning: CHA: unsupported virtual method table" on every pcode import,
+    # which would otherwise mark every successful run unsupported.
+    low = "\n".join(ln for ln in stderr.splitlines()
+                    if not ln.lstrip().lower().startswith("warning:")).lower()
     for m in _UNSUPPORTED_MARKERS:
         if m in low:
             return "unsupported", m
-    if returncode and returncode != 0:
-        return "crash", None
-    return "ok", None
+    return "crash", None
 
 
 def run_one(ctadl: Path, model: Path, entry: dict, timeout_s: int) -> tuple[F.RunInfo, list[F.Finding], Optional[str], Optional[str]]:

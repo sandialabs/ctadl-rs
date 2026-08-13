@@ -306,49 +306,69 @@ meet with the source label (the debug `C0002` node carries only the sink's
 (#70)") is what closed this gap model-side.
 </details>
 
-### Corpus status (Operation Mango tests, cta@4b7e767 — current build)
+### Corpus status (Operation Mango tests, cta@2afaf7d6 — current build)
 
-Run over all 15 Operation Mango test binaries (`operation-mango-public`), scored
-against 24 Mango known bugs with `--addr-tolerance 0`:
+Re-validated after rebasing the branch onto ctadl `main` @ `92d6a996`. Run over
+all 15 Operation Mango test binaries (`operation-mango-public`), scored against
+24 Mango known bugs with `--addr-tolerance 0`:
 
 ```
-21 TP / 3 FN / 4 extra   (recall 87.5%)   15/15 binaries run OK
+23 TP / 1 FN / 4 extra   (recall 95.8%)   15/15 binaries run OK   27 findings
 ```
 
-The remaining 3 FN are genuine CTADL analysis gaps, not harness artifacts.
-Diagnosed by dumping the index/taint graphs (`--dump-index-graph` /
+Every one of the 27 findings carries a concrete sink call-site address, so the
+23 TP are **exact** address matches at tolerance 0.
+
+| Build | TP | FN | extra | recall | note |
+|---|---|---|---|---|---|
+| `b06b137` | 20 | 4 | 12 | 83.3% | old last-good baseline |
+| `4b7e767` | 21 | 3 | 4 | 87.5% | previous documented status |
+| `aef39ab` | 23 | 1 | 5 | 95.8% | ⚠ all 28 findings lacked addresses — matched by `sink_func` only |
+| **`2afaf7d6`** | **23** | **1** | **4** | **95.8%** | current, post-rebase — exact address matching |
+
+The one remaining FN is a genuine CTADL analysis gap, not a harness artifact.
+Diagnose by dumping the index/taint graphs (`--dump-index-graph` /
 `--dump-taint-graph`) and the debug SARIF profile (`--sarif-profile debug`,
 which exposes `C0002.tainted-instruction` = where forward+backward taint *meet*,
 `C0003.taint-source`, `C0004.taint-sink`):
 
 | Binary | FN | Symptom | Root cause |
 |--------|----|---------|-----------|
-| `nvram`    | 2 | **0 sinks matched** | unlinked ET_REL object (below) |
 | `layered`  | 1 | 1 of 2 system call sites found | second call site missed |
 
-(`off_shoot` and `execve` were in this list until, respectively, base-level
-string-builder propagation — item 2 of the ✅ Resolved section above — and
-wildcard sink ports — the **Resolved: wildcard sink ports** section below —
-landed; both now report.)
+(`off_shoot`, `execve`, and `nvram` were in this list until, respectively,
+base-level string-builder propagation — item 2 of the ✅ Resolved section above —
+wildcard sink ports — the **Resolved: wildcard sink ports** section below — and
+the rebase onto `main` landed; all three now report.)
 
-**`nvram` — unlinked ELF relocatable object.** `nvram/program` is `ET_REL`
-(`file` reports "relocatable", `main` at 0x0, `system`/`acosNvramConfig_get` are
-unresolved `R_X86_64_PLT32` relocs) — the Makefile's generic rule compiles
-`program.c` without linking `nvram_lib.c`. angr/Mango load object files and
-apply relocations; the Ghidra-pcode frontend does not, so the `call system`
-sites (`e8 00000000`, reloc unapplied) never bind to the external `system`
-function. Result: the calls appear only under `function(main)\ncall-arg(...)`
-with no callee resolution (contrast `execve`, which has
-`function(execve)\ncall-arg(47,...)`), so **0 sinks match** and no flow can form.
-Irrelevant to real firmware (linked images); to exercise this test either link
-it (`gcc program.c nvram_lib.c`) or teach the Ghidra import to apply ET_REL
-relocations.
+**`nvram` — resolved by the rebase.** `nvram/program` is still an unlinked
+`ET_REL` object (`file` reports "relocatable"; `system`/`acosNvramConfig_get`
+were unresolved `R_X86_64_PLT32` relocs), and the Ghidra-pcode frontend used to
+bind **0 sinks** on it, so no flow could form. On the current `main` both call
+sites now bind and match Mango's ground truth exactly (`system@4194349` and
+`system@4194380`, both `src=NVRAM`). No harness or model change was needed.
 
 The 4 extras are in `early_resolve` (`53a6…`, 2: a NETWORK and a FILE
 source→`system`) and `multi_input` (`e2f7…`, 2: two FILE source→`system`) —
 extra source-classes into genuine multi-channel sinks that Mango's GT lists once
 (both binaries are built with several input channels), likely `cta_advantage`
 rather than FP; needs triage to confirm.
+
+### Resolved: benign warnings misclassified every run as `unsupported`
+
+`bench.py::classify()` substring-scanned the whole of stderr for
+`"unsupported"` (and `"unimplemented"`, …) *before* looking at the exit code.
+The current pcode frontend prints `warning: CHA: unsupported virtual method
+table` on every import, so after the rebase all 15 binaries were classified
+`unsupported` with `findings=0` — CTADL had actually succeeded, but `run_one`
+only parses the SARIF when `status == "ok"`, so every finding was silently
+dropped and the corpus scored 0.
+
+Fixed in `classify()`: exit 0 is `ok` unconditionally, and the
+`_UNSUPPORTED_MARKERS` scan runs only on a failed run with `warning:` lines
+stripped out. A genuinely unsupported input still exits non-zero with
+`Error: … unrecognized filename extension`, so it is still classified
+`unsupported`.
 
 ### Resolved: wildcard sink ports (recovers `execve`)
 
