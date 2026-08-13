@@ -1518,6 +1518,83 @@ fn error_on_ast_promotes_source_problem() {
 }
 
 #[test_log::test]
+fn bare_block_then_statement_recovers() {
+    // Regression for the CFG-wiring bug that aborted dropbear's `svr_dropbear_exit`
+    // import. A bare compound block `{ ... }` written as a statement makes the
+    // end-of-compound link install an *implicit `return`* on the enclosing block
+    // when that block's continuation is the fall-off-the-end sentinel (`None`).
+    // The next statement in the same body then tries to add a fall-through edge
+    // out of a block that already returns -- which used to be a hard ingestion
+    // error. It now drops the redundant edge and recovers, so the function still
+    // lowers. This is the minimal trigger: a bare block followed by any further
+    // statement (an `if` here, matching dropbear). Skips under CTADL_ERROR_ON_AST,
+    // which restores the hard error (see `error_on_ast_promotes_bare_block_edge`).
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        void f(void) {
+            { h(); }
+            if (c) { k(); }
+        }";
+    // program_from_string asserts the recovered CFG is well-formed -- no block is
+    // left without a terminator -- and that tree-sitter saw no syntax error.
+    let prog = program_from_string(src).0;
+    assert!(
+        function_named(&prog, "f").is_some(),
+        "recovered program should still define f\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn svr_dropbear_exit_shape_recovers() {
+    // The reduced shape of dropbear's `svr_dropbear_exit`, the function this bug
+    // was found on: an if / else-if / else chain, then a bare `{ }` block (the
+    // remnant of a compiled-out `#if DROPBEAR_VFORK` that had guarded a lone
+    // `{ session_cleanup(); }`), then a trailing `if` (`if (svr_opts.hostkey)`).
+    // The bare-block-then-if pair is what actually triggers the wiring bug -- not,
+    // despite first appearances, the returning arms of the chain. Must recover and
+    // still lower the function.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        void svr_dropbear_exit(int exitcode) {
+            int add_delay = 0;
+            if (early) { log(1); }
+            else if (authed) { log(2); }
+            else { log(3); add_delay = 1; }
+            { session_cleanup(); }
+            if (hostkey) { free_key(hostkey); }
+        }";
+    let prog = program_from_string(src).0;
+    assert!(
+        function_named(&prog, "svr_dropbear_exit").is_some(),
+        "recovered program should still define svr_dropbear_exit\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn error_on_ast_promotes_bare_block_edge() {
+    // Strict side of the switch: under CTADL_ERROR_ON_AST the recovered
+    // continuation edge out of an already-returning block is a hard ingestion
+    // error again, exactly as before the demotion to a warning.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        void f(void) {
+            { h(); }
+            if (c) { k(); }
+        }";
+    let err = super::parse_c_program(src)
+        .expect_err("strict mode must reject the continuation-into-return edge");
+    assert!(
+        err.to_string()
+            .contains("continuation edge into a block that already returns"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
 fn compound_assign_accumulates() {
     // Compound assignment (`y += b`) is an accumulate, not an overwrite: it lowers to `y = b + y`,
     // keeping the prior value of `y` *and* mixing in the new one. With `y` seeded from param 0 and

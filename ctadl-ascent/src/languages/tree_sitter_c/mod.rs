@@ -350,10 +350,22 @@ fn link_blocks(
                     targets.push(target_val);
                     Ok(())
                 }
-                TerminatorKind::Return { .. } => Err(Error::TreeSitterParse(format!(
-                    "attempt to overwriting return with destination block: {:?} -> {:?}",
-                    from_sv, target_val
-                ))),
+                // The block already ends in a `return`, so it has no fall-through
+                // and this continuation edge is redundant: a block cannot both
+                // return and goto. This arises from over-eager continuation
+                // wiring around an if/else chain whose arms all diverge (e.g.
+                // dropbear's `svr_dropbear_exit`). Keep the `return` and drop the
+                // spurious edge rather than aborting the whole import.
+                TerminatorKind::Return { .. } => {
+                    recoverable_report(
+                        "frontend gap",
+                        format!(
+                            "continuation edge into a block that already returns, dropped: \
+                             {:?} -> {:?}",
+                            from_sv.blidx, target_val
+                        ),
+                    )
+                }
             }
         } else {
             log::debug!("Final add {:?} -> {:?}", from_sv.blidx, target_val);
@@ -1855,15 +1867,25 @@ impl<'a> Context<'a> {
     ) -> Result<(), Error> {
         //  debug_print_tree(child, 0, Some("do"), Some(20));
 
-        let initializer_node = child
-            .child_by_field_name("initializer")
-            .expect("always has initializer");
-        let condition_node = child
-            .child_by_field_name("condition")
-            .expect("always has initializer");
-        let update_node = child
-            .child_by_field_name("update")
-            .expect("always has initializer");
+        // `for (;;)` legally omits any of the three clauses, and tree-sitter then
+        // has no field for the missing one(s). Fall back to one of the for's own
+        // `;`/`(` tokens: its CompoundProxy is empty, so the clause lowers to an
+        // empty block and the loop wiring below is unchanged (a missing condition
+        // still gets the exit edge -- conservative, and the condition's value is
+        // ignored here anyway).
+        let empty_clause = (0..child.child_count())
+            .filter_map(|i| child.child(i as u32))
+            .find(|n| n.kind() == ";" || n.kind() == "(");
+        let (Some(initializer_node), Some(condition_node), Some(update_node)) = (
+            child.child_by_field_name("initializer").or(empty_clause),
+            child.child_by_field_name("condition").or(empty_clause),
+            child.child_by_field_name("update").or(empty_clause),
+        ) else {
+            return malformed_source(format!(
+                "for statement at line {} has no parsable clauses",
+                get_line_num(&child) + 1
+            ));
+        };
         let body_node = child.child_by_field_name("body").expect("always has body");
 
         let for_sidx = self
@@ -2561,9 +2583,12 @@ impl<'a> Context<'a> {
             // numeric literal, so lower it to an `Exp::Str` constant (carries no taint). Without
             // this arm any program containing a char literal hit `flatten_expr`'s catch-all and
             // failed ingestion (ERR 78) -- a broad gap, since char literals are everyday C.
-            "number_literal" | "string_literal" | "char_literal" => {
-                Ok(Exp::Str(ArcIntern::<str>::from(text)))
-            }
+            // `concatenated_string` is adjacent literals ("a" "b") -- one string
+            // constant. `true`/`false`/`null` (NULL/nullptr) are keyword tokens the
+            // grammar special-cases; they only survive to the AST when the source
+            // was preprocessed without stdbool.h/stddef.h expanding them.
+            "number_literal" | "string_literal" | "char_literal" | "concatenated_string"
+            | "true" | "false" | "null" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
             "unary_expression" => {
                 let ch = node
                     .child_by_field_name("argument")
