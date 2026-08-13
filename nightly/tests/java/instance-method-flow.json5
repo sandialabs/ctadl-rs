@@ -1,0 +1,50 @@
+{
+  // Flow: holder.setData(source()) (13) -> retrieved = holder.getData() (14) ->
+  // sink(retrieved) (15). Lines 7 and 8 (the setData/getData bodies:
+  // `this.data = d` and `return this.data`) are dropped: their copy-through
+  // getters/setters are collapsed by copy_alias, so those instructions appear in
+  // neither the human code flow nor the machine tainted-instructions.
+  "expected_lines": [
+    13,
+    14,
+    15
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "source",
+          "parent": "LInstanceMethodFlow;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "UserInput",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "sink",
+          "parent": "LInstanceMethodFlow;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "TaintedData",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}

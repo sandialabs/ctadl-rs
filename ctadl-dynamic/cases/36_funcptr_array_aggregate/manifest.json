@@ -1,0 +1,6 @@
+{
+  "name": "funcptr_array_aggregate",
+  "description": "funcptr array via aggregate initializer `int (*fps[2])(int) = { id, id }`, then an indirect call through fps[0] -- must produce the same facts as the element-assignment form (case 30); s=flow d=flow (spec 019)",
+  "label": "Test",
+  "expect_flow": true
+}

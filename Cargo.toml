@@ -1,15 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["ctadl-ascent", "ctadl-dynamic", "ctadl-flowy", "ctadl-ir", "pcode-reader", "sarif-util", "trie", "tailshare", "immortal", "xtask"]
-# In-tree path dependencies become workspace members, so their bins would be
-# installed into the distro by `nix build .#packages.default`. dex-reader and
-# jvm-reader are libraries used by ctadl-ascent but their standalone bins must
-# not ship; excluding them drops their membership (and bins) while they are
-# still built as ordinary path-dependency libraries.
-exclude = ["dex-reader", "jvm-reader"]
+members = ["ctadl-ascent", "ctadl-dynamic", "ctadl-flowy", "ctadl-ir", "pcode-reader", "trie", "tailshare", "immortal", "xtask", "dex-reader", "jvm-reader"]
 
+# One version for the whole tree. Every member takes it with
+# `version.workspace = true`, so a release tag names exactly one thing: this
+# number. It is what `ctadl --version` prints, and it is what any of these
+# crates would carry if we ever publish them. Bump it here and nowhere else.
 [workspace.package]
-version = "0.1.0"
+version = "0.1.2"
 
 # Section defining rustc compiler lint rules for the workspace
 [workspace.lints.rust]
@@ -32,4 +30,11 @@ result_large_err = "allow"
 just_underscores_and_digits = "allow"
 
 [profile.release]
+debug = false
+strip = "debuginfo"
+lto = "thin"
+
+[profile.profiling]
+inherits = "release"
 debug = true
+strip = "none"

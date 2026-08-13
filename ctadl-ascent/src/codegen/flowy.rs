@@ -22,7 +22,12 @@ use ctadl_ir::mir::Variable;
 /// Imports a flowy artifact into the store. This also saves the requirements so that they can be
 /// checked at query time.
 pub fn import(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
-    let program = flowy::compile_program(&import.artifact_path)?;
+    let program = flowy::compile_program(&import.artifact_path).err_context(|| {
+        format!(
+            "compiling flowy program: {}",
+            import.artifact_path.display()
+        )
+    })?;
 
     // Save requirements
     let data = bitcode::serialize(&program.requirements).map_err(Error::Bitcode)?;
@@ -42,8 +47,11 @@ pub fn import(import: &ArtifactImport) -> Result<ProgramInfo, Error> {
 fn load_requirements(
     import: &ArtifactImport,
 ) -> Result<(SummaryRequires, EndpointRequires), Error> {
-    let data = std::fs::read(import.requirements_path())?;
-    let reqs: (SummaryRequires, EndpointRequires) = bitcode::deserialize(&data)?;
+    let path = import.requirements_path();
+    let data =
+        std::fs::read(&path).err_context(|| format!("reading requirements: {}", path.display()))?;
+    let reqs: (SummaryRequires, EndpointRequires) = bitcode::deserialize(&data)
+        .err_context(|| format!("decoding requirements: {}", path.display()))?;
     Ok(reqs)
 }
 
@@ -83,7 +91,7 @@ fn index_check_summaries(
                 FlowSpec::FlowPresent => {
                     if !index_result.summary.contains(&record) {
                         fail_count += 1;
-                        println!(
+                        log::warn!(
                             "Function {func_name} required summary flow is absent: {flow_spec}"
                         );
                     } else {
@@ -93,7 +101,7 @@ fn index_check_summaries(
                 FlowSpec::FlowAbsent => {
                     if index_result.summary.contains(&record) {
                         fail_count += 1;
-                        println!(
+                        log::warn!(
                             "Function {func_name} forbidden summary flow is present: {flow_spec}"
                         );
                     } else {
@@ -140,6 +148,7 @@ fn query_check_endpoints(
     query_result: &QueryResult,
     endpoint_requires: EndpointRequires,
     sites: &fx::IdMap,
+    call: &[(fx::PackedInsnSiteId, fx::FunctionId)],
 ) -> Result<(usize, usize), Error> {
     let mut pass_count = 0;
     let mut fail_count = 0;
@@ -147,25 +156,34 @@ fn query_check_endpoints(
         for (endpoint, flow_spec) in flow_specs.iter() {
             let fx_endpoint: fx::TaintEndpoint = endpoint.into();
             let func_id = sites.get_function_id(func_name.clone().into());
-            let Some(func_id) = func_id else {
+            if func_id.is_none() {
                 log::warn!("Function {func_name} not found in query results");
                 fail_count += 1;
                 continue;
             };
 
+            // Resolve the declaration to the same call-site-anchored endpoints
+            // the query seeded (a declaration on a callee's formal fans out to
+            // one endpoint per call site) — the vertices taint is actually
+            // discovered at. The flow is present when taint of the *reversed*
+            // direction reached any of them: a source's vertex reached by
+            // sink-seeded (backward) taint, or a sink's vertex reached by
+            // source-seeded (forward) taint, is an endpoint participating in a
+            // completed flow.
+            let qes = from_flowy_endpoint(sites, call, endpoint);
             let present = query_result.taint.iter().any(|r| {
-                r.0 == func_id
-                    && r.4.label == fx_endpoint.label
+                r.4.label == fx_endpoint.label
                     && r.4.direction == fx_endpoint.direction.reversed()
-                    && r.2 == fx_endpoint.vertex.0
-                    && r.3 == fx_endpoint.vertex.1
+                    && qes
+                        .iter()
+                        .any(|qe| r.0 == qe.infunc && r.2 == qe.vertex.0 && r.3 == qe.vertex.1)
             });
 
             match flow_spec {
                 FlowSpec::FlowPresent => {
                     if !present {
                         fail_count += 1;
-                        println!("Required endpoint not found: {}", fx_endpoint.reversed());
+                        log::warn!("Required endpoint not found: {}", fx_endpoint.reversed());
                     } else {
                         pass_count += 1;
                     }
@@ -173,7 +191,7 @@ fn query_check_endpoints(
                 FlowSpec::FlowAbsent => {
                     if present {
                         fail_count += 1;
-                        println!("Forbidden endpoint is present: {}", fx_endpoint.reversed());
+                        log::warn!("Forbidden endpoint is present: {}", fx_endpoint.reversed());
                     } else {
                         pass_count += 1;
                     }
@@ -184,14 +202,17 @@ fn query_check_endpoints(
     Ok((pass_count, fail_count))
 }
 
-/// Checks endpoint requirements for a flowy import.
+/// Checks endpoint requirements for a flowy import. `call` is the static call
+/// graph, needed to resolve declared endpoints to the call-site-anchored
+/// endpoints the query seeded.
 pub fn query_check(
     import: &ArtifactImport,
     query_result: &QueryResult,
     sites: &fx::IdMap,
+    call: &[(fx::PackedInsnSiteId, fx::FunctionId)],
 ) -> Result<(usize, usize), Error> {
     let (_, endpoint_requires) = load_requirements(import)?;
-    query_check_endpoints(query_result, endpoint_requires, sites)
+    query_check_endpoints(query_result, endpoint_requires, sites, call)
 }
 
 /// Checks the human SARIF profile: every declared source/sink pair must agree
@@ -203,17 +224,17 @@ pub fn query_check(
 /// must begin one. A flow that is forbidden (`FlowSpec::FlowAbsent`, i.e.
 /// `errsource`/`errsink`) must *not* appear in any path. This runs the very
 /// path-finding that `format_sarif` uses to build the human-profile
-/// `tainted-path` results (`compute_taint_results` + `find_endpoint_paths`), so
-/// the formatter is exercised directly.
+/// `tainted-path` results (`find_endpoint_paths`), so the formatter is exercised
+/// directly.
 fn check_human_profile_paths(
     format_facts: &crate::query_engine::formatter::FormatFacts,
+    taint_results: &crate::query_engine::formatter::TaintAnalysisResults,
     endpoint_requires: &EndpointRequires,
     sites: &fx::IdMap,
 ) -> (usize, usize) {
     use flowy::EndpointDirection;
 
-    let taint_results = formatter::compute_taint_results(format_facts);
-    let paths = formatter::find_endpoint_paths(format_facts, &taint_results);
+    let paths = formatter::find_endpoint_paths(format_facts, taint_results);
 
     // A declared source/sink pair shares a taint label, so only consider paths
     // whose source and sink carry the same label. The taint graph itself is
@@ -270,7 +291,7 @@ fn check_human_profile_paths(
                             pass_count += 1;
                         } else {
                             fail_count += 1;
-                            println!(
+                            log::warn!(
                                 "Human profile: expected {expected} path(s) for {kind} endpoint \
                                  but found {path_hits}: {endpoint}"
                             );
@@ -279,7 +300,7 @@ fn check_human_profile_paths(
                         pass_count += 1;
                     } else {
                         fail_count += 1;
-                        println!(
+                        log::warn!(
                             "Human profile: no path found for required {kind} endpoint: {endpoint}"
                         );
                     }
@@ -287,7 +308,7 @@ fn check_human_profile_paths(
                 FlowSpec::FlowAbsent => {
                     if on_path {
                         fail_count += 1;
-                        println!(
+                        log::warn!(
                             "Human profile: forbidden {kind} endpoint appears on a path: {endpoint}"
                         );
                     } else {
@@ -301,11 +322,37 @@ fn check_human_profile_paths(
 }
 
 /// Check a flowy program, running the ctadl index and query steps, and print errors.
-pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow::Result<()> {
+pub fn check<P: AsRef<Path>>(
+    file: P,
+    dump_index_graph: Option<&Path>,
+    models: &[std::path::PathBuf],
+) -> anyhow::Result<()> {
     let file = file.as_ref();
     let program = flowy::compile_program(file)?;
     let mut pass_count = 0;
     let mut fail_count = 0;
+
+    // Models are loaded before `codegen_program`, which consumes the `ProgramInfo`. A flowy
+    // import has `VirtualMethodTable::Unknown`, so a generator matches by the IR function name
+    // directly (`ModelGeneratorIngest::new`'s fallback arm) and gets no default models of its
+    // own. That makes flowy the cheapest place to pin what a *model port* means, which is what
+    // `port_semantics/` uses it for.
+    let match_index = crate::models::ProgramMatchIndex::new(
+        &program.program_info,
+        crate::models::ImportScope {
+            language: Some(crate::project::ArtifactLanguage::Flowy),
+            import: None,
+        },
+    );
+    // One accumulator across every model file, and one phase-2 run over it below. A flowy
+    // check has a single program and no import loop, so there is no ordering hazard here --
+    // but `Argument(*)` still expands over `compute_arg_arity` when phase 2 runs, and running
+    // it once is what keeps that the same expansion the index path performs.
+    let mut model_matches = crate::models::ProgramModelMatches::default();
+    for model_path in models {
+        crate::models::try_load_models(&match_index, model_path, &mut model_matches)?;
+    }
+    drop(match_index);
 
     let mut index_facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
@@ -314,7 +361,16 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
         &mut index_facts,
         &mut source_info,
         CallResolutionStrategy::Mixed,
+        &model_matches.skip_analysis,
     );
+    // No bridge specs, so nothing here can raise the model errors phase 2 reports: every one of
+    // them is about pairing two bridge sides.
+    crate::codegen::model_matches::codegen_model_matches(
+        &model_matches,
+        &[],
+        &mut index_facts,
+        &mut source_info,
+    )?;
     log::debug!("Function ID to Name mapping:");
     for (id, name) in source_info.sites.functions() {
         log::debug!("{}: {}", id.id, name.0);
@@ -340,14 +396,15 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
     );
 
     if let Some(dot_path) = dump_index_graph {
-        let mut file = std::fs::File::create(dot_path).err_context(|| "creating dot file")?;
+        let mut file = std::fs::File::create(dot_path)
+            .err_context(|| format!("creating dot file: {}", dot_path.display()))?;
         crate::graphviz::render_index_graph(
             &index_result.assign_like,
             &source_info.sites,
             &mut file,
         )
-        .err_context(|| "rendering index graph")?;
-        eprintln!("Wrote index graph to '{}'", dot_path.display());
+        .err_context(|| format!("rendering index graph: {}", dot_path.display()))?;
+        log::info!("Wrote index graph to '{}'", dot_path.display());
     }
 
     let (ipass, ifail) = index_check_summaries(
@@ -365,17 +422,17 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
     format_facts_builder
         .index_actual_param(index_facts.actual_param.clone())
         .call(index_facts.call.clone())
-        .assign(index_result.assign_like.clone())
-        .paths(index_result.paths.clone())
-        .external_function(index_result.external_function.clone())
         .id_to_name(source_info.sites.get_id_to_name_map());
 
     let query_facts = QueryFacts {
         formal_param: index_facts.formal_param,
         actual_param: index_facts.actual_param,
-        call: index_facts.call,
+        // Cloned: the call graph is also needed below to resolve declared
+        // endpoints to their call-site-anchored forms during the query check.
+        call: index_facts.call.clone(),
         assign: index_result.assign_like,
         paths: index_facts.paths,
+        external_function: index_result.external_function,
         endpoints,
     };
     let query_result = taint_analysis(query_facts, Some(&source_info.sites));
@@ -387,6 +444,7 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
         &query_result,
         program.requirements.endpoint_requires,
         &source_info.sites,
+        &index_facts.call,
     )?;
     pass_count += ipass;
     fail_count += ifail;
@@ -394,13 +452,18 @@ pub fn check<P: AsRef<Path>>(file: P, dump_index_graph: Option<&Path>) -> anyhow
     // Human-profile formatter check: every declared source/sink pair that is
     // required to flow must surface as a source -> sink path in the human SARIF
     // profile.
+    let taint_results = formatter::TaintAnalysisResults::from_query_result(&query_result);
     let format_facts = format_facts_builder
         .taint(query_result.taint.clone())
-        .formal_param(query_result.formal_param.clone())
+        .taint_edge(query_result.taint_edge.clone())
         .build()
         .expect("building format facts");
-    let (hpass, hfail) =
-        check_human_profile_paths(&format_facts, &endpoint_requires, &source_info.sites);
+    let (hpass, hfail) = check_human_profile_paths(
+        &format_facts,
+        &taint_results,
+        &endpoint_requires,
+        &source_info.sites,
+    );
     pass_count += hpass;
     fail_count += hfail;
 
@@ -474,6 +537,8 @@ fn flowy_endpoint_base(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> QueryEn
             EndpointDirection::Sink => TaintDirection::Backward,
         },
         call_site: None,
+        // Flowy sources do not (yet) declare saturation.
+        saturating: false,
     }
 }
 
@@ -498,10 +563,11 @@ fn from_flowy_endpoint(
 
 fn port_to_index(port: &Port) -> anyhow::Result<(fx::FormalIndex, fx::Path)> {
     let Port { base, fields } = port;
+    let path = fx::Path::from_accesses(fields.iter().cloned());
     match base {
-        PortBase::Return => Ok(((-1i16).into(), fields.into())),
+        PortBase::Return => Ok(((-1i16).into(), path)),
         PortBase::Var(v) => match v.variable.as_ref() {
-            Variable::Param(idx) => Ok((idx.index().try_into().unwrap(), fields.into())),
+            Variable::Param(idx) => Ok((idx.index().try_into().unwrap(), path)),
             Variable::Local(_) => {
                 panic!("summary requires refers to local")
             }

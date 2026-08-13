@@ -1,0 +1,205 @@
+name: Release
+
+# Pushing a vX.Y.Z tag publishes a GitHub release carrying a `ctadl` binary for
+# each supported platform and a checksum for each binary.
+#
+# workflow_dispatch runs the same builds and leaves the binaries as workflow
+# artifacts without publishing anything, so the cross-compiles can be exercised
+# without minting a tag first.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    # A cold cache builds the whole dependency tree (datafusion, arrow, ascent)
+    # plus, for the cross targets, the toolchain that compiles it.
+    timeout-minutes: 180
+
+    permissions:
+      contents: read
+      # Needed for the (tokenless, OIDC-based) FlakeHub Nix cache.
+      id-token: write
+
+    strategy:
+      # One platform failing should not hide whether the others build.
+      fail-fast: false
+      matrix:
+        include:
+          # Linux and Windows both cross-compile from the same x86_64 Linux
+          # runner. macOS needs a runner of its own: Nix cannot cross-compile to
+          # Darwin, for want of a redistributable SDK. macos-latest is arm64.
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            nix-system: x86_64-linux
+          - target: x86_64-pc-windows-gnu
+            runner: ubuntu-latest
+            nix-system: x86_64-linux
+            suffix: .exe
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            nix-system: aarch64-darwin
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Set up Nix build cache
+        uses: DeterminateSystems/flakehub-cache-action@main
+
+      # How each target is built -- which toolchain, what it links against, and
+      # why the result runs on a machine without Nix -- lives in `release` in
+      # flake.nix, not here.
+      - name: Build ctadl
+        run: |
+          nix build --print-build-logs --out-link result \
+            '.#legacyPackages.${{ matrix.nix-system }}.release."${{ matrix.target }}"'
+
+      - name: Name the binary after the release
+        shell: bash
+        run: |
+          # On a tag this is the version; on a manual run it is the branch,
+          # whose name may contain characters a filename should not.
+          version="${GITHUB_REF_NAME//\//-}"
+          # The upload step below names the artifact after it too.
+          echo "version=$version" >> "$GITHUB_ENV"
+          mkdir -p dist
+          # The store is read-only, so copy rather than link, and restore the
+          # executable bit that copying out of it loses.
+          install -m 755 \
+            "result/bin/ctadl${{ matrix.suffix }}" \
+            "dist/ctadl-$version-${{ matrix.target }}${{ matrix.suffix }}"
+
+      - name: Upload the binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctadl-${{ env.version }}-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    # Only a tag publishes; a manual run stops after the builds above.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Creating the release and uploading its assets.
+      contents: write
+
+    steps:
+      - name: Collect the binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          # Flatten the per-target artifacts into one directory.
+          merge-multiple: true
+
+      # The tree has one version: `[workspace.package] version` in the root
+      # Cargo.toml, which every crate inherits and which `ctadl --version`
+      # prints. Check the tag against the binary rather than against a
+      # Cargo.toml -- what gets checked is then what ships. The musl build is
+      # the one that runs here without further ado.
+      - name: Check the tag against the binary
+        shell: bash
+        run: |
+          cd dist
+          binary="ctadl-$GITHUB_REF_NAME-x86_64-unknown-linux-musl"
+          # Downloading an artifact does not preserve the executable bit.
+          chmod +x "$binary"
+          # `ctadl --version` prints "ctadl <version>". The tag carries a
+          # leading `v` that a Cargo version never does, so drop it before
+          # comparing.
+          expected="${GITHUB_REF_NAME#v}"
+          reported=$(./"$binary" --version | awk '{ print $2 }')
+          if [ "$reported" != "$expected" ]; then
+            echo "error: tag is $GITHUB_REF_NAME but the binary reports $reported" >&2
+            echo "Either tag [workspace.package] version, or bump it to match the tag." >&2
+            exit 1
+          fi
+          echo "tag and binary agree: $reported"
+
+      - name: Checksum each binary
+        shell: bash
+        run: |
+          cd dist
+          # sha256sum's own format, so a downloader can run
+          #   sha256sum -c ctadl-<version>-<target>.sha256
+          # to check the file next to it. The glob expands before the loop
+          # runs, so the sums it writes are not themselves summed.
+          for binary in ctadl-*; do
+            sha256sum "$binary" > "$binary.sha256"
+          done
+          ls -l
+
+      # How to use what the release carries. gh puts this ahead of the notes
+      # `--generate-notes` derives from the commit log.
+      - name: Write the installation notes
+        shell: bash
+        run: |
+          cat > notes.md <<'EOF'
+          ## Downloads
+
+          Each binary is self-contained: it needs no Rust toolchain, no Nix, and
+          no shared libraries beyond what the operating system already provides.
+
+          | Platform | File |
+          | --- | --- |
+          | macOS (Apple silicon) | `ctadl-<version>-aarch64-apple-darwin` |
+          | Linux (x86-64) | `ctadl-<version>-x86_64-unknown-linux-musl` |
+          | Windows (x86-64) | `ctadl-<version>-x86_64-pc-windows-gnu.exe` |
+
+          ### Check the download
+
+          Each binary ships with a `.sha256` file next to it. With both in the
+          same directory:
+
+          ```
+          sha256sum -c ctadl-<version>-<platform>.sha256
+          ```
+
+          ### Run it
+
+          On macOS and Linux, make it executable first:
+
+          ```
+          chmod +x ctadl-<version>-<platform>
+          ```
+
+          The macOS binary is signed ad hoc rather than notarized, so Gatekeeper
+          quarantines anything downloaded through a browser. Clear the flag
+          before the first run:
+
+          ```
+          xattr -d com.apple.quarantine ctadl-<version>-aarch64-apple-darwin
+          ```
+          EOF
+          # The heredoc is quoted, because the markdown above is full of
+          # backticks the shell would otherwise read as command substitution.
+          # So fill the version in afterwards, and let the commands be
+          # copy-pasteable rather than a template the reader has to edit.
+          sed -i "s/<version>/$GITHUB_REF_NAME/g" notes.md
+          cat notes.md
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --notes-file notes.md \
+            --generate-notes \
+            dist/*

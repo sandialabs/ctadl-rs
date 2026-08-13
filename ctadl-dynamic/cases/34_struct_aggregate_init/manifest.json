@@ -1,0 +1,6 @@
+{
+  "name": "struct_aggregate_init",
+  "description": "struct aggregate initializer `struct P p = { s, 0 }`: the tainted element maps positionally onto p.x, which the sink reads -- s=flow d=flow (spec 019)",
+  "label": "Test",
+  "expect_flow": true
+}

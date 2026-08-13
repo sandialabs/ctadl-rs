@@ -6,11 +6,11 @@
 
 use datafusion::arrow::array::{Int64Array, StringArray};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::datasource::file_format::file_compression_type::FileCompressionType;
 use datafusion::prelude::*;
 use std::fmt::Display;
 use std::ops::Deref;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
 use internment::ArcIntern;
 use smallvec::SmallVec;
@@ -192,6 +192,58 @@ impl PcodeFactsReader {
         }
     }
 
+    /// Resolve a logical fact filename (e.g. `PCODE_INPUT.facts`) to the file that
+    /// actually exists on disk.
+    ///
+    /// A gzipped `<filename>.gz` is preferred when present (returning `true` for
+    /// "compressed"); otherwise the plain `<filename>` is used. Preferring `.gz`
+    /// but falling back to the plain file is what lets someone manually `gunzip`
+    /// files in the store and still have everything read correctly. Returns `None`
+    /// if neither variant exists.
+    fn resolve_fact_path(&self, filename: &str) -> Option<(PathBuf, bool)> {
+        let gz = self.facts_dir.join(format!("{filename}.gz"));
+        if gz.exists() {
+            return Some((gz, true));
+        }
+        let plain = self.facts_dir.join(filename);
+        if plain.exists() {
+            return Some((plain, false));
+        }
+        None
+    }
+
+    /// Register a fact table with DataFusion, resolving to the compressed or plain
+    /// variant and configuring the CSV options accordingly. Does nothing if the
+    /// table's file is absent.
+    async fn register_fact_csv(
+        &self,
+        ctx: &SessionContext,
+        table: &str,
+        filename: &str,
+        fields: Vec<Field>,
+    ) -> Result<()> {
+        let Some((path, compressed)) = self.resolve_fact_path(filename) else {
+            return Ok(());
+        };
+        let schema = Schema::new(fields);
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| PcodeError::fact_consistency_error("Invalid path"))?;
+        let mut options = CsvReadOptions::new()
+            .has_header(false)
+            .delimiter(b'\t')
+            .schema(&schema);
+        if compressed {
+            options = options
+                .file_extension(".facts.gz")
+                .file_compression_type(FileCompressionType::GZIP);
+        } else {
+            options = options.file_extension(".facts");
+        }
+        ctx.register_csv(table, path_str, options).await?;
+        Ok(())
+    }
+
     /// Read all essential pcode facts
     pub fn read_all_facts(&self) -> Result<PcodeFacts> {
         log::trace!("pcode: reading hfunc facts");
@@ -210,6 +262,10 @@ impl PcodeFactsReader {
         let hvar_name_facts = self.read_hvar_name_facts()?;
         log::trace!("pcode: reading hvar representative facts");
         let hvar_representative_facts = self.read_hvar_representative_facts()?;
+        log::trace!("pcode: reading vnode hvar facts");
+        let vnode_hvar_facts = self.read_vnode_hvar_facts()?;
+        log::trace!("pcode: reading hvar class facts");
+        let hvar_class_facts = self.read_hvar_class_facts()?;
         log::trace!("pcode: reading register facts");
         let register_facts = self.read_register_facts()?;
 
@@ -222,6 +278,8 @@ impl PcodeFactsReader {
             symbol_hvar_facts,
             hvar_name_facts,
             hvar_representative_facts,
+            vnode_hvar_facts,
+            hvar_class_facts,
             register_facts,
         })
     }
@@ -500,21 +558,7 @@ impl PcodeFactsReader {
         ];
 
         for (file, table, fields) in tables {
-            let path = self.facts_dir.join(file);
-            if path.exists() {
-                let schema = Arc::new(Schema::new(fields));
-                ctx.register_csv(
-                    table,
-                    path.to_str()
-                        .ok_or_else(|| PcodeError::fact_consistency_error("Invalid path"))?,
-                    CsvReadOptions::new()
-                        .has_header(false)
-                        .delimiter(b'\t')
-                        .file_extension(".facts")
-                        .schema(&schema),
-                )
-                .await?;
-            }
+            self.register_fact_csv(&ctx, table, file, fields).await?;
         }
 
         // Build mnemonic map
@@ -799,21 +843,8 @@ impl PcodeFactsReader {
         ];
 
         for (file_name, table_name, fields) in tables {
-            let path = self.facts_dir.join(file_name);
-            if path.exists() {
-                let schema = Schema::new(fields);
-                ctx.register_csv(
-                    table_name,
-                    path.to_str()
-                        .ok_or_else(|| PcodeError::fact_consistency_error("Invalid path"))?,
-                    CsvReadOptions::new()
-                        .has_header(false)
-                        .delimiter(b'\t')
-                        .file_extension(".facts")
-                        .schema(&schema),
-                )
+            self.register_fact_csv(&ctx, table_name, file_name, fields)
                 .await?;
-            }
         }
 
         let mut name_map: BTreeMap<PcodeVarnode, String> = BTreeMap::new();
@@ -1040,21 +1071,8 @@ impl PcodeFactsReader {
         ];
 
         for (file_name, table_name, fields) in tables {
-            let path = self.facts_dir.join(file_name);
-            if path.exists() {
-                let schema = Schema::new(fields);
-                ctx.register_csv(
-                    table_name,
-                    path.to_str()
-                        .ok_or_else(|| PcodeError::fact_consistency_error("Invalid path"))?,
-                    CsvReadOptions::new()
-                        .has_header(false)
-                        .delimiter(b'\t')
-                        .file_extension(".facts")
-                        .schema(&schema),
-                )
+            self.register_fact_csv(&ctx, table_name, file_name, fields)
                 .await?;
-            }
         }
 
         let mut hfunc_map: BTreeMap<PcodeBlockBasic, HighFunc> = BTreeMap::new();
@@ -1288,9 +1306,13 @@ impl PcodeFactsReader {
     }
 
     /// Read SYMBOL_HVAR facts
-    pub fn read_symbol_hvar_facts(&self) -> Result<BTreeMap<HighSymbol, HighVariable>> {
+    pub fn read_symbol_hvar_facts(&self) -> Result<BTreeMap<HighSymbol, Vec<HighVariable>>> {
         let facts = self.read_csv_facts::<(HighSymbol, HighVariable)>("SYMBOL_HVAR.facts")?;
-        Ok(facts.into_iter().collect())
+        let mut m: BTreeMap<HighSymbol, Vec<HighVariable>> = BTreeMap::new();
+        for (s, h) in facts {
+            m.entry(s).or_default().push(h);
+        }
+        Ok(m)
     }
 
     /// Read HVAR_NAME facts
@@ -1306,6 +1328,28 @@ impl PcodeFactsReader {
         Ok(facts.into_iter().collect())
     }
 
+    /// Read VNODE_HVAR facts, mapping each varnode to the high variable it belongs to.
+    ///
+    /// Optional: fact sets exported before this was read lack the file, in which case
+    /// callers see an empty map and simply detect no high-variable classes.
+    pub fn read_vnode_hvar_facts(&self) -> Result<BTreeMap<PcodeVarnode, HighVariable>> {
+        let facts = self
+            .read_csv_facts_optional::<(PcodeVarnode, HighVariable)>("VNODE_HVAR.facts")?
+            .unwrap_or_default();
+        Ok(facts.into_iter().collect())
+    }
+
+    /// Read HVAR_CLASS facts, giving Ghidra's storage classification for each high
+    /// variable (`global`, `constant`, `other`, ...).
+    ///
+    /// Optional, for the same reason as [`Self::read_vnode_hvar_facts`].
+    pub fn read_hvar_class_facts(&self) -> Result<BTreeMap<HighVariable, String>> {
+        let facts = self
+            .read_csv_facts_optional::<(HighVariable, String)>("HVAR_CLASS.facts")?
+            .unwrap_or_default();
+        Ok(facts.into_iter().collect())
+    }
+
     /// Helper function to read CSV facts
     fn read_csv_facts<T: serde::de::DeserializeOwned>(&self, filename: &str) -> Result<Vec<T>> {
         log::trace!("read_csv_facts: {filename}");
@@ -1318,14 +1362,19 @@ impl PcodeFactsReader {
         &self,
         filename: &str,
     ) -> Result<Option<Vec<T>>> {
-        let path = self.facts_dir.join(filename);
-        if !path.exists() {
+        let Some((path, compressed)) = self.resolve_fact_path(filename) else {
             return Ok(None);
-        }
+        };
 
         let file = std::fs::File::open(&path).map_err(PcodeError::from)?;
 
-        let reader = std::io::BufReader::new(file);
+        // The reader must work whether the fact file is compressed or not, so that
+        // someone can manually gunzip files in the store and everything still works.
+        let reader: std::io::BufReader<Box<dyn std::io::Read>> = if compressed {
+            std::io::BufReader::new(Box::new(flate2::read::GzDecoder::new(file)))
+        } else {
+            std::io::BufReader::new(Box::new(file))
+        };
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(false)
             .delimiter(b'\t') // Use tab delimiter
@@ -1348,9 +1397,11 @@ pub struct PcodeFacts {
     pub vnode_facts: BTreeMap<PcodeVarnode, VnodeData>,
     pub bb_facts: BTreeMap<PcodeBlockBasic, BBData>,
     pub proto_facts: BTreeMap<HighProto, ProtoData>,
-    pub symbol_hvar_facts: BTreeMap<HighSymbol, HighVariable>,
+    pub symbol_hvar_facts: BTreeMap<HighSymbol, Vec<HighVariable>>,
     pub hvar_name_facts: BTreeMap<HighVariable, String>,
     pub hvar_representative_facts: BTreeMap<HighVariable, PcodeVarnode>,
+    pub vnode_hvar_facts: BTreeMap<PcodeVarnode, HighVariable>,
+    pub hvar_class_facts: BTreeMap<HighVariable, String>,
     pub register_facts: Vec<RegisterData>,
 }
 
@@ -1369,10 +1420,29 @@ impl PcodeFacts {
     ///
     /// Returns None if either mapping is not found.
     pub fn get_symbol_representative(&self, symbol: &HighSymbol) -> Option<&PcodeVarnode> {
-        // Step 1: Find HighVariable for the given HighSymbol
-        let hvar = self.symbol_hvar_facts.get(symbol)?;
+        // Step 1: Find the HighVariables for the given HighSymbol. Ghidra maps one symbol
+        // to several high variables when it splits an aggregate into the pieces the body
+        // actually touches (the whole variable, plus one per accessed field). Only some of
+        // them carry a representative varnode, so try each rather than picking one blindly.
+        let hvars = self.symbol_hvar_facts.get(symbol)?;
 
         // Step 2: Find PcodeVarnode for the HighVariable
-        self.hvar_representative_facts.get(hvar)
+        hvars
+            .iter()
+            .find_map(|hvar| self.hvar_representative_facts.get(hvar))
+    }
+
+    /// Whether `vnode` is storage for a global variable, i.e. whether it belongs to a
+    /// high variable the decompiler typed as a `HighGlobal`.
+    ///
+    /// The varnode's address space is not a substitute for this test: call-target
+    /// varnodes also live in the `ram` space, and are distinguished by having no high
+    /// variable at all. Each function gets its own high variable for a given global, so
+    /// callers must key the global's identity on its address rather than on the hvar.
+    pub fn is_global_vnode(&self, vnode: &PcodeVarnode) -> bool {
+        self.vnode_hvar_facts
+            .get(vnode)
+            .and_then(|hvar| self.hvar_class_facts.get(hvar))
+            .is_some_and(|class| class == "global")
     }
 }

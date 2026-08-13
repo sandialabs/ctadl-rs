@@ -1,7 +1,6 @@
 use super::*;
 
 use hashbrown::HashSet;
-use smallvec::smallvec;
 
 use super::GLOBALS_INDEX;
 use crate::facts as fx;
@@ -66,6 +65,7 @@ fn test_basic3() {
         &mut facts,
         &mut source_info,
         CallResolutionStrategy::Mixed,
+        &Default::default(),
     );
     let f_id = source_info
         .sites
@@ -86,6 +86,69 @@ fn test_basic3() {
     assert!(result.summary.iter().find(|t| t.0 == f_id).is_some());
     assert!(result.summary.iter().find(|t| t.0 == g_id).is_some());
     assert!(result.summary.len() >= 3);
+}
+
+/// `modes: ["skip-analysis"]`, at the layer that implements it. `test_basic3` above is the
+/// control: same two functions, G calling F, nothing skipped.
+///
+/// What a skipped function keeps is its *signature*, because that is what the model's own
+/// `summary` rows are written against and what `compute_num_params` reports. What it loses is
+/// everything its blocks would have produced -- including, and this is the part no fact-level
+/// guard could do, the `call` edge out of it.
+#[test]
+fn a_skipped_body_contributes_no_facts() {
+    let mut program = Program::default();
+    program.functions.push(function_f());
+    program.functions.push(function_g());
+    let program_info = ProgramInfo {
+        program,
+        source_info: Default::default(),
+        vmt: Default::default(),
+    };
+    let mut facts = IndexFacts::default();
+    let mut source_info = IndexSourceInfo::default();
+    let skipped = codegen_program(
+        program_info,
+        &mut facts,
+        &mut source_info,
+        CallResolutionStrategy::Mixed,
+        &[Str::from("G")].into_iter().collect(),
+    );
+    assert_eq!(skipped, 1, "exactly one body was named and lowered");
+
+    let f_id = source_info
+        .sites
+        .get_function_id(fx::Function("F".into()))
+        .unwrap();
+    let g_id = source_info
+        .sites
+        .get_function_id(fx::Function("G".into()))
+        .unwrap();
+
+    // The signature survives: one declared parameter plus the globals and return auxiliaries.
+    assert_eq!(
+        facts
+            .formal_param
+            .iter()
+            .filter(|(f, ..)| *f == g_id)
+            .count(),
+        3
+    );
+    // The body does not. G's call to F was the program's only call site.
+    assert!(
+        facts.call.is_empty(),
+        "the skipped body's call edge must not be in the fact base"
+    );
+    for (site, ..) in &facts.assign {
+        let fx::InsnSiteId { func_id, .. } = fx::InsnSiteId::try_from(*site).unwrap();
+        assert_ne!(func_id, g_id, "the skipped body produced an assign row");
+    }
+
+    // F is untouched, and G derives nothing -- with no model loaded here, it has no summary at
+    // all, which is the "this function moves nothing" case.
+    let result = taint_index(facts);
+    assert!(result.summary.iter().any(|t| t.0 == f_id));
+    assert!(!result.summary.iter().any(|t| t.0 == g_id));
 }
 
 #[test]
@@ -109,6 +172,7 @@ fn test_basic2_source_sink() {
         call: facts.call,
         assign: index_result.assign_like,
         paths: facts.paths,
+        external_function: index_result.external_function,
         endpoints: [ss.source.clone(), ss.sink.clone()]
             .into_iter()
             .map(|e| (QueryEndpoint::from_taint_endpoint(&source_info.sites, e),))
@@ -134,6 +198,41 @@ fn test_basic2_source_sink() {
                 && r.2 == ss.source.vertex.0
                 && r.3 == ss.source.vertex.1)
             .is_some()
+    );
+
+    // The taint graph is oriented in execution / data-flow order, so a forward walk over
+    // `taint_edge` from the source vertex must reach the sink vertex. This only holds if
+    // backward (sink-seeded) edges were reversed into execution order.
+    assert!(!query_result.taint_edge.is_empty());
+    let mut adj: std::collections::BTreeMap<
+        (fx::FunctionId, fx::FlowVariable, fx::Path),
+        Vec<(fx::FunctionId, fx::FlowVariable, fx::Path)>,
+    > = std::collections::BTreeMap::new();
+    for (_edge, sf, sv, sp, df, dv, dp) in &query_result.taint_edge {
+        adj.entry((*sf, *sv, *sp))
+            .or_default()
+            .push((*df, *dv, *dp));
+    }
+    let start = (h_id, ss.source.vertex.0, ss.source.vertex.1);
+    let goal = (h_id, ss.sink.vertex.0, ss.sink.vertex.1);
+    let mut seen = std::collections::BTreeSet::new();
+    let mut queue = std::collections::VecDeque::from([start]);
+    seen.insert(start);
+    let mut reached_sink = false;
+    while let Some(node) = queue.pop_front() {
+        if node == goal {
+            reached_sink = true;
+            break;
+        }
+        for next in adj.get(&node).into_iter().flatten() {
+            if seen.insert(*next) {
+                queue.push_back(*next);
+            }
+        }
+    }
+    assert!(
+        reached_sink,
+        "forward walk over taint_edge should reach the sink vertex"
     );
 }
 
@@ -235,8 +334,8 @@ fn function_f() -> FunctionData {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_update(a.clone(), q);
-    b.create_assign_or_update(p.clone(), a);
+    b.create_assign_or_store(a.clone(), None, q);
+    b.create_assign_or_store(p.clone(), None, a);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -271,7 +370,7 @@ fn function_j() -> FunctionData {
     let q = b.new_param_var(ParameterIdx::new(1));
 
     b.create_assign(a.clone(), vec![q.into(), param_b.into()]);
-    b.create_assign_or_update(p.clone(), a);
+    b.create_assign_or_store(p.clone(), None, a);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -299,7 +398,7 @@ fn function_g() -> FunctionData {
     let param_b = b.new_param_var(ParameterIdx::new(0));
     let c = b.new_local_var("c");
 
-    let call_edges = CallEdges::Explicit(smallvec!["F".to_string()]);
+    let call_edges = CallEdges::Explicit(ctadl_ir::thin_vec!["F".to_string()]);
     let style = CallStyle::DirectCall { call_edges };
 
     b.create_call(style, vec![c.clone()], vec![a.into(), param_b.into()]);
@@ -338,8 +437,8 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_update(a.clone(), q);
-    b.create_assign_or_update(p.clone(), a);
+    b.create_assign_or_store(a.clone(), None, q);
+    b.create_assign_or_store(p.clone(), None, a);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -412,27 +511,19 @@ fn function_with_phi() -> FunctionData {
     let _cond = VariableRef::new_parameter(ParameterIdx::new(0));
     let a = VariableRef::new_parameter(ParameterIdx::new(1));
     let b = VariableRef::new_parameter(ParameterIdx::new(2));
-    let x = VariableRef::new_local("x".to_string());
+    let x = VariableRef::new_local_idx(f.locals.get_or_intern("x"));
 
     // True branch: x = a (using builder API)
-    let mut true_builder = BasicBlockBuilder::new(&mut f[true_branch]);
-    true_builder.create_assign_or_update(
-        true_builder.new_access_path(x.clone(), Vec::<&str>::new()),
-        Exp::AccessPath(true_builder.new_access_path(a, Vec::<&str>::new())),
-    );
+    let mut true_builder = BasicBlockBuilder::new(&mut f.blocks[true_branch], &mut f.locals);
+    true_builder.create_assign_or_store(x.clone(), None, Exp::Variable(a));
 
     // False branch: x = b (using builder API)
-    let mut false_builder = BasicBlockBuilder::new(&mut f[false_branch]);
-    false_builder.create_assign_or_update(
-        false_builder.new_access_path(x.clone(), Vec::<&str>::new()),
-        Exp::AccessPath(false_builder.new_access_path(b, Vec::<&str>::new())),
-    );
+    let mut false_builder = BasicBlockBuilder::new(&mut f.blocks[false_branch], &mut f.locals);
+    false_builder.create_assign_or_store(x.clone(), None, Exp::Variable(b));
 
     // Merge block will get phi node during SSA conversion (using builder API)
-    let mut merge_builder = BasicBlockBuilder::new(&mut f[merge]);
-    merge_builder.create_ret(vec![Exp::AccessPath(
-        merge_builder.new_access_path(x, Vec::<&str>::new()),
-    )]);
+    let mut merge_builder = BasicBlockBuilder::new(&mut f.blocks[merge], &mut f.locals);
+    merge_builder.create_ret(vec![Exp::Variable(x)]);
 
     f.verify().expect("doesn't verify");
     f
@@ -464,23 +555,21 @@ fn function_with_update() -> FunctionData {
 
     // Body block
     let body = blocks.push(BasicBlockData::new(None));
-    let mut builder = BasicBlockBuilder::new(&mut f[body]);
+    let mut builder = BasicBlockBuilder::new(&mut f.blocks[body], &mut f.locals);
 
     // Create variables using builder helpers
     let s_var = builder.new_param_var(ParameterIdx::new(0));
     let new_value = builder.new_local_var("new_value");
-    let s_access = builder.new_access_path(s_var.clone(), vec!["field"]);
 
-    // Create update statement using builder API
-    builder.create_update(
-        s_access,
-        Exp::AccessPath(builder.new_access_path(new_value.clone(), Vec::<&str>::new())),
+    // Create update statement using builder API: s.field = new_value
+    builder.create_store(
+        s_var.clone(),
+        ctadl_ir::mir::FieldPath::symbol("field"),
+        Exp::Variable(new_value.clone()),
     );
 
     // Create return statement using builder API
-    builder.create_ret(vec![Exp::AccessPath(
-        builder.new_access_path(s_var, Vec::<&str>::new()),
-    )]);
+    builder.create_ret(vec![Exp::Variable(s_var)]);
 
     f.verify().expect("doesn't verify");
     f
@@ -505,19 +594,19 @@ fn function_with_param_to_global_field() -> FunctionData {
 
     // Body block
     let body = blocks.push(BasicBlockData::new(None));
-    let mut builder = BasicBlockBuilder::new(&mut f[body]);
+    let mut builder = BasicBlockBuilder::new(&mut f.blocks[body], &mut f.locals);
 
     // Create local variable and assign it a value
     let local_var = builder.new_param_var(ParameterIdx::new(0));
 
     // Create globals access and update its field with local_var
     let globals_var = builder.new_global_var();
-    let globals_field_access = builder.new_access_path(globals_var.clone(), vec!["field"]);
 
     // This is the key assignment: globals.field = local_var
-    builder.create_update(
-        globals_field_access,
-        Exp::AccessPath(builder.new_access_path(local_var.clone(), Vec::<&str>::new())),
+    builder.create_store(
+        globals_var.clone(),
+        ctadl_ir::mir::FieldPath::symbol("field"),
+        Exp::Variable(local_var.clone()),
     );
 
     // Return globals
@@ -540,29 +629,24 @@ fn test_cap_algorithm() {
 
     let blocks = f.blocks.blocks_mut();
     let body = blocks.push(BasicBlockData::new(None));
-    let mut builder = BasicBlockBuilder::new(&mut f[body]);
+    let mut builder = BasicBlockBuilder::new(&mut f.blocks[body], &mut f.locals);
 
     // x = p0
     let x = builder.new_param_var(ParameterIdx::new(0));
 
-    // t1 = x.foo
+    // t1 = load x.foo
     let t1 = builder.new_local_var("t1");
-    let x_foo = builder.new_access_path(x.clone(), vec!["foo"]);
-    builder.create_assign(t1.clone(), vec![Exp::AccessPath(x_foo)]);
+    builder.create_load(t1.clone(), x.clone(), "foo");
 
-    // t2 = t1.bar
+    // t2 = load t1.bar
     let t2 = builder.new_local_var("t2");
-    let t1_bar = builder.new_access_path(t1.clone(), vec!["bar"]);
-    builder.create_assign(t2.clone(), vec![Exp::AccessPath(t1_bar)]);
+    builder.create_load(t2.clone(), t1.clone(), "bar");
 
-    // t3 = t2.baz
+    // t3 = load t2.baz
     let t3 = builder.new_local_var("t3");
-    let t2_baz = builder.new_access_path(t2.clone(), vec!["baz"]);
-    builder.create_assign(t3.clone(), vec![Exp::AccessPath(t2_baz)]);
+    builder.create_load(t3.clone(), t2.clone(), "baz");
 
-    builder.create_ret(vec![Exp::AccessPath(
-        builder.new_access_path(t3, Vec::<&str>::new()),
-    )]);
+    builder.create_ret(vec![Exp::Variable(t3)]);
 
     f.verify().expect("doesn't verify");
 

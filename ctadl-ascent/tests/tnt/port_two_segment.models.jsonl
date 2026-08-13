@@ -1,0 +1,2 @@
+{"find":"methods","where":[{"constraint":"signature_match","name":"unwrap"}],"model":{"propagation":[{"input":"Argument(0).[8].deref","output":"Return"}]}}
+{"find":"methods","where":[{"constraint":"signature_match","name":"wrap"}],"model":{"propagation":[{"input":"Argument(0)","output":"Return.deref.deref"}]}}

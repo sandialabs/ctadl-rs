@@ -1,0 +1,54 @@
+{
+  // The four statements of `main`: the source call, the native method that stashes the taint,
+  // the different native method that fetches it back, and the sink.
+  "expected_lines": [
+    41,
+    42,
+    43,
+    44
+  ],
+  // `g_slot = keep(data);` in JniRegister.c -- the call site inside `stash_impl`, which is
+  // tainted only if the argument really crossed the boundary into a function that no symbol
+  // name pointed at.
+  "expected_native_lines": [
+    46
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "source",
+          "parent": "LJniRegister;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "UserInput",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "sink",
+          "parent": "LJniRegister;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "TaintedData",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}

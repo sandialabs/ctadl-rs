@@ -2,8 +2,9 @@ use crate::index::idx::Idx;
 use crate::mir::call::CallStyle;
 use crate::mir::terminator::{Terminator, TerminatorKind};
 use crate::mir::{
-    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldAccesses, FunctionData, ParameterIdx,
-    ParameterType, Statement, StatementIdx, StatementKind, VariableRef,
+    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FieldAccesses, FieldPath, FunctionData,
+    LocalIdx, Locals, ParameterIdx, ParameterType, Statement, StatementIdx, StatementKind,
+    VariableRef,
 };
 
 /// A builder for creating functions.
@@ -30,7 +31,17 @@ impl<'a> FunctionBuilder<'a> {
 
     /// Get a builder for a specific basic block
     pub fn at_block(&mut self, block_idx: BasicBlockIdx) -> BasicBlockBuilder<'_> {
-        BasicBlockBuilder::new(&mut self.function.blocks[block_idx])
+        // Disjoint borrow of the two separate fields of `FunctionData` so the block builder can
+        // intern locals into the same function's table while building a block.
+        BasicBlockBuilder::new(
+            &mut self.function.blocks[block_idx],
+            &mut self.function.locals,
+        )
+    }
+
+    /// Intern a local by name into the function's locals table, returning its index.
+    pub fn intern_local(&mut self, name: &str) -> LocalIdx {
+        self.function.intern_local(name)
     }
 
     /// Set the name of the function
@@ -52,15 +63,18 @@ impl<'a> FunctionBuilder<'a> {
 pub struct BasicBlockBuilder<'a> {
     /// Mutable reference to the basic block being constructed
     block_data: &'a mut BasicBlockData,
+    /// Mutable reference to the enclosing function's locals table, for interning local names
+    locals: &'a mut Locals,
     /// Current insertion point within the basic block
     insertion_point: usize,
 }
 
 impl<'a> BasicBlockBuilder<'a> {
-    /// Create a new BasicBlockBuilder with given basic block
-    pub fn new(block_data: &'a mut BasicBlockData) -> Self {
+    /// Create a new BasicBlockBuilder with given basic block and locals table
+    pub fn new(block_data: &'a mut BasicBlockData, locals: &'a mut Locals) -> Self {
         Self {
             block_data,
+            locals,
             insertion_point: 0,
         }
     }
@@ -115,34 +129,61 @@ impl<'a> BasicBlockBuilder<'a> {
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create and insert an update statement
+    /// Create and insert a load statement `dest = source.field`.
     ///
     /// # Arguments
-    /// * `dest` - Destination access path
-    /// * `source` - Source expression
-    pub fn create_update(
+    /// * `dest` - Destination variable
+    /// * `source` - Source address (offset-only access path)
+    /// * `field` - Symbolic field to load
+    pub fn create_load(
         &mut self,
-        dest: impl Into<AccessPath>,
-        source: impl Into<Exp>,
+        dest: VariableRef,
+        source: impl Into<AccessPath>,
+        field: impl Into<FieldPath>,
     ) -> StatementIdx {
-        let statement = Statement::new_kind(StatementKind::update(dest.into(), source.into()));
+        let statement = Statement::new_kind(StatementKind::load(dest, source, field));
         let current_pos = self.insertion_point;
         self.insert_statement(statement);
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create and insert an assign_or_update statement
+    /// Create and insert a store statement `store dest.field := source`.
     ///
     /// # Arguments
-    /// * `dest` - Destination access path
+    /// * `dest` - Destination address (offset-only access path)
+    /// * `field` - Symbolic field written
     /// * `source` - Source expression
-    pub fn create_assign_or_update(
+    pub fn create_store(
         &mut self,
         dest: impl Into<AccessPath>,
+        field: impl Into<FieldPath>,
         source: impl Into<Exp>,
     ) -> StatementIdx {
         let statement =
-            Statement::new_kind(StatementKind::assign_or_update(dest.into(), source.into()));
+            Statement::new_kind(StatementKind::store(dest.into(), field, source.into()));
+        let current_pos = self.insertion_point;
+        self.insert_statement(statement);
+        StatementIdx::from(current_pos as u32)
+    }
+
+    /// Create and insert an assign (`field` is `None`) or a store of `field` into `dest` (see
+    /// [`StatementKind::assign_or_store`]). Storing to an offset address with no field is an error.
+    ///
+    /// # Arguments
+    /// * `dest` - Destination access path (offset-only)
+    /// * `field` - Symbolic field written, or `None` for a plain assign to a bare variable
+    /// * `source` - Source expression
+    pub fn create_assign_or_store(
+        &mut self,
+        dest: impl Into<AccessPath>,
+        field: Option<FieldPath>,
+        source: impl Into<Exp>,
+    ) -> StatementIdx {
+        let statement = Statement::new_kind(StatementKind::assign_or_store(
+            dest.into(),
+            field,
+            source.into(),
+        ));
         let current_pos = self.insertion_point;
         self.insert_statement(statement);
         StatementIdx::from(current_pos as u32)
@@ -230,12 +271,17 @@ impl<'a> BasicBlockBuilder<'a> {
         StatementIdx::from(current_pos as u32)
     }
 
-    /// Create a new local variable reference
+    /// Create a new local variable reference, interning `name` into the function's locals table
     ///
     /// # Arguments
     /// * `name` - Variable name
-    pub fn new_local_var(&self, name: &str) -> VariableRef {
-        VariableRef::new_local(name.to_string())
+    pub fn new_local_var(&mut self, name: &str) -> VariableRef {
+        VariableRef::new_local_idx(self.locals.get_or_intern(name))
+    }
+
+    /// Intern a local by name into the function's locals table, returning its index.
+    pub fn intern_local(&mut self, name: &str) -> LocalIdx {
+        self.locals.get_or_intern(name)
     }
 
     /// Create a new parameter variable reference
@@ -251,50 +297,28 @@ impl<'a> BasicBlockBuilder<'a> {
         VariableRef::new_global()
     }
 
-    /// Create a new access path
+    /// Create a new offset-only access path
     ///
     /// # Arguments
     /// * `variable` - Variable reference
-    /// * `fields` - Field access path
-    pub fn new_access_path<S: AsRef<str>>(
+    /// * `offsets` - Offset (pointer-arithmetic) field accesses
+    pub fn new_access_path(
         &self,
         variable_ref: VariableRef,
-        fields: impl IntoIterator<Item = S>,
+        offsets: impl IntoIterator<Item = i64>,
     ) -> AccessPath {
         AccessPath {
             variable_ref,
-            path: fields.into_iter().collect(),
+            path: FieldAccesses::with_offsets(offsets),
         }
     }
 
-    /// Create a new field access path
-    ///
-    /// # Arguments
-    /// * `fields` - Field names
-    pub fn new_field_path<S: AsRef<str>>(
-        &self,
-        fields: impl IntoIterator<Item = S>,
-    ) -> FieldAccesses {
-        fields.into_iter().collect()
-    }
-
-    /// Create a new field access path with a single offset
+    /// Create a new access path with a single offset
     ///
     /// # Arguments
     /// * `offset` - Numeric offset
     pub fn new_offset_path(&self, offset: i64) -> FieldAccesses {
         FieldAccesses::with_offset(offset)
-    }
-
-    /// Create a new field access path with mixed field accesses
-    ///
-    /// # Arguments
-    /// * `fields` - Sequence of either field names (Ok) or offsets (Err)
-    pub fn new_mixed_field_path<S: AsRef<str>>(
-        &self,
-        fields: impl IntoIterator<Item = Result<S, i64>>,
-    ) -> FieldAccesses {
-        FieldAccesses::mixed(fields)
     }
 
     /// Create a string expression

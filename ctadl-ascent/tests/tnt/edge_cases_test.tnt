@@ -1,24 +1,25 @@
 // Test edge cases for numeric field access
+// A numeric-offset memory access spells its dereference (e.g. `a.[0].deref`).
 
 def TestEdgeCases(a) {
 start:
     // Test 1: Zero offset
-    b = a.[0];
-    
+    b = a.[0].deref;
+
     // Test 2: Single digit offset
-    c = a.[5];
-    
+    c = a.[5].deref;
+
     // Test 3: Multi-digit offset
-    d = a.[42];
-    
+    d = a.[42].deref;
+
     // Test 4: Large offset
-    e = a.[999999];
-    
+    e = a.[999999].deref;
+
     // Test 5: Mixed with symbolic fields
-    f = a.[1].field.[2].another.[3];
-    
-    // Test 6: Numeric field update with same variable
-    a.[10] = a.[20];
-    
+    f = a.[1].field.[2].another.[3].deref;
+
+    // Test 6: Numeric field update with same variable (memory read/write spell the dereference)
+    a.[10].deref = a.[20].deref;
+
     return;
 }

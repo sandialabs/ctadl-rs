@@ -1,0 +1,6 @@
+{
+  "name": "CPP_97_funcptr_array_aggregate",
+  "description": "C++: funcptr array via aggregate initializer `int (*fps[2])(int) = { id, id }`, then an indirect call through fps[0] -- same facts as the element-assignment form (CPP_30); s=flow d=flow (spec 019)",
+  "label": "Test",
+  "expect_flow": true
+}

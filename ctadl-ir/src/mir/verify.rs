@@ -6,8 +6,8 @@ use thiserror::Error;
 
 use crate::index::idx::Idx;
 use crate::mir::{
-    BasicBlockData, BasicBlockIdx, FunctionData, FunctionIdx, Location, ParameterIdx,
-    StatementKind, TerminatorKind, Variable, VariableRef, visit::Visitor,
+    BasicBlockData, BasicBlockIdx, FunctionData, FunctionIdx, LocalIdx, Location, ParameterIdx,
+    TerminatorKind, Variable, VariableRef, visit::Visitor,
 };
 
 /// These are the errors that CTADL IR verification detects. Any of these errors mean that the IR
@@ -21,16 +21,16 @@ pub enum VerifyError {
     #[error("multiply-defined function: {}", index.index())]
     MultiplyDefinedFunction { index: FunctionIdx },
 
-    /// An Update instruction that doesn't update any field
-    #[error("update with no field: {location}")]
-    EmptyFieldUpdate { location: Location },
-
     /// Parameter reference found outside the bounds of declared parameters
     #[error("in function: {function}: reference to nonexistent parameter: '{}'", parameter.index())]
     ParameterDoesNotExist {
         function: String,
         parameter: ParameterIdx,
     },
+
+    /// Local reference found outside the bounds of the function's locals table
+    #[error("in function: {function}: reference to nonexistent local: '{}'", local.index())]
+    LocalDoesNotExist { function: String, local: LocalIdx },
 
     #[error("in function: {function}: goto to non-existent block: {}", target.index())]
     BlockDoesNotExist {
@@ -111,6 +111,8 @@ pub struct MirVerify {
     num_blocks: Option<usize>,
     /// Length of the last function's parameter list
     params_len: Option<ParameterIdx>,
+    /// Number of locals in the last function's locals table
+    locals_len: Option<usize>,
     /// Length of return values from function
     return_arity: Option<u8>,
     defines: HashSet<String>,
@@ -145,12 +147,14 @@ impl Visitor for MirVerify {
         self.name = data.name.clone();
         self.num_blocks = Some(data.blocks.len());
         self.params_len = Some(ParameterIdx::new(data.num_parameters()));
+        self.locals_len = Some(data.locals.len());
         self.return_arity = Some(data.return_type.arity);
         self.super_function_data(idx, data);
         // After visiting a function, clear state.
         self.name = "".to_string();
         self.num_blocks = None;
         self.params_len = None;
+        self.locals_len = None;
         self.return_arity = None;
     }
 
@@ -183,19 +187,14 @@ impl Visitor for MirVerify {
                 parameter: *idx,
             });
         }
-    }
-
-    #[inline]
-    fn visit_statement_kind(&mut self, statement: &StatementKind, location: Location) {
-        self.super_statement_kind(statement, location);
-        use StatementKind::*;
-        if let Update {
-            dest: (_var, fields),
-            ..
-        } = statement
-            && fields.is_empty()
+        // Check that referenced local exists.
+        if let Variable::Local(idx) = variable.variable.as_ref()
+            && idx.index() >= self.locals_len.unwrap()
         {
-            self.add_error(VerifyError::EmptyFieldUpdate { location });
+            self.add_error(VerifyError::LocalDoesNotExist {
+                function: self.name.clone(),
+                local: *idx,
+            });
         }
     }
 

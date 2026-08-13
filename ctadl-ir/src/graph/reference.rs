@@ -25,3 +25,14 @@ impl<G: Predecessors> Predecessors for &G {
         (**self).predecessors(node)
     }
 }
+
+impl<G: LabeledSuccessors> LabeledSuccessors for &G {
+    type Label = G::Label;
+
+    fn labeled_successors(
+        &self,
+        node: Self::Node,
+    ) -> impl Iterator<Item = (Self::Node, Self::Label)> {
+        (**self).labeled_successors(node)
+    }
+}

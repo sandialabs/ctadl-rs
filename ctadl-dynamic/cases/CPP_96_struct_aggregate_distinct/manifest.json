@@ -1,0 +1,6 @@
+{
+  "name": "CPP_96_struct_aggregate_distinct",
+  "description": "C++: struct aggregate initializer, NEGATIVE: `P p = { 0, s }` taints p.y; the sink reads the distinct member p.x -- s=none d=none (positional precision, spec 019)",
+  "label": "Test",
+  "expect_flow": false
+}

@@ -1,27 +1,32 @@
+use hashbrown::HashTable;
 use parking_lot::RwLock;
-use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
+use rustc_hash::FxBuildHasher;
+use std::hash::{BuildHasher, Hash};
 
 pub struct Interner<T: ?Sized + 'static> {
-    shards: Box<[RwLock<HashSet<&'static T>>]>,
+    state: FxBuildHasher,
+    shards: Box<[RwLock<HashTable<&'static T>>]>,
 }
 
 impl<T: ?Sized + Hash + Eq + Send + Sync + 'static> Interner<T> {
     pub fn new(num_shards: usize) -> Self {
         let mut shards = Vec::with_capacity(num_shards);
         for _ in 0..num_shards {
-            shards.push(RwLock::new(HashSet::new()));
+            shards.push(RwLock::new(HashTable::new()));
         }
         Self {
+            state: FxBuildHasher,
             shards: shards.into_boxed_slice(),
         }
     }
 
-    fn shard_for(&self, value: &T) -> usize {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        value.hash(&mut hasher);
-        let hash = hasher.finish();
-        (hash % self.shards.len() as u64) as usize
+    #[inline]
+    fn shard_index(&self, hash: u64) -> usize {
+        // Shard on the HIGH bits: hashbrown indexes its buckets with the LOW bits of
+        // the same hash, so sharding on the high bits keeps full entropy inside each
+        // shard's table (sharding on low bits would collapse every entry in a shard
+        // into the same handful of hashbrown buckets).
+        (hash >> 57) as usize % self.shards.len()
     }
 
     pub fn intern(&self, value: &T) -> &'static T
@@ -29,25 +34,25 @@ impl<T: ?Sized + Hash + Eq + Send + Sync + 'static> Interner<T> {
         T: ToOwned,
         Box<T>: From<T::Owned>,
     {
-        let idx = self.shard_for(value);
-        let shard = &self.shards[idx];
+        let hash = self.state.hash_one(value);
+        let shard = &self.shards[self.shard_index(hash)];
 
         {
             let read = shard.read();
-            if let Some(&existing) = read.get(value) {
+            if let Some(&existing) = read.find(hash, |&x| *x == *value) {
                 return existing;
             }
         }
 
         let mut write = shard.write();
-        if let Some(&existing) = write.get(value) {
+        if let Some(&existing) = write.find(hash, |&x| *x == *value) {
             return existing;
         }
 
         let owned = value.to_owned();
         let boxed = Box::<T>::from(owned);
-        let leaked = Box::leak(boxed);
-        write.insert(leaked);
+        let leaked: &'static T = Box::leak(boxed);
+        write.insert_unique(hash, leaked, |&x| self.state.hash_one(x));
         leaked
     }
 }
@@ -182,6 +187,7 @@ mod tests {
     #[test]
     fn test_hash_consistency() {
         use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
 
         let s1 = StringRef::new("hello");
         let s2 = StringRef::new("hello");

@@ -1,0 +1,25 @@
+// PORT SEMANTICS 5/6 -- `.deref`.
+//
+// `deref` is an ORDINARY symbol segment. pcode's frontend spells a pointee that way and the
+// whole native default model file is built on it, so it behaves exactly like the named field in
+// `port_in_symbol.tnt` -- there is no special pointer handling behind it. That is worth pinning
+// precisely because it looks like it might be special.
+def id(v): 1
+where summaries [return <- v.deref]
+{
+start:
+  w = "nothing";
+  return w;
+}
+
+def main() {
+start:
+  t.deref.g = source(Secret);
+  u = id(t);
+  // Predicted: u.g.
+  probe = u.g;
+  sink(probe, Secret);
+  deeper = u.deref.g;
+  errsink(deeper, Secret);
+  return;
+}

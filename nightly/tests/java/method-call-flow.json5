@@ -1,0 +1,51 @@
+{
+  // Flow: data = source() (22) -> result = obj.process(data) (24) ->
+  // sink(result) (25). Line 8 (`return in + "_processed"` inside process) is
+  // dropped: the dex frontend surfaces it as a tainted instruction, but the JVM
+  // frontend compiles the string concat to a StringBuilder chain that maps
+  // elsewhere, so line 8 is unreachable for the shared (dex+jvm) config. The
+  // source->sink code-flow connectivity check still proves the inter-procedural
+  // flow, and line 24 pins the process() call site.
+  "expected_lines": [
+    22,
+    24
+  ],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "source",
+          "parent": "LMethodCallFlow;"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "kind": "UserInput",
+            "port": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "name": "sink",
+          "parent": "LMethodCallFlow;"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "kind": "TaintedData",
+            "port": "Argument(0)"
+          }
+        ]
+      }
+    }
+  ]
+}

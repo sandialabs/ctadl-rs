@@ -12,16 +12,16 @@
 
 use ctadl_ir::{ProgramInfo, ssa};
 
-use crate::cli::build_query_endpoints;
-use crate::codegen::models::codegen_summary;
+use crate::codegen::model_matches::codegen_model_matches;
 use crate::codegen::{CallResolutionStrategy, codegen_program};
 use crate::error::Error;
 use crate::facts::TaintDirection;
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::{IndexConfig, IndexFacts, taint_index_with_config};
-use crate::languages::tree_sitter::{parse_c_program, parse_cpp_program};
-use crate::models::{ModelsBatch, try_load_models};
-use crate::query_engine::{QueryFacts, taint_analysis};
+use crate::languages::tree_sitter_c::{parse_c_program, parse_cpp_program};
+use crate::models::{ImportScope, ProgramMatchIndex, ProgramModelMatches, try_load_models};
+use crate::project::ArtifactLanguage;
+use crate::query_engine::{QueryFacts, build_query_endpoints, taint_analysis};
 
 /// A single source→sink flow that CTADL reports statically: taint of `label`
 /// reaches the sink vertex (`sink_function` + `sink_path`).
@@ -77,12 +77,17 @@ fn analyze_parsed_flows(
     };
     program_info.program.verify()?;
 
-    // 2. Load the source/sink model against the program (needs program_info
-    //    before codegen consumes it). Split summary (consumed by indexing) from
-    //    endpoints (used to build the query).
-    let ModelsBatch {
-        summary, endpoint, ..
-    } = try_load_models(&program_info, model_path.as_ref())?;
+    // 2. Match the source/sink model against the program (needs program_info before codegen
+    //    consumes it). Matching resolves each model port to concrete program entities up
+    //    front; the summary half is folded into the index below, the endpoint half builds
+    //    the query. The harness analyses a single in-memory C/C++ translation unit, so it
+    //    matches under one anonymous import scope.
+    let mut model_matches = ProgramModelMatches::default();
+    {
+        let scope = ImportScope::new(ArtifactLanguage::C, "taint_compare");
+        let match_index = ProgramMatchIndex::new(&program_info, scope);
+        try_load_models(&match_index, model_path.as_ref(), &mut model_matches)?;
+    }
 
     // 3. Index: SSA → codegen facts → fold in model summaries → datalog index.
     ssa::transform_program(&mut program_info.program, true);
@@ -93,19 +98,28 @@ fn analyze_parsed_flows(
         &mut index_facts,
         &mut source_info,
         CallResolutionStrategy::Mixed,
+        // The harness analyses every function body; nothing is model-skipped.
+        &Default::default(),
     );
-    codegen_summary(summary, &mut index_facts, &mut source_info);
+    // No bridge specs: the harness models a single translation unit, with no cross-language
+    // (JNI-style) linking to resolve.
+    codegen_model_matches(&model_matches, &[], &mut index_facts, &mut source_info)?;
     let index_result = taint_index_with_config(
         index_facts.clone(),
         IndexConfig::default(),
         Some(&source_info.sites),
     );
 
-    // 4. Build query endpoints (sources + sinks) from the model.
-    let (endpoints, model_formals) =
-        build_query_endpoints(&endpoint, &index_facts, &source_info.sites);
+    // 4. Build query endpoints (sources + sinks) from the matched model.
+    let built = build_query_endpoints(
+        &model_matches.endpoints,
+        &index_facts,
+        &source_info.sites,
+        &index_result.assign_like,
+    );
+    let endpoints = built.endpoints;
     let mut formal_params = index_facts.formal_param.clone();
-    formal_params.extend(model_formals);
+    formal_params.extend(built.formals);
 
     {
         let n_src = endpoints
@@ -136,6 +150,7 @@ fn analyze_parsed_flows(
         call: index_facts.call,
         assign: index_result.assign_like,
         paths: index_result.paths,
+        external_function: index_result.external_function,
         endpoints: endpoints.clone(),
     };
     let query_result = taint_analysis(query_facts, Some(&source_info.sites));
