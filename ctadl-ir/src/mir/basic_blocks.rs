@@ -105,7 +105,13 @@ impl BasicBlocks {
 impl Successors for BasicBlocks {
     #[inline]
     fn successors(&self, node: Self::Node) -> impl Iterator<Item = Self::Node> {
-        self.basic_blocks[node].terminator().successors()
+        // A block can legitimately lack a terminator when a frontend recovered
+        // from a construct it couldn't lower (see `recoverable_report`); treat
+        // it as a dead end rather than panicking mid-walk.
+        self.basic_blocks[node]
+            .terminator_opt()
+            .into_iter()
+            .flat_map(|t| t.successors())
     }
 }
 

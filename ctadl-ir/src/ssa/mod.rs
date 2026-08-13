@@ -227,6 +227,18 @@ impl MutVisitor for SingleExitRewrite {
         _bb: BasicBlockIdx,
         data: &mut BasicBlockData,
     ) {
+        // A block can lack a terminator when the frontend recovered from a
+        // construct it could not lower (see the tree-sitter frontend's
+        // `recoverable_report`): the diverging statement that would have set one
+        // was dropped. Such a block falls through to the function exit, so give
+        // it the same goto-to-exit an empty `return` gets. Do this first so the
+        // Return handling below sees a well-formed block.
+        if data.terminator_opt().is_none() {
+            *data.terminator_opt_mut() = Some(Terminator::new_kind(TerminatorKind::Goto {
+                targets: smallvec![self.exit],
+            }));
+            return;
+        }
         // Create assignment of <retvar>* = <return'd var>
         if let TerminatorKind::Return { args } = &data.terminator().kind {
             let args = args.clone();
