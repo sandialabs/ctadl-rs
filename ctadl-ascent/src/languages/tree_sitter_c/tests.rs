@@ -1440,6 +1440,84 @@ fn labeled_empty_statement_parses() {
 }
 
 #[test_log::test]
+fn unsupported_expression_warns_and_recovers() {
+    // An AST shape the frontend does not lower (here `asm("nop")`, which reaches
+    // `flatten_expr`'s catch-all, ERR 78) is a warning by default, not an ingestion
+    // error: the expression becomes an opaque temp via `unexpected_ast` and the rest
+    // of the function still lowers, so `f`'s param->return flow survives. Setting
+    // CTADL_ERROR_ON_AST restores the hard error; that side isn't exercised here
+    // because the env var is process-global and tests run in parallel -- instead the
+    // test skips when the var is set, so a strict-mode environment doesn't fail it.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r#"
+        int f(int a) {
+            asm("nop");
+            return a;
+        }"#;
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn stray_break_continue_goto_warn_and_recover() {
+    // `break`/`continue` outside any loop/switch and `goto` to an undefined label are
+    // problems in the analyzed source ("source problem" warnings), not frontend gaps.
+    // Each recovers as a no-op -- none terminates the block -- so the statements after
+    // them still lower and `f`'s param->return flow survives. Skips under
+    // CTADL_ERROR_ON_AST, which restores the hard error for all three.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        int f(int a) {
+            break;
+            continue;
+            goto nowhere;
+            return a;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn error_on_ast_promotes_frontend_gap() {
+    // The strict side of the switch: under CTADL_ERROR_ON_AST an unsupported
+    // expression is a hard ingestion error again, exactly as before the warning
+    // demotion. Strictness comes from the per-thread test override, not the env var,
+    // which is process-global and would race the parallel test harness.
+    let _strict = super::force_error_on_ast();
+    let src = r#"
+        int f(int a) {
+            asm("nop");
+            return a;
+        }"#;
+    let err = super::parse_c_program(src).expect_err("strict mode must reject the frontend gap");
+    assert!(
+        err.to_string().contains("Unsupported expression type"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
+fn error_on_ast_promotes_source_problem() {
+    // Same strict switch for the source-problem flavor: a stray `break` fails
+    // ingestion under CTADL_ERROR_ON_AST.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int f(int a) {
+            break;
+            return a;
+        }";
+    let err = super::parse_c_program(src).expect_err("strict mode must reject the stray break");
+    assert!(
+        err.to_string().contains("`break` outside"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
 fn compound_assign_accumulates() {
     // Compound assignment (`y += b`) is an accumulate, not an overwrite: it lowers to `y = b + y`,
     // keeping the prior value of `y` *and* mixing in the new one. With `y` seeded from param 0 and

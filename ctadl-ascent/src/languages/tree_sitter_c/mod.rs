@@ -1710,18 +1710,18 @@ impl<'a> Context<'a> {
                 self.walk_switch(source, program, scope_view, child)?;
             }
             // `return`/`break`/`continue` terminate the current block and have no
-            // fall-through, so they end the compound (skipping its end link).
+            // fall-through, so they end the compound (skipping its end link). A stray
+            // `break`/`continue` outside any loop/switch recovers as a no-op and
+            // reports `false`, so the compound continues normally.
             "return_statement" => {
                 self.walk_return(source, program, scope_view, child)?;
                 return Ok(true);
             }
             "break_statement" => {
-                self.walk_break(program, scope_view)?;
-                return Ok(true);
+                return self.walk_break(program, scope_view);
             }
             "continue_statement" => {
-                self.walk_continue(program, scope_view)?;
-                return Ok(true);
+                return self.walk_continue(program, scope_view);
             }
             // Unlike break/continue, a `goto` does NOT end the compound: code after it
             // is unreachable but may hold labels that must still lower, so it updates
@@ -1734,7 +1734,7 @@ impl<'a> Context<'a> {
             }
             "ERROR" => {
                 let node_str = to_str(&child, source);
-                log::warn!("Unknown token(2): {kind}: {node_str}");
+                unexpected_ast(format!("Unknown token(2): {kind}: {node_str}"))?;
             }
             _ => {
                 self.flatten_expr(program, child, source, scope_view)?;
@@ -1778,9 +1778,10 @@ impl<'a> Context<'a> {
                     continue;
                 }
                 _ => {
-                    return Err(Error::TreeSitterParse(format!(
+                    unexpected_ast(format!(
                         "Declaration declarator had an unexpected kind {decl_kind}"
-                    )));
+                    ))?;
+                    continue;
                 }
             };
             let var_name = to_str(&decl_ident, source);
@@ -2157,32 +2158,39 @@ impl<'a> Context<'a> {
 
     /// `break`: terminate the current block with a goto to the innermost enclosing
     /// `switch`/loop continuation. The target rides on the scope view, so it is just
-    /// `scope_view.break_target` — no stack to consult.
-    fn walk_break(&self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
+    /// `scope_view.break_target` — no stack to consult. Returns whether the block was
+    /// terminated: a stray `break` outside any switch/loop (a source problem) recovers
+    /// as a no-op, so following statements keep lowering into the same block.
+    fn walk_break(&self, program: &mut Program, scope_view: &ScopeView) -> Result<bool, Error> {
         match scope_view.break_target {
             Some(target) => {
                 let mut to = scope_view.clone();
                 to.blidx = target;
-                link_blocks(program, scope_view, &to, false)
+                link_blocks(program, scope_view, &to, false)?;
+                Ok(true)
             }
-            None => Err(Error::TreeSitterParse(
-                "`break` outside of a switch or loop".to_string(),
-            )),
+            None => {
+                malformed_source("`break` outside of a switch or loop".to_string())?;
+                Ok(false)
+            }
         }
     }
 
     /// `continue`: terminate the current block with a goto to the innermost enclosing
-    /// loop's re-test/update block (`scope_view.continue_target`).
-    fn walk_continue(&self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
+    /// loop's re-test/update block (`scope_view.continue_target`). Termination and
+    /// stray-`continue` recovery mirror [`Self::walk_break`].
+    fn walk_continue(&self, program: &mut Program, scope_view: &ScopeView) -> Result<bool, Error> {
         match scope_view.continue_target {
             Some(target) => {
                 let mut to = scope_view.clone();
                 to.blidx = target;
-                link_blocks(program, scope_view, &to, false)
+                link_blocks(program, scope_view, &to, false)?;
+                Ok(true)
             }
-            None => Err(Error::TreeSitterParse(
-                "`continue` outside of a loop".to_string(),
-            )),
+            None => {
+                malformed_source("`continue` outside of a loop".to_string())?;
+                Ok(false)
+            }
         }
     }
 
@@ -2202,9 +2210,12 @@ impl<'a> Context<'a> {
             .child_by_field_name("label")
             .expect("goto_statement always has a label");
         let label = to_str(&label_node, source);
-        let target = *self.label_blocks.get(label).ok_or_else(|| {
-            Error::TreeSitterParse(format!("`goto` to undefined label `{label}`"))
-        })?;
+        let Some(&target) = self.label_blocks.get(label) else {
+            malformed_source(format!("`goto` to undefined label `{label}`"))?;
+            // Recover as a no-op: with no target block to jump to, lowering simply
+            // falls through to the next statement in the current block.
+            return Ok(());
+        };
         let mut to = scope_view.clone();
         to.blidx = target;
         link_blocks(program, scope_view, &to, false)?;
@@ -2695,9 +2706,16 @@ impl<'a> Context<'a> {
             }
             _ => {
                 debug_print_tree(node, 0, None, None);
-                Err(Error::TreeSitterParse(format!(
+                unexpected_ast(format!(
                     "ERR 78: Unsupported expression type: {}",
                     node.kind()
+                ))?;
+                // Recover with a fresh temp nothing else reads or writes: this
+                // expression's value becomes opaque (no flows in or out), but the
+                // surrounding statement still lowers.
+                let temp_name = self.allocator.next_temp();
+                Ok(Exp::Variable(VariableRef::new_local_idx(
+                    program[scope_view.fidx].locals.get_or_intern(&temp_name),
                 )))
             }
         }
@@ -2736,9 +2754,14 @@ impl<'a> Context<'a> {
             }
         } else {
             debug_print_tree(node, 0, None, None);
-            Err(Error::TreeSitterParse(
+            unexpected_ast(
                 "Surprised, Pointer Declarators dont always have a declarators".to_string(),
-            ))
+            )?;
+            // Recover as an opaque temp, like `flatten_expr`'s catch-all.
+            let temp_name = self.allocator.next_temp();
+            Ok(Exp::Variable(VariableRef::new_local_idx(
+                program[scope_view.fidx].locals.get_or_intern(&temp_name),
+            )))
         }
     }
 
@@ -3266,10 +3289,18 @@ impl<'a> Context<'a> {
             }
             _ => match self.flatten_expr(program, node, source, scope_view)? {
                 Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
-                _ => Err(Error::TreeSitterParse(format!(
-                    "not an lvalue: {}",
-                    node.kind()
-                ))),
+                _ => {
+                    unexpected_ast(format!("not an lvalue: {}", node.kind()))?;
+                    // Recover by targeting a dead temp: this one store is dropped,
+                    // the rest of the function still lowers.
+                    let temp_name = self.allocator.next_temp();
+                    Ok(RawPath::new(
+                        VariableRef::new_local_idx(
+                            program[scope_view.fidx].locals.get_or_intern(&temp_name),
+                        ),
+                        ThinVec::new(),
+                    ))
+                }
             },
         }
     }
@@ -3366,6 +3397,66 @@ impl TempAllocator {
 /// * `node` - The current Tree-sitter node to print.
 /// * `depth` - The current recursion depth (start with 0).
 /// * `field_name` - The field name of the current node, if any (start with None).
+/// The switch behind [`unexpected_ast`] and [`malformed_source`]: by default log a
+/// warning (prefixed with who is at fault) and return `Ok(())` so the call site can
+/// recover and the user still gets useful results from the rest of the program. Set
+/// `CTADL_ERROR_ON_AST` (to any value) to promote every such report to a hard
+/// ingestion error, which is what you want when hunting frontend gaps.
+fn recoverable_report(attribution: &str, msg: String) -> Result<(), Error> {
+    if error_on_ast() {
+        Err(Error::TreeSitterParse(msg))
+    } else {
+        log::warn!("{attribution}: {msg} (recovering; set CTADL_ERROR_ON_AST to fail instead)");
+        Ok(())
+    }
+}
+
+/// Whether AST/source problems are hard errors: `CTADL_ERROR_ON_AST` in the
+/// environment, or the per-thread test override below.
+fn error_on_ast() -> bool {
+    #[cfg(test)]
+    if FORCE_ERROR_ON_AST.with(std::cell::Cell::get) {
+        return true;
+    }
+    std::env::var_os("CTADL_ERROR_ON_AST").is_some()
+}
+
+#[cfg(test)]
+thread_local! {
+    static FORCE_ERROR_ON_AST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test-only: strict `CTADL_ERROR_ON_AST` behavior on this thread for the returned
+/// guard's lifetime. A per-thread flag rather than the env var itself, which is
+/// process-global and would race the rest of the parallel test harness. Ingestion
+/// runs on the caller's thread, so the flag covers `parse_c_program`.
+#[cfg(test)]
+fn force_error_on_ast() -> impl Drop {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            FORCE_ERROR_ON_AST.with(|f| f.set(false));
+        }
+    }
+    FORCE_ERROR_ON_AST.with(|f| f.set(true));
+    Reset
+}
+
+/// An AST shape the frontend does not lower (unknown statement kinds, unsupported
+/// expressions, declarators we don't recognize) — a gap in the frontend, not a
+/// problem in the analyzed source. Call sites recover by skipping the construct or
+/// substituting a fresh opaque temp.
+fn unexpected_ast(msg: String) -> Result<(), Error> {
+    recoverable_report("frontend gap", msg)
+}
+
+/// A construct the analyzed source itself misuses (`break` outside a loop, `goto` to
+/// an undefined label) — a problem in that code, not a frontend gap. Same switch as
+/// [`unexpected_ast`]; the warning attributes the fault to the source.
+fn malformed_source(msg: String) -> Result<(), Error> {
+    recoverable_report("source problem", msg)
+}
+
 pub fn debug_print_tree(
     node: Node<'_>,
     depth: usize,
