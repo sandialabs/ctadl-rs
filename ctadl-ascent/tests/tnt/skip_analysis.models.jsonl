@@ -1,0 +1,4 @@
+// Loaded by `flowy_tests.rs` for the sibling `skip_analysis.tnt`, as `ctadl index --models`
+// would. Drop the `modes` key and the fixture's `return </- src` check fails -- that difference
+// is the whole point of the pair.
+{"find":"methods","where":[{"constraint":"signature_match","name":"transfer"}],"model":{"modes":["skip-analysis"],"propagation":[{"input":"Argument(0)","output":"Return"}]}}

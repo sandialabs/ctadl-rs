@@ -1,0 +1,34 @@
+// `modes: ["skip-analysis"]` -- the model REPLACES the body.
+//
+// Same function as `model_adds_to_summary.tnt`, same propagation, one extra directive. The
+// body's `return <- src` is gone and only the model's `return <- dst` survives, so the two
+// fixtures together pin both halves of the semantics: a model alone adds, a model with
+// `skip-analysis` replaces.
+//
+// The mechanism is in codegen (`codegen::codegen_program`): a matched function's signature is
+// lowered and its blocks are not, so the body never becomes facts and there is nothing for the
+// two summary rules, `critical_summary`, or `context_locals` to fire on. Call sites are
+// unaffected: they live in the caller and instantiate `summary(tgt, ..)`, which the model
+// supplied.
+def transfer(dst, src): 1
+where summaries [return </- src, return <- dst]
+{
+start:
+  return src;
+}
+
+// One source, taken through the same function twice. Both checks read the same taint, so
+// neither can pass by the source having gone missing.
+def main() {
+start:
+  a = source(Secret);
+  clean = "nothing";
+  // The model's port: Argument(0) reaches the return.
+  viaModel = transfer(a, clean);
+  sink(viaModel, Secret);
+
+  // The body's flow, which the model does not declare and the directive suppresses.
+  viaBody = transfer(clean, a);
+  errsink(viaBody, Secret);
+  return;
+}

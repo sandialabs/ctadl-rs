@@ -14,6 +14,14 @@ Some notes about choices made in the design of generating code:
 Parameters in IR are mapped to the same indices in the Datalog. Return values are mapped to index
 -1, -2, -3, etc. The global heap is mapped to [`GLOBALS_INDEX`], which is [`i16::MIN`].
 
+`skip_analysis` holds the names a `modes: ["skip-analysis"]` generator matched (see
+[`crate::models::matches::ProgramModelMatches::skip_analysis`]). Those functions get their
+signature lowered and their body dropped, which is the whole implementation of the directive:
+with no `assign`, `call`, `callee_info` or `call_target_assign` rows inside them, the indexer
+has nothing to derive a body summary from and nothing to feed hybrid inlining with. Matching
+runs per import immediately before codegen, so every name this import can contribute is
+already in the set by the time we get here.
+
 */
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -44,28 +52,35 @@ pub enum CallResolutionStrategy {
 }
 
 /// Generate code for a program in SSA form (see [`ctadl_ir::ssa::transform`]).
+///
+/// Returns the number of bodies skipped.
 #[inline]
 pub fn codegen_program(
     mut program_info: ProgramInfo,
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
     strategy: CallResolutionStrategy,
-) {
+    skip_analysis: &BTreeSet<Str>,
+) -> usize {
     let mut instantiated_classes = BTreeSet::new();
     let mut finder = InstantiationFinder {
         instantiated_classes: &mut instantiated_classes,
     };
+    // Every function, skipped ones included. This feeds the class hierarchy, which is a property
+    // of the whole program: dropping the allocations a skipped body performs would delete
+    // resolvents that call sites *elsewhere* depend on.
     for f in program_info.program.functions.iter() {
         finder.visit_function_data(FunctionIdx::new(0), f);
     }
 
     let cha = ClassHierarchyAnalysis::new(&program_info.vmt, instantiated_classes);
     emit_callee_resolvents(&cha, facts, source_info);
-    let mut v = CodegenVisitor::new(cha, facts, source_info, strategy);
+    let mut v = CodegenVisitor::new(cha, facts, source_info, strategy, skip_analysis);
     for f in program_info.program.functions.drain(..) {
         v.visit_function_data(FunctionIdx::new(0), &f);
     }
     v.finish_with_vmt(&program_info.vmt);
+    v.skipped
 }
 
 /// Generate code for a function in SSA form (see [`ctadl_ir::ssa::transform`]).
@@ -89,7 +104,14 @@ pub fn codegen_function(
     let cha = ClassHierarchyAnalysis::new(&VirtualMethodTable::Unknown, instantiated_classes);
     emit_callee_resolvents(&cha, facts, source_info);
     log::trace!("codegen for {}", function_data.name);
-    let mut v = CodegenVisitor::new(cha, facts, source_info, CallResolutionStrategy::Mixed);
+    let no_skips = BTreeSet::new();
+    let mut v = CodegenVisitor::new(
+        cha,
+        facts,
+        source_info,
+        CallResolutionStrategy::Mixed,
+        &no_skips,
+    );
     v.visit_function_data(FunctionIdx::new(0), function_data);
     v.finish();
 }
@@ -168,6 +190,13 @@ struct CodegenVisitor<'a> {
     /// `callee_resolvents`, which is what lets the unified resolution rules resolve a reached
     /// function pointer to itself without a `C`-specific rule in the index engine.
     funcptr_targets: BTreeSet<fx::FunctionId>,
+    /// Functions whose body must not be lowered: what a `modes: ["skip-analysis"]` generator
+    /// matched. See [`codegen_program`].
+    skip_analysis: &'a BTreeSet<Str>,
+    /// How many bodies this visitor actually dropped, for the `ctadl index` report. Counted here
+    /// rather than from the name set because a model file names functions that may or may not be
+    /// in this program.
+    skipped: usize,
 }
 
 impl<'a> CodegenVisitor<'a> {
@@ -179,6 +208,7 @@ impl<'a> CodegenVisitor<'a> {
         facts: &'a mut IndexFacts,
         source_info: &'a mut IndexSourceInfo,
         strategy: CallResolutionStrategy,
+        skip_analysis: &'a BTreeSet<Str>,
     ) -> Self {
         Self {
             function: None,
@@ -189,6 +219,8 @@ impl<'a> CodegenVisitor<'a> {
             paths_dedup: Default::default(),
             cap_path: Default::default(),
             funcptr_targets: Default::default(),
+            skip_analysis,
+            skipped: 0,
         }
     }
 
@@ -227,8 +259,14 @@ impl<'a> CodegenVisitor<'a> {
 impl Visitor for CodegenVisitor<'_> {
     #[inline]
     fn visit_function_data(&mut self, idx: FunctionIdx, function: &FunctionData) {
-        let func = fx::Function(function.name.clone().into());
-        let func_id = self.source_info.sites.get_or_add_function(func);
+        let name: Str = function.name.clone().into();
+        // Checked before the name is interned, against the same spelling the model matcher took
+        // out of the IR.
+        let skip = self.skip_analysis.contains(&name);
+        let func_id = self
+            .source_info
+            .sites
+            .get_or_add_function(fx::Function(name));
         self.function = Some(func_id);
         if function.blocks.is_empty() {
             self.facts.external_function.push((func_id,));
@@ -245,6 +283,14 @@ impl Visitor for CodegenVisitor<'_> {
             FlowVariable::formal_index(RETURN_INDEX.into()),
             fx::FormalType::ByRef,
         ));
+        if skip {
+            // `modes: ["skip-analysis"]`: lower the signature, drop the body. The function behaves
+            // like a stub.
+            log::debug!("skip-analysis: not lowering the body of {}", function.name);
+            self.visit_params(&function.params);
+            self.skipped += 1;
+            return;
+        }
         self.super_function_data(idx, function);
     }
 
@@ -599,12 +645,16 @@ impl Visitor for CodegenVisitor<'_> {
                 }
                 // pass parameters
                 for (i, arg_exp) in args.iter().enumerate() {
-                    let index: Result<i8, _> = i.try_into();
-                    let Ok(idx_i8) = index else {
-                        log::warn!("found > 127 parameters in function call; skipping rest");
+                    // The negative half is reserved for the engine (returns at -1, -2, ...; globals
+                    // at `GLOBALS_INDEX`), which is why this stops at `i16::MAX` rather than
+                    // wrapping into it.
+                    let Ok(formal_index) = FormalIndex::try_from(i) else {
+                        log::warn!(
+                            "found > {} parameters in function call; skipping rest",
+                            i16::MAX
+                        );
                         break;
                     };
-                    let formal_index = FormalIndex::new(idx_i8.into());
 
                     if let Exp::ObjectRef(CallObject::FunctionPtr(name)) = arg_exp {
                         let target = fx::Function(name.clone().into());

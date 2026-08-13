@@ -361,6 +361,7 @@ pub fn check<P: AsRef<Path>>(
         &mut index_facts,
         &mut source_info,
         CallResolutionStrategy::Mixed,
+        &model_matches.skip_analysis,
     );
     // No bridge specs, so nothing here can raise the model errors phase 2 reports: every one of
     // them is about pairing two bridge sides.
