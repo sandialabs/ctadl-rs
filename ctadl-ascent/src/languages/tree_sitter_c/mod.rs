@@ -585,6 +585,28 @@ struct Context<'a> {
     /// being walked. Set once per source statement in [`Context::walk_statement`] so that all
     /// the IR it expands into (calls, loads, stores) points back at that statement.
     cur_span: SourceInfo,
+    /// **Record layout registry**: a record tag mapped to its data members in declaration
+    /// order. Filled once per translation unit by [`Context::collect_struct_layouts`], before
+    /// any function is lowered, so a member's own type is available regardless of declaration
+    /// order. Consulted only by [`Context::collect_initializer_list`], to map a *positional*
+    /// brace initializer onto the members it writes. A tag that is absent (anonymous, declared
+    /// in another translation unit) simply takes the positional-element fallback, so an
+    /// incomplete registry is always safe.
+    struct_layouts: HashMap<String, Vec<MemberSlot>>,
+}
+
+/// One data member in a [`Context::struct_layouts`] entry.
+#[derive(Debug, Clone)]
+struct MemberSlot {
+    /// The member's name -- the `Symbol` a `.name` access lowers to.
+    name: String,
+    /// The record tag of this member's *own* type, when it has one: `struct Q q;` records
+    /// `Q`, so a brace nested at this member's position can recurse with `Q`'s layout.
+    /// `None` for scalars and, deliberately, for **pointer** and **array** members: those are
+    /// not inline records, and treating a brace at their position as one would write a wrong
+    /// path rather than fix one. Resolved against the registry lazily at use, so a member
+    /// whose type is defined later in the file still works.
+    type_tag: Option<String>,
 }
 
 /// One source file's placement inside the combined parse buffer produced by
@@ -958,6 +980,142 @@ pub fn compile_query(query_src: &str) -> Query {
     })
 }
 
+/// The record tag a declaration's *type* names, if it names one: `struct P p = ...` yields
+/// `P`, a `typedef`'d record (`P p = ...`) yields the typedef name, and a plain `int` yields
+/// `None`. The tag is looked up in [`Context::struct_layouts`], which records both spellings,
+/// so both resolve to the same layout.
+fn declaration_type_tag<'s>(decl_node: Node<'_>, source: &'s str) -> Option<&'s str> {
+    let ty = decl_node.child_by_field_name("type")?;
+    match ty.kind() {
+        // `struct P x;` / `union U u;` / (C++) `class C c;`
+        "struct_specifier" | "union_specifier" | "class_specifier" => {
+            ty.child_by_field_name("name").map(|n| to_str(&n, source))
+        }
+        // `P x;` where `P` is a typedef of a record.
+        "type_identifier" => Some(to_str(&ty, source)),
+        _ => None,
+    }
+}
+
+/// How many array dimensions a declarator declares: `a[2]` is 1, `m[2][2]` is 2, a plain
+/// identifier 0. The declared type describes the innermost element, so this is how many brace
+/// levels an initializer must descend before that type's layout applies. Descends through
+/// parenthesized and pointer declarators, which do not add a dimension.
+fn array_declarator_rank(decl: Node<'_>) -> usize {
+    match decl.kind() {
+        "array_declarator" => {
+            1 + decl
+                .child_by_field_name("declarator")
+                .map(array_declarator_rank)
+                .unwrap_or(0)
+        }
+        "parenthesized_declarator" => decl.named_child(0).map(array_declarator_rank).unwrap_or(0),
+        "pointer_declarator" | "init_declarator" => decl
+            .child_by_field_name("declarator")
+            .map(array_declarator_rank)
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// The data members of a record definition, in declaration order, each with the tag of its own
+/// record type when it has one. `None` for a node that is not a record definition, or for a
+/// body this cannot read *completely* -- a partial layout would silently mis-map every element
+/// after the gap, which is worse than no layout, so it is dropped and the caller falls back to
+/// element numbering.
+///
+/// Not counted as members, and not treated as gaps: a C++ **method** declaration (also a
+/// `field_declaration`, but its `function_declarator` names the method directly) and a
+/// **`static`** data member (class-scoped storage, not part of the object). A function-pointer
+/// *member* (`int (*a)(int);`, likewise a `function_declarator`, but wrapping a parenthesized
+/// pointer) **is** a member.
+fn record_member_slots(node: Node<'_>, source: &str) -> Option<Vec<MemberSlot>> {
+    if !matches!(
+        node.kind(),
+        "struct_specifier" | "union_specifier" | "class_specifier"
+    ) {
+        return None;
+    }
+    let body = node.child_by_field_name("body")?;
+    let mut members = Vec::new();
+    let mut cursor = body.walk();
+    for field_decl in body.children(&mut cursor) {
+        if field_decl.kind() != "field_declaration" {
+            continue;
+        }
+        // `static int total;` -- one class-scoped global, not a per-object slot.
+        let mut scursor = field_decl.walk();
+        if field_decl
+            .children(&mut scursor)
+            .any(|ch| ch.kind() == "storage_class_specifier" && to_str(&ch, source) == "static")
+        {
+            continue;
+        }
+        // The member's own record type, if its type names one. Only a **bare identifier**
+        // declarator keeps it: a pointer (`struct Q *q;`) or array (`struct Q qs[2];`) member
+        // is not an inline record, and recursing into a brace at its position with `Q`'s
+        // layout would write a wrong path. A self-referential record is excluded for free,
+        // since the recursive member is always a pointer.
+        let ty_tag = field_decl
+            .child_by_field_name("type")
+            .and_then(|ty| match ty.kind() {
+                "struct_specifier" | "union_specifier" | "class_specifier" => {
+                    ty.child_by_field_name("name").map(|n| to_str(&n, source))
+                }
+                "type_identifier" => Some(to_str(&ty, source)),
+                _ => None,
+            });
+        let mut dcursor = field_decl.walk();
+        for declarator in field_decl.children_by_field_name("declarator", &mut dcursor) {
+            // `void set(int);` -- a method, not storage.
+            if declarator.kind() == "function_declarator"
+                && declarator
+                    .child_by_field_name("declarator")
+                    .is_some_and(|d| d.kind() == "field_identifier")
+            {
+                continue;
+            }
+            match declarator_member_name(declarator, source) {
+                Some((name, is_plain)) => members.push(MemberSlot {
+                    name: name.to_string(),
+                    type_tag: if is_plain {
+                        ty_tag.map(str::to_string)
+                    } else {
+                        None
+                    },
+                }),
+                // A shape whose slot cannot be named: the layout is incomplete, so drop it.
+                None => return None,
+            }
+        }
+    }
+    Some(members)
+}
+
+/// The name a member declarator introduces, plus whether it is a **plain** one (a bare
+/// identifier, so the member is stored inline and its declared type is its real type) as
+/// opposed to a pointer/array/function-pointer wrapper. `None` for a shape that names no
+/// single member.
+fn declarator_member_name<'s>(decl: Node<'_>, source: &'s str) -> Option<(&'s str, bool)> {
+    match decl.kind() {
+        "field_identifier" => Some((to_str(&decl, source), true)),
+        "pointer_declarator" | "array_declarator" => decl
+            .child_by_field_name("declarator")
+            .and_then(|d| declarator_member_name(d, source))
+            .map(|(n, _)| (n, false)),
+        "parenthesized_declarator" => decl
+            .named_child(0)
+            .and_then(|d| declarator_member_name(d, source))
+            .map(|(n, _)| (n, false)),
+        // `int (*a)(int);` -- a function-pointer member.
+        "function_declarator" => decl
+            .child_by_field_name("declarator")
+            .and_then(|d| declarator_member_name(d, source))
+            .map(|(n, _)| (n, false)),
+        _ => None,
+    }
+}
+
 fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
     n.utf8_text(source.as_bytes()).unwrap().trim()
 }
@@ -1142,28 +1300,128 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// Fill the [`Context::struct_layouts`] registry: for every record definition in the
+    /// translation unit, its data members in declaration order, keyed by the tag a declaration
+    /// can name it with. Two spellings are recorded:
+    /// - a **tagged** definition (`struct P { ... };`) under its tag;
+    /// - a **typedef** of a definition (`typedef struct { ... } P;`) under the typedef name,
+    ///   which is how an otherwise-anonymous record becomes nameable.
+    ///
+    /// A recursive node walk rather than a tree-sitter query, because the record kinds differ
+    /// per grammar (`class_specifier` exists only in C++, and a query naming it would not
+    /// compile against the C grammar). Matching on `kind()` is neutral by construction: a kind
+    /// a grammar does not have simply never occurs. A layout that could not be read completely
+    /// is **not** recorded (see [`record_member_slots`]), so positional mapping is only ever
+    /// attempted where every slot is known.
+    fn collect_struct_layouts(&mut self, source: &'a str, node: Node<'_>) {
+        if let Some(slots) = record_member_slots(node, source) {
+            // `struct P { ... }` -- nameable by its own tag.
+            if let Some(name) = node.child_by_field_name("name") {
+                self.struct_layouts
+                    .insert(to_str(&name, source).to_string(), slots.clone());
+            }
+            // `typedef struct { ... } P;` -- nameable by the typedef's name. The record is the
+            // `type` of the enclosing `type_definition`, whose declarator is that name.
+            if let Some(parent) = node.parent()
+                && parent.kind() == "type_definition"
+            {
+                let mut pcursor = parent.walk();
+                for declarator in parent.children_by_field_name("declarator", &mut pcursor) {
+                    if declarator.kind() == "type_identifier" {
+                        self.struct_layouts
+                            .insert(to_str(&declarator, source).to_string(), slots.clone());
+                    }
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.collect_struct_layouts(source, child);
+        }
+    }
+
     /// Lower an aggregate brace initializer (`int a[2] = { s, 0 }`,
-    /// `struct P p = { s, 0 }`) into per-element stores. `decl_ident` is the declarator
-    /// being initialized (an `array_declarator` for arrays, an `identifier` for structs
-    /// / scalars); flattening it yields -- and registers -- the base access path.
+    /// `struct P p = { s, 0 }`) into per-element stores. `decl_node` is the whole declaration
+    /// (it carries the type, and so the record tag); `decl_ident` is the declarator being
+    /// initialized (an `array_declarator` for arrays, an `identifier` for structs / scalars),
+    /// whose flattening yields -- and registers -- the base access path.
+    ///
+    /// A *record*'s positional elements map onto the members those positions name, from the
+    /// [`Context::struct_layouts`] registry: `struct P p = { s, 0 }` writes `p.x` and `p.y`,
+    /// which is what a later `p.x` read resolves to. Numbering them as array elements instead
+    /// would write `p.deref` and silently drop the taint, since a write at one path is not
+    /// observed at a read of another. An *array*'s elements keep the element numbering, and
+    /// carry the element type's layout down so an array **of** records maps its members too.
     fn collect_initializer_list(
         &mut self,
         source: &str,
         program: &mut Program,
         scope_view: &ScopeView,
+        decl_node: Node<'_>,
         decl_ident: Node<'_>,
         init_list: Node<'_>,
     ) -> Result<(), Error> {
+        // The declaration's own record layout, if its type names a record we know.
+        let own = declaration_type_tag(decl_node, source)
+            .and_then(|tag| self.struct_layouts.get(tag).cloned());
+        // An array declarator's *rank*: `struct Q qs[2]` is 1, `int m[2][2]` is 2, a
+        // non-array 0. The declared type describes the innermost element, so its layout
+        // applies only once that many brace levels have been entered.
+        let rank = array_declarator_rank(decl_ident);
+
         let base_ap = self.flatten_lvalue(program, decl_ident, source, scope_view)?;
-        self.lower_initializer_list(source, program, scope_view, &base_ap, init_list)
+
+        // A braced **scalar** (`int x = { v };`) is not an aggregate: it has no elements to
+        // place and its single value initializes the variable itself, exactly as `int x = v;`
+        // does. Numbering it as element 0 would write the synthetic `deref` field of a scalar.
+        if rank == 0 && own.is_none() {
+            let mut cursor = init_list.walk();
+            let elems: Vec<Node<'_>> = init_list
+                .children(&mut cursor)
+                .filter(|c| c.is_named())
+                .collect();
+            if let [elem] = elems[..]
+                && !matches!(elem.kind(), "initializer_list" | "initializer_pair")
+            {
+                let rhs = self.flatten_expr(program, elem, source, scope_view)?;
+                self.add_assign_to_program(program, scope_view, &base_ap, &rhs, None);
+                return Ok(());
+            }
+        }
+
+        // At rank 0 the declared type *is* this level's layout; at rank N this level is an
+        // array and the layout belongs N levels down.
+        let (members, elem_layout, depth) = if rank == 0 {
+            (own, None, 0)
+        } else {
+            (None, own, rank)
+        };
+        self.lower_initializer_list(
+            source,
+            program,
+            scope_view,
+            &base_ap,
+            init_list,
+            members.as_deref(),
+            elem_layout.as_deref(),
+            depth,
+        )
     }
 
-    /// Walk the elements of an `initializer_list`, storing each into a successive element of
-    /// `base_ap` -- the same offset + `deref` shape a constant-index subscript read (`a[0]`)
-    /// resolves to (see `push_element` and `flatten_subscript`), so taint deposited here is
-    /// later observed at the read. Positional struct fields reuse the same element synthesis (no
-    /// type info to recover member names). Nested aggregates (`{{..},{..}}`) recurse, extending
-    /// the base path by the outer index.
+    /// Walk the elements of an `initializer_list`, storing each into the sub-path of `base_ap`
+    /// that its position names.
+    ///
+    /// With a `members` layout this level is a **record**: element *i* writes the member named
+    /// at position *i*, the same `Symbol` a `.name` read resolves to. Without one it is an
+    /// **array**: element *i* gets the offset + `deref` shape a constant-index subscript read
+    /// (`a[i]`) resolves to (see `push_element` and `flatten_subscript`), so taint deposited
+    /// here is observed at the read.
+    ///
+    /// Nested braces recurse with the layout of whatever the inner level *is*: a record
+    /// member's own record type (from its [`MemberSlot::type_tag`]), or -- once `depth` array
+    /// levels have been entered -- the array's element layout in `elem_layout`. Anything not
+    /// resolvable falls back to element numbering, which is the pre-existing behavior.
+    #[allow(clippy::too_many_arguments)]
     fn lower_initializer_list(
         &mut self,
         source: &str,
@@ -1171,6 +1429,9 @@ impl<'a> Context<'a> {
         scope_view: &ScopeView,
         base_ap: &RawPath,
         init_list: Node<'_>,
+        members: Option<&[MemberSlot]>,
+        elem_layout: Option<&[MemberSlot]>,
+        depth: usize,
     ) -> Result<(), Error> {
         let mut cursor = init_list.walk();
         let mut idx = 0usize;
@@ -1178,8 +1439,10 @@ impl<'a> Context<'a> {
             if !elem.is_named() {
                 continue; // skip the `{`, `,`, `}` tokens
             }
-            // Pick this element's target sub-path + its value node.
-            let (fields, value_node) = if elem.kind() == "initializer_pair" {
+            // Pick this element's target sub-path, its value node, and the layout to lower a
+            // nested brace with: a member's own record type, or the array element layout once
+            // `depth` array levels have been entered.
+            let (fields, value_node, nested) = if elem.kind() == "initializer_pair" {
                 // Designated: `.member = e` or `[n] = e`.
                 let designator = elem
                     .child_by_field_name("designator")
@@ -1191,7 +1454,10 @@ impl<'a> Context<'a> {
                 let mut fields = ThinVec::new();
                 if let Some(member) = dtext.strip_prefix('.') {
                     // `.a` -> Symbol("a"), matching how a `.a` field read is lowered.
-                    fields.push(PathSegment::symbol(member.trim()));
+                    let member = member.trim();
+                    fields.push(PathSegment::symbol(member));
+                    let nested = self.member_layout(members, |m| m.name == member);
+                    (fields, value, nested)
                 } else {
                     // `[n]` array designator -> the same offset + dereference a subscript read
                     // of that index resolves to.
@@ -1200,25 +1466,77 @@ impl<'a> Context<'a> {
                         &mut fields,
                         constant_index(&Exp::Str(ArcIntern::<str>::from(index))),
                     );
+                    let nested = self.elem_layout_at(elem_layout, depth);
+                    (fields, value, nested)
                 }
-                (fields, value)
             } else {
-                // Positional element -> successive indices.
                 let mut fields = ThinVec::new();
-                push_element(&mut fields, Some(idx as i64));
+                let nested = match members.and_then(|m| m.get(idx)) {
+                    // Positional element of a record whose layout is known -> the member that
+                    // position names.
+                    Some(slot) => {
+                        fields.push(PathSegment::symbol(slot.name.as_str()));
+                        slot.type_tag
+                            .as_deref()
+                            .and_then(|tag| self.struct_layouts.get(tag).cloned())
+                    }
+                    // Array element, or a record with more elements than its layout describes
+                    // -> successive indices.
+                    None => {
+                        push_element(&mut fields, Some(idx as i64));
+                        self.elem_layout_at(elem_layout, depth)
+                    }
+                };
                 idx += 1;
-                (fields, elem)
+                (fields, elem, nested)
             };
             let mut elem_ap = base_ap.clone();
             elem_ap.fields.extend(fields);
             if value_node.kind() == "initializer_list" {
-                self.lower_initializer_list(source, program, scope_view, &elem_ap, value_node)?;
+                // One array level consumed; the element layout applies when `depth` reaches 0.
+                self.lower_initializer_list(
+                    source,
+                    program,
+                    scope_view,
+                    &elem_ap,
+                    value_node,
+                    nested.as_deref(),
+                    elem_layout,
+                    depth.saturating_sub(1),
+                )?;
             } else {
                 let rhs = self.flatten_expr(program, value_node, source, scope_view)?;
                 self.add_assign_to_program(program, scope_view, &elem_ap, &rhs, None);
             }
         }
         Ok(())
+    }
+
+    /// The layout of the record type of the member `members` holds matching `pred`, if that
+    /// member names a record we know. Used to recurse into a brace at a designated member.
+    fn member_layout(
+        &self,
+        members: Option<&[MemberSlot]>,
+        pred: impl Fn(&MemberSlot) -> bool,
+    ) -> Option<Vec<MemberSlot>> {
+        members?
+            .iter()
+            .find(|m| pred(m))
+            .and_then(|m| m.type_tag.as_deref())
+            .and_then(|tag| self.struct_layouts.get(tag).cloned())
+    }
+
+    /// An array's element layout, but only at the level where the elements actually are:
+    /// `struct Q qs[2]` reaches its records after one brace level, `struct Q qs[2][2]` after
+    /// two. Above that the level is still an array and must keep element numbering.
+    fn elem_layout_at(
+        &self,
+        elem_layout: Option<&[MemberSlot]>,
+        depth: usize,
+    ) -> Option<Vec<MemberSlot>> {
+        (depth == 1)
+            .then(|| elem_layout.map(<[MemberSlot]>::to_vec))
+            .flatten()
     }
 
     fn setup_compound<'b>(
@@ -1493,7 +1811,9 @@ impl<'a> Context<'a> {
                     // to per-element stores `a[i] = elem_i` so taint flows into the
                     // indexed access paths a later `a[0]` read resolves to. (Without this
                     // the `initializer_list` reaches `flatten_expr`'s catch-all -> ERR 78.)
-                    self.collect_initializer_list(source, program, scope_view, decl_ident, vc)?;
+                    self.collect_initializer_list(
+                        source, program, scope_view, node, decl_ident, vc,
+                    )?;
                 } else {
                     self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;
                 }
@@ -2109,6 +2429,9 @@ impl<'a> Context<'a> {
         program: &mut Program,
     ) -> anyhow::Result<(), Error> {
         let global_sidx = self.scope_tree.add_scope("%GLOBAL".to_string(), None);
+        // Record layouts first: a positional brace initializer in any function body needs the
+        // layout of a record that may be defined anywhere in the translation unit.
+        self.collect_struct_layouts(source, tree.root_node());
         self.collect_functions(source, tree, program, global_sidx)
     }
 

@@ -2420,3 +2420,116 @@ fn variable_port_resolves_per_matched_function() {
         "expected one row per matched function that has `buf`, each with that function's own index"
     );
 }
+
+// --- Positional record initializers ------------------------------------------------------
+//
+// A brace initializer's elements must land on the paths a later read resolves to. For a record
+// that means the *members* those positions name, not array element slots: a write at `p.deref`
+// is not observed at a read of `p.x`, so numbering a record's elements silently drops the taint
+// rather than over-approximating it. The layout comes from the `struct_layouts` registry, and
+// nested braces recurse with the layout of whatever the inner level is (a member's own record
+// type, or an array's element type).
+
+#[test_log::test]
+fn struct_positional_initializer_maps_onto_members() {
+    // `struct P p = { v, 0 }` writes `p.x` and `p.y` -- the same paths `p.x = v; p.y = 0;`
+    // produce -- so the tainted element reaches the return through `p.x`.
+    let src = r"
+        struct P { int x; int y; };
+        int f(int v) {
+            struct P p = { v, 0 };
+            return p.x;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "p.x", ["@p0"], None);
+    check_assign_or_update(&prog, "p.y", ["#0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn struct_nested_in_struct_initializer_maps_onto_members() {
+    // A brace nested at a record member's position is that member's own record, so it recurses
+    // with the member's layout: `{ { v, 0 }, 0 }` writes `r.q.a`, which `r.q.a` reads.
+    let src = r"
+        struct Q { int a; int b; };
+        struct R { struct Q q; int z; };
+        int f(int v) {
+            struct R r = { { v, 0 }, 0 };
+            return r.q.a;
+        }";
+    let prog = program_from_string(src).0;
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn array_of_structs_initializer_maps_onto_members() {
+    // An array's own elements keep the element numbering, but the brace one level down is a
+    // record, so it maps onto members: `qs[0].a` reads what `{ { v, 0 }, ... }` wrote.
+    let src = r"
+        struct Q { int a; int b; };
+        int f(int v) {
+            struct Q qs[2] = { { v, 0 }, { 0, 0 } };
+            return qs[0].a;
+        }";
+    let prog = program_from_string(src).0;
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn typedef_struct_initializer_maps_onto_members() {
+    // A typedef'd (otherwise anonymous) record is registered under the typedef name, so a
+    // declaration naming it that way finds the same layout.
+    let src = r"
+        typedef struct { int x; int y; } P;
+        int f(int v) {
+            P p = { v, 0 };
+            return p.x;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "p.x", ["@p0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn pointer_member_is_not_treated_as_an_inline_record() {
+    // A *pointer* member is not stored inline, so a brace at its position is not that record's
+    // body and must not be mapped onto its members. The element keeps the positional fallback;
+    // what matters is that no wrong member path is written and lowering does not recurse
+    // forever on a self-referential type.
+    let src = r"
+        struct Q { int a; int b; };
+        struct S { struct Q *q; int z; };
+        struct N { int v; struct N *next; };
+        int f(int v) {
+            struct S s = { 0, v };
+            struct N n = { v, 0 };
+            return s.z;
+        }";
+    let prog = program_from_string(src).0;
+    // The scalar members still map by name...
+    check_assign_or_update(&prog, "s.z", ["@p0"], None);
+    check_assign_or_update(&prog, "n.v", ["@p0"], None);
+    // ...and `s.z` carries the taint to the return.
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn unknown_record_type_falls_back_to_positional_elements() {
+    // A record defined in another translation unit has no layout here. That must not error:
+    // the elements take the pre-existing element numbering, which is what this frontend did
+    // for every record before layouts existed.
+    let src = r"
+        int f(int v) {
+            struct Elsewhere e = { v, 0 };
+            return v;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "e.deref", ["@p0"], None);
+}
