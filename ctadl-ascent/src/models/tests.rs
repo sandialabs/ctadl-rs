@@ -181,6 +181,100 @@ fn bracketed_segment_spellings_stay_distinct() {
     );
 }
 
+/// Tests for `model.modes`, the directive that makes a model *replace* a body rather than add to
+/// it.
+///
+/// What the loader has to get right is small but load-bearing: the directive names functions (so
+/// phase 2 can resolve them to ids), it is independent of whether the same generator declares a
+/// propagation, and an unrecognized value is an error rather than a silently ignored key -- a
+/// typo'd mode that loads clean reads exactly like a mode that did nothing.
+mod modes {
+    use super::*;
+
+    /// Runs `generators` against a native program and returns everything Stage 1 emitted.
+    fn matches_of(names: &[&str], generators: Vec<serde_json::Value>) -> ProgramModelMatches {
+        let program_info = native_program(names);
+        let mut out = ProgramModelMatches::default();
+        {
+            let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+            let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
+            ingest.encode_models(generators).expect("encoding models");
+        }
+        out
+    }
+
+    /// The same `where` that selects a propagation's functions selects the directive's.
+    #[test]
+    fn skip_analysis_records_the_matched_functions() {
+        let matches = matches_of(
+            &["f", "g"],
+            vec![serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "signature_match", "name": "f"}],
+                "model": {
+                    "modes": ["skip-analysis"],
+                    "propagation": [{"input": "Argument(0)", "output": "Return"}],
+                },
+            })],
+        );
+        assert_eq!(
+            matches.skip_analysis,
+            [facts::Str::from("f")].into_iter().collect()
+        );
+        // The propagation is unaffected: `skip-analysis` removes what the *body* contributes,
+        // and the model's own rows are the whole point of writing one.
+        assert_eq!(matches.propagations.len(), 1);
+    }
+
+    /// A generator with `modes` and no `propagation` is the honest model for a function that
+    /// moves nothing, and it is what the ARM unwinder defaults use.
+    #[test]
+    fn skip_analysis_needs_no_propagation() {
+        let matches = matches_of(
+            &["f"],
+            vec![serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "signature_match", "name": "f"}],
+                "model": {"modes": ["skip-analysis"]},
+            })],
+        );
+        assert_eq!(
+            matches.skip_analysis,
+            [facts::Str::from("f")].into_iter().collect()
+        );
+        assert!(matches.propagations.is_empty());
+    }
+
+    /// An unknown mode errors. Ignoring it would produce a model file that loads clean and
+    /// analyzes the body anyway -- the one failure this directive cannot afford.
+    #[test]
+    fn an_unknown_mode_is_an_error() {
+        let program_info = native_program(&["f"]);
+        let mut out = ProgramModelMatches::default();
+        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
+        let err = ingest
+            .encode_models(vec![serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "signature_match", "name": "f"}],
+                "model": {"modes": ["skip_analysis"]},
+            })])
+            .expect_err("an unknown mode is rejected");
+        let crate::error::Error::JsonModel(errors) = err else {
+            panic!("expected a JSON model error, got: {err}");
+        };
+        assert_eq!(errors.len(), 1);
+        // The message names the defined value, because the reason a mode is misspelled is that
+        // the writer did not know how it is spelled.
+        assert!(
+            format!("{}", errors[0]).contains("skip-analysis"),
+            "the error should name the defined value: {}",
+            errors[0]
+        );
+        assert!(out.skip_analysis.is_empty());
+    }
+}
+
 /// Tests for the per-generator capture the no-index model check reads.
 ///
 /// The capture is what makes a count trustworthy without an index, so what is pinned here is

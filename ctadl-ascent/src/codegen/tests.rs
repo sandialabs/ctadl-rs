@@ -65,6 +65,7 @@ fn test_basic3() {
         &mut facts,
         &mut source_info,
         CallResolutionStrategy::Mixed,
+        &Default::default(),
     );
     let f_id = source_info
         .sites
@@ -85,6 +86,69 @@ fn test_basic3() {
     assert!(result.summary.iter().find(|t| t.0 == f_id).is_some());
     assert!(result.summary.iter().find(|t| t.0 == g_id).is_some());
     assert!(result.summary.len() >= 3);
+}
+
+/// `modes: ["skip-analysis"]`, at the layer that implements it. `test_basic3` above is the
+/// control: same two functions, G calling F, nothing skipped.
+///
+/// What a skipped function keeps is its *signature*, because that is what the model's own
+/// `summary` rows are written against and what `compute_num_params` reports. What it loses is
+/// everything its blocks would have produced -- including, and this is the part no fact-level
+/// guard could do, the `call` edge out of it.
+#[test]
+fn a_skipped_body_contributes_no_facts() {
+    let mut program = Program::default();
+    program.functions.push(function_f());
+    program.functions.push(function_g());
+    let program_info = ProgramInfo {
+        program,
+        source_info: Default::default(),
+        vmt: Default::default(),
+    };
+    let mut facts = IndexFacts::default();
+    let mut source_info = IndexSourceInfo::default();
+    let skipped = codegen_program(
+        program_info,
+        &mut facts,
+        &mut source_info,
+        CallResolutionStrategy::Mixed,
+        &[Str::from("G")].into_iter().collect(),
+    );
+    assert_eq!(skipped, 1, "exactly one body was named and lowered");
+
+    let f_id = source_info
+        .sites
+        .get_function_id(fx::Function("F".into()))
+        .unwrap();
+    let g_id = source_info
+        .sites
+        .get_function_id(fx::Function("G".into()))
+        .unwrap();
+
+    // The signature survives: one declared parameter plus the globals and return auxiliaries.
+    assert_eq!(
+        facts
+            .formal_param
+            .iter()
+            .filter(|(f, ..)| *f == g_id)
+            .count(),
+        3
+    );
+    // The body does not. G's call to F was the program's only call site.
+    assert!(
+        facts.call.is_empty(),
+        "the skipped body's call edge must not be in the fact base"
+    );
+    for (site, ..) in &facts.assign {
+        let fx::InsnSiteId { func_id, .. } = fx::InsnSiteId::try_from(*site).unwrap();
+        assert_ne!(func_id, g_id, "the skipped body produced an assign row");
+    }
+
+    // F is untouched, and G derives nothing -- with no model loaded here, it has no summary at
+    // all, which is the "this function moves nothing" case.
+    let result = taint_index(facts);
+    assert!(result.summary.iter().any(|t| t.0 == f_id));
+    assert!(!result.summary.iter().any(|t| t.0 == g_id));
 }
 
 #[test]
