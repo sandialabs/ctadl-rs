@@ -2438,3 +2438,144 @@ fn cpp_null_statement_is_noop() {
     check_block_count(&prog, 1);
     check_assign_or_update(&prog, "r", ["@p0"], None);
 }
+
+// ---------------------------------------------------------------------------
+// Aggregate (brace) initializers — spec 019. The desugaring is in the shared core
+// (`collect_initializer_list`), keyed on the node kind `initializer_list`, which both
+// grammars use — so these mirror the C tests and assert the C++ frontend produces the
+// same element stores. The C++-specific concern is the boundary with construction:
+// a brace on a class *with a constructor* must stay a `Box::Box` call (specs 006/010),
+// which `cpp_class_brace_init_is_not_an_aggregate` pins.
+// ---------------------------------------------------------------------------
+
+#[test_log::test]
+fn cpp_array_aggregate_initializer() {
+    // Parity with C `array_aggregate_initializer` (the CPP_31 shape): `int a[2] = { x, 0 };`
+    // desugars element-wise, so element 0 is `a.deref` (`Offset(0)` is elided) and element 1
+    // `a.[1].deref`, and the tainted element reaches the return through `a[0]`.
+    let src = r"
+        int cpp_array_aggregate_initializer(int x) {
+            int a[2] = { x, 0 };
+            return a[0];
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    check_assign_or_update(&prog, "a.deref", ["@p0"], None);
+    check_assign_or_update(&prog, "a.[1].deref", ["#0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn cpp_struct_aggregate_initializer_positional() {
+    // Parity with C `struct_aggregate_initializer_positional` (the CPP_95 shape). C++ lets the
+    // record type be named without the `struct` keyword, so both spellings are asserted: the
+    // layout registry keys on the tag either way, and the tainted element lands on `p.x`.
+    for decl in ["struct P p = { v, 0 };", "P p = { v, 0 };"] {
+        let src = format!(
+            r"
+            struct P {{ int x; int y; }};
+            int cpp_struct_aggregate_initializer_positional(int v) {{
+                {decl}
+                return p.x;
+            }}
+        "
+        );
+        let prog = program_from_cpp_string(&src).0;
+        check_assign_or_update(&prog, "p.x", ["@p0"], None);
+        check_assign_or_update(&prog, "p.y", ["#0"], None);
+
+        let summary = get_summary(prog).unwrap().0;
+        check_returns_param(&summary, 0, "");
+    }
+}
+
+#[test_log::test]
+fn cpp_struct_aggregate_initializer_distinct_member() {
+    // Parity with C `struct_aggregate_initializer_distinct_member` (the CPP_96 negative):
+    // `{ 0, v }` taints the SECOND member, so reading `p.x` must report no flow. An
+    // over-approximating lowering (both elements written to `p` itself) would fail here.
+    let src = r"
+        struct P { int x; int y; };
+        int cpp_struct_aggregate_initializer_distinct_member(int v) {
+            P p = { 0, v };
+            return p.x;
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    check_assign_or_update(&prog, "p.x", ["#0"], None);
+    check_assign_or_update(&prog, "p.y", ["@p0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_does_not_return_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn cpp_funcptr_array_aggregate_initializer() {
+    // Parity with C `funcptr_array_aggregate_initializer` (the CPP_97 shape): the brace form
+    // must lower to exactly the statements the element-assignment form does, which is what makes
+    // the indirect call through `fps[0]` resolve (the CPP_30 funcptr facts).
+    let brace = r"
+        int id(int p) { return p; }
+        int via_brace(int x) {
+            int (*fps[2])(int) = { id, id };
+            return fps[0](x);
+        }
+    ";
+    let elemwise = r"
+        int id(int p) { return p; }
+        int via_brace(int x) {
+            int (*fps[2])(int);
+            fps[0] = id;
+            fps[1] = id;
+            return fps[0](x);
+        }
+    ";
+    let brace_prog = program_from_cpp_string(brace).0;
+    let elemwise_prog = program_from_cpp_string(elemwise).0;
+    assert_eq!(
+        stmt_kinds_of(&brace_prog, "via_brace"),
+        stmt_kinds_of(&elemwise_prog, "via_brace"),
+        "brace-initialized funcptr array must lower like element assignment\nbrace:\n{brace_prog}\nelement-wise:\n{elemwise_prog}"
+    );
+}
+
+#[test_log::test]
+fn cpp_class_brace_init_is_not_an_aggregate() {
+    // FR-5 boundary: `Box b{source()}` on a class *with a constructor* is construction, not
+    // aggregate initialization — the `construct` hook claims the declaration before the
+    // aggregate path sees it. So the brace form must lower to exactly what the paren form
+    // does (a `Box::Box` call with `b` as the arg-0 receiver) and synthesize no positional
+    // member store of its own; comparing the two lowerings pins both halves at once.
+    let brace = r#"
+        extern "C" int source();
+        struct Box {
+            int v;
+            Box(int x) { v = x; }
+        };
+        int main() {
+            Box b{source()};
+            return 0;
+        }
+    "#;
+    let paren = r#"
+        extern "C" int source();
+        struct Box {
+            int v;
+            Box(int x) { v = x; }
+        };
+        int main() {
+            Box b(source());
+            return 0;
+        }
+    "#;
+    let brace_prog = program_from_cpp_string(brace).0;
+    let paren_prog = program_from_cpp_string(paren).0;
+    check_direct_call_arg0(&brace_prog, "main", "Box::Box", "b");
+    assert_eq!(
+        stmt_kinds_of(&brace_prog, "main"),
+        stmt_kinds_of(&paren_prog, "main"),
+        "a class brace-init must stay construction, not become an aggregate\nbrace:\n{brace_prog}\nparen:\n{paren_prog}"
+    );
+}

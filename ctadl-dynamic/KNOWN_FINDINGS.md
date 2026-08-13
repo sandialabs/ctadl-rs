@@ -11,13 +11,13 @@ frontend ingestion gaps — and tracks their disposition.
 | array_declarator not ingested | frontend | 18 | ✅ resolved (`d1ccd07`) |
 | switch_statement not ingested | frontend | 25–29 | ✅ resolved (`5d5a695`) |
 | F2 — multiple funcptr stores into an aggregate drop taint | soundness | 30, 33 | ✅ resolved (index-engine path fix) |
-| **initializer_list (`{...}`) not ingested** | frontend | 31 | 🟠 open |
+| initializer_list (`{...}`) not ingested | frontend | 31, 34–36 | ✅ resolved (spec 019) |
 | labeled_empty_statement (`L: ;`) not ingested | frontend | 32 | ✅ resolved (spec 018) |
 
 F2 and the two frontend findings above were surfaced by the **broadened M7 generator** (it threads
 taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at volume).
-Resolved entries are kept as a record of what the approach caught and how each was fixed. **1
-finding remains open** (the `initializer_list` frontend ingestion gap).
+Resolved entries are kept as a record of what the approach caught and how each was fixed. **No
+finding is currently open.**
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
 (soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see
@@ -136,24 +136,69 @@ compiles these with clang regardless, so each case already carries the runtime g
 compare against the moment the frontend learns to ingest it (the harness will then report
 `resolved-known-frontend-gap`).
 
-## initializer_list — aggregate `{...}` initializers don't parse (OPEN)
+## initializer_list — aggregate `{...}` initializers are now ingested (RESOLVED)
 
-- **Status:** **open.** Allowlisted as `"known_frontend_gap": "initializer_list"` in
-  [`cases/31_aggregate_initializer`](cases/31_aggregate_initializer/).
-- **Symptom:** an aggregate (brace) initializer fails with `ERR 78: Unsupported expression type:
-  initializer_list`. The expression flattener (`flatten_expr` in
-  `ctadl-ascent/src/languages/tree_sitter/mod.rs`) has no `initializer_list` arm, so the `{ ... }`
-  node hits the catch-all. Affects **both** array and struct aggregates:
+- **Status:** **resolved** (spec 019). The `known_frontend_gap: "initializer_list"` allowlist has
+  been removed from [`cases/31_aggregate_initializer`](cases/31_aggregate_initializer/) **and**
+  [`cases/CPP_31_aggregate_initializer`](cases/CPP_31_aggregate_initializer/), which now run as
+  plain `OK`.
+- **Was:** an aggregate (brace) initializer failed with `ERR 78: Unsupported expression type:
+  initializer_list`. The declaration walker handed the `init_declarator`'s value to
+  `collect_assignment`, and the expression flattener has no `initializer_list` arm, so the
+  `{ ... }` node hit the catch-all. Affected **both** array and struct aggregates:
   ```c
   int a[2]      = { s, 0 };   // ERR 78
   struct P p    = { s, 0 };   // ERR 78 (same gap)
   int (*fps[2])(int) = { id, id };  // ERR 78 — this is what masked F2 until element-assignment
   ```
-- **Reproduces with:** [`cases/31_aggregate_initializer`](cases/31_aggregate_initializer/) →
-  `known-frontend-gap (initializer_list)`. DFSan observes `a[0] <- s`, so the expected result once
-  it parses is `flow`. Everyday C — the broadest of the open frontend gaps.
+- **Fix:** `walk_declaration` in
+  [`ctadl-ascent/src/languages/tree_sitter_c/mod.rs`](../ctadl-ascent/src/languages/tree_sitter_c/mod.rs)
+  intercepts a value node of kind `initializer_list` and routes it to `collect_initializer_list`,
+  which **desugars the brace element-wise into the assignments it stands for** — no new IR, no new
+  taint rule, just the existing subscript-/field-/funcptr-store lowering:
+  - an **array** element gets the `Offset(i)` + `deref` path a constant-index read `a[i]` resolves
+    to (`Offset(0)` elided, so element 0 is `a.deref`);
+  - a **record** element writes the *member* its position names, from a new neutral layout registry
+    `Context::struct_layouts` (record tag → members in declaration order, filled once per
+    translation unit by a `kind()` walk — not a query, since `class_specifier` exists only in the
+    C++ grammar). Positional precision is the point: a write at `p.deref` is **not** observed at a
+    read of `p.x`, so numbering a record's elements would silently drop taint rather than
+    over-approximate it. For the same reason there is no "assign the aggregate's base path"
+    fallback — measured, a write at a variable's root does not reach a later read of a field under
+    it (propagation goes through `substitute_prefix`), so that "sound over-approximation" is
+    actually a silent false negative.
+  - nested braces recurse with whatever the inner level is: an array's element type, a member's own
+    record type, or an **anonymous** inline record member's layout (carried on the slot itself,
+    since it has no tag);
+  - a **union**'s elements write the shared `$union` field, the same collapsed path a member read
+    resolves to under the F4 union model;
+  - designated initializers (`.x = e`, `[1] = e`) write the member/index they name.
+
+  The node kind is identical in tree-sitter-c and tree-sitter-cpp, so this one shared-core change
+  (no hook, no language branch, `parse_c_program` untouched) closed both mirrors. A C++ brace on a
+  *class with a constructor* (`Widget w{…}`) is claimed earlier by the `construct` hook and is
+  unaffected.
+- **Residual (over-approximate, not precise):** where a record's layout is not knowable, the
+  elements keep the pre-existing element numbering — the taint lands on `p.[i].deref` while a
+  member read looks at `p.<name>`, so it is **dropped**. This happens for a record whose definition
+  is not in the parse buffer (`unknown_record_type_falls_back_to_positional_elements`), a brace at
+  a **pointer**/array member's position (`pointer_member_is_not_treated_as_an_inline_record`), and
+  a record body the walk cannot read completely (an unnamed bitfield shifts every later position,
+  so the layout is dropped rather than mis-mapped). Each is pinned by the named unit test above.
+- **Verified resolved by:** [`cases/31_aggregate_initializer`](cases/31_aggregate_initializer/) and
+  [`cases/CPP_31_aggregate_initializer`](cases/CPP_31_aggregate_initializer/) now report
+  `static=flow dynamic=flow` (`OK`) — the harness first flagged both `resolved-known-frontend-gap`
+  with the allowlists still in place. Locked in by six new cases: `34`/`CPP_95` (struct positional,
+  `flow`), `35`/`CPP_96` (**negative** — the tainted element is in the *other* member's position, so
+  `none`; this is what an over-approximating lowering would fail), `36`/`CPP_97` (funcptr array,
+  `flow`). Unit-covered in both grammars (`array_aggregate_initializer`,
+  `struct_aggregate_initializer_positional`/`_distinct_member`,
+  `funcptr_array_aggregate_initializer`, `union_aggregate_initializer_writes_the_shared_field`,
+  `anonymous_nested_record_initializer_maps_onto_members`/`_distinct_member`, and the `cpp_`-
+  prefixed mirrors incl. `cpp_class_brace_init_is_not_an_aggregate`).
 - **Found by:** the broadened M7 generator (its array-of-function-pointers transform used a brace
-  initializer; switching to element assignment dodged this and exposed F2).
+  initializer; switching to element assignment dodged this and exposed F2). The generator now
+  carries brace-initializer transforms (array, struct, funcptr array) again.
 
 ## labeled_empty_statement — the null statement (`;`, incl. `L: ;`) is now ingested (RESOLVED)
 

@@ -45,7 +45,7 @@ impl Rng {
     }
 }
 
-const NUM_TRANSFORMS: usize = 15;
+const NUM_TRANSFORMS: usize = 18;
 
 /// Builds one program: file-scope `preamble` + `main` `body`, threading a carrier.
 struct ProgBuilder {
@@ -120,11 +120,10 @@ impl ProgBuilder {
             }
             8 => {
                 // indirect call through a function pointer in an ARRAY ELEMENT
-                // (array + indirect combo). Elements are assigned individually rather
-                // than brace-initialized: a `{...}` aggregate initializer is a known
-                // frontend gap (case 31), and avoiding it lets this transform probe the
-                // F2 soundness gap (funcptr-in-array-element taint, case 30) instead of
-                // just spamming frontend-error.
+                // (array + indirect combo). Elements are assigned individually here; the
+                // brace-initialized spelling is transform 17, which must produce the same
+                // facts. Keeping this one element-wise preserves it as the original F2
+                // probe (funcptr-in-array-element taint, case 30).
                 let fps = self.fresh_var();
                 self.body.push(format!(
                     "int (*{fps}[2])(int); {fps}[0] = id; {fps}[1] = id; \
@@ -155,6 +154,37 @@ impl ProgBuilder {
                 let lbl = format!("lbl_{}", self.fresh_var());
                 self.body.push(format!(
                     "int {next} = {cur}; goto {lbl}; {next} = 0; {lbl}: {next} = {next};"
+                ));
+            }
+            15 => {
+                // ARRAY aggregate (brace) initializer, read back through a subscript. Was a
+                // frontend gap (case 31) until spec 019 desugared `{...}` element-wise; these
+                // three transforms are what keep that desugaring under the oracle.
+                let a = self.fresh_var();
+                self.body.push(format!(
+                    "int {a}[3] = {{ {cur}, 0, 0 }}; int {next} = {a}[0];"
+                ));
+            }
+            16 => {
+                // STRUCT aggregate initializer: the elements map positionally onto the members,
+                // so reading the member the tainted element initialized carries the taint. The
+                // second (untainted) member is what makes a positional mis-map observable.
+                let s = format!("S{}", self.sct);
+                self.sct += 1;
+                self.preamble
+                    .push(format!("struct {s} {{ int f; int g; }};"));
+                let obj = self.fresh_var();
+                self.body.push(format!(
+                    "struct {s} {obj} = {{ {cur}, 0 }}; int {next} = {obj}.f;"
+                ));
+            }
+            17 => {
+                // Brace-initialized funcptr ARRAY, then an indirect call through element 0 --
+                // the shape that masked F2. Must produce exactly what transform 8's
+                // element-assignment spelling does.
+                let fps = self.fresh_var();
+                self.body.push(format!(
+                    "int (*{fps}[2])(int) = {{ id, id }}; int {next} = {fps}[0]({cur});"
                 ));
             }
             // taint-killing / imprecision probes

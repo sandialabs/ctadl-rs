@@ -127,6 +127,20 @@ pub(crate) fn function_named<'a>(prog: &'a Program, name: &str) -> Option<&'a Fu
     prog.functions.functions.raw.iter().find(|f| f.name == name)
 }
 
+/* Statement kinds of the named function, in block-then-statement order. Lets a test assert that
+two spellings of the same construct lower to *exactly* the same statements -- e.g. that a
+brace-initialized function-pointer array matches the element-assignment form. Use this (not
+`statements_of`) for multi-function fixtures, which that helper rejects. */
+pub(crate) fn stmt_kinds_of(prog: &Program, name: &str) -> Vec<StatementKind> {
+    function_named(prog, name)
+        .unwrap_or_else(|| panic!("no function named {name}"))
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .map(|s| s.kind.clone())
+        .collect()
+}
+
 /* Renders the local named `local` in function `func` the way the IR dump does (`%L{idx}`), by
 looking its interned `LocalIdx` up in the function's locals table. Lets dump-based assertions be
 written in terms of the readable source name rather than a hard-coded, hard-to-follow index. Panics

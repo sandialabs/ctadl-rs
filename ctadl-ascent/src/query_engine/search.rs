@@ -88,8 +88,13 @@ pub struct TaintSearchGraph {
     formal_ty: HashMap<(FunctionId, FlowVariable), FormalType>,
     /// Call sites indexed by callee, for formal-to-actual (function exit) steps.
     callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>>,
-    /// Callee of each call site, for actual-to-formal (call entry) steps.
-    callee_by_site: HashMap<PackedInsnSiteId, FunctionId>,
+    /// Callees of each call site, for actual-to-formal (call entry) steps. A site
+    /// has more than one callee whenever the frontend emits a multi-target
+    /// `CallEdges::Explicit` — CHA virtual dispatch (a C++ virtual call or
+    /// destructor resolves to every override in the static type's subtree). All of
+    /// them must be stepped into, exactly as the closure engine's call-entry rule
+    /// fires once per `call(site, callee)` row.
+    callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>>,
     /// The materialized access paths; a step producing a non-materialized path
     /// is dropped, the same gate the closure engine's `paths(p)` premises apply.
     paths: HashSet<Path>,
@@ -144,10 +149,10 @@ impl TaintSearchGraph {
             .collect();
 
         let mut callers_by_callee: HashMap<FunctionId, Vec<PackedInsnSiteId>> = HashMap::default();
-        let mut callee_by_site = HashMap::default();
+        let mut callee_by_site: HashMap<PackedInsnSiteId, Vec<FunctionId>> = HashMap::default();
         for (site, callee) in &facts.call {
             callers_by_callee.entry(*callee).or_default().push(*site);
-            callee_by_site.insert(*site, *callee);
+            callee_by_site.entry(*site).or_default().push(*callee);
         }
 
         let paths = facts.paths.iter().map(|(p,)| *p).collect();
@@ -312,8 +317,8 @@ impl LazySuccessors for TaintSearchGraph {
         if let Some(packed) = v.as_call_arg() {
             let call_arg_id = CallArgId::try_from(packed).unwrap();
             let site = PackedInsnSiteId::try_from_parts(f, call_arg_id.insn_id).unwrap();
-            if let Some(callee) = self.callee_by_site.get(&site) {
-                let formal_var = FlowVariable::formal_index(call_arg_id.formal());
+            let formal_var = FlowVariable::formal_index(call_arg_id.formal());
+            for callee in self.callee_by_site.get(&site).into_iter().flatten() {
                 if self.formal_ty.contains_key(&(*callee, formal_var)) {
                     out.push(((*callee, formal_var, p, level), FlowEdge::Call(site)));
                 }
@@ -548,10 +553,10 @@ pub fn taint_search(facts: QueryFacts, id_map: Option<&IdMap>) -> QueryResult {
         if !v.is_globals() && *call_arg_id.formal() >= 0 {
             tainted_insn.insert((site, src.label.clone(), *v, *p));
         }
-        if let Some(target) = graph.callee_by_site.get(&site)
-            && external.contains(target)
-        {
-            absorbing.insert((*target, src.clone(), call_arg_id.formal()));
+        for target in graph.callee_by_site.get(&site).into_iter().flatten() {
+            if external.contains(target) {
+                absorbing.insert((*target, src.clone(), call_arg_id.formal()));
+            }
         }
     }
 
@@ -707,6 +712,71 @@ mod tests {
         assert!(
             plain.taint_edge.is_empty(),
             "plain source at the bare path must not reach the `.field` sink"
+        );
+    }
+
+    /// A call site may have several callees — CHA virtual dispatch emits one
+    /// `CallEdges::Explicit` list holding every override in the static type's
+    /// subtree (a C++ `delete p` on a base pointer, a Java virtual call, a Lua
+    /// metatable method). Taint on an argument must enter *every* one of them.
+    ///
+    /// Regression guard: `callee_by_site` was a `HashMap<site, FunctionId>`, so
+    /// each `call` row overwrote the previous and only the **last** callee was
+    /// ever stepped into. Taint then reached a sink in the last override while
+    /// an identical sink in any earlier one became invisible — a silent
+    /// soundness hole (the C++ `CPP_88_virtual_dtor_base_in_chain` case, where
+    /// the base destructor in the chain is the one that sinks).
+    #[test]
+    fn multi_target_call_site_enters_every_callee() {
+        use crate::facts::{FormalIndex, InsnId};
+
+        let caller = FunctionId::new(0);
+        // Two callees at one site. `FIRST` is the one the overwrite dropped.
+        const FIRST: u32 = 1;
+        const LAST: u32 = 2;
+        let first = FunctionId::new(FIRST);
+        let last = FunctionId::new(LAST);
+
+        let insn = InsnId::new(0);
+        let formal0 = FormalIndex::new(0);
+        let site = PackedInsnSiteId::try_from_parts(caller, insn).unwrap();
+        let arg_var =
+            FlowVariable::call_arg_packed(PackedCallArg::try_from_parts(insn, formal0).unwrap());
+        let formal_var = FlowVariable::formal_index(formal0);
+
+        // The callee's body: `leak = p0`, so taint entering formal 0 reaches a
+        // local the sink sits on. Without a body the sink would coincide with
+        // the formal, letting a backward step satisfy the query without the
+        // forward call-entry edge under test ever firing.
+        let leak = FlowVariable::local("leak".into());
+
+        // Run the same query twice, moving the sink between the two callees.
+        // Only the forward actual-to-formal step can carry taint in, so a site
+        // that keeps just one callee fails whichever run targets the other.
+        let reaches = |callee_raw: u32| {
+            let callee = FunctionId::new(callee_raw);
+            let facts = QueryFacts {
+                call: vec![(site, first), (site, last)],
+                formal_param: vec![
+                    (first, formal_var, FormalType::ByRef),
+                    (last, formal_var, FormalType::ByRef),
+                ],
+                assign: vec![(callee, leak, Path::empty(), formal_var, Path::empty())],
+                paths: vec![(Path::empty(),)],
+                endpoints: vec![(source(0, arg_var, false),), (sink(callee_raw, leak),)],
+                ..Default::default()
+            };
+            !taint_search(facts, None).taint_edge.is_empty()
+        };
+
+        assert!(
+            reaches(LAST),
+            "taint must enter the last callee at a multi-target call site"
+        );
+        assert!(
+            reaches(FIRST),
+            "taint must also enter the FIRST callee at a multi-target call site \
+             (it was dropped when the site kept only one callee)"
         );
     }
 }

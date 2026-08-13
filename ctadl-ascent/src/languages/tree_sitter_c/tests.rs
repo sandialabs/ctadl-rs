@@ -1896,20 +1896,6 @@ fn trailing_labeled_null_statement() {
 // lowering rather than an aggregate model.
 // ---------------------------------------------------------------------------------------
 
-/* Statement kinds of the named function, in block-then-statement order. Used by the
-function-pointer test below to assert that a brace-initialized array lowers to *exactly* the
-statements the element-assignment form does (the multi-function programs there rule out
-`statements_of`, which wants a single function). */
-fn stmt_kinds_of(prog: &ctadl_ir::Program, name: &str) -> Vec<StatementKind> {
-    function_named(prog, name)
-        .unwrap_or_else(|| panic!("no function named {name}"))
-        .blocks
-        .iter()
-        .flat_map(|b| b.statements.iter())
-        .map(|s| s.kind.clone())
-        .collect()
-}
-
 #[test_log::test]
 fn array_aggregate_initializer() {
     // `int a[2] = { x, 0 };` (the case-31 shape) desugars element-wise into the same stores
@@ -2915,4 +2901,66 @@ fn unknown_record_type_falls_back_to_positional_elements() {
         }";
     let prog = program_from_string(src).0;
     check_assign_or_update(&prog, "e.deref", ["@p0"], None);
+}
+
+#[test_log::test]
+fn union_aggregate_initializer_writes_the_shared_field() {
+    // A union's members share storage, so every member *read* on the union variable collapses to
+    // the synthetic `$union` field (the F4 model). The initializer has to write that same path:
+    // storing the first member's own name (`u.a`) would leave even `u.a` -- the member actually
+    // initialized -- reading an untainted path, silently dropping the taint. Both the positional
+    // and the designated spelling collapse, and the flow is observed at *either* member (which is
+    // what union aliasing means).
+    for (init, read) in [
+        ("union U u = { v };", "u.a"),
+        ("union U u = { v };", "u.b"),
+        ("union U u = { .b = v };", "u.a"),
+    ] {
+        let src = format!(
+            r"
+        union U {{ int a; int b; }};
+        int f(int v) {{
+            {init}
+            return {read};
+        }}"
+        );
+        let prog = program_from_string(&src).0;
+        check_assign_or_update(&prog, "u.$union", ["@p0"], None);
+
+        let summary = get_summary(prog).unwrap().0;
+        check_returns_param(&summary, 0, "");
+    }
+}
+
+#[test_log::test]
+fn anonymous_nested_record_initializer_maps_onto_members() {
+    // A brace nested at an *anonymous* inline record member's position (`struct { int a; } q;`)
+    // must map onto that member's own members, exactly as a tagged one does. The type has no tag
+    // to look up, so the layout rides on the slot itself (`MemberSlot::inline_layout`); without
+    // it the nested brace fell back to element numbering and wrote `r.q.deref`, which a later
+    // `r.q.a` read never resolves to -- taint silently dropped.
+    let src = r"
+        struct R { struct { int a; int b; } q; int z; };
+        int f(int v) {
+            struct R r = { { v, 0 }, 0 };
+            return r.q.a;
+        }";
+    let prog = program_from_string(src).0;
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn anonymous_nested_record_initializer_distinct_member() {
+    // The negative that proves the anonymous nested layout is *mapped*, not over-approximated:
+    // `{ { 0, v }, 0 }` taints `r.q.b`, so reading `r.q.a` reports nothing.
+    let src = r"
+        struct R { struct { int a; int b; } q; int z; };
+        int f(int v) {
+            struct R r = { { 0, v }, 0 };
+            return r.q.a;
+        }";
+    let prog = program_from_string(src).0;
+    let summary = get_summary(prog).unwrap().0;
+    check_does_not_return_param(&summary, 0, "");
 }

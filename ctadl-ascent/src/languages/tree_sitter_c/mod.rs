@@ -908,6 +908,28 @@ struct MemberSlot {
     /// path rather than fix one. Resolved against the registry lazily at use, so a member
     /// whose type is defined later in the file still works.
     type_tag: Option<String>,
+    /// Layout of an **anonymous** inline record member -- `struct { int a; int b; } q;` -- which
+    /// has no tag to resolve against the registry. Carrying its members here lets a brace nested
+    /// at this position map onto them, exactly as a tagged member's does; without it the nested
+    /// brace would fall back to element numbering and write a path (`r.q.deref`) that a later
+    /// `r.q.a` read never resolves to, silently dropping the taint. Set only when the member's
+    /// type is a record *definition* with no name.
+    inline_layout: Option<Vec<MemberSlot>>,
+}
+
+impl MemberSlot {
+    /// The layout to lower a brace nested at this member's position with: its own inline
+    /// members if it is an anonymous record, otherwise its record tag looked up in `registry`.
+    fn nested_layout(
+        &self,
+        registry: &HashMap<String, Vec<MemberSlot>>,
+    ) -> Option<Vec<MemberSlot>> {
+        self.inline_layout.clone().or_else(|| {
+            self.type_tag
+                .as_deref()
+                .and_then(|tag| registry.get(tag).cloned())
+        })
+    }
 }
 
 /// One source file's placement inside the combined parse buffer produced by
@@ -1424,15 +1446,20 @@ fn record_member_slots(node: Node<'_>, source: &str) -> Option<Vec<MemberSlot>> 
         // is not an inline record, and recursing into a brace at its position with `Q`'s
         // layout would write a wrong path. A self-referential record is excluded for free,
         // since the recursive member is always a pointer.
-        let ty_tag = field_decl
-            .child_by_field_name("type")
-            .and_then(|ty| match ty.kind() {
-                "struct_specifier" | "union_specifier" | "class_specifier" => {
-                    ty.child_by_field_name("name").map(|n| to_str(&n, source))
-                }
-                "type_identifier" => Some(to_str(&ty, source)),
-                _ => None,
-            });
+        let member_ty = field_decl.child_by_field_name("type");
+        let ty_tag = member_ty.and_then(|ty| match ty.kind() {
+            "struct_specifier" | "union_specifier" | "class_specifier" => {
+                ty.child_by_field_name("name").map(|n| to_str(&n, source))
+            }
+            "type_identifier" => Some(to_str(&ty, source)),
+            _ => None,
+        });
+        // An *anonymous* inline record member (`struct { int a; } q;`) has no tag to record, so
+        // its layout is carried on the slot itself. Only when the type is nameless: a tagged
+        // definition is already reachable through `ty_tag`.
+        let inline_layout = member_ty
+            .filter(|ty| ty.child_by_field_name("name").is_none())
+            .and_then(|ty| record_member_slots(ty, source));
         let mut dcursor = field_decl.walk();
         for declarator in field_decl.children_by_field_name("declarator", &mut dcursor) {
             // `void set(int);` -- a method, not storage.
@@ -1448,6 +1475,11 @@ fn record_member_slots(node: Node<'_>, source: &str) -> Option<Vec<MemberSlot>> 
                     name: name.to_string(),
                     type_tag: if is_plain {
                         ty_tag.map(str::to_string)
+                    } else {
+                        None
+                    },
+                    inline_layout: if is_plain {
+                        inline_layout.clone()
                     } else {
                         None
                     },
@@ -1775,6 +1807,13 @@ impl<'a> Context<'a> {
         } else {
             (None, own, rank)
         };
+        // A **union**'s members share storage, so a member access on the union variable is
+        // collapsed to the synthetic `UNION_FIELD` when it is read (see `union_vars`, the F4
+        // model). The initializer has to deposit taint at that same path: writing the first
+        // member's own name would leave *every* read -- including `u.a`, the member actually
+        // initialized -- resolving to an untainted path and silently dropping the taint. The
+        // variable is registered in `union_vars` by `walk_declaration` before it gets here.
+        let collapsed = base_ap.is_pathless() && self.union_vars.contains(&base_ap.base);
         self.lower_initializer_list(
             source,
             program,
@@ -1784,7 +1823,18 @@ impl<'a> Context<'a> {
             members.as_deref(),
             elem_layout.as_deref(),
             depth,
+            collapsed,
         )
+    }
+
+    /// The field name element *i* of a record level writes: the member's own name, or the
+    /// shared [`UNION_FIELD`] when this level's members alias each other (a union variable).
+    fn write_name<'s>(&self, slot: &'s MemberSlot, collapsed: bool) -> &'s str {
+        if collapsed {
+            UNION_FIELD
+        } else {
+            slot.name.as_str()
+        }
     }
 
     /// Walk the elements of an `initializer_list`, storing each into the sub-path of `base_ap`
@@ -1797,9 +1847,16 @@ impl<'a> Context<'a> {
     /// here is observed at the read.
     ///
     /// Nested braces recurse with the layout of whatever the inner level *is*: a record
-    /// member's own record type (from its [`MemberSlot::type_tag`]), or -- once `depth` array
-    /// levels have been entered -- the array's element layout in `elem_layout`. Anything not
-    /// resolvable falls back to element numbering, which is the pre-existing behavior.
+    /// member's own record type (from its [`MemberSlot::type_tag`] or, for an anonymous inline
+    /// record, its [`MemberSlot::inline_layout`]), or -- once `depth` array levels have been
+    /// entered -- the array's element layout in `elem_layout`. Anything not resolvable falls
+    /// back to element numbering, which is the pre-existing behavior.
+    ///
+    /// `collapsed` marks a level whose members alias -- a union variable, whose member reads all
+    /// resolve to [`UNION_FIELD`] -- so every element of *this* level writes that shared field
+    /// instead of the member's own name. It does not carry into nested levels: only the access
+    /// on the union variable itself collapses (`u.q.a` reads `$union` then `a`), which is what
+    /// recursing with the member's real layout reproduces.
     #[allow(clippy::too_many_arguments)]
     fn lower_initializer_list(
         &mut self,
@@ -1811,6 +1868,7 @@ impl<'a> Context<'a> {
         members: Option<&[MemberSlot]>,
         elem_layout: Option<&[MemberSlot]>,
         depth: usize,
+        collapsed: bool,
     ) -> Result<(), Error> {
         let mut cursor = init_list.walk();
         let mut idx = 0usize;
@@ -1832,10 +1890,16 @@ impl<'a> Context<'a> {
                 let dtext = to_str(&designator, source);
                 let mut fields = ThinVec::new();
                 if let Some(member) = dtext.strip_prefix('.') {
-                    // `.a` -> Symbol("a"), matching how a `.a` field read is lowered.
+                    // `.a` -> Symbol("a"), matching how a `.a` field read is lowered -- or the
+                    // shared field, when this level's members all alias (a union).
                     let member = member.trim();
-                    fields.push(PathSegment::symbol(member));
-                    let nested = self.member_layout(members, |m| m.name == member);
+                    let slot = members.and_then(|m| m.iter().find(|m| m.name == member));
+                    fields.push(PathSegment::symbol(if collapsed {
+                        UNION_FIELD
+                    } else {
+                        member
+                    }));
+                    let nested = slot.and_then(|s| s.nested_layout(&self.struct_layouts));
                     (fields, value, nested)
                 } else {
                     // `[n]` array designator -> the same offset + dereference a subscript read
@@ -1854,10 +1918,8 @@ impl<'a> Context<'a> {
                     // Positional element of a record whose layout is known -> the member that
                     // position names.
                     Some(slot) => {
-                        fields.push(PathSegment::symbol(slot.name.as_str()));
-                        slot.type_tag
-                            .as_deref()
-                            .and_then(|tag| self.struct_layouts.get(tag).cloned())
+                        fields.push(PathSegment::symbol(self.write_name(slot, collapsed)));
+                        slot.nested_layout(&self.struct_layouts)
                     }
                     // Array element, or a record with more elements than its layout describes
                     // -> successive indices.
@@ -1882,6 +1944,7 @@ impl<'a> Context<'a> {
                     nested.as_deref(),
                     elem_layout,
                     depth.saturating_sub(1),
+                    false,
                 )?;
             } else {
                 let rhs = self.flatten_expr(program, value_node, source, scope_view)?;
@@ -1889,20 +1952,6 @@ impl<'a> Context<'a> {
             }
         }
         Ok(())
-    }
-
-    /// The layout of the record type of the member `members` holds matching `pred`, if that
-    /// member names a record we know. Used to recurse into a brace at a designated member.
-    fn member_layout(
-        &self,
-        members: Option<&[MemberSlot]>,
-        pred: impl Fn(&MemberSlot) -> bool,
-    ) -> Option<Vec<MemberSlot>> {
-        members?
-            .iter()
-            .find(|m| pred(m))
-            .and_then(|m| m.type_tag.as_deref())
-            .and_then(|tag| self.struct_layouts.get(tag).cloned())
     }
 
     /// An array's element layout, but only at the level where the elements actually are:
@@ -4547,12 +4596,6 @@ impl TempAllocator {
     }
 }
 
-/// Recursively prints a Tree-sitter node and all its descendants.
-///
-/// # Arguments
-/// * `node` - The current Tree-sitter node to print.
-/// * `depth` - The current recursion depth (start with 0).
-/// * `field_name` - The field name of the current node, if any (start with None).
 /// The switch behind [`unexpected_ast`] and [`malformed_source`]: by default log a
 /// warning (prefixed with who is at fault) and return `Ok(())` so the call site can
 /// recover and the user still gets useful results from the rest of the program. Set
