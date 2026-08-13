@@ -1440,6 +1440,84 @@ fn labeled_empty_statement_parses() {
 }
 
 #[test_log::test]
+fn unsupported_expression_warns_and_recovers() {
+    // An AST shape the frontend does not lower (here `asm("nop")`, which reaches
+    // `flatten_expr`'s catch-all, ERR 78) is a warning by default, not an ingestion
+    // error: the expression becomes an opaque temp via `unexpected_ast` and the rest
+    // of the function still lowers, so `f`'s param->return flow survives. Setting
+    // CTADL_ERROR_ON_AST restores the hard error; that side isn't exercised here
+    // because the env var is process-global and tests run in parallel -- instead the
+    // test skips when the var is set, so a strict-mode environment doesn't fail it.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r#"
+        int f(int a) {
+            asm("nop");
+            return a;
+        }"#;
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn stray_break_continue_goto_warn_and_recover() {
+    // `break`/`continue` outside any loop/switch and `goto` to an undefined label are
+    // problems in the analyzed source ("source problem" warnings), not frontend gaps.
+    // Each recovers as a no-op -- none terminates the block -- so the statements after
+    // them still lower and `f`'s param->return flow survives. Skips under
+    // CTADL_ERROR_ON_AST, which restores the hard error for all three.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        int f(int a) {
+            break;
+            continue;
+            goto nowhere;
+            return a;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn error_on_ast_promotes_frontend_gap() {
+    // The strict side of the switch: under CTADL_ERROR_ON_AST an unsupported
+    // expression is a hard ingestion error again, exactly as before the warning
+    // demotion. Strictness comes from the per-thread test override, not the env var,
+    // which is process-global and would race the parallel test harness.
+    let _strict = super::force_error_on_ast();
+    let src = r#"
+        int f(int a) {
+            asm("nop");
+            return a;
+        }"#;
+    let err = super::parse_c_program(src).expect_err("strict mode must reject the frontend gap");
+    assert!(
+        err.to_string().contains("Unsupported expression type"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
+fn error_on_ast_promotes_source_problem() {
+    // Same strict switch for the source-problem flavor: a stray `break` fails
+    // ingestion under CTADL_ERROR_ON_AST.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int f(int a) {
+            break;
+            return a;
+        }";
+    let err = super::parse_c_program(src).expect_err("strict mode must reject the stray break");
+    assert!(
+        err.to_string().contains("`break` outside"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
 fn compound_assign_accumulates() {
     // Compound assignment (`y += b`) is an accumulate, not an overwrite: it lowers to `y = b + y`,
     // keeping the prior value of `y` *and* mixing in the new one. With `y` seeded from param 0 and
@@ -2036,32 +2114,6 @@ fn designated_initializer_writes_the_named_member() {
 
     let summary = get_summary(prog).unwrap().0;
     check_returns_param(&summary, 0, "");
-}
-
-#[test_log::test]
-fn brace_nested_in_a_record_does_not_reach_the_member() {
-    // KNOWN IMPRECISION. A brace nested inside a *record* initializer is placed by element
-    // number, not by the inner member's name, because only the outer record's layout is in the
-    // registry -- a member's own type tag is not tracked. So `struct R r = { { v, 0 }, 0 }`
-    // writes `r.q.deref` (element 0 of `q`) while a later `r.q.a` read resolves to `r.q.a`, and
-    // the taint is dropped: the summary below is empty.
-    //
-    // This is a soundness false negative, not an over-approximation, and it is silent -- which
-    // is why it is pinned here rather than left to be discovered. Closing it means recording
-    // each member's type tag alongside its name in `Context::struct_layouts`, so the nested
-    // brace can recurse with the member's own layout. Nested *arrays* are unaffected (they have
-    // no member names to recover) -- see `nested_array_aggregate_initializer`.
-    let src = r"
-            struct Q { int a; int b; };
-            struct R { struct Q q; int z; };
-            int nested_record(int v) {
-                struct R r = { { v, 0 }, 0 };
-                return r.q.a;
-            }
-        ";
-    let prog = program_from_string(src).0;
-    let summary = get_summary(prog).unwrap().0;
-    check_does_not_return_param(&summary, 0, "");
 }
 
 #[test_log::test]
@@ -2752,3 +2804,115 @@ fn variable_port_resolves_per_matched_function() {
     );
 }
 
+// --- Positional record initializers ------------------------------------------------------
+//
+// A brace initializer's elements must land on the paths a later read resolves to. For a record
+// that means the *members* those positions name, not array element slots: a write at `p.deref`
+// is not observed at a read of `p.x`, so numbering a record's elements silently drops the taint
+// rather than over-approximating it. The layout comes from the `struct_layouts` registry, and
+// nested braces recurse with the layout of whatever the inner level is (a member's own record
+// type, or an array's element type).
+
+#[test_log::test]
+fn struct_positional_initializer_maps_onto_members() {
+    // `struct P p = { v, 0 }` writes `p.x` and `p.y` -- the same paths `p.x = v; p.y = 0;`
+    // produce -- so the tainted element reaches the return through `p.x`.
+    let src = r"
+        struct P { int x; int y; };
+        int f(int v) {
+            struct P p = { v, 0 };
+            return p.x;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "p.x", ["@p0"], None);
+    check_assign_or_update(&prog, "p.y", ["#0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn struct_nested_in_struct_initializer_maps_onto_members() {
+    // A brace nested at a record member's position is that member's own record, so it recurses
+    // with the member's layout: `{ { v, 0 }, 0 }` writes `r.q.a`, which `r.q.a` reads.
+    let src = r"
+        struct Q { int a; int b; };
+        struct R { struct Q q; int z; };
+        int f(int v) {
+            struct R r = { { v, 0 }, 0 };
+            return r.q.a;
+        }";
+    let prog = program_from_string(src).0;
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn array_of_structs_initializer_maps_onto_members() {
+    // An array's own elements keep the element numbering, but the brace one level down is a
+    // record, so it maps onto members: `qs[0].a` reads what `{ { v, 0 }, ... }` wrote.
+    let src = r"
+        struct Q { int a; int b; };
+        int f(int v) {
+            struct Q qs[2] = { { v, 0 }, { 0, 0 } };
+            return qs[0].a;
+        }";
+    let prog = program_from_string(src).0;
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn typedef_struct_initializer_maps_onto_members() {
+    // A typedef'd (otherwise anonymous) record is registered under the typedef name, so a
+    // declaration naming it that way finds the same layout.
+    let src = r"
+        typedef struct { int x; int y; } P;
+        int f(int v) {
+            P p = { v, 0 };
+            return p.x;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "p.x", ["@p0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn pointer_member_is_not_treated_as_an_inline_record() {
+    // A *pointer* member is not stored inline, so a brace at its position is not that record's
+    // body and must not be mapped onto its members. The element keeps the positional fallback;
+    // what matters is that no wrong member path is written and lowering does not recurse
+    // forever on a self-referential type.
+    let src = r"
+        struct Q { int a; int b; };
+        struct S { struct Q *q; int z; };
+        struct N { int v; struct N *next; };
+        int f(int v) {
+            struct S s = { 0, v };
+            struct N n = { v, 0 };
+            return s.z;
+        }";
+    let prog = program_from_string(src).0;
+    // The scalar members still map by name...
+    check_assign_or_update(&prog, "s.z", ["@p0"], None);
+    check_assign_or_update(&prog, "n.v", ["@p0"], None);
+    // ...and `s.z` carries the taint to the return.
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn unknown_record_type_falls_back_to_positional_elements() {
+    // A record defined in another translation unit has no layout here. That must not error:
+    // the elements take the pre-existing element numbering, which is what this frontend did
+    // for every record before layouts existed.
+    let src = r"
+        int f(int v) {
+            struct Elsewhere e = { v, 0 };
+            return v;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "e.deref", ["@p0"], None);
+}
