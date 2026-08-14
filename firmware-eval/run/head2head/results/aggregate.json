@@ -1,0 +1,1412 @@
+{
+  "corpus": [
+    {
+      "label": "r7000_arp_check",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 18784,
+        "import_bytes": 5045405,
+        "index_bytes": 2073885,
+        "summaries": 198,
+        "sarif_paths": 36,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets",
+          "recv"
+        ],
+        "labels": [
+          "file_input",
+          "network_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 10.3,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 986040960,
+          "index": 14336456,
+          "query": 19792376
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 18784,
+        "import_bytes": 31016235,
+        "index_bytes": 48824320,
+        "summaries": 76,
+        "sarif_paths": 0,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 784386544,
+          "index": 2474344,
+          "query": 2457960
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system",
+          "recv->system"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system",
+          "fgets->system",
+          "recv->system"
+        ]
+      }
+    },
+    {
+      "label": "dlink878_nvram_daemon",
+      "vendor": "D-Link",
+      "device": "DIR-878",
+      "arch": "MIPS",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/nvram_daemon",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 23908,
+        "import_bytes": 2365534,
+        "index_bytes": 229281,
+        "summaries": 159,
+        "sarif_paths": 0,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 717476544,
+          "index": 8847816,
+          "query": 14139920
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 23908,
+        "import_bytes": 16487801,
+        "index_bytes": 31784960,
+        "summaries": 71,
+        "sarif_paths": 0,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 739890120,
+          "index": 2474344,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "r7000_rc",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/rc",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 114916,
+        "import_bytes": 35610218,
+        "index_bytes": 15879723,
+        "summaries": 295,
+        "sarif_paths": 31,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets",
+          "getenv",
+          "nvram_get"
+        ],
+        "labels": [
+          "env_input",
+          "file_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 20.6,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1464211528,
+          "index": 39371256,
+          "query": 23904760
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 114916,
+        "import_bytes": 202864513,
+        "index_bytes": 232914944,
+        "summaries": 157,
+        "sarif_paths": 0,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.6,
+          "index": 20.3,
+          "query": 10.2
+        },
+        "peak_fp_b": {
+          "import": 1470781944,
+          "index": 214598568,
+          "query": 62751272
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system",
+          "getenv->system",
+          "nvram_get->system"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system",
+          "fgets->system",
+          "getenv->system",
+          "nvram_get->system"
+        ]
+      }
+    },
+    {
+      "label": "r6400_acos_service",
+      "vendor": "Netgear",
+      "device": "R6400v2",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/acos_service",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 141796,
+        "import_bytes": 23845583,
+        "index_bytes": 6382887,
+        "summaries": 310,
+        "sarif_paths": 72,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets",
+          "getenv",
+          "main"
+        ],
+        "labels": [
+          "argv_input",
+          "env_input",
+          "file_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 15.6,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1552996760,
+          "index": 34619896,
+          "query": 20709880
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 141796,
+        "import_bytes": 132261736,
+        "index_bytes": 161873920,
+        "summaries": 128,
+        "sarif_paths": 2,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "fgets"
+        ],
+        "labels": [
+          "file_input"
+        ],
+        "wall_s": {
+          "import": 15.6,
+          "index": 15.2,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1678842360,
+          "index": 171672512,
+          "query": 2474344
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "pair_comparison": {
+        "old": [
+          "fgets->system"
+        ],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system",
+          "getenv->system",
+          "main->system"
+        ],
+        "both": [
+          "fgets->system"
+        ],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system",
+          "getenv->system",
+          "main->system"
+        ]
+      }
+    },
+    {
+      "label": "ac15_netctrl",
+      "vendor": "Tenda",
+      "device": "AC15",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/netctrl",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 318012,
+        "import_bytes": 32551638,
+        "index_bytes": 7365985,
+        "summaries": 3790,
+        "sarif_paths": 2,
+        "sink_funcs": [
+          "doSystemCmd"
+        ],
+        "source_funcs": [
+          "fgets"
+        ],
+        "labels": [
+          "file_input"
+        ],
+        "wall_s": {
+          "import": 25.9,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 2467601560,
+          "index": 38650336,
+          "query": 17662432
+        },
+        "path_records": [
+          {
+            "sink_func": "doSystemCmd",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "doSystemCmd",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 318012,
+        "import_bytes": 190706158,
+        "index_bytes": 227475456,
+        "summaries": 409,
+        "sarif_paths": 0,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.8,
+          "index": 20.3,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1732186912,
+          "index": 254510016,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "fgets->doSystemCmd"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "fgets->doSystemCmd"
+        ]
+      }
+    }
+  ],
+  "controls": [
+    {
+      "binary": "nested",
+      "pattern": "direct",
+      "souffle_paths": 3,
+      "rs_paths": 2
+    },
+    {
+      "binary": "simple",
+      "pattern": "direct",
+      "souffle_paths": 6,
+      "rs_paths": 4
+    },
+    {
+      "binary": "heap",
+      "pattern": "via-builder",
+      "souffle_paths": 0,
+      "rs_paths": 2
+    },
+    {
+      "binary": "wrapper",
+      "pattern": "via-builder",
+      "souffle_paths": 0,
+      "rs_paths": 2
+    },
+    {
+      "binary": "off_shoot",
+      "pattern": "via-builder",
+      "souffle_paths": 0,
+      "rs_paths": 3
+    }
+  ]
+}

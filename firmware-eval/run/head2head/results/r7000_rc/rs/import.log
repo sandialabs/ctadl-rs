@@ -1,0 +1,4 @@
+importing pcode artifact 'r7000_rc' from /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/rc
+running Ghidra to disassemble; console output -> /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_rc/rs/store/imports/r7000_rc/ghidra.log
+warning: Unsupported pcode mnemonic: CALLOTHER
+'r7000_rc': imported 393 function(s)

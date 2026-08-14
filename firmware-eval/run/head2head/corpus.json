@@ -1,0 +1,51 @@
+{
+  "_comment": [
+    "The 5 firmware binaries for the ctadl-rs vs ctadl-souffle head-to-head - DO-NOT-MERGE.",
+    "Drawn from operation-mango-public/firmware/7_firmware, the SaTC 7-device corpus behind",
+    "Operation Mango's paper Table 3, so these are the same images ../TABLE3_COMPARISON.md used.",
+    "Chosen for spread rather than for a favourable result: 3 vendors, 2 architectures, and a",
+    "size range of 20K..312K. The daemons are the ones command injection actually lives in -",
+    "the Netgear service/init binaries (nvram-getter -> sprintf -> system), D-Link's NVRAM",
+    "daemon, and Tenda's network controller.",
+    "The upper size bound is set by ctadl-souffle, not by ctadl-rs: Souffle indexes the whole",
+    "program eagerly, and the megabyte-class httpd binaries in this corpus are out of reach for",
+    "it in any reasonable budget."
+  ],
+  "corpus": [
+    {
+      "label": "r7000_arp_check",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check"
+    },
+    {
+      "label": "dlink878_nvram_daemon",
+      "vendor": "D-Link",
+      "device": "DIR-878",
+      "arch": "MIPS",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/nvram_daemon"
+    },
+    {
+      "label": "r7000_rc",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/rc"
+    },
+    {
+      "label": "r6400_acos_service",
+      "vendor": "Netgear",
+      "device": "R6400v2",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/acos_service"
+    },
+    {
+      "label": "ac15_netctrl",
+      "vendor": "Tenda",
+      "device": "AC15",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/netctrl"
+    }
+  ]
+}

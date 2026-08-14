@@ -1,0 +1,251 @@
+{
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^main$"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "port": "Argument(1).*",
+            "kind": "argv_input",
+            "all_fields": true
+          },
+          {
+            "port": "Argument(1).*.*",
+            "kind": "argv_input",
+            "all_fields": true
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(system|twsystem|execFormatCmd|exec_cmd|___system|bstar_system|doSystemCmd|doShell|CsteSystem|cgi_deal_popen|ExeCmd|ExecShell|exec_shell_popen|exec_shell_popen_str|popen|execl|execlp|execle|execv|execvp|execvpe|execve|tp_systemEx|exec_shell_async|exec_shell_sync|exec_shell_sync2|SLIBCSystem|SLIBCExec|SLIBCExecv|SLIBCPopen|pegaSystem)$"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "port": "Argument(0).*",
+            "kind": "command_injection"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(SLIBCExecl)$"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "port": "Argument(1).*",
+            "kind": "command_injection"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(execl|execlp|execle)$"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "port": "Argument(1).*",
+            "kind": "command_injection"
+          },
+          {
+            "port": "Argument(2).*",
+            "kind": "command_injection"
+          },
+          {
+            "port": "Argument(3).*",
+            "kind": "command_injection"
+          },
+          {
+            "port": "Argument(4).*",
+            "kind": "command_injection"
+          },
+          {
+            "port": "Argument(5).*",
+            "kind": "command_injection"
+          },
+          {
+            "port": "Argument(6).*",
+            "kind": "command_injection"
+          },
+          {
+            "port": "Argument(7).*",
+            "kind": "command_injection"
+          },
+          {
+            "port": "Argument(8).*",
+            "kind": "command_injection"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(execv|execvp|execvpe|execve)$"
+        }
+      ],
+      "model": {
+        "sinks": [
+          {
+            "port": "Argument(1)",
+            "kind": "command_injection",
+            "all_fields": true
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(nvram_get|nvram_safe_get|bcm_nvram_get|envram_get|wlcsm_nvram_get|dni_nvram_get|PTI_nvram_get|acosNvramConfig_get|acosNvramConfig_read|GetValue)$"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "port": "Return.*",
+            "kind": "nvram_input"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(getenv)$"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "port": "Return.*",
+            "kind": "env_input"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(recv|recvfrom)$"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "port": "Argument(1).*",
+            "kind": "network_input"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(custom_param_parser)$"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "port": "Return.*",
+            "kind": "network_input"
+          },
+          {
+            "port": "Argument(0).*",
+            "kind": "network_input"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(read)$"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "port": "Argument(1).*",
+            "kind": "file_input"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(fread)$"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "port": "Argument(0).*",
+            "kind": "file_input"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(fgets)$"
+        }
+      ],
+      "model": {
+        "sources": [
+          {
+            "port": "Argument(0).*",
+            "kind": "file_input"
+          },
+          {
+            "port": "Return.*",
+            "kind": "file_input"
+          }
+        ]
+      }
+    }
+  ]
+}

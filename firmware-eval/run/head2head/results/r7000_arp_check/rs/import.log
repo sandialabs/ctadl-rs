@@ -1,0 +1,4 @@
+importing pcode artifact 'r7000_arp_check' from /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check
+running Ghidra to disassemble; console output -> /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_arp_check/rs/store/imports/r7000_arp_check/ghidra.log
+warning: Unsupported pcode mnemonic: CALLOTHER
+'r7000_arp_check': imported 138 function(s)

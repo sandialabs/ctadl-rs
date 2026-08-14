@@ -1,0 +1,10 @@
+# The parent firmware-eval/.gitignore drops every `results.sarif` - sensible
+# there, where they are scratch output. Here they ARE the raw data the path
+# counts are computed from, so keep them. - DO-NOT-MERGE
+!results/**/results.sarif
+
+# The store / import trees are intermediate bulk (one souffle ctadlir.db for a
+# firmware binary is ~200 MB). run_one.py deletes them once their size has been
+# measured; this is the belt-and-braces for KEEP_ARTIFACTS=1 runs.
+results/*/*/store/
+results/*/*/import/

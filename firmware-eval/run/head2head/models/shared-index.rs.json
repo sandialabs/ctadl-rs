@@ -1,0 +1,1213 @@
+{
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "strcpy",
+            "wcscpy",
+            "strncpy",
+            "wcsncpy",
+            "stpcpy",
+            "wcpcpy",
+            "stpncpy",
+            "wcpncpy",
+            "strcat",
+            "wcscat",
+            "strncat",
+            "wcsncat",
+            "strcpy_chk",
+            "strncpy_chk",
+            "stpcpy_chk",
+            "stpncpy_chk",
+            "strcat_chk",
+            "strncat_chk",
+            "wcscpy_chk",
+            "wcsncpy_chk",
+            "wcscat_chk",
+            "wcsncat_chk"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(0).deref"
+          },
+          {
+            "input": "Argument(1).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "memcpy",
+            "memmove",
+            "mempcpy",
+            "memccpy",
+            "bcopy",
+            "memcpy_chk",
+            "memmove_chk",
+            "mempcpy_chk",
+            "memccpy_chk"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(0).deref"
+          },
+          {
+            "input": "Argument(1).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "strlcpy",
+            "strlcat",
+            "strlcpy_chk",
+            "strlcat_chk"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(0).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "sprintf",
+            "swprintf",
+            "snprintf",
+            "vsprintf",
+            "vsnprintf",
+            "vswprintf",
+            "asprintf",
+            "vasprintf",
+            "sprintf_chk",
+            "snprintf_chk",
+            "vsprintf_chk",
+            "vsnprintf_chk",
+            "swprintf_chk",
+            "vswprintf_chk",
+            "asprintf_chk",
+            "vasprintf_chk"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(*).deref",
+            "output": "Argument(0).deref"
+          },
+          {
+            "input": "Argument(*).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "sscanf",
+            "swscanf",
+            "vsscanf",
+            "vswscanf",
+            "isoc99_sscanf",
+            "isoc99_swscanf",
+            "isoc99_vsscanf",
+            "isoc99_vswscanf"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Argument(*).deref"
+          },
+          {
+            "input": "Argument(0).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "strdup",
+            "strndup",
+            "wcsdup"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "strchr",
+            "strrchr",
+            "wcschr",
+            "wcsrchr",
+            "strpbrk",
+            "wcspbrk",
+            "strstr",
+            "wcsstr",
+            "strtok",
+            "wcstok",
+            "strsep",
+            "strcasestr",
+            "index",
+            "rindex",
+            "memchr",
+            "memrchr",
+            "memmem",
+            "rawmemchr"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "strtok_r",
+            "wcstok_r"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Return.deref"
+          },
+          {
+            "input": "Argument(0).deref",
+            "output": "Argument(2).deref.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "bsearch",
+            "lsearch",
+            "lfind"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "strlen",
+            "wcslen",
+            "strnlen",
+            "wcsnlen"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "atoi",
+            "atol",
+            "atoll",
+            "atof",
+            "strtol",
+            "strtoll",
+            "strtoul",
+            "strtoull",
+            "strtof",
+            "strtod",
+            "strtold",
+            "wcstol",
+            "wcstoll",
+            "wcstoul",
+            "wcstoull",
+            "wcstof",
+            "wcstod",
+            "wcstold"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "toupper",
+            "tolower",
+            "toascii"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0)",
+            "output": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "ntohl",
+            "ntohs",
+            "ntohll",
+            "htonl",
+            "htons",
+            "htonll",
+            "bswap_16",
+            "bswap_32",
+            "bswap_64"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0)",
+            "output": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "getline"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(2).deref",
+            "output": "Argument(0).deref.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "getdelim"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(3).deref",
+            "output": "Argument(0).deref.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "basename",
+            "dirname"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "realpath",
+            "realpath_chk"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Argument(1).deref"
+          },
+          {
+            "input": "Argument(0).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "readlink",
+            "readlink_chk"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Argument(1).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "readlinkat",
+            "readlinkat_chk"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(2).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "inet_ntoa"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0)",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "inet_ntop"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(2).deref"
+          },
+          {
+            "input": "Argument(1).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "inet_addr",
+            "inet_network",
+            "inet_aton"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Return"
+          },
+          {
+            "input": "Argument(0).deref",
+            "output": "Argument(1).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "inet_pton"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(2).deref"
+          },
+          {
+            "input": "Argument(1).deref",
+            "output": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "strftime",
+            "wcsftime",
+            "strftime_chk"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(3).deref",
+            "output": "Argument(0).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "ctime",
+            "asctime",
+            "ctime_r",
+            "asctime_r"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "mbstowcs",
+            "wcstombs",
+            "mbstowcs_chk",
+            "wcstombs_chk"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(0).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "mbsrtowcs",
+            "wcsrtombs"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref.deref",
+            "output": "Argument(0).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "malloc",
+            "calloc",
+            "aligned_alloc",
+            "valloc",
+            "memalign",
+            "posix_memalign"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(*)",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "realloc",
+            "reallocarray",
+            "reallocf"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "aeabi_unwind_cpp_pr0",
+            "aeabi_unwind_cpp_pr1",
+            "aeabi_unwind_cpp_pr2",
+            "gnu_unwind_frame",
+            "gnu_unwind_execute",
+            "gnu_unwind_pr_common",
+            "gnu_Unwind_Resume",
+            "gnu_Unwind_Resume_or_Rethrow",
+            "gnu_Unwind_RaiseException",
+            "gnu_Unwind_ForcedUnwind",
+            "gnu_Unwind_Backtrace",
+            "unwind_phase1",
+            "unwind_phase2",
+            "unwind_phase2_forced",
+            "Unwind_RaiseException",
+            "Unwind_Resume",
+            "Unwind_Resume_or_Rethrow",
+            "Unwind_ForcedUnwind",
+            "Unwind_DeleteException",
+            "Unwind_Backtrace",
+            "Unwind_Complete",
+            "Unwind_VRS_Get",
+            "Unwind_VRS_Set",
+            "Unwind_VRS_Pop",
+            "Unwind_GetLanguageSpecificData",
+            "Unwind_GetRegionStart",
+            "Unwind_GetDataRelBase",
+            "Unwind_GetTextRelBase",
+            "cxa_begin_cleanup",
+            "cxa_end_cleanup",
+            "cxa_type_match",
+            "cxa_call_unexpected"
+          ]
+        }
+      ],
+      "model": {
+        "modes": [
+          "skip-analysis"
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "memcpy",
+            "_memcpy"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(0).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "strcpy",
+            "_strcpy"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(0).deref"
+          },
+          {
+            "input": "Argument(1).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "strncat",
+            "_strncat"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(0).deref"
+          },
+          {
+            "input": "Argument(2).deref",
+            "output": "Argument(0).deref"
+          },
+          {
+            "input": "Argument(1).deref",
+            "output": "Return.deref"
+          },
+          {
+            "input": "Argument(2).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "strlcpy",
+            "_strlcpy",
+            "strlcat",
+            "_strlcat"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(0).deref"
+          },
+          {
+            "input": "Argument(2).deref",
+            "output": "Argument(0).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "getc",
+            "_getc",
+            "getc_unlocked",
+            "_getc_unlocked"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "atoi",
+            "_atoi",
+            "atol",
+            "_atol",
+            "atoll",
+            "_atoll",
+            "fgetc",
+            "_fgetc",
+            "strchr",
+            "_strchr",
+            "strrchr",
+            "_strrchr",
+            "tolower",
+            "_tolower",
+            "toupper",
+            "_toupper",
+            "strdup",
+            "_strdup",
+            "strdupa",
+            "_strdupa",
+            "wcsdup",
+            "_wcsdup"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0)",
+            "output": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "fgets",
+            "_fgets"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0)",
+            "output": "Return"
+          },
+          {
+            "input": "Argument(2)",
+            "output": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "scanf",
+            "_scanf",
+            "fscanf",
+            "_fscanf"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(2)",
+            "output": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "getdelim",
+            "_getdelim"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(3)",
+            "output": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "getline",
+            "_getline"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(2)",
+            "output": "Argument(0)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "getw",
+            "_getw"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0)",
+            "output": "Return"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "pread",
+            "_pread"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0)",
+            "output": "Argument(1)"
+          },
+          {
+            "input": "Argument(0)",
+            "output": "Return"
+          },
+          {
+            "input": "Argument(0)",
+            "output": "Argument(2)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "read",
+            "_read"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0)",
+            "output": "Argument(2)"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "signature_match",
+          "names": [
+            "pread",
+            "_pread"
+          ]
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0)",
+            "output": "Argument(2).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(sprintf|snprintf|vsprintf|vsnprintf|asprintf|vasprintf|swprintf|vswprintf)$"
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(*).deref",
+            "output": "Argument(0).deref"
+          },
+          {
+            "input": "Argument(*).deref",
+            "output": "Return.deref"
+          },
+          {
+            "input": "Argument(*)",
+            "output": "Argument(0).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(strcpy|strncpy|stpcpy|stpncpy|strcat|strncat|strlcpy|strlcat)$"
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(0).deref"
+          },
+          {
+            "input": "Argument(1).deref",
+            "output": "Return.deref"
+          },
+          {
+            "input": "Argument(1)",
+            "output": "Argument(0).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(memcpy|memmove|mempcpy|bcopy)$"
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(1).deref",
+            "output": "Argument(0).deref"
+          },
+          {
+            "input": "Argument(1).deref",
+            "output": "Return.deref"
+          },
+          {
+            "input": "Argument(1)",
+            "output": "Argument(0).deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(strdup|strndup|strstr|strchr|strrchr|strpbrk|strtok|strtok_r|strsep|basename|dirname)$"
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Return.deref"
+          }
+        ]
+      }
+    },
+    {
+      "find": "methods",
+      "where": [
+        {
+          "constraint": "name",
+          "pattern": "^(atoi|atol|atoll|strtol|strtoll|strtoul|strtoull)$"
+        }
+      ],
+      "model": {
+        "propagation": [
+          {
+            "input": "Argument(0).deref",
+            "output": "Return"
+          }
+        ]
+      }
+    }
+  ]
+}

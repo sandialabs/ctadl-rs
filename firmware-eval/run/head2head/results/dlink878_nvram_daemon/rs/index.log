@@ -1,0 +1,7 @@
+indexing project 'dlink878_nvram_daemon' from 1 import(s): dlink878_nvram_daemon
+'dlink878_nvram_daemon': loading IR
+'dlink878_nvram_daemon': preprocessing 155 function(s) (SSA) and generating facts
+warning: CHA: unsupported virtual method table
+models: 147 summary row(s), 0 declared access path(s), 0 function body(ies) not analyzed
+indexing (computing the flow relation)
+wrote index to /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dlink878_nvram_daemon/rs/store/projects/dlink878_nvram_daemon/index

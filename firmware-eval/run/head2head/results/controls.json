@@ -1,0 +1,32 @@
+[
+  {
+    "binary": "nested",
+    "pattern": "direct",
+    "souffle_paths": 3,
+    "rs_paths": 2
+  },
+  {
+    "binary": "simple",
+    "pattern": "direct",
+    "souffle_paths": 6,
+    "rs_paths": 4
+  },
+  {
+    "binary": "heap",
+    "pattern": "via-builder",
+    "souffle_paths": 0,
+    "rs_paths": 2
+  },
+  {
+    "binary": "wrapper",
+    "pattern": "via-builder",
+    "souffle_paths": 0,
+    "rs_paths": 2
+  },
+  {
+    "binary": "off_shoot",
+    "pattern": "via-builder",
+    "souffle_paths": 0,
+    "rs_paths": 3
+  }
+]
