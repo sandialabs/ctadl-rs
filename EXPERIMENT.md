@@ -4,10 +4,16 @@ ctadl is this project. ctadl-souffle, a previous version written with Souffle, i
 
 This branch has a harness for running ctadl firmware benchmarks. Read about it in ./firmware-eval/README.md.
 
+Before the experiment runs, make sure:
+
+- devShell that pins a common ghidra version
+- Both engines can run on control binaries that are really simple with similar results
+
 Run an experiment as follows:
 
 - The goal is to compare ctadl-souffle with this ctadl on a subset of firmware.  Let's try 5 firmware binaries for now.
 - Using existing sources and sinks, make sure they work (or produce an equivalent version that works) on ctadl-souffle.
+- Make sure both engines use the same set of models (override the default models). You'll need library code models in addition to the sources and sinks
 - Index each firmware with ctadl and ctadl-souffle
 - Evaluate and compare SARIF paths found by running ctadl query for both versions
 - Measure and compare for each:
@@ -16,6 +22,7 @@ Run an experiment as follows:
   - number of SARIF paths
 - Put raw data for the results into an obvious place
 - Graph the results with a stacked bar graph (old +- new)
+- These graphs are going into a presentation, so size appropriately
 
 Run the experiment.
 

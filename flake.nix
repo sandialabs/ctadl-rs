@@ -388,6 +388,41 @@
               export PATH="${androidSdk.androidsdk}/libexec/android-sdk/build-tools/30.0.2:$PATH"
             '';
           };
+
+          # nix develop .#head2head  -- DO-NOT-MERGE
+          #
+          # The environment for the ctadl-rs vs ctadl-souffle head-to-head
+          # experiment (firmware-eval/run/head2head). It exists so BOTH tools
+          # see the *same* Ghidra: each one lifts the binary itself, and a
+          # version skew there would show up as an analysis difference that is
+          # really a frontend difference. `ghidra-bin` is put on PATH and named
+          # by GHIDRA_HOME, which is how both frontends locate it (ctadl-rs's
+          # pcode reader and the souffle build's ghidra fact-generator plugin
+          # both read GHIDRA_HOME first).
+          devShells.head2head = pkgs.mkShell {
+            buildInputs = with pkgs; [
+              self.packages.${system}.default # ctadl-rs, as `ctadl`
+              ctadl-souffle-wrapper # ctadl-souffle 0.14.1 + plugins
+              ghidra-bin
+              # pyarrow reads ctadl-rs's summary.parquet (the summary count);
+              # matplotlib draws the graph. sqlite3 (stdlib) reads the souffle
+              # index's SummaryFlow, the other half of that metric.
+              (python3.withPackages (ps: [
+                ps.pyarrow
+                ps.matplotlib
+              ]))
+              jq
+              sqlite
+            ];
+
+            GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
+
+            shellHook = ''
+              echo "head2head: ctadl=$(command -v ctadl)"
+              echo "head2head: ctadl-souffle=$(command -v ctadl-souffle)"
+              echo "head2head: GHIDRA_HOME=$GHIDRA_HOME"
+            '';
+          };
       }
     );
 }
