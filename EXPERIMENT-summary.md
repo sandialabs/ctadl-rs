@@ -175,11 +175,86 @@ The new engine derives more compositional summaries on **46 of 47** binaries,
 median 2.6×. Summaries are what carry taint across a call, so this is the
 mechanism behind the path counts.
 
-**The exception is worth naming: `r7000_circled`, where the old engine derives
-3,199 summaries to the new engine's 476** — the single blue dot on the spread
-chart. The new engine still reports 23 paths there to the old engine's 0, so more
-summaries did not translate into more findings, but it is the one binary that
-runs against the trend and I have not investigated why.
+**The exception is `r7000_circled`, where the old engine derives 3,199 summaries
+to the new engine's 476** — the single blue dot on the spread chart. It was
+chased, and it is not the new engine underperforming. It is the old engine's
+aliasing rule losing precision. See below.
+
+#### The one binary that runs against the trend
+
+Reproduced with `KEEP_ARTIFACTS=1` (476/3,199 and 23/0 paths, exactly).
+
+**The two counts are comparable.** `SummaryFlow` carries two columns
+`summary.parquet` does not — a second function id and a context — so it *could*
+hold cross-function rows or duplicate a summary once per context. On this binary
+it does neither: all 3,199 rows are intra-function (`m1 = m2`) under a single
+context. The gap is real, not a counting artefact.
+
+**87% of the excess sits in eight functions, and they are one call chain.**
+
+```
+966c(216) → b970(216) → d208(504) → d474(770) → d668(308)
+966c(216) → 9f5c(216) → a30c(216)              d554(330)
+```
+
+The new engine on the same chain: `24, 24, 24, 0, 0, 24, 24, 0`.
+
+**The mechanism, from the old engine's own frontend facts.** `FUN_0000966c` is a
+statically linked, hand-unrolled digest block transform — `circled` links
+OpenSSL-style code, and this one reads a 64-byte block and writes a 24-byte
+state. ctadl-souffle's own `CInsn_Move` table says the function writes formal 0
+at six paths, `.[0] .[4] .[8] .[12] .[16] .[20]`, and writes the scratch buffer
+`local_14` at offsets 16 through 60. Its `SummaryFlow` then reports formal 0
+written at `.[24]` through `.[60]` as well — **ten destination offsets that exist
+only on the scratch buffer and never on the parameter, worth 176 of the 216
+rows.** The four destinations that are real carry exactly four sources each: the
+same 24 rows ctadl-rs reports, byte for byte.
+
+The rule responsible is the four-case aliasing summary in
+`../ctadl/src/ctadl/souffle-logic/graph/dataflow.dl:337-372` — if two formals
+both reach the same local, summarize one into the other at every offset that
+local carries. Here formal 0 partly flows into `local_14`, so the whole block's
+offset space gets projected onto the parameter. ctadl-rs's counterpart
+(`ctadl-ascent/src/index_engine/mod.rs:1187`) adds two guards souffle has no
+equivalent of — `prog_store` (the destination path must be a real program
+field-store) and `alias_of_formal` (the alias must be established by original
+program copies). Both fail here, so the 176 rows are never derived.
+
+**And it cascades.** `FUN_0000d474`, the largest single contributor at 770 rows,
+has *zero* instruction facts that write any parameter at any path, in either
+engine's frontend. Its ten arguments are spilled to a stack frame and passed on.
+626 of its `VirtualAssign` rows have reason `summary` — callee summaries
+instantiated at its six call sites — and the alias closure over those manufactures
+summaries on 18 distinct paths across formals 2–9. Inflated callee summaries breed
+inflated caller summaries: 216 → 504 → 770. The new engine reports 0 for `d474`,
+`d554` and `d668`, which is the correct answer.
+
+**Cross-check.** Normalizing the path spellings (`.[k].deref` ↔ `.[k]`, `.deref`
+↔ `.[0]`/`.*`), 279 of the new engine's 409 distinct rows also appear in
+`SummaryFlow`; the 130 that do not are spread thin over ~30 functions, mostly
+library models. The old engine's ~2,891 extra rows are the concentrated ones
+above.
+
+**Why this binary.** 3,199 is anomalous *for ctadl-souffle*, not for ctadl-rs:
+
+| binary | size | old | new |
+|---|--:|--:|--:|
+| **r7000_circled** | **56 K** | **3,199** | 476 |
+| xr300_dap_logd | 419 K | 700 | 1,541 |
+| ac18_dhttpd | 207 K | 523 | 13,151 |
+| w20e_portal | 50 K | 83 | 268 |
+
+The old engine derives 4.6× more summaries on this 56 K binary than on the 419 K
+binary that is its next largest count anywhere in the corpus. 476 is unremarkable
+for the new engine at this size. `circled` triggers the blowup because it has
+exactly the shape the alias rule handles worst: an unrolled crypto module with a
+large stack scratch block written at many distinct offsets, wrapped by dispatchers
+with ten spilled arguments.
+
+**It does not touch the findings.** All the excess is in the `0x9600`–`0xd700`
+digest module. The new engine's 23 paths run through `FUN_0000f14c`, `f288`,
+`f3ac` and `f784` — a different part of the binary. The extra summaries carry no
+taint, which is why more of them produced no more findings.
 
 ### SARIF paths
 
@@ -335,7 +410,12 @@ and the dark surface. A dark-mode PNG is generated alongside each light one, and
   intent, not provably identical semantics. The control experiment is what makes
   the translation credible: under it, the old engine outperforms the new one on
   the direct cases.
-- **`r7000_circled` is unexplained** — the one binary where the old engine
-  derives 6.7× more summaries. Flagged rather than chased.
+- **`r7000_circled` is explained, and it is not a caveat.** The one binary where
+  the old engine derives 6.7× more summaries is a precision loss in *its*
+  aliasing rule, which projects a 64-byte stack scratch buffer's offset space
+  onto a formal parameter and then cascades that up the call chain. 87% of the
+  3,199 rows sit in eight functions of one statically linked digest module, on
+  access paths the program never writes; none of them carries taint. Worked out
+  above, under "The one binary that runs against the trend."
 - **Nothing is committed.** All of it is working-tree changes on
   `head-to-head-vs-ctadl-souffle-firmware`, marked DO-NOT-MERGE.
