@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "dir878_nvram_daemon",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/nvram_daemon",
+  "binary_bytes": 23908,
+  "status": "ok",
+  "total_wall_s": 26.3,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 15.5,
+      "peak_fp_b": 763498888
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 8847816
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 14516752
+    }
+  },
+  "import_bytes": 2389731,
+  "index_bytes": 229185,
+  "summaries": 159,
+  "sarif_paths": 0
+}

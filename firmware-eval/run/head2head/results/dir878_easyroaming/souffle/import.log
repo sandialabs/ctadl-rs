@@ -1,0 +1,157 @@
+ctadl_ghidra_fact_generator_plugin 0.1.0
+exporting program with Ghidra to '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/souffle/import'
+openjdk version "21.0.8" 2025-07-15 LTS
+OpenJDK Runtime Environment Zulu21.44+17-CA (build 21.0.8+9-LTS)
+OpenJDK 64-Bit Server VM Zulu21.44+17-CA (build 21.0.8+9-LTS, mixed mode)
+INFO  Using log config file: jar:file:/nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /Users/dbueno/.config/ghidra/ghidra_12.0.4_NIX/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /Users/dbueno/.config/ghidra/ghidra_12.0.4_NIX/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (684 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (1272 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 58 extension points (18 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/FunctionID/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/Base/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/BytePatterns/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/PIC/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/JVM/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/Atmel/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/PyGhidra/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/VersionTracking/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/BSim/ghidra_scripts
+    /nix/store/wv3h872qsfbfsjnsnmpjrhswwcxb6ga1-python3.13-ctadl-0.14.1/lib/python3.13/site-packages/ctadl/souffle-logic/pcode
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/Decompiler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Debug/Debugger/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/FileFormats/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/Jython/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/PDB/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/DATA/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/8051/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Creating temporary project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-wkf10wjd/ghidra_headless/headless (HeadlessAnalyzer)  
+INFO  Creating project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-wkf10wjd/ghidra_headless/headless (DefaultProject)  
+INFO  REPORT: Processing input files:  (HeadlessAnalyzer)  
+INFO       project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-wkf10wjd/ghidra_headless/headless (HeadlessAnalyzer)  
+INFO  IMPORTING: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming (HeadlessAnalyzer)  
+INFO  Using Loader: Executable and Linking Format (ELF) (ProgramLoader)  
+INFO  Using Language/Compiler: MIPS:LE:32:default:default (ProgramLoader)  
+INFO  Using Library Search Path: [., /System/Library/dyld/dyld_shared_cache_arm64e, /System/Library/dyld/dyld_shared_cache_x86_64, /System/Library/dyld/dyld_shared_cache_x86_64h, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64h, /Users/dbueno/Library/Java/Extensions, /Library/Java/Extensions, /Network/Library/Java/Extensions, /System/Library/Java/Extensions, /usr/lib/java] (ProgramLoader)  
+INFO  Additional info:
+Loading file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming?MD5=5d084f637db133c33a1a34ac9549fd4a...
+Skipping section [.mdebug.abi32] with invalid size 0x0
+Unable to place symbol due to non-loaded section: .mdebug.abi32 - value=0x442f30, section=.mdebug.abi32
+_mips_gp0_value=0x44a980
+------------------------------------------------
+
+Linking the External Programs of 'easyroaming' to imported libraries...
+  [libaes.so] -> not found in project
+  [libm.so.0] -> not found in project
+  [libpthread.so.0] -> not found in project
+  [libc.so.0] -> not found in project
+------------------------------------------------
+
+Resolving External Symbols of [/easyroaming] - 76 unresolved symbols, no external libraries configured - skipping
+ (ProgramLoader)  
+INFO  IMPORTING: Loaded 0 additional files (HeadlessAnalyzer)  
+INFO  ANALYZING all memory and code: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming (HeadlessAnalyzer)  
+INFO  Added 580 source map entries (DWARFImporter)  
+INFO  DWARF ver[2], 22 compUnits, 1197 DIES, import - total elapsed: 127ms (DWARFImportSummary)  
+INFO  DWARF data type import - elapsed: 54ms (DWARFImportSummary)  
+INFO  DWARF func & symbol import - elapsed: 41ms (DWARFImportSummary)  
+INFO  DWARF types imported: 51 (DWARFImportSummary)  
+INFO  DWARF enums from macros - elapsed: 1ms (DWARFImportSummary)  
+INFO  DWARF compile dirs: [/home/ralink/buildroot-2012.11.1/output/toolchain/gcc-4.6.3-final/mipsel-buildroot-linux-uclibc/libgcc] (DWARFImportSummary)  
+INFO  DWARF producers: [GNU C 4.6.3] (DWARFImportSummary)  
+INFO  DWARF source languages: [DW_LANG_C89] (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/fp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: /home/ralink/buildroot-2012.11.1/output/toolchain/gcc-4.6.3/libgcc/../gcc/libgcc2.c (DWARFImportSummary)  
+INFO  DWARF compUnit: /home/ralink/buildroot-2012.11.1/output/toolchain/gcc-4.6.3/libgcc/../gcc/libgcc2.c (DWARFImportSummary)  
+INFO  DWARF compUnit: /home/ralink/buildroot-2012.11.1/output/toolchain/gcc-4.6.3/libgcc/../gcc/libgcc2.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/fp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: ../.././gcc/dp-bit.c (DWARFImportSummary)  
+INFO  DWARF compUnit: /home/ralink/buildroot-2012.11.1/output/toolchain/gcc-4.6.3/libgcc/../gcc/libgcc2.c (DWARFImportSummary)  
+ERROR DWARF un-recoverable expressions: (DWARFImportSummary)  
+ERROR   DW_OP_reg5 -> 3 (DWARFImportSummary)  
+ERROR   DW_OP_reg4; DW_OP_piece; DW_OP_reg5; DW_OP_piece -> 2 (DWARFImportSummary)  
+ERROR   DW_OP_fbreg -> 47 (DWARFImportSummary)  
+ERROR   DW_OP_reg4 -> 5 (DWARFImportSummary)  
+ERROR   DW_OP_breg29 -> 22 (DWARFImportSummary)  
+ERROR   DW_OP_reg6 -> 2 (DWARFImportSummary)  
+INFO  Packed database cache: /Users/dbueno/.cache/ghidra/packed-db-cache (PackedDatabaseCache)  
+INFO  Applied data type archive: generic_clib (ApplyDataArchiveAnalyzer)  
+INFO  Applied data type archive: generic_clib (ApplyDataArchiveAnalyzer)  
+INFO  -----------------------------------------------------
+    ASCII Strings                              0.164 secs
+    Apply Data Archives                        0.578 secs
+    Call Convention ID                         1.933 secs
+    Call-Fixup Installer                       0.006 secs
+    Create Address Tables                      0.026 secs
+    Create Function                            0.000 secs
+    DWARF                                      0.172 secs
+    Data Reference                             0.023 secs
+    Decompiler Switch Analysis                 5.190 secs
+    Demangler GNU                              0.055 secs
+    Disassemble Entry Points                   0.435 secs
+    Embedded Media                             0.010 secs
+    External Entry References                  0.001 secs
+    Function ID                                0.021 secs
+    Function Start Search                      0.055 secs
+    GCC Exception Handlers                     0.032 secs
+    MIPS Constant Reference Analyzer           0.780 secs
+    MIPS Symbol                                0.009 secs
+    MIPS UnAlligned Instruction Fix            0.019 secs
+    Non-Returning Functions - Discovered       0.032 secs
+    Non-Returning Functions - Known            0.003 secs
+    Reference                                  0.042 secs
+    Shared Return Calls                        0.027 secs
+    Stack                                      0.671 secs
+    Subroutine References                      0.034 secs
+    Subroutine References - One Time           0.000 secs
+-----------------------------------------------------
+     Total Time   10 secs
+-----------------------------------------------------
+ (AutoAnalysisManager)  
+INFO  REPORT: Analysis succeeded for file: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: ExportPcode.java '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/souffle/import/facts'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /nix/store/wv3h872qsfbfsjnsnmpjrhswwcxb6ga1-python3.13-ctadl-0.14.1/lib/python3.13/site-packages/ctadl/souffle-logic/pcode/ExportPcode.java (HeadlessAnalyzer)  
+INFO  ExportPcode.java> Script is not running in GUI (GhidraScript)  
+WARN  Decompiling 0044301c, pcode error at 0044301c: Unable to disassemble EXTERNAL block location: 0044301c (DecompileCallback)  
+WARN  Decompiling 00443004, pcode error at 00443004: Unable to disassemble EXTERNAL block location: 00443004 (DecompileCallback)  
+WARN  Decompiling 00443000, pcode error at 00443000: Unable to disassemble EXTERNAL block location: 00443000 (DecompileCallback)  
+WARN  Decompiling 00443014, pcode error at 00443014: Unable to disassemble EXTERNAL block location: 00443014 (DecompileCallback)  
+WARN  Decompiling 0044300c, pcode error at 0044300c: Unable to disassemble EXTERNAL block location: 0044300c (DecompileCallback)  
+INFO  ExportPcode.java> total duration: 4013 (GhidraScript)  
+INFO  ANALYZING changes made by post scripts: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming (HeadlessAnalyzer)  
+INFO  REPORT: Post-analysis succeeded for file: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming (HeadlessAnalyzer)  
+INFO  /easyroaming: file created (dbueno) (LocalFileSystem)  
+INFO  REPORT: Save succeeded for: /easyroaming (headless:/easyroaming) (HeadlessAnalyzer)  
+INFO  REPORT: Import succeeded (HeadlessAnalyzer)  
+SUT imported to '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/souffle/import'
+>> hint: index with 'ctadl --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/souffle/import index'

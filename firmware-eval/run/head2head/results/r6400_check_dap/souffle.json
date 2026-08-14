@@ -1,0 +1,32 @@
+{
+  "engine": "souffle",
+  "label": "r6400_check_dap",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/check_dap",
+  "binary_bytes": 15800,
+  "status": "ok",
+  "total_wall_s": 20.5,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.3,
+      "peak_fp_b": 585288032
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2589032
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2523496
+    }
+  },
+  "import_bytes": 10299699,
+  "index_bytes": 25886720,
+  "summaries": 78,
+  "sarif_paths": 0
+}

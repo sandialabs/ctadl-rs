@@ -1,0 +1,3 @@
+importing pcode artifact 'xr300_dap_logd' from /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/dap_logd
+running Ghidra to disassemble; console output -> /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_logd/rs/store/imports/xr300_dap_logd/ghidra.log
+'xr300_dap_logd': imported 589 function(s)

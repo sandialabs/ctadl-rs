@@ -1,0 +1,32 @@
+{
+  "engine": "souffle",
+  "label": "xr300_funjsq_conntime",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_conntime",
+  "binary_bytes": 95900,
+  "status": "ok",
+  "total_wall_s": 30.8,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 15.5,
+      "peak_fp_b": 1375098136
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 103694816
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2507112
+    }
+  },
+  "import_bytes": 62673021,
+  "index_bytes": 83951616,
+  "summaries": 154,
+  "sarif_paths": 0
+}

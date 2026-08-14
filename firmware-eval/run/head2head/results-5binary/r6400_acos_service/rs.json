@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "r6400_acos_service",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/acos_service",
+  "binary_bytes": 141796,
+  "status": "ok",
+  "total_wall_s": 26.5,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 15.6,
+      "peak_fp_b": 1552996760
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 34619896
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 20709880
+    }
+  },
+  "import_bytes": 23845583,
+  "index_bytes": 6382887,
+  "summaries": 310,
+  "sarif_paths": 72
+}

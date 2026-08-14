@@ -1,0 +1,888 @@
+[1/100] dir878_dlcfg_cgi/rs  (9K, 0 min elapsed)
+[dir878_dlcfg_cgi] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/etc_ro/lighttpd/www/web/HNAP1/dlcfg.cgi
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dlcfg_cgi/rs/store import -n dir878_dlcfg_cgi -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/etc_ro/lighttpd/www/web/HNAP1/dlcfg.cgi
+    [rs/import] ok 10.2s peak=0.63G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dlcfg_cgi/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json dir878_dlcfg_cgi
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dlcfg_cgi/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dlcfg_cgi/rs/results.sarif dir878_dlcfg_cgi
+    [rs/query] ok 5.1s peak=0.01G
+[dir878_dlcfg_cgi] rs: ok import=388919 index=65708 summaries=20 paths=0 total=22.9s
+[2/100] dir878_dlcfg_cgi/souffle  (9K, 0 min elapsed, eta 38 min)
+[dir878_dlcfg_cgi] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/etc_ro/lighttpd/www/web/HNAP1/dlcfg.cgi
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/etc_ro/lighttpd/www/web/HNAP1/dlcfg.cgi -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dlcfg_cgi/souffle/import -f
+    [sf/import] ok 10.3s peak=0.56G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dlcfg_cgi/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dlcfg_cgi/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dlcfg_cgi/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[dir878_dlcfg_cgi] souffle: ok import=2333569 index=16973824 summaries=10 paths=0 total=20.5s
+[3/100] ac15_logserver/rs  (9K, 1 min elapsed, eta 36 min)
+[ac15_logserver] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/logserver
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_logserver/rs/store import -n ac15_logserver -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/logserver
+    [rs/import] ok 10.2s peak=0.87G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_logserver/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json ac15_logserver
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_logserver/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_logserver/rs/results.sarif ac15_logserver
+    [rs/query] crash 5.1s peak=0.01G
+[ac15_logserver] rs: crash:query import=505792 index=117485 summaries=191 paths=None total=21.0s
+[4/100] ac15_logserver/souffle  (9K, 1 min elapsed, eta 35 min)
+[ac15_logserver] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/logserver
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/logserver -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_logserver/souffle/import -f
+    [sf/import] ok 10.2s peak=0.62G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_logserver/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_logserver/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_logserver/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[ac15_logserver] souffle: ok import=2945142 index=17170432 summaries=39 paths=0 total=20.5s
+[5/100] r6400_dlnad/rs  (9K, 1 min elapsed, eta 34 min)
+[r6400_dlnad] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dlnad/rs/store import -n r6400_dlnad -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad
+    [rs/import] ok 10.2s peak=0.62G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dlnad/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r6400_dlnad
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dlnad/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dlnad/rs/results.sarif r6400_dlnad
+    [rs/query] ok 5.1s peak=0.01G
+[r6400_dlnad] rs: ok import=656680 index=210762 summaries=71 paths=15 total=21.1s
+[6/100] r6400_dlnad/souffle  (9K, 2 min elapsed, eta 34 min)
+[r6400_dlnad] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dlnad/souffle/import -f
+    [sf/import] ok 10.2s peak=0.62G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dlnad/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dlnad/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dlnad/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r6400_dlnad] souffle: ok import=3806635 index=17563648 summaries=34 paths=2 total=20.5s
+[7/100] r7000_usbheartbeat/rs  (9K, 2 min elapsed, eta 33 min)
+[r7000_usbheartbeat] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/usbheartbeat
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_usbheartbeat/rs/store import -n r7000_usbheartbeat -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/usbheartbeat
+    [rs/import] ok 10.2s peak=0.68G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_usbheartbeat/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r7000_usbheartbeat
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_usbheartbeat/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_usbheartbeat/rs/results.sarif r7000_usbheartbeat
+    [rs/query] ok 5.1s peak=0.01G
+[r7000_usbheartbeat] rs: ok import=1149520 index=555385 summaries=56 paths=2 total=21.1s
+[8/100] r7000_usbheartbeat/souffle  (9K, 2 min elapsed, eta 33 min)
+[r7000_usbheartbeat] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/usbheartbeat
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/usbheartbeat -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_usbheartbeat/souffle/import -f
+    [sf/import] ok 10.2s peak=0.73G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_usbheartbeat/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_usbheartbeat/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_usbheartbeat/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r7000_usbheartbeat] souffle: ok import=6167866 index=22347776 summaries=20 paths=0 total=20.5s
+[9/100] xr300_ftpc/rs  (13K, 3 min elapsed, eta 32 min)
+[xr300_ftpc] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/ftpc
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_ftpc/rs/store import -n xr300_ftpc -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/ftpc
+    [rs/import] ok 10.2s peak=0.79G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_ftpc/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json xr300_ftpc
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_ftpc/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_ftpc/rs/results.sarif xr300_ftpc
+    [rs/query] ok 5.1s peak=0.01G
+[xr300_ftpc] rs: ok import=874270 index=179880 summaries=243 paths=0 total=21.1s
+[10/100] xr300_ftpc/souffle  (13K, 3 min elapsed, eta 32 min)
+[xr300_ftpc] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/ftpc
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/ftpc -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_ftpc/souffle/import -f
+    [sf/import] ok 10.2s peak=0.55G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_ftpc/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_ftpc/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_ftpc/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[xr300_ftpc] souffle: ok import=4979011 index=19398656 summaries=92 paths=0 total=20.5s
+[11/100] r7000_ftpc/rs  (13K, 4 min elapsed, eta 32 min)
+[r7000_ftpc] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/ftpc
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_ftpc/rs/store import -n r7000_ftpc -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/ftpc
+    [rs/import] ok 10.2s peak=0.75G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_ftpc/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r7000_ftpc
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_ftpc/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_ftpc/rs/results.sarif r7000_ftpc
+    [rs/query] ok 5.1s peak=0.01G
+[r7000_ftpc] rs: ok import=871341 index=179353 summaries=149 paths=0 total=21.1s
+[12/100] r7000_ftpc/souffle  (13K, 4 min elapsed, eta 31 min)
+[r7000_ftpc] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/ftpc
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/ftpc -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_ftpc/souffle/import -f
+    [sf/import] ok 10.2s peak=0.70G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_ftpc/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_ftpc/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_ftpc/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r7000_ftpc] souffle: ok import=4953278 index=19398656 summaries=92 paths=0 total=20.5s
+[13/100] w20e_logserver/rs  (13K, 4 min elapsed, eta 31 min)
+[w20e_logserver] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/logserver
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_logserver/rs/store import -n w20e_logserver -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/logserver
+    [rs/import] ok 10.2s peak=0.47G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_logserver/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json w20e_logserver
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_logserver/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_logserver/rs/results.sarif w20e_logserver
+    [rs/query] crash 5.1s peak=0.01G
+    [query] nonzero exit but SARIF written (no endpoints) -> ok
+[w20e_logserver] rs: ok import=694949 index=164359 summaries=256 paths=0 total=21.0s
+[14/100] w20e_logserver/souffle  (13K, 5 min elapsed, eta 31 min)
+[w20e_logserver] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/logserver
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/logserver -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_logserver/souffle/import -f
+    [sf/import] ok 10.2s peak=0.46G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_logserver/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_logserver/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_logserver/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[w20e_logserver] souffle: ok import=3985173 index=18087936 summaries=44 paths=0 total=20.5s
+[15/100] xr300_genie_cgi/rs  (14K, 5 min elapsed, eta 30 min)
+[xr300_genie_cgi] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_genie_cgi/rs/store import -n xr300_genie_cgi -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi
+    [rs/import] ok 10.2s peak=0.57G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_genie_cgi/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json xr300_genie_cgi
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_genie_cgi/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_genie_cgi/rs/results.sarif xr300_genie_cgi
+    [rs/query] ok 5.1s peak=0.01G
+[xr300_genie_cgi] rs: ok import=1390840 index=398716 summaries=112 paths=0 total=21.3s
+[16/100] xr300_genie_cgi/souffle  (14K, 5 min elapsed, eta 30 min)
+[xr300_genie_cgi] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_genie_cgi/souffle/import -f
+    [sf/import] ok 10.2s peak=0.53G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_genie_cgi/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_genie_cgi/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_genie_cgi/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[xr300_genie_cgi] souffle: ok import=8453963 index=23855104 summaries=63 paths=0 total=20.4s
+[17/100] r6400_check_dap/rs  (15K, 6 min elapsed, eta 29 min)
+[r6400_check_dap] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/check_dap
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_check_dap/rs/store import -n r6400_check_dap -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/check_dap
+    [rs/import] ok 10.3s peak=0.72G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_check_dap/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r6400_check_dap
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_check_dap/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_check_dap/rs/results.sarif r6400_check_dap
+    [rs/query] ok 5.1s peak=0.01G
+[r6400_check_dap] rs: ok import=1742910 index=519510 summaries=354 paths=4 total=21.6s
+[18/100] r6400_check_dap/souffle  (15K, 6 min elapsed, eta 29 min)
+[r6400_check_dap] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/check_dap
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/check_dap -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_check_dap/souffle/import -f
+    [sf/import] ok 10.3s peak=0.55G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_check_dap/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_check_dap/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_check_dap/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r6400_check_dap] souffle: ok import=10299699 index=25886720 summaries=78 paths=0 total=20.5s
+[19/100] r7000_genie_cgi/rs  (15K, 6 min elapsed, eta 29 min)
+[r7000_genie_cgi] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/rs/store import -n r7000_genie_cgi -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi
+    [rs/import] ok 10.3s peak=0.49G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r7000_genie_cgi
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/rs/results.sarif r7000_genie_cgi
+    [rs/query] ok 5.1s peak=0.01G
+[r7000_genie_cgi] rs: ok import=1392256 index=399663 summaries=112 paths=0 total=21.2s
+[20/100] r7000_genie_cgi/souffle  (15K, 7 min elapsed, eta 28 min)
+[r7000_genie_cgi] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/souffle/import -f
+    [sf/import] ok 10.3s peak=0.52G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r7000_genie_cgi] souffle: ok import=8471334 index=23920640 summaries=63 paths=0 total=20.5s
+[21/100] r6400_genie_cgi/rs  (16K, 7 min elapsed, eta 28 min)
+[r6400_genie_cgi] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_genie_cgi/rs/store import -n r6400_genie_cgi -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi
+    [rs/import] ok 10.2s peak=0.50G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_genie_cgi/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r6400_genie_cgi
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_genie_cgi/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_genie_cgi/rs/results.sarif r6400_genie_cgi
+    [rs/query] ok 5.1s peak=0.01G
+[r6400_genie_cgi] rs: ok import=1428291 index=409030 summaries=133 paths=0 total=21.2s
+[22/100] r6400_genie_cgi/souffle  (16K, 7 min elapsed, eta 28 min)
+[r6400_genie_cgi] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_genie_cgi/souffle/import -f
+    [sf/import] ok 10.2s peak=0.54G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_genie_cgi/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_genie_cgi/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_genie_cgi/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r6400_genie_cgi] souffle: ok import=8656018 index=24248320 summaries=69 paths=0 total=20.5s
+[23/100] r7000_hotplug2/rs  (17K, 8 min elapsed, eta 27 min)
+[r7000_hotplug2] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/hotplug2
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_hotplug2/rs/store import -n r7000_hotplug2 -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/hotplug2
+    [rs/import] ok 10.2s peak=0.63G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_hotplug2/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r7000_hotplug2
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_hotplug2/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_hotplug2/rs/results.sarif r7000_hotplug2
+    [rs/query] ok 5.1s peak=0.01G
+[r7000_hotplug2] rs: ok import=1872999 index=616813 summaries=167 paths=0 total=21.1s
+[24/100] r7000_hotplug2/souffle  (17K, 8 min elapsed, eta 27 min)
+[r7000_hotplug2] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/hotplug2
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/hotplug2 -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_hotplug2/souffle/import -f
+    [sf/import] ok 10.2s peak=0.61G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_hotplug2/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_hotplug2/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_hotplug2/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r7000_hotplug2] souffle: ok import=10953573 index=26804224 summaries=66 paths=0 total=20.5s
+[25/100] w20e_ucloud_ctl/rs  (18K, 8 min elapsed, eta 27 min)
+[w20e_ucloud_ctl] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/ucloud_ctl
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_ucloud_ctl/rs/store import -n w20e_ucloud_ctl -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/ucloud_ctl
+    [rs/import] ok 10.2s peak=0.59G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_ucloud_ctl/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json w20e_ucloud_ctl
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_ucloud_ctl/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_ucloud_ctl/rs/results.sarif w20e_ucloud_ctl
+    [rs/query] ok 5.1s peak=0.01G
+[w20e_ucloud_ctl] rs: ok import=624803 index=112602 summaries=102 paths=0 total=21.1s
+[26/100] w20e_ucloud_ctl/souffle  (18K, 9 min elapsed, eta 26 min)
+[w20e_ucloud_ctl] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/ucloud_ctl
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/ucloud_ctl -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_ucloud_ctl/souffle/import -f
+    [sf/import] ok 10.2s peak=0.38G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_ucloud_ctl/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_ucloud_ctl/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_ucloud_ctl/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[w20e_ucloud_ctl] souffle: ok import=3855741 index=17563648 summaries=45 paths=0 total=20.5s
+[27/100] r7000_arp_check/rs  (18K, 9 min elapsed, eta 26 min)
+[r7000_arp_check] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_arp_check/rs/store import -n r7000_arp_check -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check
+    [rs/import] ok 10.2s peak=0.89G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_arp_check/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r7000_arp_check
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_arp_check/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_arp_check/rs/results.sarif r7000_arp_check
+    [rs/query] ok 5.1s peak=0.02G
+[r7000_arp_check] rs: ok import=5047120 index=2072790 summaries=198 paths=36 total=21.1s
+[28/100] r7000_arp_check/souffle  (18K, 9 min elapsed, eta 26 min)
+[r7000_arp_check] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_arp_check/souffle/import -f
+    [sf/import] ok 10.3s peak=0.63G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_arp_check/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_arp_check/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_arp_check/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r7000_arp_check] souffle: ok import=31016146 index=48824320 summaries=76 paths=0 total=20.4s
+[29/100] dir878_ated/rs  (18K, 10 min elapsed, eta 25 min)
+[dir878_ated] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/ated
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_ated/rs/store import -n dir878_ated -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/ated
+    [rs/import] ok 15.5s peak=0.44G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_ated/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json dir878_ated
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_ated/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_ated/rs/results.sarif dir878_ated
+    [rs/query] ok 5.1s peak=0.01G
+[dir878_ated] rs: ok import=2388077 index=579998 summaries=733 paths=0 total=26.4s
+[30/100] dir878_ated/souffle  (18K, 10 min elapsed, eta 25 min)
+[dir878_ated] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/ated
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/ated -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_ated/souffle/import -f
+    [sf/import] ok 15.5s peak=0.47G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_ated/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_ated/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_ated/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[dir878_ated] souffle: ok import=14327266 index=32047104 summaries=29 paths=0 total=25.7s
+[31/100] xr300_arp_check/rs  (18K, 11 min elapsed, eta 25 min)
+[xr300_arp_check] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/arp_check
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_arp_check/rs/store import -n xr300_arp_check -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/arp_check
+    [rs/import] ok 10.2s peak=0.78G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_arp_check/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json xr300_arp_check
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_arp_check/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_arp_check/rs/results.sarif xr300_arp_check
+    [rs/query] ok 5.1s peak=0.02G
+[xr300_arp_check] rs: ok import=5070137 index=2077342 summaries=198 paths=36 total=21.2s
+[32/100] xr300_arp_check/souffle  (18K, 11 min elapsed, eta 25 min)
+[xr300_arp_check] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/arp_check
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/arp_check -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_arp_check/souffle/import -f
+    [sf/import] ok 10.3s peak=0.46G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_arp_check/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_arp_check/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_arp_check/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[xr300_arp_check] souffle: ok import=31129745 index=48955392 summaries=76 paths=0 total=20.5s
+[33/100] r6400_bd/rs  (22K, 11 min elapsed, eta 24 min)
+[r6400_bd] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/bd
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bd/rs/store import -n r6400_bd -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/bd
+    [rs/import] ok 10.3s peak=0.47G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bd/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r6400_bd
+    [rs/index] ok 5.1s peak=0.02G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bd/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bd/rs/results.sarif r6400_bd
+    [rs/query] ok 5.1s peak=0.02G
+[r6400_bd] rs: ok import=2615021 index=645757 summaries=117 paths=2 total=21.3s
+[34/100] r6400_bd/souffle  (22K, 12 min elapsed, eta 24 min)
+[r6400_bd] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/bd
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/bd -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bd/souffle/import -f
+    [sf/import] ok 10.2s peak=0.50G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bd/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bd/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bd/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r6400_bd] souffle: ok import=15911141 index=34013184 summaries=52 paths=2 total=20.4s
+[35/100] r7000_bd/rs  (22K, 12 min elapsed, eta 23 min)
+[r7000_bd] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/bd
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bd/rs/store import -n r7000_bd -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/bd
+    [rs/import] ok 10.2s peak=0.43G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bd/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r7000_bd
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bd/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bd/rs/results.sarif r7000_bd
+    [rs/query] ok 5.1s peak=0.02G
+[r7000_bd] rs: ok import=2631620 index=639599 summaries=117 paths=2 total=21.1s
+[36/100] r7000_bd/souffle  (22K, 12 min elapsed, eta 23 min)
+[r7000_bd] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/bd
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/bd -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bd/souffle/import -f
+    [sf/import] ok 10.2s peak=0.76G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bd/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bd/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bd/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r7000_bd] souffle: ok import=15894928 index=34013184 summaries=52 paths=2 total=20.5s
+[37/100] dir878_nvram_daemon/rs  (23K, 13 min elapsed, eta 23 min)
+[dir878_nvram_daemon] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/nvram_daemon
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_nvram_daemon/rs/store import -n dir878_nvram_daemon -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/nvram_daemon
+    [rs/import] ok 15.5s peak=0.71G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_nvram_daemon/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json dir878_nvram_daemon
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_nvram_daemon/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_nvram_daemon/rs/results.sarif dir878_nvram_daemon
+    [rs/query] ok 5.1s peak=0.01G
+[dir878_nvram_daemon] rs: ok import=2389731 index=229185 summaries=159 paths=0 total=26.3s
+[38/100] dir878_nvram_daemon/souffle  (23K, 13 min elapsed, eta 22 min)
+[dir878_nvram_daemon] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/nvram_daemon
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/nvram_daemon -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_nvram_daemon/souffle/import -f
+    [sf/import] ok 15.5s peak=0.63G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_nvram_daemon/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_nvram_daemon/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_nvram_daemon/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[dir878_nvram_daemon] souffle: ok import=16676092 index=31850496 summaries=71 paths=0 total=25.7s
+[39/100] r7000_checkDullWan/rs  (24K, 14 min elapsed, eta 22 min)
+[r7000_checkDullWan] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/checkDullWan
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/rs/store import -n r7000_checkDullWan -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/checkDullWan
+    [rs/import] ok 10.2s peak=0.87G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r7000_checkDullWan
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/rs/results.sarif r7000_checkDullWan
+    [rs/query] ok 5.1s peak=0.02G
+[r7000_checkDullWan] rs: ok import=2632277 index=661616 summaries=172 paths=4 total=21.1s
+[40/100] r7000_checkDullWan/souffle  (24K, 14 min elapsed, eta 22 min)
+[r7000_checkDullWan] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/checkDullWan
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/checkDullWan -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/souffle/import -f
+    [sf/import] ok 10.2s peak=0.54G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r7000_checkDullWan] souffle: ok import=14822000 index=33554432 summaries=41 paths=0 total=20.5s
+[41/100] ac15_inadyn/rs  (26K, 14 min elapsed, eta 21 min)
+[ac15_inadyn] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/inadyn
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_inadyn/rs/store import -n ac15_inadyn -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/inadyn
+    [rs/import] ok 10.2s peak=0.59G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_inadyn/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json ac15_inadyn
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_inadyn/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_inadyn/rs/results.sarif ac15_inadyn
+    [rs/query] ok 5.1s peak=0.02G
+[ac15_inadyn] rs: ok import=2273132 index=814709 summaries=168 paths=0 total=21.1s
+[42/100] ac15_inadyn/souffle  (26K, 15 min elapsed, eta 21 min)
+[ac15_inadyn] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/inadyn
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/inadyn -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_inadyn/souffle/import -f
+    [sf/import] ok 10.2s peak=0.53G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_inadyn/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] crash 5.1s peak=0.00G
+[ac15_inadyn] souffle: crash:index import=13298141 index=None summaries=None paths=None total=15.4s
+[43/100] dir878_fota_config/rs  (28K, 15 min elapsed, eta 21 min)
+[dir878_fota_config] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/fota_config
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_fota_config/rs/store import -n dir878_fota_config -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/fota_config
+    [rs/import] ok 10.2s peak=0.57G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_fota_config/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json dir878_fota_config
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_fota_config/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_fota_config/rs/results.sarif dir878_fota_config
+    [rs/query] ok 5.1s peak=0.02G
+[dir878_fota_config] rs: ok import=2188614 index=664514 summaries=80 paths=0 total=21.1s
+[44/100] dir878_fota_config/souffle  (28K, 15 min elapsed, eta 20 min)
+[dir878_fota_config] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/fota_config
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/fota_config -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_fota_config/souffle/import -f
+    [sf/import] ok 10.2s peak=0.57G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_fota_config/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_fota_config/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_fota_config/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[dir878_fota_config] souffle: ok import=13852269 index=30408704 summaries=30 paths=0 total=20.4s
+[45/100] xr300_dap_daemon/rs  (30K, 16 min elapsed, eta 20 min)
+[xr300_dap_daemon] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/dap_daemon
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_daemon/rs/store import -n xr300_dap_daemon -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/dap_daemon
+    [rs/import] ok 10.2s peak=0.61G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_daemon/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json xr300_dap_daemon
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_daemon/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_daemon/rs/results.sarif xr300_dap_daemon
+    [rs/query] ok 5.1s peak=0.02G
+[xr300_dap_daemon] rs: ok import=2787468 index=886949 summaries=310 paths=0 total=21.1s
+[46/100] xr300_dap_daemon/souffle  (30K, 16 min elapsed, eta 20 min)
+[xr300_dap_daemon] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/dap_daemon
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/dap_daemon -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_daemon/souffle/import -f
+    [sf/import] ok 10.2s peak=0.66G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_daemon/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_daemon/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_daemon/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[xr300_dap_daemon] souffle: ok import=16501668 index=34537472 summaries=98 paths=0 total=20.5s
+[47/100] ac15_acsd/rs  (38K, 16 min elapsed, eta 19 min)
+[ac15_acsd] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/usr/sbin/acsd
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_acsd/rs/store import -n ac15_acsd -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/usr/sbin/acsd
+    [rs/import] ok 10.2s peak=0.71G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_acsd/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json ac15_acsd
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_acsd/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_acsd/rs/results.sarif ac15_acsd
+    [rs/query] ok 5.1s peak=0.02G
+[ac15_acsd] rs: ok import=3069929 index=678328 summaries=530 paths=0 total=21.1s
+[48/100] ac15_acsd/souffle  (38K, 17 min elapsed, eta 19 min)
+[ac15_acsd] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/usr/sbin/acsd
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/usr/sbin/acsd -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_acsd/souffle/import -f
+    [sf/import] ok 10.2s peak=0.49G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_acsd/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_acsd/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_acsd/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[ac15_acsd] souffle: ok import=17393814 index=35782656 summaries=141 paths=0 total=20.5s
+[49/100] w20e_portal/rs  (50K, 17 min elapsed, eta 18 min)
+[w20e_portal] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/portal
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_portal/rs/store import -n w20e_portal -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/portal
+    [rs/import] ok 15.5s peak=0.94G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_portal/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json w20e_portal
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_portal/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_portal/rs/results.sarif w20e_portal
+    [rs/query] ok 5.1s peak=0.01G
+[w20e_portal] rs: ok import=4064769 index=847427 summaries=268 paths=0 total=26.4s
+[50/100] w20e_portal/souffle  (50K, 17 min elapsed, eta 18 min)
+[w20e_portal] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/portal
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/portal -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_portal/souffle/import -f
+    [sf/import] ok 15.3s peak=0.75G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_portal/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_portal/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_portal/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[w20e_portal] souffle: ok import=23719118 index=41549824 summaries=83 paths=0 total=25.5s
+[51/100] r7000_bftpd/rs  (51K, 18 min elapsed, eta 18 min)
+[r7000_bftpd] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/bftpd
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/rs/store import -n r7000_bftpd -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/bftpd
+    [rs/import] ok 15.5s peak=1.38G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r7000_bftpd
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/rs/results.sarif r7000_bftpd
+    [rs/query] ok 5.1s peak=0.02G
+[r7000_bftpd] rs: ok import=7879143 index=2309891 summaries=1900 paths=2 total=26.4s
+[52/100] r7000_bftpd/souffle  (51K, 18 min elapsed, eta 18 min)
+[r7000_bftpd] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/bftpd
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/bftpd -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/souffle/import -f
+    [sf/import] ok 15.5s peak=0.51G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r7000_bftpd] souffle: ok import=46950204 index=67371008 summaries=146 paths=0 total=25.8s
+[53/100] r6400_bftpd/rs  (51K, 19 min elapsed, eta 17 min)
+[r6400_bftpd] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/bftpd
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bftpd/rs/store import -n r6400_bftpd -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/bftpd
+    [rs/import] ok 15.5s peak=1.37G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bftpd/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r6400_bftpd
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bftpd/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bftpd/rs/results.sarif r6400_bftpd
+    [rs/query] ok 5.1s peak=0.02G
+[r6400_bftpd] rs: ok import=7891479 index=2317538 summaries=1907 paths=2 total=26.4s
+[54/100] r6400_bftpd/souffle  (51K, 19 min elapsed, eta 17 min)
+[r6400_bftpd] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/bftpd
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/bftpd -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bftpd/souffle/import -f
+    [sf/import] ok 15.5s peak=0.51G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bftpd/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bftpd/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bftpd/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r6400_bftpd] souffle: ok import=47033764 index=67502080 summaries=146 paths=0 total=25.8s
+[55/100] r7000_circled/rs  (56K, 20 min elapsed, eta 17 min)
+[r7000_circled] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/bin/circled
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_circled/rs/store import -n r7000_circled -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/bin/circled
+    [rs/import] ok 15.8s peak=1.33G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_circled/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r7000_circled
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_circled/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_circled/rs/results.sarif r7000_circled
+    [rs/query] ok 5.1s peak=0.02G
+[r7000_circled] rs: ok import=5104889 index=1006810 summaries=476 paths=23 total=26.6s
+[56/100] r7000_circled/souffle  (56K, 20 min elapsed, eta 16 min)
+[r7000_circled] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/bin/circled
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/bin/circled -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_circled/souffle/import -f
+    [sf/import] ok 15.6s peak=1.36G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_circled/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_circled/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_circled/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r7000_circled] souffle: ok import=29156627 index=48431104 summaries=3199 paths=0 total=25.9s
+[57/100] r7000_xagent_control/rs  (80K, 20 min elapsed, eta 16 min)
+[r7000_xagent_control] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/xagent/xagent_control
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_xagent_control/rs/store import -n r7000_xagent_control -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/xagent/xagent_control
+    [rs/import] ok 15.5s peak=1.26G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_xagent_control/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r7000_xagent_control
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_xagent_control/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_xagent_control/rs/results.sarif r7000_xagent_control
+    [rs/query] ok 5.1s peak=0.01G
+[r7000_xagent_control] rs: ok import=7932403 index=1643931 summaries=1130 paths=2 total=26.4s
+[58/100] r7000_xagent_control/souffle  (80K, 21 min elapsed, eta 16 min)
+[r7000_xagent_control] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/xagent/xagent_control
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/xagent/xagent_control -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_xagent_control/souffle/import -f
+    [sf/import] ok 15.5s peak=1.15G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_xagent_control/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] crash 5.1s peak=0.00G
+[r7000_xagent_control] souffle: crash:index import=45284786 index=None summaries=None paths=None total=20.6s
+[59/100] ac15_app_data_center/rs  (82K, 21 min elapsed, eta 15 min)
+[ac15_app_data_center] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/usr/bin/app_data_center
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_app_data_center/rs/store import -n ac15_app_data_center -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/usr/bin/app_data_center
+    [rs/import] ok 15.5s peak=1.24G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_app_data_center/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json ac15_app_data_center
+    [rs/index] ok 5.1s peak=0.01G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_app_data_center/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_app_data_center/rs/results.sarif ac15_app_data_center
+    [rs/query] ok 5.1s peak=0.02G
+[ac15_app_data_center] rs: ok import=7929306 index=2392073 summaries=4766 paths=0 total=26.3s
+[60/100] ac15_app_data_center/souffle  (82K, 22 min elapsed, eta 15 min)
+[ac15_app_data_center] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/usr/bin/app_data_center
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/usr/bin/app_data_center -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_app_data_center/souffle/import -f
+    [sf/import] ok 15.5s peak=0.92G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_app_data_center/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_app_data_center/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_app_data_center/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[ac15_app_data_center] souffle: ok import=44733651 index=66912256 summaries=439 paths=0 total=25.8s
+[61/100] w20e_dhcpcd/rs  (84K, 22 min elapsed, eta 15 min)
+[w20e_dhcpcd] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/dhcpcd
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcpcd/rs/store import -n w20e_dhcpcd -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/dhcpcd
+    [rs/import] ok 15.6s peak=1.30G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcpcd/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json w20e_dhcpcd
+    [rs/index] ok 5.1s peak=0.02G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcpcd/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcpcd/rs/results.sarif w20e_dhcpcd
+    [rs/query] ok 5.1s peak=0.02G
+[w20e_dhcpcd] rs: ok import=13408691 index=3391252 summaries=3903 paths=0 total=26.5s
+[62/100] w20e_dhcpcd/souffle  (84K, 23 min elapsed, eta 14 min)
+[w20e_dhcpcd] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/dhcpcd
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/dhcpcd -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcpcd/souffle/import -f
+    [sf/import] ok 15.6s peak=1.32G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcpcd/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 10.2s peak=0.09G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcpcd/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcpcd/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[w20e_dhcpcd] souffle: ok import=78431663 index=100794368 summaries=107 paths=0 total=30.9s
+[63/100] dir878_dxml/rs  (92K, 23 min elapsed, eta 14 min)
+[dir878_dxml] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/dxml
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/rs/store import -n dir878_dxml -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/dxml
+    [rs/import] ok 21.0s peak=1.45G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json dir878_dxml
+    [rs/index] ok 5.1s peak=0.02G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/rs/results.sarif dir878_dxml
+    [rs/query] ok 5.1s peak=0.01G
+[dir878_dxml] rs: ok import=10829045 index=2423215 summaries=2905 paths=0 total=31.8s
+[64/100] dir878_dxml/souffle  (92K, 24 min elapsed, eta 14 min)
+[dir878_dxml] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/dxml
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/dxml -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/souffle/import -f
+    [sf/import] ok 20.9s peak=1.36G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 10.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[dir878_dxml] souffle: ok import=66230417 index=89653248 summaries=196 paths=0 total=36.2s
+[65/100] xr300_funjsq_conntime/rs  (93K, 24 min elapsed, eta 14 min)
+[xr300_funjsq_conntime] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_conntime
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_conntime/rs/store import -n xr300_funjsq_conntime -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_conntime
+    [rs/import] ok 15.5s peak=1.24G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_conntime/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json xr300_funjsq_conntime
+    [rs/index] ok 5.1s peak=0.02G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_conntime/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_conntime/rs/results.sarif xr300_funjsq_conntime
+    [rs/query] ok 5.1s peak=0.01G
+[xr300_funjsq_conntime] rs: ok import=10628952 index=1937025 summaries=614 paths=0 total=26.4s
+[66/100] xr300_funjsq_conntime/souffle  (93K, 25 min elapsed, eta 13 min)
+[xr300_funjsq_conntime] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_conntime
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_conntime -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_conntime/souffle/import -f
+    [sf/import] ok 15.5s peak=1.28G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_conntime/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 10.2s peak=0.10G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_conntime/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_conntime/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[xr300_funjsq_conntime] souffle: ok import=62673021 index=83951616 summaries=154 paths=0 total=30.8s
+[67/100] r6400_readycloud_control_cgi/rs  (95K, 25 min elapsed, eta 13 min)
+[r6400_readycloud_control_cgi] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_readycloud_control_cgi/rs/store import -n r6400_readycloud_control_cgi -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi
+    [rs/import] ok 21.0s peak=2.47G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_readycloud_control_cgi/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r6400_readycloud_control_cgi
+    [rs/index] ok 15.2s peak=1.73G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_readycloud_control_cgi/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_readycloud_control_cgi/rs/results.sarif r6400_readycloud_control_cgi
+    [rs/query] ok 15.2s peak=1.13G
+[r6400_readycloud_control_cgi] rs: ok import=57093619 index=61741290 summaries=452 paths=0 total=52.1s
+[68/100] r6400_readycloud_control_cgi/souffle  (95K, 26 min elapsed, eta 13 min)
+[r6400_readycloud_control_cgi] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_readycloud_control_cgi/souffle/import -f
+    [sf/import] ok 20.9s peak=2.59G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_readycloud_control_cgi/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 40.6s peak=0.53G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_readycloud_control_cgi/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_readycloud_control_cgi/souffle/results.sarif
+    [sf/query] ok 15.2s peak=0.34G
+[r6400_readycloud_control_cgi] souffle: ok import=309693485 index=378339328 summaries=348 paths=0 total=76.8s
+[69/100] r7000_readycloud_control_cgi/rs  (96K, 27 min elapsed, eta 13 min)
+[r7000_readycloud_control_cgi] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_readycloud_control_cgi/rs/store import -n r7000_readycloud_control_cgi -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi
+    [rs/import] ok 21.0s peak=2.73G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_readycloud_control_cgi/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r7000_readycloud_control_cgi
+    [rs/index] ok 15.2s peak=1.89G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_readycloud_control_cgi/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_readycloud_control_cgi/rs/results.sarif r7000_readycloud_control_cgi
+    [rs/query] ok 15.2s peak=1.12G
+[r7000_readycloud_control_cgi] rs: ok import=57007871 index=62094215 summaries=451 paths=0 total=52.1s
+[70/100] r7000_readycloud_control_cgi/souffle  (96K, 28 min elapsed, eta 13 min)
+[r7000_readycloud_control_cgi] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_readycloud_control_cgi/souffle/import -f
+    [sf/import] ok 20.9s peak=2.54G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_readycloud_control_cgi/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 40.6s peak=0.53G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_readycloud_control_cgi/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_readycloud_control_cgi/souffle/results.sarif
+    [sf/query] ok 10.2s peak=0.33G
+[r7000_readycloud_control_cgi] souffle: ok import=310941281 index=379387904 summaries=345 paths=0 total=71.7s
+[71/100] r6400_rc/rs  (106K, 29 min elapsed, eta 13 min)
+[r6400_rc] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/rs/store import -n r6400_rc -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc
+    [rs/import] ok 15.6s peak=1.33G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r6400_rc
+    [rs/index] ok 5.1s peak=0.04G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/rs/results.sarif r6400_rc
+    [rs/query] ok 5.1s peak=0.02G
+[r6400_rc] rs: ok import=32315273 index=13853138 summaries=290 paths=29 total=26.5s
+[72/100] r6400_rc/souffle  (106K, 30 min elapsed, eta 12 min)
+[r6400_rc] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/souffle/import -f
+    [sf/import] ok 15.6s peak=1.41G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 20.3s peak=0.21G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r6400_rc] souffle: ok import=182438830 index=211156992 summaries=150 paths=0 total=41.1s
+[73/100] r7000_rc/rs  (112K, 31 min elapsed, eta 12 min)
+[r7000_rc] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/rc
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_rc/rs/store import -n r7000_rc -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/rc
+    [rs/import] ok 20.6s peak=1.40G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_rc/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r7000_rc
+    [rs/index] ok 5.1s peak=0.04G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_rc/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_rc/rs/results.sarif r7000_rc
+    [rs/query] ok 5.1s peak=0.02G
+[r7000_rc] rs: ok import=35611051 index=15862030 summaries=298 paths=31 total=31.6s
+[74/100] r7000_rc/souffle  (112K, 31 min elapsed, eta 11 min)
+[r7000_rc] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/rc
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/rc -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_rc/souffle/import -f
+    [sf/import] ok 15.6s peak=1.38G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_rc/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 20.3s peak=0.20G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_rc/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_rc/souffle/results.sarif
+    [sf/query] ok 10.2s peak=0.06G
+[r7000_rc] souffle: ok import=202864353 index=232914944 summaries=157 paths=0 total=46.2s
+[75/100] xr300_acos_service/rs  (135K, 32 min elapsed, eta 11 min)
+[xr300_acos_service] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/sbin/acos_service
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_acos_service/rs/store import -n xr300_acos_service -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/sbin/acos_service
+    [rs/import] ok 15.6s peak=1.43G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_acos_service/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json xr300_acos_service
+    [rs/index] ok 5.1s peak=0.03G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_acos_service/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_acos_service/rs/results.sarif xr300_acos_service
+    [rs/query] ok 5.1s peak=0.02G
+[xr300_acos_service] rs: ok import=22877585 index=6166323 summaries=297 paths=64 total=26.5s
+[76/100] xr300_acos_service/souffle  (135K, 32 min elapsed, eta 11 min)
+[xr300_acos_service] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/sbin/acos_service
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/sbin/acos_service -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_acos_service/souffle/import -f
+    [sf/import] ok 15.6s peak=1.58G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_acos_service/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 15.2s peak=0.15G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_acos_service/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_acos_service/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[xr300_acos_service] souffle: ok import=127236566 index=156237824 summaries=117 paths=2 total=36.0s
+[77/100] r6400_acos_service/rs  (138K, 33 min elapsed, eta 10 min)
+[r6400_acos_service] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/acos_service
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/rs/store import -n r6400_acos_service -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/acos_service
+    [rs/import] ok 15.6s peak=1.44G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r6400_acos_service
+    [rs/index] ok 5.1s peak=0.03G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/rs/results.sarif r6400_acos_service
+    [rs/query] ok 5.1s peak=0.02G
+[r6400_acos_service] rs: ok import=23843073 index=6389430 summaries=310 paths=72 total=26.6s
+[78/100] r6400_acos_service/souffle  (138K, 33 min elapsed, eta 10 min)
+[r6400_acos_service] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/acos_service
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/acos_service -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/souffle/import -f
+    [sf/import] ok 15.6s peak=1.46G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 15.3s peak=0.16G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[r6400_acos_service] souffle: ok import=132261520 index=161873920 summaries=128 paths=2 total=36.0s
+[79/100] dir878_goahead/rs  (144K, 34 min elapsed, eta 10 min)
+[dir878_goahead] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/goahead
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/rs/store import -n dir878_goahead -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/goahead
+    [rs/import] ok 20.6s peak=1.28G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json dir878_goahead
+    [rs/index] ok 5.1s peak=0.02G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/rs/results.sarif dir878_goahead
+    [rs/query] ok 5.1s peak=0.01G
+[dir878_goahead] rs: ok import=15062712 index=2994415 summaries=9817 paths=0 total=31.4s
+[80/100] dir878_goahead/souffle  (144K, 34 min elapsed, eta 9 min)
+[dir878_goahead] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/goahead
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/goahead -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/souffle/import -f
+    [sf/import] ok 15.6s peak=1.05G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 10.2s peak=0.09G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[dir878_goahead] souffle: ok import=93656334 index=114884608 summaries=256 paths=0 total=30.9s
+[81/100] xr300_funjsq_httpd/rs  (162K, 35 min elapsed, eta 9 min)
+[xr300_funjsq_httpd] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_httpd
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_httpd/rs/store import -n xr300_funjsq_httpd -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_httpd
+    [rs/import] ok 20.8s peak=1.22G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_httpd/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json xr300_funjsq_httpd
+    [rs/index] ok 5.1s peak=0.02G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_httpd/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_httpd/rs/results.sarif xr300_funjsq_httpd
+    [rs/query] ok 5.1s peak=0.01G
+[xr300_funjsq_httpd] rs: ok import=14072491 index=3428845 summaries=1337 paths=0 total=31.7s
+[82/100] xr300_funjsq_httpd/souffle  (162K, 36 min elapsed, eta 8 min)
+[xr300_funjsq_httpd] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_httpd
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_httpd -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_httpd/souffle/import -f
+    [sf/import] ok 20.4s peak=1.24G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_httpd/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 10.2s peak=0.09G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_httpd/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_httpd/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[xr300_funjsq_httpd] souffle: ok import=80236155 index=105578496 summaries=363 paths=0 total=35.8s
+[83/100] w20e_dhcps/rs  (170K, 36 min elapsed, eta 8 min)
+[w20e_dhcps] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/dhcps
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcps/rs/store import -n w20e_dhcps -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/dhcps
+    [rs/import] ok 20.7s peak=1.54G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcps/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json w20e_dhcps
+    [rs/index] ok 20.3s peak=0.98G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcps/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcps/rs/results.sarif w20e_dhcps
+    [rs/query] ok 10.1s peak=1.26G
+[w20e_dhcps] rs: ok import=39002553 index=18873756 summaries=37636 paths=4 total=51.9s
+[84/100] w20e_dhcps/souffle  (170K, 37 min elapsed, eta 8 min)
+[w20e_dhcps] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/dhcps
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/dhcps -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcps/souffle/import -f
+    [sf/import] ok 20.8s peak=1.75G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcps/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 25.4s peak=0.38G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcps/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_dhcps/souffle/results.sarif
+    [sf/query] ok 10.2s peak=0.40G
+[w20e_dhcps] souffle: ok import=220803934 index=305987584 summaries=379 paths=0 total=56.5s
+[85/100] ac15_business_proc/rs  (171K, 38 min elapsed, eta 7 min)
+[ac15_business_proc] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/business_proc
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_business_proc/rs/store import -n ac15_business_proc -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/business_proc
+    [rs/import] ok 20.8s peak=1.39G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_business_proc/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json ac15_business_proc
+    [rs/index] ok 5.1s peak=0.02G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_business_proc/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_business_proc/rs/results.sarif ac15_business_proc
+    [rs/query] ok 5.1s peak=0.01G
+[ac15_business_proc] rs: ok import=15285311 index=2942093 summaries=537 paths=0 total=31.6s
+[86/100] ac15_business_proc/souffle  (171K, 38 min elapsed, eta 7 min)
+[ac15_business_proc] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/business_proc
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/business_proc -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_business_proc/souffle/import -f
+    [sf/import] ok 20.8s peak=1.33G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_business_proc/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 10.2s peak=0.09G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_business_proc/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_business_proc/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[ac15_business_proc] souffle: ok import=90384620 index=113311744 summaries=234 paths=0 total=36.2s
+[87/100] ac18_business_proc/rs  (171K, 39 min elapsed, eta 6 min)
+[ac18_business_proc] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/business_proc
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_business_proc/rs/store import -n ac18_business_proc -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/business_proc
+    [rs/import] ok 20.7s peak=1.34G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_business_proc/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json ac18_business_proc
+    [rs/index] ok 5.1s peak=0.02G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_business_proc/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_business_proc/rs/results.sarif ac18_business_proc
+    [rs/query] ok 5.1s peak=0.01G
+[ac18_business_proc] rs: ok import=15281239 index=2940364 summaries=537 paths=0 total=31.6s
+[88/100] ac18_business_proc/souffle  (171K, 40 min elapsed, eta 6 min)
+[ac18_business_proc] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/business_proc
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/business_proc -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_business_proc/souffle/import -f
+    [sf/import] ok 20.8s peak=1.35G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_business_proc/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 10.2s peak=0.10G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_business_proc/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_business_proc/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[ac18_business_proc] souffle: ok import=90384446 index=113180672 summaries=234 paths=0 total=36.1s
+[89/100] ac18_dhttpd/rs  (207K, 40 min elapsed, eta 5 min)
+[ac18_dhttpd] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/dhttpd
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_dhttpd/rs/store import -n ac18_dhttpd -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/dhttpd
+    [rs/import] ok 20.8s peak=1.96G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_dhttpd/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json ac18_dhttpd
+    [rs/index] ok 5.1s peak=0.02G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_dhttpd/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_dhttpd/rs/results.sarif ac18_dhttpd
+    [rs/query] ok 5.1s peak=0.01G
+[ac18_dhttpd] rs: ok import=16578856 index=3278782 summaries=13151 paths=0 total=31.7s
+[90/100] ac18_dhttpd/souffle  (207K, 41 min elapsed, eta 5 min)
+[ac18_dhttpd] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/dhttpd
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/dhttpd -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_dhttpd/souffle/import -f
+    [sf/import] ok 20.8s peak=1.97G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_dhttpd/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 10.2s peak=0.17G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_dhttpd/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_dhttpd/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[ac18_dhttpd] souffle: ok import=93724758 index=122683392 summaries=523 paths=0 total=36.1s
+[91/100] dir878_easyroaming/rs  (258K, 41 min elapsed, eta 5 min)
+[dir878_easyroaming] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/rs/store import -n dir878_easyroaming -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming
+    [rs/import] ok 20.8s peak=1.22G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json dir878_easyroaming
+    [rs/index] ok 5.1s peak=0.02G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/rs/results.sarif dir878_easyroaming
+    [rs/query] ok 5.1s peak=0.01G
+[dir878_easyroaming] rs: ok import=10782388 index=1557875 summaries=1483 paths=0 total=31.6s
+[92/100] dir878_easyroaming/souffle  (258K, 42 min elapsed, eta 4 min)
+[dir878_easyroaming] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/souffle/import -f
+    [sf/import] ok 20.7s peak=1.27G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 5.1s peak=0.00G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[dir878_easyroaming] souffle: ok import=68659811 index=87818240 summaries=450 paths=0 total=30.9s
+[93/100] xr300_funjsq_detect/rs  (286K, 42 min elapsed, eta 4 min)
+[xr300_funjsq_detect] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_detect
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_detect/rs/store import -n xr300_funjsq_detect -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_detect
+    [rs/import] ok 26.1s peak=2.20G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_detect/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json xr300_funjsq_detect
+    [rs/index] ok 15.2s peak=0.70G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_detect/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_detect/rs/results.sarif xr300_funjsq_detect
+    [rs/query] ok 5.1s peak=0.01G
+[xr300_funjsq_detect] rs: ok import=34368193 index=13714332 summaries=53706 paths=0 total=47.1s
+[94/100] xr300_funjsq_detect/souffle  (286K, 43 min elapsed, eta 3 min)
+[xr300_funjsq_detect] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_detect
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_detect -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_detect/souffle/import -f
+    [sf/import] ok 26.0s peak=2.52G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_detect/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 20.3s peak=0.24G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_detect/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_detect/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[xr300_funjsq_detect] souffle: ok import=194406020 index=233963520 summaries=419 paths=0 total=51.5s
+[95/100] r6400_dbus_daemon/rs  (303K, 44 min elapsed, eta 3 min)
+[r6400_dbus_daemon] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/bin/dbus-daemon
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dbus_daemon/rs/store import -n r6400_dbus_daemon -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/bin/dbus-daemon
+    [rs/import] ok 25.9s peak=1.74G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dbus_daemon/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json r6400_dbus_daemon
+    [rs/index] ok 15.2s peak=1.81G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dbus_daemon/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dbus_daemon/rs/results.sarif r6400_dbus_daemon
+    [rs/query] ok 5.1s peak=0.01G
+[r6400_dbus_daemon] rs: ok import=29403111 index=6045788 summaries=6039 paths=0 total=46.9s
+[96/100] r6400_dbus_daemon/souffle  (303K, 45 min elapsed, eta 2 min)
+[r6400_dbus_daemon] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/bin/dbus-daemon
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/bin/dbus-daemon -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dbus_daemon/souffle/import -f
+    [sf/import] ok 25.9s peak=1.97G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dbus_daemon/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] crash 15.2s peak=0.14G
+[r6400_dbus_daemon] souffle: crash:index import=169132285 index=None summaries=None paths=None total=41.2s
+[97/100] ac15_netctrl/rs  (310K, 45 min elapsed, eta 2 min)
+[ac15_netctrl] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/netctrl
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/rs/store import -n ac15_netctrl -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/netctrl
+    [rs/import] ok 25.9s peak=1.91G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json ac15_netctrl
+    [rs/index] ok 5.1s peak=0.04G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/rs/results.sarif ac15_netctrl
+    [rs/query] ok 5.1s peak=0.02G
+[ac15_netctrl] rs: ok import=32513129 index=7363375 summaries=3790 paths=2 total=36.9s
+[98/100] ac15_netctrl/souffle  (310K, 46 min elapsed, eta 1 min)
+[ac15_netctrl] souffle: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/netctrl
+    [sf/import] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle import pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/netctrl -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/souffle/import -f
+    [sf/import] ok 26.1s peak=1.61G
+    [sf/index] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/souffle/import index -j 10 -f --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json
+    [sf/index] ok 20.3s peak=0.24G
+    [sf/query] /nix/store/rc7k8x5zma0cx4v928hk45dc0fg2vl63-ctadl-souffle/bin/ctadl-souffle --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/souffle/import query /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json -j 10 --format sarif -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/souffle/results.sarif
+    [sf/query] ok 5.1s peak=0.00G
+[ac15_netctrl] souffle: ok import=190706701 index=227475456 summaries=409 paths=0 total=51.5s
+[99/100] xr300_dap_logd/rs  (419K, 47 min elapsed, eta 1 min)
+[xr300_dap_logd] rs: /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/dap_logd
+    [rs/import] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_logd/rs/store import -n xr300_dap_logd -l pcode /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/dap_logd
+    [rs/import] ok 31.2s peak=1.31G
+    [rs/index] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_logd/rs/store index --no-default-models --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.rs.json xr300_dap_logd
+    [rs/index] ok 5.1s peak=0.04G
+    [rs/query] /nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_logd/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_logd/rs/results.sarif xr300_dap_logd
+    [rs/query] ok 5.1s peak=0.02G
+[xr300_dap_logd] rs: ok import=36487363 index=9320611 summaries=1541 paths=0 total=42.0s
+[100/100] SKIP xr300_dap_logd/souffle (done)
+campaign done in 47.7 min

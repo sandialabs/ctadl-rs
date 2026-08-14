@@ -2,48 +2,65 @@
 
 **Date:** 2026-08-13 · **Old:** `ctadl-souffle` 0.14.1 (Python + Souffle 2.3, `../ctadl`) ·
 **New:** `ctadl-rs` 0.1.2 (this repo, branch `head-to-head-vs-ctadl-souffle-firmware`)
-**Corpus:** 5 binaries from `operation-mango-public/firmware/7_firmware`
+**Corpus:** 50 binaries from `operation-mango-public/firmware/7_firmware`
 **Everything lives in** `firmware-eval/run/head2head/`; raw data in `firmware-eval/run/head2head/results/`.
+
+*Supersedes the earlier 5-binary run, kept at `firmware-eval/run/head2head/results-5binary/`.*
 
 ---
 
 ## TL;DR
 
-On the same 5 firmware binaries, with the **same models**, the **same Ghidra**, and
-each engine's own defaults suppressed:
+On 50 firmware binaries, with the **same models**, the **same Ghidra**, and each
+engine's own defaults suppressed — 47 of which both engines finished:
 
 | | old (souffle) | new (rs) | old / new |
 |---|--:|--:|--:|
-| import size, total | 573 MB | 99 MB | **5.8×** |
-| index size, total | 703 MB | 32 MB | **22.0×** |
-| function summaries, total | 841 | 4,752 | 0.18× |
-| SARIF taint paths, total | **2** | **141** | 0.01× |
-| binaries with ≥1 path | 1 of 5 | 4 of 5 | |
-
-The new engine builds an index **22× smaller**, derives **5.6× more function
-summaries** from it, and reports **141 paths where the old engine reports 2**.
-Every path the old engine found, the new engine also found — the old engine's
-findings are a strict subset (0 old-only endpoint pairs on all 5 binaries).
+| import size, total | 3.0 GB | 544 MB | **5.7×** |
+| index size, total | 4.1 GB | 250 MB | **16.8×** |
+| function summaries, total | 11,063 | 146,952 | 0.08× |
+| SARIF taint paths, total | **10** | **330** | 0.03× |
+| binaries with ≥1 path | 5 of 47 | 17 of 47 | |
+| binaries the engine could not finish | **3 of 50** | 0 of 50 | |
 
 ![results](firmware-eval/run/head2head/results/head2head.png)
+
+Three claims, in decreasing order of how much I would stake on them:
+
+1. **The new engine's index is smaller, on every binary.** Median 40× smaller,
+   and the *worst* case in the corpus is still 6× smaller. Nothing about this
+   depends on the taint models being right.
+2. **The old engine crashes on binaries the new one handles.** Three of 50, all
+   the same internal error. This did not appear at n=5.
+3. **The new engine reports many more paths, and the old engine's findings are
+   a strict subset of the new engine's.** Zero old-only endpoint pairs across
+   all 47 comparable binaries. The path counts themselves are unverified, so
+   this is a recall-shaped result, not a precision-shaped one.
 
 ---
 
 ## What was held equal
 
 The comparison is only worth something if the two engines differ in *engine* and
-nothing else. Three things were equalized.
+nothing else.
 
-**1. One Ghidra.** Both engines lift the binary themselves, so a Ghidra version
-skew would show up as an analysis difference that is really a frontend
-difference. `nix develop .#head2head` (added to the root `flake.nix`) puts both
-tools and **one** `ghidra-bin` 12.0.4 on `PATH` and exports `GHIDRA_HOME`, which
-is how both frontends locate it.
+**1. One Ghidra — and this was wrong in the 5-binary run.** Both engines lift the
+binary themselves, so a Ghidra skew shows up as an analysis difference that is
+really a frontend difference. The earlier write-up said `nix develop .#head2head`
+"exports `GHIDRA_HOME`, which is how both frontends locate it." Only half of that
+is true. **ctadl-souffle's Nix wrapper hard-`export`s its own `GHIDRA_HOME` and
+overrides whatever the shell set.** So the 5-binary run actually had ctadl-rs on
+`ghidra-bin` (the upstream `PUBLIC` release) and ctadl-souffle on `ghidra` (the
+`NIX` build from source) — same version 12.0.4, different derivation.
 
-**2. One model set, with both engines' defaults off.** Neither engine runs its
-shipped models. `firmware-eval/run/head2head/models/build_models.py` generates
-one shared set from a single source of truth and emits it in each engine's
-syntax:
+The devShell now reads the Ghidra path *out of souffle's own wrapper* and hands
+ctadl-rs that one, and aborts if it cannot find it. Verified by watching the
+process table during both engines' import phases: one store path,
+`w9g7nhx…-ghidra-12.0.4`, for both.
+
+**2. One model set, with both engines' defaults off.** Unchanged from the
+5-binary run, and `models/build_models.py` regenerates all four files
+byte-identically. One shared set in each engine's syntax:
 
 - **49 propagation (library) generators** — the union of ctadl-rs's
   `native-index.jsonl`, ctadl-souffle's `pcode/default-index.json`, and the
@@ -54,18 +71,25 @@ syntax:
 Union rather than intersection for a mechanical reason: ctadl-souffle has no
 `--no-default-models`, so `index --models F` *adds* F to its built-in defaults.
 Its defaults are unavoidable, so the only set both engines can end up with is one
-that contains them. ctadl-rs is then run with `--no-default-models`, and neither
-engine contributes anything of its own.
+that contains them. ctadl-rs is then run with `--no-default-models`.
 
-**3. Same phases, same measurements.** import → index → query for both, each
-phase guarded by a wall timeout and a physical-footprint cap, index size measured
-after index and *before* query (ctadl-souffle writes query results back into
-`ctadlir.db`, which would otherwise inflate it).
+**3. Same phases, same measurements, same machine, one job at a time.** import →
+index → query for both, each phase guarded by a wall timeout and a physical-
+footprint cap, index size measured after index and *before* query (ctadl-souffle
+writes query results back into `ctadlir.db`, which would otherwise inflate it).
+
+**4. A zero that means the same thing in both engines.** ctadl-rs exits *nonzero*
+when no configured sink matches the program; ctadl-souffle exits 0 and reports no
+paths. Left alone, a binary where both engines legitimately find nothing would be
+scored `0 paths` for the old engine and `crash` for the new one — and dropping
+the binary would have been exactly the wrong correction. `run_one.py` now
+normalizes both to a valid zero-path measurement and flags it; 2 binaries are
+flagged, and the flag is reported in `TABLE.md`.
 
 ### What could not be held equal — the model translation
 
 The two engines spell access paths differently, so the shared set is a faithful
-translation, not the same bytes. All of the differences:
+translation, not the same bytes:
 
 | ctadl-rs | ctadl-souffle | why |
 |---|---|---|
@@ -76,133 +100,176 @@ translation, not the same bytes. All of the differences:
 `where` clauses need no translation: `signature_match` + `names` and `name` +
 `pattern` (a regex) match the function's short name identically in both.
 
-One translation caveat worth recording: souffle expands `Argument(*)` only to a
-function's *declared* arity, and Ghidra declares `sprintf` with arity 2 — so
-`Argument(*)` never reaches a format argument there. Expanding it to explicit
-indices `Argument(0..7)` was tested and changed nothing (still 0 paths on
-`arp_check`), so the shipped model keeps `Argument(*)`.
-
 ---
 
 ## The corpus
 
-Five binaries, chosen for spread rather than for a favourable result — 3 vendors,
-2 architectures, 18 K to 311 K. These are the daemons command injection actually
-lives in. The upper size bound is set by ctadl-souffle: the megabyte-class
-`httpd` binaries in this corpus are out of its reach in any reasonable budget.
+50 binaries, picked by `select_corpus.py` so that "why these 50?" has a program
+as its answer rather than a taste. Four filters and one sample, all applied blind
+to either engine's output and before either was run:
 
-| label | device | arch | size |
-|---|---|---|--:|
-| `r7000_arp_check` | Netgear R7000 | ARM | 18 K |
-| `dlink878_nvram_daemon` | D-Link DIR-878 | MIPS | 23 K |
-| `r7000_rc` | Netgear R7000 | ARM | 112 K |
-| `r6400_acos_service` | Netgear R6400v2 | ARM | 138 K |
-| `ac15_netctrl` | Tenda AC15 | ARM | 311 K |
+1. ELF **executables** under the 7 device roots of the SaTC corpus behind
+   Operation Mango's paper. Shared objects dropped — the experiment analyzes
+   programs, and a library has no `main`.
+2. **Deduplicated by content hash**, then one per name per device. The same
+   busybox ships under a dozen names; analyzing it a dozen times would weight the
+   corpus by packaging accident. (This is also why Tenda AC15 and AC18, which are
+   the same firmware line, contribute 6 and 2: their shared binaries are
+   *literally identical bytes* and collapse into one.)
+3. **Size in [8 K, 512 K].** The floor drops stubs. **The ceiling is set by
+   ctadl-souffle, not by ctadl-rs** — Souffle indexes the whole program eagerly,
+   and the megabyte-class `httpd`/`fbwifi` binaries are out of its reach in any
+   reasonable budget. Both engines get the same ceiling, so the ceiling favours
+   the old engine.
+4. **Must contain at least one command-execution sink symbol AND at least one
+   taint source symbol** from the shared query models. A binary with no
+   `system`-like callee cannot have a command-injection path in *either* engine,
+   so including it would measure nothing but Ghidra.
 
-All 10 jobs (5 binaries × 2 engines × 3 phases) completed; nothing timed out,
-crashed, or hit the memory cap.
+296 binaries survive; the 50 are then a per-device size-stratified sample
+preferring the web/CGI/config-daemon attack surface (equal-count size bins, best
+attack-surface tier in each). The 5 binaries of the earlier run are pinned in, so
+these numbers are a superset of the ones already reported.
+
+| | |
+|---|---|
+| devices | 7 — R7000 12, R6400v2 9, XR300 9, DIR-878 7, AC15 6, W20E 5, AC18 2 |
+| vendors | Netgear 30, Tenda 13, D-Link 7 |
+| architecture | ARM 43, MIPS 7 |
+| size | 9 K – 419 K |
+
+**The one place the corpus is thin is architecture.** 7 of 50 are MIPS because
+only one of the seven devices is a MIPS device. That is a property of this
+corpus, not a choice, and it is the caveat I would put first.
 
 ---
 
 ## Results
 
-| binary | engine | import | index | summaries | SARIF paths | wall |
-|---|---|--:|--:|--:|--:|--:|
-| `r7000_arp_check` | old | 29.6 M | 46.6 M | 76 | 0 | 20 s |
-| | **new** | **4.8 M** | **2.0 M** | **198** | **36** | 20 s |
-| `dlink878_nvram_daemon` | old | 15.7 M | 30.3 M | 71 | 0 | 26 s |
-| | **new** | **2.3 M** | **224 K** | **159** | **0** | 26 s |
-| `r7000_rc` | old | 193.5 M | 222.1 M | 157 | 0 | 46 s |
-| | **new** | **34.0 M** | **15.1 M** | **295** | **31** | 31 s |
-| `r6400_acos_service` | old | 126.1 M | 154.4 M | 128 | 2 | 36 s |
-| | **new** | **22.7 M** | **6.1 M** | **310** | **72** | 26 s |
-| `ac15_netctrl` | old | 181.9 M | 216.9 M | 409 | 0 | 46 s |
-| | **new** | **31.0 M** | **7.0 M** | **3790** | **2** | 37 s |
+Full per-binary table: `firmware-eval/run/head2head/results/TABLE.md`. Every
+number, plus a record per path, is in `results/aggregate.json`.
 
-Full table with endpoints: `firmware-eval/run/head2head/results/TABLE.md`.
-Every number above, plus a record per path, is in `results/aggregate.json`.
+### Size — the most solid result
 
-### Size
+The old engine's import is **5.4–7.0×** larger, and its index is larger on
+**every one of the 47** binaries. Totals can be carried by one big binary, so the
+same comparison computed per binary and quantiled:
 
-The old engine's import is **5.5–7×** larger on every binary (Souffle reads
-text `.facts` files; the new engine writes a binary IR). The index gap is wider
-still — **15×** on `rc`, **23×** on `arp_check`, **139×** on `nvram_daemon` — and
-it widens as the binary gets smaller, which says the old engine's index carries a
-fixed cost the new one does not. The old engine's index is a SQLite database
-holding the full materialized relation set; the new engine's is a directory of
-Parquet files.
+| ratio | min | q1 | **median** | q3 | max |
+|---|--:|--:|--:|--:|--:|
+| import size, old / new | 5.37× | 5.66× | **5.85×** | 6.05× | 6.98× |
+| index size, old / new | 6.11× | 28.55× | **40.24×** | 55.81× | 258.32× |
+| summaries, new / old | 0.15× | 2.22× | **2.64×** | 5.36× | 128.18× |
+
+![spread](firmware-eval/run/head2head/results/head2head-spread.png)
+
+Import is a tight band — Souffle reads text `.facts` files where the new engine
+writes a binary IR, and that ratio is close to a constant. The index gap is wide
+and *varies*, from 6× to 258×: the old engine's index is a SQLite database
+holding the full materialized relation set, the new engine's is a directory of
+Parquet files, and how much that saves depends on the program.
 
 ### Summaries
 
-The new engine derives more compositional summaries from the same program on
-every binary — 2.0× to 2.6× on four of them, and **9.3×** on `netctrl` (3,790 vs
-409), the largest binary in the set. This is the mechanism behind the path
-counts: summaries are what carry taint across a call.
+The new engine derives more compositional summaries on **46 of 47** binaries,
+median 2.6×. Summaries are what carry taint across a call, so this is the
+mechanism behind the path counts.
+
+**The exception is worth naming: `r7000_circled`, where the old engine derives
+3,199 summaries to the new engine's 476** — the single blue dot on the spread
+chart. The new engine still reports 23 paths there to the old engine's 0, so more
+summaries did not translate into more findings, but it is the one binary that
+runs against the trend and I have not investigated why.
 
 ### SARIF paths
 
-Paths were compared as `source → sink` endpoint pairs, the coarsest join that is
+Per binary: the new engine reports more on **15**, the old engine reports more on
+**0**, and they tie on 32 (30 of those tied at zero — the corpus filter admits
+binaries that contain a sink symbol, which is not the same as containing a
+reachable flow).
+
+Paths compared as `source → sink` endpoint pairs, the coarsest join that is
 meaningful across engines:
 
-| binary | pairs old | pairs new | both | old only | new only |
-|---|--:|--:|--:|--:|--:|
-| `r7000_arp_check` | 0 | 3 | 0 | 0 | 3 |
-| `dlink878_nvram_daemon` | 0 | 0 | 0 | 0 | 0 |
-| `r7000_rc` | 0 | 4 | 0 | 0 | 4 |
-| `r6400_acos_service` | 1 | 4 | **1** | 0 | 3 |
-| `ac15_netctrl` | 0 | 1 | 0 | 0 | 1 |
+| | pairs |
+|---|--:|
+| old total | 5 |
+| new total | 42 |
+| reported by both | 5 |
+| **old only** | **0** |
+| new only | 37 |
 
-The one pair both engines report is `fgets → system` in `acos_service`. The new
-engine additionally reports `acosNvramConfig_get → system`, `nvram_get → system`,
-`getenv → system`, `recv → system`, `main → system`, and `fgets → doSystemCmd` —
-in other words the NVRAM- and network-sourced flows, which is where router
-command injection lives. **There is no binary on which the old engine reports
-something the new engine misses.**
+**There is no binary in the corpus on which the old engine reports an endpoint
+pair the new engine misses.** The old engine reaches exactly one sink (`system`)
+from exactly one source (`fgets`). The new engine reaches `system`, `popen`,
+`execl`, and `doSystemCmd`, from `fgets`, `getenv`, `read`, `recv`, `main`,
+`nvram_get`, and `acosNvramConfig_get` — that is, the NVRAM- and network-sourced
+flows, which is where router command injection actually lives.
+
+### The old engine crashes on 3 of 50 binaries — new information at n=50
+
+| binary | size | phase | error |
+|---|--:|---|---|
+| `ac15_inadyn` | 26 K | index | 11 × `Variable move neither function or global: thunk_FUN_…@…:@ret` |
+| `r7000_xagent_control` | 80 K | index | 1 × same |
+| `r6400_dbus_daemon` | 303 K | index | 13 × same |
+
+One error class, three binaries, three different vendors and sizes: ctadl-souffle
+fails on PLT-thunk returns. It writes `ctadlir.db` and then aborts, so there is no
+index to query. The new engine finished all three.
+
+These three are **excluded from every number above**, because a binary only
+enters the comparison if both engines finished it. That means the totals
+*understate* the gap — the fair reading of "4.1 GB vs 250 MB" is that it is the
+cost on the 47 binaries where the old engine worked at all.
+
+### Wall time and memory — not a headline
+
+Recorded, not featured. 23.9 min vs 21.1 min total; the new engine is faster on
+21 of 47 and on all five of the slowest binaries (e.g. `readycloud_control.cgi`,
+77 s → 51 s). Both phases include Ghidra, which dominates on small inputs and is
+now provably identical for both. Peak footprint is a wash: 2.6 GB vs 2.7 GB max.
 
 ### Is the old engine simply misconfigured?
 
-No — worth checking, because "0 paths" is exactly what a broken model set looks
-like. `controls.py` runs both engines, with these same shared models, over
-Operation Mango's synthetic test binaries:
+No. `controls.py` runs both engines, with these same shared models, over
+Operation Mango's synthetic test binaries, and reproduces exactly as before:
 
-| binary | old (souffle) | new (rs) |
-|---|--:|--:|
-| `nested` | **3** | 2 |
-| `simple` | **6** | 4 |
-| `heap` | 0 | 2 |
-| `wrapper` | 0 | 2 |
-| `off_shoot` | 0 | 3 |
+| binary | pattern | old (souffle) | new (rs) |
+|---|---|--:|--:|
+| `nested` | direct | **3** | 2 |
+| `simple` | direct | **6** | 4 |
+| `heap` | via-builder | 0 | 2 |
+| `wrapper` | via-builder | 0 | 2 |
+| `off_shoot` | via-builder | 0 | 3 |
 
 The old engine binds the models, propagates taint, and reports *more* paths than
-the new engine on `nested` and `simple`. It is working. It binds endpoints on the
-firmware binaries too: a diagnostic run on `arp_check` (`--format summary`, plus
-the `TaintSourceVertex` / `LeakingSinkVertex` / `CTADLStats` relations in
-`ctadlir.db`) showed 12 source vertices — `acosNvramConfig_get`,
-`acosNvramConfig_read`, `fgets` — and 2 `system` sink vertices, with 374 vertices
-tainted across 4 functions. The taint simply never arrives at the sink's
-argument. Neither `--star`, `--dynamic-access-paths-max-length 3`,
-`--compute-slices all`, expanding `Argument(*)` to explicit indices, nor dropping
-`.*` from the ports changed that. Per the experiment's instructions this was left
-alone rather than tuned around; it comes out in the path counts above.
+the new engine on the two direct cases. It is working. What it does not do is
+carry taint through a string builder (`sprintf(buf, "…%s", tainted); system(buf)`)
+— which is the shape essentially all real firmware command injection has, and
+which is what the firmware numbers are measuring. Per the experiment's
+instructions this was left alone rather than tuned around.
 
 ---
 
 ## Reproducing this
 
 ```sh
-# 1. the environment: both engines, one Ghidra
+# 1. the environment: both engines, ONE Ghidra (souffle's, which is the only
+#    one it will use)
 nix develop .#head2head
 
 cd firmware-eval/run/head2head
 
-# 2. regenerate the shared model set (already checked in; this proves it)
+# 2. regenerate the corpus and the shared model set (both checked in; this
+#    proves they are generated, not hand-curated)
+python3 select_corpus.py
 python3 models/build_models.py
 
 # 3. pin tool paths so a campaign does not re-evaluate the flake per job
-#    (env.sh is generated from inside the devShell; it is checked in)
 source env.sh
 
-# 4. the campaign: 5 binaries x 2 engines x 3 phases, sequential, ~6 min
+# 4. the campaign: 50 binaries x 2 engines x 3 phases, sequential, ~48 min
 python3 campaign.py                 # --force to redo completed jobs
 
 # 5. the configuration control
@@ -211,49 +278,64 @@ python3 controls.py
 # 6. aggregate -> results/aggregate.json + results/TABLE.md
 python3 analyze.py
 
-# 7. the graph -> results/head2head.png and results/head2head-dark.png
+# 7. the graphs -> results/head2head*.png (light and dark)
 python3 plot.py
 ```
 
-Jobs are run one at a time on purpose: wall time and peak memory are recorded per
-phase, and concurrent jobs on a shared machine would make both meaningless.
-`campaign.py` is resumable — a job with an existing `results/<label>/<engine>.json`
-is skipped.
+Jobs run one at a time on purpose: wall time and peak memory are recorded per
+phase, and concurrent jobs on a shared machine would make both meaningless. Jobs
+run smallest-binary-first, so a partial campaign is still a usable result.
+`campaign.py` is resumable — a job with an existing
+`results/<label>/<engine>.json` is skipped.
 
-### The graph
+### The graphs
 
-`plot.py` draws three panels, old beside new for each binary:
+At 50 binaries a bar per binary is a picket fence, so the three questions get
+three figures:
 
-1. **on-disk footprint** — a *stacked* bar, import size with index size on top, so
-   the total cost of analyzing a binary is the bar height and the split is visible
-   inside it;
-2. **function summaries**;
-3. **SARIF paths**.
+1. **`head2head.png`** — the headline. Corpus totals, old beside new, three
+   panels. Panel 1 is the *stacked* bar the experiment asked for: import size
+   with index size on top, so the total cost of analyzing the corpus is the bar
+   height and the split is visible inside it. Slide-sized.
+2. **`head2head-spread.png`** — the per-binary ratio distribution on a log axis,
+   one dot per binary. This is what n=50 buys that n=5 could not: whether the
+   headline is one big binary or all of them.
+3. **`head2head-per-binary.png`** — every binary, tall. The appendix / receipt.
 
-Colour carries engine identity and nothing else (old blue, new orange, in every
-panel); inside a stacked bar the two phases are separated by lightness within
-that engine's own hue plus a surface-coloured gap. The palette passes the CVD and
-contrast checks in both modes. `results/TABLE.md` is the table view of the same
-numbers, and a dark-mode PNG is generated alongside the light one.
+Colour carries engine identity and nothing else — old blue, new orange, in every
+panel of every figure. On the spread chart each dot wears the hue of whichever
+engine that binary's ratio favours, which is why the one binary that runs against
+the trend is a blue dot you cannot miss. Inside a stacked bar the two phases are
+separated by lightness within that engine's own hue plus a surface-coloured gap.
+The palette passes the CVD, chroma, and contrast checks against both the light
+and the dark surface. A dark-mode PNG is generated alongside each light one, and
+`results/TABLE.md` is the table view of the same numbers.
 
 ---
 
 ## Caveats
 
-- **Five binaries.** Enough to be consistent, not enough to be a distribution.
-  The direction is uniform across vendors, architectures, and a 17× size range,
-  but the magnitudes are not population estimates.
-- **Wall time is not a headline.** It is recorded (the new engine is faster on
-  the three larger binaries, tied on the two small ones) but the phases include
-  Ghidra, which dominates on small inputs and is identical for both.
 - **Path counts are unranked and unverified.** Neither engine ranks its output
-  and no manual verification was done, so "141 vs 2" is recall-shaped, not
-  precision-shaped. What *is* verified is the containment: the old engine found
-  nothing the new engine missed.
-- **The model translation is a judgement call.** The `.deref` ↔ `.*` mapping and
-  the `saturating` ↔ `all_fields` mapping are each engine's idiom for the same
+  and no manual triage was done, so "330 vs 10" is recall-shaped, not
+  precision-shaped. What *is* verified is the containment: 0 old-only endpoint
+  pairs on 47 binaries.
+- **The corpus filter requires a sink symbol.** Binaries with no `system`-like
+  callee were excluded up front. That is a pre-registered criterion applied
+  identically to both engines, but it does mean the corpus is enriched for
+  binaries where a finding is possible at all. It is not a sample of firmware in
+  general.
+- **Architecture is skewed** — 43 ARM to 7 MIPS, because six of the seven devices
+  are ARM. The size and index results hold on both; the path results have too few
+  MIPS binaries to say anything per-architecture.
+- **The size ceiling favours the old engine.** 512 K is where ctadl-souffle stops
+  being tractable. The new engine was never tested at the sizes where the gap
+  would presumably be widest.
+- **The model translation is a judgement call.** The `.deref` ↔ `.*` and
+  `saturating` ↔ `all_fields` mappings are each engine's idiom for the same
   intent, not provably identical semantics. The control experiment is what makes
   the translation credible: under it, the old engine outperforms the new one on
   the direct cases.
+- **`r7000_circled` is unexplained** — the one binary where the old engine
+  derives 6.7× more summaries. Flagged rather than chased.
 - **Nothing is committed.** All of it is working-tree changes on
   `head-to-head-vs-ctadl-souffle-firmware`, marked DO-NOT-MERGE.

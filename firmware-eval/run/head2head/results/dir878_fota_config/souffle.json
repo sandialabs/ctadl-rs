@@ -1,0 +1,32 @@
+{
+  "engine": "souffle",
+  "label": "dir878_fota_config",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/fota_config",
+  "binary_bytes": 29088,
+  "status": "ok",
+  "total_wall_s": 20.4,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 609421688
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2474344
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2474344
+    }
+  },
+  "import_bytes": 13852269,
+  "index_bytes": 30408704,
+  "summaries": 30,
+  "sarif_paths": 0
+}

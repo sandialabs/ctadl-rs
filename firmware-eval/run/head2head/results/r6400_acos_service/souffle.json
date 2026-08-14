@@ -10,13 +10,13 @@
       "status": "ok",
       "exit_code": 0,
       "wall_s": 15.6,
-      "peak_fp_b": 1678842360
+      "peak_fp_b": 1571953072
     },
     "index": {
       "status": "ok",
       "exit_code": 0,
-      "wall_s": 15.2,
-      "peak_fp_b": 171672512
+      "wall_s": 15.3,
+      "peak_fp_b": 169935784
     },
     "query": {
       "status": "ok",
@@ -25,7 +25,7 @@
       "peak_fp_b": 2474344
     }
   },
-  "import_bytes": 132261736,
+  "import_bytes": 132261520,
   "index_bytes": 161873920,
   "summaries": 128,
   "sarif_paths": 2

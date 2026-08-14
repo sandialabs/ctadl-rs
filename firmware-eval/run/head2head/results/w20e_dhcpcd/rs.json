@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "w20e_dhcpcd",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/dhcpcd",
+  "binary_bytes": 86200,
+  "status": "ok",
+  "total_wall_s": 26.5,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 15.6,
+      "peak_fp_b": 1398872208
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 23216584
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 17744352
+    }
+  },
+  "import_bytes": 13408691,
+  "index_bytes": 3391252,
+  "summaries": 3903,
+  "sarif_paths": 0
+}

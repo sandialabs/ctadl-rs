@@ -1,0 +1,3124 @@
+{
+  "version": "2.1.0",
+  "properties": {
+    "parquet_dir": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/rs/store/imports/r7000_bftpd/source-info",
+    "parquet_dirs": [
+      "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/rs/store/imports/r7000_bftpd/source-info"
+    ],
+    "project_name": "r7000_bftpd"
+  },
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/schemata/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "fullDescription": {
+            "text": "CTADL (Compositional Taint Analysis in Datalog)."
+          },
+          "informationUri": "https://github.com/sandialabs/ctadl-rs",
+          "name": "ctadl",
+          "notifications": [
+            {
+              "id": "CTADL0001.no-endpoints-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sources or sinks were configured ({0} model file(s) loaded, no built-in endpoints), so the query has nothing to search for."
+                }
+              },
+              "name": "No endpoints configured",
+              "shortDescription": {
+                "text": "Neither a source nor a sink was declared anywhere"
+              }
+            },
+            {
+              "id": "CTADL0002.no-sources-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sources were configured, but {0} sink endpoint(s) were. A taint query with no source is vacuous."
+                }
+              },
+              "name": "No sources configured",
+              "shortDescription": {
+                "text": "Sinks were declared but no source was"
+              }
+            },
+            {
+              "id": "CTADL0003.no-sinks-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sinks were configured, but {0} source endpoint(s) were. A taint query with no sink is vacuous."
+                }
+              },
+              "name": "No sinks configured",
+              "shortDescription": {
+                "text": "Sources were declared but no sink was"
+              }
+            },
+            {
+              "id": "CTADL0004.generator-matched-nothing",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' declares a {2} that matched nothing in the program, so it contributes nothing to the query."
+                },
+                "indexTimeDeclaration": {
+                  "text": "Model generator {0} in '{1}' declares a {2}, but no function in the program matched its 'where' constraints, so it will contribute nothing when the project is indexed."
+                },
+                "localNotFound": {
+                  "text": "Model generator {0} in '{1}' declares a {2} on port 'Variable({3})': its 'where' constraints matched {4} function(s), but none of them has a local variable named '{3}', so it contributes nothing to the query."
+                },
+                "mixedReasons": {
+                  "text": "Model generator {0} in '{1}' declares {3} {2} port(s), none of which matched anything in the program ({4}), so it contributes nothing to the query."
+                },
+                "noCallerMatched": {
+                  "text": "Model generator {0} in '{1}' declares a {2} at call sites: its 'where' constraints matched {3} function(s), but no caller of them satisfied its 'in_function' constraint, so it contributes nothing to the query."
+                },
+                "noFunctionMatched": {
+                  "text": "Model generator {0} in '{1}' declares a {2}, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+                },
+                "portRejected": {
+                  "text": "Model generator {0} in '{1}' declares a {2} on a port that is not valid for its 'find' method, so it contributes nothing to the query."
+                }
+              },
+              "name": "Model generator matched nothing",
+              "shortDescription": {
+                "text": "A model generator declared a port that produced no endpoint"
+              }
+            },
+            {
+              "id": "CTADL0005.endpoint-function-not-indexed",
+              "messageStrings": {
+                "default": {
+                  "text": "Function '{0}' was matched by a model but is not present in the index, so its source/sink endpoints were dropped."
+                }
+              },
+              "name": "Endpoint function not indexed",
+              "shortDescription": {
+                "text": "A matched function name is absent from the index"
+              }
+            },
+            {
+              "id": "CTADL0006.no-sources-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} source port(s) were declared but none of them matched anything in the program, so no taint could be seeded."
+                }
+              },
+              "name": "No sources matched",
+              "shortDescription": {
+                "text": "Sources were declared but none matched the program"
+              }
+            },
+            {
+              "id": "CTADL0007.no-sinks-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} sink port(s) were declared but none of them matched anything in the program, so no flow could be detected."
+                }
+              },
+              "name": "No sinks matched",
+              "shortDescription": {
+                "text": "Sinks were declared but none matched the program"
+              }
+            },
+            {
+              "id": "CTADL0008.no-index-model-check-only",
+              "messageStrings": {
+                "default": {
+                  "text": "The project has no index, so no taint analysis ran. The model files were matched against the imported program(s) instead -- {0} -- and the notifications below report what they select. These are model-matching results only: call-site fan-out, 'Argument(*)' expansion and sink wildcard expansion need the index, a matched name can still be absent from it, and bridge pairs are not counted. Run `ctadl index` for a real query."
+                }
+              },
+              "name": "No index; model check only",
+              "shortDescription": {
+                "text": "The project has no index, so only the model files were checked"
+              }
+            },
+            {
+              "id": "CTADL0009.generator-scope-excluded",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' has an 'in' scope ({2}) that admits none of the programs checked, so it was never evaluated against any of them."
+                }
+              },
+              "name": "Model generator out of scope",
+              "shortDescription": {
+                "text": "A generator's 'in' clause admits none of the programs checked"
+              }
+            },
+            {
+              "id": "CTADL0010.bridge-model-diagnosis",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}': {2}"
+                }
+              },
+              "name": "Bridge model cannot be paired",
+              "shortDescription": {
+                "text": "A bridge's sides matched nothing, or matched ambiguously"
+              }
+            },
+            {
+              "id": "CTADL0011.generator-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' matched {2}{3}."
+                }
+              },
+              "name": "Model generator matched",
+              "shortDescription": {
+                "text": "What a generator's 'where' constraints selected"
+              }
+            },
+            {
+              "id": "CTADL0012.model-file-error",
+              "messageStrings": {
+                "default": {
+                  "text": "Model file '{0}': {1}"
+                }
+              },
+              "name": "Model file error",
+              "shortDescription": {
+                "text": "A model file could not be read, or a generator in it is malformed"
+              }
+            },
+            {
+              "id": "CTADL0100.endpoint-match-summary",
+              "messageStrings": {
+                "default": {
+                  "text": "Declared {0} source and {1} sink port(s), which matched {2} source and {3} sink endpoint(s) in the program; {4} declared port(s) matched nothing."
+                },
+                "modelCheckOnly": {
+                  "text": "Declared {0} source and {1} sink port(s), which matched {2} source and {3} sink model row(s) in the program(s) checked -- before the call-site fan-out and wildcard expansion an index would apply; {4} declared port(s) matched nothing."
+                }
+              },
+              "name": "Endpoint match summary",
+              "shortDescription": {
+                "text": "How many ports the models declared and how many endpoints they matched"
+              }
+            },
+            {
+              "id": "CTADL0101.path-generation-disabled",
+              "messageStrings": {
+                "default": {
+                  "text": "The '{0}' SARIF profile does not perform source-to-sink path search, so this run cannot produce '{1}' results."
+                }
+              },
+              "name": "Path generation disabled",
+              "shortDescription": {
+                "text": "The selected SARIF profile does not perform path search"
+              }
+            },
+            {
+              "id": "CTADL0102.no-paths-found",
+              "messageStrings": {
+                "default": {
+                  "text": "Path search completed over {0} source and {1} sink endpoints and found no source-to-sink flow."
+                }
+              },
+              "name": "No paths found",
+              "shortDescription": {
+                "text": "Path search completed without finding a flow"
+              }
+            },
+            {
+              "id": "CTADL0103.path-dropped-no-location",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} source-to-sink path(s) were found but discarded because no reporting location could be resolved for them."
+                }
+              },
+              "name": "Path dropped for want of a location",
+              "shortDescription": {
+                "text": "A path was found but could not be reported"
+              }
+            }
+          ],
+          "rules": [
+            {
+              "id": "C0001.tainted-path",
+              "messageStrings": {
+                "default": {
+                  "text": "This is a tainted source-sink path."
+                }
+              },
+              "name": "Tainted paths",
+              "shortDescription": {
+                "text": "A path of tainted data flow"
+              }
+            },
+            {
+              "id": "C0002.tainted-instruction",
+              "messageStrings": {
+                "default": {
+                  "text": "This instruction manipulates tainted data."
+                }
+              },
+              "name": "Tainted instructions",
+              "shortDescription": {
+                "text": "An instruction with tainted data"
+              }
+            },
+            {
+              "id": "C0003.taint-source",
+              "messageStrings": {
+                "default": {
+                  "text": "This is a source of tainted data."
+                }
+              },
+              "name": "Tainted data sources",
+              "shortDescription": {
+                "text": "Tainted data source"
+              }
+            },
+            {
+              "id": "C0004.taint-sink",
+              "messageStrings": {
+                "default": {
+                  "text": "This is an desired sink of tainted data."
+                }
+              },
+              "name": "Tainted data sink",
+              "shortDescription": {
+                "text": "Tainted data sinks"
+              }
+            },
+            {
+              "id": "C0005.tainted-data",
+              "messageStrings": {
+                "default": {
+                  "text": "This vertex is tainted."
+                }
+              },
+              "name": "Tainted data",
+              "shortDescription": {
+                "text": "Tainted variables and fields"
+              }
+            },
+            {
+              "id": "C0006.almost-path-function",
+              "messageStrings": {
+                "default": {
+                  "text": "This function contains source and sink taint."
+                }
+              },
+              "name": "Almost-path function",
+              "shortDescription": {
+                "text": "A function which contains source-tainted and sink-tainted data, which means there's 'almost' a path between them."
+              }
+            },
+            {
+              "id": "C0007.absorbing-function",
+              "messageStrings": {
+                "default": {
+                  "text": "This external function receives tainted data."
+                }
+              },
+              "name": "Absorbing functions",
+              "shortDescription": {
+                "text": "An external function that receives tainted data"
+              }
+            }
+          ],
+          "version": "2026.1"
+        }
+      },
+      "invocations": [
+        {
+          "arguments": [
+            "--store",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/rs/store",
+            "query",
+            "--models",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+            "-o",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/rs/results.sarif",
+            "r7000_bftpd"
+          ],
+          "commandLine": "/nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_bftpd/rs/results.sarif r7000_bftpd",
+          "endTimeUtc": "2026-08-14T04:17:52.129Z",
+          "executionSuccessful": true,
+          "exitCode": 0,
+          "exitCodeDescription": "query completed",
+          "ruleConfigurationOverrides": [
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0002.tainted-instruction"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0005.tainted-data"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0006.almost-path-function"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0007.absorbing-function"
+              }
+            }
+          ],
+          "startTimeUtc": "2026-08-14T04:17:51.808Z",
+          "toolConfigurationNotifications": [
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "0",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 0 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 0,
+                "portsDeclared": 2,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "2",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 2 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 2,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "3",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 3 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 3,
+                "portsDeclared": 8,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "6",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 6 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 6,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "8",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 8 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 8,
+                "portsDeclared": 2,
+                "reason": "noFunctionMatched"
+              }
+            }
+          ],
+          "toolExecutionNotifications": [
+            {
+              "descriptor": {
+                "id": "CTADL0100.endpoint-match-summary"
+              },
+              "level": "note",
+              "message": {
+                "arguments": [
+                  "11",
+                  "11",
+                  "40",
+                  "6",
+                  "14"
+                ],
+                "id": "default",
+                "text": "Declared 11 source and 11 sink port(s), which matched 40 source and 6 sink endpoint(s) in the program; 14 declared port(s) matched nothing."
+              },
+              "properties": {
+                "portsDeclared": 22,
+                "portsUnmatched": 14,
+                "sinksDeclared": 11,
+                "sinksMatched": 6,
+                "sourcesDeclared": 11,
+                "sourcesMatched": 40,
+                "unmatchedDeclarations": 5
+              }
+            }
+          ]
+        }
+      ],
+      "results": [
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 204
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(-1).deref in function <EXTERNAL>::acosNvramConfig_get@EXTERNAL:0000005f (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "formal(-1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 205
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: formal(0).deref in function <EXTERNAL>::execv@EXTERNAL:0000002e (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "formal(0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 205
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: formal(1) in function <EXTERNAL>::execv@EXTERNAL:0000002e (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "formal(1)"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 206
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(0).deref in function <EXTERNAL>::fgets@EXTERNAL:00000046 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "formal(0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 206
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(-1).deref in function <EXTERNAL>::fgets@EXTERNAL:00000046 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "formal(-1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 207
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(0).deref in function <EXTERNAL>::fread@EXTERNAL:00000038 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "formal(0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 208
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(1).deref in function <EXTERNAL>::read@EXTERNAL:0000002d (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "formal(1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 209
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(1).deref in function <EXTERNAL>::recv@EXTERNAL:00000023 (kind 'network_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "network_input"
+            ],
+            "taintVertex": "formal(1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 210
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: formal(0).deref in function <EXTERNAL>::system@EXTERNAL:0000000d (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "formal(0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 211
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(1485, 0).deref in function <EXTERNAL>::fread@00009998 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(1485, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 211
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(1709, 0).deref in function <EXTERNAL>::fread@00009998 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(1709, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 211
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(1841, 0).deref in function <EXTERNAL>::fread@00009998 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(1841, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 211
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(2004, 0).deref in function <EXTERNAL>::fread@00009998 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(2004, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 211
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(2096, 0).deref in function <EXTERNAL>::fread@00009998 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(2096, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 211
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(2152, 0).deref in function <EXTERNAL>::fread@00009998 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(2152, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(46988, 0).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(46988, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(46988, -1).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(46988, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 213
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(49607, 0).deref in function <EXTERNAL>::system@00009794 (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(49607, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(10952, 0).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(10952, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(10952, -1).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(10952, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 214
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(13674, 1).deref in function <EXTERNAL>::read@00009914 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(13674, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 215
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(17068, 0).deref in function <EXTERNAL>::execv@00009920 (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(17068, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 215
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(17068, 1) in function <EXTERNAL>::execv@00009920 (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(17068, 1)"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 216
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(22589, 1).deref in function <EXTERNAL>::recv@0000989c (kind 'network_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "network_input"
+            ],
+            "taintVertex": "call-arg(22589, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 211
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(32787, 0).deref in function <EXTERNAL>::fread@00009998 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(32787, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 211
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(32866, 0).deref in function <EXTERNAL>::fread@00009998 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(32866, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(33453, 0).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(33453, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(33453, -1).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(33453, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(33507, 0).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(33507, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(33507, -1).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(33507, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(33910, 0).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(33910, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(33910, -1).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(33910, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 217
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(38404, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00009b6c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(38404, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 217
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(38406, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00009b6c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(38406, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(40162, 0).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(40162, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(40162, -1).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(40162, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(54882, 0).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(54882, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(54882, -1).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(54882, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(54977, 0).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(54977, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(54977, -1).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(54977, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(55713, 0).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(55713, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(55713, -1).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(55713, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(75570, 0).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(75570, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(75570, -1).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(75570, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(94588, 0).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(94588, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 212
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(94588, -1).deref in function <EXTERNAL>::fgets@00009a40 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(94588, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "executionOrder": 1,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 72
+                          }
+                        ],
+                        "message": {
+                          "text": "source call-arg(38406, -1).deref in <EXTERNAL>::acosNvramConfig_get@00009b6c"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 58644,
+                            "kind": "instruction",
+                            "relativeAddress": 25876
+                          },
+                          "artifactLocation": {
+                            "uri": "bftpd",
+                            "uriBaseId": "IMPORT_r7000_bftpd"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 2,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 73
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(38407, 0).deref in <EXTERNAL>::inet_addr@00009b0c"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 58648,
+                            "kind": "instruction",
+                            "relativeAddress": 25880
+                          },
+                          "artifactLocation": {
+                            "uri": "bftpd",
+                            "uriBaseId": "IMPORT_r7000_bftpd"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "return"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 149
+                          }
+                        ],
+                        "message": {
+                          "text": "return call-arg(64894, -1) in FUN_0000ff58"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 66196,
+                            "kind": "instruction",
+                            "relativeAddress": 33428
+                          },
+                          "artifactLocation": {
+                            "uri": "bftpd",
+                            "uriBaseId": "IMPORT_r7000_bftpd"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 4,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 165
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(74539, -32768).[32].deref in FUN_0000b4e4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 67144,
+                            "kind": "instruction",
+                            "relativeAddress": 34376
+                          },
+                          "artifactLocation": {
+                            "uri": "bftpd",
+                            "uriBaseId": "IMPORT_r7000_bftpd"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 5,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 19
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(10291, -32768).[117236].deref in FUN_0000edcc"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 46720,
+                            "kind": "instruction",
+                            "relativeAddress": 13952
+                          },
+                          "artifactLocation": {
+                            "uri": "bftpd",
+                            "uriBaseId": "IMPORT_r7000_bftpd"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 6,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 121
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(49479, 2) in <EXTERNAL>::sprintf@00009b3c"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 62568,
+                            "kind": "instruction",
+                            "relativeAddress": 29800
+                          },
+                          "artifactLocation": {
+                            "uri": "bftpd",
+                            "uriBaseId": "IMPORT_r7000_bftpd"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 7,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 123
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(49544, 2).deref in <EXTERNAL>::sprintf@00009b3c"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 62612,
+                            "kind": "instruction",
+                            "relativeAddress": 29844
+                          },
+                          "artifactLocation": {
+                            "uri": "bftpd",
+                            "uriBaseId": "IMPORT_r7000_bftpd"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 8,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 125
+                          }
+                        ],
+                        "message": {
+                          "text": "sink call-arg(49607, 0).deref in <EXTERNAL>::system@00009794"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 62632,
+                            "kind": "instruction",
+                            "relativeAddress": 29864
+                          },
+                          "artifactLocation": {
+                            "uri": "bftpd",
+                            "uriBaseId": "IMPORT_r7000_bftpd"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "kind": "fail",
+          "level": "warning",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 73
+                }
+              ],
+              "physicalLocation": {
+                "address": {
+                  "absoluteAddress": 58648,
+                  "kind": "instruction",
+                  "relativeAddress": 25880
+                },
+                "artifactLocation": {
+                  "uri": "bftpd",
+                  "uriBaseId": "IMPORT_r7000_bftpd"
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Taint flow labelled 'nvram_input'"
+          },
+          "properties": {
+            "sinkCallee": "<EXTERNAL>::system@00009794",
+            "sinkFunctions": [
+              "<EXTERNAL>::system@00009794"
+            ],
+            "sourceCallee": "<EXTERNAL>::acosNvramConfig_get@00009b6c",
+            "sourceFunctions": [
+              "<EXTERNAL>::acosNvramConfig_get@00009b6c"
+            ],
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertices": {
+              "command_injection": [
+                "call-arg(38407, 0).deref"
+              ],
+              "nvram_input": [
+                "call-arg(38407, 0).deref",
+                "call-arg(38407, 1).deref"
+              ]
+            }
+          },
+          "ruleId": "C0001.tainted-path"
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "executionOrder": 1,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 101
+                          }
+                        ],
+                        "message": {
+                          "text": "source call-arg(46988, 0).deref in <EXTERNAL>::fgets@00009a40"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 61820,
+                            "kind": "instruction",
+                            "relativeAddress": 29052
+                          },
+                          "artifactLocation": {
+                            "uri": "bftpd",
+                            "uriBaseId": "IMPORT_r7000_bftpd"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 2,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 125
+                          }
+                        ],
+                        "message": {
+                          "text": "sink call-arg(49607, 0).deref in <EXTERNAL>::system@00009794"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 62632,
+                            "kind": "instruction",
+                            "relativeAddress": 29864
+                          },
+                          "artifactLocation": {
+                            "uri": "bftpd",
+                            "uriBaseId": "IMPORT_r7000_bftpd"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "kind": "fail",
+          "level": "warning",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 101
+                }
+              ],
+              "physicalLocation": {
+                "address": {
+                  "absoluteAddress": 61820,
+                  "kind": "instruction",
+                  "relativeAddress": 29052
+                },
+                "artifactLocation": {
+                  "uri": "bftpd",
+                  "uriBaseId": "IMPORT_r7000_bftpd"
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Taint flow labelled 'file_input'"
+          },
+          "properties": {
+            "sinkCallee": "<EXTERNAL>::system@00009794",
+            "sinkFunctions": [
+              "<EXTERNAL>::system@00009794"
+            ],
+            "sourceCallee": "<EXTERNAL>::fgets@00009a40",
+            "sourceFunctions": [
+              "<EXTERNAL>::fgets@00009a40"
+            ],
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertices": {
+              "command_injection": [
+                "call-arg(46988, 0).deref"
+              ],
+              "file_input": [
+                "call-arg(46988, 0).deref",
+                "call-arg(46988, 0).deref.deref",
+                "call-arg(46988, 0).deref.deref.deref",
+                "call-arg(46988, 2).deref",
+                "call-arg(46988, 2).deref.deref",
+                "call-arg(46988, 2).deref.deref.deref"
+              ],
+              "nvram_input": [
+                "call-arg(46988, 0).deref",
+                "call-arg(46988, 0).deref.deref",
+                "call-arg(46988, 0).deref.deref.deref",
+                "call-arg(46988, 2).deref",
+                "call-arg(46988, 2).deref.deref",
+                "call-arg(46988, 2).deref.deref.deref"
+              ]
+            }
+          },
+          "ruleId": "C0001.tainted-path"
+        }
+      ],
+      "logicalLocations": [
+        {
+          "fullyQualifiedName": "FUN_00009de4@00009e34:00009e34",
+          "kind": "member",
+          "name": "FUN_00009de4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009de4@00009e50:00009e50",
+          "kind": "member",
+          "name": "FUN_00009de4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009e90@00009eec:00009eec",
+          "kind": "member",
+          "name": "FUN_00009e90"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009e90@00009f00:00009f00",
+          "kind": "member",
+          "name": "FUN_00009e90"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009e90@00009f08:00009f08",
+          "kind": "member",
+          "name": "FUN_00009e90"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009e90@00009f40:00009f40",
+          "kind": "member",
+          "name": "FUN_00009e90"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009e90@00009f48:00009f48",
+          "kind": "member",
+          "name": "FUN_00009e90"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009e90@00009f70:00009f70",
+          "kind": "member",
+          "name": "FUN_00009e90"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009fe8@0000a01c:0000a01c",
+          "kind": "member",
+          "name": "FUN_00009fe8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a050@0000a07c:0000a07c",
+          "kind": "member",
+          "name": "FUN_0000a050"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a050@0000a090:0000a090",
+          "kind": "member",
+          "name": "FUN_0000a050"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a050@0000a0b0:0000a0b0",
+          "kind": "member",
+          "name": "FUN_0000a050"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a0ec@0000a118:0000a118",
+          "kind": "member",
+          "name": "FUN_0000a0ec"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a0ec@0000a12c:0000a12c",
+          "kind": "member",
+          "name": "FUN_0000a0ec"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a0ec@0000a14c:0000a14c",
+          "kind": "member",
+          "name": "FUN_0000a0ec"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a16c@0000a1a4:0000a1a4",
+          "kind": "member",
+          "name": "FUN_0000a16c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a16c@0000a1d4:0000a1d4",
+          "kind": "member",
+          "name": "FUN_0000a16c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a16c@0000a208:0000a208",
+          "kind": "member",
+          "name": "FUN_0000a16c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a16c@0000a21c:0000a21c",
+          "kind": "member",
+          "name": "FUN_0000a16c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b4e4@0000b680:0000b680",
+          "kind": "member",
+          "name": "FUN_0000b4e4"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b6ec@0000b738:0000b738",
+          "kind": "member",
+          "name": "FUN_0000b6ec"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b6ec@0000b750:0000b750",
+          "kind": "member",
+          "name": "FUN_0000b6ec"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b6ec@0000b768:0000b768",
+          "kind": "member",
+          "name": "FUN_0000b6ec"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b6ec@0000b784:0000b784",
+          "kind": "member",
+          "name": "FUN_0000b6ec"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b6ec@0000b7a4:0000b7a4",
+          "kind": "member",
+          "name": "FUN_0000b6ec"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b6ec@0000b7b0:0000b7b0",
+          "kind": "member",
+          "name": "FUN_0000b6ec"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b81c@0000bbd0:0000bbd0",
+          "kind": "member",
+          "name": "FUN_0000b81c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b81c@0000bbe4:0000bbe4",
+          "kind": "member",
+          "name": "FUN_0000b81c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b81c@0000ba3c:0000ba3c",
+          "kind": "member",
+          "name": "FUN_0000b81c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b81c@0000ba84:0000ba84",
+          "kind": "member",
+          "name": "FUN_0000b81c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b81c@0000bb28:0000bb28",
+          "kind": "member",
+          "name": "FUN_0000b81c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b81c@0000bb84:0000bb84",
+          "kind": "member",
+          "name": "FUN_0000b81c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bf30@0000bf84:0000bf84",
+          "kind": "member",
+          "name": "FUN_0000bf30"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bf30@0000bfc0:0000bfc0",
+          "kind": "member",
+          "name": "FUN_0000bf30"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bf30@0000c004:0000c004",
+          "kind": "member",
+          "name": "FUN_0000bf30"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bf30@0000c034:0000c034",
+          "kind": "member",
+          "name": "FUN_0000bf30"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bf30@0000c04c:0000c04c",
+          "kind": "member",
+          "name": "FUN_0000bf30"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bf30@0000c0d0:0000c0d0",
+          "kind": "member",
+          "name": "FUN_0000bf30"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bf30@0000c180:0000c180",
+          "kind": "member",
+          "name": "FUN_0000bf30"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000c218@0000c32c:0000c32c",
+          "kind": "member",
+          "name": "FUN_0000c218"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d1dc@0000cc44:0000cc44",
+          "kind": "member",
+          "name": "FUN_0000d1dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d1dc@0000cccc:0000cccc",
+          "kind": "member",
+          "name": "FUN_0000d1dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d1dc@0000ccec:0000ccec",
+          "kind": "member",
+          "name": "FUN_0000d1dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d1dc@0000cd44:0000cd44",
+          "kind": "member",
+          "name": "FUN_0000d1dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d1dc@0000cd64:0000cd64",
+          "kind": "member",
+          "name": "FUN_0000d1dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d1dc@0000cd94:0000cd94",
+          "kind": "member",
+          "name": "FUN_0000d1dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d1dc@0000cdd8:0000cdd8",
+          "kind": "member",
+          "name": "FUN_0000d1dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d1dc@0000d050:0000d050",
+          "kind": "member",
+          "name": "FUN_0000d1dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d1dc@0000cea8:0000cea8",
+          "kind": "member",
+          "name": "FUN_0000d1dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d1dc@0000cf4c:0000cf4c",
+          "kind": "member",
+          "name": "FUN_0000d1dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d1dc@0000d068:0000d068",
+          "kind": "member",
+          "name": "FUN_0000d1dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d1dc@0000d0c8:0000d0c8",
+          "kind": "member",
+          "name": "FUN_0000d1dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d3a8@0000d408:0000d408",
+          "kind": "member",
+          "name": "FUN_0000d3a8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d3a8@0000d42c:0000d42c",
+          "kind": "member",
+          "name": "FUN_0000d3a8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d3a8@0000d448:0000d448",
+          "kind": "member",
+          "name": "FUN_0000d3a8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d3a8@0000d45c:0000d45c",
+          "kind": "member",
+          "name": "FUN_0000d3a8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d4c8@0000d4d0:0000d4d0",
+          "kind": "member",
+          "name": "FUN_0000d4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d4c8@0000d540:0000d540",
+          "kind": "member",
+          "name": "FUN_0000d4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d4c8@0000d554:0000d554",
+          "kind": "member",
+          "name": "FUN_0000d4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d4c8@0000d5ac:0000d5ac",
+          "kind": "member",
+          "name": "FUN_0000d4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d4c8@0000d5c0:0000d5c0",
+          "kind": "member",
+          "name": "FUN_0000d4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d4c8@0000d5cc:0000d5cc",
+          "kind": "member",
+          "name": "FUN_0000d4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d4c8@0000d5e4:0000d5e4",
+          "kind": "member",
+          "name": "FUN_0000d4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d604@0000d66c:0000d66c",
+          "kind": "member",
+          "name": "FUN_0000d604"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d604@0000d67c:0000d67c",
+          "kind": "member",
+          "name": "FUN_0000d604"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d604@0000d6c4:0000d6c4",
+          "kind": "member",
+          "name": "FUN_0000d604"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d604@0000d6e4:0000d6e4",
+          "kind": "member",
+          "name": "FUN_0000d604"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d604@0000d6f4:0000d6f4",
+          "kind": "member",
+          "name": "FUN_0000d604"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d730@0000d7e4:0000d7e4",
+          "kind": "member",
+          "name": "FUN_0000d730"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000d730@0000d7f4:0000d7f4",
+          "kind": "member",
+          "name": "FUN_0000d730"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000dc0c@0000dc2c:0000dc2c",
+          "kind": "member",
+          "name": "FUN_0000dc0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000e4f0@0000e504:0000e504",
+          "kind": "member",
+          "name": "FUN_0000e4f0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000e4f0@0000e514:0000e514",
+          "kind": "member",
+          "name": "FUN_0000e4f0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000e4f0@0000e518:0000e518",
+          "kind": "member",
+          "name": "FUN_0000e4f0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000e4f0@0000e524:0000e524",
+          "kind": "member",
+          "name": "FUN_0000e4f0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000e8a4@0000e8d0:0000e8d0",
+          "kind": "member",
+          "name": "FUN_0000e8a4"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000e8a4@0000e920:0000e920",
+          "kind": "member",
+          "name": "FUN_0000e8a4"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000e8a4@0000e934:0000e934",
+          "kind": "member",
+          "name": "FUN_0000e8a4"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000e8a4@0000e93c:0000e93c",
+          "kind": "member",
+          "name": "FUN_0000e8a4"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000e8a4@0000e968:0000e968",
+          "kind": "member",
+          "name": "FUN_0000e8a4"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000e8a4@0000e97c:0000e97c",
+          "kind": "member",
+          "name": "FUN_0000e8a4"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ea20@0000ea48:0000ea48",
+          "kind": "member",
+          "name": "FUN_0000ea20"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ea20@0000ea54:0000ea54",
+          "kind": "member",
+          "name": "FUN_0000ea20"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000eb5c@0000eb00:0000eb00",
+          "kind": "member",
+          "name": "FUN_0000eb5c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ebac@0000ebe4:0000ebe4",
+          "kind": "member",
+          "name": "FUN_0000ebac"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ebac@0000ebf8:0000ebf8",
+          "kind": "member",
+          "name": "FUN_0000ebac"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ebac@0000ec1c:0000ec1c",
+          "kind": "member",
+          "name": "FUN_0000ebac"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ebac@0000ec2c:0000ec2c",
+          "kind": "member",
+          "name": "FUN_0000ebac"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ebac@0000ec40:0000ec40",
+          "kind": "member",
+          "name": "FUN_0000ebac"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000edf0:0000edf0",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000ee04:0000ee04",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000ef10:0000ef10",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000ef3c:0000ef3c",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000ef4c:0000ef4c",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f0a4:0000f0a4",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f0d0:0000f0d0",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f0e0:0000f0e0",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f0f0:0000f0f0",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f11c:0000f11c",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f15c:0000f15c",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f164:0000f164",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f17c:0000f17c",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f18c:0000f18c",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f1a4:0000f1a4",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f1c0:0000f1c0",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f1dc:0000f1dc",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f1ec:0000f1ec",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f208:0000f208",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f220:0000f220",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f238:0000f238",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f278:0000f278",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f280:0000f280",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f290:0000f290",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f308:0000f308",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f334:0000f334",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f37c:0000f37c",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f394:0000f394",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f3a8:0000f3a8",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f3b4:0000f3b4",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f3c4:0000f3c4",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f3ec:0000f3ec",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f468:0000f468",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f484:0000f484",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f494:0000f494",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f4a0:0000f4a0",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000edcc@0000f4a8:0000f4a8",
+          "kind": "member",
+          "name": "FUN_0000edcc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000f7bc@0000f814:0000f814",
+          "kind": "member",
+          "name": "FUN_0000f7bc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000f7bc@0000f838:0000f838",
+          "kind": "member",
+          "name": "FUN_0000f7bc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000f7bc@0000f840:0000f840",
+          "kind": "member",
+          "name": "FUN_0000f7bc"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000f85c@0000f890:0000f890",
+          "kind": "member",
+          "name": "FUN_0000f85c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000f85c@0000f8b0:0000f8b0",
+          "kind": "member",
+          "name": "FUN_0000f85c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000f85c@0000f91c:0000f91c",
+          "kind": "member",
+          "name": "FUN_0000f85c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000f85c@0000f924:0000f924",
+          "kind": "member",
+          "name": "FUN_0000f85c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000f85c@0000f954:0000f954",
+          "kind": "member",
+          "name": "FUN_0000f85c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000fb5c@0000fb88:0000fb88",
+          "kind": "member",
+          "name": "FUN_0000fb5c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000fb5c@0000fba8:0000fba8",
+          "kind": "member",
+          "name": "FUN_0000fb5c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000fb5c@0000fbb8:0000fbb8",
+          "kind": "member",
+          "name": "FUN_0000fb5c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000fb5c@0000fbcc:0000fbcc",
+          "kind": "member",
+          "name": "FUN_0000fb5c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000fc10@0000fc4c:0000fc4c",
+          "kind": "member",
+          "name": "FUN_0000fc10"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000fc10@0000fc54:0000fc54",
+          "kind": "member",
+          "name": "FUN_0000fc10"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000fc10@0000fc70:0000fc70",
+          "kind": "member",
+          "name": "FUN_0000fc10"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000fe50@0000fe8c:0000fe8c",
+          "kind": "member",
+          "name": "FUN_0000fe50"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000fe50@0000fe94:0000fe94",
+          "kind": "member",
+          "name": "FUN_0000fe50"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000fe50@0000feb0:0000feb0",
+          "kind": "member",
+          "name": "FUN_0000fe50"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@0000ffe8:0000ffe8",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010160:00010160",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@000101d8:000101d8",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010208:00010208",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@0001026c:0001026c",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010294:00010294",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@000102fc:000102fc",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010394:00010394",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@000103a8:000103a8",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@000104f4:000104f4",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010508:00010508",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010510:00010510",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010524:00010524",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010564:00010564",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010578:00010578",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010588:00010588",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@000105bc:000105bc",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@000105cc:000105cc",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@000105d8:000105d8",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010610:00010610",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010628:00010628",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010648:00010648",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@0001065c:0001065c",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010668:00010668",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010670:00010670",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010690:00010690",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010698:00010698",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@000106a8:000106a8",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@000106c0:000106c0",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@0001073c:0001073c",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010750:00010750",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010950:00010950",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@0001095c:0001095c",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@0001097c:0001097c",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@00010990:00010990",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ff58@000109ac:000109ac",
+          "kind": "member",
+          "name": "FUN_0000ff58"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010b90@00010b9c:00010b9c",
+          "kind": "member",
+          "name": "FUN_00010b90"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010b90@00010bb4:00010bb4",
+          "kind": "member",
+          "name": "FUN_00010b90"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010bd4@00010bec:00010bec",
+          "kind": "member",
+          "name": "FUN_00010bd4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010bd4@00010bf8:00010bf8",
+          "kind": "member",
+          "name": "FUN_00010bd4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010bd4@00010c08:00010c08",
+          "kind": "member",
+          "name": "FUN_00010bd4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010bd4@00010c18:00010c18",
+          "kind": "member",
+          "name": "FUN_00010bd4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010bd4@00010c20:00010c20",
+          "kind": "member",
+          "name": "FUN_00010bd4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010bd4@00010c30:00010c30",
+          "kind": "member",
+          "name": "FUN_00010bd4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010bd4@00010c3c:00010c3c",
+          "kind": "member",
+          "name": "FUN_00010bd4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010dbc@00010dd0:00010dd0",
+          "kind": "member",
+          "name": "FUN_00010dbc"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010e78@00010e90:00010e90",
+          "kind": "member",
+          "name": "FUN_00010e78"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010e78@00010ef4:00010ef4",
+          "kind": "member",
+          "name": "FUN_00010e78"
+        },
+        {
+          "fullyQualifiedName": "FUN_00010e78@00010efc:00010efc",
+          "kind": "member",
+          "name": "FUN_00010e78"
+        },
+        {
+          "fullyQualifiedName": "FUN_000112c0@000112ec:000112ec",
+          "kind": "member",
+          "name": "FUN_000112c0"
+        },
+        {
+          "fullyQualifiedName": "FUN_000112c0@00011308:00011308",
+          "kind": "member",
+          "name": "FUN_000112c0"
+        },
+        {
+          "fullyQualifiedName": "FUN_000112c0@00011340:00011340",
+          "kind": "member",
+          "name": "FUN_000112c0"
+        },
+        {
+          "fullyQualifiedName": "FUN_000112c0@00011358:00011358",
+          "kind": "member",
+          "name": "FUN_000112c0"
+        },
+        {
+          "fullyQualifiedName": "FUN_000112c0@00011430:00011430",
+          "kind": "member",
+          "name": "FUN_000112c0"
+        },
+        {
+          "fullyQualifiedName": "FUN_000112c0@00011444:00011444",
+          "kind": "member",
+          "name": "FUN_000112c0"
+        },
+        {
+          "fullyQualifiedName": "FUN_000112c0@00011494:00011494",
+          "kind": "member",
+          "name": "FUN_000112c0"
+        },
+        {
+          "fullyQualifiedName": "FUN_000118dc@000118f8:000118f8",
+          "kind": "member",
+          "name": "FUN_000118dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_000118dc@00011960:00011960",
+          "kind": "member",
+          "name": "FUN_000118dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_000118dc@000119d8:000119d8",
+          "kind": "member",
+          "name": "FUN_000118dc"
+        },
+        {
+          "fullyQualifiedName": "FUN_000118dc@000119e8:000119e8",
+          "kind": "member",
+          "name": "FUN_000118dc"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::acosNvramConfig_get@EXTERNAL:0000005f",
+          "kind": "member",
+          "name": "<EXTERNAL>::acosNvramConfig_get@EXTERNAL:0000005f"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::execv@EXTERNAL:0000002e",
+          "kind": "member",
+          "name": "<EXTERNAL>::execv@EXTERNAL:0000002e"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::fgets@EXTERNAL:00000046",
+          "kind": "member",
+          "name": "<EXTERNAL>::fgets@EXTERNAL:00000046"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::fread@EXTERNAL:00000038",
+          "kind": "member",
+          "name": "<EXTERNAL>::fread@EXTERNAL:00000038"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::read@EXTERNAL:0000002d",
+          "kind": "member",
+          "name": "<EXTERNAL>::read@EXTERNAL:0000002d"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::recv@EXTERNAL:00000023",
+          "kind": "member",
+          "name": "<EXTERNAL>::recv@EXTERNAL:00000023"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::system@EXTERNAL:0000000d",
+          "kind": "member",
+          "name": "<EXTERNAL>::system@EXTERNAL:0000000d"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::fread@00009998",
+          "kind": "member",
+          "name": "<EXTERNAL>::fread@00009998"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::fgets@00009a40",
+          "kind": "member",
+          "name": "<EXTERNAL>::fgets@00009a40"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::system@00009794",
+          "kind": "member",
+          "name": "<EXTERNAL>::system@00009794"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::read@00009914",
+          "kind": "member",
+          "name": "<EXTERNAL>::read@00009914"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::execv@00009920",
+          "kind": "member",
+          "name": "<EXTERNAL>::execv@00009920"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::recv@0000989c",
+          "kind": "member",
+          "name": "<EXTERNAL>::recv@0000989c"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::acosNvramConfig_get@00009b6c",
+          "kind": "member",
+          "name": "<EXTERNAL>::acosNvramConfig_get@00009b6c"
+        }
+      ],
+      "originalUriBaseIds": {
+        "IMPORT_r7000_bftpd": {
+          "uri": "file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/"
+        }
+      }
+    }
+  ]
+}

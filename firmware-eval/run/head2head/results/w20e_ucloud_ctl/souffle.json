@@ -1,0 +1,32 @@
+{
+  "engine": "souffle",
+  "label": "w20e_ucloud_ctl",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/ucloud_ctl",
+  "binary_bytes": 18731,
+  "status": "ok",
+  "total_wall_s": 20.5,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 402868144
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2474344
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2507112
+    }
+  },
+  "import_bytes": 3855741,
+  "index_bytes": 17563648,
+  "summaries": 45,
+  "sarif_paths": 0
+}

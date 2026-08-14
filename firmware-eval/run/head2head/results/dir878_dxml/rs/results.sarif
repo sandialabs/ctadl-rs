@@ -1,0 +1,3049 @@
+{
+  "version": "2.1.0",
+  "properties": {
+    "parquet_dir": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/rs/store/imports/dir878_dxml/source-info",
+    "parquet_dirs": [
+      "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/rs/store/imports/dir878_dxml/source-info"
+    ],
+    "project_name": "dir878_dxml"
+  },
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/schemata/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "fullDescription": {
+            "text": "CTADL (Compositional Taint Analysis in Datalog)."
+          },
+          "informationUri": "https://github.com/sandialabs/ctadl-rs",
+          "name": "ctadl",
+          "notifications": [
+            {
+              "id": "CTADL0001.no-endpoints-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sources or sinks were configured ({0} model file(s) loaded, no built-in endpoints), so the query has nothing to search for."
+                }
+              },
+              "name": "No endpoints configured",
+              "shortDescription": {
+                "text": "Neither a source nor a sink was declared anywhere"
+              }
+            },
+            {
+              "id": "CTADL0002.no-sources-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sources were configured, but {0} sink endpoint(s) were. A taint query with no source is vacuous."
+                }
+              },
+              "name": "No sources configured",
+              "shortDescription": {
+                "text": "Sinks were declared but no source was"
+              }
+            },
+            {
+              "id": "CTADL0003.no-sinks-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sinks were configured, but {0} source endpoint(s) were. A taint query with no sink is vacuous."
+                }
+              },
+              "name": "No sinks configured",
+              "shortDescription": {
+                "text": "Sources were declared but no sink was"
+              }
+            },
+            {
+              "id": "CTADL0004.generator-matched-nothing",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' declares a {2} that matched nothing in the program, so it contributes nothing to the query."
+                },
+                "indexTimeDeclaration": {
+                  "text": "Model generator {0} in '{1}' declares a {2}, but no function in the program matched its 'where' constraints, so it will contribute nothing when the project is indexed."
+                },
+                "localNotFound": {
+                  "text": "Model generator {0} in '{1}' declares a {2} on port 'Variable({3})': its 'where' constraints matched {4} function(s), but none of them has a local variable named '{3}', so it contributes nothing to the query."
+                },
+                "mixedReasons": {
+                  "text": "Model generator {0} in '{1}' declares {3} {2} port(s), none of which matched anything in the program ({4}), so it contributes nothing to the query."
+                },
+                "noCallerMatched": {
+                  "text": "Model generator {0} in '{1}' declares a {2} at call sites: its 'where' constraints matched {3} function(s), but no caller of them satisfied its 'in_function' constraint, so it contributes nothing to the query."
+                },
+                "noFunctionMatched": {
+                  "text": "Model generator {0} in '{1}' declares a {2}, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+                },
+                "portRejected": {
+                  "text": "Model generator {0} in '{1}' declares a {2} on a port that is not valid for its 'find' method, so it contributes nothing to the query."
+                }
+              },
+              "name": "Model generator matched nothing",
+              "shortDescription": {
+                "text": "A model generator declared a port that produced no endpoint"
+              }
+            },
+            {
+              "id": "CTADL0005.endpoint-function-not-indexed",
+              "messageStrings": {
+                "default": {
+                  "text": "Function '{0}' was matched by a model but is not present in the index, so its source/sink endpoints were dropped."
+                }
+              },
+              "name": "Endpoint function not indexed",
+              "shortDescription": {
+                "text": "A matched function name is absent from the index"
+              }
+            },
+            {
+              "id": "CTADL0006.no-sources-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} source port(s) were declared but none of them matched anything in the program, so no taint could be seeded."
+                }
+              },
+              "name": "No sources matched",
+              "shortDescription": {
+                "text": "Sources were declared but none matched the program"
+              }
+            },
+            {
+              "id": "CTADL0007.no-sinks-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} sink port(s) were declared but none of them matched anything in the program, so no flow could be detected."
+                }
+              },
+              "name": "No sinks matched",
+              "shortDescription": {
+                "text": "Sinks were declared but none matched the program"
+              }
+            },
+            {
+              "id": "CTADL0008.no-index-model-check-only",
+              "messageStrings": {
+                "default": {
+                  "text": "The project has no index, so no taint analysis ran. The model files were matched against the imported program(s) instead -- {0} -- and the notifications below report what they select. These are model-matching results only: call-site fan-out, 'Argument(*)' expansion and sink wildcard expansion need the index, a matched name can still be absent from it, and bridge pairs are not counted. Run `ctadl index` for a real query."
+                }
+              },
+              "name": "No index; model check only",
+              "shortDescription": {
+                "text": "The project has no index, so only the model files were checked"
+              }
+            },
+            {
+              "id": "CTADL0009.generator-scope-excluded",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' has an 'in' scope ({2}) that admits none of the programs checked, so it was never evaluated against any of them."
+                }
+              },
+              "name": "Model generator out of scope",
+              "shortDescription": {
+                "text": "A generator's 'in' clause admits none of the programs checked"
+              }
+            },
+            {
+              "id": "CTADL0010.bridge-model-diagnosis",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}': {2}"
+                }
+              },
+              "name": "Bridge model cannot be paired",
+              "shortDescription": {
+                "text": "A bridge's sides matched nothing, or matched ambiguously"
+              }
+            },
+            {
+              "id": "CTADL0011.generator-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' matched {2}{3}."
+                }
+              },
+              "name": "Model generator matched",
+              "shortDescription": {
+                "text": "What a generator's 'where' constraints selected"
+              }
+            },
+            {
+              "id": "CTADL0012.model-file-error",
+              "messageStrings": {
+                "default": {
+                  "text": "Model file '{0}': {1}"
+                }
+              },
+              "name": "Model file error",
+              "shortDescription": {
+                "text": "A model file could not be read, or a generator in it is malformed"
+              }
+            },
+            {
+              "id": "CTADL0100.endpoint-match-summary",
+              "messageStrings": {
+                "default": {
+                  "text": "Declared {0} source and {1} sink port(s), which matched {2} source and {3} sink endpoint(s) in the program; {4} declared port(s) matched nothing."
+                },
+                "modelCheckOnly": {
+                  "text": "Declared {0} source and {1} sink port(s), which matched {2} source and {3} sink model row(s) in the program(s) checked -- before the call-site fan-out and wildcard expansion an index would apply; {4} declared port(s) matched nothing."
+                }
+              },
+              "name": "Endpoint match summary",
+              "shortDescription": {
+                "text": "How many ports the models declared and how many endpoints they matched"
+              }
+            },
+            {
+              "id": "CTADL0101.path-generation-disabled",
+              "messageStrings": {
+                "default": {
+                  "text": "The '{0}' SARIF profile does not perform source-to-sink path search, so this run cannot produce '{1}' results."
+                }
+              },
+              "name": "Path generation disabled",
+              "shortDescription": {
+                "text": "The selected SARIF profile does not perform path search"
+              }
+            },
+            {
+              "id": "CTADL0102.no-paths-found",
+              "messageStrings": {
+                "default": {
+                  "text": "Path search completed over {0} source and {1} sink endpoints and found no source-to-sink flow."
+                }
+              },
+              "name": "No paths found",
+              "shortDescription": {
+                "text": "Path search completed without finding a flow"
+              }
+            },
+            {
+              "id": "CTADL0103.path-dropped-no-location",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} source-to-sink path(s) were found but discarded because no reporting location could be resolved for them."
+                }
+              },
+              "name": "Path dropped for want of a location",
+              "shortDescription": {
+                "text": "A path was found but could not be reported"
+              }
+            }
+          ],
+          "rules": [
+            {
+              "id": "C0001.tainted-path",
+              "messageStrings": {
+                "default": {
+                  "text": "This is a tainted source-sink path."
+                }
+              },
+              "name": "Tainted paths",
+              "shortDescription": {
+                "text": "A path of tainted data flow"
+              }
+            },
+            {
+              "id": "C0002.tainted-instruction",
+              "messageStrings": {
+                "default": {
+                  "text": "This instruction manipulates tainted data."
+                }
+              },
+              "name": "Tainted instructions",
+              "shortDescription": {
+                "text": "An instruction with tainted data"
+              }
+            },
+            {
+              "id": "C0003.taint-source",
+              "messageStrings": {
+                "default": {
+                  "text": "This is a source of tainted data."
+                }
+              },
+              "name": "Tainted data sources",
+              "shortDescription": {
+                "text": "Tainted data source"
+              }
+            },
+            {
+              "id": "C0004.taint-sink",
+              "messageStrings": {
+                "default": {
+                  "text": "This is an desired sink of tainted data."
+                }
+              },
+              "name": "Tainted data sink",
+              "shortDescription": {
+                "text": "Tainted data sinks"
+              }
+            },
+            {
+              "id": "C0005.tainted-data",
+              "messageStrings": {
+                "default": {
+                  "text": "This vertex is tainted."
+                }
+              },
+              "name": "Tainted data",
+              "shortDescription": {
+                "text": "Tainted variables and fields"
+              }
+            },
+            {
+              "id": "C0006.almost-path-function",
+              "messageStrings": {
+                "default": {
+                  "text": "This function contains source and sink taint."
+                }
+              },
+              "name": "Almost-path function",
+              "shortDescription": {
+                "text": "A function which contains source-tainted and sink-tainted data, which means there's 'almost' a path between them."
+              }
+            },
+            {
+              "id": "C0007.absorbing-function",
+              "messageStrings": {
+                "default": {
+                  "text": "This external function receives tainted data."
+                }
+              },
+              "name": "Absorbing functions",
+              "shortDescription": {
+                "text": "An external function that receives tainted data"
+              }
+            }
+          ],
+          "version": "2026.1"
+        }
+      },
+      "invocations": [
+        {
+          "arguments": [
+            "--store",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/rs/store",
+            "query",
+            "--models",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+            "-o",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/rs/results.sarif",
+            "dir878_dxml"
+          ],
+          "commandLine": "/nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dxml/rs/results.sarif dir878_dxml",
+          "endTimeUtc": "2026-08-14T04:23:12.106Z",
+          "executionSuccessful": true,
+          "exitCode": 0,
+          "exitCodeDescription": "query completed",
+          "ruleConfigurationOverrides": [
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0002.tainted-instruction"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0005.tainted-data"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0006.almost-path-function"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0007.absorbing-function"
+              }
+            }
+          ],
+          "startTimeUtc": "2026-08-14T04:23:11.704Z",
+          "toolConfigurationNotifications": [
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "2",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 2 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 2,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "3",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 3 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 3,
+                "portsDeclared": 8,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "4",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 4 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 4,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "5",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 5 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 5,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "6",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 6 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 6,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "7",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 7 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 7,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "8",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 8 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 8,
+                "portsDeclared": 2,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "11",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 11 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 11,
+                "portsDeclared": 2,
+                "reason": "noFunctionMatched"
+              }
+            }
+          ],
+          "toolExecutionNotifications": [
+            {
+              "descriptor": {
+                "id": "CTADL0100.endpoint-match-summary"
+              },
+              "level": "note",
+              "message": {
+                "arguments": [
+                  "11",
+                  "11",
+                  "11",
+                  "4",
+                  "17"
+                ],
+                "id": "default",
+                "text": "Declared 11 source and 11 sink port(s), which matched 11 source and 4 sink endpoint(s) in the program; 17 declared port(s) matched nothing."
+              },
+              "properties": {
+                "portsDeclared": 22,
+                "portsUnmatched": 17,
+                "sinksDeclared": 11,
+                "sinksMatched": 4,
+                "sourcesDeclared": 11,
+                "sourcesMatched": 11,
+                "unmatchedDeclarations": 8
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0102.no-paths-found"
+              },
+              "level": "note",
+              "message": {
+                "arguments": [
+                  "11",
+                  "4"
+                ],
+                "id": "default",
+                "text": "Path search completed over 11 source and 4 sink endpoints and found no source-to-sink flow."
+              }
+            }
+          ]
+        }
+      ],
+      "results": [
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 394
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(0).deref in function <EXTERNAL>::fread@EXTERNAL:00000022 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "formal(0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 395
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: formal(0).deref in function <EXTERNAL>::popen@EXTERNAL:00000047 (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "formal(0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 396
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(1).deref in function <EXTERNAL>::read@EXTERNAL:00000029 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "formal(1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 397
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: formal(0).deref in function <EXTERNAL>::system@EXTERNAL:0000003e (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "formal(0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 398
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(6314, 1).deref in function <EXTERNAL>::read@00413640 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(6314, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 399
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(79816, 0).deref in function <EXTERNAL>::system@004134f0 (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(79816, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 398
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(20558, 1).deref in function <EXTERNAL>::read@00413640 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(20558, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 400
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(79613, 0).deref in function <EXTERNAL>::popen@00413460 (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(79613, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 401
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(79041, 0).deref in function <EXTERNAL>::fread@004136b0 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(79041, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 398
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(73085, 1).deref in function <EXTERNAL>::read@00413640 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(73085, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 398
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(73178, 1).deref in function <EXTERNAL>::read@00413640 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(73178, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 398
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(73498, 1).deref in function <EXTERNAL>::read@00413640 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(73498, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 402
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(1).deref in function main (kind 'argv_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "argv_input"
+            ],
+            "taintVertex": "formal(1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 402
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(1).deref.deref in function main (kind 'argv_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "argv_input"
+            ],
+            "taintVertex": "formal(1).deref.deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 398
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(85196, 1).deref in function <EXTERNAL>::read@00413640 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(85196, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "open",
+          "level": "none",
+          "message": {
+            "text": "Taint path analysis ran to completion and found no source-to-sink flow. CTADL does not prove the absence of a flow, so this is reported as 'open' rather than 'pass'."
+          },
+          "ruleId": "C0001.tainted-path"
+        }
+      ],
+      "logicalLocations": [
+        {
+          "fullyQualifiedName": "FUN_00404a40@004135c8:004135c8",
+          "kind": "member",
+          "name": "FUN_00404a40"
+        },
+        {
+          "fullyQualifiedName": "FUN_00401f94@00401fe0:00401fe0",
+          "kind": "member",
+          "name": "FUN_00401f94"
+        },
+        {
+          "fullyQualifiedName": "FUN_00401f94@00402044:00402044",
+          "kind": "member",
+          "name": "FUN_00401f94"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040249c@00402580:00402580",
+          "kind": "member",
+          "name": "FUN_0040249c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00402ea4:00402ea4",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00402ea4:00402ea4",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00402ed0:00402ed0",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00402ed0:00402ed0",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00402f68:00402f68",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00402f68:00402f68",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00402fb4:00402fb4",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00402fb4:00402fb4",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403020:00403020",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403020:00403020",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403084:00403084",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403084:00403084",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403344:00403344",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403344:00403344",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403204:00403204",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403204:00403204",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403b1c:00403b1c",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403b1c:00403b1c",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403cd4:00403cd4",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403cd4:00403cd4",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403bf8:00403bf8",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403bf8:00403bf8",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004031d8:004031d8",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004031d8:004031d8",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403224:00403224",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403224:00403224",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403248:00403248",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403248:00403248",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403264:00403264",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403264:00403264",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403288:00403288",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403288:00403288",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004032a8:004032a8",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004032a8:004032a8",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004032d4:004032d4",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004032d4:004032d4",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@0040330c:0040330c",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@0040330c:0040330c",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403368:00403368",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403368:00403368",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@0040339c:0040339c",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@0040339c:0040339c",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004033bc:004033bc",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004033bc:004033bc",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004033fc:004033fc",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004033fc:004033fc",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@0040341c:0040341c",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@0040341c:0040341c",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@0040343c:0040343c",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@0040343c:0040343c",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403458:00403458",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403458:00403458",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403478:00403478",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403478:00403478",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004034bc:004034bc",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004034bc:004034bc",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004034e4:004034e4",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004034e4:004034e4",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403500:00403500",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403500:00403500",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403534:00403534",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403534:00403534",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403558:00403558",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403558:00403558",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403578:00403578",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403578:00403578",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004035a0:004035a0",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004035a0:004035a0",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004035c0:004035c0",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004035c0:004035c0",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004035e8:004035e8",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004035e8:004035e8",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403660:00403660",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403660:00403660",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@0040367c:0040367c",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@0040367c:0040367c",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004036bc:004036bc",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004036bc:004036bc",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004036e4:004036e4",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004036e4:004036e4",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403704:00403704",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403704:00403704",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403744:00403744",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403744:00403744",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403798:00403798",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403798:00403798",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403800:00403800",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403800:00403800",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403838:00403838",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403838:00403838",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403878:00403878",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403878:00403878",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004038dc:004038dc",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004038dc:004038dc",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004039a4:004039a4",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004039a4:004039a4",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004039c4:004039c4",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004039c4:004039c4",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@004039dc:004039dc",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@004039dc:004039dc",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403a00:00403a00",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403a00:00403a00",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403a74:00403a74",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403a74:00403a74",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403af8:00403af8",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403af8:00403af8",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403b68:00403b68",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403b68:00403b68",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403b84:00403b84",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403b84:00403b84",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403cb0:00403cb0",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403cb0:00403cb0",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403d10:00403d10",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403d10:00403d10",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403d44:00403d44",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403d44:00403d44",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403d64:00403d64",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403d64:00403d64",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403d84:00403d84",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403d84:00403d84",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403d9c:00403d9c",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403d9c:00403d9c",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403df0:00403df0",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403df0:00403df0",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403e0c:00403e0c",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403e0c:00403e0c",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403e24:00403e24",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403e24:00403e24",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403e44:00403e44",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403e44:00403e44",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403e80:00403e80",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403e80:00403e80",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403e98:00403e98",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403e98:00403e98",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403ec8:00403ec8",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403ec8:00403ec8",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403ee0:00403ee0",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403ee0:00403ee0",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403f00:00403f00",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403f00:00403f00",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403f20:00403f20",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403f20:00403f20",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403f3c:00403f3c",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403f3c:00403f3c",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e54@00403f60:00403f60",
+          "kind": "member",
+          "name": "FUN_00402e54"
+        },
+        {
+          "fullyQualifiedName": "FUN_00402e64@00403f60:00403f60",
+          "kind": "member",
+          "name": "FUN_00402e64"
+        },
+        {
+          "fullyQualifiedName": "FUN_00404800@0040484c:0040484c",
+          "kind": "member",
+          "name": "FUN_00404800"
+        },
+        {
+          "fullyQualifiedName": "FUN_00404800@00404870:00404870",
+          "kind": "member",
+          "name": "FUN_00404800"
+        },
+        {
+          "fullyQualifiedName": "FUN_00404800@00404890:00404890",
+          "kind": "member",
+          "name": "FUN_00404800"
+        },
+        {
+          "fullyQualifiedName": "FUN_00404800@004048ac:004048ac",
+          "kind": "member",
+          "name": "FUN_00404800"
+        },
+        {
+          "fullyQualifiedName": "FUN_00404a40@00404a7c:00404a7c",
+          "kind": "member",
+          "name": "FUN_00404a40"
+        },
+        {
+          "fullyQualifiedName": "FUN_00404ac8@00404b14:00404b14",
+          "kind": "member",
+          "name": "FUN_00404ac8"
+        },
+        {
+          "fullyQualifiedName": "FUN_00404ac8@00404b44:00404b44",
+          "kind": "member",
+          "name": "FUN_00404ac8"
+        },
+        {
+          "fullyQualifiedName": "FUN_00404ac8@00404b68:00404b68",
+          "kind": "member",
+          "name": "FUN_00404ac8"
+        },
+        {
+          "fullyQualifiedName": "FUN_00404ac8@00404b80:00404b80",
+          "kind": "member",
+          "name": "FUN_00404ac8"
+        },
+        {
+          "fullyQualifiedName": "FUN_00404ac8@00404c3c:00404c3c",
+          "kind": "member",
+          "name": "FUN_00404ac8"
+        },
+        {
+          "fullyQualifiedName": "FUN_00406fd0@00407030:00407030",
+          "kind": "member",
+          "name": "FUN_00406fd0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00406fd0@0040704c:0040704c",
+          "kind": "member",
+          "name": "FUN_00406fd0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004070a8@00407114:00407114",
+          "kind": "member",
+          "name": "FUN_004070a8"
+        },
+        {
+          "fullyQualifiedName": "FUN_004070a8@00407148:00407148",
+          "kind": "member",
+          "name": "FUN_004070a8"
+        },
+        {
+          "fullyQualifiedName": "FUN_004071a8@00407228:00407228",
+          "kind": "member",
+          "name": "FUN_004071a8"
+        },
+        {
+          "fullyQualifiedName": "FUN_004071a8@00407260:00407260",
+          "kind": "member",
+          "name": "FUN_004071a8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@00408690:00408690",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@00408a8c:00408a8c",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@00408b90:00408b90",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@00408c60:00408c60",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@00408dec:00408dec",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@00408fb8:00408fb8",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@0040902c:0040902c",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@00409164:00409164",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@004091a4:004091a4",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@004094c8:004094c8",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@00409608:00409608",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@00409648:00409648",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@00409744:00409744",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@004097a8:004097a8",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@004097fc:004097fc",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@00409818:00409818",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@00409834:00409834",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040837c@0040984c:0040984c",
+          "kind": "member",
+          "name": "FUN_0040837c"
+        },
+        {
+          "fullyQualifiedName": "FUN_004098f4@00409c14:00409c14",
+          "kind": "member",
+          "name": "FUN_004098f4"
+        },
+        {
+          "fullyQualifiedName": "FUN_004098f4@00409d58:00409d58",
+          "kind": "member",
+          "name": "FUN_004098f4"
+        },
+        {
+          "fullyQualifiedName": "FUN_004098f4@00409dfc:00409dfc",
+          "kind": "member",
+          "name": "FUN_004098f4"
+        },
+        {
+          "fullyQualifiedName": "FUN_004098f4@00409e3c:00409e3c",
+          "kind": "member",
+          "name": "FUN_004098f4"
+        },
+        {
+          "fullyQualifiedName": "FUN_004098f4@00409e84:00409e84",
+          "kind": "member",
+          "name": "FUN_004098f4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@00409fc8:00409fc8",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a000:0040a000",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a03c:0040a03c",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a058:0040a058",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a0a0:0040a0a0",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a0c4:0040a0c4",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a0d4:0040a0d4",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a0f0:0040a0f0",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a100:0040a100",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a110:0040a110",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a148:0040a148",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a344:0040a344",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a35c:0040a35c",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a280:0040a280",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a298:0040a298",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a38c:0040a38c",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a3a4:0040a3a4",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a244:0040a244",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a25c:0040a25c",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a2bc:0040a2bc",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a2d4:0040a2d4",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a2fc:0040a2fc",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a318:0040a318",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a3c8:0040a3c8",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a3e0:0040a3e0",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a400:0040a400",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a41c:0040a41c",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a42c:0040a42c",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00409f7c@0040a468:0040a468",
+          "kind": "member",
+          "name": "FUN_00409f7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a8ec@0040a948:0040a948",
+          "kind": "member",
+          "name": "FUN_0040a8ec"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a998@0040a9cc:0040a9cc",
+          "kind": "member",
+          "name": "FUN_0040a998"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a998@0040aa44:0040aa44",
+          "kind": "member",
+          "name": "FUN_0040a998"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a998@0040aa90:0040aa90",
+          "kind": "member",
+          "name": "FUN_0040a998"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a998@0040aadc:0040aadc",
+          "kind": "member",
+          "name": "FUN_0040a998"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a998@0040ab10:0040ab10",
+          "kind": "member",
+          "name": "FUN_0040a998"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a998@0040ab44:0040ab44",
+          "kind": "member",
+          "name": "FUN_0040a998"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a998@0040ab90:0040ab90",
+          "kind": "member",
+          "name": "FUN_0040a998"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a998@0040ac14:0040ac14",
+          "kind": "member",
+          "name": "FUN_0040a998"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b210:0040b210",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b230:0040b230",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b254:0040b254",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b290:0040b290",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b2b0:0040b2b0",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b2dc:0040b2dc",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b35c:0040b35c",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b394:0040b394",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b3d8:0040b3d8",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b440:0040b440",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b45c:0040b45c",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b47c:0040b47c",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b4b4:0040b4b4",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b4c4:0040b4c4",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b4f0:0040b4f0",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b524:0040b524",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b534:0040b534",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b560:0040b560",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b584:0040b584",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b5b8:0040b5b8",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b600:0040b600",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b61c:0040b61c",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b63c:0040b63c",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b6f0:0040b6f0",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b738:0040b738",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b790:0040b790",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b7cc:0040b7cc",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b7e4:0040b7e4",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b820:0040b820",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b83c:0040b83c",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b87c:0040b87c",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b89c:0040b89c",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b8b4:0040b8b4",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b8d4:0040b8d4",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b8f4:0040b8f4",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b95c:0040b95c",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040b9ec:0040b9ec",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040ba14:0040ba14",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040ba2c:0040ba2c",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040ba68:0040ba68",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040ba88:0040ba88",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040baa4:0040baa4",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040bac8:0040bac8",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040baf0:0040baf0",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040bb18:0040bb18",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040bb5c:0040bb5c",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040bc24:0040bc24",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040bc44:0040bc44",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040bc60:0040bc60",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040bcd8:0040bcd8",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040b178@0040bd04:0040bd04",
+          "kind": "member",
+          "name": "FUN_0040b178"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040bdb0@0040c078:0040c078",
+          "kind": "member",
+          "name": "FUN_0040bdb0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040bdb0@0040c1e0:0040c1e0",
+          "kind": "member",
+          "name": "FUN_0040bdb0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040bdb0@0040c234:0040c234",
+          "kind": "member",
+          "name": "FUN_0040bdb0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040bdb0@0040c250:0040c250",
+          "kind": "member",
+          "name": "FUN_0040bdb0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040bdb0@0040c27c:0040c27c",
+          "kind": "member",
+          "name": "FUN_0040bdb0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040bdb0@0040c2b0:0040c2b0",
+          "kind": "member",
+          "name": "FUN_0040bdb0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040bdb0@0040c460:0040c460",
+          "kind": "member",
+          "name": "FUN_0040bdb0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410450@00410498:00410498",
+          "kind": "member",
+          "name": "FUN_00410450"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410450@004104bc:004104bc",
+          "kind": "member",
+          "name": "FUN_00410450"
+        },
+        {
+          "fullyQualifiedName": "FUN_004104e8@00410588:00410588",
+          "kind": "member",
+          "name": "FUN_004104e8"
+        },
+        {
+          "fullyQualifiedName": "FUN_004104e8@004105bc:004105bc",
+          "kind": "member",
+          "name": "FUN_004104e8"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410620@004106fc:004106fc",
+          "kind": "member",
+          "name": "FUN_00410620"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410620@0041072c:0041072c",
+          "kind": "member",
+          "name": "FUN_00410620"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410620@00410748:00410748",
+          "kind": "member",
+          "name": "FUN_00410620"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410620@00410764:00410764",
+          "kind": "member",
+          "name": "FUN_00410620"
+        },
+        {
+          "fullyQualifiedName": "FUN_0041079c@004107e4:004107e4",
+          "kind": "member",
+          "name": "FUN_0041079c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0041079c@00410814:00410814",
+          "kind": "member",
+          "name": "FUN_0041079c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0041079c@00410868:00410868",
+          "kind": "member",
+          "name": "FUN_0041079c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0041079c@00410884:00410884",
+          "kind": "member",
+          "name": "FUN_0041079c"
+        },
+        {
+          "fullyQualifiedName": "FUN_004108a4@00410934:00410934",
+          "kind": "member",
+          "name": "FUN_004108a4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410e18@00410ea0:00410ea0",
+          "kind": "member",
+          "name": "FUN_00410e18"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410e28@00410ea0:00410ea0",
+          "kind": "member",
+          "name": "FUN_00410e28"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410e28@00410ec0:00410ec0",
+          "kind": "member",
+          "name": "FUN_00410e28"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410e18@00410ec0:00410ec0",
+          "kind": "member",
+          "name": "FUN_00410e18"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410e28@00410ed8:00410ed8",
+          "kind": "member",
+          "name": "FUN_00410e28"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410e18@00410ed8:00410ed8",
+          "kind": "member",
+          "name": "FUN_00410e18"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410f14@00410f8c:00410f8c",
+          "kind": "member",
+          "name": "FUN_00410f14"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410f04@00410f8c:00410f8c",
+          "kind": "member",
+          "name": "FUN_00410f04"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410f04@00410fac:00410fac",
+          "kind": "member",
+          "name": "FUN_00410f04"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410f14@00410fac:00410fac",
+          "kind": "member",
+          "name": "FUN_00410f14"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410f04@00410fc4:00410fc4",
+          "kind": "member",
+          "name": "FUN_00410f04"
+        },
+        {
+          "fullyQualifiedName": "FUN_00410f14@00410fc4:00410fc4",
+          "kind": "member",
+          "name": "FUN_00410f14"
+        },
+        {
+          "fullyQualifiedName": "FUN_00411128@004111b0:004111b0",
+          "kind": "member",
+          "name": "FUN_00411128"
+        },
+        {
+          "fullyQualifiedName": "FUN_00411138@004111b0:004111b0",
+          "kind": "member",
+          "name": "FUN_00411138"
+        },
+        {
+          "fullyQualifiedName": "FUN_00411138@004111d0:004111d0",
+          "kind": "member",
+          "name": "FUN_00411138"
+        },
+        {
+          "fullyQualifiedName": "FUN_00411128@004111d0:004111d0",
+          "kind": "member",
+          "name": "FUN_00411128"
+        },
+        {
+          "fullyQualifiedName": "FUN_00411128@004111e8:004111e8",
+          "kind": "member",
+          "name": "FUN_00411128"
+        },
+        {
+          "fullyQualifiedName": "FUN_00411138@004111e8:004111e8",
+          "kind": "member",
+          "name": "FUN_00411138"
+        },
+        {
+          "fullyQualifiedName": "client_putc@00402770:00402770",
+          "kind": "member",
+          "name": "client_putc"
+        },
+        {
+          "fullyQualifiedName": "client_puts@00402810:00402810",
+          "kind": "member",
+          "name": "client_puts"
+        },
+        {
+          "fullyQualifiedName": "client_write@004028a0:004028a0",
+          "kind": "member",
+          "name": "client_write"
+        },
+        {
+          "fullyQualifiedName": "convert_ext_strlst@00410404:00410404",
+          "kind": "member",
+          "name": "convert_ext_strlst"
+        },
+        {
+          "fullyQualifiedName": "convert_string@00406cf4:00406cf4",
+          "kind": "member",
+          "name": "convert_string"
+        },
+        {
+          "fullyQualifiedName": "convert_string@00406de0:00406de0",
+          "kind": "member",
+          "name": "convert_string"
+        },
+        {
+          "fullyQualifiedName": "file_read@0040af64:0040af64",
+          "kind": "member",
+          "name": "file_read"
+        },
+        {
+          "fullyQualifiedName": "file_read@0040af80:0040af80",
+          "kind": "member",
+          "name": "file_read"
+        },
+        {
+          "fullyQualifiedName": "file_read@0040af9c:0040af9c",
+          "kind": "member",
+          "name": "file_read"
+        },
+        {
+          "fullyQualifiedName": "file_read@0040afe4:0040afe4",
+          "kind": "member",
+          "name": "file_read"
+        },
+        {
+          "fullyQualifiedName": "get_access_side@00402c04:00402c04",
+          "kind": "member",
+          "name": "get_access_side"
+        },
+        {
+          "fullyQualifiedName": "get_access_side@00402c20:00402c20",
+          "kind": "member",
+          "name": "get_access_side"
+        },
+        {
+          "fullyQualifiedName": "ldxmlcRunShell@00410ad0:00410ad0",
+          "kind": "member",
+          "name": "ldxmlcRunShell"
+        },
+        {
+          "fullyQualifiedName": "ldxmlcSystem@00410c30:00410c30",
+          "kind": "member",
+          "name": "ldxmlcSystem"
+        },
+        {
+          "fullyQualifiedName": "main@00401c98:00401c98",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@00401cbc:00401cbc",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@00401cdc:00401cdc",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@00401d08:00401d08",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@00401d28:00401d28",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@00401d58:00401d58",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@00401d6c:00401d6c",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "mh_malloc@0040f0cc:0040f0cc",
+          "kind": "member",
+          "name": "mh_malloc"
+        },
+        {
+          "fullyQualifiedName": "mh_realloc@0040f51c:0040f51c",
+          "kind": "member",
+          "name": "mh_realloc"
+        },
+        {
+          "fullyQualifiedName": "mh_realloc@0040f53c:0040f53c",
+          "kind": "member",
+          "name": "mh_realloc"
+        },
+        {
+          "fullyQualifiedName": "mh_realloc@0040f554:0040f554",
+          "kind": "member",
+          "name": "mh_realloc"
+        },
+        {
+          "fullyQualifiedName": "mh_realloc@0040f584:0040f584",
+          "kind": "member",
+          "name": "mh_realloc"
+        },
+        {
+          "fullyQualifiedName": "mh_strdup@0040f2f8:0040f2f8",
+          "kind": "member",
+          "name": "mh_strdup"
+        },
+        {
+          "fullyQualifiedName": "mh_strdup@0040f314:0040f314",
+          "kind": "member",
+          "name": "mh_strdup"
+        },
+        {
+          "fullyQualifiedName": "mh_strdup@0040f334:0040f334",
+          "kind": "member",
+          "name": "mh_strdup"
+        },
+        {
+          "fullyQualifiedName": "query_node_ex@0040add8:0040add8",
+          "kind": "member",
+          "name": "query_node_ex"
+        },
+        {
+          "fullyQualifiedName": "sloop_register_timeout@0040de2c:0040de2c",
+          "kind": "member",
+          "name": "sloop_register_timeout"
+        },
+        {
+          "fullyQualifiedName": "sloop_run@0040e278:0040e278",
+          "kind": "member",
+          "name": "sloop_run"
+        },
+        {
+          "fullyQualifiedName": "sloop_run@0040e2f4:0040e2f4",
+          "kind": "member",
+          "name": "sloop_run"
+        },
+        {
+          "fullyQualifiedName": "verbose@004026f0:004026f0",
+          "kind": "member",
+          "name": "verbose"
+        },
+        {
+          "fullyQualifiedName": "xmldb_dump_all@004059b0:004059b0",
+          "kind": "member",
+          "name": "xmldb_dump_all"
+        },
+        {
+          "fullyQualifiedName": "xmldb_dump_nodes@004058b4:004058b4",
+          "kind": "member",
+          "name": "xmldb_dump_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_dump_nodes@004058d4:004058d4",
+          "kind": "member",
+          "name": "xmldb_dump_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_dump_nodes@004058f0:004058f0",
+          "kind": "member",
+          "name": "xmldb_dump_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_dump_nodes@00405918:00405918",
+          "kind": "member",
+          "name": "xmldb_dump_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_ephp@0040c568:0040c568",
+          "kind": "member",
+          "name": "xmldb_ephp"
+        },
+        {
+          "fullyQualifiedName": "xmldb_ephp@0040c590:0040c590",
+          "kind": "member",
+          "name": "xmldb_ephp"
+        },
+        {
+          "fullyQualifiedName": "xmldb_ephp@0040c610:0040c610",
+          "kind": "member",
+          "name": "xmldb_ephp"
+        },
+        {
+          "fullyQualifiedName": "xmldb_ephp@0040c634:0040c634",
+          "kind": "member",
+          "name": "xmldb_ephp"
+        },
+        {
+          "fullyQualifiedName": "xmldb_ephp@0040c654:0040c654",
+          "kind": "member",
+          "name": "xmldb_ephp"
+        },
+        {
+          "fullyQualifiedName": "xmldb_ephp@0040c67c:0040c67c",
+          "kind": "member",
+          "name": "xmldb_ephp"
+        },
+        {
+          "fullyQualifiedName": "xmldb_find_node@00405ac4:00405ac4",
+          "kind": "member",
+          "name": "xmldb_find_node"
+        },
+        {
+          "fullyQualifiedName": "xmldb_find_node@00405bac:00405bac",
+          "kind": "member",
+          "name": "xmldb_find_node"
+        },
+        {
+          "fullyQualifiedName": "xmldb_find_node@00405bc8:00405bc8",
+          "kind": "member",
+          "name": "xmldb_find_node"
+        },
+        {
+          "fullyQualifiedName": "xmldb_find_node@00405be4:00405be4",
+          "kind": "member",
+          "name": "xmldb_find_node"
+        },
+        {
+          "fullyQualifiedName": "xmldb_find_node@00405c0c:00405c0c",
+          "kind": "member",
+          "name": "xmldb_find_node"
+        },
+        {
+          "fullyQualifiedName": "xmldb_find_node@00405c2c:00405c2c",
+          "kind": "member",
+          "name": "xmldb_find_node"
+        },
+        {
+          "fullyQualifiedName": "xmldb_find_sibling@004059fc:004059fc",
+          "kind": "member",
+          "name": "xmldb_find_sibling"
+        },
+        {
+          "fullyQualifiedName": "xmldb_find_sibling@00405a4c:00405a4c",
+          "kind": "member",
+          "name": "xmldb_find_sibling"
+        },
+        {
+          "fullyQualifiedName": "xmldb_get_value@004065cc:004065cc",
+          "kind": "member",
+          "name": "xmldb_get_value"
+        },
+        {
+          "fullyQualifiedName": "xmldb_get_value@00406620:00406620",
+          "kind": "member",
+          "name": "xmldb_get_value"
+        },
+        {
+          "fullyQualifiedName": "xmldb_get_value@00406640:00406640",
+          "kind": "member",
+          "name": "xmldb_get_value"
+        },
+        {
+          "fullyQualifiedName": "xmldb_get_value@00406664:00406664",
+          "kind": "member",
+          "name": "xmldb_get_value"
+        },
+        {
+          "fullyQualifiedName": "xmldb_get_value@0040669c:0040669c",
+          "kind": "member",
+          "name": "xmldb_get_value"
+        },
+        {
+          "fullyQualifiedName": "xmldb_get_value@004066c4:004066c4",
+          "kind": "member",
+          "name": "xmldb_get_value"
+        },
+        {
+          "fullyQualifiedName": "xmldb_get_value@00406704:00406704",
+          "kind": "member",
+          "name": "xmldb_get_value"
+        },
+        {
+          "fullyQualifiedName": "xmldb_get_value@0040671c:0040671c",
+          "kind": "member",
+          "name": "xmldb_get_value"
+        },
+        {
+          "fullyQualifiedName": "xmldb_print_nodes@00405ce4:00405ce4",
+          "kind": "member",
+          "name": "xmldb_print_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_print_nodes@00405d38:00405d38",
+          "kind": "member",
+          "name": "xmldb_print_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_print_nodes@00405d5c:00405d5c",
+          "kind": "member",
+          "name": "xmldb_print_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_print_nodes@00405d78:00405d78",
+          "kind": "member",
+          "name": "xmldb_print_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_print_nodes@00405d90:00405d90",
+          "kind": "member",
+          "name": "xmldb_print_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_print_nodes@00405dac:00405dac",
+          "kind": "member",
+          "name": "xmldb_print_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_print_nodes@00405dd0:00405dd0",
+          "kind": "member",
+          "name": "xmldb_print_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_print_nodes@00405de8:00405de8",
+          "kind": "member",
+          "name": "xmldb_print_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_print_nodes@00405e08:00405e08",
+          "kind": "member",
+          "name": "xmldb_print_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_print_nodes@00405e28:00405e28",
+          "kind": "member",
+          "name": "xmldb_print_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_print_nodes@00405e4c:00405e4c",
+          "kind": "member",
+          "name": "xmldb_print_nodes"
+        },
+        {
+          "fullyQualifiedName": "xmldb_reatwhite@004051c4:004051c4",
+          "kind": "member",
+          "name": "xmldb_reatwhite"
+        },
+        {
+          "fullyQualifiedName": "xmldb_set_extend@00406460:00406460",
+          "kind": "member",
+          "name": "xmldb_set_extend"
+        },
+        {
+          "fullyQualifiedName": "xmldb_set_extend@00406480:00406480",
+          "kind": "member",
+          "name": "xmldb_set_extend"
+        },
+        {
+          "fullyQualifiedName": "xmldb_set_extend@004064b0:004064b0",
+          "kind": "member",
+          "name": "xmldb_set_extend"
+        },
+        {
+          "fullyQualifiedName": "xmldb_set_value@00405ea0:00405ea0",
+          "kind": "member",
+          "name": "xmldb_set_value"
+        },
+        {
+          "fullyQualifiedName": "xmldb_set_value@00405f28:00405f28",
+          "kind": "member",
+          "name": "xmldb_set_value"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::fread@EXTERNAL:00000022",
+          "kind": "member",
+          "name": "<EXTERNAL>::fread@EXTERNAL:00000022"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::popen@EXTERNAL:00000047",
+          "kind": "member",
+          "name": "<EXTERNAL>::popen@EXTERNAL:00000047"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::read@EXTERNAL:00000029",
+          "kind": "member",
+          "name": "<EXTERNAL>::read@EXTERNAL:00000029"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::system@EXTERNAL:0000003e",
+          "kind": "member",
+          "name": "<EXTERNAL>::system@EXTERNAL:0000003e"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::read@00413640",
+          "kind": "member",
+          "name": "<EXTERNAL>::read@00413640"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::system@004134f0",
+          "kind": "member",
+          "name": "<EXTERNAL>::system@004134f0"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::popen@00413460",
+          "kind": "member",
+          "name": "<EXTERNAL>::popen@00413460"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::fread@004136b0",
+          "kind": "member",
+          "name": "<EXTERNAL>::fread@004136b0"
+        },
+        {
+          "fullyQualifiedName": "main",
+          "kind": "member",
+          "name": "main"
+        }
+      ],
+      "originalUriBaseIds": {
+        "IMPORT_dir878_dxml": {
+          "uri": "file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link%20878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/"
+        }
+      }
+    }
+  ]
+}

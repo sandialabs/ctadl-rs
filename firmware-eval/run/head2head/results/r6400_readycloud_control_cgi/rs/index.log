@@ -1,0 +1,7 @@
+indexing project 'r6400_readycloud_control_cgi' from 1 import(s): r6400_readycloud_control_cgi
+'r6400_readycloud_control_cgi': loading IR
+'r6400_readycloud_control_cgi': preprocessing 359 function(s) (SSA) and generating facts
+warning: CHA: unsupported virtual method table
+models: 18 summary row(s), 0 declared access path(s), 8 function body(ies) not analyzed
+indexing (computing the flow relation)
+wrote index to /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_readycloud_control_cgi/rs/store/projects/r6400_readycloud_control_cgi/index

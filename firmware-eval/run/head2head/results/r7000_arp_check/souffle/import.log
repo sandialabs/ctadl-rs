@@ -7,12 +7,12 @@ INFO  Using log config file: jar:file:/nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbf
 INFO  Using log file: /Users/dbueno/.config/ghidra/ghidra_12.0.4_NIX/application.log (LoggingInitialization)  
 INFO  Loading user preferences: /Users/dbueno/.config/ghidra/ghidra_12.0.4_NIX/preferences (Preferences)  
 INFO  Searching for classes... (ClassSearcher)  
-INFO  Class search complete (711 ms) (ClassSearcher)  
+INFO  Class search complete (732 ms) (ClassSearcher)  
 INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
 INFO  Initializing Random Number Generator... (SecureRandomFactory)  
 INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
 INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
-INFO  Headless startup complete (1292 ms) (AnalyzeHeadless)  
+INFO  Headless startup complete (1315 ms) (AnalyzeHeadless)  
 INFO  Class searcher loaded 58 extension points (18 false positives) (ClassSearcher)  
 INFO  HEADLESS Script Paths:
     /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/FunctionID/ghidra_scripts
@@ -40,10 +40,10 @@ INFO  HEADLESS Script Paths:
     /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/DATA/ghidra_scripts
     /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/8051/ghidra_scripts (HeadlessAnalyzer)  
 INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
-INFO  Creating temporary project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-m4vguwpd/ghidra_headless/headless (HeadlessAnalyzer)  
-INFO  Creating project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-m4vguwpd/ghidra_headless/headless (DefaultProject)  
+INFO  Creating temporary project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-y0d753hq/ghidra_headless/headless (HeadlessAnalyzer)  
+INFO  Creating project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-y0d753hq/ghidra_headless/headless (DefaultProject)  
 INFO  REPORT: Processing input files:  (HeadlessAnalyzer)  
-INFO       project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-m4vguwpd/ghidra_headless/headless (HeadlessAnalyzer)  
+INFO       project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-y0d753hq/ghidra_headless/headless (HeadlessAnalyzer)  
 INFO  IMPORTING: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check (HeadlessAnalyzer)  
 INFO  Using Loader: Executable and Linking Format (ELF) (ProgramLoader)  
 INFO  Using Language/Compiler: ARM:LE:32:v8:default (ProgramLoader)  
@@ -70,35 +70,35 @@ INFO  hit non-returning function, restarting decompiler switch analyzer later (D
 INFO  Packed database cache: /Users/dbueno/.cache/ghidra/packed-db-cache (PackedDatabaseCache)  
 INFO  Applied data type archive: generic_clib (ApplyDataArchiveAnalyzer)  
 INFO  -----------------------------------------------------
-    ARM Constant Reference Analyzer            0.143 secs
+    ARM Constant Reference Analyzer            0.141 secs
     ARM Symbol                                 0.000 secs
-    ASCII Strings                              0.155 secs
-    Apply Data Archives                        0.270 secs
-    Call Convention ID                         0.000 secs
+    ASCII Strings                              0.154 secs
+    Apply Data Archives                        0.251 secs
+    Call Convention ID                         0.001 secs
     Call-Fixup Installer                       0.002 secs
     Create Address Tables                      0.004 secs
     Create Function                            0.025 secs
-    Data Reference                             0.008 secs
-    Decompiler Switch Analysis                 0.320 secs
+    Data Reference                             0.009 secs
+    Decompiler Switch Analysis                 0.314 secs
     Decompiler Switch Analysis - One Time      0.000 secs
     Demangler GNU                              0.013 secs
-    Disassemble                                0.090 secs
-    Disassemble Entry Points                   0.061 secs
-    Embedded Media                             0.004 secs
-    External Entry References                  0.000 secs
-    Function ID                                0.021 secs
+    Disassemble                                0.091 secs
+    Disassemble Entry Points                   0.063 secs
+    Embedded Media                             0.005 secs
+    External Entry References                  0.001 secs
+    Function ID                                0.024 secs
     Function Start Pre Search                  0.002 secs
-    Function Start Search                      0.106 secs
-    Function Start Search After Code           0.009 secs
-    Function Start Search After Data           0.008 secs
+    Function Start Search                      0.111 secs
+    Function Start Search After Code           0.010 secs
+    Function Start Search After Data           0.007 secs
     Function Start Search delayed - One Time   0.000 secs
     GCC Exception Handlers                     0.005 secs
     Non-Returning Functions - Discovered       0.004 secs
-    Non-Returning Functions - Known            0.001 secs
-    Reference                                  0.022 secs
-    Shared Return Calls                        0.004 secs
-    Stack                                      0.129 secs
-    Subroutine References                      0.018 secs
+    Non-Returning Functions - Known            0.002 secs
+    Reference                                  0.020 secs
+    Shared Return Calls                        0.003 secs
+    Stack                                      0.121 secs
+    Subroutine References                      0.013 secs
 -----------------------------------------------------
      Total Time   1 secs
 -----------------------------------------------------
@@ -107,9 +107,9 @@ INFO  REPORT: Analysis succeeded for file: file:///Users/dbueno/proj/operation-m
 INFO  REPORT: Execute script: ExportPcode.java '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_arp_check/souffle/import/facts'  (HeadlessAnalyzer)  
 INFO  SCRIPT: /nix/store/wv3h872qsfbfsjnsnmpjrhswwcxb6ga1-python3.13-ctadl-0.14.1/lib/python3.13/site-packages/ctadl/souffle-logic/pcode/ExportPcode.java (HeadlessAnalyzer)  
 INFO  ExportPcode.java> Script is not running in GUI (GhidraScript)  
-WARN  Decompiling 00015000, pcode error at 00015000: Unable to disassemble EXTERNAL block location: 00015000 (DecompileCallback)  
 WARN  Decompiling 00015008, pcode error at 00015008: Unable to disassemble EXTERNAL block location: 00015008 (DecompileCallback)  
-INFO  ExportPcode.java> total duration: 2898 (GhidraScript)  
+WARN  Decompiling 00015000, pcode error at 00015000: Unable to disassemble EXTERNAL block location: 00015000 (DecompileCallback)  
+INFO  ExportPcode.java> total duration: 2862 (GhidraScript)  
 INFO  ANALYZING changes made by post scripts: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check (HeadlessAnalyzer)  
 INFO  REPORT: Post-analysis succeeded for file: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check (HeadlessAnalyzer)  
 INFO  /arp_check: file created (dbueno) (LocalFileSystem)  

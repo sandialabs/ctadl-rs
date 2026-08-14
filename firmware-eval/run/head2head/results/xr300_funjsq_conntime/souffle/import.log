@@ -1,0 +1,115 @@
+ctadl_ghidra_fact_generator_plugin 0.1.0
+exporting program with Ghidra to '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_conntime/souffle/import'
+openjdk version "21.0.8" 2025-07-15 LTS
+OpenJDK Runtime Environment Zulu21.44+17-CA (build 21.0.8+9-LTS)
+OpenJDK 64-Bit Server VM Zulu21.44+17-CA (build 21.0.8+9-LTS, mixed mode)
+INFO  Using log config file: jar:file:/nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /Users/dbueno/.config/ghidra/ghidra_12.0.4_NIX/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /Users/dbueno/.config/ghidra/ghidra_12.0.4_NIX/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (710 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (1289 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 58 extension points (18 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/FunctionID/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/Base/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/BytePatterns/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/PIC/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/JVM/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/Atmel/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/PyGhidra/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/VersionTracking/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/BSim/ghidra_scripts
+    /nix/store/wv3h872qsfbfsjnsnmpjrhswwcxb6ga1-python3.13-ctadl-0.14.1/lib/python3.13/site-packages/ctadl/souffle-logic/pcode
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/Decompiler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Debug/Debugger/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/FileFormats/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/Jython/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/PDB/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/DATA/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/8051/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Creating temporary project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-xo2d1700/ghidra_headless/headless (HeadlessAnalyzer)  
+INFO  Creating project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-xo2d1700/ghidra_headless/headless (DefaultProject)  
+INFO  REPORT: Processing input files:  (HeadlessAnalyzer)  
+INFO       project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-xo2d1700/ghidra_headless/headless (HeadlessAnalyzer)  
+INFO  IMPORTING: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_conntime (HeadlessAnalyzer)  
+INFO  Using Loader: Executable and Linking Format (ELF) (ProgramLoader)  
+INFO  Using Language/Compiler: ARM:LE:32:v8:default (ProgramLoader)  
+INFO  Using Library Search Path: [., /System/Library/dyld/dyld_shared_cache_arm64e, /System/Library/dyld/dyld_shared_cache_x86_64, /System/Library/dyld/dyld_shared_cache_x86_64h, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64h, /Users/dbueno/Library/Java/Extensions, /Library/Java/Extensions, /Network/Library/Java/Extensions, /System/Library/Java/Extensions, /usr/lib/java] (ProgramLoader)  
+INFO  Additional info:
+Loading file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_conntime?MD5=a71f59467b8e8f5477f6b37650c0c864...
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 000271dc (Symbol = stderr) - Runtime copy not supported (4-bytes)
+------------------------------------------------
+
+Linking the External Programs of 'funjsq_conntime' to imported libraries...
+  [libc.so.0] -> not found in project
+------------------------------------------------
+
+Resolving External Symbols of [/funjsq_conntime] - 56 unresolved symbols, no external libraries configured - skipping
+ (ProgramLoader)  
+INFO  IMPORTING: Loaded 0 additional files (HeadlessAnalyzer)  
+INFO  ANALYZING all memory and code: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_conntime (HeadlessAnalyzer)  
+INFO  hit non-returning function, restarting decompiler switch analyzer later (DecompilerSwitchAnalyzer)  
+INFO  Packed database cache: /Users/dbueno/.cache/ghidra/packed-db-cache (PackedDatabaseCache)  
+INFO  Applied data type archive: generic_clib (ApplyDataArchiveAnalyzer)  
+INFO  -----------------------------------------------------
+    ARM Constant Reference Analyzer            0.490 secs
+    ARM Symbol                                 0.000 secs
+    ASCII Strings                              0.166 secs
+    Apply Data Archives                        0.243 secs
+    Call Convention ID                         0.021 secs
+    Call-Fixup Installer                       0.002 secs
+    Create Address Tables                      0.009 secs
+    Create Address Tables - One Time           0.005 secs
+    Create Function                            0.053 secs
+    Data Reference                             0.012 secs
+    Decompiler Switch Analysis                 2.645 secs
+    Decompiler Switch Analysis - One Time      0.000 secs
+    Demangler GNU                              0.012 secs
+    Disassemble                                0.469 secs
+    Disassemble Entry Points                   0.053 secs
+    Embedded Media                             0.005 secs
+    External Entry References                  0.000 secs
+    Function ID                                0.020 secs
+    Function Start Pre Search                  0.005 secs
+    Function Start Search                      0.129 secs
+    Function Start Search After Code           0.030 secs
+    Function Start Search After Data           0.033 secs
+    Function Start Search delayed - One Time   0.007 secs
+    GCC Exception Handlers                     0.005 secs
+    Non-Returning Functions - Discovered       0.042 secs
+    Non-Returning Functions - Known            0.002 secs
+    Reference                                  0.038 secs
+    Shared Return Calls                        0.010 secs
+    Stack                                      0.469 secs
+    Subroutine References                      0.019 secs
+-----------------------------------------------------
+     Total Time   4 secs
+-----------------------------------------------------
+ (AutoAnalysisManager)  
+INFO  REPORT: Analysis succeeded for file: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_conntime (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: ExportPcode.java '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_conntime/souffle/import/facts'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /nix/store/wv3h872qsfbfsjnsnmpjrhswwcxb6ga1-python3.13-ctadl-0.14.1/lib/python3.13/site-packages/ctadl/souffle-logic/pcode/ExportPcode.java (HeadlessAnalyzer)  
+INFO  ExportPcode.java> Script is not running in GUI (GhidraScript)  
+WARN  Decompiling 00029004, pcode error at 00029004: Unable to disassemble EXTERNAL block location: 00029004 (DecompileCallback)  
+WARN  Decompiling 00029000, pcode error at 00029000: Unable to disassemble EXTERNAL block location: 00029000 (DecompileCallback)  
+INFO  ExportPcode.java> total duration: 3390 (GhidraScript)  
+INFO  ANALYZING changes made by post scripts: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_conntime (HeadlessAnalyzer)  
+INFO  REPORT: Post-analysis succeeded for file: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_conntime (HeadlessAnalyzer)  
+INFO  /funjsq_conntime: file created (dbueno) (LocalFileSystem)  
+INFO  REPORT: Save succeeded for: /funjsq_conntime (headless:/funjsq_conntime) (HeadlessAnalyzer)  
+INFO  REPORT: Import succeeded (HeadlessAnalyzer)  
+SUT imported to '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_conntime/souffle/import'
+>> hint: index with 'ctadl --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_conntime/souffle/import index'

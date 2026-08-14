@@ -1,0 +1,4 @@
+index written to '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_xagent_control/souffle/import/ctadlir.db'
+** internal error: Variable move neither function or global: thunk_FUN_00014fec@000151e4:@ret
+** found an error
+** Please file a Github issue (https://github.com/sandialabs/ctadl/issues)

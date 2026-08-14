@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "r7000_hotplug2",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/hotplug2",
+  "binary_bytes": 18124,
+  "status": "ok",
+  "total_wall_s": 21.1,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 673401352
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 11682248
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 14451168
+    }
+  },
+  "import_bytes": 1872999,
+  "index_bytes": 616813,
+  "summaries": 167,
+  "sarif_paths": 0
+}

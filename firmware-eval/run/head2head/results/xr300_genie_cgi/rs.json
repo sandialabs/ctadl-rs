@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "xr300_genie_cgi",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi",
+  "binary_bytes": 14760,
+  "status": "ok",
+  "total_wall_s": 21.3,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 614304120
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 10600904
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 12911048
+    }
+  },
+  "import_bytes": 1390840,
+  "index_bytes": 398716,
+  "summaries": 112,
+  "sarif_paths": 0
+}

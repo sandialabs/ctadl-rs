@@ -1,0 +1,4 @@
+importing pcode artifact 'r6400_readycloud_control_cgi' from /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi
+running Ghidra to disassemble; console output -> /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_readycloud_control_cgi/rs/store/imports/r6400_readycloud_control_cgi/ghidra.log
+warning: Unsupported pcode mnemonic: CALLOTHER
+'r6400_readycloud_control_cgi': imported 359 function(s)

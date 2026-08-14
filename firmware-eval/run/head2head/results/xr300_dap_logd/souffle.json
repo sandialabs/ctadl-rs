@@ -1,0 +1,32 @@
+{
+  "engine": "souffle",
+  "label": "xr300_dap_logd",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/dap_logd",
+  "binary_bytes": 429688,
+  "status": "ok",
+  "total_wall_s": 56.9,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 31.4,
+      "peak_fp_b": 1878448848
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 20.3,
+      "peak_fp_b": 278512696
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2556264
+    }
+  },
+  "import_bytes": 200586760,
+  "index_bytes": 247463936,
+  "summaries": 700,
+  "sarif_paths": 0
+}

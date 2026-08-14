@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "ac18_business_proc",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/business_proc",
+  "binary_bytes": 176084,
+  "status": "ok",
+  "total_wall_s": 31.6,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 20.7,
+      "peak_fp_b": 1435048152
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 22413792
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 13795808
+    }
+  },
+  "import_bytes": 15281239,
+  "index_bytes": 2940364,
+  "summaries": 537,
+  "sarif_paths": 0
+}

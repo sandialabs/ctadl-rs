@@ -1,0 +1,7 @@
+indexing project 'dir878_fota_config' from 1 import(s): dir878_fota_config
+'dir878_fota_config': loading IR
+'dir878_fota_config': preprocessing 86 function(s) (SSA) and generating facts
+warning: CHA: unsupported virtual method table
+models: 76 summary row(s), 0 declared access path(s), 0 function body(ies) not analyzed
+indexing (computing the flow relation)
+wrote index to /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_fota_config/rs/store/projects/dir878_fota_config/index

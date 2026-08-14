@@ -4,13 +4,13 @@
   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check",
   "binary_bytes": 18784,
   "status": "ok",
-  "total_wall_s": 20.5,
+  "total_wall_s": 20.4,
   "phases": {
     "import": {
       "status": "ok",
       "exit_code": 0,
-      "wall_s": 10.2,
-      "peak_fp_b": 784386544
+      "wall_s": 10.3,
+      "peak_fp_b": 673925568
     },
     "index": {
       "status": "ok",
@@ -22,10 +22,10 @@
       "status": "ok",
       "exit_code": 0,
       "wall_s": 5.1,
-      "peak_fp_b": 2457960
+      "peak_fp_b": 2507112
     }
   },
-  "import_bytes": 31016235,
+  "import_bytes": 31016146,
   "index_bytes": 48824320,
   "summaries": 76,
   "sarif_paths": 0

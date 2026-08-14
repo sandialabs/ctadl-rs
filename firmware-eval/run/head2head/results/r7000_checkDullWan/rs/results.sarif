@@ -1,0 +1,4389 @@
+{
+  "version": "2.1.0",
+  "properties": {
+    "parquet_dir": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/rs/store/imports/r7000_checkDullWan/source-info",
+    "parquet_dirs": [
+      "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/rs/store/imports/r7000_checkDullWan/source-info"
+    ],
+    "project_name": "r7000_checkDullWan"
+  },
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/schemata/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "fullDescription": {
+            "text": "CTADL (Compositional Taint Analysis in Datalog)."
+          },
+          "informationUri": "https://github.com/sandialabs/ctadl-rs",
+          "name": "ctadl",
+          "notifications": [
+            {
+              "id": "CTADL0001.no-endpoints-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sources or sinks were configured ({0} model file(s) loaded, no built-in endpoints), so the query has nothing to search for."
+                }
+              },
+              "name": "No endpoints configured",
+              "shortDescription": {
+                "text": "Neither a source nor a sink was declared anywhere"
+              }
+            },
+            {
+              "id": "CTADL0002.no-sources-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sources were configured, but {0} sink endpoint(s) were. A taint query with no source is vacuous."
+                }
+              },
+              "name": "No sources configured",
+              "shortDescription": {
+                "text": "Sinks were declared but no source was"
+              }
+            },
+            {
+              "id": "CTADL0003.no-sinks-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sinks were configured, but {0} source endpoint(s) were. A taint query with no sink is vacuous."
+                }
+              },
+              "name": "No sinks configured",
+              "shortDescription": {
+                "text": "Sources were declared but no sink was"
+              }
+            },
+            {
+              "id": "CTADL0004.generator-matched-nothing",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' declares a {2} that matched nothing in the program, so it contributes nothing to the query."
+                },
+                "indexTimeDeclaration": {
+                  "text": "Model generator {0} in '{1}' declares a {2}, but no function in the program matched its 'where' constraints, so it will contribute nothing when the project is indexed."
+                },
+                "localNotFound": {
+                  "text": "Model generator {0} in '{1}' declares a {2} on port 'Variable({3})': its 'where' constraints matched {4} function(s), but none of them has a local variable named '{3}', so it contributes nothing to the query."
+                },
+                "mixedReasons": {
+                  "text": "Model generator {0} in '{1}' declares {3} {2} port(s), none of which matched anything in the program ({4}), so it contributes nothing to the query."
+                },
+                "noCallerMatched": {
+                  "text": "Model generator {0} in '{1}' declares a {2} at call sites: its 'where' constraints matched {3} function(s), but no caller of them satisfied its 'in_function' constraint, so it contributes nothing to the query."
+                },
+                "noFunctionMatched": {
+                  "text": "Model generator {0} in '{1}' declares a {2}, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+                },
+                "portRejected": {
+                  "text": "Model generator {0} in '{1}' declares a {2} on a port that is not valid for its 'find' method, so it contributes nothing to the query."
+                }
+              },
+              "name": "Model generator matched nothing",
+              "shortDescription": {
+                "text": "A model generator declared a port that produced no endpoint"
+              }
+            },
+            {
+              "id": "CTADL0005.endpoint-function-not-indexed",
+              "messageStrings": {
+                "default": {
+                  "text": "Function '{0}' was matched by a model but is not present in the index, so its source/sink endpoints were dropped."
+                }
+              },
+              "name": "Endpoint function not indexed",
+              "shortDescription": {
+                "text": "A matched function name is absent from the index"
+              }
+            },
+            {
+              "id": "CTADL0006.no-sources-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} source port(s) were declared but none of them matched anything in the program, so no taint could be seeded."
+                }
+              },
+              "name": "No sources matched",
+              "shortDescription": {
+                "text": "Sources were declared but none matched the program"
+              }
+            },
+            {
+              "id": "CTADL0007.no-sinks-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} sink port(s) were declared but none of them matched anything in the program, so no flow could be detected."
+                }
+              },
+              "name": "No sinks matched",
+              "shortDescription": {
+                "text": "Sinks were declared but none matched the program"
+              }
+            },
+            {
+              "id": "CTADL0008.no-index-model-check-only",
+              "messageStrings": {
+                "default": {
+                  "text": "The project has no index, so no taint analysis ran. The model files were matched against the imported program(s) instead -- {0} -- and the notifications below report what they select. These are model-matching results only: call-site fan-out, 'Argument(*)' expansion and sink wildcard expansion need the index, a matched name can still be absent from it, and bridge pairs are not counted. Run `ctadl index` for a real query."
+                }
+              },
+              "name": "No index; model check only",
+              "shortDescription": {
+                "text": "The project has no index, so only the model files were checked"
+              }
+            },
+            {
+              "id": "CTADL0009.generator-scope-excluded",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' has an 'in' scope ({2}) that admits none of the programs checked, so it was never evaluated against any of them."
+                }
+              },
+              "name": "Model generator out of scope",
+              "shortDescription": {
+                "text": "A generator's 'in' clause admits none of the programs checked"
+              }
+            },
+            {
+              "id": "CTADL0010.bridge-model-diagnosis",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}': {2}"
+                }
+              },
+              "name": "Bridge model cannot be paired",
+              "shortDescription": {
+                "text": "A bridge's sides matched nothing, or matched ambiguously"
+              }
+            },
+            {
+              "id": "CTADL0011.generator-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' matched {2}{3}."
+                }
+              },
+              "name": "Model generator matched",
+              "shortDescription": {
+                "text": "What a generator's 'where' constraints selected"
+              }
+            },
+            {
+              "id": "CTADL0012.model-file-error",
+              "messageStrings": {
+                "default": {
+                  "text": "Model file '{0}': {1}"
+                }
+              },
+              "name": "Model file error",
+              "shortDescription": {
+                "text": "A model file could not be read, or a generator in it is malformed"
+              }
+            },
+            {
+              "id": "CTADL0100.endpoint-match-summary",
+              "messageStrings": {
+                "default": {
+                  "text": "Declared {0} source and {1} sink port(s), which matched {2} source and {3} sink endpoint(s) in the program; {4} declared port(s) matched nothing."
+                },
+                "modelCheckOnly": {
+                  "text": "Declared {0} source and {1} sink port(s), which matched {2} source and {3} sink model row(s) in the program(s) checked -- before the call-site fan-out and wildcard expansion an index would apply; {4} declared port(s) matched nothing."
+                }
+              },
+              "name": "Endpoint match summary",
+              "shortDescription": {
+                "text": "How many ports the models declared and how many endpoints they matched"
+              }
+            },
+            {
+              "id": "CTADL0101.path-generation-disabled",
+              "messageStrings": {
+                "default": {
+                  "text": "The '{0}' SARIF profile does not perform source-to-sink path search, so this run cannot produce '{1}' results."
+                }
+              },
+              "name": "Path generation disabled",
+              "shortDescription": {
+                "text": "The selected SARIF profile does not perform path search"
+              }
+            },
+            {
+              "id": "CTADL0102.no-paths-found",
+              "messageStrings": {
+                "default": {
+                  "text": "Path search completed over {0} source and {1} sink endpoints and found no source-to-sink flow."
+                }
+              },
+              "name": "No paths found",
+              "shortDescription": {
+                "text": "Path search completed without finding a flow"
+              }
+            },
+            {
+              "id": "CTADL0103.path-dropped-no-location",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} source-to-sink path(s) were found but discarded because no reporting location could be resolved for them."
+                }
+              },
+              "name": "Path dropped for want of a location",
+              "shortDescription": {
+                "text": "A path was found but could not be reported"
+              }
+            }
+          ],
+          "rules": [
+            {
+              "id": "C0001.tainted-path",
+              "messageStrings": {
+                "default": {
+                  "text": "This is a tainted source-sink path."
+                }
+              },
+              "name": "Tainted paths",
+              "shortDescription": {
+                "text": "A path of tainted data flow"
+              }
+            },
+            {
+              "id": "C0002.tainted-instruction",
+              "messageStrings": {
+                "default": {
+                  "text": "This instruction manipulates tainted data."
+                }
+              },
+              "name": "Tainted instructions",
+              "shortDescription": {
+                "text": "An instruction with tainted data"
+              }
+            },
+            {
+              "id": "C0003.taint-source",
+              "messageStrings": {
+                "default": {
+                  "text": "This is a source of tainted data."
+                }
+              },
+              "name": "Tainted data sources",
+              "shortDescription": {
+                "text": "Tainted data source"
+              }
+            },
+            {
+              "id": "C0004.taint-sink",
+              "messageStrings": {
+                "default": {
+                  "text": "This is an desired sink of tainted data."
+                }
+              },
+              "name": "Tainted data sink",
+              "shortDescription": {
+                "text": "Tainted data sinks"
+              }
+            },
+            {
+              "id": "C0005.tainted-data",
+              "messageStrings": {
+                "default": {
+                  "text": "This vertex is tainted."
+                }
+              },
+              "name": "Tainted data",
+              "shortDescription": {
+                "text": "Tainted variables and fields"
+              }
+            },
+            {
+              "id": "C0006.almost-path-function",
+              "messageStrings": {
+                "default": {
+                  "text": "This function contains source and sink taint."
+                }
+              },
+              "name": "Almost-path function",
+              "shortDescription": {
+                "text": "A function which contains source-tainted and sink-tainted data, which means there's 'almost' a path between them."
+              }
+            },
+            {
+              "id": "C0007.absorbing-function",
+              "messageStrings": {
+                "default": {
+                  "text": "This external function receives tainted data."
+                }
+              },
+              "name": "Absorbing functions",
+              "shortDescription": {
+                "text": "An external function that receives tainted data"
+              }
+            }
+          ],
+          "version": "2026.1"
+        }
+      },
+      "invocations": [
+        {
+          "arguments": [
+            "--store",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/rs/store",
+            "query",
+            "--models",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+            "-o",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/rs/results.sarif",
+            "r7000_checkDullWan"
+          ],
+          "commandLine": "/nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_checkDullWan/rs/results.sarif r7000_checkDullWan",
+          "endTimeUtc": "2026-08-14T04:13:31.021Z",
+          "executionSuccessful": true,
+          "exitCode": 0,
+          "exitCodeDescription": "query completed",
+          "ruleConfigurationOverrides": [
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0002.tainted-instruction"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0005.tainted-data"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0006.almost-path-function"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0007.absorbing-function"
+              }
+            }
+          ],
+          "startTimeUtc": "2026-08-14T04:13:30.911Z",
+          "toolConfigurationNotifications": [
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "2",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 2 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 2,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "3",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 3 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 3,
+                "portsDeclared": 8,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "4",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 4 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 4,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "6",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 6 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 6,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "7",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 7 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 7,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "8",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 8 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 8,
+                "portsDeclared": 2,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "9",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 9 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 9,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "10",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 10 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 10,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            }
+          ],
+          "toolExecutionNotifications": [
+            {
+              "descriptor": {
+                "id": "CTADL0100.endpoint-match-summary"
+              },
+              "level": "note",
+              "message": {
+                "arguments": [
+                  "11",
+                  "11",
+                  "53",
+                  "22",
+                  "16"
+                ],
+                "id": "default",
+                "text": "Declared 11 source and 11 sink port(s), which matched 53 source and 22 sink endpoint(s) in the program; 16 declared port(s) matched nothing."
+              },
+              "properties": {
+                "portsDeclared": 22,
+                "portsUnmatched": 16,
+                "sinksDeclared": 11,
+                "sinksMatched": 22,
+                "sourcesDeclared": 11,
+                "sourcesMatched": 53,
+                "unmatchedDeclarations": 8
+              }
+            }
+          ]
+        }
+      ],
+      "results": [
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 182
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(-1).deref in function <EXTERNAL>::acosNvramConfig_get@EXTERNAL:0000002a (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "formal(-1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 183
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(0).deref in function <EXTERNAL>::fgets@EXTERNAL:0000001d (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "formal(0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 183
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(-1).deref in function <EXTERNAL>::fgets@EXTERNAL:0000001d (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "formal(-1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 184
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: formal(0).deref in function <EXTERNAL>::system@EXTERNAL:0000000a (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "formal(0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 185
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(576, 0).deref in function <EXTERNAL>::fgets@00008db0 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(576, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 185
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(576, -1).deref in function <EXTERNAL>::fgets@00008db0 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(576, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(812, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(812, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(1230, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(1230, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(1231, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(1231, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(1243, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(1243, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(1257, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(1257, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(1271, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(1271, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(1434, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(1434, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(1615, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(1615, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(1843, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(1843, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(1952, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(1952, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(1986, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(1986, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 185
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(2356, 0).deref in function <EXTERNAL>::fgets@00008db0 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(2356, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 185
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(2356, -1).deref in function <EXTERNAL>::fgets@00008db0 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(2356, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(3018, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(3018, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(3302, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(3302, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(3317, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(3317, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(3348, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(3348, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(3580, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(3580, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(3719, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(3719, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(4443, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(4443, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(4446, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(4446, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(4449, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(4449, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(4452, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(4452, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(4529, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(4529, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(4693, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(4693, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(4707, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(4707, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(4783, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(4783, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(5331, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(5331, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(5380, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(5380, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(5394, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(5394, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(5431, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(5431, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(5465, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(5465, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(5540, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(5540, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(6635, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(6635, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(6722, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(6722, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(6744, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(6744, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(6755, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(6755, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(9226, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(9226, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(9396, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(9396, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(9667, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(9667, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(9939, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(9939, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(10228, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(10228, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(10333, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(10333, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(10383, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(10383, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(10433, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(10433, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(10952, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(10952, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(11002, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(11002, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(11052, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(11052, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(14739, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(14739, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(14773, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(14773, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(14864, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(14864, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(14979, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(14979, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(15302, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(15302, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(15359, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(15359, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 188
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(1).deref in function main (kind 'argv_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "argv_input"
+            ],
+            "taintVertex": "formal(1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 188
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(1).deref.deref in function main (kind 'argv_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "argv_input"
+            ],
+            "taintVertex": "formal(1).deref.deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(17331, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(17331, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(17373, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(17373, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(17415, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(17415, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(17457, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(17457, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(17670, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(17670, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(17862, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(17862, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(17883, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(17883, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(17958, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(17958, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(17982, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(17982, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(23366, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(23366, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(23389, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(23389, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 187
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(23410, -1).deref in function <EXTERNAL>::acosNvramConfig_get@00008e4c (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(23410, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 186
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(26452, 0).deref in function <EXTERNAL>::system@00008ccc (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(26452, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "executionOrder": 1,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 80
+                          }
+                        ],
+                        "message": {
+                          "text": "source call-arg(5380, -1).deref in <EXTERNAL>::acosNvramConfig_get@00008e4c"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 43004,
+                            "kind": "instruction",
+                            "relativeAddress": 10236
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 2,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 81
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(5387, 2).deref in <EXTERNAL>::sprintf@00008e34"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 43024,
+                            "kind": "instruction",
+                            "relativeAddress": 10256
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 82
+                          }
+                        ],
+                        "message": {
+                          "text": "sink call-arg(5394, 0).deref in <EXTERNAL>::system@00008ccc"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 43032,
+                            "kind": "instruction",
+                            "relativeAddress": 10264
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "kind": "fail",
+          "level": "warning",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 81
+                }
+              ],
+              "physicalLocation": {
+                "address": {
+                  "absoluteAddress": 43024,
+                  "kind": "instruction",
+                  "relativeAddress": 10256
+                },
+                "artifactLocation": {
+                  "uri": "checkDullWan",
+                  "uriBaseId": "IMPORT_r7000_checkDullWan"
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Taint flow labelled 'nvram_input'"
+          },
+          "properties": {
+            "sinkCallee": "<EXTERNAL>::system@00008ccc",
+            "sinkFunctions": [
+              "<EXTERNAL>::system@00008ccc"
+            ],
+            "sourceCallee": "<EXTERNAL>::acosNvramConfig_get@00008e4c",
+            "sourceFunctions": [
+              "<EXTERNAL>::acosNvramConfig_get@00008e4c"
+            ],
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertices": {
+              "command_injection": [
+                "call-arg(5387, 0).deref",
+                "call-arg(5387, 2).deref"
+              ],
+              "nvram_input": [
+                "call-arg(5387, 0).deref",
+                "call-arg(5387, 0).deref.deref",
+                "call-arg(5387, 0).deref.deref.deref",
+                "call-arg(5387, 2).deref"
+              ]
+            }
+          },
+          "ruleId": "C0001.tainted-path"
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "executionOrder": 1,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 152
+                          }
+                        ],
+                        "message": {
+                          "text": "source call-arg(14979, -1).deref in <EXTERNAL>::acosNvramConfig_get@00008e4c"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49012,
+                            "kind": "instruction",
+                            "relativeAddress": 16244
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 2,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 153
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(14996, 1).deref in <EXTERNAL>::strcpy@00008ed0"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49024,
+                            "kind": "instruction",
+                            "relativeAddress": 16256
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 154
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(15016, 0).deref in <EXTERNAL>::strtok_r@00008c90"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49060,
+                            "kind": "instruction",
+                            "relativeAddress": 16292
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 4,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 156
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(15052, 1).deref in <EXTERNAL>::strcpy@00008ed0"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49108,
+                            "kind": "instruction",
+                            "relativeAddress": 16340
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 5,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 163
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(15285, 2).deref in <EXTERNAL>::sprintf@00008e34"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49360,
+                            "kind": "instruction",
+                            "relativeAddress": 16592
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 6,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 164
+                          }
+                        ],
+                        "message": {
+                          "text": "sink call-arg(15302, 0).deref in <EXTERNAL>::system@00008ccc"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49368,
+                            "kind": "instruction",
+                            "relativeAddress": 16600
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "executionOrder": 1,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 152
+                          }
+                        ],
+                        "message": {
+                          "text": "source call-arg(14979, -1).deref in <EXTERNAL>::acosNvramConfig_get@00008e4c"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49012,
+                            "kind": "instruction",
+                            "relativeAddress": 16244
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 2,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 153
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(14996, 1).deref in <EXTERNAL>::strcpy@00008ed0"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49024,
+                            "kind": "instruction",
+                            "relativeAddress": 16256
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 154
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(15016, 0).deref in <EXTERNAL>::strtok_r@00008c90"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49060,
+                            "kind": "instruction",
+                            "relativeAddress": 16292
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 4,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 156
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(15052, 1).deref in <EXTERNAL>::strcpy@00008ed0"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49108,
+                            "kind": "instruction",
+                            "relativeAddress": 16340
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 5,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 163
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(15285, 2).deref in <EXTERNAL>::sprintf@00008e34"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49360,
+                            "kind": "instruction",
+                            "relativeAddress": 16592
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 6,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 166
+                          }
+                        ],
+                        "message": {
+                          "text": "sink call-arg(15359, 0).deref in <EXTERNAL>::system@00008ccc"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49428,
+                            "kind": "instruction",
+                            "relativeAddress": 16660
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "kind": "fail",
+          "level": "warning",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 153
+                }
+              ],
+              "physicalLocation": {
+                "address": {
+                  "absoluteAddress": 49024,
+                  "kind": "instruction",
+                  "relativeAddress": 16256
+                },
+                "artifactLocation": {
+                  "uri": "checkDullWan",
+                  "uriBaseId": "IMPORT_r7000_checkDullWan"
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Taint flow labelled 'nvram_input'"
+          },
+          "properties": {
+            "sinkCallee": "<EXTERNAL>::system@00008ccc",
+            "sinkFunctions": [
+              "<EXTERNAL>::system@00008ccc"
+            ],
+            "sourceCallee": "<EXTERNAL>::acosNvramConfig_get@00008e4c",
+            "sourceFunctions": [
+              "<EXTERNAL>::acosNvramConfig_get@00008e4c"
+            ],
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertices": {
+              "command_injection": [
+                "call-arg(14996, 0).deref",
+                "call-arg(14996, 1).deref"
+              ],
+              "nvram_input": [
+                "call-arg(14996, 0).deref",
+                "call-arg(14996, 0).deref.deref",
+                "call-arg(14996, 0).deref.deref.deref",
+                "call-arg(14996, 1).deref"
+              ]
+            }
+          },
+          "ruleId": "C0001.tainted-path"
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "executionOrder": 1,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 152
+                          }
+                        ],
+                        "message": {
+                          "text": "source call-arg(14979, -1).deref in <EXTERNAL>::acosNvramConfig_get@00008e4c"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49012,
+                            "kind": "instruction",
+                            "relativeAddress": 16244
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 2,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 153
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(14996, 1).deref in <EXTERNAL>::strcpy@00008ed0"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49024,
+                            "kind": "instruction",
+                            "relativeAddress": 16256
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 154
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(15016, 0).deref in <EXTERNAL>::strtok_r@00008c90"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49060,
+                            "kind": "instruction",
+                            "relativeAddress": 16292
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 4,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 156
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(15052, 1).deref in <EXTERNAL>::strcpy@00008ed0"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49108,
+                            "kind": "instruction",
+                            "relativeAddress": 16340
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 5,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 163
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(15285, 2).deref in <EXTERNAL>::sprintf@00008e34"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49360,
+                            "kind": "instruction",
+                            "relativeAddress": 16592
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 6,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 164
+                          }
+                        ],
+                        "message": {
+                          "text": "sink call-arg(15302, 0).deref in <EXTERNAL>::system@00008ccc"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49368,
+                            "kind": "instruction",
+                            "relativeAddress": 16600
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "executionOrder": 1,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 152
+                          }
+                        ],
+                        "message": {
+                          "text": "source call-arg(14979, -1).deref in <EXTERNAL>::acosNvramConfig_get@00008e4c"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49012,
+                            "kind": "instruction",
+                            "relativeAddress": 16244
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 2,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 153
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(14996, 1).deref in <EXTERNAL>::strcpy@00008ed0"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49024,
+                            "kind": "instruction",
+                            "relativeAddress": 16256
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 154
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(15016, 0).deref in <EXTERNAL>::strtok_r@00008c90"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49060,
+                            "kind": "instruction",
+                            "relativeAddress": 16292
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 4,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 156
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(15052, 1).deref in <EXTERNAL>::strcpy@00008ed0"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49108,
+                            "kind": "instruction",
+                            "relativeAddress": 16340
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 5,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 163
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(15285, 2).deref in <EXTERNAL>::sprintf@00008e34"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49360,
+                            "kind": "instruction",
+                            "relativeAddress": 16592
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 6,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 166
+                          }
+                        ],
+                        "message": {
+                          "text": "sink call-arg(15359, 0).deref in <EXTERNAL>::system@00008ccc"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 49428,
+                            "kind": "instruction",
+                            "relativeAddress": 16660
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "kind": "fail",
+          "level": "warning",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 153
+                }
+              ],
+              "physicalLocation": {
+                "address": {
+                  "absoluteAddress": 49024,
+                  "kind": "instruction",
+                  "relativeAddress": 16256
+                },
+                "artifactLocation": {
+                  "uri": "checkDullWan",
+                  "uriBaseId": "IMPORT_r7000_checkDullWan"
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Taint flow labelled 'nvram_input'"
+          },
+          "properties": {
+            "sinkCallee": "<EXTERNAL>::system@00008ccc",
+            "sinkFunctions": [
+              "<EXTERNAL>::system@00008ccc"
+            ],
+            "sourceCallee": "<EXTERNAL>::acosNvramConfig_get@00008e4c",
+            "sourceFunctions": [
+              "<EXTERNAL>::acosNvramConfig_get@00008e4c"
+            ],
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertices": {
+              "command_injection": [
+                "call-arg(14996, 0).deref",
+                "call-arg(14996, 1).deref"
+              ],
+              "nvram_input": [
+                "call-arg(14996, 0).deref",
+                "call-arg(14996, 0).deref.deref",
+                "call-arg(14996, 0).deref.deref.deref",
+                "call-arg(14996, 1).deref"
+              ]
+            }
+          },
+          "ruleId": "C0001.tainted-path"
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "executionOrder": 1,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 0
+                          }
+                        ],
+                        "message": {
+                          "text": "source call-arg(576, 0).deref in <EXTERNAL>::fgets@00008db0"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 37048,
+                            "kind": "instruction",
+                            "relativeAddress": 4280
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 2,
+                      "kinds": [
+                        "taint"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 5
+                          }
+                        ],
+                        "message": {
+                          "text": "sink call-arg(812, 0).deref in <EXTERNAL>::system@00008ccc"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 37176,
+                            "kind": "instruction",
+                            "relativeAddress": 4408
+                          },
+                          "artifactLocation": {
+                            "uri": "checkDullWan",
+                            "uriBaseId": "IMPORT_r7000_checkDullWan"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "kind": "fail",
+          "level": "warning",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 0
+                }
+              ],
+              "physicalLocation": {
+                "address": {
+                  "absoluteAddress": 37048,
+                  "kind": "instruction",
+                  "relativeAddress": 4280
+                },
+                "artifactLocation": {
+                  "uri": "checkDullWan",
+                  "uriBaseId": "IMPORT_r7000_checkDullWan"
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Taint flow labelled 'file_input'"
+          },
+          "properties": {
+            "sinkCallee": "<EXTERNAL>::system@00008ccc",
+            "sinkFunctions": [
+              "<EXTERNAL>::system@00008ccc"
+            ],
+            "sourceCallee": "<EXTERNAL>::fgets@00008db0",
+            "sourceFunctions": [
+              "<EXTERNAL>::fgets@00008db0"
+            ],
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertices": {
+              "command_injection": [
+                "call-arg(576, 0).deref"
+              ],
+              "file_input": [
+                "call-arg(576, 0).deref",
+                "call-arg(576, 0).deref.deref",
+                "call-arg(576, 0).deref.deref.deref",
+                "call-arg(576, 2).deref",
+                "call-arg(576, 2).deref.deref",
+                "call-arg(576, 2).deref.deref.deref"
+              ]
+            }
+          },
+          "ruleId": "C0001.tainted-path"
+        }
+      ],
+      "logicalLocations": [
+        {
+          "fullyQualifiedName": "FUN_00009010@000090b8:000090b8",
+          "kind": "member",
+          "name": "FUN_00009010"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009010@000090cc:000090cc",
+          "kind": "member",
+          "name": "FUN_00009010"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009010@000090ec:000090ec",
+          "kind": "member",
+          "name": "FUN_00009010"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009010@00009110:00009110",
+          "kind": "member",
+          "name": "FUN_00009010"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009010@00009130:00009130",
+          "kind": "member",
+          "name": "FUN_00009010"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009010@00009138:00009138",
+          "kind": "member",
+          "name": "FUN_00009010"
+        },
+        {
+          "fullyQualifiedName": "FUN_000092a4@00009310:00009310",
+          "kind": "member",
+          "name": "FUN_000092a4"
+        },
+        {
+          "fullyQualifiedName": "FUN_000094f4@00009528:00009528",
+          "kind": "member",
+          "name": "FUN_000094f4"
+        },
+        {
+          "fullyQualifiedName": "FUN_000094f4@00009530:00009530",
+          "kind": "member",
+          "name": "FUN_000094f4"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000954c@00009558:00009558",
+          "kind": "member",
+          "name": "FUN_0000954c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000954c@00009568:00009568",
+          "kind": "member",
+          "name": "FUN_0000954c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000954c@00009578:00009578",
+          "kind": "member",
+          "name": "FUN_0000954c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000954c@000095e8:000095e8",
+          "kind": "member",
+          "name": "FUN_0000954c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009610@00009680:00009680",
+          "kind": "member",
+          "name": "FUN_00009610"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000969c@000096c8:000096c8",
+          "kind": "member",
+          "name": "FUN_0000969c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000969c@00009798:00009798",
+          "kind": "member",
+          "name": "FUN_0000969c"
+        },
+        {
+          "fullyQualifiedName": "FUN_000099e8@00009a48:00009a48",
+          "kind": "member",
+          "name": "FUN_000099e8"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009a7c@00009b00:00009b00",
+          "kind": "member",
+          "name": "FUN_00009a7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009a7c@00009b50:00009b50",
+          "kind": "member",
+          "name": "FUN_00009a7c"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009c24@00009c84:00009c84",
+          "kind": "member",
+          "name": "FUN_00009c24"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009c24@00009c9c:00009c9c",
+          "kind": "member",
+          "name": "FUN_00009c24"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009c24@00009cac:00009cac",
+          "kind": "member",
+          "name": "FUN_00009c24"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009cd0@00009d04:00009d04",
+          "kind": "member",
+          "name": "FUN_00009cd0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009cd0@00009d18:00009d18",
+          "kind": "member",
+          "name": "FUN_00009cd0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009cd0@00009d2c:00009d2c",
+          "kind": "member",
+          "name": "FUN_00009cd0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009cd0@00009d38:00009d38",
+          "kind": "member",
+          "name": "FUN_00009cd0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009cd0@00009d5c:00009d5c",
+          "kind": "member",
+          "name": "FUN_00009cd0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009cd0@00009d70:00009d70",
+          "kind": "member",
+          "name": "FUN_00009cd0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009cd0@00009d84:00009d84",
+          "kind": "member",
+          "name": "FUN_00009cd0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009cd0@00009d90:00009d90",
+          "kind": "member",
+          "name": "FUN_00009cd0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009cd0@00009eac:00009eac",
+          "kind": "member",
+          "name": "FUN_00009cd0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009f48@00009f90:00009f90",
+          "kind": "member",
+          "name": "FUN_00009f48"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009f48@00009fa0:00009fa0",
+          "kind": "member",
+          "name": "FUN_00009f48"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009fec@0000a008:0000a008",
+          "kind": "member",
+          "name": "FUN_00009fec"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009fec@0000a020:0000a020",
+          "kind": "member",
+          "name": "FUN_00009fec"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009fec@0000a03c:0000a03c",
+          "kind": "member",
+          "name": "FUN_00009fec"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a08c@0000a0dc:0000a0dc",
+          "kind": "member",
+          "name": "FUN_0000a08c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a08c@0000a0fc:0000a0fc",
+          "kind": "member",
+          "name": "FUN_0000a08c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a08c@0000a114:0000a114",
+          "kind": "member",
+          "name": "FUN_0000a08c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a08c@0000a120:0000a120",
+          "kind": "member",
+          "name": "FUN_0000a08c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a1f0:0000a1f0",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a204:0000a204",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a210:0000a210",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a21c:0000a21c",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a248:0000a248",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a264:0000a264",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a26c:0000a26c",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a278:0000a278",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a284:0000a284",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a298:0000a298",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a2ac:0000a2ac",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a2bc:0000a2bc",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a14c@0000a2cc:0000a2cc",
+          "kind": "member",
+          "name": "FUN_0000a14c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a340@0000a380:0000a380",
+          "kind": "member",
+          "name": "FUN_0000a340"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a340@0000a388:0000a388",
+          "kind": "member",
+          "name": "FUN_0000a340"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a340@0000a390:0000a390",
+          "kind": "member",
+          "name": "FUN_0000a340"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a340@0000a398:0000a398",
+          "kind": "member",
+          "name": "FUN_0000a340"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a3c8@0000a43c:0000a43c",
+          "kind": "member",
+          "name": "FUN_0000a3c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a4e8:0000a4e8",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a540:0000a540",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a554:0000a554",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a568:0000a568",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a584:0000a584",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a598:0000a598",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a5dc:0000a5dc",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a5f0:0000a5f0",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a60c:0000a60c",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a624:0000a624",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a644:0000a644",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a658:0000a658",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a688:0000a688",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a694:0000a694",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a6ac:0000a6ac",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a6d0:0000a6d0",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a6e4:0000a6e4",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a6fc:0000a6fc",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a71c:0000a71c",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a728:0000a728",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a4c8@0000a740:0000a740",
+          "kind": "member",
+          "name": "FUN_0000a4c8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a7a0:0000a7a0",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a7fc:0000a7fc",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a810:0000a810",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a818:0000a818",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a854:0000a854",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a890:0000a890",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a8a0:0000a8a0",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a914:0000a914",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a92c:0000a92c",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a938:0000a938",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a944:0000a944",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a950:0000a950",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a78c@0000a9b0:0000a9b0",
+          "kind": "member",
+          "name": "FUN_0000a78c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ac9c@0000acb4:0000acb4",
+          "kind": "member",
+          "name": "FUN_0000ac9c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ac9c@0000acbc:0000acbc",
+          "kind": "member",
+          "name": "FUN_0000ac9c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ace0@0000ad28:0000ad28",
+          "kind": "member",
+          "name": "FUN_0000ace0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ace0@0000ad78:0000ad78",
+          "kind": "member",
+          "name": "FUN_0000ace0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ace0@0000b1dc:0000b1dc",
+          "kind": "member",
+          "name": "FUN_0000ace0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ace0@0000b20c:0000b20c",
+          "kind": "member",
+          "name": "FUN_0000ace0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b338@0000b374:0000b374",
+          "kind": "member",
+          "name": "FUN_0000b338"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b388@0000b3c0:0000b3c0",
+          "kind": "member",
+          "name": "FUN_0000b388"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b388@0000b3d4:0000b3d4",
+          "kind": "member",
+          "name": "FUN_0000b388"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b388@0000b3dc:0000b3dc",
+          "kind": "member",
+          "name": "FUN_0000b388"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b388@0000b3e8:0000b3e8",
+          "kind": "member",
+          "name": "FUN_0000b388"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b388@0000b3f4:0000b3f4",
+          "kind": "member",
+          "name": "FUN_0000b388"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b388@0000b40c:0000b40c",
+          "kind": "member",
+          "name": "FUN_0000b388"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b448@0000b4b8:0000b4b8",
+          "kind": "member",
+          "name": "FUN_0000b448"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b448@0000b4d4:0000b4d4",
+          "kind": "member",
+          "name": "FUN_0000b448"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b448@0000b4e0:0000b4e0",
+          "kind": "member",
+          "name": "FUN_0000b448"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b448@0000b4ec:0000b4ec",
+          "kind": "member",
+          "name": "FUN_0000b448"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b448@0000b4f8:0000b4f8",
+          "kind": "member",
+          "name": "FUN_0000b448"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b534@0000b5cc:0000b5cc",
+          "kind": "member",
+          "name": "FUN_0000b534"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b534@0000b5e8:0000b5e8",
+          "kind": "member",
+          "name": "FUN_0000b534"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b534@0000b5f4:0000b5f4",
+          "kind": "member",
+          "name": "FUN_0000b534"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b534@0000b600:0000b600",
+          "kind": "member",
+          "name": "FUN_0000b534"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b534@0000b60c:0000b60c",
+          "kind": "member",
+          "name": "FUN_0000b534"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b65c@0000b690:0000b690",
+          "kind": "member",
+          "name": "FUN_0000b65c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b65c@0000b69c:0000b69c",
+          "kind": "member",
+          "name": "FUN_0000b65c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b65c@0000b6a8:0000b6a8",
+          "kind": "member",
+          "name": "FUN_0000b65c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b65c@0000b6b4:0000b6b4",
+          "kind": "member",
+          "name": "FUN_0000b65c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000b65c@0000b6c0:0000b6c0",
+          "kind": "member",
+          "name": "FUN_0000b65c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b74c:0000b74c",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b76c:0000b76c",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b77c:0000b77c",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b788:0000b788",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b794:0000b794",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b7b0:0000b7b0",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b7c4:0000b7c4",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b7d8:0000b7d8",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b7e4:0000b7e4",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b7f8:0000b7f8",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b80c:0000b80c",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b874:0000b874",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b88c:0000b88c",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b8cc:0000b8cc",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b8e0:0000b8e0",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b8f4:0000b8f4",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b900:0000b900",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b934:0000b934",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b944:0000b944",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b9c0:0000b9c0",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000bad0@0000b9d0:0000b9d0",
+          "kind": "member",
+          "name": "FUN_0000bad0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000be28:0000be28",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000be3c:0000be3c",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000be50:0000be50",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000be64:0000be64",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bed8:0000bed8",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000beec:0000beec",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bef8:0000bef8",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bf0c:0000bf0c",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bf48:0000bf48",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bf5c:0000bf5c",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bf6c:0000bf6c",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bf74:0000bf74",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bf80:0000bf80",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bfa4:0000bfa4",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bfb8:0000bfb8",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bfd4:0000bfd4",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bfe0:0000bfe0",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000bffc:0000bffc",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000c00c:0000c00c",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000c03c:0000c03c",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000c054:0000c054",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000c070:0000c070",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000c0d0:0000c0d0",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000c0d8:0000c0d8",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000c10c:0000c10c",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000c114:0000c114",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000c140:0000c140",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000c15c:0000c15c",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000c184:0000c184",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000be0c@0000c1ac:0000c1ac",
+          "kind": "member",
+          "name": "FUN_0000be0c"
+        },
+        {
+          "fullyQualifiedName": "main@0000c47c:0000c47c",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@0000c48c:0000c48c",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@0000c49c:0000c49c",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@0000c4b8:0000c4b8",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@0000c50c:0000c50c",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@0000c520:0000c520",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@0000c59c:0000c59c",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@0000c758:0000c758",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@0000c7c8:0000c7c8",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@0000cb28:0000cb28",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@0000cc38:0000cc38",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::acosNvramConfig_get@EXTERNAL:0000002a",
+          "kind": "member",
+          "name": "<EXTERNAL>::acosNvramConfig_get@EXTERNAL:0000002a"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::fgets@EXTERNAL:0000001d",
+          "kind": "member",
+          "name": "<EXTERNAL>::fgets@EXTERNAL:0000001d"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::system@EXTERNAL:0000000a",
+          "kind": "member",
+          "name": "<EXTERNAL>::system@EXTERNAL:0000000a"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::fgets@00008db0",
+          "kind": "member",
+          "name": "<EXTERNAL>::fgets@00008db0"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::system@00008ccc",
+          "kind": "member",
+          "name": "<EXTERNAL>::system@00008ccc"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::acosNvramConfig_get@00008e4c",
+          "kind": "member",
+          "name": "<EXTERNAL>::acosNvramConfig_get@00008e4c"
+        },
+        {
+          "fullyQualifiedName": "main",
+          "kind": "member",
+          "name": "main"
+        }
+      ],
+      "originalUriBaseIds": {
+        "IMPORT_r7000_checkDullWan": {
+          "uri": "file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/"
+        }
+      }
+    }
+  ]
+}

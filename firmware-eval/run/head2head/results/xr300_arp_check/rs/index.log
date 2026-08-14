@@ -1,0 +1,7 @@
+indexing project 'xr300_arp_check' from 1 import(s): xr300_arp_check
+'xr300_arp_check': loading IR
+'xr300_arp_check': preprocessing 138 function(s) (SSA) and generating facts
+warning: CHA: unsupported virtual method table
+models: 163 summary row(s), 0 declared access path(s), 0 function body(ies) not analyzed
+indexing (computing the flow relation)
+wrote index to /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_arp_check/rs/store/projects/xr300_arp_check/index

@@ -395,15 +395,26 @@
           # experiment (firmware-eval/run/head2head). It exists so BOTH tools
           # see the *same* Ghidra: each one lifts the binary itself, and a
           # version skew there would show up as an analysis difference that is
-          # really a frontend difference. `ghidra-bin` is put on PATH and named
-          # by GHIDRA_HOME, which is how both frontends locate it (ctadl-rs's
-          # pcode reader and the souffle build's ghidra fact-generator plugin
-          # both read GHIDRA_HOME first).
+          # really a frontend difference.
+          #
+          # Only ctadl-rs reads GHIDRA_HOME from the environment. The upstream
+          # ctadl-souffle flake wraps its entry point with a hard `export
+          # GHIDRA_HOME=<its own ghidra>`, which overrides whatever the shell
+          # set - so pointing GHIDRA_HOME at some third Ghidra equalizes
+          # nothing, it just gives the two engines different ones. Setting
+          # GHIDRA_HOME here to ghidra-bin and souffle to its own pinned build
+          # is exactly the mistake this shell exists to prevent: same version
+          # (12.0.4), different derivation (`PUBLIC` release vs `NIX` built
+          # from source).
+          #
+          # So the direction is reversed: read the Ghidra out of souffle's own
+          # wrapper and hand ctadl-rs that one. Then both frontends run the
+          # identical bytes, and the shell fails loudly if the wrapper ever
+          # stops naming one.
           devShells.head2head = pkgs.mkShell {
             buildInputs = with pkgs; [
               self.packages.${system}.default # ctadl-rs, as `ctadl`
               ctadl-souffle-wrapper # ctadl-souffle 0.14.1 + plugins
-              ghidra-bin
               # pyarrow reads ctadl-rs's summary.parquet (the summary count);
               # matplotlib draws the graph. sqlite3 (stdlib) reads the souffle
               # index's SummaryFlow, the other half of that metric.
@@ -415,12 +426,25 @@
               sqlite
             ];
 
-            GHIDRA_HOME = "${pkgs.ghidra-bin}/lib/ghidra";
-
             shellHook = ''
+              # the Ghidra ctadl-souffle is wired to, whatever the shell says
+              GHIDRA_HOME=$(
+                sed -n "s/^export GHIDRA_HOME='\(.*\)'$/\1/p" \
+                  "$(readlink -f "$(command -v ctadl-souffle)")" \
+                  "${ctadl-souffle.packages.${system}.ctadlPackages.ctadl-full}/bin/ctadl" \
+                  2>/dev/null | head -1
+              )
+              if [ -z "$GHIDRA_HOME" ]; then
+                echo "head2head: FATAL - could not read GHIDRA_HOME out of the" \
+                     "ctadl-souffle wrapper; the two engines would run different" \
+                     "Ghidras and the comparison would be meaningless." >&2
+                return 1
+              fi
+              export GHIDRA_HOME
+              export PATH="$GHIDRA_HOME/support:$PATH"
               echo "head2head: ctadl=$(command -v ctadl)"
               echo "head2head: ctadl-souffle=$(command -v ctadl-souffle)"
-              echo "head2head: GHIDRA_HOME=$GHIDRA_HOME"
+              echo "head2head: GHIDRA_HOME=$GHIDRA_HOME (from souffle's wrapper)"
             '';
           };
       }

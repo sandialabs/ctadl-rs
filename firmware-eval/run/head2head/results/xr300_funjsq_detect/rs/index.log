@@ -1,0 +1,7 @@
+indexing project 'xr300_funjsq_detect' from 1 import(s): xr300_funjsq_detect
+'xr300_funjsq_detect': loading IR
+'xr300_funjsq_detect': preprocessing 694 function(s) (SSA) and generating facts
+warning: CHA: unsupported virtual method table
+models: 309 summary row(s), 0 declared access path(s), 2 function body(ies) not analyzed
+indexing (computing the flow relation)
+wrote index to /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_detect/rs/store/projects/xr300_funjsq_detect/index

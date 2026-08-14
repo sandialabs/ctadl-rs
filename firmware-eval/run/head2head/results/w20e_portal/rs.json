@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "w20e_portal",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/portal",
+  "binary_bytes": 51648,
+  "status": "ok",
+  "total_wall_s": 26.4,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 15.5,
+      "peak_fp_b": 1010898896
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 11272648
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 15876576
+    }
+  },
+  "import_bytes": 4064769,
+  "index_bytes": 847427,
+  "summaries": 268,
+  "sarif_paths": 0
+}

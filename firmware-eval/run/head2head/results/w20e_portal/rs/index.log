@@ -1,0 +1,7 @@
+indexing project 'w20e_portal' from 1 import(s): w20e_portal
+'w20e_portal': loading IR
+'w20e_portal': preprocessing 179 function(s) (SSA) and generating facts
+warning: CHA: unsupported virtual method table
+models: 159 summary row(s), 0 declared access path(s), 0 function body(ies) not analyzed
+indexing (computing the flow relation)
+wrote index to /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_portal/rs/store/projects/w20e_portal/index

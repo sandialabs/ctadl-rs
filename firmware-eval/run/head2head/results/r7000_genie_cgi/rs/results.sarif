@@ -1,0 +1,1221 @@
+{
+  "version": "2.1.0",
+  "properties": {
+    "parquet_dir": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/rs/store/imports/r7000_genie_cgi/source-info",
+    "parquet_dirs": [
+      "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/rs/store/imports/r7000_genie_cgi/source-info"
+    ],
+    "project_name": "r7000_genie_cgi"
+  },
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/schemata/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "fullDescription": {
+            "text": "CTADL (Compositional Taint Analysis in Datalog)."
+          },
+          "informationUri": "https://github.com/sandialabs/ctadl-rs",
+          "name": "ctadl",
+          "notifications": [
+            {
+              "id": "CTADL0001.no-endpoints-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sources or sinks were configured ({0} model file(s) loaded, no built-in endpoints), so the query has nothing to search for."
+                }
+              },
+              "name": "No endpoints configured",
+              "shortDescription": {
+                "text": "Neither a source nor a sink was declared anywhere"
+              }
+            },
+            {
+              "id": "CTADL0002.no-sources-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sources were configured, but {0} sink endpoint(s) were. A taint query with no source is vacuous."
+                }
+              },
+              "name": "No sources configured",
+              "shortDescription": {
+                "text": "Sinks were declared but no source was"
+              }
+            },
+            {
+              "id": "CTADL0003.no-sinks-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sinks were configured, but {0} source endpoint(s) were. A taint query with no sink is vacuous."
+                }
+              },
+              "name": "No sinks configured",
+              "shortDescription": {
+                "text": "Sources were declared but no sink was"
+              }
+            },
+            {
+              "id": "CTADL0004.generator-matched-nothing",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' declares a {2} that matched nothing in the program, so it contributes nothing to the query."
+                },
+                "indexTimeDeclaration": {
+                  "text": "Model generator {0} in '{1}' declares a {2}, but no function in the program matched its 'where' constraints, so it will contribute nothing when the project is indexed."
+                },
+                "localNotFound": {
+                  "text": "Model generator {0} in '{1}' declares a {2} on port 'Variable({3})': its 'where' constraints matched {4} function(s), but none of them has a local variable named '{3}', so it contributes nothing to the query."
+                },
+                "mixedReasons": {
+                  "text": "Model generator {0} in '{1}' declares {3} {2} port(s), none of which matched anything in the program ({4}), so it contributes nothing to the query."
+                },
+                "noCallerMatched": {
+                  "text": "Model generator {0} in '{1}' declares a {2} at call sites: its 'where' constraints matched {3} function(s), but no caller of them satisfied its 'in_function' constraint, so it contributes nothing to the query."
+                },
+                "noFunctionMatched": {
+                  "text": "Model generator {0} in '{1}' declares a {2}, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+                },
+                "portRejected": {
+                  "text": "Model generator {0} in '{1}' declares a {2} on a port that is not valid for its 'find' method, so it contributes nothing to the query."
+                }
+              },
+              "name": "Model generator matched nothing",
+              "shortDescription": {
+                "text": "A model generator declared a port that produced no endpoint"
+              }
+            },
+            {
+              "id": "CTADL0005.endpoint-function-not-indexed",
+              "messageStrings": {
+                "default": {
+                  "text": "Function '{0}' was matched by a model but is not present in the index, so its source/sink endpoints were dropped."
+                }
+              },
+              "name": "Endpoint function not indexed",
+              "shortDescription": {
+                "text": "A matched function name is absent from the index"
+              }
+            },
+            {
+              "id": "CTADL0006.no-sources-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} source port(s) were declared but none of them matched anything in the program, so no taint could be seeded."
+                }
+              },
+              "name": "No sources matched",
+              "shortDescription": {
+                "text": "Sources were declared but none matched the program"
+              }
+            },
+            {
+              "id": "CTADL0007.no-sinks-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} sink port(s) were declared but none of them matched anything in the program, so no flow could be detected."
+                }
+              },
+              "name": "No sinks matched",
+              "shortDescription": {
+                "text": "Sinks were declared but none matched the program"
+              }
+            },
+            {
+              "id": "CTADL0008.no-index-model-check-only",
+              "messageStrings": {
+                "default": {
+                  "text": "The project has no index, so no taint analysis ran. The model files were matched against the imported program(s) instead -- {0} -- and the notifications below report what they select. These are model-matching results only: call-site fan-out, 'Argument(*)' expansion and sink wildcard expansion need the index, a matched name can still be absent from it, and bridge pairs are not counted. Run `ctadl index` for a real query."
+                }
+              },
+              "name": "No index; model check only",
+              "shortDescription": {
+                "text": "The project has no index, so only the model files were checked"
+              }
+            },
+            {
+              "id": "CTADL0009.generator-scope-excluded",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' has an 'in' scope ({2}) that admits none of the programs checked, so it was never evaluated against any of them."
+                }
+              },
+              "name": "Model generator out of scope",
+              "shortDescription": {
+                "text": "A generator's 'in' clause admits none of the programs checked"
+              }
+            },
+            {
+              "id": "CTADL0010.bridge-model-diagnosis",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}': {2}"
+                }
+              },
+              "name": "Bridge model cannot be paired",
+              "shortDescription": {
+                "text": "A bridge's sides matched nothing, or matched ambiguously"
+              }
+            },
+            {
+              "id": "CTADL0011.generator-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' matched {2}{3}."
+                }
+              },
+              "name": "Model generator matched",
+              "shortDescription": {
+                "text": "What a generator's 'where' constraints selected"
+              }
+            },
+            {
+              "id": "CTADL0012.model-file-error",
+              "messageStrings": {
+                "default": {
+                  "text": "Model file '{0}': {1}"
+                }
+              },
+              "name": "Model file error",
+              "shortDescription": {
+                "text": "A model file could not be read, or a generator in it is malformed"
+              }
+            },
+            {
+              "id": "CTADL0100.endpoint-match-summary",
+              "messageStrings": {
+                "default": {
+                  "text": "Declared {0} source and {1} sink port(s), which matched {2} source and {3} sink endpoint(s) in the program; {4} declared port(s) matched nothing."
+                },
+                "modelCheckOnly": {
+                  "text": "Declared {0} source and {1} sink port(s), which matched {2} source and {3} sink model row(s) in the program(s) checked -- before the call-site fan-out and wildcard expansion an index would apply; {4} declared port(s) matched nothing."
+                }
+              },
+              "name": "Endpoint match summary",
+              "shortDescription": {
+                "text": "How many ports the models declared and how many endpoints they matched"
+              }
+            },
+            {
+              "id": "CTADL0101.path-generation-disabled",
+              "messageStrings": {
+                "default": {
+                  "text": "The '{0}' SARIF profile does not perform source-to-sink path search, so this run cannot produce '{1}' results."
+                }
+              },
+              "name": "Path generation disabled",
+              "shortDescription": {
+                "text": "The selected SARIF profile does not perform path search"
+              }
+            },
+            {
+              "id": "CTADL0102.no-paths-found",
+              "messageStrings": {
+                "default": {
+                  "text": "Path search completed over {0} source and {1} sink endpoints and found no source-to-sink flow."
+                }
+              },
+              "name": "No paths found",
+              "shortDescription": {
+                "text": "Path search completed without finding a flow"
+              }
+            },
+            {
+              "id": "CTADL0103.path-dropped-no-location",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} source-to-sink path(s) were found but discarded because no reporting location could be resolved for them."
+                }
+              },
+              "name": "Path dropped for want of a location",
+              "shortDescription": {
+                "text": "A path was found but could not be reported"
+              }
+            }
+          ],
+          "rules": [
+            {
+              "id": "C0001.tainted-path",
+              "messageStrings": {
+                "default": {
+                  "text": "This is a tainted source-sink path."
+                }
+              },
+              "name": "Tainted paths",
+              "shortDescription": {
+                "text": "A path of tainted data flow"
+              }
+            },
+            {
+              "id": "C0002.tainted-instruction",
+              "messageStrings": {
+                "default": {
+                  "text": "This instruction manipulates tainted data."
+                }
+              },
+              "name": "Tainted instructions",
+              "shortDescription": {
+                "text": "An instruction with tainted data"
+              }
+            },
+            {
+              "id": "C0003.taint-source",
+              "messageStrings": {
+                "default": {
+                  "text": "This is a source of tainted data."
+                }
+              },
+              "name": "Tainted data sources",
+              "shortDescription": {
+                "text": "Tainted data source"
+              }
+            },
+            {
+              "id": "C0004.taint-sink",
+              "messageStrings": {
+                "default": {
+                  "text": "This is an desired sink of tainted data."
+                }
+              },
+              "name": "Tainted data sink",
+              "shortDescription": {
+                "text": "Tainted data sinks"
+              }
+            },
+            {
+              "id": "C0005.tainted-data",
+              "messageStrings": {
+                "default": {
+                  "text": "This vertex is tainted."
+                }
+              },
+              "name": "Tainted data",
+              "shortDescription": {
+                "text": "Tainted variables and fields"
+              }
+            },
+            {
+              "id": "C0006.almost-path-function",
+              "messageStrings": {
+                "default": {
+                  "text": "This function contains source and sink taint."
+                }
+              },
+              "name": "Almost-path function",
+              "shortDescription": {
+                "text": "A function which contains source-tainted and sink-tainted data, which means there's 'almost' a path between them."
+              }
+            },
+            {
+              "id": "C0007.absorbing-function",
+              "messageStrings": {
+                "default": {
+                  "text": "This external function receives tainted data."
+                }
+              },
+              "name": "Absorbing functions",
+              "shortDescription": {
+                "text": "An external function that receives tainted data"
+              }
+            }
+          ],
+          "version": "2026.1"
+        }
+      },
+      "invocations": [
+        {
+          "arguments": [
+            "--store",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/rs/store",
+            "query",
+            "--models",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+            "-o",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/rs/results.sarif",
+            "r7000_genie_cgi"
+          ],
+          "commandLine": "/nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_genie_cgi/rs/results.sarif r7000_genie_cgi",
+          "endTimeUtc": "2026-08-14T04:06:12.305Z",
+          "executionSuccessful": true,
+          "exitCode": 0,
+          "exitCodeDescription": "query completed",
+          "ruleConfigurationOverrides": [
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0002.tainted-instruction"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0005.tainted-data"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0006.almost-path-function"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0007.absorbing-function"
+              }
+            }
+          ],
+          "startTimeUtc": "2026-08-14T04:06:12.230Z",
+          "toolConfigurationNotifications": [
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "0",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 0 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 0,
+                "portsDeclared": 2,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "2",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 2 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 2,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "3",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 3 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 3,
+                "portsDeclared": 8,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "4",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 4 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 4,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "7",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 7 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 7,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "8",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 8 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 8,
+                "portsDeclared": 2,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "9",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 9 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 9,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "11",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 11 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 11,
+                "portsDeclared": 2,
+                "reason": "noFunctionMatched"
+              }
+            }
+          ],
+          "toolExecutionNotifications": [
+            {
+              "descriptor": {
+                "id": "CTADL0100.endpoint-match-summary"
+              },
+              "level": "note",
+              "message": {
+                "arguments": [
+                  "11",
+                  "11",
+                  "7",
+                  "2",
+                  "18"
+                ],
+                "id": "default",
+                "text": "Declared 11 source and 11 sink port(s), which matched 7 source and 2 sink endpoint(s) in the program; 18 declared port(s) matched nothing."
+              },
+              "properties": {
+                "portsDeclared": 22,
+                "portsUnmatched": 18,
+                "sinksDeclared": 11,
+                "sinksMatched": 2,
+                "sourcesDeclared": 11,
+                "sourcesMatched": 7,
+                "unmatchedDeclarations": 8
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0102.no-paths-found"
+              },
+              "level": "note",
+              "message": {
+                "arguments": [
+                  "7",
+                  "2"
+                ],
+                "id": "default",
+                "text": "Path search completed over 7 source and 2 sink endpoints and found no source-to-sink flow."
+              }
+            }
+          ]
+        }
+      ],
+      "results": [
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 57
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(0).deref in function <EXTERNAL>::fread@EXTERNAL:0000001a (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "formal(0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 58
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(-1).deref in function <EXTERNAL>::getenv@EXTERNAL:00000005 (kind 'env_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "env_input"
+            ],
+            "taintVertex": "formal(-1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 59
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(-1).deref in function <EXTERNAL>::nvram_get@EXTERNAL:00000017 (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "formal(-1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 60
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: formal(0).deref in function <EXTERNAL>::popen@EXTERNAL:0000002f (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "formal(0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 61
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(9941, 0).deref in function <EXTERNAL>::fread@00008c6c (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(9941, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 62
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(10229, -1).deref in function <EXTERNAL>::getenv@00008b70 (kind 'env_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "env_input"
+            ],
+            "taintVertex": "call-arg(10229, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 63
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(18565, 0).deref in function <EXTERNAL>::popen@00008d68 (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(18565, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 61
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(18580, 0).deref in function <EXTERNAL>::fread@00008c6c (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(18580, 0).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 64
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(18775, -1).deref in function <EXTERNAL>::nvram_get@00008c48 (kind 'nvram_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "nvram_input"
+            ],
+            "taintVertex": "call-arg(18775, -1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "open",
+          "level": "none",
+          "message": {
+            "text": "Taint path analysis ran to completion and found no source-to-sink flow. CTADL does not prove the absence of a flow, so this is reported as 'open' rather than 'pass'."
+          },
+          "ruleId": "C0001.tainted-path"
+        }
+      ],
+      "logicalLocations": [
+        {
+          "fullyQualifiedName": "FUN_000093e4@00009438:00009438",
+          "kind": "member",
+          "name": "FUN_000093e4"
+        },
+        {
+          "fullyQualifiedName": "FUN_000093e4@00009478:00009478",
+          "kind": "member",
+          "name": "FUN_000093e4"
+        },
+        {
+          "fullyQualifiedName": "FUN_000093e4@00009488:00009488",
+          "kind": "member",
+          "name": "FUN_000093e4"
+        },
+        {
+          "fullyQualifiedName": "FUN_000093e4@00009500:00009500",
+          "kind": "member",
+          "name": "FUN_000093e4"
+        },
+        {
+          "fullyQualifiedName": "FUN_000093e4@0000953c:0000953c",
+          "kind": "member",
+          "name": "FUN_000093e4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@0000958c:0000958c",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009794:00009794",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009808:00009808",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009914:00009914",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009930:00009930",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@0000999c:0000999c",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@000099cc:000099cc",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009a74:00009a74",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009a90:00009a90",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009ac4:00009ac4",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009af4:00009af4",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009b2c:00009b2c",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009b48:00009b48",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009b7c:00009b7c",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009bac:00009bac",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009c0c:00009c0c",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009c64:00009c64",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009c6c:00009c6c",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009564@00009c74:00009c74",
+          "kind": "member",
+          "name": "FUN_00009564"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009cc4@00009db4:00009db4",
+          "kind": "member",
+          "name": "FUN_00009cc4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009cc4@00009dfc:00009dfc",
+          "kind": "member",
+          "name": "FUN_00009cc4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009cc4@00009e38:00009e38",
+          "kind": "member",
+          "name": "FUN_00009cc4"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009ef8@00009f68:00009f68",
+          "kind": "member",
+          "name": "FUN_00009ef8"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009ef8@00009fb8:00009fb8",
+          "kind": "member",
+          "name": "FUN_00009ef8"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009ef8@0000a00c:0000a00c",
+          "kind": "member",
+          "name": "FUN_00009ef8"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009ef8@0000a040:0000a040",
+          "kind": "member",
+          "name": "FUN_00009ef8"
+        },
+        {
+          "fullyQualifiedName": "FUN_00009ef8@0000a048:0000a048",
+          "kind": "member",
+          "name": "FUN_00009ef8"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a314@0000a334:0000a334",
+          "kind": "member",
+          "name": "FUN_0000a314"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a35c@0000a380:0000a380",
+          "kind": "member",
+          "name": "FUN_0000a35c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a35c@0000a398:0000a398",
+          "kind": "member",
+          "name": "FUN_0000a35c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a3c0@0000a3e8:0000a3e8",
+          "kind": "member",
+          "name": "FUN_0000a3c0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a3c0@0000a400:0000a400",
+          "kind": "member",
+          "name": "FUN_0000a3c0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a3c0@0000a418:0000a418",
+          "kind": "member",
+          "name": "FUN_0000a3c0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a3c0@0000a468:0000a468",
+          "kind": "member",
+          "name": "FUN_0000a3c0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000a874:0000a874",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000a884:0000a884",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000a8a4:0000a8a4",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000a90c:0000a90c",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000a928:0000a928",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000a930:0000a930",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000a960:0000a960",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000a968:0000a968",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000aad4:0000aad4",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000aaf4:0000aaf4",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000aafc:0000aafc",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000ab04:0000ab04",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000a764@0000abd4:0000abd4",
+          "kind": "member",
+          "name": "FUN_0000a764"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ac68@0000ac8c:0000ac8c",
+          "kind": "member",
+          "name": "FUN_0000ac68"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ac68@0000ad04:0000ad04",
+          "kind": "member",
+          "name": "FUN_0000ac68"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ac68@0000ad3c:0000ad3c",
+          "kind": "member",
+          "name": "FUN_0000ac68"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000ac68@0000ad7c:0000ad7c",
+          "kind": "member",
+          "name": "FUN_0000ac68"
+        },
+        {
+          "fullyQualifiedName": "FUN_0000adfc@0000ae68:0000ae68",
+          "kind": "member",
+          "name": "FUN_0000adfc"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::fread@EXTERNAL:0000001a",
+          "kind": "member",
+          "name": "<EXTERNAL>::fread@EXTERNAL:0000001a"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::getenv@EXTERNAL:00000005",
+          "kind": "member",
+          "name": "<EXTERNAL>::getenv@EXTERNAL:00000005"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::nvram_get@EXTERNAL:00000017",
+          "kind": "member",
+          "name": "<EXTERNAL>::nvram_get@EXTERNAL:00000017"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::popen@EXTERNAL:0000002f",
+          "kind": "member",
+          "name": "<EXTERNAL>::popen@EXTERNAL:0000002f"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::fread@00008c6c",
+          "kind": "member",
+          "name": "<EXTERNAL>::fread@00008c6c"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::getenv@00008b70",
+          "kind": "member",
+          "name": "<EXTERNAL>::getenv@00008b70"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::popen@00008d68",
+          "kind": "member",
+          "name": "<EXTERNAL>::popen@00008d68"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::nvram_get@00008c48",
+          "kind": "member",
+          "name": "<EXTERNAL>::nvram_get@00008c48"
+        }
+      ],
+      "originalUriBaseIds": {
+        "IMPORT_r7000_genie_cgi": {
+          "uri": "file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/www/cgi-bin/"
+        }
+      }
+    }
+  ]
+}

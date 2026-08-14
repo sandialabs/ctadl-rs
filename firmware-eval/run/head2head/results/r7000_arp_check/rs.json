@@ -9,24 +9,24 @@
     "import": {
       "status": "ok",
       "exit_code": 0,
-      "wall_s": 10.3,
-      "peak_fp_b": 986040960
+      "wall_s": 10.2,
+      "peak_fp_b": 952584856
     },
     "index": {
       "status": "ok",
       "exit_code": 0,
       "wall_s": 5.1,
-      "peak_fp_b": 14336456
+      "peak_fp_b": 13713864
     },
     "query": {
       "status": "ok",
       "exit_code": 0,
       "wall_s": 5.1,
-      "peak_fp_b": 19792376
+      "peak_fp_b": 20283896
     }
   },
-  "import_bytes": 5045405,
-  "index_bytes": 2073885,
+  "import_bytes": 5047120,
+  "index_bytes": 2072790,
   "summaries": 198,
   "sarif_paths": 36
 }

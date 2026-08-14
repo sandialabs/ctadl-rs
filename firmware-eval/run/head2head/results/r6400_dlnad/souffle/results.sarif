@@ -1,0 +1,837 @@
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/cos02/schemas/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "properties": {
+    "comment": "CTADL taint findings",
+    "day": "2026-08-13"
+  },
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "ctadl",
+          "version": "0.14.1",
+          "informationUri": "https://github.com/sandialabs/ctadl",
+          "fullDescription": {
+            "text": "CTADL (Compositional Taint Analysis in Datalog)."
+          },
+          "rules": [
+            {
+              "id": "C0001",
+              "name": "Tainted paths",
+              "shortDescription": {
+                "text": "A path of tainted data flow"
+              },
+              "messageStrings": {
+                "default": {
+                  "text": "This is a tainted source-sink path."
+                }
+              }
+            },
+            {
+              "id": "C0002",
+              "name": "Tainted instructions",
+              "shortDescription": {
+                "text": "An instruction with tainted data"
+              },
+              "messageStrings": {
+                "default": {
+                  "text": "This instruction manipulates tainted data."
+                }
+              }
+            },
+            {
+              "id": "C0003",
+              "name": "Tainted data sources",
+              "shortDescription": {
+                "text": "Tainted data source"
+              },
+              "messageStrings": {
+                "default": {
+                  "text": "This is a source of tainted data."
+                }
+              }
+            },
+            {
+              "id": "C0004",
+              "name": "Tainted data sink",
+              "shortDescription": {
+                "text": "Tainted data sinks"
+              },
+              "messageStrings": {
+                "default": {
+                  "text": "This is an desired sink of tainted data."
+                }
+              }
+            },
+            {
+              "id": "C0005",
+              "name": "Tainted data",
+              "shortDescription": {
+                "text": "Tainted variables and fields"
+              },
+              "messageStrings": {
+                "default": {
+                  "text": "This vertex is tainted."
+                }
+              }
+            },
+            {
+              "id": "C0006",
+              "name": "Almost-path function",
+              "shortDescription": {
+                "text": "A function which contains source-tainted and sink-tainted data, which means there's 'almost' a path between them."
+              },
+              "messageStrings": {
+                "default": {
+                  "text": "This function contains source and sink taint."
+                }
+              }
+            }
+          ],
+          "properties": {
+            "short_description": "Compositional Taint Analysis in Datalog",
+            "config": {
+              "CTADL_Version": "0.14.1",
+              "ALL_OUTPUTS": "0",
+              "CTADL_ANALYSIS_LANG": "PCODE",
+              "CTADL_DISABLE_GLOBAL_DATA_FLOW": "0",
+              "CTADL_DYNAMIC_ACCESS_PATHS_MAX_LENGTH": "0",
+              "CTADL_ENABLE_STAR": "0",
+              "CTADL_ENABLE_HYBRID_INLINING_K_CONTEXT_SENSITIVITY": "0",
+              "CTADL_HYBRID_INLINING_K_CONTEXT_SIZE": "3",
+              "CTADL_ENABLE_HYBRID_INLINING_K_INLINING_SENSITIVITY": "1",
+              "CTADL_HYBRID_INLINING_K_INLINING_SIZE": "5",
+              "CTADL_ENABLE_HYBRID_INLINING": "1",
+              "CTADL_HYBRID_INLINING_ADD_PARTHIANS_TO_VERTEX": "0",
+              "CTADL_ENABLE_MATCH_ACCESS_PATHS_TO_STAR": "0",
+              "CTADL_ENABLE_CHA": "0",
+              "CTADL_ENABLE_CONTEXT_FREE_OBJECT_TRACKING": "0",
+              "CTADL_Import_Path": "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dlnad/souffle/import/facts",
+              "CTADL_Index_Timestamp": "2026-08-13T22:01:35.647388",
+              "CTADL_Index_Models": "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json",
+              "CTADL_Query": "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json",
+              "CTADL_Query_Timestamp": "2026-08-13T22:01:40.753219"
+            },
+            "stats": {
+              "CInsn_InFunction": 1595,
+              "CFunction_Arity": 88,
+              "CFunction_FormalParam": 382,
+              "CFunction_isFormalParamByRef": 315,
+              "CInsn_Call": 347,
+              "CVar_InFunction": 3471,
+              "AccessPathNonEmptySplit": 0,
+              "ComputedAccessPathNonEmptySplit": 0,
+              "import-vertex": 2404,
+              "import-virtual-assign": 1893,
+              "import-computed-access-path": 55,
+              "source vertices": 8,
+              "sink vertices": 2,
+              "tainted-vertex": 62,
+              "CInsn_Move": 1772,
+              "CInsn_Use": 3,
+              "CisFunction": 88,
+              "CFunction_Name": 88,
+              "CFunction_ModelAssign": 38,
+              "CCall_ActualParam": 699,
+              "CisAccessPath": 55,
+              "CVar_isGlobal": 0,
+              "CVar_Name": 3471,
+              "analyzed-function": 49,
+              "CisAlloc": 6,
+              "CCall_VirtualBase": 33,
+              "virtual-assign-star": 0,
+              "virtual-assign-starsummary": 0,
+              "virtual-assign-starsummary2": 0,
+              "ParthianVertex": 33,
+              "ParthianFlowEdge": 0,
+              "ctx": 0,
+              "obj-ctx": 0,
+              "obj-reachable-vertex": 0,
+              "ContextObj": 0,
+              "LocallyReachable-ctx": 0,
+              "virtual-assign-ctx": 0,
+              "virtual-alloc-ctx": 0,
+              "summary-flow-ctx": 0,
+              "virtual-assign-star-ctx": 0,
+              "virtual-assign-starsummary-ctx": 0,
+              "virtual-assign-starsummary2-ctx": 0,
+              "initial-vertex": 2309,
+              "vertex": 2404,
+              "virtual-assign": 1893,
+              "virtual-assign-summary": 76,
+              "virtual-assign-summary2": 0,
+              "virtual-assign-alias": 0,
+              "virtual-assign-fp": 45,
+              "virtual-assign-move": 1772,
+              "virtual-alloc": 6,
+              "computed-access-path": 55,
+              "star-access-path": 1,
+              "summary-flow": 34,
+              "summary2-flow": 0,
+              "LocallyReachable": 55,
+              "LocallyReachableSources": 9,
+              "alias-entries": 0,
+              "alias-sets": 0
+            }
+          }
+        }
+      },
+      "addresses": [],
+      "logicalLocations": [
+        {
+          "name": "FUN_00008b58",
+          "kind": "function",
+          "fullyQualifiedName": "FUN_00008b58@00008b58",
+          "decoratedName": "FUN_00008b58@00008b58"
+        },
+        {
+          "name": "fgets",
+          "kind": "function",
+          "fullyQualifiedName": "<EXTERNAL>::fgets@000089c4",
+          "decoratedName": "<EXTERNAL>::fgets@000089c4"
+        },
+        {
+          "name": "system",
+          "kind": "function",
+          "fullyQualifiedName": "<EXTERNAL>::system@00008910",
+          "decoratedName": "<EXTERNAL>::system@00008910"
+        },
+        {
+          "name": "system",
+          "kind": "function",
+          "fullyQualifiedName": "<EXTERNAL>::system@EXTERNAL:00000005",
+          "decoratedName": "<EXTERNAL>::system@EXTERNAL:00000005"
+        },
+        {
+          "name": "register:00000034",
+          "kind": "variable",
+          "fullyQualifiedName": "FUN_00008b58@00008b58::register:00000034",
+          "decoratedName": "FUN_00008b58@00008b58:register:00000034:328",
+          "parentIndex": 0
+        },
+        {
+          "name": "__s",
+          "kind": "variable",
+          "fullyQualifiedName": "<EXTERNAL>::fgets@000089c4::__s",
+          "decoratedName": "<EXTERNAL>::fgets@000089c4:@__s",
+          "parentIndex": 1
+        },
+        {
+          "name": "__command",
+          "kind": "variable",
+          "fullyQualifiedName": "<EXTERNAL>::system@00008910::__command",
+          "decoratedName": "<EXTERNAL>::system@00008910:@__command",
+          "parentIndex": 2
+        },
+        {
+          "name": "__command",
+          "kind": "variable",
+          "fullyQualifiedName": "<EXTERNAL>::system@EXTERNAL:00000005::__command",
+          "decoratedName": "<EXTERNAL>::system@EXTERNAL:00000005:@__command",
+          "parentIndex": 3
+        },
+        {
+          "name": "FUN_00008b58@00008b58:00008db8:656",
+          "kind": "member",
+          "fullyQualifiedName": "FUN_00008b58@00008b58:00008db8:656",
+          "decoratedName": "FUN_00008b58@00008b58:00008db8:656",
+          "parentIndex": 0
+        },
+        {
+          "name": "FUN_00008b58@00008b58:00008d40:569",
+          "kind": "member",
+          "fullyQualifiedName": "FUN_00008b58@00008b58:00008d40:569",
+          "decoratedName": "FUN_00008b58@00008b58:00008d40:569",
+          "parentIndex": 0
+        },
+        {
+          "name": "FUN_00008b58@00008b58:00008d64:607",
+          "kind": "member",
+          "fullyQualifiedName": "FUN_00008b58@00008b58:00008d64:607",
+          "decoratedName": "FUN_00008b58@00008b58:00008d64:607",
+          "parentIndex": 0
+        },
+        {
+          "name": "FUN_00008b58@00008b58:00008bb0:125",
+          "kind": "member",
+          "fullyQualifiedName": "FUN_00008b58@00008b58:00008bb0:125",
+          "decoratedName": "FUN_00008b58@00008b58:00008bb0:125",
+          "parentIndex": 0
+        },
+        {
+          "name": "FUN_00008b58@00008b58:00008dfc:703",
+          "kind": "member",
+          "fullyQualifiedName": "FUN_00008b58@00008b58:00008dfc:703",
+          "decoratedName": "FUN_00008b58@00008b58:00008dfc:703",
+          "parentIndex": 0
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "C0001",
+          "kind": "review",
+          "level": "warning",
+          "message": {
+            "text": "Path starts in function '<EXTERNAL>::fgets@000089c4' label 'file_input', ends at '<EXTERNAL>::system@00008910'"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "additionalProperties": {
+              "taintLabels": [
+                "file_input"
+              ]
+            }
+          },
+          "codeFlows": [
+            {
+              "message": {
+                "text": "Path from source to sink with 2 intermediate instructions"
+              },
+              "threadFlows": [
+                {
+                  "message": {
+                    "text": "Path from source to sink with 2 intermediate instructions"
+                  },
+                  "locations": [
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad"
+                          },
+                          "address": {
+                            "absoluteAddress": 35268,
+                            "kind": "data"
+                          }
+                        },
+                        "logicalLocations": [
+                          {
+                            "index": 5
+                          }
+                        ],
+                        "message": {
+                          "text": "Tainted data enters in '__s' aka '__s' in '<EXTERNAL>::fgets@000089c4'"
+                        },
+                        "annotations": [
+                          {
+                            "message": {
+                              "text": "Source vertex: 'VertexTy(var='<EXTERNAL>::fgets@000089c4:@__s', path='.*')'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "Source variable: '__s'"
+                            }
+                          }
+                        ]
+                      },
+                      "kinds": [
+                        "taint",
+                        "acquire"
+                      ],
+                      "state": {
+                        "__s": {
+                          "text": "label: file_input"
+                        }
+                      },
+                      "properties": {
+                        "text": "This is the source vertex"
+                      }
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad"
+                          },
+                          "address": {
+                            "absoluteAddress": 35760,
+                            "kind": "instruction",
+                            "fullyQualifiedName": "FUN_00008b58@00008b58:00008bb0:125"
+                          }
+                        },
+                        "logicalLocations": [
+                          {
+                            "index": 11
+                          }
+                        ],
+                        "message": {
+                          "text": "[out of*]  '__s' aka '__s' field '.*' in 'fgets'"
+                        },
+                        "annotations": [
+                          {
+                            "message": {
+                              "text": "Source vertex: '<EXTERNAL>::fgets@000089c4:@__s.*' in '<EXTERNAL>::fgets@000089c4'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "Source variable: '__s.*'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "The tainted assignment text is 'FUN_00008b58@00008b58:register:00000034:328.* := <EXTERNAL>::fgets@000089c4:@__s.*'"
+                            }
+                          }
+                        ]
+                      },
+                      "kinds": [
+                        "taint",
+                        "interprocedural"
+                      ],
+                      "state": {
+                        "__s.*": {
+                          "text": "labels: file_input"
+                        }
+                      },
+                      "properties": {
+                        "additionalProperties": {
+                          "insnDecoratedName": "FUN_00008b58@00008b58:00008bb0:125"
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad"
+                          },
+                          "address": {
+                            "absoluteAddress": 35760,
+                            "kind": "instruction",
+                            "fullyQualifiedName": "FUN_00008b58@00008b58:00008bb0:125"
+                          }
+                        },
+                        "logicalLocations": [
+                          {
+                            "index": 11
+                          }
+                        ],
+                        "message": {
+                          "text": " [into] parameter(0) 'vn328' aka 'register:00000034' field '.*' in 'FUN_00008b58'"
+                        },
+                        "annotations": [
+                          {
+                            "message": {
+                              "text": "Destination vertex: 'FUN_00008b58@00008b58:register:00000034:328.*' in 'FUN_00008b58@00008b58'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "Destination variable: 'vn328.*'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "The tainted assignment text is 'FUN_00008b58@00008b58:register:00000034:328.* := <EXTERNAL>::fgets@000089c4:@__s.*'"
+                            }
+                          }
+                        ]
+                      },
+                      "kinds": [
+                        "taint",
+                        "interprocedural"
+                      ],
+                      "state": {
+                        "vn328.*": {
+                          "text": "labels: file_input"
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad"
+                          },
+                          "address": {
+                            "absoluteAddress": 36160,
+                            "kind": "instruction",
+                            "fullyQualifiedName": "FUN_00008b58@00008b58:00008d40:569"
+                          }
+                        },
+                        "logicalLocations": [
+                          {
+                            "index": 9
+                          }
+                        ],
+                        "message": {
+                          "text": "[out of] parameter(0) 'vn328' aka 'register:00000034' field '.*' in 'FUN_00008b58'"
+                        },
+                        "annotations": [
+                          {
+                            "message": {
+                              "text": "Source vertex: 'FUN_00008b58@00008b58:register:00000034:328.*' in 'FUN_00008b58@00008b58'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "Source variable: 'vn328.*'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "The tainted assignment text is '<EXTERNAL>::system@00008910:@__command.* := FUN_00008b58@00008b58:register:00000034:328.*'"
+                            }
+                          }
+                        ]
+                      },
+                      "kinds": [
+                        "taint",
+                        "interprocedural"
+                      ],
+                      "state": {
+                        "vn328.*": {
+                          "text": "labels: file_input"
+                        }
+                      },
+                      "properties": {
+                        "additionalProperties": {
+                          "insnDecoratedName": "FUN_00008b58@00008b58:00008d40:569"
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad"
+                          },
+                          "address": {
+                            "absoluteAddress": 36160,
+                            "kind": "instruction",
+                            "fullyQualifiedName": "FUN_00008b58@00008b58:00008d40:569"
+                          }
+                        },
+                        "logicalLocations": [
+                          {
+                            "index": 9
+                          }
+                        ],
+                        "message": {
+                          "text": " [into*]  '__command' aka '__command' field '.*' in 'system'"
+                        },
+                        "annotations": [
+                          {
+                            "message": {
+                              "text": "Destination vertex: '<EXTERNAL>::system@00008910:@__command.*' in '<EXTERNAL>::system@00008910'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "Destination variable: '__command.*'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "The tainted assignment text is '<EXTERNAL>::system@00008910:@__command.* := FUN_00008b58@00008b58:register:00000034:328.*'"
+                            }
+                          }
+                        ]
+                      },
+                      "kinds": [
+                        "taint",
+                        "interprocedural"
+                      ],
+                      "state": {
+                        "__command.*": {
+                          "text": "labels: file_input"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "ruleId": "C0001",
+          "kind": "review",
+          "level": "warning",
+          "message": {
+            "text": "Path starts in function '<EXTERNAL>::fgets@000089c4' label 'file_input', ends at '<EXTERNAL>::system@EXTERNAL:00000005'"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "additionalProperties": {
+              "taintLabels": [
+                "file_input"
+              ]
+            }
+          },
+          "codeFlows": [
+            {
+              "message": {
+                "text": "Path from source to sink with 2 intermediate instructions"
+              },
+              "threadFlows": [
+                {
+                  "message": {
+                    "text": "Path from source to sink with 2 intermediate instructions"
+                  },
+                  "locations": [
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad"
+                          },
+                          "address": {
+                            "absoluteAddress": 35268,
+                            "kind": "data"
+                          }
+                        },
+                        "logicalLocations": [
+                          {
+                            "index": 5
+                          }
+                        ],
+                        "message": {
+                          "text": "Tainted data enters in '__s' aka '__s' in '<EXTERNAL>::fgets@000089c4'"
+                        },
+                        "annotations": [
+                          {
+                            "message": {
+                              "text": "Source vertex: 'VertexTy(var='<EXTERNAL>::fgets@000089c4:@__s', path='.*')'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "Source variable: '__s'"
+                            }
+                          }
+                        ]
+                      },
+                      "kinds": [
+                        "taint",
+                        "acquire"
+                      ],
+                      "state": {
+                        "__s": {
+                          "text": "label: file_input"
+                        }
+                      },
+                      "properties": {
+                        "text": "This is the source vertex"
+                      }
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad"
+                          },
+                          "address": {
+                            "absoluteAddress": 35760,
+                            "kind": "instruction",
+                            "fullyQualifiedName": "FUN_00008b58@00008b58:00008bb0:125"
+                          }
+                        },
+                        "logicalLocations": [
+                          {
+                            "index": 11
+                          }
+                        ],
+                        "message": {
+                          "text": "[out of*]  '__s' aka '__s' field '.*' in 'fgets'"
+                        },
+                        "annotations": [
+                          {
+                            "message": {
+                              "text": "Source vertex: '<EXTERNAL>::fgets@000089c4:@__s.*' in '<EXTERNAL>::fgets@000089c4'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "Source variable: '__s.*'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "The tainted assignment text is 'FUN_00008b58@00008b58:register:00000034:328.* := <EXTERNAL>::fgets@000089c4:@__s.*'"
+                            }
+                          }
+                        ]
+                      },
+                      "kinds": [
+                        "taint",
+                        "interprocedural"
+                      ],
+                      "state": {
+                        "__s.*": {
+                          "text": "labels: file_input"
+                        }
+                      },
+                      "properties": {
+                        "additionalProperties": {
+                          "insnDecoratedName": "FUN_00008b58@00008b58:00008bb0:125"
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad"
+                          },
+                          "address": {
+                            "absoluteAddress": 35760,
+                            "kind": "instruction",
+                            "fullyQualifiedName": "FUN_00008b58@00008b58:00008bb0:125"
+                          }
+                        },
+                        "logicalLocations": [
+                          {
+                            "index": 11
+                          }
+                        ],
+                        "message": {
+                          "text": " [into] parameter(0) 'vn328' aka 'register:00000034' field '.*' in 'FUN_00008b58'"
+                        },
+                        "annotations": [
+                          {
+                            "message": {
+                              "text": "Destination vertex: 'FUN_00008b58@00008b58:register:00000034:328.*' in 'FUN_00008b58@00008b58'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "Destination variable: 'vn328.*'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "The tainted assignment text is 'FUN_00008b58@00008b58:register:00000034:328.* := <EXTERNAL>::fgets@000089c4:@__s.*'"
+                            }
+                          }
+                        ]
+                      },
+                      "kinds": [
+                        "taint",
+                        "interprocedural"
+                      ],
+                      "state": {
+                        "vn328.*": {
+                          "text": "labels: file_input"
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad"
+                          },
+                          "address": {
+                            "absoluteAddress": 36160,
+                            "kind": "instruction",
+                            "fullyQualifiedName": "FUN_00008b58@00008b58:00008d40:569"
+                          }
+                        },
+                        "logicalLocations": [
+                          {
+                            "index": 9
+                          }
+                        ],
+                        "message": {
+                          "text": "[out of] parameter(0) 'vn328' aka 'register:00000034' field '.*' in 'FUN_00008b58'"
+                        },
+                        "annotations": [
+                          {
+                            "message": {
+                              "text": "Source vertex: 'FUN_00008b58@00008b58:register:00000034:328.*' in 'FUN_00008b58@00008b58'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "Source variable: 'vn328.*'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "The tainted assignment text is '<EXTERNAL>::system@EXTERNAL:00000005:@__command.* := FUN_00008b58@00008b58:register:00000034:328.*'"
+                            }
+                          }
+                        ]
+                      },
+                      "kinds": [
+                        "taint",
+                        "interprocedural"
+                      ],
+                      "state": {
+                        "vn328.*": {
+                          "text": "labels: file_input"
+                        }
+                      },
+                      "properties": {
+                        "additionalProperties": {
+                          "insnDecoratedName": "FUN_00008b58@00008b58:00008d40:569"
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad"
+                          },
+                          "address": {
+                            "absoluteAddress": 36160,
+                            "kind": "instruction",
+                            "fullyQualifiedName": "FUN_00008b58@00008b58:00008d40:569"
+                          }
+                        },
+                        "logicalLocations": [
+                          {
+                            "index": 9
+                          }
+                        ],
+                        "message": {
+                          "text": " [into*]  '__command' aka '__command' field '.*' in 'system'"
+                        },
+                        "annotations": [
+                          {
+                            "message": {
+                              "text": "Destination vertex: '<EXTERNAL>::system@EXTERNAL:00000005:@__command.*' in '<EXTERNAL>::system@EXTERNAL:00000005'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "Destination variable: '__command.*'"
+                            }
+                          },
+                          {
+                            "message": {
+                              "text": "The tainted assignment text is '<EXTERNAL>::system@EXTERNAL:00000005:@__command.* := FUN_00008b58@00008b58:register:00000034:328.*'"
+                            }
+                          }
+                        ]
+                      },
+                      "kinds": [
+                        "taint",
+                        "interprocedural"
+                      ],
+                      "state": {
+                        "__command.*": {
+                          "text": "labels: file_input"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "graphs": []
+    }
+  ]
+}

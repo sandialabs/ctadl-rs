@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "r6400_genie_cgi",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi",
+  "binary_bytes": 16560,
+  "status": "ok",
+  "total_wall_s": 21.2,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 538495328
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 11911648
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 14270920
+    }
+  },
+  "import_bytes": 1428291,
+  "index_bytes": 409030,
+  "summaries": 133,
+  "sarif_paths": 0
+}

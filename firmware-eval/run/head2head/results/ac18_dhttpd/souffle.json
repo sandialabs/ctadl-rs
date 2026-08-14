@@ -1,0 +1,32 @@
+{
+  "engine": "souffle",
+  "label": "ac18_dhttpd",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/dhttpd",
+  "binary_bytes": 212948,
+  "status": "ok",
+  "total_wall_s": 36.1,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 20.8,
+      "peak_fp_b": 2112428848
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 177619856
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2507112
+    }
+  },
+  "import_bytes": 93724758,
+  "index_bytes": 122683392,
+  "summaries": 523,
+  "sarif_paths": 0
+}

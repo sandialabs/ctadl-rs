@@ -333,8 +333,8 @@
             "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/rs/results.sarif",
             "ac15_netctrl"
           ],
-          "commandLine": "/nix/store/wgmaac9dn2k350zc4qvaabmixjw3kcmd-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/rs/results.sarif ac15_netctrl",
-          "endTimeUtc": "2026-08-13T23:42:30.250Z",
+          "commandLine": "/nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/rs/results.sarif ac15_netctrl",
+          "endTimeUtc": "2026-08-14T04:45:40.584Z",
           "executionSuccessful": true,
           "exitCode": 0,
           "exitCodeDescription": "query completed",
@@ -372,7 +372,7 @@
               }
             }
           ],
-          "startTimeUtc": "2026-08-13T23:42:28.719Z",
+          "startTimeUtc": "2026-08-14T04:45:39.037Z",
           "toolConfigurationNotifications": [
             {
               "descriptor": {

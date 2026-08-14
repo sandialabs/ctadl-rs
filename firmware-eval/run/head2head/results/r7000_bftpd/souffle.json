@@ -1,0 +1,32 @@
+{
+  "engine": "souffle",
+  "label": "r7000_bftpd",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/bftpd",
+  "binary_bytes": 52304,
+  "status": "ok",
+  "total_wall_s": 25.8,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 15.5,
+      "peak_fp_b": 550209912
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2474344
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2474344
+    }
+  },
+  "import_bytes": 46950204,
+  "index_bytes": 67371008,
+  "summaries": 146,
+  "sarif_paths": 0
+}

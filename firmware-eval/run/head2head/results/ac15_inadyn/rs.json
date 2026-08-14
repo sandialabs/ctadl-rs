@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "ac15_inadyn",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/inadyn",
+  "binary_bytes": 27596,
+  "status": "ok",
+  "total_wall_s": 21.1,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 632785320
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 9814472
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 17449440
+    }
+  },
+  "import_bytes": 2273132,
+  "index_bytes": 814709,
+  "summaries": 168,
+  "sarif_paths": 0
+}

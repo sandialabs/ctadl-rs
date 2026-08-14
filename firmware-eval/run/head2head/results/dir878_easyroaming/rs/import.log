@@ -1,0 +1,4 @@
+importing pcode artifact 'dir878_easyroaming' from /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming
+running Ghidra to disassemble; console output -> /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_easyroaming/rs/store/imports/dir878_easyroaming/ghidra.log
+warning: Unsupported pcode mnemonic: CALLOTHER
+'dir878_easyroaming': imported 408 function(s)

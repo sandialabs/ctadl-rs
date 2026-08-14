@@ -1,0 +1,4 @@
+importing pcode artifact 'r6400_rc' from /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc
+running Ghidra to disassemble; console output -> /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/rs/store/imports/r6400_rc/ghidra.log
+warning: Unsupported pcode mnemonic: CALLOTHER
+'r6400_rc': imported 390 function(s)

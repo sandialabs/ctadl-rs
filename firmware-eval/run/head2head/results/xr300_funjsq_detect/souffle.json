@@ -1,0 +1,32 @@
+{
+  "engine": "souffle",
+  "label": "xr300_funjsq_detect",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_detect",
+  "binary_bytes": 293004,
+  "status": "ok",
+  "total_wall_s": 51.5,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 26.0,
+      "peak_fp_b": 2704022896
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 20.3,
+      "peak_fp_b": 260522968
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2507112
+    }
+  },
+  "import_bytes": 194406020,
+  "index_bytes": 233963520,
+  "summaries": 419,
+  "sarif_paths": 0
+}

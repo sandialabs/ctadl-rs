@@ -4,19 +4,19 @@
   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/netctrl",
   "binary_bytes": 318012,
   "status": "ok",
-  "total_wall_s": 46.2,
+  "total_wall_s": 51.5,
   "phases": {
     "import": {
       "status": "ok",
       "exit_code": 0,
-      "wall_s": 20.8,
-      "peak_fp_b": 1732186912
+      "wall_s": 26.1,
+      "peak_fp_b": 1733956024
     },
     "index": {
       "status": "ok",
       "exit_code": 0,
       "wall_s": 20.3,
-      "peak_fp_b": 254510016
+      "peak_fp_b": 261211120
     },
     "query": {
       "status": "ok",
@@ -25,7 +25,7 @@
       "peak_fp_b": 2474344
     }
   },
-  "import_bytes": 190706158,
+  "import_bytes": 190706701,
   "index_bytes": 227475456,
   "summaries": 409,
   "sarif_paths": 0

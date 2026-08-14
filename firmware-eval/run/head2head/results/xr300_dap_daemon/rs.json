@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "xr300_dap_daemon",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/dap_daemon",
+  "binary_bytes": 30936,
+  "status": "ok",
+  "total_wall_s": 21.1,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 649791840
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 10568136
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 18596320
+    }
+  },
+  "import_bytes": 2787468,
+  "index_bytes": 886949,
+  "summaries": 310,
+  "sarif_paths": 0
+}

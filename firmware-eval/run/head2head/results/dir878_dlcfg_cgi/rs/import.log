@@ -1,0 +1,3 @@
+importing pcode artifact 'dir878_dlcfg_cgi' from /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/etc_ro/lighttpd/www/web/HNAP1/dlcfg.cgi
+running Ghidra to disassemble; console output -> /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_dlcfg_cgi/rs/store/imports/dir878_dlcfg_cgi/ghidra.log
+'dir878_dlcfg_cgi': imported 52 function(s)

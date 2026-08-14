@@ -1,0 +1,4 @@
+importing pcode artifact 'xr300_arp_check' from /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/arp_check
+running Ghidra to disassemble; console output -> /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_arp_check/rs/store/imports/xr300_arp_check/ghidra.log
+warning: Unsupported pcode mnemonic: CALLOTHER
+'xr300_arp_check': imported 138 function(s)

@@ -1,0 +1,32 @@
+{
+  "engine": "souffle",
+  "label": "r7000_checkDullWan",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/checkDullWan",
+  "binary_bytes": 25100,
+  "status": "ok",
+  "total_wall_s": 20.5,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 581568840
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2474344
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2556264
+    }
+  },
+  "import_bytes": 14822000,
+  "index_bytes": 33554432,
+  "summaries": 41,
+  "sarif_paths": 0
+}

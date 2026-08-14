@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "r6400_dlnad",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad",
+  "binary_bytes": 9908,
+  "status": "ok",
+  "total_wall_s": 21.1,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 660687296
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 8389064
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 12501520
+    }
+  },
+  "import_bytes": 656680,
+  "index_bytes": 210762,
+  "summaries": 71,
+  "sarif_paths": 15
+}

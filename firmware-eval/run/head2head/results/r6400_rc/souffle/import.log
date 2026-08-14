@@ -1,0 +1,122 @@
+ctadl_ghidra_fact_generator_plugin 0.1.0
+exporting program with Ghidra to '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/souffle/import'
+openjdk version "21.0.8" 2025-07-15 LTS
+OpenJDK Runtime Environment Zulu21.44+17-CA (build 21.0.8+9-LTS)
+OpenJDK 64-Bit Server VM Zulu21.44+17-CA (build 21.0.8+9-LTS, mixed mode)
+INFO  Using log config file: jar:file:/nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /Users/dbueno/.config/ghidra/ghidra_12.0.4_NIX/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /Users/dbueno/.config/ghidra/ghidra_12.0.4_NIX/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (732 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (1314 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 58 extension points (18 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/FunctionID/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/Base/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/BytePatterns/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/PIC/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/JVM/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/Atmel/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/PyGhidra/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/VersionTracking/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/BSim/ghidra_scripts
+    /nix/store/wv3h872qsfbfsjnsnmpjrhswwcxb6ga1-python3.13-ctadl-0.14.1/lib/python3.13/site-packages/ctadl/souffle-logic/pcode
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/Decompiler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Debug/Debugger/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/FileFormats/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/Jython/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/PDB/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/DATA/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/8051/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Creating temporary project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-pux7q0nt/ghidra_headless/headless (HeadlessAnalyzer)  
+INFO  Creating project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-pux7q0nt/ghidra_headless/headless (DefaultProject)  
+INFO  REPORT: Processing input files:  (HeadlessAnalyzer)  
+INFO       project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-pux7q0nt/ghidra_headless/headless (HeadlessAnalyzer)  
+INFO  IMPORTING: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc (HeadlessAnalyzer)  
+INFO  Using Loader: Executable and Linking Format (ELF) (ProgramLoader)  
+INFO  Using Language/Compiler: ARM:LE:32:v8:default (ProgramLoader)  
+INFO  Using Library Search Path: [., /System/Library/dyld/dyld_shared_cache_arm64e, /System/Library/dyld/dyld_shared_cache_x86_64, /System/Library/dyld/dyld_shared_cache_x86_64h, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64h, /Users/dbueno/Library/Java/Extensions, /Library/Java/Extensions, /Network/Library/Java/Extensions, /System/Library/Java/Extensions, /usr/lib/java] (ProgramLoader)  
+INFO  Additional info:
+Loading file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc?MD5=5b777990ec458c9b6d249aba260c15e9...
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 0002a368 (Symbol = stderr) - Runtime copy not supported (4-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 0002a36c (Symbol = router_defaults) - Runtime copy not supported (14460-bytes)
+------------------------------------------------
+
+Linking the External Programs of 'rc' to imported libraries...
+  [libnvram.so] -> not found in project
+  [libshared.so] -> not found in project
+  [libbcmcrypto.so] -> not found in project
+  [libbcm.so] -> not found in project
+  [libacos_shared.so] -> not found in project
+  [libgcc_s.so.1] -> not found in project
+  [libc.so.0] -> not found in project
+------------------------------------------------
+
+Resolving External Symbols of [/rc] - 135 unresolved symbols, no external libraries configured - skipping
+ (ProgramLoader)  
+INFO  IMPORTING: Loaded 0 additional files (HeadlessAnalyzer)  
+INFO  ANALYZING all memory and code: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc (HeadlessAnalyzer)  
+INFO  hit non-returning function, restarting decompiler switch analyzer later (DecompilerSwitchAnalyzer)  
+INFO  Packed database cache: /Users/dbueno/.cache/ghidra/packed-db-cache (PackedDatabaseCache)  
+INFO  Applied data type archive: generic_clib (ApplyDataArchiveAnalyzer)  
+INFO  -----------------------------------------------------
+    ARM Constant Reference Analyzer            0.651 secs
+    ARM Symbol                                 0.001 secs
+    ASCII Strings                              0.169 secs
+    Apply Data Archives                        0.268 secs
+    Call Convention ID                         0.002 secs
+    Call-Fixup Installer                       0.004 secs
+    Create Address Tables                      0.014 secs
+    Create Address Tables - One Time           0.011 secs
+    Create Function                            0.057 secs
+    Data Reference                             0.028 secs
+    Decompiler Switch Analysis                 0.565 secs
+    Decompiler Switch Analysis - One Time      0.907 secs
+    Demangler GNU                              0.018 secs
+    Disassemble                                0.070 secs
+    Disassemble Entry Points                   0.251 secs
+    Embedded Media                             0.004 secs
+    External Entry References                  0.001 secs
+    Function ID                                0.020 secs
+    Function Start Pre Search                  0.004 secs
+    Function Start Search                      0.122 secs
+    Function Start Search After Code           0.040 secs
+    Function Start Search After Data           0.033 secs
+    Function Start Search delayed - One Time   0.004 secs
+    GCC Exception Handlers                     0.006 secs
+    Non-Returning Functions - Discovered       0.033 secs
+    Non-Returning Functions - Known            0.002 secs
+    Reference                                  0.067 secs
+    Shared Return Calls                        0.013 secs
+    Stack                                      0.416 secs
+    Subroutine References                      0.028 secs
+-----------------------------------------------------
+     Total Time   3 secs
+-----------------------------------------------------
+ (AutoAnalysisManager)  
+INFO  REPORT: Analysis succeeded for file: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: ExportPcode.java '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/souffle/import/facts'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /nix/store/wv3h872qsfbfsjnsnmpjrhswwcxb6ga1-python3.13-ctadl-0.14.1/lib/python3.13/site-packages/ctadl/souffle-logic/pcode/ExportPcode.java (HeadlessAnalyzer)  
+INFO  ExportPcode.java> Script is not running in GUI (GhidraScript)  
+WARN  Decompiling 0002e000, pcode error at 0002e000: Unable to disassemble EXTERNAL block location: 0002e000 (DecompileCallback)  
+WARN  Decompiling 0002e008, pcode error at 0002e008: Unable to disassemble EXTERNAL block location: 0002e008 (DecompileCallback)  
+INFO  ExportPcode.java> total duration: 5113 (GhidraScript)  
+INFO  ANALYZING changes made by post scripts: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc (HeadlessAnalyzer)  
+INFO  REPORT: Post-analysis succeeded for file: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc (HeadlessAnalyzer)  
+INFO  /rc: file created (dbueno) (LocalFileSystem)  
+INFO  REPORT: Save succeeded for: /rc (headless:/rc) (HeadlessAnalyzer)  
+INFO  REPORT: Import succeeded (HeadlessAnalyzer)  
+SUT imported to '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/souffle/import'
+>> hint: index with 'ctadl --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_rc/souffle/import index'

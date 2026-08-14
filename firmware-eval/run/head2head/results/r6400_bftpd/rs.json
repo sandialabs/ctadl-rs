@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "r6400_bftpd",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/bftpd",
+  "binary_bytes": 52432,
+  "status": "ok",
+  "total_wall_s": 26.4,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 15.5,
+      "peak_fp_b": 1474058456
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 15729096
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 17596896
+    }
+  },
+  "import_bytes": 7891479,
+  "index_bytes": 2317538,
+  "summaries": 1907,
+  "sarif_paths": 2
+}

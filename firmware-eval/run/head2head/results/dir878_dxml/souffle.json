@@ -1,0 +1,32 @@
+{
+  "engine": "souffle",
+  "label": "dir878_dxml",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/dxml",
+  "binary_bytes": 95200,
+  "status": "ok",
+  "total_wall_s": 36.2,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 20.9,
+      "peak_fp_b": 1461557656
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.1,
+      "peak_fp_b": 2507112
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2474344
+    }
+  },
+  "import_bytes": 66230417,
+  "index_bytes": 89653248,
+  "summaries": 196,
+  "sarif_paths": 0
+}

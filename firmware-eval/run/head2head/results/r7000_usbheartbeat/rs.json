@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "r7000_usbheartbeat",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/usbheartbeat",
+  "binary_bytes": 9932,
+  "status": "ok",
+  "total_wall_s": 21.1,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 733661680
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 13238728
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 15122912
+    }
+  },
+  "import_bytes": 1149520,
+  "index_bytes": 555385,
+  "summaries": 56,
+  "sarif_paths": 2
+}

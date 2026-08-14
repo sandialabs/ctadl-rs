@@ -1,0 +1,4 @@
+importing pcode artifact 'ac18_dhttpd' from /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/dhttpd
+running Ghidra to disassemble; console output -> /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac18_dhttpd/rs/store/imports/ac18_dhttpd/ghidra.log
+warning: Unsupported pcode mnemonic: LZCOUNT
+'ac18_dhttpd': imported 682 function(s)

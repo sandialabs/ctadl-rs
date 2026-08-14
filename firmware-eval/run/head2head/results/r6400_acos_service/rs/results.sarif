@@ -333,8 +333,8 @@
             "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/rs/results.sarif",
             "r6400_acos_service"
           ],
-          "commandLine": "/nix/store/wgmaac9dn2k350zc4qvaabmixjw3kcmd-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/rs/results.sarif r6400_acos_service",
-          "endTimeUtc": "2026-08-13T23:41:16.696Z",
+          "commandLine": "/nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/rs/results.sarif r6400_acos_service",
+          "endTimeUtc": "2026-08-14T04:32:54.470Z",
           "executionSuccessful": true,
           "exitCode": 0,
           "exitCodeDescription": "query completed",
@@ -372,7 +372,7 @@
               }
             }
           ],
-          "startTimeUtc": "2026-08-13T23:41:15.776Z",
+          "startTimeUtc": "2026-08-14T04:32:53.543Z",
           "toolConfigurationNotifications": [
             {
               "descriptor": {
@@ -23863,13 +23863,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(235297, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(235298, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 123512,
+                            "absoluteAddress": 123524,
                             "kind": "instruction",
-                            "relativeAddress": 90744
+                            "relativeAddress": 90756
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -23890,7 +23890,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(235300, 2).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(235300, 3).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -24243,13 +24243,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(235297, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(235298, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 123512,
+                            "absoluteAddress": 123524,
                             "kind": "instruction",
-                            "relativeAddress": 90744
+                            "relativeAddress": 90756
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -24270,7 +24270,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(235300, 2).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(235300, 3).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -24332,13 +24332,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(235297, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(235298, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 123512,
+                            "absoluteAddress": 123524,
                             "kind": "instruction",
-                            "relativeAddress": 90744
+                            "relativeAddress": 90756
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -24359,7 +24359,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(235300, 2).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(235300, 3).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -24452,7 +24452,7 @@
               ],
               "command_injection": [
                 "call-arg(235300, 0).deref",
-                "call-arg(235300, 2).deref"
+                "call-arg(235300, 3).deref"
               ],
               "nvram_input": [
                 "call-arg(235300, 0).deref",
@@ -24716,13 +24716,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(235297, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(235298, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 123512,
+                            "absoluteAddress": 123524,
                             "kind": "instruction",
-                            "relativeAddress": 90744
+                            "relativeAddress": 90756
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -24743,7 +24743,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(235300, 2).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(235300, 3).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -24805,13 +24805,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(235297, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(235298, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 123512,
+                            "absoluteAddress": 123524,
                             "kind": "instruction",
-                            "relativeAddress": 90744
+                            "relativeAddress": 90756
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -24832,7 +24832,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(235300, 2).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(235300, 3).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -24925,7 +24925,7 @@
               ],
               "command_injection": [
                 "call-arg(235300, 0).deref",
-                "call-arg(235300, 2).deref"
+                "call-arg(235300, 3).deref"
               ],
               "nvram_input": [
                 "call-arg(235300, 0).deref",
@@ -27678,17 +27678,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 1033
+                            "index": 1028
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(166812, 0).deref in <EXTERNAL>::strlen@0000a694"
+                          "text": "call call-arg(166773, 0).deref in <EXTERNAL>::strlen@0000a694"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 114216,
+                            "absoluteAddress": 114084,
                             "kind": "instruction",
-                            "relativeAddress": 81448
+                            "relativeAddress": 81316
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -27902,17 +27902,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 1033
+                            "index": 1028
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(166812, 0).deref in <EXTERNAL>::strlen@0000a694"
+                          "text": "call call-arg(166773, 0).deref in <EXTERNAL>::strlen@0000a694"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 114216,
+                            "absoluteAddress": 114084,
                             "kind": "instruction",
-                            "relativeAddress": 81448
+                            "relativeAddress": 81316
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -28420,17 +28420,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 1033
+                            "index": 1028
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(166812, 0).deref in <EXTERNAL>::strlen@0000a694"
+                          "text": "call call-arg(166773, 0).deref in <EXTERNAL>::strlen@0000a694"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 114216,
+                            "absoluteAddress": 114084,
                             "kind": "instruction",
-                            "relativeAddress": 81448
+                            "relativeAddress": 81316
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -28644,17 +28644,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 1033
+                            "index": 1028
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(166812, 0).deref in <EXTERNAL>::strlen@0000a694"
+                          "text": "call call-arg(166773, 0).deref in <EXTERNAL>::strlen@0000a694"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 114216,
+                            "absoluteAddress": 114084,
                             "kind": "instruction",
-                            "relativeAddress": 81448
+                            "relativeAddress": 81316
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -28934,13 +28934,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(32164, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(31504, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 67036,
+                            "absoluteAddress": 67024,
                             "kind": "instruction",
-                            "relativeAddress": 34268
+                            "relativeAddress": 34256
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -28961,7 +28961,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(32207, 3).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(32207, 2).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -29023,13 +29023,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(32164, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(31504, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 67036,
+                            "absoluteAddress": 67024,
                             "kind": "instruction",
-                            "relativeAddress": 34268
+                            "relativeAddress": 34256
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -29050,7 +29050,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(32207, 3).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(32207, 2).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -29137,7 +29137,7 @@
             "taintVertices": {
               "command_injection": [
                 "call-arg(32207, 0).deref",
-                "call-arg(32207, 3).deref"
+                "call-arg(32207, 2).deref"
               ],
               "file_input": [
                 "call-arg(32207, 0).deref",
@@ -29173,13 +29173,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(32164, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(31504, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 67036,
+                            "absoluteAddress": 67024,
                             "kind": "instruction",
-                            "relativeAddress": 34268
+                            "relativeAddress": 34256
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -29200,7 +29200,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(32207, 3).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(32207, 2).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -29262,13 +29262,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(32164, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(31504, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 67036,
+                            "absoluteAddress": 67024,
                             "kind": "instruction",
-                            "relativeAddress": 34268
+                            "relativeAddress": 34256
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -29289,7 +29289,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(32207, 3).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(32207, 2).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -29376,7 +29376,7 @@
             "taintVertices": {
               "command_injection": [
                 "call-arg(32207, 0).deref",
-                "call-arg(32207, 3).deref"
+                "call-arg(32207, 2).deref"
               ],
               "file_input": [
                 "call-arg(32207, 0).deref",
@@ -29702,6 +29702,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -29722,7 +29749,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -29749,7 +29776,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -29818,6 +29845,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -29838,7 +29892,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -29865,7 +29919,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -29934,6 +29988,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -29954,7 +30035,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -29981,7 +30062,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -30570,6 +30651,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -30590,7 +30698,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -30617,7 +30725,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -30686,6 +30794,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -30706,7 +30841,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -30733,7 +30868,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -30802,6 +30937,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -30822,7 +30984,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -30849,7 +31011,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -31438,6 +31600,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -31458,7 +31647,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -31485,7 +31674,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -31554,6 +31743,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -31574,7 +31790,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -31601,7 +31817,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -31670,6 +31886,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -31690,7 +31933,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -31717,7 +31960,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -32163,17 +32406,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 850
+                            "index": 857
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(101257, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(101966, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 94224,
+                            "absoluteAddress": 94560,
                             "kind": "instruction",
-                            "relativeAddress": 61456
+                            "relativeAddress": 61792
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -32190,17 +32433,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 851
+                            "index": 858
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(101261, 3).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(101970, 3).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 94244,
+                            "absoluteAddress": 94580,
                             "kind": "instruction",
-                            "relativeAddress": 61476
+                            "relativeAddress": 61812
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -32217,7 +32460,7 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 852
+                            "index": 851
                           }
                         ],
                         "message": {
@@ -32228,95 +32471,6 @@
                             "absoluteAddress": 94256,
                             "kind": "instruction",
                             "relativeAddress": 61488
-                          },
-                          "artifactLocation": {
-                            "uri": "acos_service",
-                            "uriBaseId": "IMPORT_r6400_acos_service"
-                          }
-                        }
-                      }
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "threadFlows": [
-                {
-                  "locations": [
-                    {
-                      "executionOrder": 1,
-                      "kinds": [
-                        "taint"
-                      ],
-                      "location": {
-                        "logicalLocations": [
-                          {
-                            "index": 850
-                          }
-                        ],
-                        "message": {
-                          "text": "source call-arg(101257, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
-                        },
-                        "physicalLocation": {
-                          "address": {
-                            "absoluteAddress": 94224,
-                            "kind": "instruction",
-                            "relativeAddress": 61456
-                          },
-                          "artifactLocation": {
-                            "uri": "acos_service",
-                            "uriBaseId": "IMPORT_r6400_acos_service"
-                          }
-                        }
-                      }
-                    },
-                    {
-                      "executionOrder": 2,
-                      "kinds": [
-                        "call"
-                      ],
-                      "location": {
-                        "logicalLocations": [
-                          {
-                            "index": 851
-                          }
-                        ],
-                        "message": {
-                          "text": "call call-arg(101261, 3).deref in <EXTERNAL>::sprintf@0000aa60"
-                        },
-                        "physicalLocation": {
-                          "address": {
-                            "absoluteAddress": 94244,
-                            "kind": "instruction",
-                            "relativeAddress": 61476
-                          },
-                          "artifactLocation": {
-                            "uri": "acos_service",
-                            "uriBaseId": "IMPORT_r6400_acos_service"
-                          }
-                        }
-                      }
-                    },
-                    {
-                      "executionOrder": 3,
-                      "kinds": [
-                        "taint"
-                      ],
-                      "location": {
-                        "logicalLocations": [
-                          {
-                            "index": 859
-                          }
-                        ],
-                        "message": {
-                          "text": "sink call-arg(101974, 0).deref in <EXTERNAL>::system@0000a4d8"
-                        },
-                        "physicalLocation": {
-                          "address": {
-                            "absoluteAddress": 94588,
-                            "kind": "instruction",
-                            "relativeAddress": 61820
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -32341,9 +32495,9 @@
               ],
               "physicalLocation": {
                 "address": {
-                  "absoluteAddress": 94244,
+                  "absoluteAddress": 94256,
                   "kind": "instruction",
-                  "relativeAddress": 61476
+                  "relativeAddress": 61488
                 },
                 "artifactLocation": {
                   "uri": "acos_service",
@@ -32369,14 +32523,12 @@
             ],
             "taintVertices": {
               "command_injection": [
-                "call-arg(101261, 0).deref",
-                "call-arg(101261, 3).deref"
+                "call-arg(101266, 0).deref"
               ],
               "nvram_input": [
-                "call-arg(101261, 0).deref",
-                "call-arg(101261, 0).deref.deref",
-                "call-arg(101261, 0).deref.deref.deref",
-                "call-arg(101261, 3).deref"
+                "call-arg(101266, 0).deref",
+                "call-arg(101266, 0).deref.deref",
+                "call-arg(101266, 0).deref.deref.deref"
               ]
             }
           },
@@ -32396,17 +32548,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 850
+                            "index": 857
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(101257, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(101966, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 94224,
+                            "absoluteAddress": 94560,
                             "kind": "instruction",
-                            "relativeAddress": 61456
+                            "relativeAddress": 61792
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -32423,106 +32575,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 851
+                            "index": 858
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(101261, 3).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(101970, 3).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 94244,
+                            "absoluteAddress": 94580,
                             "kind": "instruction",
-                            "relativeAddress": 61476
-                          },
-                          "artifactLocation": {
-                            "uri": "acos_service",
-                            "uriBaseId": "IMPORT_r6400_acos_service"
-                          }
-                        }
-                      }
-                    },
-                    {
-                      "executionOrder": 3,
-                      "kinds": [
-                        "taint"
-                      ],
-                      "location": {
-                        "logicalLocations": [
-                          {
-                            "index": 852
-                          }
-                        ],
-                        "message": {
-                          "text": "sink call-arg(101266, 0).deref in <EXTERNAL>::system@0000a4d8"
-                        },
-                        "physicalLocation": {
-                          "address": {
-                            "absoluteAddress": 94256,
-                            "kind": "instruction",
-                            "relativeAddress": 61488
-                          },
-                          "artifactLocation": {
-                            "uri": "acos_service",
-                            "uriBaseId": "IMPORT_r6400_acos_service"
-                          }
-                        }
-                      }
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "threadFlows": [
-                {
-                  "locations": [
-                    {
-                      "executionOrder": 1,
-                      "kinds": [
-                        "taint"
-                      ],
-                      "location": {
-                        "logicalLocations": [
-                          {
-                            "index": 850
-                          }
-                        ],
-                        "message": {
-                          "text": "source call-arg(101257, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
-                        },
-                        "physicalLocation": {
-                          "address": {
-                            "absoluteAddress": 94224,
-                            "kind": "instruction",
-                            "relativeAddress": 61456
-                          },
-                          "artifactLocation": {
-                            "uri": "acos_service",
-                            "uriBaseId": "IMPORT_r6400_acos_service"
-                          }
-                        }
-                      }
-                    },
-                    {
-                      "executionOrder": 2,
-                      "kinds": [
-                        "call"
-                      ],
-                      "location": {
-                        "logicalLocations": [
-                          {
-                            "index": 851
-                          }
-                        ],
-                        "message": {
-                          "text": "call call-arg(101261, 3).deref in <EXTERNAL>::sprintf@0000aa60"
-                        },
-                        "physicalLocation": {
-                          "address": {
-                            "absoluteAddress": 94244,
-                            "kind": "instruction",
-                            "relativeAddress": 61476
+                            "relativeAddress": 61812
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -32569,14 +32632,14 @@
             {
               "logicalLocations": [
                 {
-                  "index": 851
+                  "index": 858
                 }
               ],
               "physicalLocation": {
                 "address": {
-                  "absoluteAddress": 94244,
+                  "absoluteAddress": 94580,
                   "kind": "instruction",
-                  "relativeAddress": 61476
+                  "relativeAddress": 61812
                 },
                 "artifactLocation": {
                   "uri": "acos_service",
@@ -32602,14 +32665,14 @@
             ],
             "taintVertices": {
               "command_injection": [
-                "call-arg(101261, 0).deref",
-                "call-arg(101261, 3).deref"
+                "call-arg(101970, 0).deref",
+                "call-arg(101970, 3).deref"
               ],
               "nvram_input": [
-                "call-arg(101261, 0).deref",
-                "call-arg(101261, 0).deref.deref",
-                "call-arg(101261, 0).deref.deref.deref",
-                "call-arg(101261, 3).deref"
+                "call-arg(101970, 0).deref",
+                "call-arg(101970, 0).deref.deref",
+                "call-arg(101970, 0).deref.deref.deref",
+                "call-arg(101970, 3).deref"
               ]
             }
           },
@@ -33327,17 +33390,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 1033
+                            "index": 1028
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(166812, 0).deref in <EXTERNAL>::strlen@0000a694"
+                          "text": "call call-arg(166773, 0).deref in <EXTERNAL>::strlen@0000a694"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 114216,
+                            "absoluteAddress": 114084,
                             "kind": "instruction",
-                            "relativeAddress": 81448
+                            "relativeAddress": 81316
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -33551,17 +33614,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 1033
+                            "index": 1028
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(166812, 0).deref in <EXTERNAL>::strlen@0000a694"
+                          "text": "call call-arg(166773, 0).deref in <EXTERNAL>::strlen@0000a694"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 114216,
+                            "absoluteAddress": 114084,
                             "kind": "instruction",
-                            "relativeAddress": 81448
+                            "relativeAddress": 81316
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -34069,17 +34132,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 1033
+                            "index": 1028
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(166812, 0).deref in <EXTERNAL>::strlen@0000a694"
+                          "text": "call call-arg(166773, 0).deref in <EXTERNAL>::strlen@0000a694"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 114216,
+                            "absoluteAddress": 114084,
                             "kind": "instruction",
-                            "relativeAddress": 81448
+                            "relativeAddress": 81316
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -34293,17 +34356,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 1033
+                            "index": 1028
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(166812, 0).deref in <EXTERNAL>::strlen@0000a694"
+                          "text": "call call-arg(166773, 0).deref in <EXTERNAL>::strlen@0000a694"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 114216,
+                            "absoluteAddress": 114084,
                             "kind": "instruction",
-                            "relativeAddress": 81448
+                            "relativeAddress": 81316
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -35061,17 +35124,17 @@
                       "location": {
                         "logicalLocations": [
                           {
-                            "index": 1130
+                            "index": 1144
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(234253, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(234680, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 120620,
+                            "absoluteAddress": 121228,
                             "kind": "instruction",
-                            "relativeAddress": 87852
+                            "relativeAddress": 88460
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -35084,38 +35147,38 @@
                       "executionOrder": 2,
                       "kinds": [
                         "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
+                            "index": 1145
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(234683, 3).deref in <EXTERNAL>::sprintf@0000aa60"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 121248,
+                            "kind": "instruction",
+                            "relativeAddress": 88480
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "taint"
                       ],
                       "location": {
                         "logicalLocations": [
                           {
                             "index": 1131
-                          }
-                        ],
-                        "message": {
-                          "text": "call call-arg(234256, 3).deref in <EXTERNAL>::sprintf@0000aa60"
-                        },
-                        "physicalLocation": {
-                          "address": {
-                            "absoluteAddress": 120640,
-                            "kind": "instruction",
-                            "relativeAddress": 87872
-                          },
-                          "artifactLocation": {
-                            "uri": "acos_service",
-                            "uriBaseId": "IMPORT_r6400_acos_service"
-                          }
-                        }
-                      }
-                    },
-                    {
-                      "executionOrder": 3,
-                      "kinds": [
-                        "taint"
-                      ],
-                      "location": {
-                        "logicalLocations": [
-                          {
-                            "index": 1132
                           }
                         ],
                         "message": {
@@ -35150,9 +35213,9 @@
               ],
               "physicalLocation": {
                 "address": {
-                  "absoluteAddress": 120640,
+                  "absoluteAddress": 120652,
                   "kind": "instruction",
-                  "relativeAddress": 87872
+                  "relativeAddress": 87884
                 },
                 "artifactLocation": {
                   "uri": "acos_service",
@@ -35178,14 +35241,12 @@
             ],
             "taintVertices": {
               "command_injection": [
-                "call-arg(234256, 0).deref",
-                "call-arg(234256, 3).deref"
+                "call-arg(234271, 0).deref"
               ],
               "nvram_input": [
-                "call-arg(234256, 0).deref",
-                "call-arg(234256, 0).deref.deref",
-                "call-arg(234256, 0).deref.deref.deref",
-                "call-arg(234256, 3).deref"
+                "call-arg(234271, 0).deref",
+                "call-arg(234271, 0).deref.deref",
+                "call-arg(234271, 0).deref.deref.deref"
               ]
             }
           },
@@ -37410,13 +37471,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(235297, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(235298, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 123512,
+                            "absoluteAddress": 123524,
                             "kind": "instruction",
-                            "relativeAddress": 90744
+                            "relativeAddress": 90756
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -37437,7 +37498,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(235300, 2).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(235300, 3).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -37790,13 +37851,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(235297, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(235298, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 123512,
+                            "absoluteAddress": 123524,
                             "kind": "instruction",
-                            "relativeAddress": 90744
+                            "relativeAddress": 90756
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -37817,7 +37878,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(235300, 2).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(235300, 3).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -37879,13 +37940,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(235297, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(235298, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 123512,
+                            "absoluteAddress": 123524,
                             "kind": "instruction",
-                            "relativeAddress": 90744
+                            "relativeAddress": 90756
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -37906,7 +37967,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(235300, 2).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(235300, 3).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -37999,7 +38060,7 @@
               ],
               "command_injection": [
                 "call-arg(235300, 0).deref",
-                "call-arg(235300, 2).deref"
+                "call-arg(235300, 3).deref"
               ],
               "nvram_input": [
                 "call-arg(235300, 0).deref",
@@ -38263,13 +38324,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(235297, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(235298, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 123512,
+                            "absoluteAddress": 123524,
                             "kind": "instruction",
-                            "relativeAddress": 90744
+                            "relativeAddress": 90756
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -38290,7 +38351,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(235300, 2).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(235300, 3).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -38352,13 +38413,13 @@
                           }
                         ],
                         "message": {
-                          "text": "source call-arg(235297, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
+                          "text": "source call-arg(235298, -1).deref in <EXTERNAL>::acosNvramConfig_get@0000aaa8"
                         },
                         "physicalLocation": {
                           "address": {
-                            "absoluteAddress": 123512,
+                            "absoluteAddress": 123524,
                             "kind": "instruction",
-                            "relativeAddress": 90744
+                            "relativeAddress": 90756
                           },
                           "artifactLocation": {
                             "uri": "acos_service",
@@ -38379,7 +38440,7 @@
                           }
                         ],
                         "message": {
-                          "text": "call call-arg(235300, 2).deref in <EXTERNAL>::sprintf@0000aa60"
+                          "text": "call call-arg(235300, 3).deref in <EXTERNAL>::sprintf@0000aa60"
                         },
                         "physicalLocation": {
                           "address": {
@@ -38472,7 +38533,7 @@
               ],
               "command_injection": [
                 "call-arg(235300, 0).deref",
-                "call-arg(235300, 2).deref"
+                "call-arg(235300, 3).deref"
               ],
               "nvram_input": [
                 "call-arg(235300, 0).deref",
@@ -43508,6 +43569,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -43528,7 +43616,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -43555,7 +43643,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -43624,6 +43712,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -43644,7 +43759,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -43671,7 +43786,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -43740,6 +43855,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -43760,7 +43902,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -43787,7 +43929,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -44376,6 +44518,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -44396,7 +44565,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -44423,7 +44592,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -44492,6 +44661,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -44512,7 +44708,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -44539,7 +44735,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -44608,6 +44804,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -44628,7 +44851,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -44655,7 +44878,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -45244,6 +45467,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -45264,7 +45514,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -45291,7 +45541,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -45360,6 +45610,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -45380,7 +45657,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -45407,7 +45684,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -45476,6 +45753,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -45496,7 +45800,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -45523,7 +45827,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -47895,6 +48199,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -47915,7 +48246,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -47942,7 +48273,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -48011,6 +48342,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -48031,7 +48389,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -48058,7 +48416,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -48127,6 +48485,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -48147,7 +48532,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -48174,7 +48559,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -48763,6 +49148,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -48783,7 +49195,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -48810,7 +49222,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -48879,6 +49291,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -48899,7 +49338,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -48926,7 +49365,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -48995,6 +49434,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -49015,7 +49481,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -49042,7 +49508,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -49631,6 +50097,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -49651,7 +50144,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -49678,7 +50171,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -49747,6 +50240,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -49767,7 +50287,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -49794,7 +50314,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -49863,6 +50383,33 @@
                       "location": {
                         "logicalLocations": [
                           {
+                            "index": 711
+                          }
+                        ],
+                        "message": {
+                          "text": "call call-arg(83300, 0).deref in <EXTERNAL>::ifconfig@0000a8a4"
+                        },
+                        "physicalLocation": {
+                          "address": {
+                            "absoluteAddress": 95320,
+                            "kind": "instruction",
+                            "relativeAddress": 62552
+                          },
+                          "artifactLocation": {
+                            "uri": "acos_service",
+                            "uriBaseId": "IMPORT_r6400_acos_service"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "executionOrder": 3,
+                      "kinds": [
+                        "call"
+                      ],
+                      "location": {
+                        "logicalLocations": [
+                          {
                             "index": 772
                           }
                         ],
@@ -49883,7 +50430,7 @@
                       }
                     },
                     {
-                      "executionOrder": 3,
+                      "executionOrder": 4,
                       "kinds": [
                         "call"
                       ],
@@ -49910,7 +50457,7 @@
                       }
                     },
                     {
-                      "executionOrder": 4,
+                      "executionOrder": 5,
                       "kinds": [
                         "taint"
                       ],
@@ -51676,7 +52223,7 @@
           "name": "FUN_00010234"
         },
         {
-          "fullyQualifiedName": "FUN_00010234@000105dc:000105dc",
+          "fullyQualifiedName": "FUN_00010234@000105d0:000105d0",
           "kind": "member",
           "name": "FUN_00010234"
         },
@@ -54816,11 +55363,6 @@
           "name": "FUN_00018694"
         },
         {
-          "fullyQualifiedName": "FUN_00018694@00017010:00017010",
-          "kind": "member",
-          "name": "FUN_00018694"
-        },
-        {
           "fullyQualifiedName": "FUN_00018694@00017024:00017024",
           "kind": "member",
           "name": "FUN_00018694"
@@ -54852,6 +55394,11 @@
         },
         {
           "fullyQualifiedName": "FUN_00018694@00017158:00017158",
+          "kind": "member",
+          "name": "FUN_00018694"
+        },
+        {
+          "fullyQualifiedName": "FUN_00018694@00017160:00017160",
           "kind": "member",
           "name": "FUN_00018694"
         },
@@ -56216,11 +56763,6 @@
           "name": "FUN_0001d614"
         },
         {
-          "fullyQualifiedName": "FUN_0001d614@0001d72c:0001d72c",
-          "kind": "member",
-          "name": "FUN_0001d614"
-        },
-        {
           "fullyQualifiedName": "FUN_0001d614@0001d740:0001d740",
           "kind": "member",
           "name": "FUN_0001d614"
@@ -56287,6 +56829,11 @@
         },
         {
           "fullyQualifiedName": "FUN_0001d614@0001d850:0001d850",
+          "kind": "member",
+          "name": "FUN_0001d614"
+        },
+        {
+          "fullyQualifiedName": "FUN_0001d614@0001d98c:0001d98c",
           "kind": "member",
           "name": "FUN_0001d614"
         },
@@ -56556,7 +57103,7 @@
           "name": "FUN_0001e118"
         },
         {
-          "fullyQualifiedName": "FUN_0001e118@0001e278:0001e278",
+          "fullyQualifiedName": "FUN_0001e118@0001e284:0001e284",
           "kind": "member",
           "name": "FUN_0001e118"
         },

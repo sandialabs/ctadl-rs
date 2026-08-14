@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "xr300_arp_check",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/arp_check",
+  "binary_bytes": 18968,
+  "status": "ok",
+  "total_wall_s": 21.2,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 840714832
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 15434208
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 19841528
+    }
+  },
+  "import_bytes": 5070137,
+  "index_bytes": 2077342,
+  "summaries": 198,
+  "sarif_paths": 36
+}

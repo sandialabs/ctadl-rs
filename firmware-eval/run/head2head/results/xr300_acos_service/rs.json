@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "xr300_acos_service",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/sbin/acos_service",
+  "binary_bytes": 138732,
+  "status": "ok",
+  "total_wall_s": 26.5,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 15.6,
+      "peak_fp_b": 1535662560
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 33374712
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 20627960
+    }
+  },
+  "import_bytes": 22877585,
+  "index_bytes": 6166323,
+  "summaries": 297,
+  "sarif_paths": 64
+}

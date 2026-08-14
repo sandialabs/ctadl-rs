@@ -1,0 +1,7 @@
+indexing project 'r6400_bftpd' from 1 import(s): r6400_bftpd
+'r6400_bftpd': loading IR
+'r6400_bftpd': preprocessing 382 function(s) (SSA) and generating facts
+warning: CHA: unsupported virtual method table
+models: 209 summary row(s), 0 declared access path(s), 0 function body(ies) not analyzed
+indexing (computing the flow relation)
+wrote index to /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_bftpd/rs/store/projects/r6400_bftpd/index

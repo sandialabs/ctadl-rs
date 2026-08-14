@@ -1,0 +1,7 @@
+indexing project 'xr300_dap_daemon' from 1 import(s): xr300_dap_daemon
+'xr300_dap_daemon': loading IR
+'xr300_dap_daemon': preprocessing 296 function(s) (SSA) and generating facts
+warning: CHA: unsupported virtual method table
+models: 173 summary row(s), 0 declared access path(s), 4 function body(ies) not analyzed
+indexing (computing the flow relation)
+wrote index to /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_daemon/rs/store/projects/xr300_dap_daemon/index

@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "xr300_ftpc",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/ftpc",
+  "binary_bytes": 13980,
+  "status": "ok",
+  "total_wall_s": 21.1,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 849709624
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 8323528
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 13992464
+    }
+  },
+  "import_bytes": 874270,
+  "index_bytes": 179880,
+  "summaries": 243,
+  "sarif_paths": 0
+}

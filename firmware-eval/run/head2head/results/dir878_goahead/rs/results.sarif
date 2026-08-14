@@ -1,0 +1,2891 @@
+{
+  "version": "2.1.0",
+  "properties": {
+    "parquet_dir": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/rs/store/imports/dir878_goahead/source-info",
+    "parquet_dirs": [
+      "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/rs/store/imports/dir878_goahead/source-info"
+    ],
+    "project_name": "dir878_goahead"
+  },
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/schemata/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "fullDescription": {
+            "text": "CTADL (Compositional Taint Analysis in Datalog)."
+          },
+          "informationUri": "https://github.com/sandialabs/ctadl-rs",
+          "name": "ctadl",
+          "notifications": [
+            {
+              "id": "CTADL0001.no-endpoints-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sources or sinks were configured ({0} model file(s) loaded, no built-in endpoints), so the query has nothing to search for."
+                }
+              },
+              "name": "No endpoints configured",
+              "shortDescription": {
+                "text": "Neither a source nor a sink was declared anywhere"
+              }
+            },
+            {
+              "id": "CTADL0002.no-sources-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sources were configured, but {0} sink endpoint(s) were. A taint query with no source is vacuous."
+                }
+              },
+              "name": "No sources configured",
+              "shortDescription": {
+                "text": "Sinks were declared but no source was"
+              }
+            },
+            {
+              "id": "CTADL0003.no-sinks-configured",
+              "messageStrings": {
+                "default": {
+                  "text": "No taint sinks were configured, but {0} source endpoint(s) were. A taint query with no sink is vacuous."
+                }
+              },
+              "name": "No sinks configured",
+              "shortDescription": {
+                "text": "Sources were declared but no sink was"
+              }
+            },
+            {
+              "id": "CTADL0004.generator-matched-nothing",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' declares a {2} that matched nothing in the program, so it contributes nothing to the query."
+                },
+                "indexTimeDeclaration": {
+                  "text": "Model generator {0} in '{1}' declares a {2}, but no function in the program matched its 'where' constraints, so it will contribute nothing when the project is indexed."
+                },
+                "localNotFound": {
+                  "text": "Model generator {0} in '{1}' declares a {2} on port 'Variable({3})': its 'where' constraints matched {4} function(s), but none of them has a local variable named '{3}', so it contributes nothing to the query."
+                },
+                "mixedReasons": {
+                  "text": "Model generator {0} in '{1}' declares {3} {2} port(s), none of which matched anything in the program ({4}), so it contributes nothing to the query."
+                },
+                "noCallerMatched": {
+                  "text": "Model generator {0} in '{1}' declares a {2} at call sites: its 'where' constraints matched {3} function(s), but no caller of them satisfied its 'in_function' constraint, so it contributes nothing to the query."
+                },
+                "noFunctionMatched": {
+                  "text": "Model generator {0} in '{1}' declares a {2}, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+                },
+                "portRejected": {
+                  "text": "Model generator {0} in '{1}' declares a {2} on a port that is not valid for its 'find' method, so it contributes nothing to the query."
+                }
+              },
+              "name": "Model generator matched nothing",
+              "shortDescription": {
+                "text": "A model generator declared a port that produced no endpoint"
+              }
+            },
+            {
+              "id": "CTADL0005.endpoint-function-not-indexed",
+              "messageStrings": {
+                "default": {
+                  "text": "Function '{0}' was matched by a model but is not present in the index, so its source/sink endpoints were dropped."
+                }
+              },
+              "name": "Endpoint function not indexed",
+              "shortDescription": {
+                "text": "A matched function name is absent from the index"
+              }
+            },
+            {
+              "id": "CTADL0006.no-sources-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} source port(s) were declared but none of them matched anything in the program, so no taint could be seeded."
+                }
+              },
+              "name": "No sources matched",
+              "shortDescription": {
+                "text": "Sources were declared but none matched the program"
+              }
+            },
+            {
+              "id": "CTADL0007.no-sinks-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} sink port(s) were declared but none of them matched anything in the program, so no flow could be detected."
+                }
+              },
+              "name": "No sinks matched",
+              "shortDescription": {
+                "text": "Sinks were declared but none matched the program"
+              }
+            },
+            {
+              "id": "CTADL0008.no-index-model-check-only",
+              "messageStrings": {
+                "default": {
+                  "text": "The project has no index, so no taint analysis ran. The model files were matched against the imported program(s) instead -- {0} -- and the notifications below report what they select. These are model-matching results only: call-site fan-out, 'Argument(*)' expansion and sink wildcard expansion need the index, a matched name can still be absent from it, and bridge pairs are not counted. Run `ctadl index` for a real query."
+                }
+              },
+              "name": "No index; model check only",
+              "shortDescription": {
+                "text": "The project has no index, so only the model files were checked"
+              }
+            },
+            {
+              "id": "CTADL0009.generator-scope-excluded",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' has an 'in' scope ({2}) that admits none of the programs checked, so it was never evaluated against any of them."
+                }
+              },
+              "name": "Model generator out of scope",
+              "shortDescription": {
+                "text": "A generator's 'in' clause admits none of the programs checked"
+              }
+            },
+            {
+              "id": "CTADL0010.bridge-model-diagnosis",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}': {2}"
+                }
+              },
+              "name": "Bridge model cannot be paired",
+              "shortDescription": {
+                "text": "A bridge's sides matched nothing, or matched ambiguously"
+              }
+            },
+            {
+              "id": "CTADL0011.generator-matched",
+              "messageStrings": {
+                "default": {
+                  "text": "Model generator {0} in '{1}' matched {2}{3}."
+                }
+              },
+              "name": "Model generator matched",
+              "shortDescription": {
+                "text": "What a generator's 'where' constraints selected"
+              }
+            },
+            {
+              "id": "CTADL0012.model-file-error",
+              "messageStrings": {
+                "default": {
+                  "text": "Model file '{0}': {1}"
+                }
+              },
+              "name": "Model file error",
+              "shortDescription": {
+                "text": "A model file could not be read, or a generator in it is malformed"
+              }
+            },
+            {
+              "id": "CTADL0100.endpoint-match-summary",
+              "messageStrings": {
+                "default": {
+                  "text": "Declared {0} source and {1} sink port(s), which matched {2} source and {3} sink endpoint(s) in the program; {4} declared port(s) matched nothing."
+                },
+                "modelCheckOnly": {
+                  "text": "Declared {0} source and {1} sink port(s), which matched {2} source and {3} sink model row(s) in the program(s) checked -- before the call-site fan-out and wildcard expansion an index would apply; {4} declared port(s) matched nothing."
+                }
+              },
+              "name": "Endpoint match summary",
+              "shortDescription": {
+                "text": "How many ports the models declared and how many endpoints they matched"
+              }
+            },
+            {
+              "id": "CTADL0101.path-generation-disabled",
+              "messageStrings": {
+                "default": {
+                  "text": "The '{0}' SARIF profile does not perform source-to-sink path search, so this run cannot produce '{1}' results."
+                }
+              },
+              "name": "Path generation disabled",
+              "shortDescription": {
+                "text": "The selected SARIF profile does not perform path search"
+              }
+            },
+            {
+              "id": "CTADL0102.no-paths-found",
+              "messageStrings": {
+                "default": {
+                  "text": "Path search completed over {0} source and {1} sink endpoints and found no source-to-sink flow."
+                }
+              },
+              "name": "No paths found",
+              "shortDescription": {
+                "text": "Path search completed without finding a flow"
+              }
+            },
+            {
+              "id": "CTADL0103.path-dropped-no-location",
+              "messageStrings": {
+                "default": {
+                  "text": "{0} source-to-sink path(s) were found but discarded because no reporting location could be resolved for them."
+                }
+              },
+              "name": "Path dropped for want of a location",
+              "shortDescription": {
+                "text": "A path was found but could not be reported"
+              }
+            }
+          ],
+          "rules": [
+            {
+              "id": "C0001.tainted-path",
+              "messageStrings": {
+                "default": {
+                  "text": "This is a tainted source-sink path."
+                }
+              },
+              "name": "Tainted paths",
+              "shortDescription": {
+                "text": "A path of tainted data flow"
+              }
+            },
+            {
+              "id": "C0002.tainted-instruction",
+              "messageStrings": {
+                "default": {
+                  "text": "This instruction manipulates tainted data."
+                }
+              },
+              "name": "Tainted instructions",
+              "shortDescription": {
+                "text": "An instruction with tainted data"
+              }
+            },
+            {
+              "id": "C0003.taint-source",
+              "messageStrings": {
+                "default": {
+                  "text": "This is a source of tainted data."
+                }
+              },
+              "name": "Tainted data sources",
+              "shortDescription": {
+                "text": "Tainted data source"
+              }
+            },
+            {
+              "id": "C0004.taint-sink",
+              "messageStrings": {
+                "default": {
+                  "text": "This is an desired sink of tainted data."
+                }
+              },
+              "name": "Tainted data sink",
+              "shortDescription": {
+                "text": "Tainted data sinks"
+              }
+            },
+            {
+              "id": "C0005.tainted-data",
+              "messageStrings": {
+                "default": {
+                  "text": "This vertex is tainted."
+                }
+              },
+              "name": "Tainted data",
+              "shortDescription": {
+                "text": "Tainted variables and fields"
+              }
+            },
+            {
+              "id": "C0006.almost-path-function",
+              "messageStrings": {
+                "default": {
+                  "text": "This function contains source and sink taint."
+                }
+              },
+              "name": "Almost-path function",
+              "shortDescription": {
+                "text": "A function which contains source-tainted and sink-tainted data, which means there's 'almost' a path between them."
+              }
+            },
+            {
+              "id": "C0007.absorbing-function",
+              "messageStrings": {
+                "default": {
+                  "text": "This external function receives tainted data."
+                }
+              },
+              "name": "Absorbing functions",
+              "shortDescription": {
+                "text": "An external function that receives tainted data"
+              }
+            }
+          ],
+          "version": "2026.1"
+        }
+      },
+      "invocations": [
+        {
+          "arguments": [
+            "--store",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/rs/store",
+            "query",
+            "--models",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+            "-o",
+            "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/rs/results.sarif",
+            "dir878_goahead"
+          ],
+          "commandLine": "/nix/store/n0s9l2nwqbj7ri2a70m3hcsbiz00afy0-rust-workspace-unknown/bin/ctadl --store /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/rs/store query --models /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json -o /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/dir878_goahead/rs/results.sarif dir878_goahead",
+          "endTimeUtc": "2026-08-14T04:34:01.837Z",
+          "executionSuccessful": true,
+          "exitCode": 0,
+          "exitCodeDescription": "query completed",
+          "ruleConfigurationOverrides": [
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0002.tainted-instruction"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0005.tainted-data"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0006.almost-path-function"
+              }
+            },
+            {
+              "configuration": {
+                "enabled": false
+              },
+              "descriptor": {
+                "id": "C0007.absorbing-function"
+              }
+            }
+          ],
+          "startTimeUtc": "2026-08-14T04:34:01.175Z",
+          "toolConfigurationNotifications": [
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "2",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 2 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 2,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "3",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "sink"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 3 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a sink, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "sink",
+                "functionsMatched": 0,
+                "generatorIndex": 3,
+                "portsDeclared": 8,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "5",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 5 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 5,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "6",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 6 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 6,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "8",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 8 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 8,
+                "portsDeclared": 2,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "10",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 10 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 10,
+                "portsDeclared": 1,
+                "reason": "noFunctionMatched"
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0004.generator-matched-nothing"
+              },
+              "level": "warning",
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": {
+                      "uri": "file:///Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json"
+                    }
+                  }
+                }
+              ],
+              "message": {
+                "arguments": [
+                  "11",
+                  "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json",
+                  "source"
+                ],
+                "id": "noFunctionMatched",
+                "text": "Model generator 11 in '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.rs.json' declares a source, but no function in the program matched its 'where' constraints, so it contributes nothing to the query."
+              },
+              "properties": {
+                "direction": "source",
+                "functionsMatched": 0,
+                "generatorIndex": 11,
+                "portsDeclared": 2,
+                "reason": "noFunctionMatched"
+              }
+            }
+          ],
+          "toolExecutionNotifications": [
+            {
+              "descriptor": {
+                "id": "CTADL0100.endpoint-match-summary"
+              },
+              "level": "note",
+              "message": {
+                "arguments": [
+                  "11",
+                  "11",
+                  "12",
+                  "4",
+                  "16"
+                ],
+                "id": "default",
+                "text": "Declared 11 source and 11 sink port(s), which matched 12 source and 4 sink endpoint(s) in the program; 16 declared port(s) matched nothing."
+              },
+              "properties": {
+                "portsDeclared": 22,
+                "portsUnmatched": 16,
+                "sinksDeclared": 11,
+                "sinksMatched": 4,
+                "sourcesDeclared": 11,
+                "sourcesMatched": 12,
+                "unmatchedDeclarations": 7
+              }
+            },
+            {
+              "descriptor": {
+                "id": "CTADL0102.no-paths-found"
+              },
+              "level": "note",
+              "message": {
+                "arguments": [
+                  "12",
+                  "4"
+                ],
+                "id": "default",
+                "text": "Path search completed over 12 source and 4 sink endpoints and found no source-to-sink flow."
+              }
+            }
+          ]
+        }
+      ],
+      "results": [
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 364
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: formal(0).deref in function <EXTERNAL>::execve@EXTERNAL:00000057 (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "formal(0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 364
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: formal(1) in function <EXTERNAL>::execve@EXTERNAL:00000057 (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "formal(1)"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 365
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(1).deref in function <EXTERNAL>::read@EXTERNAL:00000035 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "formal(1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 366
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(1).deref in function <EXTERNAL>::recv@EXTERNAL:0000005e (kind 'network_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "network_input"
+            ],
+            "taintVertex": "formal(1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 367
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(1).deref in function <EXTERNAL>::recvfrom@EXTERNAL:00000050 (kind 'network_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "network_input"
+            ],
+            "taintVertex": "formal(1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 368
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(32186, 1).deref in function <EXTERNAL>::read@0041cd90 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(32186, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 369
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(32238, 0).deref in function <EXTERNAL>::execve@0041cb70 (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(32238, 0).deref"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 369
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Sink of tainted data: call-arg(32238, 1) in function <EXTERNAL>::execve@0041cb70 (kind 'command_injection')"
+          },
+          "properties": {
+            "taintLabels": [
+              "command_injection"
+            ],
+            "taintVertex": "call-arg(32238, 1)"
+          },
+          "ruleId": "C0004.taint-sink"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 368
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(122074, 1).deref in function <EXTERNAL>::read@0041cd90 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(122074, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 368
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(54917, 1).deref in function <EXTERNAL>::read@0041cd90 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(54917, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 368
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(88844, 1).deref in function <EXTERNAL>::read@0041cd90 (kind 'file_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "file_input"
+            ],
+            "taintVertex": "call-arg(88844, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 370
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(1).deref in function main (kind 'argv_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "argv_input"
+            ],
+            "taintVertex": "formal(1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 370
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: formal(1).deref.deref in function main (kind 'argv_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "argv_input"
+            ],
+            "taintVertex": "formal(1).deref.deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 371
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(101711, 1).deref in function <EXTERNAL>::recv@0041cb00 (kind 'network_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "network_input"
+            ],
+            "taintVertex": "call-arg(101711, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 372
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(102143, 1).deref in function <EXTERNAL>::recvfrom@0041cbe0 (kind 'network_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "network_input"
+            ],
+            "taintVertex": "call-arg(102143, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "informational",
+          "level": "none",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "index": 371
+                }
+              ]
+            }
+          ],
+          "message": {
+            "text": "Source of tainted data: call-arg(102153, 1).deref in function <EXTERNAL>::recv@0041cb00 (kind 'network_input')"
+          },
+          "properties": {
+            "taintLabels": [
+              "network_input"
+            ],
+            "taintVertex": "call-arg(102153, 1).deref"
+          },
+          "ruleId": "C0003.taint-source"
+        },
+        {
+          "kind": "open",
+          "level": "none",
+          "message": {
+            "text": "Taint path analysis ran to completion and found no source-to-sink flow. CTADL does not prove the absence of a flow, so this is reported as 'open' rather than 'pass'."
+          },
+          "ruleId": "C0001.tainted-path"
+        }
+      ],
+      "logicalLocations": [
+        {
+          "fullyQualifiedName": "FUN_00403974@00403bc4:00403bc4",
+          "kind": "member",
+          "name": "FUN_00403974"
+        },
+        {
+          "fullyQualifiedName": "FUN_00406530@00406560:00406560",
+          "kind": "member",
+          "name": "FUN_00406530"
+        },
+        {
+          "fullyQualifiedName": "FUN_00406530@00406594:00406594",
+          "kind": "member",
+          "name": "FUN_00406530"
+        },
+        {
+          "fullyQualifiedName": "FUN_00406530@004065c0:004065c0",
+          "kind": "member",
+          "name": "FUN_00406530"
+        },
+        {
+          "fullyQualifiedName": "FUN_00406530@004065dc:004065dc",
+          "kind": "member",
+          "name": "FUN_00406530"
+        },
+        {
+          "fullyQualifiedName": "FUN_00406530@004065fc:004065fc",
+          "kind": "member",
+          "name": "FUN_00406530"
+        },
+        {
+          "fullyQualifiedName": "FUN_00406530@00406620:00406620",
+          "kind": "member",
+          "name": "FUN_00406530"
+        },
+        {
+          "fullyQualifiedName": "FUN_004066d0@004067ec:004067ec",
+          "kind": "member",
+          "name": "FUN_004066d0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00406f6c@00406f90:00406f90",
+          "kind": "member",
+          "name": "FUN_00406f6c"
+        },
+        {
+          "fullyQualifiedName": "FUN_004071f0@004072cc:004072cc",
+          "kind": "member",
+          "name": "FUN_004071f0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004071f0@00407310:00407310",
+          "kind": "member",
+          "name": "FUN_004071f0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004071f0@00407338:00407338",
+          "kind": "member",
+          "name": "FUN_004071f0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040748c@00407718:00407718",
+          "kind": "member",
+          "name": "FUN_0040748c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a4a4@0040a4d4:0040a4d4",
+          "kind": "member",
+          "name": "FUN_0040a4a4"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a508@0040a624:0040a624",
+          "kind": "member",
+          "name": "FUN_0040a508"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a508@0040a658:0040a658",
+          "kind": "member",
+          "name": "FUN_0040a508"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a508@0040a690:0040a690",
+          "kind": "member",
+          "name": "FUN_0040a508"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a508@0040a6ac:0040a6ac",
+          "kind": "member",
+          "name": "FUN_0040a508"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a508@0040a6d8:0040a6d8",
+          "kind": "member",
+          "name": "FUN_0040a508"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a508@0040a6e8:0040a6e8",
+          "kind": "member",
+          "name": "FUN_0040a508"
+        },
+        {
+          "fullyQualifiedName": "FUN_0040a508@0040a700:0040a700",
+          "kind": "member",
+          "name": "FUN_0040a508"
+        },
+        {
+          "fullyQualifiedName": "FUN_004110e0@00411120:00411120",
+          "kind": "member",
+          "name": "FUN_004110e0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004110e0@00411148:00411148",
+          "kind": "member",
+          "name": "FUN_004110e0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004110e0@00411188:00411188",
+          "kind": "member",
+          "name": "FUN_004110e0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004110e0@0041119c:0041119c",
+          "kind": "member",
+          "name": "FUN_004110e0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004110e0@004111f4:004111f4",
+          "kind": "member",
+          "name": "FUN_004110e0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004110e0@0041126c:0041126c",
+          "kind": "member",
+          "name": "FUN_004110e0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004119a0@004119f8:004119f8",
+          "kind": "member",
+          "name": "FUN_004119a0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004119a0@00411b4c:00411b4c",
+          "kind": "member",
+          "name": "FUN_004119a0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004119a0@00411a38:00411a38",
+          "kind": "member",
+          "name": "FUN_004119a0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004119a0@00411a50:00411a50",
+          "kind": "member",
+          "name": "FUN_004119a0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004119a0@00411abc:00411abc",
+          "kind": "member",
+          "name": "FUN_004119a0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004119a0@00411adc:00411adc",
+          "kind": "member",
+          "name": "FUN_004119a0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004119a0@00411afc:00411afc",
+          "kind": "member",
+          "name": "FUN_004119a0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00411d38@00411d88:00411d88",
+          "kind": "member",
+          "name": "FUN_00411d38"
+        },
+        {
+          "fullyQualifiedName": "FUN_00411d38@00411da0:00411da0",
+          "kind": "member",
+          "name": "FUN_00411d38"
+        },
+        {
+          "fullyQualifiedName": "FUN_00412aa0@00412e44:00412e44",
+          "kind": "member",
+          "name": "FUN_00412aa0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00412aa0@00412e64:00412e64",
+          "kind": "member",
+          "name": "FUN_00412aa0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00412aa0@00412eb8:00412eb8",
+          "kind": "member",
+          "name": "FUN_00412aa0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@00413930:00413930",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@00413950:00413950",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@00413978:00413978",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@004139c4:004139c4",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@004139dc:004139dc",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@004139f4:004139f4",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@00413a40:00413a40",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@00413a90:00413a90",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@00413aa0:00413aa0",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@00413ab0:00413ab0",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@00413ac8:00413ac8",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@00413b00:00413b00",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@00413b14:00413b14",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@00413b54:00413b54",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00413894@00413b88:00413b88",
+          "kind": "member",
+          "name": "FUN_00413894"
+        },
+        {
+          "fullyQualifiedName": "FUN_00415998@004159bc:004159bc",
+          "kind": "member",
+          "name": "FUN_00415998"
+        },
+        {
+          "fullyQualifiedName": "FUN_00416fe0@0041701c:0041701c",
+          "kind": "member",
+          "name": "FUN_00416fe0"
+        },
+        {
+          "fullyQualifiedName": "FUN_00416fe0@0041704c:0041704c",
+          "kind": "member",
+          "name": "FUN_00416fe0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004170b0@004170ec:004170ec",
+          "kind": "member",
+          "name": "FUN_004170b0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004170b0@00417108:00417108",
+          "kind": "member",
+          "name": "FUN_004170b0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004170b0@0041711c:0041711c",
+          "kind": "member",
+          "name": "FUN_004170b0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004170b0@0041712c:0041712c",
+          "kind": "member",
+          "name": "FUN_004170b0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004170b0@00417144:00417144",
+          "kind": "member",
+          "name": "FUN_004170b0"
+        },
+        {
+          "fullyQualifiedName": "FUN_004170b0@00417178:00417178",
+          "kind": "member",
+          "name": "FUN_004170b0"
+        },
+        {
+          "fullyQualifiedName": "FUN_0041a150@0041a1c8:0041a1c8",
+          "kind": "member",
+          "name": "FUN_0041a150"
+        },
+        {
+          "fullyQualifiedName": "FUN_0041a750@0041a7ac:0041a7ac",
+          "kind": "member",
+          "name": "FUN_0041a750"
+        },
+        {
+          "fullyQualifiedName": "FUN_0041ad9c@0041ae34:0041ae34",
+          "kind": "member",
+          "name": "FUN_0041ad9c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0041ad9c@0041ae50:0041ae50",
+          "kind": "member",
+          "name": "FUN_0041ad9c"
+        },
+        {
+          "fullyQualifiedName": "FUN_0041ad9c@0041ae60:0041ae60",
+          "kind": "member",
+          "name": "FUN_0041ad9c"
+        },
+        {
+          "fullyQualifiedName": "balloc@00406268:00406268",
+          "kind": "member",
+          "name": "balloc"
+        },
+        {
+          "fullyQualifiedName": "ballocAscToUni@0040c49c:0040c49c",
+          "kind": "member",
+          "name": "ballocAscToUni"
+        },
+        {
+          "fullyQualifiedName": "ballocAscToUni@0040c4c0:0040c4c0",
+          "kind": "member",
+          "name": "ballocAscToUni"
+        },
+        {
+          "fullyQualifiedName": "ballocUniToAsc@0040c514:0040c514",
+          "kind": "member",
+          "name": "ballocUniToAsc"
+        },
+        {
+          "fullyQualifiedName": "ballocUniToAsc@0040c538:0040c538",
+          "kind": "member",
+          "name": "ballocUniToAsc"
+        },
+        {
+          "fullyQualifiedName": "bclose@00406140:00406140",
+          "kind": "member",
+          "name": "bclose"
+        },
+        {
+          "fullyQualifiedName": "bfree@00406334:00406334",
+          "kind": "member",
+          "name": "bfree"
+        },
+        {
+          "fullyQualifiedName": "brealloc@004064b4:004064b4",
+          "kind": "member",
+          "name": "brealloc"
+        },
+        {
+          "fullyQualifiedName": "brealloc@004064d0:004064d0",
+          "kind": "member",
+          "name": "brealloc"
+        },
+        {
+          "fullyQualifiedName": "brealloc@004064f0:004064f0",
+          "kind": "member",
+          "name": "brealloc"
+        },
+        {
+          "fullyQualifiedName": "brealloc@004064fc:004064fc",
+          "kind": "member",
+          "name": "brealloc"
+        },
+        {
+          "fullyQualifiedName": "bstrdup@004063b8:004063b8",
+          "kind": "member",
+          "name": "bstrdup"
+        },
+        {
+          "fullyQualifiedName": "bstrdup@004063c8:004063c8",
+          "kind": "member",
+          "name": "bstrdup"
+        },
+        {
+          "fullyQualifiedName": "bstrdup@004063ec:004063ec",
+          "kind": "member",
+          "name": "bstrdup"
+        },
+        {
+          "fullyQualifiedName": "dbAddRow@0041ad58:0041ad58",
+          "kind": "member",
+          "name": "dbAddRow"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b198:0041b198",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b294:0041b294",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b2b0:0041b2b0",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b2ec:0041b2ec",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b304:0041b304",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b31c:0041b31c",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b33c:0041b33c",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b37c:0041b37c",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b39c:0041b39c",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b3c4:0041b3c4",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b460:0041b460",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b508:0041b508",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b4ac:0041b4ac",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b4c4:0041b4c4",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b4d4:0041b4d4",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b528:0041b528",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b53c:0041b53c",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b568:0041b568",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b5b0:0041b5b0",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b5cc:0041b5cc",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b5e4:0041b5e4",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b62c:0041b62c",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbLoad@0041b644:0041b644",
+          "kind": "member",
+          "name": "dbLoad"
+        },
+        {
+          "fullyQualifiedName": "dbWriteInt@0041a970:0041a970",
+          "kind": "member",
+          "name": "dbWriteInt"
+        },
+        {
+          "fullyQualifiedName": "dbWriteStr@0041a858:0041a858",
+          "kind": "member",
+          "name": "dbWriteStr"
+        },
+        {
+          "fullyQualifiedName": "dbWriteStr@0041a8f8:0041a8f8",
+          "kind": "member",
+          "name": "dbWriteStr"
+        },
+        {
+          "fullyQualifiedName": "ejEval@0040a398:0040a398",
+          "kind": "member",
+          "name": "ejEval"
+        },
+        {
+          "fullyQualifiedName": "ejLexOpenScript@00416148:00416148",
+          "kind": "member",
+          "name": "ejLexOpenScript"
+        },
+        {
+          "fullyQualifiedName": "ejLexOpenScript@00416164:00416164",
+          "kind": "member",
+          "name": "ejLexOpenScript"
+        },
+        {
+          "fullyQualifiedName": "ejLexOpenScript@00416184:00416184",
+          "kind": "member",
+          "name": "ejLexOpenScript"
+        },
+        {
+          "fullyQualifiedName": "ejLexOpenScript@004161a0:004161a0",
+          "kind": "member",
+          "name": "ejLexOpenScript"
+        },
+        {
+          "fullyQualifiedName": "ejSetGlobalFunctionDirect@00408b74:00408b74",
+          "kind": "member",
+          "name": "ejSetGlobalFunctionDirect"
+        },
+        {
+          "fullyQualifiedName": "emfSchedProcess@00415c68:00415c68",
+          "kind": "member",
+          "name": "emfSchedProcess"
+        },
+        {
+          "fullyQualifiedName": "gstrtoi@0040c620:0040c620",
+          "kind": "member",
+          "name": "gstrtoi"
+        },
+        {
+          "fullyQualifiedName": "hAlloc@0040accc:0040accc",
+          "kind": "member",
+          "name": "hAlloc"
+        },
+        {
+          "fullyQualifiedName": "hAlloc@0040ad50:0040ad50",
+          "kind": "member",
+          "name": "hAlloc"
+        },
+        {
+          "fullyQualifiedName": "hAlloc@0040ad88:0040ad88",
+          "kind": "member",
+          "name": "hAlloc"
+        },
+        {
+          "fullyQualifiedName": "hAllocEntry@0040aecc:0040aecc",
+          "kind": "member",
+          "name": "hAllocEntry"
+        },
+        {
+          "fullyQualifiedName": "hAllocEntry@0040af10:0040af10",
+          "kind": "member",
+          "name": "hAllocEntry"
+        },
+        {
+          "fullyQualifiedName": "main@004032d8:004032d8",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@00403338:00403338",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@00403358:00403358",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@004033e0:004033e0",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@004033f8:004033f8",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@00403414:00403414",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@0040345c:0040345c",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@0040347c:0040347c",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "main@004035a8:004035a8",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "ringqClose@004175bc:004175bc",
+          "kind": "member",
+          "name": "ringqClose"
+        },
+        {
+          "fullyQualifiedName": "ringqGetBlkAdj@004174cc:004174cc",
+          "kind": "member",
+          "name": "ringqGetBlkAdj"
+        },
+        {
+          "fullyQualifiedName": "ringqPutBlk@00417208:00417208",
+          "kind": "member",
+          "name": "ringqPutBlk"
+        },
+        {
+          "fullyQualifiedName": "ringqPutBlk@0041722c:0041722c",
+          "kind": "member",
+          "name": "ringqPutBlk"
+        },
+        {
+          "fullyQualifiedName": "ringqPutBlk@0041723c:0041723c",
+          "kind": "member",
+          "name": "ringqPutBlk"
+        },
+        {
+          "fullyQualifiedName": "ringqPutBlk@00417268:00417268",
+          "kind": "member",
+          "name": "ringqPutBlk"
+        },
+        {
+          "fullyQualifiedName": "ringqPutStr@004172f0:004172f0",
+          "kind": "member",
+          "name": "ringqPutStr"
+        },
+        {
+          "fullyQualifiedName": "ringqPutStr@00417300:00417300",
+          "kind": "member",
+          "name": "ringqPutStr"
+        },
+        {
+          "fullyQualifiedName": "socketAlloc@0040c84c:0040c84c",
+          "kind": "member",
+          "name": "socketAlloc"
+        },
+        {
+          "fullyQualifiedName": "socketAlloc@0040c874:0040c874",
+          "kind": "member",
+          "name": "socketAlloc"
+        },
+        {
+          "fullyQualifiedName": "socketAlloc@0040c890:0040c890",
+          "kind": "member",
+          "name": "socketAlloc"
+        },
+        {
+          "fullyQualifiedName": "socketAlloc@0040c8ac:0040c8ac",
+          "kind": "member",
+          "name": "socketAlloc"
+        },
+        {
+          "fullyQualifiedName": "socketAlloc@0040c8c8:0040c8c8",
+          "kind": "member",
+          "name": "socketAlloc"
+        },
+        {
+          "fullyQualifiedName": "socketAlloc@0040c8e4:0040c8e4",
+          "kind": "member",
+          "name": "socketAlloc"
+        },
+        {
+          "fullyQualifiedName": "socketClose@0040d830:0040d830",
+          "kind": "member",
+          "name": "socketClose"
+        },
+        {
+          "fullyQualifiedName": "socketCloseConnection@0040d788:0040d788",
+          "kind": "member",
+          "name": "socketCloseConnection"
+        },
+        {
+          "fullyQualifiedName": "socketCloseConnection@0040d7ac:0040d7ac",
+          "kind": "member",
+          "name": "socketCloseConnection"
+        },
+        {
+          "fullyQualifiedName": "socketCreateHandler@0040cbd0:0040cbd0",
+          "kind": "member",
+          "name": "socketCreateHandler"
+        },
+        {
+          "fullyQualifiedName": "socketCreateHandler@0040cc00:0040cc00",
+          "kind": "member",
+          "name": "socketCreateHandler"
+        },
+        {
+          "fullyQualifiedName": "socketDeleteHandler@0040cb74:0040cb74",
+          "kind": "member",
+          "name": "socketDeleteHandler"
+        },
+        {
+          "fullyQualifiedName": "socketDeleteHandler@0040cb98:0040cb98",
+          "kind": "member",
+          "name": "socketDeleteHandler"
+        },
+        {
+          "fullyQualifiedName": "socketEof@0040cd94:0040cd94",
+          "kind": "member",
+          "name": "socketEof"
+        },
+        {
+          "fullyQualifiedName": "socketFlush@0040d22c:0040d22c",
+          "kind": "member",
+          "name": "socketFlush"
+        },
+        {
+          "fullyQualifiedName": "socketFlush@0040d270:0040d270",
+          "kind": "member",
+          "name": "socketFlush"
+        },
+        {
+          "fullyQualifiedName": "socketFlush@0040d2dc:0040d2dc",
+          "kind": "member",
+          "name": "socketFlush"
+        },
+        {
+          "fullyQualifiedName": "socketFlush@0040d31c:0040d31c",
+          "kind": "member",
+          "name": "socketFlush"
+        },
+        {
+          "fullyQualifiedName": "socketFlush@0040d338:0040d338",
+          "kind": "member",
+          "name": "socketFlush"
+        },
+        {
+          "fullyQualifiedName": "socketFlush@0040d3a0:0040d3a0",
+          "kind": "member",
+          "name": "socketFlush"
+        },
+        {
+          "fullyQualifiedName": "socketFlush@0040d3b8:0040d3b8",
+          "kind": "member",
+          "name": "socketFlush"
+        },
+        {
+          "fullyQualifiedName": "socketFlush@0040d3e0:0040d3e0",
+          "kind": "member",
+          "name": "socketFlush"
+        },
+        {
+          "fullyQualifiedName": "socketFlush@0040d418:0040d418",
+          "kind": "member",
+          "name": "socketFlush"
+        },
+        {
+          "fullyQualifiedName": "socketFlush@0040d43c:0040d43c",
+          "kind": "member",
+          "name": "socketFlush"
+        },
+        {
+          "fullyQualifiedName": "socketFree@0040c9c0:0040c9c0",
+          "kind": "member",
+          "name": "socketFree"
+        },
+        {
+          "fullyQualifiedName": "socketFree@0040c9dc:0040c9dc",
+          "kind": "member",
+          "name": "socketFree"
+        },
+        {
+          "fullyQualifiedName": "socketFree@0040c9fc:0040c9fc",
+          "kind": "member",
+          "name": "socketFree"
+        },
+        {
+          "fullyQualifiedName": "socketFree@0040ca14:0040ca14",
+          "kind": "member",
+          "name": "socketFree"
+        },
+        {
+          "fullyQualifiedName": "socketFree@0040ca34:0040ca34",
+          "kind": "member",
+          "name": "socketFree"
+        },
+        {
+          "fullyQualifiedName": "socketFree@0040ca4c:0040ca4c",
+          "kind": "member",
+          "name": "socketFree"
+        },
+        {
+          "fullyQualifiedName": "socketFree@0040ca74:0040ca74",
+          "kind": "member",
+          "name": "socketFree"
+        },
+        {
+          "fullyQualifiedName": "socketFree@0040ca8c:0040ca8c",
+          "kind": "member",
+          "name": "socketFree"
+        },
+        {
+          "fullyQualifiedName": "socketFree@0040caa4:0040caa4",
+          "kind": "member",
+          "name": "socketFree"
+        },
+        {
+          "fullyQualifiedName": "socketFree@0040cabc:0040cabc",
+          "kind": "member",
+          "name": "socketFree"
+        },
+        {
+          "fullyQualifiedName": "socketFree@0040cad8:0040cad8",
+          "kind": "member",
+          "name": "socketFree"
+        },
+        {
+          "fullyQualifiedName": "socketGetInput@0040d8f0:0040d8f0",
+          "kind": "member",
+          "name": "socketGetInput"
+        },
+        {
+          "fullyQualifiedName": "socketGetInput@0040d90c:0040d90c",
+          "kind": "member",
+          "name": "socketGetInput"
+        },
+        {
+          "fullyQualifiedName": "socketInputBuffered@0040cde0:0040cde0",
+          "kind": "member",
+          "name": "socketInputBuffered"
+        },
+        {
+          "fullyQualifiedName": "socketInputBuffered@0040cdf0:0040cdf0",
+          "kind": "member",
+          "name": "socketInputBuffered"
+        },
+        {
+          "fullyQualifiedName": "socketInputBuffered@0040ce18:0040ce18",
+          "kind": "member",
+          "name": "socketInputBuffered"
+        },
+        {
+          "fullyQualifiedName": "socketOpenConnection@0040e40c:0040e40c",
+          "kind": "member",
+          "name": "socketOpenConnection"
+        },
+        {
+          "fullyQualifiedName": "socketOpenConnection@0040e434:0040e434",
+          "kind": "member",
+          "name": "socketOpenConnection"
+        },
+        {
+          "fullyQualifiedName": "socketOpenConnection@0040e458:0040e458",
+          "kind": "member",
+          "name": "socketOpenConnection"
+        },
+        {
+          "fullyQualifiedName": "socketOpenConnection@0040e53c:0040e53c",
+          "kind": "member",
+          "name": "socketOpenConnection"
+        },
+        {
+          "fullyQualifiedName": "socketOpenConnection@0040e5b0:0040e5b0",
+          "kind": "member",
+          "name": "socketOpenConnection"
+        },
+        {
+          "fullyQualifiedName": "socketOpenConnection@0040e5e8:0040e5e8",
+          "kind": "member",
+          "name": "socketOpenConnection"
+        },
+        {
+          "fullyQualifiedName": "socketOpenConnection@0040e604:0040e604",
+          "kind": "member",
+          "name": "socketOpenConnection"
+        },
+        {
+          "fullyQualifiedName": "socketOpenConnection@0040e644:0040e644",
+          "kind": "member",
+          "name": "socketOpenConnection"
+        },
+        {
+          "fullyQualifiedName": "socketOpenConnection@0040e660:0040e660",
+          "kind": "member",
+          "name": "socketOpenConnection"
+        },
+        {
+          "fullyQualifiedName": "socketOpenConnection@0040e684:0040e684",
+          "kind": "member",
+          "name": "socketOpenConnection"
+        },
+        {
+          "fullyQualifiedName": "socketOpenConnection@0040e6a0:0040e6a0",
+          "kind": "member",
+          "name": "socketOpenConnection"
+        },
+        {
+          "fullyQualifiedName": "socketOpenConnection@0040e6e4:0040e6e4",
+          "kind": "member",
+          "name": "socketOpenConnection"
+        },
+        {
+          "fullyQualifiedName": "socketProcess@0040e0a0:0040e0a0",
+          "kind": "member",
+          "name": "socketProcess"
+        },
+        {
+          "fullyQualifiedName": "socketProcess@0040e0ec:0040e0ec",
+          "kind": "member",
+          "name": "socketProcess"
+        },
+        {
+          "fullyQualifiedName": "socketProcess@0040e10c:0040e10c",
+          "kind": "member",
+          "name": "socketProcess"
+        },
+        {
+          "fullyQualifiedName": "socketProcess@0040e140:0040e140",
+          "kind": "member",
+          "name": "socketProcess"
+        },
+        {
+          "fullyQualifiedName": "socketProcess@0040e178:0040e178",
+          "kind": "member",
+          "name": "socketProcess"
+        },
+        {
+          "fullyQualifiedName": "socketProcess@0040e1c4:0040e1c4",
+          "kind": "member",
+          "name": "socketProcess"
+        },
+        {
+          "fullyQualifiedName": "socketProcess@0040e1e0:0040e1e0",
+          "kind": "member",
+          "name": "socketProcess"
+        },
+        {
+          "fullyQualifiedName": "socketProcess@0040e20c:0040e20c",
+          "kind": "member",
+          "name": "socketProcess"
+        },
+        {
+          "fullyQualifiedName": "socketProcess@0040e260:0040e260",
+          "kind": "member",
+          "name": "socketProcess"
+        },
+        {
+          "fullyQualifiedName": "socketProcess@0040e27c:0040e27c",
+          "kind": "member",
+          "name": "socketProcess"
+        },
+        {
+          "fullyQualifiedName": "socketProcess@0040e2c8:0040e2c8",
+          "kind": "member",
+          "name": "socketProcess"
+        },
+        {
+          "fullyQualifiedName": "socketReady@0040ddd0:0040ddd0",
+          "kind": "member",
+          "name": "socketReady"
+        },
+        {
+          "fullyQualifiedName": "socketReady@0040de08:0040de08",
+          "kind": "member",
+          "name": "socketReady"
+        },
+        {
+          "fullyQualifiedName": "socketReady@0040de1c:0040de1c",
+          "kind": "member",
+          "name": "socketReady"
+        },
+        {
+          "fullyQualifiedName": "socketSelect@0040d9cc:0040d9cc",
+          "kind": "member",
+          "name": "socketSelect"
+        },
+        {
+          "fullyQualifiedName": "socketSelect@0040d9e8:0040d9e8",
+          "kind": "member",
+          "name": "socketSelect"
+        },
+        {
+          "fullyQualifiedName": "socketSelect@0040da00:0040da00",
+          "kind": "member",
+          "name": "socketSelect"
+        },
+        {
+          "fullyQualifiedName": "socketSelect@0040da1c:0040da1c",
+          "kind": "member",
+          "name": "socketSelect"
+        },
+        {
+          "fullyQualifiedName": "socketSelect@0040da34:0040da34",
+          "kind": "member",
+          "name": "socketSelect"
+        },
+        {
+          "fullyQualifiedName": "socketSelect@0040da50:0040da50",
+          "kind": "member",
+          "name": "socketSelect"
+        },
+        {
+          "fullyQualifiedName": "socketSelect@0040db04:0040db04",
+          "kind": "member",
+          "name": "socketSelect"
+        },
+        {
+          "fullyQualifiedName": "socketSelect@0040dbb4:0040dbb4",
+          "kind": "member",
+          "name": "socketSelect"
+        },
+        {
+          "fullyQualifiedName": "socketSelect@0040dc40:0040dc40",
+          "kind": "member",
+          "name": "socketSelect"
+        },
+        {
+          "fullyQualifiedName": "socketSelect@0040dce8:0040dce8",
+          "kind": "member",
+          "name": "socketSelect"
+        },
+        {
+          "fullyQualifiedName": "socketSelect@0040dd00:0040dd00",
+          "kind": "member",
+          "name": "socketSelect"
+        },
+        {
+          "fullyQualifiedName": "socketSelect@0040dd18:0040dd18",
+          "kind": "member",
+          "name": "socketSelect"
+        },
+        {
+          "fullyQualifiedName": "socketSetBlock@0040df70:0040df70",
+          "kind": "member",
+          "name": "socketSetBlock"
+        },
+        {
+          "fullyQualifiedName": "socketSetBlock@0040dfc4:0040dfc4",
+          "kind": "member",
+          "name": "socketSetBlock"
+        },
+        {
+          "fullyQualifiedName": "socketSetBlock@0040dfe4:0040dfe4",
+          "kind": "member",
+          "name": "socketSetBlock"
+        },
+        {
+          "fullyQualifiedName": "socketSetBlock@0040e004:0040e004",
+          "kind": "member",
+          "name": "socketSetBlock"
+        },
+        {
+          "fullyQualifiedName": "socketWrite@0040d4d4:0040d4d4",
+          "kind": "member",
+          "name": "socketWrite"
+        },
+        {
+          "fullyQualifiedName": "socketWrite@0040d500:0040d500",
+          "kind": "member",
+          "name": "socketWrite"
+        },
+        {
+          "fullyQualifiedName": "socketWrite@0040d514:0040d514",
+          "kind": "member",
+          "name": "socketWrite"
+        },
+        {
+          "fullyQualifiedName": "socketWrite@0040d530:0040d530",
+          "kind": "member",
+          "name": "socketWrite"
+        },
+        {
+          "fullyQualifiedName": "socketWrite@0040d57c:0040d57c",
+          "kind": "member",
+          "name": "socketWrite"
+        },
+        {
+          "fullyQualifiedName": "symClose@0040ebac:0040ebac",
+          "kind": "member",
+          "name": "symClose"
+        },
+        {
+          "fullyQualifiedName": "symClose@0040ebc4:0040ebc4",
+          "kind": "member",
+          "name": "symClose"
+        },
+        {
+          "fullyQualifiedName": "symClose@0040ebdc:0040ebdc",
+          "kind": "member",
+          "name": "symClose"
+        },
+        {
+          "fullyQualifiedName": "symClose@0040ec28:0040ec28",
+          "kind": "member",
+          "name": "symClose"
+        },
+        {
+          "fullyQualifiedName": "symClose@0040ec60:0040ec60",
+          "kind": "member",
+          "name": "symClose"
+        },
+        {
+          "fullyQualifiedName": "symEnter@0040eef4:0040eef4",
+          "kind": "member",
+          "name": "symEnter"
+        },
+        {
+          "fullyQualifiedName": "symEnter@0040ef48:0040ef48",
+          "kind": "member",
+          "name": "symEnter"
+        },
+        {
+          "fullyQualifiedName": "symEnter@0040ef8c:0040ef8c",
+          "kind": "member",
+          "name": "symEnter"
+        },
+        {
+          "fullyQualifiedName": "symEnter@0040efa8:0040efa8",
+          "kind": "member",
+          "name": "symEnter"
+        },
+        {
+          "fullyQualifiedName": "symEnter@0040efc8:0040efc8",
+          "kind": "member",
+          "name": "symEnter"
+        },
+        {
+          "fullyQualifiedName": "symEnter@0040efe4:0040efe4",
+          "kind": "member",
+          "name": "symEnter"
+        },
+        {
+          "fullyQualifiedName": "symEnter@0040f000:0040f000",
+          "kind": "member",
+          "name": "symEnter"
+        },
+        {
+          "fullyQualifiedName": "symEnter@0040f040:0040f040",
+          "kind": "member",
+          "name": "symEnter"
+        },
+        {
+          "fullyQualifiedName": "symEnter@0040f06c:0040f06c",
+          "kind": "member",
+          "name": "symEnter"
+        },
+        {
+          "fullyQualifiedName": "symEnter@0040f088:0040f088",
+          "kind": "member",
+          "name": "symEnter"
+        },
+        {
+          "fullyQualifiedName": "symEnter@0040f0a4:0040f0a4",
+          "kind": "member",
+          "name": "symEnter"
+        },
+        {
+          "fullyQualifiedName": "symOpen@0040ea0c:0040ea0c",
+          "kind": "member",
+          "name": "symOpen"
+        },
+        {
+          "fullyQualifiedName": "symOpen@0040ea48:0040ea48",
+          "kind": "member",
+          "name": "symOpen"
+        },
+        {
+          "fullyQualifiedName": "trace@0040f3ec:0040f3ec",
+          "kind": "member",
+          "name": "trace"
+        },
+        {
+          "fullyQualifiedName": "trace@0040f40c:0040f40c",
+          "kind": "member",
+          "name": "trace"
+        },
+        {
+          "fullyQualifiedName": "trace@0040f424:0040f424",
+          "kind": "member",
+          "name": "trace"
+        },
+        {
+          "fullyQualifiedName": "valueString@0040f828:0040f828",
+          "kind": "member",
+          "name": "valueString"
+        },
+        {
+          "fullyQualifiedName": "valueString@0040f850:0040f850",
+          "kind": "member",
+          "name": "valueString"
+        },
+        {
+          "fullyQualifiedName": "websAspDefine@00405fa8:00405fa8",
+          "kind": "member",
+          "name": "websAspDefine"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405abc:00405abc",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405ad8:00405ad8",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405af4:00405af4",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405b18:00405b18",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405b40:00405b40",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405b64:00405b64",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405b8c:00405b8c",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405bb0:00405bb0",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405bd0:00405bd0",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405bec:00405bec",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405c24:00405c24",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405c44:00405c44",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405d6c:00405d6c",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405d98:00405d98",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405db4:00405db4",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405de8:00405de8",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405e04:00405e04",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405e28:00405e28",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405e5c:00405e5c",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405e9c:00405e9c",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405eb8:00405eb8",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405edc:00405edc",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405efc:00405efc",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405f34:00405f34",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websAspRequest@00405f4c:00405f4c",
+          "kind": "member",
+          "name": "websAspRequest"
+        },
+        {
+          "fullyQualifiedName": "websCalcNonce@00419d18:00419d18",
+          "kind": "member",
+          "name": "websCalcNonce"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@00407020:00407020",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@0040702c:0040702c",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@00407048:00407048",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@00407070:00407070",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@00407154:00407154",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@004070c4:004070c4",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@004070dc:004070dc",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@004070f4:004070f4",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@0040710c:0040710c",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@00407124:00407124",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@0040716c:0040716c",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@00407184:00407184",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCgiCleanup@0040719c:0040719c",
+          "kind": "member",
+          "name": "websCgiCleanup"
+        },
+        {
+          "fullyQualifiedName": "websCloseServer@00413364:00413364",
+          "kind": "member",
+          "name": "websCloseServer"
+        },
+        {
+          "fullyQualifiedName": "websCloseServer@0041336c:0041336c",
+          "kind": "member",
+          "name": "websCloseServer"
+        },
+        {
+          "fullyQualifiedName": "websCloseServer@004133b8:004133b8",
+          "kind": "member",
+          "name": "websCloseServer"
+        },
+        {
+          "fullyQualifiedName": "websCloseServer@004133e8:004133e8",
+          "kind": "member",
+          "name": "websCloseServer"
+        },
+        {
+          "fullyQualifiedName": "websCloseServer@00413420:00413420",
+          "kind": "member",
+          "name": "websCloseServer"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@004078ec:004078ec",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407970:00407970",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@004079d0:004079d0",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@004079f0:004079f0",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407a08:00407a08",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407a54:00407a54",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407a64:00407a64",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407a90:00407a90",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407b84:00407b84",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407c00:00407c00",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407c3c:00407c3c",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407ca0:00407ca0",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407d00:00407d00",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407d28:00407d28",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407d6c:00407d6c",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407dac:00407dac",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407dec:00407dec",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407e04:00407e04",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407e1c:00407e1c",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407e38:00407e38",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407e60:00407e60",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407e80:00407e80",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407ea4:00407ea4",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407ec0:00407ec0",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDefaultHandler@00407edc:00407edc",
+          "kind": "member",
+          "name": "websDefaultHandler"
+        },
+        {
+          "fullyQualifiedName": "websDone@00412ee8:00412ee8",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@0041307c:0041307c",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@004130d0:004130d0",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@00413118:00413118",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@0041313c:0041313c",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@0041317c:0041317c",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@004131a0:004131a0",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@004131a8:004131a8",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@004131c4:004131c4",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@004131d4:004131d4",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@004131ec:004131ec",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@00413204:00413204",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@0041321c:0041321c",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websDone@00413224:00413224",
+          "kind": "member",
+          "name": "websDone"
+        },
+        {
+          "fullyQualifiedName": "websError@00413bd0:00413bd0",
+          "kind": "member",
+          "name": "websError"
+        },
+        {
+          "fullyQualifiedName": "websError@00413be8:00413be8",
+          "kind": "member",
+          "name": "websError"
+        },
+        {
+          "fullyQualifiedName": "websError@00413c14:00413c14",
+          "kind": "member",
+          "name": "websError"
+        },
+        {
+          "fullyQualifiedName": "websError@00413c20:00413c20",
+          "kind": "member",
+          "name": "websError"
+        },
+        {
+          "fullyQualifiedName": "websError@00413c38:00413c38",
+          "kind": "member",
+          "name": "websError"
+        },
+        {
+          "fullyQualifiedName": "websError@00413c70:00413c70",
+          "kind": "member",
+          "name": "websError"
+        },
+        {
+          "fullyQualifiedName": "websError@00413c84:00413c84",
+          "kind": "member",
+          "name": "websError"
+        },
+        {
+          "fullyQualifiedName": "websError@00413c9c:00413c9c",
+          "kind": "member",
+          "name": "websError"
+        },
+        {
+          "fullyQualifiedName": "websError@00413cb4:00413cb4",
+          "kind": "member",
+          "name": "websError"
+        },
+        {
+          "fullyQualifiedName": "websFormDefine@0040a928:0040a928",
+          "kind": "member",
+          "name": "websFormDefine"
+        },
+        {
+          "fullyQualifiedName": "websOpenServer@00411c3c:00411c3c",
+          "kind": "member",
+          "name": "websOpenServer"
+        },
+        {
+          "fullyQualifiedName": "websOpenServer@00411cdc:00411cdc",
+          "kind": "member",
+          "name": "websOpenServer"
+        },
+        {
+          "fullyQualifiedName": "websOpenServer@00411d0c:00411d0c",
+          "kind": "member",
+          "name": "websOpenServer"
+        },
+        {
+          "fullyQualifiedName": "websPageClose@0040c6a0:0040c6a0",
+          "kind": "member",
+          "name": "websPageClose"
+        },
+        {
+          "fullyQualifiedName": "websPageReadData@0040c784:0040c784",
+          "kind": "member",
+          "name": "websPageReadData"
+        },
+        {
+          "fullyQualifiedName": "websRedirect@00414a3c:00414a3c",
+          "kind": "member",
+          "name": "websRedirect"
+        },
+        {
+          "fullyQualifiedName": "websRedirect@00414a98:00414a98",
+          "kind": "member",
+          "name": "websRedirect"
+        },
+        {
+          "fullyQualifiedName": "websSetRequestLpath@00413684:00413684",
+          "kind": "member",
+          "name": "websSetRequestLpath"
+        },
+        {
+          "fullyQualifiedName": "websUrlHandlerClose@0040b1d4:0040b1d4",
+          "kind": "member",
+          "name": "websUrlHandlerClose"
+        },
+        {
+          "fullyQualifiedName": "websUrlHandlerDefine@0040b2b8:0040b2b8",
+          "kind": "member",
+          "name": "websUrlHandlerDefine"
+        },
+        {
+          "fullyQualifiedName": "websUrlHandlerDefine@0040b2f4:0040b2f4",
+          "kind": "member",
+          "name": "websUrlHandlerDefine"
+        },
+        {
+          "fullyQualifiedName": "websUrlHandlerDefine@0040b37c:0040b37c",
+          "kind": "member",
+          "name": "websUrlHandlerDefine"
+        },
+        {
+          "fullyQualifiedName": "websWrite@00412108:00412108",
+          "kind": "member",
+          "name": "websWrite"
+        },
+        {
+          "fullyQualifiedName": "websWrite@0041214c:0041214c",
+          "kind": "member",
+          "name": "websWrite"
+        },
+        {
+          "fullyQualifiedName": "websWrite@0041215c:0041215c",
+          "kind": "member",
+          "name": "websWrite"
+        },
+        {
+          "fullyQualifiedName": "websWrite@00412174:00412174",
+          "kind": "member",
+          "name": "websWrite"
+        },
+        {
+          "fullyQualifiedName": "websWriteBlock@00412020:00412020",
+          "kind": "member",
+          "name": "websWriteBlock"
+        },
+        {
+          "fullyQualifiedName": "websWriteBlock@00412044:00412044",
+          "kind": "member",
+          "name": "websWriteBlock"
+        },
+        {
+          "fullyQualifiedName": "websWriteBlock@00412060:00412060",
+          "kind": "member",
+          "name": "websWriteBlock"
+        },
+        {
+          "fullyQualifiedName": "websWriteBlock@0041207c:0041207c",
+          "kind": "member",
+          "name": "websWriteBlock"
+        },
+        {
+          "fullyQualifiedName": "websWriteBlock@0041209c:0041209c",
+          "kind": "member",
+          "name": "websWriteBlock"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::execve@EXTERNAL:00000057",
+          "kind": "member",
+          "name": "<EXTERNAL>::execve@EXTERNAL:00000057"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::read@EXTERNAL:00000035",
+          "kind": "member",
+          "name": "<EXTERNAL>::read@EXTERNAL:00000035"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::recv@EXTERNAL:0000005e",
+          "kind": "member",
+          "name": "<EXTERNAL>::recv@EXTERNAL:0000005e"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::recvfrom@EXTERNAL:00000050",
+          "kind": "member",
+          "name": "<EXTERNAL>::recvfrom@EXTERNAL:00000050"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::read@0041cd90",
+          "kind": "member",
+          "name": "<EXTERNAL>::read@0041cd90"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::execve@0041cb70",
+          "kind": "member",
+          "name": "<EXTERNAL>::execve@0041cb70"
+        },
+        {
+          "fullyQualifiedName": "main",
+          "kind": "member",
+          "name": "main"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::recv@0041cb00",
+          "kind": "member",
+          "name": "<EXTERNAL>::recv@0041cb00"
+        },
+        {
+          "fullyQualifiedName": "<EXTERNAL>::recvfrom@0041cbe0",
+          "kind": "member",
+          "name": "<EXTERNAL>::recvfrom@0041cbe0"
+        }
+      ],
+      "originalUriBaseIds": {
+        "IMPORT_dir878_goahead": {
+          "uri": "file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link%20878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "engine": "souffle",
+  "label": "r6400_dbus_daemon",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/bin/dbus-daemon",
+  "binary_bytes": 310384,
+  "status": "crash:index",
+  "total_wall_s": 41.2,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 25.9,
+      "peak_fp_b": 2109985544
+    },
+    "index": {
+      "status": "crash",
+      "exit_code": 1,
+      "wall_s": 15.2,
+      "peak_fp_b": 153273328
+    }
+  },
+  "import_bytes": 169132285
+}

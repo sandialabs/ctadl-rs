@@ -1,0 +1,186 @@
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/cos02/schemas/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "properties": {
+    "comment": "CTADL taint findings",
+    "day": "2026-08-13"
+  },
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "ctadl",
+          "version": "0.14.1",
+          "informationUri": "https://github.com/sandialabs/ctadl",
+          "fullDescription": {
+            "text": "CTADL (Compositional Taint Analysis in Datalog)."
+          },
+          "rules": [
+            {
+              "id": "C0001",
+              "name": "Tainted paths",
+              "shortDescription": {
+                "text": "A path of tainted data flow"
+              },
+              "messageStrings": {
+                "default": {
+                  "text": "This is a tainted source-sink path."
+                }
+              }
+            },
+            {
+              "id": "C0002",
+              "name": "Tainted instructions",
+              "shortDescription": {
+                "text": "An instruction with tainted data"
+              },
+              "messageStrings": {
+                "default": {
+                  "text": "This instruction manipulates tainted data."
+                }
+              }
+            },
+            {
+              "id": "C0003",
+              "name": "Tainted data sources",
+              "shortDescription": {
+                "text": "Tainted data source"
+              },
+              "messageStrings": {
+                "default": {
+                  "text": "This is a source of tainted data."
+                }
+              }
+            },
+            {
+              "id": "C0004",
+              "name": "Tainted data sink",
+              "shortDescription": {
+                "text": "Tainted data sinks"
+              },
+              "messageStrings": {
+                "default": {
+                  "text": "This is an desired sink of tainted data."
+                }
+              }
+            },
+            {
+              "id": "C0005",
+              "name": "Tainted data",
+              "shortDescription": {
+                "text": "Tainted variables and fields"
+              },
+              "messageStrings": {
+                "default": {
+                  "text": "This vertex is tainted."
+                }
+              }
+            },
+            {
+              "id": "C0006",
+              "name": "Almost-path function",
+              "shortDescription": {
+                "text": "A function which contains source-tainted and sink-tainted data, which means there's 'almost' a path between them."
+              },
+              "messageStrings": {
+                "default": {
+                  "text": "This function contains source and sink taint."
+                }
+              }
+            }
+          ],
+          "properties": {
+            "short_description": "Compositional Taint Analysis in Datalog",
+            "config": {
+              "CTADL_Version": "0.14.1",
+              "ALL_OUTPUTS": "0",
+              "CTADL_ANALYSIS_LANG": "PCODE",
+              "CTADL_DISABLE_GLOBAL_DATA_FLOW": "0",
+              "CTADL_DYNAMIC_ACCESS_PATHS_MAX_LENGTH": "0",
+              "CTADL_ENABLE_STAR": "0",
+              "CTADL_ENABLE_HYBRID_INLINING_K_CONTEXT_SENSITIVITY": "0",
+              "CTADL_HYBRID_INLINING_K_CONTEXT_SIZE": "3",
+              "CTADL_ENABLE_HYBRID_INLINING_K_INLINING_SENSITIVITY": "1",
+              "CTADL_HYBRID_INLINING_K_INLINING_SIZE": "5",
+              "CTADL_ENABLE_HYBRID_INLINING": "1",
+              "CTADL_HYBRID_INLINING_ADD_PARTHIANS_TO_VERTEX": "0",
+              "CTADL_ENABLE_MATCH_ACCESS_PATHS_TO_STAR": "0",
+              "CTADL_ENABLE_CHA": "0",
+              "CTADL_ENABLE_CONTEXT_FREE_OBJECT_TRACKING": "0",
+              "CTADL_Import_Path": "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_dap_logd/souffle/import/facts",
+              "CTADL_Index_Timestamp": "2026-08-13T21:55:35.158763",
+              "CTADL_Index_Models": "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json",
+              "CTADL_Query": "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json",
+              "CTADL_Query_Timestamp": "2026-08-13T21:55:41.160423"
+            },
+            "stats": {
+              "CInsn_InFunction": 89515,
+              "CFunction_Arity": 589,
+              "CFunction_FormalParam": 4632,
+              "CFunction_isFormalParamByRef": 3884,
+              "CInsn_Call": 5911,
+              "CVar_InFunction": 163846,
+              "AccessPathNonEmptySplit": 20,
+              "ComputedAccessPathNonEmptySplit": 20,
+              "import-vertex": 176515,
+              "import-virtual-assign": 225486,
+              "import-computed-access-path": 268,
+              "source vertices": 12,
+              "sink vertices": 4,
+              "tainted-vertex": 486,
+              "CInsn_Move": 129463,
+              "CInsn_Use": 574,
+              "CisFunction": 589,
+              "CFunction_Name": 589,
+              "CFunction_ModelAssign": 108,
+              "CCall_ActualParam": 19518,
+              "CisAccessPath": 268,
+              "CVar_isGlobal": 0,
+              "CVar_Name": 163846,
+              "analyzed-function": 414,
+              "CisAlloc": 16695,
+              "CCall_VirtualBase": 209,
+              "virtual-assign-star": 0,
+              "virtual-assign-starsummary": 0,
+              "virtual-assign-starsummary2": 0,
+              "ParthianVertex": 375,
+              "ParthianFlowEdge": 1,
+              "ctx": 1,
+              "obj-ctx": 8,
+              "obj-reachable-vertex": 328,
+              "ContextObj": 2624,
+              "LocallyReachable-ctx": 0,
+              "virtual-assign-ctx": 0,
+              "virtual-alloc-ctx": 0,
+              "summary-flow-ctx": 0,
+              "virtual-assign-star-ctx": 0,
+              "virtual-assign-starsummary-ctx": 0,
+              "virtual-assign-starsummary2-ctx": 0,
+              "initial-vertex": 107611,
+              "vertex": 176515,
+              "virtual-assign": 225486,
+              "virtual-assign-summary": 4020,
+              "virtual-assign-summary2": 0,
+              "virtual-assign-alias": 0,
+              "virtual-assign-fp": 92108,
+              "virtual-assign-move": 129358,
+              "virtual-alloc": 18007,
+              "computed-access-path": 268,
+              "star-access-path": 1,
+              "summary-flow": 700,
+              "summary2-flow": 0,
+              "LocallyReachable": 67383,
+              "LocallyReachableSources": 2362,
+              "alias-entries": 0,
+              "alias-sets": 0
+            }
+          }
+        }
+      },
+      "addresses": [],
+      "logicalLocations": [],
+      "results": [],
+      "graphs": []
+    }
+  ]
+}

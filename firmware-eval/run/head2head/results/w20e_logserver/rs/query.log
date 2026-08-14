@@ -1,0 +1,8 @@
+querying project 'w20e_logserver'
+matched 8 sources and 0 sinks
+warning: no configured sink matched the program; see the SARIF invocation for details
+wrote /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_logserver/rs/results.sarif
+Error: running 'query' project: "w20e_logserver"
+
+Caused by:
+    query produced no analyzable endpoints; see '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/w20e_logserver/rs/results.sarif' for details

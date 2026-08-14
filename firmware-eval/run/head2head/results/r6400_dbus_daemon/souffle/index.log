@@ -1,0 +1,16 @@
+index written to '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_dbus_daemon/souffle/import/ctadlir.db'
+** internal error: Variable move neither function or global: thunk_FUN_0003672c@0002c544:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0003d4dc@0003d180:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0003d738@0003d178:@ret
+** internal error: Variable move neither function or global: thunk_FUN_00032014@00031fcc:@ret
+** internal error: Variable move neither function or global: thunk_FUN_000331e0@00016cc0:@ret
+** internal error: Variable move neither function or global: thunk_FUN_00034824@00034ee8:@ret
+** internal error: Variable move neither function or global: thunk_FUN_00036500@0003659c:@ret
+** internal error: Variable move neither function or global: thunk_FUN_00032ee4@00032f98:@ret
+** internal error: Variable move neither function or global: thunk_FUN_00034670@00034bcc:@ret
+** internal error: Variable move neither function or global: thunk_FUN_000373c8@000374b8:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0003ec90@0003ec7c:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0003d7b0@0003d17c:@ret
+** internal error: Variable move neither function or global: thunk_FUN_00033268@00016d24:@ret
+** found 13 errors
+** Please file a Github issue (https://github.com/sandialabs/ctadl/issues)

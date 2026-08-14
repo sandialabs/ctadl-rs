@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "ac15_acsd",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/usr/sbin/acsd",
+  "binary_bytes": 39364,
+  "status": "ok",
+  "total_wall_s": 21.1,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 758909448
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 9159112
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 16548320
+    }
+  },
+  "import_bytes": 3069929,
+  "index_bytes": 678328,
+  "summaries": 530,
+  "sarif_paths": 0
+}

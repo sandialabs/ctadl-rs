@@ -1,0 +1,4 @@
+importing pcode artifact 'ac15_business_proc' from /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/business_proc
+running Ghidra to disassemble; console output -> /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_business_proc/rs/store/imports/ac15_business_proc/ghidra.log
+warning: Unsupported pcode mnemonic: LZCOUNT
+'ac15_business_proc': imported 583 function(s)

@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "r6400_rc",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc",
+  "binary_bytes": 108692,
+  "status": "ok",
+  "total_wall_s": 26.5,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 15.6,
+      "peak_fp_b": 1432066408
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 37585400
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 24035832
+    }
+  },
+  "import_bytes": 32315273,
+  "index_bytes": 13853138,
+  "summaries": 290,
+  "sarif_paths": 29
+}

@@ -1,0 +1,8 @@
+querying project 'ac15_logserver'
+matched 4 sources and 0 sinks
+warning: no configured sink matched the program; see the SARIF invocation for details
+wrote /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_logserver/rs/results.sarif
+Error: running 'query' project: "ac15_logserver"
+
+Caused by:
+    query produced no analyzable endpoints; see '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_logserver/rs/results.sarif' for details

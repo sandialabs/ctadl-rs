@@ -180,6 +180,27 @@ def count_sarif_paths(sarif_path: Path):
     )
 
 
+def settle_query(phase, sarif: Path):
+    """Reclassify a query that answered 'nothing to analyze' as a real answer.
+
+    ctadl-rs exits NONZERO when no configured sink matched the program - it
+    writes the SARIF, then fails the command. ctadl-souffle exits 0 in the same
+    situation. Left alone that asymmetry is a systematic penalty on ctadl-rs:
+    a binary where both engines legitimately find nothing would be recorded as
+    `0 paths` for the old engine and `crash` for the new one, and dropping the
+    binary from the comparison is exactly the wrong correction. The measurement
+    is valid, so it is kept - flagged, so the flag can be counted.
+
+    A query with no readable SARIF is still a crash.
+    """
+    if phase["status"] == "ok" or count_sarif_paths(sarif) is None:
+        return phase
+    phase["status"] = "ok"
+    phase["no_endpoints"] = True
+    print("    [query] nonzero exit but SARIF written (no endpoints) -> ok", flush=True)
+    return phase
+
+
 def count_rs_summaries(index_dir: Path):
     try:
         import pyarrow.parquet as pq
@@ -238,16 +259,19 @@ def run_rs(label, binary, outdir):
     sizes["index_bytes"] = dir_bytes(index_dir)
     sizes["summaries"] = count_rs_summaries(index_dir)
 
-    res["query"] = run_phase(
-        "rs/query",
-        [
-            ctadl, "--store", store, "query",
-            "--models", MODELS / "shared-query.rs.json",
-            "-o", sarif,
-            label,
-        ],
-        outdir / "query.log",
-        QUERY_TIMEOUT_S,
+    res["query"] = settle_query(
+        run_phase(
+            "rs/query",
+            [
+                ctadl, "--store", store, "query",
+                "--models", MODELS / "shared-query.rs.json",
+                "-o", sarif,
+                label,
+            ],
+            outdir / "query.log",
+            QUERY_TIMEOUT_S,
+        ),
+        sarif,
     )
     if res["query"]["status"] == "ok":
         sizes["sarif_paths"] = count_sarif_paths(sarif)
@@ -287,17 +311,20 @@ def run_souffle(label, binary, outdir):
     sizes["index_bytes"] = dir_bytes(db)
     sizes["summaries"] = count_souffle_summaries(db)
 
-    res["query"] = run_phase(
-        "sf/query",
-        [
-            ctadl, "--directory", imp, "query",
-            str(MODELS / "shared-query.souffle.json"),
-            "-j", SOUFFLE_JOBS,
-            "--format", "sarif",
-            "-o", sarif,
-        ],
-        outdir / "query.log",
-        QUERY_TIMEOUT_S,
+    res["query"] = settle_query(
+        run_phase(
+            "sf/query",
+            [
+                ctadl, "--directory", imp, "query",
+                str(MODELS / "shared-query.souffle.json"),
+                "-j", SOUFFLE_JOBS,
+                "--format", "sarif",
+                "-o", sarif,
+            ],
+            outdir / "query.log",
+            QUERY_TIMEOUT_S,
+        ),
+        sarif,
     )
     if res["query"]["status"] == "ok":
         sizes["sarif_paths"] = count_sarif_paths(sarif)

@@ -108,10 +108,10 @@
               "CTADL_ENABLE_CHA": "0",
               "CTADL_ENABLE_CONTEXT_FREE_OBJECT_TRACKING": "0",
               "CTADL_Import_Path": "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_netctrl/souffle/import/facts",
-              "CTADL_Index_Timestamp": "2026-08-13T17:43:09.322854",
+              "CTADL_Index_Timestamp": "2026-08-13T22:46:24.692619",
               "CTADL_Index_Models": "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json",
               "CTADL_Query": "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json",
-              "CTADL_Query_Timestamp": "2026-08-13T17:43:17.921443"
+              "CTADL_Query_Timestamp": "2026-08-13T22:46:33.507321"
             },
             "stats": {
               "CInsn_InFunction": 81610,

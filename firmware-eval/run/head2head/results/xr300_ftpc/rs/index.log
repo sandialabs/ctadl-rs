@@ -1,0 +1,7 @@
+indexing project 'xr300_ftpc' from 1 import(s): xr300_ftpc
+'xr300_ftpc': loading IR
+'xr300_ftpc': preprocessing 127 function(s) (SSA) and generating facts
+warning: CHA: unsupported virtual method table
+models: 107 summary row(s), 0 declared access path(s), 0 function body(ies) not analyzed
+indexing (computing the flow relation)
+wrote index to /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_ftpc/rs/store/projects/xr300_ftpc/index

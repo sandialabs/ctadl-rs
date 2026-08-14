@@ -1,0 +1,32 @@
+{
+  "engine": "souffle",
+  "label": "r7000_circled",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/bin/circled",
+  "binary_bytes": 58191,
+  "status": "ok",
+  "total_wall_s": 25.9,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 15.6,
+      "peak_fp_b": 1455479096
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2507112
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2474344
+    }
+  },
+  "import_bytes": 29156627,
+  "index_bytes": 48431104,
+  "summaries": 3199,
+  "sarif_paths": 0
+}

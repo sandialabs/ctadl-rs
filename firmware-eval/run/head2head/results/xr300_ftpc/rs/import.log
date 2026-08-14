@@ -1,0 +1,3 @@
+importing pcode artifact 'xr300_ftpc' from /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/ftpc
+running Ghidra to disassemble; console output -> /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_ftpc/rs/store/imports/xr300_ftpc/ghidra.log
+'xr300_ftpc': imported 127 function(s)

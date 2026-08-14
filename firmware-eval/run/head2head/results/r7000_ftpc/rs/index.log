@@ -1,0 +1,7 @@
+indexing project 'r7000_ftpc' from 1 import(s): r7000_ftpc
+'r7000_ftpc': loading IR
+'r7000_ftpc': preprocessing 127 function(s) (SSA) and generating facts
+warning: CHA: unsupported virtual method table
+models: 107 summary row(s), 0 declared access path(s), 0 function body(ies) not analyzed
+indexing (computing the flow relation)
+wrote index to /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_ftpc/rs/store/projects/r7000_ftpc/index

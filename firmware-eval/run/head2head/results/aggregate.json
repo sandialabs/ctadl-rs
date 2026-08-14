@@ -1,40 +1,459 @@
 {
   "corpus": [
     {
-      "label": "r7000_arp_check",
-      "vendor": "Netgear",
-      "device": "R7000",
-      "arch": "ARM",
-      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check",
+      "label": "dir878_dlcfg_cgi",
+      "vendor": "D-Link",
+      "device": "DIR-878",
+      "arch": "MIPS",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/etc_ro/lighttpd/www/web/HNAP1/dlcfg.cgi",
       "rs": {
         "status": "ok",
-        "binary_bytes": 18784,
-        "import_bytes": 5045405,
-        "index_bytes": 2073885,
-        "summaries": 198,
-        "sarif_paths": 36,
-        "sink_funcs": [
-          "system"
-        ],
-        "source_funcs": [
-          "acosNvramConfig_get",
-          "fgets",
-          "recv"
-        ],
-        "labels": [
-          "file_input",
-          "network_input",
-          "nvram_input"
-        ],
+        "binary_bytes": 9328,
+        "import_bytes": 388919,
+        "index_bytes": 65708,
+        "summaries": 20,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 681658816,
+          "index": 6488520,
+          "query": 9355792
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 9328,
+        "import_bytes": 2333569,
+        "index_bytes": 16973824,
+        "summaries": 10,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
         "wall_s": {
           "import": 10.3,
           "index": 5.1,
           "query": 5.1
         },
         "peak_fp_b": {
-          "import": 986040960,
-          "index": 14336456,
-          "query": 19792376
+          "import": 604277784,
+          "index": 2474344,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "dir878_ated",
+      "vendor": "D-Link",
+      "device": "DIR-878",
+      "arch": "MIPS",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/ated",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 18956,
+        "import_bytes": 2388077,
+        "index_bytes": 579998,
+        "summaries": 733,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 472778792,
+          "index": 10863048,
+          "query": 14991840
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 18956,
+        "import_bytes": 14327266,
+        "index_bytes": 32047104,
+        "summaries": 29,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 504088616,
+          "index": 2507112,
+          "query": 2605416
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "dir878_nvram_daemon",
+      "vendor": "D-Link",
+      "device": "DIR-878",
+      "arch": "MIPS",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/nvram_daemon",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 23908,
+        "import_bytes": 2389731,
+        "index_bytes": 229185,
+        "summaries": 159,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 763498888,
+          "index": 8847816,
+          "query": 14516752
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 23908,
+        "import_bytes": 16676092,
+        "index_bytes": 31850496,
+        "summaries": 71,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 681743376,
+          "index": 2572648,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "dir878_fota_config",
+      "vendor": "D-Link",
+      "device": "DIR-878",
+      "arch": "MIPS",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/fota_config",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 29088,
+        "import_bytes": 2188614,
+        "index_bytes": 664514,
+        "summaries": 80,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 608209248,
+          "index": 9650632,
+          "query": 16318944
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 29088,
+        "import_bytes": 13852269,
+        "index_bytes": 30408704,
+        "summaries": 30,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 609421688,
+          "index": 2474344,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "dir878_dxml",
+      "vendor": "D-Link",
+      "device": "DIR-878",
+      "arch": "MIPS",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/dxml",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 95200,
+        "import_bytes": 10829045,
+        "index_bytes": 2423215,
+        "summaries": 2905,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 21.0,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1559075224,
+          "index": 17105352,
+          "query": 15368672
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 95200,
+        "import_bytes": 66230417,
+        "index_bytes": 89653248,
+        "summaries": 196,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.9,
+          "index": 10.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1461557656,
+          "index": 2507112,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "dir878_goahead",
+      "vendor": "D-Link",
+      "device": "DIR-878",
+      "arch": "MIPS",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/goahead",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 147596,
+        "import_bytes": 15062712,
+        "index_bytes": 2994415,
+        "summaries": 9817,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.6,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1376144384,
+          "index": 21381600,
+          "query": 14647776
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 147596,
+        "import_bytes": 93656334,
+        "index_bytes": 114884608,
+        "summaries": 256,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.6,
+          "index": 10.2,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1125814040,
+          "index": 100565856,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "dir878_easyroaming",
+      "vendor": "D-Link",
+      "device": "DIR-878",
+      "arch": "MIPS",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 264802,
+        "import_bytes": 10782388,
+        "index_bytes": 1557875,
+        "summaries": 1483,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.8,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1305711536,
+          "index": 16318920,
+          "query": 13205984
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 264802,
+        "import_bytes": 68659811,
+        "index_bytes": 87818240,
+        "summaries": 450,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.7,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1361253872,
+          "index": 2507112,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "r6400_dlnad",
+      "vendor": "Netgear",
+      "device": "R6400v2",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/dlnad",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 9908,
+        "import_bytes": 656680,
+        "index_bytes": 210762,
+        "summaries": 71,
+        "sarif_paths": 15,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets"
+        ],
+        "labels": [
+          "file_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 660687296,
+          "index": 8389064,
+          "query": 12501520
         },
         "path_records": [
           {
@@ -116,156 +535,9 @@
           },
           {
             "sink_func": "system",
-            "source_func": "acosNvramConfig_get",
+            "source_func": "fgets",
             "labels": [
-              "nvram_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "acosNvramConfig_get",
-            "labels": [
-              "nvram_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "acosNvramConfig_get",
-            "labels": [
-              "nvram_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "acosNvramConfig_get",
-            "labels": [
-              "nvram_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "acosNvramConfig_get",
-            "labels": [
-              "nvram_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "acosNvramConfig_get",
-            "labels": [
-              "nvram_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "acosNvramConfig_get",
-            "labels": [
-              "nvram_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "recv",
-            "labels": [
-              "network_input"
+              "file_input"
             ]
           },
           {
@@ -293,11 +565,182 @@
       },
       "souffle": {
         "status": "ok",
-        "binary_bytes": 18784,
-        "import_bytes": 31016235,
-        "index_bytes": 48824320,
-        "summaries": 76,
+        "binary_bytes": 9908,
+        "import_bytes": 3806635,
+        "index_bytes": 17563648,
+        "summaries": 34,
+        "sarif_paths": 2,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "fgets"
+        ],
+        "labels": [
+          "file_input"
+        ],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 665865000,
+          "index": 2507112,
+          "query": 2474344
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "pair_comparison": {
+        "old": [
+          "fgets->system"
+        ],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system"
+        ],
+        "both": [
+          "fgets->system"
+        ],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system"
+        ]
+      }
+    },
+    {
+      "label": "r6400_check_dap",
+      "vendor": "Netgear",
+      "device": "R6400v2",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/check_dap",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 15800,
+        "import_bytes": 1742910,
+        "index_bytes": 519510,
+        "summaries": 354,
+        "sarif_paths": 4,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets"
+        ],
+        "labels": [
+          "file_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 10.3,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 772950464,
+          "index": 13074888,
+          "query": 13320672
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 15800,
+        "import_bytes": 10299699,
+        "index_bytes": 25886720,
+        "summaries": 78,
         "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.3,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 585288032,
+          "index": 2589032,
+          "query": 2523496
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system",
+          "fgets->system"
+        ]
+      }
+    },
+    {
+      "label": "r6400_genie_cgi",
+      "vendor": "Netgear",
+      "device": "R6400v2",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 16560,
+        "import_bytes": 1428291,
+        "index_bytes": 409030,
+        "summaries": 133,
+        "sarif_paths": 0,
+        "no_endpoints": false,
         "sink_funcs": [],
         "source_funcs": [],
         "labels": [],
@@ -307,74 +750,31 @@
           "query": 5.1
         },
         "peak_fp_b": {
-          "import": 784386544,
-          "index": 2474344,
-          "query": 2457960
-        },
-        "path_records": []
-      },
-      "pair_comparison": {
-        "old": [],
-        "new": [
-          "acosNvramConfig_get->system",
-          "fgets->system",
-          "recv->system"
-        ],
-        "both": [],
-        "old_only": [],
-        "new_only": [
-          "acosNvramConfig_get->system",
-          "fgets->system",
-          "recv->system"
-        ]
-      }
-    },
-    {
-      "label": "dlink878_nvram_daemon",
-      "vendor": "D-Link",
-      "device": "DIR-878",
-      "arch": "MIPS",
-      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/bin/nvram_daemon",
-      "rs": {
-        "status": "ok",
-        "binary_bytes": 23908,
-        "import_bytes": 2365534,
-        "index_bytes": 229281,
-        "summaries": 159,
-        "sarif_paths": 0,
-        "sink_funcs": [],
-        "source_funcs": [],
-        "labels": [],
-        "wall_s": {
-          "import": 15.5,
-          "index": 5.1,
-          "query": 5.1
-        },
-        "peak_fp_b": {
-          "import": 717476544,
-          "index": 8847816,
-          "query": 14139920
+          "import": 538495328,
+          "index": 11911648,
+          "query": 14270920
         },
         "path_records": []
       },
       "souffle": {
         "status": "ok",
-        "binary_bytes": 23908,
-        "import_bytes": 16487801,
-        "index_bytes": 31784960,
-        "summaries": 71,
+        "binary_bytes": 16560,
+        "import_bytes": 8656018,
+        "index_bytes": 24248320,
+        "summaries": 69,
         "sarif_paths": 0,
+        "no_endpoints": false,
         "sink_funcs": [],
         "source_funcs": [],
         "labels": [],
         "wall_s": {
-          "import": 15.5,
+          "import": 10.2,
           "index": 5.1,
           "query": 5.1
         },
         "peak_fp_b": {
-          "import": 739890120,
-          "index": 2474344,
+          "import": 576653400,
+          "index": 2507112,
           "query": 2474344
         },
         "path_records": []
@@ -388,18 +788,281 @@
       }
     },
     {
-      "label": "r7000_rc",
+      "label": "r6400_bd",
       "vendor": "Netgear",
-      "device": "R7000",
+      "device": "R6400v2",
       "arch": "ARM",
-      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/rc",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/bd",
       "rs": {
         "status": "ok",
-        "binary_bytes": 114916,
-        "import_bytes": 35610218,
-        "index_bytes": 15879723,
-        "summaries": 295,
-        "sarif_paths": 31,
+        "binary_bytes": 22844,
+        "import_bytes": 2615021,
+        "index_bytes": 645757,
+        "summaries": 117,
+        "sarif_paths": 2,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets"
+        ],
+        "labels": [
+          "file_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 10.3,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 505710632,
+          "index": 16531936,
+          "query": 17859040
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 22844,
+        "import_bytes": 15911141,
+        "index_bytes": 34013184,
+        "summaries": 52,
+        "sarif_paths": 2,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "fgets"
+        ],
+        "labels": [
+          "file_input"
+        ],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 533334080,
+          "index": 2523496,
+          "query": 2539880
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "pair_comparison": {
+        "old": [
+          "fgets->system"
+        ],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system"
+        ],
+        "both": [
+          "fgets->system"
+        ],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system"
+        ]
+      }
+    },
+    {
+      "label": "r6400_bftpd",
+      "vendor": "Netgear",
+      "device": "R6400v2",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/sbin/bftpd",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 52432,
+        "import_bytes": 7891479,
+        "index_bytes": 2317538,
+        "summaries": 1907,
+        "sarif_paths": 2,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets"
+        ],
+        "labels": [
+          "file_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1474058456,
+          "index": 15729096,
+          "query": 17596896
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 52432,
+        "import_bytes": 47033764,
+        "index_bytes": 67502080,
+        "summaries": 146,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 545572880,
+          "index": 2474344,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system",
+          "fgets->system"
+        ]
+      }
+    },
+    {
+      "label": "r6400_readycloud_control_cgi",
+      "vendor": "Netgear",
+      "device": "R6400v2",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 97376,
+        "import_bytes": 57093619,
+        "index_bytes": 61741290,
+        "summaries": 452,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 21.0,
+          "index": 15.2,
+          "query": 15.2
+        },
+        "peak_fp_b": {
+          "import": 2649775640,
+          "index": 1861683408,
+          "query": 1212040680
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 97376,
+        "import_bytes": 309693485,
+        "index_bytes": 378339328,
+        "summaries": 348,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.9,
+          "index": 40.6,
+          "query": 15.2
+        },
+        "peak_fp_b": {
+          "import": 2777079344,
+          "index": 566822136,
+          "query": 360875040
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "r6400_rc",
+      "vendor": "Netgear",
+      "device": "R6400v2",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/sbin/rc",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 108692,
+        "import_bytes": 32315273,
+        "index_bytes": 13853138,
+        "summaries": 290,
+        "sarif_paths": 29,
+        "no_endpoints": false,
         "sink_funcs": [
           "system"
         ],
@@ -415,33 +1078,19 @@
           "nvram_input"
         ],
         "wall_s": {
-          "import": 20.6,
+          "import": 15.6,
           "index": 5.1,
           "query": 5.1
         },
         "peak_fp_b": {
-          "import": 1464211528,
-          "index": 39371256,
-          "query": 23904760
+          "import": 1432066408,
+          "index": 37585400,
+          "query": 24035832
         },
         "path_records": [
           {
             "sink_func": "system",
             "source_func": "acosNvramConfig_get",
-            "labels": [
-              "nvram_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "nvram_get",
-            "labels": [
-              "nvram_input"
-            ]
-          },
-          {
-            "sink_func": "system",
-            "source_func": "nvram_get",
             "labels": [
               "nvram_input"
             ]
@@ -646,23 +1295,24 @@
       },
       "souffle": {
         "status": "ok",
-        "binary_bytes": 114916,
-        "import_bytes": 202864513,
-        "index_bytes": 232914944,
-        "summaries": 157,
+        "binary_bytes": 108692,
+        "import_bytes": 182438830,
+        "index_bytes": 211156992,
+        "summaries": 150,
         "sarif_paths": 0,
+        "no_endpoints": false,
         "sink_funcs": [],
         "source_funcs": [],
         "labels": [],
         "wall_s": {
           "import": 15.6,
           "index": 20.3,
-          "query": 10.2
+          "query": 5.1
         },
         "peak_fp_b": {
-          "import": 1470781944,
-          "index": 214598568,
-          "query": 62751272
+          "import": 1511905640,
+          "index": 229950400,
+          "query": 2474344
         },
         "path_records": []
       },
@@ -693,10 +1343,11 @@
       "rs": {
         "status": "ok",
         "binary_bytes": 141796,
-        "import_bytes": 23845583,
-        "index_bytes": 6382887,
+        "import_bytes": 23843073,
+        "index_bytes": 6389430,
         "summaries": 310,
         "sarif_paths": 72,
+        "no_endpoints": false,
         "sink_funcs": [
           "system"
         ],
@@ -718,9 +1369,9 @@
           "query": 5.1
         },
         "peak_fp_b": {
-          "import": 1552996760,
-          "index": 34619896,
-          "query": 20709880
+          "import": 1542789528,
+          "index": 34439672,
+          "query": 20234720
         },
         "path_records": [
           {
@@ -1232,10 +1883,11 @@
       "souffle": {
         "status": "ok",
         "binary_bytes": 141796,
-        "import_bytes": 132261736,
+        "import_bytes": 132261520,
         "index_bytes": 161873920,
         "summaries": 128,
         "sarif_paths": 2,
+        "no_endpoints": false,
         "sink_funcs": [
           "system"
         ],
@@ -1247,12 +1899,12 @@
         ],
         "wall_s": {
           "import": 15.6,
-          "index": 15.2,
+          "index": 15.3,
           "query": 5.1
         },
         "peak_fp_b": {
-          "import": 1678842360,
-          "index": 171672512,
+          "import": 1571953072,
+          "index": 169935784,
           "query": 2474344
         },
         "path_records": [
@@ -1294,6 +1946,3221 @@
       }
     },
     {
+      "label": "r6400_dbus_daemon",
+      "vendor": "Netgear",
+      "device": "R6400v2",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/RV6400_v2/_R6400v2-V1.0.4.84_10.0.58.chk.extracted/squashfs-root/usr/bin/dbus-daemon",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 310384,
+        "import_bytes": 29403111,
+        "index_bytes": 6045788,
+        "summaries": 6039,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 25.9,
+          "index": 15.2,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1865898728,
+          "index": 1943488504,
+          "query": 15532512
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "crash:index",
+        "binary_bytes": 310384,
+        "import_bytes": 169132285,
+        "index_bytes": null,
+        "summaries": null,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 25.9,
+          "index": 15.2
+        },
+        "peak_fp_b": {
+          "import": 2109985544,
+          "index": 153273328
+        },
+        "path_records": []
+      }
+    },
+    {
+      "label": "r7000_usbheartbeat",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/usbheartbeat",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 9932,
+        "import_bytes": 1149520,
+        "index_bytes": 555385,
+        "summaries": 56,
+        "sarif_paths": 2,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get"
+        ],
+        "labels": [
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 733661680,
+          "index": 13238728,
+          "query": 15122912
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 9932,
+        "import_bytes": 6167866,
+        "index_bytes": 22347776,
+        "summaries": 20,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 785730392,
+          "index": 2507112,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "acosNvramConfig_get->system"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system"
+        ]
+      }
+    },
+    {
+      "label": "r7000_ftpc",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/ftpc",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 13996,
+        "import_bytes": 871341,
+        "index_bytes": 179353,
+        "summaries": 149,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 800606704,
+          "index": 8438216,
+          "query": 14058000
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 13996,
+        "import_bytes": 4953278,
+        "index_bytes": 19398656,
+        "summaries": 92,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 753093080,
+          "index": 2507112,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "r7000_genie_cgi",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 15920,
+        "import_bytes": 1392256,
+        "index_bytes": 399663,
+        "summaries": 112,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.3,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 525175112,
+          "index": 11944416,
+          "query": 13058504
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 15920,
+        "import_bytes": 8471334,
+        "index_bytes": 23920640,
+        "summaries": 63,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.3,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 553011240,
+          "index": 2523496,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "r7000_hotplug2",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/hotplug2",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 18124,
+        "import_bytes": 1872999,
+        "index_bytes": 616813,
+        "summaries": 167,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 673401352,
+          "index": 11682248,
+          "query": 14451168
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 18124,
+        "import_bytes": 10953573,
+        "index_bytes": 26804224,
+        "summaries": 66,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 651806856,
+          "index": 2474344,
+          "query": 2556264
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "r7000_arp_check",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/arp_check",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 18784,
+        "import_bytes": 5047120,
+        "index_bytes": 2072790,
+        "summaries": 198,
+        "sarif_paths": 36,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets",
+          "recv"
+        ],
+        "labels": [
+          "file_input",
+          "network_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 952584856,
+          "index": 13713864,
+          "query": 20283896
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 18784,
+        "import_bytes": 31016146,
+        "index_bytes": 48824320,
+        "summaries": 76,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.3,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 673925568,
+          "index": 2474344,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system",
+          "recv->system"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system",
+          "fgets->system",
+          "recv->system"
+        ]
+      }
+    },
+    {
+      "label": "r7000_bd",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/bd",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 23120,
+        "import_bytes": 2631620,
+        "index_bytes": 639599,
+        "summaries": 117,
+        "sarif_paths": 2,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets"
+        ],
+        "labels": [
+          "file_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 457934816,
+          "index": 13124040,
+          "query": 16990688
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 23120,
+        "import_bytes": 15894928,
+        "index_bytes": 34013184,
+        "summaries": 52,
+        "sarif_paths": 2,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "fgets"
+        ],
+        "labels": [
+          "file_input"
+        ],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 821119256,
+          "index": 2507112,
+          "query": 2474344
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "pair_comparison": {
+        "old": [
+          "fgets->system"
+        ],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system"
+        ],
+        "both": [
+          "fgets->system"
+        ],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system"
+        ]
+      }
+    },
+    {
+      "label": "r7000_checkDullWan",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/checkDullWan",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 25100,
+        "import_bytes": 2632277,
+        "index_bytes": 661616,
+        "summaries": 172,
+        "sarif_paths": 4,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets"
+        ],
+        "labels": [
+          "file_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 931433040,
+          "index": 10043848,
+          "query": 17105376
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 25100,
+        "import_bytes": 14822000,
+        "index_bytes": 33554432,
+        "summaries": 41,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 581568840,
+          "index": 2474344,
+          "query": 2556264
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system",
+          "fgets->system"
+        ]
+      }
+    },
+    {
+      "label": "r7000_bftpd",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/usr/sbin/bftpd",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 52304,
+        "import_bytes": 7879143,
+        "index_bytes": 2309891,
+        "summaries": 1900,
+        "sarif_paths": 2,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets"
+        ],
+        "labels": [
+          "file_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1482332520,
+          "index": 15483336,
+          "query": 17744352
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 52304,
+        "import_bytes": 46950204,
+        "index_bytes": 67371008,
+        "summaries": 146,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 550209912,
+          "index": 2474344,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system",
+          "fgets->system"
+        ]
+      }
+    },
+    {
+      "label": "r7000_circled",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/bin/circled",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 58191,
+        "import_bytes": 5104889,
+        "index_bytes": 1006810,
+        "summaries": 476,
+        "sarif_paths": 23,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "popen",
+          "system"
+        ],
+        "source_funcs": [
+          "fgets"
+        ],
+        "labels": [
+          "file_input"
+        ],
+        "wall_s": {
+          "import": 15.8,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1430001952,
+          "index": 12501448,
+          "query": 18547168
+        },
+        "path_records": [
+          {
+            "sink_func": "popen",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "popen",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 58191,
+        "import_bytes": 29156627,
+        "index_bytes": 48431104,
+        "summaries": 3199,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.6,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1455479096,
+          "index": 2507112,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "fgets->popen",
+          "fgets->system"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "fgets->popen",
+          "fgets->system"
+        ]
+      }
+    },
+    {
+      "label": "r7000_xagent_control",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/xagent/xagent_control",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 82316,
+        "import_bytes": 7932403,
+        "index_bytes": 1643931,
+        "summaries": 1130,
+        "sarif_paths": 2,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "execlp"
+        ],
+        "source_funcs": [
+          "nvram_get"
+        ],
+        "labels": [
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1357156240,
+          "index": 14549448,
+          "query": 14123488
+        },
+        "path_records": [
+          {
+            "sink_func": "execlp",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "execlp",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "crash:index",
+        "binary_bytes": 82316,
+        "import_bytes": 45284786,
+        "index_bytes": null,
+        "summaries": null,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1237504440,
+          "index": 2474344
+        },
+        "path_records": []
+      }
+    },
+    {
+      "label": "r7000_readycloud_control_cgi",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 98804,
+        "import_bytes": 57007871,
+        "index_bytes": 62094215,
+        "summaries": 451,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 21.0,
+          "index": 15.2,
+          "query": 15.2
+        },
+        "peak_fp_b": {
+          "import": 2927845032,
+          "index": 2034452808,
+          "query": 1203537360
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 98804,
+        "import_bytes": 310941281,
+        "index_bytes": 379387904,
+        "summaries": 345,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.9,
+          "index": 40.6,
+          "query": 10.2
+        },
+        "peak_fp_b": {
+          "import": 2731285920,
+          "index": 569165072,
+          "query": 359220256
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "r7000_rc",
+      "vendor": "Netgear",
+      "device": "R7000",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/sbin/rc",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 114916,
+        "import_bytes": 35611051,
+        "index_bytes": 15862030,
+        "summaries": 298,
+        "sarif_paths": 31,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets",
+          "getenv",
+          "nvram_get"
+        ],
+        "labels": [
+          "env_input",
+          "file_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 20.6,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1499011168,
+          "index": 37929464,
+          "query": 24052216
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "nvram_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 114916,
+        "import_bytes": 202864353,
+        "index_bytes": 232914944,
+        "summaries": 157,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.6,
+          "index": 20.3,
+          "query": 10.2
+        },
+        "peak_fp_b": {
+          "import": 1486379440,
+          "index": 214713256,
+          "query": 64061992
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system",
+          "getenv->system",
+          "nvram_get->system"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system",
+          "fgets->system",
+          "getenv->system",
+          "nvram_get->system"
+        ]
+      }
+    },
+    {
+      "label": "xr300_ftpc",
+      "vendor": "Netgear",
+      "device": "XR300",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/ftpc",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 13980,
+        "import_bytes": 874270,
+        "index_bytes": 179880,
+        "summaries": 243,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 849709624,
+          "index": 8323528,
+          "query": 13992464
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 13980,
+        "import_bytes": 4979011,
+        "index_bytes": 19398656,
+        "summaries": 92,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 593168736,
+          "index": 2539880,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "xr300_genie_cgi",
+      "vendor": "Netgear",
+      "device": "XR300",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 14760,
+        "import_bytes": 1390840,
+        "index_bytes": 398716,
+        "summaries": 112,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 614304120,
+          "index": 10600904,
+          "query": 12911048
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 14760,
+        "import_bytes": 8453963,
+        "index_bytes": 23855104,
+        "summaries": 63,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 570722392,
+          "index": 2490728,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "xr300_arp_check",
+      "vendor": "Netgear",
+      "device": "XR300",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/usr/sbin/arp_check",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 18968,
+        "import_bytes": 5070137,
+        "index_bytes": 2077342,
+        "summaries": 198,
+        "sarif_paths": 36,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets",
+          "recv"
+        ],
+        "labels": [
+          "file_input",
+          "network_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 840714832,
+          "index": 15434208,
+          "query": 19841528
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "recv",
+            "labels": [
+              "network_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 18968,
+        "import_bytes": 31129745,
+        "index_bytes": 48955392,
+        "summaries": 76,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.3,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 490784784,
+          "index": 2539880,
+          "query": 2589032
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system",
+          "recv->system"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system",
+          "fgets->system",
+          "recv->system"
+        ]
+      }
+    },
+    {
+      "label": "xr300_dap_daemon",
+      "vendor": "Netgear",
+      "device": "XR300",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/dap_daemon",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 30936,
+        "import_bytes": 2787468,
+        "index_bytes": 886949,
+        "summaries": 310,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 649791840,
+          "index": 10568136,
+          "query": 18596320
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 30936,
+        "import_bytes": 16501668,
+        "index_bytes": 34537472,
+        "summaries": 98,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 705055144,
+          "index": 2507112,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "xr300_funjsq_conntime",
+      "vendor": "Netgear",
+      "device": "XR300",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_conntime",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 95900,
+        "import_bytes": 10628952,
+        "index_bytes": 1937025,
+        "summaries": 614,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1328747440,
+          "index": 17924576,
+          "query": 14828000
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 95900,
+        "import_bytes": 62673021,
+        "index_bytes": 83951616,
+        "summaries": 154,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 10.2,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1375098136,
+          "index": 103694816,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "xr300_acos_service",
+      "vendor": "Netgear",
+      "device": "XR300",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/_XR300-V1.0.3.38_10.3.30.chk.extracted/squashfs-root/sbin/acos_service",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 138732,
+        "import_bytes": 22877585,
+        "index_bytes": 6166323,
+        "summaries": 297,
+        "sarif_paths": 64,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "acosNvramConfig_get",
+          "fgets",
+          "getenv",
+          "main"
+        ],
+        "labels": [
+          "argv_input",
+          "env_input",
+          "file_input",
+          "nvram_input"
+        ],
+        "wall_s": {
+          "import": 15.6,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1535662560,
+          "index": 33374712,
+          "query": 20627960
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "main",
+            "labels": [
+              "argv_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "acosNvramConfig_get",
+            "labels": [
+              "nvram_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "getenv",
+            "labels": [
+              "env_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 138732,
+        "import_bytes": 127236566,
+        "index_bytes": 156237824,
+        "summaries": 117,
+        "sarif_paths": 2,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "system"
+        ],
+        "source_funcs": [
+          "fgets"
+        ],
+        "labels": [
+          "file_input"
+        ],
+        "wall_s": {
+          "import": 15.6,
+          "index": 15.2,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1695570424,
+          "index": 162202560,
+          "query": 2474344
+        },
+        "path_records": [
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "system",
+            "source_func": "fgets",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "pair_comparison": {
+        "old": [
+          "fgets->system"
+        ],
+        "new": [
+          "acosNvramConfig_get->system",
+          "fgets->system",
+          "getenv->system",
+          "main->system"
+        ],
+        "both": [
+          "fgets->system"
+        ],
+        "old_only": [],
+        "new_only": [
+          "acosNvramConfig_get->system",
+          "getenv->system",
+          "main->system"
+        ]
+      }
+    },
+    {
+      "label": "xr300_funjsq_httpd",
+      "vendor": "Netgear",
+      "device": "XR300",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_httpd",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 166284,
+        "import_bytes": 14072491,
+        "index_bytes": 3428845,
+        "summaries": 1337,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.8,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1312377784,
+          "index": 21725640,
+          "query": 15368672
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 166284,
+        "import_bytes": 80236155,
+        "index_bytes": 105578496,
+        "summaries": 363,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.4,
+          "index": 10.2,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1331825568,
+          "index": 100483912,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "xr300_funjsq_detect",
+      "vendor": "Netgear",
+      "device": "XR300",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_detect",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 293004,
+        "import_bytes": 34368193,
+        "index_bytes": 13714332,
+        "summaries": 53706,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 26.1,
+          "index": 15.2,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 2359008240,
+          "index": 750863440,
+          "query": 6734280
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 293004,
+        "import_bytes": 194406020,
+        "index_bytes": 233963520,
+        "summaries": 419,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 26.0,
+          "index": 20.3,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 2704022896,
+          "index": 260522968,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "xr300_dap_logd",
+      "vendor": "Netgear",
+      "device": "XR300",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/etc/dap.zip.extracted/0/dap_data/dap_logd",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 429688,
+        "import_bytes": 36487363,
+        "index_bytes": 9320611,
+        "summaries": 1541,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 31.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1406704024,
+          "index": 40387040,
+          "query": 18973128
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 429688,
+        "import_bytes": 200586760,
+        "index_bytes": 247463936,
+        "summaries": 700,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 31.4,
+          "index": 20.3,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1878448848,
+          "index": 278512696,
+          "query": 2556264
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "ac15_logserver",
+      "vendor": "Tenda",
+      "device": "AC15",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/logserver",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 9856,
+        "import_bytes": 505905,
+        "index_bytes": 116749,
+        "summaries": 191,
+        "sarif_paths": 0,
+        "no_endpoints": true,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 796232176,
+          "index": 6898120,
+          "query": 9159160
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 9856,
+        "import_bytes": 2945142,
+        "index_bytes": 17170432,
+        "summaries": 39,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 660425104,
+          "index": 2507112,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "ac15_inadyn",
+      "vendor": "Tenda",
+      "device": "AC15",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/inadyn",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 27596,
+        "import_bytes": 2273132,
+        "index_bytes": 814709,
+        "summaries": 168,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 632785320,
+          "index": 9814472,
+          "query": 17449440
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "crash:index",
+        "binary_bytes": 27596,
+        "import_bytes": 13298141,
+        "index_bytes": null,
+        "summaries": null,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1
+        },
+        "peak_fp_b": {
+          "import": 569149480,
+          "index": 2507112
+        },
+        "path_records": []
+      }
+    },
+    {
+      "label": "ac15_acsd",
+      "vendor": "Tenda",
+      "device": "AC15",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/usr/sbin/acsd",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 39364,
+        "import_bytes": 3069929,
+        "index_bytes": 678328,
+        "summaries": 530,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 758909448,
+          "index": 9159112,
+          "query": 16548320
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 39364,
+        "import_bytes": 17393814,
+        "index_bytes": 35782656,
+        "summaries": 141,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 521504808,
+          "index": 2474344,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "ac15_app_data_center",
+      "vendor": "Tenda",
+      "device": "AC15",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/usr/bin/app_data_center",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 83984,
+        "import_bytes": 7929306,
+        "index_bytes": 2392073,
+        "summaries": 4766,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1336463584,
+          "index": 15385032,
+          "query": 18465248
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 83984,
+        "import_bytes": 44733651,
+        "index_bytes": 66912256,
+        "summaries": 439,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 986107192,
+          "index": 2474344,
+          "query": 2490728
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "ac15_business_proc",
+      "vendor": "Tenda",
+      "device": "AC15",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC15/_US_AC15V1.0BR_V15.03.05.19_multi_TD01.bin.extracted/squashfs-root/bin/business_proc",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 176084,
+        "import_bytes": 15285311,
+        "index_bytes": 2942093,
+        "summaries": 537,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.8,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1487558872,
+          "index": 22348256,
+          "query": 13631944
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 176084,
+        "import_bytes": 90384620,
+        "index_bytes": 113311744,
+        "summaries": 234,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.8,
+          "index": 10.2,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1431804144,
+          "index": 101204856,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
       "label": "ac15_netctrl",
       "vendor": "Tenda",
       "device": "AC15",
@@ -1302,10 +5169,11 @@
       "rs": {
         "status": "ok",
         "binary_bytes": 318012,
-        "import_bytes": 32551638,
-        "index_bytes": 7365985,
+        "import_bytes": 32513129,
+        "index_bytes": 7363375,
         "summaries": 3790,
         "sarif_paths": 2,
+        "no_endpoints": false,
         "sink_funcs": [
           "doSystemCmd"
         ],
@@ -1321,9 +5189,9 @@
           "query": 5.1
         },
         "peak_fp_b": {
-          "import": 2467601560,
-          "index": 38650336,
-          "query": 17662432
+          "import": 2055986496,
+          "index": 39338464,
+          "query": 17727968
         },
         "path_records": [
           {
@@ -1345,21 +5213,22 @@
       "souffle": {
         "status": "ok",
         "binary_bytes": 318012,
-        "import_bytes": 190706158,
+        "import_bytes": 190706701,
         "index_bytes": 227475456,
         "summaries": 409,
         "sarif_paths": 0,
+        "no_endpoints": false,
         "sink_funcs": [],
         "source_funcs": [],
         "labels": [],
         "wall_s": {
-          "import": 20.8,
+          "import": 26.1,
           "index": 20.3,
           "query": 5.1
         },
         "peak_fp_b": {
-          "import": 1732186912,
-          "index": 254510016,
+          "import": 1733956024,
+          "index": 261211120,
           "query": 2474344
         },
         "path_records": []
@@ -1373,6 +5242,468 @@
         "old_only": [],
         "new_only": [
           "fgets->doSystemCmd"
+        ]
+      }
+    },
+    {
+      "label": "ac18_business_proc",
+      "vendor": "Tenda",
+      "device": "AC18",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/business_proc",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 176084,
+        "import_bytes": 15281239,
+        "index_bytes": 2940364,
+        "summaries": 537,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.7,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1435048152,
+          "index": 22413792,
+          "query": 13795808
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 176084,
+        "import_bytes": 90384446,
+        "index_bytes": 113180672,
+        "summaries": 234,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.8,
+          "index": 10.2,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1450039560,
+          "index": 102941536,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "ac18_dhttpd",
+      "vendor": "Tenda",
+      "device": "AC18",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/AC18/_ac18_kf_V15.03.05.19(6318_)_cn.bin.extracted/squashfs-root/bin/dhttpd",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 212948,
+        "import_bytes": 16578856,
+        "index_bytes": 3278782,
+        "summaries": 13151,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.8,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 2109266688,
+          "index": 24084960,
+          "query": 14287328
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 212948,
+        "import_bytes": 93724758,
+        "index_bytes": 122683392,
+        "summaries": 523,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.8,
+          "index": 10.2,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 2112428848,
+          "index": 177619856,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "w20e_logserver",
+      "vendor": "Tenda",
+      "device": "W20E",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/logserver",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 14120,
+        "import_bytes": 694949,
+        "index_bytes": 164359,
+        "summaries": 256,
+        "sarif_paths": 0,
+        "no_endpoints": true,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 500697392,
+          "index": 8225224,
+          "query": 12927504
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 14120,
+        "import_bytes": 3985173,
+        "index_bytes": 18087936,
+        "summaries": 44,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 499157008,
+          "index": 2507112,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "w20e_ucloud_ctl",
+      "vendor": "Tenda",
+      "device": "W20E",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/ucloud_ctl",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 18731,
+        "import_bytes": 624803,
+        "index_bytes": 112602,
+        "summaries": 102,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 628853136,
+          "index": 8061384,
+          "query": 10600976
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 18731,
+        "import_bytes": 3855741,
+        "index_bytes": 17563648,
+        "summaries": 45,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 10.2,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 402868144,
+          "index": 2474344,
+          "query": 2507112
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "w20e_portal",
+      "vendor": "Tenda",
+      "device": "W20E",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/portal",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 51648,
+        "import_bytes": 4064769,
+        "index_bytes": 847427,
+        "summaries": 268,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.5,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1010898896,
+          "index": 11272648,
+          "query": 15876576
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 51648,
+        "import_bytes": 23719118,
+        "index_bytes": 41549824,
+        "summaries": 83,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.3,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 802506960,
+          "index": 2474344,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "w20e_dhcpcd",
+      "vendor": "Tenda",
+      "device": "W20E",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/dhcpcd",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 86200,
+        "import_bytes": 13408691,
+        "index_bytes": 3391252,
+        "summaries": 3903,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.6,
+          "index": 5.1,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1398872208,
+          "index": 23216584,
+          "query": 17744352
+        },
+        "path_records": []
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 86200,
+        "import_bytes": 78431663,
+        "index_bytes": 100794368,
+        "summaries": 107,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 15.6,
+          "index": 10.2,
+          "query": 5.1
+        },
+        "peak_fp_b": {
+          "import": 1414584416,
+          "index": 94077768,
+          "query": 2474344
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [],
+        "both": [],
+        "old_only": [],
+        "new_only": []
+      }
+    },
+    {
+      "label": "w20e_dhcps",
+      "vendor": "Tenda",
+      "device": "W20E",
+      "arch": "ARM",
+      "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/Tenda/W20E/_US_W20EV4.0br_V15.11.0.6(1068_1546_841)_CN_TDC.bin.extracted/squashfs-root/bin/dhcps",
+      "rs": {
+        "status": "ok",
+        "binary_bytes": 174984,
+        "import_bytes": 39002553,
+        "index_bytes": 18873756,
+        "summaries": 37636,
+        "sarif_paths": 4,
+        "no_endpoints": false,
+        "sink_funcs": [
+          "execl",
+          "popen"
+        ],
+        "source_funcs": [
+          "read"
+        ],
+        "labels": [
+          "file_input"
+        ],
+        "wall_s": {
+          "import": 20.7,
+          "index": 20.3,
+          "query": 10.1
+        },
+        "peak_fp_b": {
+          "import": 1655282216,
+          "index": 1053967848,
+          "query": 1351648864
+        },
+        "path_records": [
+          {
+            "sink_func": "execl",
+            "source_func": "read",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "execl",
+            "source_func": "read",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "popen",
+            "source_func": "read",
+            "labels": [
+              "file_input"
+            ]
+          },
+          {
+            "sink_func": "execl",
+            "source_func": "read",
+            "labels": [
+              "file_input"
+            ]
+          }
+        ]
+      },
+      "souffle": {
+        "status": "ok",
+        "binary_bytes": 174984,
+        "import_bytes": 220803934,
+        "index_bytes": 305987584,
+        "summaries": 379,
+        "sarif_paths": 0,
+        "no_endpoints": false,
+        "sink_funcs": [],
+        "source_funcs": [],
+        "labels": [],
+        "wall_s": {
+          "import": 20.8,
+          "index": 25.4,
+          "query": 10.2
+        },
+        "peak_fp_b": {
+          "import": 1876269896,
+          "index": 412992592,
+          "query": 428754000
+        },
+        "path_records": []
+      },
+      "pair_comparison": {
+        "old": [],
+        "new": [
+          "read->execl",
+          "read->popen"
+        ],
+        "both": [],
+        "old_only": [],
+        "new_only": [
+          "read->execl",
+          "read->popen"
         ]
       }
     }
@@ -1408,5 +5739,122 @@
       "souffle_paths": 0,
       "rs_paths": 3
     }
-  ]
+  ],
+  "summary": {
+    "binaries_in_corpus": 50,
+    "binaries_both_engines_ok": 47,
+    "incomplete": [
+      {
+        "label": "r6400_dbus_daemon",
+        "rs": "ok",
+        "souffle": "crash:index"
+      },
+      {
+        "label": "r7000_xagent_control",
+        "rs": "ok",
+        "souffle": "crash:index"
+      },
+      {
+        "label": "ac15_inadyn",
+        "rs": "ok",
+        "souffle": "crash:index"
+      }
+    ],
+    "failures": {
+      "souffle": [
+        "ac15_inadyn: crash:index",
+        "r6400_dbus_daemon: crash:index",
+        "r7000_xagent_control: crash:index"
+      ],
+      "rs": []
+    },
+    "totals": {
+      "souffle": {
+        "import_bytes": 3255300110,
+        "index_bytes": 4395630592,
+        "summaries": 11063,
+        "sarif_paths": 10,
+        "wall_s": 1435.8
+      },
+      "rs": {
+        "import_bytes": 570332658,
+        "index_bytes": 262210713,
+        "summaries": 146952,
+        "sarif_paths": 330,
+        "wall_s": 1263.3
+      }
+    },
+    "ratios": {
+      "import_old_over_new": {
+        "n": 47,
+        "min": 5.365601294453337,
+        "q1": 5.663568615999582,
+        "median": 5.849315417888294,
+        "q3": 6.050190336649873,
+        "max": 6.97822976728343
+      },
+      "index_old_over_new": {
+        "n": 47,
+        "min": 6.109875195297984,
+        "q1": 28.549565508574467,
+        "median": 40.23834997344185,
+        "q3": 55.812174243254546,
+        "max": 258.32203080294636
+      },
+      "summaries_new_over_old": {
+        "n": 47,
+        "min": 0.1487964989059081,
+        "q1": 2.220432595573441,
+        "median": 2.641304347826087,
+        "q3": 5.357808857808858,
+        "max": 128.17661097852027
+      },
+      "paths_wins": {
+        "new_more": 15,
+        "old_more": 0,
+        "tied": 32,
+        "tied_at_zero": 30
+      }
+    },
+    "paths": {
+      "souffle": {
+        "binaries_with_a_path": 5,
+        "binaries_with_no_endpoint": 0,
+        "sinks_reached": [
+          "system"
+        ],
+        "sources_used": [
+          "fgets"
+        ]
+      },
+      "rs": {
+        "binaries_with_a_path": 17,
+        "binaries_with_no_endpoint": 2,
+        "sinks_reached": [
+          "doSystemCmd",
+          "execl",
+          "popen",
+          "system"
+        ],
+        "sources_used": [
+          "acosNvramConfig_get",
+          "fgets",
+          "getenv",
+          "main",
+          "nvram_get",
+          "read",
+          "recv"
+        ]
+      }
+    },
+    "containment": {
+      "pairs_old_total": 5,
+      "pairs_new_total": 42,
+      "pairs_both_total": 5,
+      "pairs_old_only_total": 0,
+      "pairs_new_only_total": 37,
+      "binaries_with_an_old_only_pair": 0,
+      "old_only_pairs": []
+    }
+  }
 }

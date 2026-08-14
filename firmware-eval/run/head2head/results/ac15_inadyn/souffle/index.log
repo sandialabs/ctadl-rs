@@ -1,0 +1,14 @@
+index written to '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/ac15_inadyn/souffle/import/ctadlir.db'
+** internal error: Variable move neither function or global: thunk_FUN_0000ad10@0000b3f4:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0000ad38@0000b3fc:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0000acf0@0000b3f0:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0000ad80@0000a910:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0000ad24@0000a904:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0000ad24@0000b3f8:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0000ad38@0000a908:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0000ad10@0000a900:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0000acf0@0000a8fc:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0000b344@0000a870:@ret
+** internal error: Variable move neither function or global: thunk_FUN_0000ad80@0000b404:@ret
+** found 11 errors
+** Please file a Github issue (https://github.com/sandialabs/ctadl/issues)

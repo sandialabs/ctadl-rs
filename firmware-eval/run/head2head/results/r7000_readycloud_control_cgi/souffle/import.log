@@ -1,0 +1,147 @@
+ctadl_ghidra_fact_generator_plugin 0.1.0
+exporting program with Ghidra to '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_readycloud_control_cgi/souffle/import'
+openjdk version "21.0.8" 2025-07-15 LTS
+OpenJDK Runtime Environment Zulu21.44+17-CA (build 21.0.8+9-LTS)
+OpenJDK 64-Bit Server VM Zulu21.44+17-CA (build 21.0.8+9-LTS, mixed mode)
+INFO  Using log config file: jar:file:/nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /Users/dbueno/.config/ghidra/ghidra_12.0.4_NIX/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /Users/dbueno/.config/ghidra/ghidra_12.0.4_NIX/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (717 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (1307 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 58 extension points (18 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/FunctionID/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/Base/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/BytePatterns/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/PIC/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/JVM/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/Atmel/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/PyGhidra/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/VersionTracking/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/BSim/ghidra_scripts
+    /nix/store/wv3h872qsfbfsjnsnmpjrhswwcxb6ga1-python3.13-ctadl-0.14.1/lib/python3.13/site-packages/ctadl/souffle-logic/pcode
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/Decompiler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Debug/Debugger/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/FileFormats/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/Jython/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/PDB/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/DATA/ghidra_scripts
+    /nix/store/w9g7nhxrl27cxvpcslljji77fcv5nbfh-ghidra-12.0.4/lib/ghidra/Ghidra/Processors/8051/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Creating temporary project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-_9ld6mui/ghidra_headless/headless (HeadlessAnalyzer)  
+INFO  Creating project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-_9ld6mui/ghidra_headless/headless (DefaultProject)  
+INFO  REPORT: Processing input files:  (HeadlessAnalyzer)  
+INFO       project: /var/folders/l0/r36c9c4s5xn78mh50cv0cf440000gn/T/ctadl-_9ld6mui/ghidra_headless/headless (HeadlessAnalyzer)  
+INFO  IMPORTING: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi (HeadlessAnalyzer)  
+INFO  Using Loader: Executable and Linking Format (ELF) (ProgramLoader)  
+INFO  Using Language/Compiler: ARM:LE:32:v8:default (ProgramLoader)  
+INFO  Using Library Search Path: [., /System/Library/dyld/dyld_shared_cache_arm64e, /System/Library/dyld/dyld_shared_cache_x86_64, /System/Library/dyld/dyld_shared_cache_x86_64h, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64h, /Users/dbueno/Library/Java/Extensions, /Library/Java/Extensions, /Network/Library/Java/Extensions, /System/Library/Java/Extensions, /usr/lib/java] (ProgramLoader)  
+INFO  Additional info:
+Loading file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi?MD5=9540ad4a14fc2f22ffe3e82f79770cdc...
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027c30 (Symbol = _ZN3Log31initialize_additional_log_sinksE) - Runtime copy not supported (1-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027c38 (Symbol = _ZTVSt9basic_iosIcSt11char_traitsIcEE) - Runtime copy not supported (16-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027c48 (Symbol = _ZNSs4_Rep20_S_empty_rep_storageE) - Runtime copy not supported (16-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027c58 (Symbol = _ZTTSt19basic_istringstreamIcSt11char_traitsIcESaIcEE) - Runtime copy not supported (16-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027c68 (Symbol = _ZTVSt15basic_streambufIcSt11char_traitsIcEE) - Runtime copy not supported (64-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027ca8 (Symbol = _ZTVN10__cxxabiv117__class_type_infoE) - Runtime copy not supported (44-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027cd4 (Symbol = _ZN3Log16log_file_patternE) - Runtime copy not supported (4-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027cd8 (Symbol = _ZTVN10__cxxabiv119__pointer_type_infoE) - Runtime copy not supported (36-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027d00 (Symbol = _ZTVSt19basic_istringstreamIcSt11char_traitsIcESaIcEE) - Runtime copy not supported (40-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027d28 (Symbol = _ZSt4cout) - Runtime copy not supported (140-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027db8 (Symbol = _ZTVN10__cxxabiv120__si_class_type_infoE) - Runtime copy not supported (44-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027de8 (Symbol = _ZTVSt15basic_stringbufIcSt11char_traitsIcESaIcEE) - Runtime copy not supported (64-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027e28 (Symbol = _ZTVN10__cxxabiv120__function_type_infoE) - Runtime copy not supported (32-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027e48 (Symbol = _ZTVSt13runtime_error) - Runtime copy not supported (20-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027e60 (Symbol = _ZTVN10__cxxabiv121__vmi_class_type_infoE) - Runtime copy not supported (44-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027e90 (Symbol = _ZSt3cin) - Runtime copy not supported (144-bytes)
+ELF Relocation Failure: R_ARM_COPY (20, 0x14) at 00027f20 (Symbol = _ZTISt13runtime_error) - Runtime copy not supported (12-bytes)
+------------------------------------------------
+
+Linking the External Programs of 'readycloud_control.cgi' to imported libraries...
+  [libpthread.so.0] -> not found in project
+  [libdl.so.0] -> not found in project
+  [libssl.so.1.0.0] -> not found in project
+  [libcrypto.so.1.0.0] -> not found in project
+  [libcurl.so.4] -> not found in project
+  [librt.so.0] -> not found in project
+  [libreadycloud.so] -> not found in project
+  [libnvram.so] -> not found in project
+  [libstdc++.so.6] -> not found in project
+  [libm.so.0] -> not found in project
+  [libgcc_s.so.1] -> not found in project
+  [libc.so.0] -> not found in project
+------------------------------------------------
+
+Resolving External Symbols of [/readycloud_control.cgi] - 110 unresolved symbols, no external libraries configured - skipping
+ (ProgramLoader)  
+INFO  IMPORTING: Loaded 0 additional files (HeadlessAnalyzer)  
+INFO  ANALYZING all memory and code: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi (HeadlessAnalyzer)  
+INFO  hit non-returning function, restarting decompiler switch analyzer later (DecompilerSwitchAnalyzer)  
+INFO  Packed database cache: /Users/dbueno/.cache/ghidra/packed-db-cache (PackedDatabaseCache)  
+INFO  Applied data type archive: generic_clib (ApplyDataArchiveAnalyzer)  
+INFO  -----------------------------------------------------
+    ARM Constant Reference Analyzer            0.595 secs
+    ARM Symbol                                 0.000 secs
+    ASCII Strings                              0.144 secs
+    Apply Data Archives                        0.225 secs
+    Call Convention ID                         2.570 secs
+    Call-Fixup Installer                       0.012 secs
+    Create Address Tables                      0.019 secs
+    Create Address Tables - One Time           0.006 secs
+    Create Function                            0.025 secs
+    Data Reference                             0.032 secs
+    Decompiler Switch Analysis                 0.356 secs
+    Decompiler Switch Analysis - One Time      0.000 secs
+    Demangler GNU                              0.166 secs
+    Disassemble                                0.024 secs
+    Disassemble Entry Points                   0.072 secs
+    Embedded Media                             0.006 secs
+    External Entry References                  0.002 secs
+    Function ID                                0.019 secs
+    Function Start Pre Search                  0.006 secs
+    Function Start Search                      0.143 secs
+    Function Start Search After Code           0.039 secs
+    Function Start Search After Data           0.028 secs
+    Function Start Search delayed - One Time   0.000 secs
+    GCC Exception Handlers                     0.486 secs
+    Non-Returning Functions - Discovered       0.092 secs
+    Non-Returning Functions - Known            0.002 secs
+    Reference                                  0.030 secs
+    Shared Return Calls                        0.019 secs
+    Stack                                      0.499 secs
+    Subroutine References                      0.018 secs
+    Subroutine References - One Time           0.001 secs
+-----------------------------------------------------
+     Total Time   5 secs
+-----------------------------------------------------
+ (AutoAnalysisManager)  
+INFO  REPORT: Analysis succeeded for file: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: ExportPcode.java '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_readycloud_control_cgi/souffle/import/facts'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /nix/store/wv3h872qsfbfsjnsnmpjrhswwcxb6ga1-python3.13-ctadl-0.14.1/lib/python3.13/site-packages/ctadl/souffle-logic/pcode/ExportPcode.java (HeadlessAnalyzer)  
+INFO  ExportPcode.java> Script is not running in GUI (GhidraScript)  
+WARN  Decompiling 0000cdf8, pcode error at 0000d36c: Unable to resolve constructor at 0000d36c (DecompileCallback)  
+WARN  Decompiling 00028000, pcode error at 00028000: Unable to disassemble EXTERNAL block location: 00028000 (DecompileCallback)  
+WARN  Decompiling 00028014, pcode error at 00028014: Unable to disassemble EXTERNAL block location: 00028014 (DecompileCallback)  
+WARN  Decompiling 00028008, pcode error at 00028008: Unable to disassemble EXTERNAL block location: 00028008 (DecompileCallback)  
+WARN  Decompiling 00028010, pcode error at 00028010: Unable to disassemble EXTERNAL block location: 00028010 (DecompileCallback)  
+WARN  Decompiling 0002800c, pcode error at 0002800c: Unable to disassemble EXTERNAL block location: 0002800c (DecompileCallback)  
+INFO  ExportPcode.java> total duration: 6502 (GhidraScript)  
+INFO  ANALYZING changes made by post scripts: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi (HeadlessAnalyzer)  
+INFO  REPORT: Post-analysis succeeded for file: file:///Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi (HeadlessAnalyzer)  
+INFO  /readycloud_control.cgi: file created (dbueno) (LocalFileSystem)  
+INFO  REPORT: Save succeeded for: /readycloud_control.cgi (headless:/readycloud_control.cgi) (HeadlessAnalyzer)  
+INFO  REPORT: Import succeeded (HeadlessAnalyzer)  
+SUT imported to '/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_readycloud_control_cgi/souffle/import'
+>> hint: index with 'ctadl --directory /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r7000_readycloud_control_cgi/souffle/import index'

@@ -1,0 +1,5 @@
+importing pcode artifact 'xr300_funjsq_httpd' from /Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/XR300/binwalk_extracted/XR300-V1.0.3.38_10.3.30.chk.extracted/3A/partition_1.bin.extracted/0/squashfs-root/usr/funjsq_plugin_netgear.tar.gz.extracted/0/decompressed.bin.extracted/0/tmp/funjsq/bin/funjsq_httpd
+running Ghidra to disassemble; console output -> /Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/xr300_funjsq_httpd/rs/store/imports/xr300_funjsq_httpd/ghidra.log
+warning: Unsupported pcode mnemonic: CALLOTHER
+warning: Unsupported pcode mnemonic: LZCOUNT
+'xr300_funjsq_httpd': imported 661 function(s)

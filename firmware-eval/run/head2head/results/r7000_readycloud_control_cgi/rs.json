@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "r7000_readycloud_control_cgi",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/opt/broken/readycloud_control.cgi",
+  "binary_bytes": 98804,
+  "status": "ok",
+  "total_wall_s": 52.1,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 21.0,
+      "peak_fp_b": 2927845032
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 15.2,
+      "peak_fp_b": 2034452808
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 15.2,
+      "peak_fp_b": 1203537360
+    }
+  },
+  "import_bytes": 57007871,
+  "index_bytes": 62094215,
+  "summaries": 451,
+  "sarif_paths": 0
+}

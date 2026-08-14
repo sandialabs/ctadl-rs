@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "dir878_dlcfg_cgi",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/etc_ro/lighttpd/www/web/HNAP1/dlcfg.cgi",
+  "binary_bytes": 9328,
+  "status": "ok",
+  "total_wall_s": 22.9,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.2,
+      "peak_fp_b": 681658816
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 6488520
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 9355792
+    }
+  },
+  "import_bytes": 388919,
+  "index_bytes": 65708,
+  "summaries": 20,
+  "sarif_paths": 0
+}

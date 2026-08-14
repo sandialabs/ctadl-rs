@@ -1,0 +1,32 @@
+{
+  "engine": "souffle",
+  "label": "dir878_easyroaming",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/D-Link/D-Link 878/_DIR_878_FW120B05_decode.BIN.extracted/cpio-root/usr/sbin/easyroaming",
+  "binary_bytes": 264802,
+  "status": "ok",
+  "total_wall_s": 30.9,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 20.7,
+      "peak_fp_b": 1361253872
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2507112
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 2474344
+    }
+  },
+  "import_bytes": 68659811,
+  "index_bytes": 87818240,
+  "summaries": 450,
+  "sarif_paths": 0
+}

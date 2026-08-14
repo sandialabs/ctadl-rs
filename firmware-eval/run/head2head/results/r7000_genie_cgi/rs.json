@@ -1,0 +1,32 @@
+{
+  "engine": "rs",
+  "label": "r7000_genie_cgi",
+  "binary": "/Users/dbueno/proj/operation-mango-public/firmware/7_firmware/NetGear/R7000/_R7000-V1.0.11.100_10.2.100.chk.extracted/squashfs-root/www/cgi-bin/genie.cgi",
+  "binary_bytes": 15920,
+  "status": "ok",
+  "total_wall_s": 21.2,
+  "phases": {
+    "import": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 10.3,
+      "peak_fp_b": 525175112
+    },
+    "index": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 11944416
+    },
+    "query": {
+      "status": "ok",
+      "exit_code": 0,
+      "wall_s": 5.1,
+      "peak_fp_b": 13058504
+    }
+  },
+  "import_bytes": 1392256,
+  "index_bytes": 399663,
+  "summaries": 112,
+  "sarif_paths": 0
+}

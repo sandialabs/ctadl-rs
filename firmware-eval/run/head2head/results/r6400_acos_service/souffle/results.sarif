@@ -108,10 +108,10 @@
               "CTADL_ENABLE_CHA": "0",
               "CTADL_ENABLE_CONTEXT_FREE_OBJECT_TRACKING": "0",
               "CTADL_Import_Path": "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/results/r6400_acos_service/souffle/import/facts",
-              "CTADL_Index_Timestamp": "2026-08-13T17:41:47.417554",
+              "CTADL_Index_Timestamp": "2026-08-13T22:33:25.226893",
               "CTADL_Index_Models": "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-index.souffle.json",
               "CTADL_Query": "/Users/dbueno/proj/ct-head-to-head-firmware/firmware-eval/run/head2head/models/shared-query.souffle.json",
-              "CTADL_Query_Timestamp": "2026-08-13T17:41:54.340024"
+              "CTADL_Query_Timestamp": "2026-08-13T22:33:32.371405"
             },
             "stats": {
               "CInsn_InFunction": 59521,
