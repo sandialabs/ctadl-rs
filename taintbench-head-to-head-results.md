@@ -167,10 +167,16 @@ hide its negatives behind, so the rule's benefit is not distributed evenly.
 
 Both precision figures are over TaintBench's *labelled* set only — 191 positives
 and 45 negatives. A reported path whose callee pair matches no finding at all is
-neither credited nor charged, because TaintBench says nothing about it, and each
-engine reports many such paths. So these are not precision over everything the
-engines print; they are the precision TaintBench's labels can measure, which is
-the most either engine can be held to here.
+neither credited nor charged, because TaintBench says nothing about it. Ascent
+reports 74 distinct callee pairs across the 38 apps: 59 carry a positive, 5 carry
+only a negative, and **10 match no finding at all**, spread over seven apps
+(`cajino_baidu` has four, including `Cursor.getString → BaiduBCS.putObject`,
+which looks like a real flow TaintBench simply did not label). Those ten are
+unknowns, not false positives — the benchmark's ground truth is not claimed to be
+exhaustive. The same count is not available for Souffle, whose per-app log this
+repo does not hold. So these are not precision over everything the engines print;
+they are the precision TaintBench's labels can measure, which is the most either
+engine can be held to here.
 
 Per app, with the shadowed subset in parentheses:
 
@@ -261,15 +267,37 @@ nix build .#checks.aarch64-darwin.taintbench -L   # full pinned run
 nix build .#checks.x86_64-linux.taintbench -L     # CI
 ```
 
-The negative recount above needs no run of its own. It is a function of the
-committed `findings.json` and `expected.json`: a callee pair is reported iff some
-finding carrying it is in `matched_finding_ids` (positive) or
+### Where the raw data is
+
+The run's own output is committed as
+[`taintbench-run-8baae049.log`](taintbench-run-8baae049.log): per app, the
+reported taint sources, the taint sinks reached, every connected source→sink
+callee pair, and one line per ground-truth finding with its `source:`/`sink:`/
+`path:` hits and verdict (`MATCH`, `FALSE-POSITIVE`,
+`MATCH(shadowed-by-positive)`, `-`). Every number in this document comes from
+that file.
+
+It is a verbatim copy of the Nix build log, under a provenance header:
+
+```sh
+nix log /nix/store/fph9wrl5y8v6nbqi75yih0gib37iqfwz-ctadl-checks-taintbench
+```
+
+The check's `$out` is an empty directory, so the log was the run's only record
+and would have gone with the next store GC. Anything rerunning the suite should
+commit its log the same way.
+
+Both counts can also be rebuilt from the committed `findings.json` and
+`expected.json` alone, without a run: a callee pair is reported iff some finding
+carrying it is in `matched_finding_ids` (positive) or
 `false_positive_finding_ids` (negative), and a negative is a false positive iff
 its pair is reported. Recomputing `false_positive_finding_ids` from that
 definition reproduces every committed list in both repos exactly, in all 38 apps,
-which is what makes the reconstruction sound. The `findings.json` are
-byte-identical between the two repos, so the same recount applies to Souffle's
-baseline unchanged.
+and the reconstruction agrees with the build log finding-for-finding. The
+`findings.json` are byte-identical between the two repos, which is what lets the
+same recount stand in for Souffle, whose per-app run output this repo does not
+hold — its side rests on the baselines and on
+`../ctadl-souffle-taintbench/taintbench-summary.md`.
 
 For one app, with `ctadl` on `PATH`:
 
