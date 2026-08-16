@@ -1,0 +1,760 @@
+# TaintBench suite output, ascent CTADL, commit 8baae049, run 2026-08-14.
+#
+# Verbatim stdout of the pinned Nix check (the leading daemon line from
+# `nix log` removed, nothing else changed):
+#
+#     nix build .#checks.aarch64-darwin.taintbench -L
+#     nix log /nix/store/fph9wrl5y8v6nbqi75yih0gib37iqfwz-ctadl-checks-taintbench
+#
+# The derivation's $out is an empty directory, so this log was the run's only
+# record; it is committed here because it is the raw data behind
+# taintbench-head-to-head-results.md and taintbench-false-positives.md.
+#
+# Per app: reported taint sources, taint sinks reached by taint, every connected
+# source->sink callee pair, then one line per ground-truth finding --
+# `pos`/`NEG` (TaintBench's isNegative), its source and sink call sites, whether
+# each endpoint was recognized, whether a connected path joins them, and the
+# verdict: MATCH, FALSE-POSITIVE, MATCH(shadowed-by-positive), or `-`.
+
+== backflash ==
+  reported taint sources:
+    android.content.Context.openFileInput
+    android.content.Intent.getStringExtra
+    android.telephony.TelephonyManager.getSimCountryIso
+  reported taint sinks (reached by taint):
+    java.io.DataOutputStream.write
+    java.io.OutputStreamWriter.write
+    java.net.HttpURLConnection.getOutputStream
+  connected source->sink paths:
+    android.content.Context.openFileInput  ==>  java.io.OutputStreamWriter.write
+    android.content.Intent.getStringExtra  ==>  java.io.OutputStreamWriter.write
+    android.telephony.TelephonyManager.getSimCountryIso  ==>  java.io.OutputStreamWriter.write
+  findings:
+    #1  pos [com.adobe.flashplayer_.AdobeFlashCore:59 android.telephony.TelephonyManager.getSimCountryIso -> com.adobe.flashplayer_.AdobeFlashCore:168 java.io.OutputStreamWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [com.adobe.flashplayer_.FlashW:64 android.content.Context.openFileInput -> com.adobe.flashplayer_.FlashVirtual:48 java.net.HttpURLConnection.getOutputStream]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [com.adobe.flashplayer_.FlashY:28 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:58 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:no  => -
+    #4  pos [com.adobe.flashplayer_.FlashY:28 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:48 java.net.HttpURLConnection.getOutputStream]  source:HIT  sink:HIT  path:no  => -
+    #5  pos [com.adobe.flashplayer_.FlashZ:57 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashZ:148 java.io.OutputStreamWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #6  pos [com.adobe.flashplayer_.FlashZ:86 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashZ:148 java.io.OutputStreamWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #7  pos [com.adobe.flashplayer_.FlashZ:115 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashZ:148 java.io.OutputStreamWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #8  pos [com.adobe.flashplayer_.FlashZ:137 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashZ:148 java.io.OutputStreamWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #9  NEG [com.adobe.flashplayer_.FlashZ:71 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashZ:148 java.io.OutputStreamWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH(shadowed-by-positive)
+    #10 NEG [com.adobe.flashplayer_.FlashZ:101 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashZ:148 java.io.OutputStreamWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH(shadowed-by-positive)
+    #11 NEG [com.adobe.flashplayer_.FlashZ:57 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:48 java.net.HttpURLConnection.getOutputStream]  source:HIT  sink:HIT  path:no  => -
+    #12 NEG [com.adobe.flashplayer_.FlashZ:86 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:48 java.net.HttpURLConnection.getOutputStream]  source:HIT  sink:HIT  path:no  => -
+    #13 NEG [com.adobe.flashplayer_.FlashZ:115 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:48 java.net.HttpURLConnection.getOutputStream]  source:HIT  sink:HIT  path:no  => -
+    #14 NEG [com.adobe.flashplayer_.FlashZ:137 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:48 java.net.HttpURLConnection.getOutputStream]  source:HIT  sink:HIT  path:no  => -
+    #15 NEG [com.adobe.flashplayer_.FlashZ:71 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:48 java.net.HttpURLConnection.getOutputStream]  source:HIT  sink:HIT  path:no  => -
+    #16 NEG [com.adobe.flashplayer_.FlashZ:101 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:48 java.net.HttpURLConnection.getOutputStream]  source:HIT  sink:HIT  path:no  => -
+    #17 pos [com.adobe.flashplayer_.FlashY:49 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashY:72 java.io.OutputStreamWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #18 NEG [com.adobe.flashplayer_.FlashY:28 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashY:72 java.io.OutputStreamWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH(shadowed-by-positive)
+    #19 pos [com.adobe.flashplayer_.FlashZ:57 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:58 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:no  => -
+    #20 pos [com.adobe.flashplayer_.FlashZ:86 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:58 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:no  => -
+    #21 pos [com.adobe.flashplayer_.FlashZ:115 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:58 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:no  => -
+    #22 pos [com.adobe.flashplayer_.FlashZ:137 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:58 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:no  => -
+    #23 NEG [com.adobe.flashplayer_.FlashZ:71 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:58 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:no  => -
+    #24 NEG [com.adobe.flashplayer_.FlashZ:101 android.content.Intent.getStringExtra -> com.adobe.flashplayer_.FlashVirtual:58 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:no  => -
+
+== beita_com_beita_contact ==
+  reported taint sources:
+    android.content.ContentResolver.query
+    java.io.FileInputStream.<init>
+  reported taint sinks (reached by taint):
+    java.io.BufferedWriter.write
+    java.io.DataOutputStream.write
+  connected source->sink paths:
+    java.io.FileInputStream.<init>  ==>  java.io.DataOutputStream.write
+  findings:
+    #1  pos [com.beita.contact.MyContacts:182 android.content.ContentResolver.query -> com.beita.contact.MailUtil:50 javax.mail.Transport.sendMessage]  source:HIT  sink:miss  path:no  => -
+    #2  pos [com.beita.contact.MyContacts:194 android.content.ContentResolver.query -> com.beita.contact.ContactUtil:12 java.io.BufferedWriter.write]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [com.beita.contact.UploadUtil:43 java.io.FileInputStream.<init> -> com.beita.contact.UploadUtil:65 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== cajino_baidu ==
+  reported taint sources:
+    android.database.Cursor.getString
+    android.location.LocationManager.getLastKnownLocation
+    android.telephony.TelephonyManager.getDeviceId
+    java.io.File.<init>
+    java.io.File.listFiles
+  reported taint sinks (reached by taint):
+    com.baidu.inf.iis.bcs.BaiduBCS.putObject
+    java.io.File.delete
+    java.io.FileWriter.write
+  connected source->sink paths:
+    android.database.Cursor.getString  ==>  com.baidu.inf.iis.bcs.BaiduBCS.putObject
+    android.database.Cursor.getString  ==>  java.io.File.delete
+    android.database.Cursor.getString  ==>  java.io.FileWriter.write
+    android.telephony.TelephonyManager.getDeviceId  ==>  com.baidu.inf.iis.bcs.BaiduBCS.putObject
+    android.telephony.TelephonyManager.getDeviceId  ==>  java.io.FileWriter.write
+    java.io.File.<init>  ==>  com.baidu.inf.iis.bcs.BaiduBCS.putObject
+    java.io.File.<init>  ==>  java.io.File.delete
+    java.io.File.<init>  ==>  java.io.FileWriter.write
+    java.io.File.listFiles  ==>  com.baidu.inf.iis.bcs.BaiduBCS.putObject
+    java.io.File.listFiles  ==>  java.io.File.delete
+    java.io.File.listFiles  ==>  java.io.FileWriter.write
+  findings:
+    #1  pos [ca.ji.no.method10.BaiduUtils.AnonymousClass3:431 java.io.File.listFiles -> ca.ji.no.method10.BaiduUtils:464 com.baidu.inf.iis.bcs.BaiduBCS.putObject]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [ca.ji.no.method10.BaiduUtils.AnonymousClass2:373 android.database.Cursor.getString -> ca.ji.no.method10.BaiduUtils:479 java.io.FileWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #3  pos [ca.ji.no.method10.BaiduUtils:216 android.database.Cursor.getString -> ca.ji.no.method10.BaiduUtils:479 java.io.FileWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #4  pos [ca.ji.no.method10.BaiduUtils:323 android.database.Cursor.getString -> ca.ji.no.method10.BaiduUtils:479 java.io.FileWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #5  pos [ca.ji.no.method10.BaiduUtils:294 android.location.LocationManager.getLastKnownLocation -> ca.ji.no.method10.BaiduUtils:479 java.io.FileWriter.write]  source:HIT  sink:HIT  path:no  => -
+    #6  pos [ca.ji.no.method10.BaiduUtils:183 android.telephony.TelephonyManager.getDeviceId -> ca.ji.no.method10.BaiduUtils:479 java.io.FileWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #7  pos [ca.ji.no.method10.BaiduUtils:183 android.telephony.TelephonyManager.getDeviceId -> ca.ji.no.method10.BaiduUtils:464 com.baidu.inf.iis.bcs.BaiduBCS.putObject]  source:HIT  sink:HIT  path:yes  => MATCH
+    #8  pos [ca.ji.no.method10.BaiduUtils:-1 java.io.File.listFiles -> ca.ji.no.method10.BaiduUtils:479 java.io.FileWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #9  pos [ca.ji.no.method10.BaiduUtils:133 java.io.File.<init> -> ca.ji.no.method10.BaiduUtils:139 com.baidu.inf.iis.bcs.BaiduBCS.putObject]  source:HIT  sink:HIT  path:yes  => MATCH
+    #10 pos [ca.ji.no.method10.BaiduUtils:110 java.io.File.<init> -> ca.ji.no.method10.BaiduUtils:110 java.io.File.delete]  source:HIT  sink:HIT  path:yes  => MATCH
+    #11 NEG [ca.ji.no.method10.BaiduUtils:72 android.telephony.TelephonyManager.getDeviceId -> ca.ji.no.method10.BaiduUtils:464 com.baidu.inf.iis.bcs.BaiduBCS.putObject]  source:HIT  sink:HIT  path:yes  => MATCH(shadowed-by-positive)
+    #12 pos [ca.ji.no.method10.BaiduUtils:458 java.io.File.<init> -> ca.ji.no.method10.BaiduUtils:464 com.baidu.inf.iis.bcs.BaiduBCS.putObject]  source:HIT  sink:HIT  path:yes  => MATCH
+    #13 NEG [ca.ji.no.method10.BaiduUtils:147 android.telephony.TelephonyManager.getDeviceId -> ca.ji.no.method10.BaiduUtils:464 com.baidu.inf.iis.bcs.BaiduBCS.putObject]  source:HIT  sink:HIT  path:yes  => MATCH(shadowed-by-positive)
+    #14 NEG [ca.ji.no.method10.BaiduUtils:119 android.telephony.TelephonyManager.getDeviceId -> ca.ji.no.method10.BaiduUtils:139 com.baidu.inf.iis.bcs.BaiduBCS.putObject]  source:HIT  sink:HIT  path:yes  => MATCH(shadowed-by-positive)
+    #15 pos [ca.ji.no.method10.BaiduUtils:470 java.io.File.<init> -> ca.ji.no.method10.BaiduUtils:470 java.io.File.delete]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== chulia ==
+  reported taint sources:
+    android.content.ContentResolver.query
+    android.location.Location.getLongitude
+  reported taint sinks (reached by taint):
+    org.apache.http.impl.client.DefaultHttpClient.execute
+  connected source->sink paths: (none)
+  findings:
+    #1  pos [com.google.services.AlarmService:214 android.content.ContentResolver.query -> com.google.services.SendInfo:189 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [com.google.services.AlarmService:-1 android.location.Location.getLongitude -> com.google.services.SendInfo:189 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [com.google.services.AlarmService:125 android.content.ContentResolver.query -> com.google.services.SendInfo:189 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #4  pos [com.google.services.AlarmService:266 android.content.ContentResolver.query -> com.google.services.SendInfo:189 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+
+== death_ring_materialflow ==
+  reported taint sources:
+    android.telephony.gsm.SmsMessage.getDisplayMessageBody
+  reported taint sinks (reached by taint):
+    android.telephony.gsm.SmsManager.sendTextMessage
+  connected source->sink paths:
+    android.telephony.gsm.SmsMessage.getDisplayMessageBody  ==>  android.telephony.gsm.SmsManager.sendTextMessage
+  findings:
+    #1  pos [com.qc.access.SmsReceiver:78 android.telephony.gsm.SmsMessage.getDisplayMessageBody -> com.qc.model.SmsSenderAndReceiver:28 android.telephony.gsm.SmsManager.sendTextMessage]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== dsencrypt_samp ==
+  reported taint sources:
+    android.content.res.AssetManager.open
+  reported taint sinks (reached by taint):
+    java.lang.reflect.Method.invoke
+  connected source->sink paths:
+    android.content.res.AssetManager.open  ==>  java.lang.reflect.Method.invoke
+  findings:
+    #1  pos [com.kbstar.kb.android.star.ProxyApp:28 android.content.res.AssetManager.open -> com.kbstar.kb.android.star.ProxyApp:60 java.lang.reflect.Method.invoke]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== exprespam ==
+  reported taint sources:
+    android.telephony.TelephonyManager.getLine1Number
+    frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.managedQuery
+  reported taint sinks (reached by taint):
+    org.apache.http.impl.client.DefaultHttpClient.execute
+  connected source->sink paths:
+    android.telephony.TelephonyManager.getLine1Number  ==>  org.apache.http.impl.client.DefaultHttpClient.execute
+    frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.managedQuery  ==>  org.apache.http.impl.client.DefaultHttpClient.execute
+  findings:
+    #1  pos [frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress:51 android.telephony.TelephonyManager.getLine1Number -> frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress:120 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress:156 frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.managedQuery -> frhfsd.siksdk.ujdsfjkfsd.WrehifsdkjsActivity.Progress:120 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== fakeappstore ==
+  reported taint sources:
+    android.content.ContentResolver.query
+    android.telephony.TelephonyManager.getDeviceId
+    org.apache.http.HttpEntity.getContent
+  reported taint sinks (reached by taint):
+    android.telephony.SmsManager.sendTextMessage
+    org.apache.http.client.HttpClient.execute
+  connected source->sink paths:
+    android.content.ContentResolver.query  ==>  android.telephony.SmsManager.sendTextMessage
+    org.apache.http.HttpEntity.getContent  ==>  org.apache.http.client.HttpClient.execute
+  findings:
+    #1  pos [com.google.games.stores.service.ContactsService:200 android.content.ContentResolver.query -> com.google.games.stores.service.ContactsService:349 android.telephony.SmsManager.sendTextMessage]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [com.google.games.stores.util.NetTask:110 org.apache.http.HttpEntity.getContent -> com.google.games.stores.service.ContactsService:349 android.telephony.SmsManager.sendTextMessage]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [com.google.games.stores.util.GeneralUtil:47 android.telephony.TelephonyManager.getDeviceId -> com.google.games.stores.util.NetTask:110 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+
+== fakebank_android_samp ==
+  reported taint sources:
+    android.telephony.SmsMessage.getDisplayMessageBody
+    android.telephony.TelephonyManager.getSimSerialNumber
+    com.example.bankmanager.BankActivity.findViewById
+    java.io.File.<init>
+  reported taint sinks (reached by taint):
+    com.example.service.InstallService.startActivity
+    java.net.HttpURLConnection.getInputStream
+    org.apache.http.client.HttpClient.execute
+    org.apache.http.impl.client.DefaultHttpClient.execute
+  connected source->sink paths:
+    android.telephony.TelephonyManager.getSimSerialNumber  ==>  java.net.HttpURLConnection.getInputStream
+    android.telephony.TelephonyManager.getSimSerialNumber  ==>  org.apache.http.impl.client.DefaultHttpClient.execute
+    java.io.File.<init>  ==>  com.example.service.InstallService.startActivity
+  findings:
+    #1  pos [com.example.bankmanager.BankActivity:24 com.example.bankmanager.BankActivity.findViewById -> cn.smsmanager.tools.JSONParser:52 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [com.example.smsmanager.BootCompleteBroadcastReceiver:36 android.telephony.TelephonyManager.getSimSerialNumber -> cn.smsmanager.internet.HttpRequest:99 java.net.HttpURLConnection.getInputStream]  source:HIT  sink:HIT  path:yes  => MATCH
+    #3  pos [com.example.bankmanager.BankEndActivity.CreateNewUser:244 android.telephony.TelephonyManager.getSimSerialNumber -> cn.smsmanager.tools.JSONParser:78 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #4  pos [com.example.smsmanager.smsReceiver:77 android.telephony.SmsMessage.getDisplayMessageBody -> com.example.smsmanager.smsReceiver.AnonymousClass1:106 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #5  pos [com.example.service.InstallService:100 java.io.File.<init> -> com.example.service.InstallService:68 com.example.service.InstallService.startActivity]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== fakedaum ==
+  reported taint sources:
+    android.telephony.SmsMessage.createFromPdu
+    android.telephony.TelephonyManager.getSimSerialNumber
+  reported taint sinks (reached by taint):
+    org.apache.http.client.HttpClient.execute
+  connected source->sink paths:
+    android.telephony.TelephonyManager.getSimSerialNumber  ==>  org.apache.http.client.HttpClient.execute
+  findings:
+    #1  pos [com.mvlove.receiver.SmsReceiver:44 android.telephony.SmsMessage.createFromPdu -> com.mvlove.http.HttpWrapper:667 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [com.mvlove.util.PhoneUtil:23 android.telephony.TelephonyManager.getSimSerialNumber -> com.mvlove.http.HttpWrapper:667 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== fakemart ==
+  reported taint sources:
+    android.telephony.gsm.SmsMessage.createFromPdu
+  reported taint sinks (reached by taint):
+    java.net.URLConnection.getInputStream
+  connected source->sink paths: (none)
+  findings:
+    #1  pos [com.android.blackmarket.SmsReceiver:29 android.telephony.gsm.SmsMessage.createFromPdu -> com.android.blackmarket.function:221 java.net.URLConnection.getInputStream]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [com.android.blackmarket.SmsReceiver:29 android.telephony.gsm.SmsMessage.createFromPdu -> com.android.blackmarket.function:221 java.net.URLConnection.getInputStream]  source:HIT  sink:HIT  path:no  => -
+
+== fakeplay ==
+  reported taint sources:
+    android.telephony.TelephonyManager.getLine1Number
+    android.telephony.TelephonyManager.getNetworkOperatorName
+  reported taint sinks (reached by taint):
+    java.io.OutputStream.write
+  connected source->sink paths: (none)
+  findings:
+    #1  pos [com.googleprojects.mm.JHService:124 android.telephony.TelephonyManager.getNetworkOperatorName -> javax.activation.DataHandler:322 java.io.OutputStream.write]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [com.googleprojects.mm.SPMainActivity:97 android.telephony.TelephonyManager.getLine1Number -> javax.activation.DataHandler:322 java.io.OutputStream.write]  source:HIT  sink:HIT  path:no  => -
+
+== faketaobao ==
+  reported taint sources:
+    android.widget.EditText.getText
+  reported taint sinks (reached by taint):
+    org.apache.http.impl.client.DefaultHttpClient.execute
+  connected source->sink paths: (none)
+  findings:
+    #1  pos [com.tao.bao.MainActivity.AnonymousClass1:59 android.widget.EditText.getText -> com.tao.bao.ToolHelper:57 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [com.tao.bao.MainActivity.AnonymousClass1:54 android.widget.EditText.getText -> com.tao.bao.ToolHelper:57 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [com.tao.bao.LocationVerify.AnonymousClass1:43 android.widget.EditText.getText -> com.tao.bao.ToolHelper:57 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #4  pos [com.tao.bao.LocationVerify.AnonymousClass1:48 android.widget.EditText.getText -> com.tao.bao.ToolHelper:57 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+
+== godwon_samp ==
+  reported taint sources:
+    android.content.Intent.getSerializableExtra
+    android.telephony.TelephonyManager.getDeviceId
+    android.telephony.TelephonyManager.getLine1Number
+  reported taint sinks (reached by taint):
+    org.apache.http.impl.client.DefaultHttpClient.execute
+  connected source->sink paths: (none)
+  findings:
+    #1  pos [android.sms.core.GoogleService:27 android.telephony.TelephonyManager.getLine1Number -> android.sms.core.ToolHelper:57 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [android.sms.core.GoogleService:29 android.telephony.TelephonyManager.getDeviceId -> android.sms.core.ToolHelper:57 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [android.sms.core.BootReceiver:59 android.content.Intent.getSerializableExtra -> android.sms.core.ToolHelper:57 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #4  pos [android.sms.core.BootReceiver:59 android.content.Intent.getSerializableExtra -> android.sms.core.ToolHelper:57 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #5  pos [android.sms.core.BootReceiver:25 android.telephony.TelephonyManager.getLine1Number -> android.sms.core.ToolHelper:57 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #6  pos [android.sms.core.BootReceiver:27 android.telephony.TelephonyManager.getDeviceId -> android.sms.core.ToolHelper:57 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+
+== hummingbad_android_samp ==
+  reported taint sources:
+    android.database.Cursor.getString
+  reported taint sinks (reached by taint):
+    android.database.sqlite.SQLiteDatabase.insert
+    android.database.sqlite.SQLiteDatabase.update
+  connected source->sink paths:
+    android.database.Cursor.getString  ==>  android.database.sqlite.SQLiteDatabase.insert
+    android.database.Cursor.getString  ==>  android.database.sqlite.SQLiteDatabase.update
+  findings:
+    #1  pos [com.android.ad.du.BaiduCacheDBUtil:117 android.database.Cursor.getString -> com.mb.bdapp.db.DBService:120 android.database.sqlite.SQLiteDatabase.insert]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [com.android.ad.du.BaiduCacheDBUtil:117 android.database.Cursor.getString -> com.mb.bdapp.db.DBService:307 android.database.sqlite.SQLiteDatabase.update]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== jollyserv ==
+  reported taint sources:
+    android.telephony.TelephonyManager.getDeviceId
+  reported taint sinks (reached by taint):
+    java.util.concurrent.ThreadPoolExecutor.submit
+  connected source->sink paths: (none)
+  findings:
+    #1  pos [fm.xtube.CheckAgeActivity:36 android.telephony.TelephonyManager.getDeviceId -> com.loopj.android.http.AsyncHttpClient:536 java.util.concurrent.ThreadPoolExecutor.submit]  source:HIT  sink:HIT  path:no  => -
+
+== overlay_android_samp ==
+  reported taint sources:
+    android.content.Intent.getExtras
+    android.content.Intent.getStringExtra
+    exts.whats.activities.Cards.findViewById
+  reported taint sinks (reached by taint):
+    android.content.Context.startService
+    exts.whats.activities.Cards.startService
+    org.apache.http.impl.client.DefaultHttpClient.execute
+  connected source->sink paths:
+    android.content.Intent.getExtras  ==>  android.content.Context.startService
+    android.content.Intent.getStringExtra  ==>  org.apache.http.impl.client.DefaultHttpClient.execute
+  findings:
+    #1  pos [exts.whats.activities.Cards:118 exts.whats.activities.Cards.findViewById -> exts.whats.activities.Cards:322 exts.whats.activities.Cards.startService]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [exts.whats.SendService:69 android.content.Intent.getStringExtra -> exts.whats.utils.Sender:17 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #3  pos [exts.whats.MessageReceiver:38 android.content.Intent.getExtras -> exts.whats.MessageReceiver:28 android.content.Context.startService]  source:HIT  sink:HIT  path:yes  => MATCH
+    #4  pos [exts.whats.SendService:75 android.content.Intent.getStringExtra -> exts.whats.utils.Sender:17 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #5  NEG [exts.whats.activities.Cards:527 android.content.Intent.getStringExtra -> exts.whats.activities.Cards:322 exts.whats.activities.Cards.startService]  source:HIT  sink:HIT  path:no  => -
+    #6  NEG [exts.whats.activities.Cards:112 android.content.Intent.getStringExtra -> exts.whats.activities.Cards:322 exts.whats.activities.Cards.startService]  source:HIT  sink:HIT  path:no  => -
+
+== overlaylocker2_android_samp ==
+  reported taint sources:
+    android.content.Intent.getStringExtra
+    android.telephony.SmsMessage.createFromPdu
+    android.telephony.TelephonyManager.getDeviceId
+    java.io.FileInputStream.<init>
+    java.lang.Class.getDeclaredMethod
+  reported taint sinks (reached by taint):
+    android.content.Context.startService
+    android.webkit.WebView.addJavascriptInterface
+    java.io.DataOutputStream.flush
+    java.lang.reflect.Method.invoke
+  connected source->sink paths:
+    android.telephony.SmsMessage.createFromPdu  ==>  android.content.Context.startService
+    android.telephony.TelephonyManager.getDeviceId  ==>  java.lang.reflect.Method.invoke
+    java.io.FileInputStream.<init>  ==>  java.io.DataOutputStream.flush
+    java.lang.Class.getDeclaredMethod  ==>  java.lang.reflect.Method.invoke
+  findings:
+    #1  pos [brandmangroupe.miui.updater.MeSetting:188 android.telephony.TelephonyManager.getDeviceId -> brandmangroupe.miui.updater.GlobalCode:87 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [brandmangroupe.miui.updater.TelephonyInfo:64 android.telephony.TelephonyManager.getDeviceId -> brandmangroupe.miui.updater.GlobalCode:88 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [brandmangroupe.miui.updater.MeSystem:110 java.lang.Class.getDeclaredMethod -> brandmangroupe.miui.updater.MeSystem:112 java.lang.reflect.Method.invoke]  source:HIT  sink:HIT  path:yes  => MATCH
+    #4  pos [brandmangroupe.miui.updater.MeSystem:114 java.lang.Class.getDeclaredMethod -> brandmangroupe.miui.updater.MeSystem:119 java.lang.reflect.Method.invoke]  source:HIT  sink:HIT  path:yes  => MATCH
+    #5  pos [brandmangroupe.miui.updater.MeFile:72 java.io.FileInputStream.<init> -> brandmangroupe.miui.updater.MeFile:116 java.io.DataOutputStream.flush]  source:HIT  sink:HIT  path:yes  => MATCH
+    #6  pos [brandmangroupe.miui.updater.MeFile:180 java.io.FileInputStream.<init> -> brandmangroupe.miui.updater.GlobalCode:89 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #7  pos [brandmangroupe.miui.updater.IncomingSms:37 android.telephony.SmsMessage.createFromPdu -> brandmangroupe.miui.updater.IncomingSms:88 android.content.Context.startService]  source:HIT  sink:HIT  path:yes  => MATCH
+    #8  NEG [brandmangroupe.miui.updater.MasterPage:105 android.telephony.TelephonyManager.getDeviceId -> brandmangroupe.miui.updater.MasterPage:61 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #9  NEG [brandmangroupe.miui.updater.MasterPage:105 android.telephony.TelephonyManager.getDeviceId -> brandmangroupe.miui.updater.MasterPage:62 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #10 NEG [brandmangroupe.miui.updater.MasterPage:105 android.telephony.TelephonyManager.getDeviceId -> brandmangroupe.miui.updater.MasterPage:63 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #11 NEG [brandmangroupe.miui.updater.MasterPage:105 android.telephony.TelephonyManager.getDeviceId -> brandmangroupe.miui.updater.MasterPage:64 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #12 NEG [brandmangroupe.miui.updater.MasterPage:105 android.telephony.TelephonyManager.getDeviceId -> brandmangroupe.miui.updater.MasterPage:65 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #13 NEG [brandmangroupe.miui.updater.MasterPage:105 android.telephony.TelephonyManager.getDeviceId -> brandmangroupe.miui.updater.MasterPage:66 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #14 NEG [brandmangroupe.miui.updater.MasterPage:40 android.content.Intent.getStringExtra -> brandmangroupe.miui.updater.MasterPage:61 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #15 NEG [brandmangroupe.miui.updater.MasterPage:40 android.content.Intent.getStringExtra -> brandmangroupe.miui.updater.MasterPage:62 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #16 NEG [brandmangroupe.miui.updater.MasterPage:40 android.content.Intent.getStringExtra -> brandmangroupe.miui.updater.MasterPage:63 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #17 NEG [brandmangroupe.miui.updater.MasterPage:40 android.content.Intent.getStringExtra -> brandmangroupe.miui.updater.MasterPage:64 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #18 NEG [brandmangroupe.miui.updater.MasterPage:40 android.content.Intent.getStringExtra -> brandmangroupe.miui.updater.MasterPage:65 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #19 NEG [brandmangroupe.miui.updater.MasterPage:40 android.content.Intent.getStringExtra -> brandmangroupe.miui.updater.MasterPage:66 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+
+== phospy ==
+  reported taint sources:
+    android.telephony.TelephonyManager.getDeviceId
+    java.io.FileInputStream.<init>
+  reported taint sinks (reached by taint):
+    java.io.DataOutputStream.write
+    java.io.DataOutputStream.writeUTF
+  connected source->sink paths:
+    android.telephony.TelephonyManager.getDeviceId  ==>  java.io.DataOutputStream.write
+    android.telephony.TelephonyManager.getDeviceId  ==>  java.io.DataOutputStream.writeUTF
+    java.io.FileInputStream.<init>  ==>  java.io.DataOutputStream.write
+    java.io.FileInputStream.<init>  ==>  java.io.DataOutputStream.writeUTF
+  findings:
+    #1  pos [com.labado.lulaoshi.myService:92 android.telephony.TelephonyManager.getDeviceId -> com.labado.lulaoshi.myService:113 java.io.DataOutputStream.writeUTF]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [com.labado.lulaoshi.myService:106 java.io.FileInputStream.<init> -> com.labado.lulaoshi.myService:131 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #3  NEG [com.labado.lulaoshi.myService:92 android.telephony.TelephonyManager.getDeviceId -> com.labado.lulaoshi.myService:131 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:yes  => FALSE-POSITIVE
+    #4  NEG [com.labado.lulaoshi.myService:106 java.io.FileInputStream.<init> -> com.labado.lulaoshi.myService:113 java.io.DataOutputStream.writeUTF]  source:HIT  sink:HIT  path:yes  => FALSE-POSITIVE
+    #5  NEG [com.labado.lulaoshi.myService:106 java.io.FileInputStream.<init> -> com.labado.lulaoshi.myService:114 java.io.DataOutputStream.writeUTF]  source:HIT  sink:HIT  path:yes  => FALSE-POSITIVE
+
+== proxy_samp ==
+  reported taint sources:
+    android.accounts.AccountManager.getAccounts
+    android.content.ContentResolver.query
+    android.net.wifi.WifiManager.getConnectionInfo
+    android.telephony.SmsMessage.getDisplayMessageBody
+    android.telephony.gsm.GsmCellLocation.getLac
+    java.io.File.<init>
+  reported taint sinks (reached by taint):
+    android.util.Log.i
+    java.io.BufferedWriter.write
+    org.apache.http.client.HttpClient.execute
+    org.apache.http.impl.client.DefaultHttpClient.execute
+  connected source->sink paths:
+    android.accounts.AccountManager.getAccounts  ==>  android.util.Log.i
+    android.content.ContentResolver.query  ==>  android.util.Log.i
+    android.net.wifi.WifiManager.getConnectionInfo  ==>  android.util.Log.i
+    android.telephony.SmsMessage.getDisplayMessageBody  ==>  android.util.Log.i
+    android.telephony.gsm.GsmCellLocation.getLac  ==>  android.util.Log.i
+    android.telephony.gsm.GsmCellLocation.getLac  ==>  org.apache.http.client.HttpClient.execute
+    java.io.File.<init>  ==>  android.util.Log.i
+    java.io.File.<init>  ==>  java.io.BufferedWriter.write
+    java.io.File.<init>  ==>  org.apache.http.impl.client.DefaultHttpClient.execute
+  findings:
+    #1  pos [com.smart.studio.proxy.ProxyService.PollerThread:739 android.telephony.gsm.GsmCellLocation.getLac -> com.smart.studio.proxy.ProxyService.PollerThread:742 android.util.Log.i]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [com.smart.studio.proxy.ProxyService.PollerThread:739 android.telephony.gsm.GsmCellLocation.getLac -> com.smart.studio.proxy.ProxyService.PollerThread:769 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #3  pos [com.smart.studio.proxy.ProxyService.ProxyThread:838 java.io.File.<init> -> com.smart.studio.proxy.ProxyService.ProxyThread:854 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #4  pos [com.smart.studio.proxy.ProxyService:-1 android.accounts.AccountManager.getAccounts -> com.smart.studio.proxy.ProxyService:280 java.io.BufferedWriter.write]  source:HIT  sink:HIT  path:no  => -
+    #5  pos [com.smart.studio.proxy.ProxyService:-1 android.accounts.AccountManager.getAccounts -> com.smart.studio.proxy.ProxyService:280 java.io.BufferedWriter.write]  source:HIT  sink:HIT  path:no  => -
+    #6  pos [com.smart.studio.proxy.ProxyService:586 android.content.ContentResolver.query -> com.smart.studio.proxy.ProxyService:280 java.io.BufferedWriter.write]  source:HIT  sink:HIT  path:no  => -
+    #7  pos [com.smart.studio.proxy.ProxyService:412 android.net.wifi.WifiManager.getConnectionInfo -> com.smart.studio.proxy.ProxyService:268 android.util.Log.i]  source:HIT  sink:HIT  path:yes  => MATCH
+    #8  pos [com.smart.studio.proxy.SMSReceiver:29 android.telephony.SmsMessage.getDisplayMessageBody -> com.smart.studio.proxy.ProxyService:268 android.util.Log.i]  source:HIT  sink:HIT  path:yes  => MATCH
+    #9  pos [com.smart.studio.proxy.ProxyService:-1 android.accounts.AccountManager.getAccounts -> com.smart.studio.proxy.ProxyService:268 android.util.Log.i]  source:HIT  sink:HIT  path:yes  => MATCH
+    #10 pos [com.smart.studio.proxy.ProxyService:-1 android.accounts.AccountManager.getAccounts -> com.smart.studio.proxy.ProxyService.ProxyThread:854 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #11 pos [com.smart.studio.proxy.SMSReceiver:29 android.telephony.SmsMessage.getDisplayMessageBody -> com.smart.studio.proxy.ProxyService:280 java.io.BufferedWriter.write]  source:HIT  sink:HIT  path:no  => -
+    #12 pos [com.smart.studio.proxy.ProxyService:412 android.net.wifi.WifiManager.getConnectionInfo -> com.smart.studio.proxy.ProxyService:280 java.io.BufferedWriter.write]  source:HIT  sink:HIT  path:no  => -
+    #13 pos [com.smart.studio.proxy.ProxyService:586 android.content.ContentResolver.query -> com.smart.studio.proxy.ProxyService:268 android.util.Log.i]  source:HIT  sink:HIT  path:yes  => MATCH
+    #14 pos [com.smart.studio.proxy.ProxyService:635 android.content.ContentResolver.query -> com.smart.studio.proxy.ProxyService:280 java.io.BufferedWriter.write]  source:HIT  sink:HIT  path:no  => -
+    #15 pos [com.smart.studio.proxy.ProxyService:633 android.content.ContentResolver.query -> com.smart.studio.proxy.ProxyService:280 java.io.BufferedWriter.write]  source:HIT  sink:HIT  path:no  => -
+    #16 NEG [com.smart.studio.proxy.ProxyService:460 java.io.File.<init> -> com.smart.studio.proxy.ProxyService:280 java.io.BufferedWriter.write]  source:HIT  sink:HIT  path:yes  => FALSE-POSITIVE
+    #17 pos [com.smart.studio.proxy.ProxyService:635 android.content.ContentResolver.query -> com.smart.studio.proxy.ProxyService:268 android.util.Log.i]  source:HIT  sink:HIT  path:yes  => MATCH
+    #18 pos [com.smart.studio.proxy.ProxyService:633 android.content.ContentResolver.query -> com.smart.studio.proxy.ProxyService:268 android.util.Log.i]  source:HIT  sink:HIT  path:yes  => MATCH
+    #19 NEG [com.smart.studio.proxy.ProxyService:412 android.net.wifi.WifiManager.getConnectionInfo -> com.smart.studio.proxy.ProxyService:461 android.util.Log.i]  source:HIT  sink:HIT  path:yes  => MATCH(shadowed-by-positive)
+    #20 NEG [com.smart.studio.proxy.ProxyService:460 java.io.File.<init> -> com.smart.studio.proxy.ProxyService:461 android.util.Log.i]  source:HIT  sink:HIT  path:yes  => FALSE-POSITIVE
+
+== remote_control_smack ==
+  reported taint sources:
+    android.database.Cursor.getInt
+    android.database.Cursor.getLong
+    android.database.Cursor.getString
+    android.location.LocationManager.getLastKnownLocation
+  reported taint sinks (reached by taint):
+    java.io.FileWriter.append
+  connected source->sink paths:
+    android.database.Cursor.getInt  ==>  java.io.FileWriter.append
+    android.database.Cursor.getLong  ==>  java.io.FileWriter.append
+    android.location.LocationManager.getLastKnownLocation  ==>  java.io.FileWriter.append
+  findings:
+    #1  pos [com.android.service.view.GPSTracker:80 android.location.LocationManager.getLastKnownLocation -> com.android.service.AlarmReceiver.AnonymousClass1:129 java.io.FileWriter.append]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [com.android.service.view.GPSTracker:98 android.location.LocationManager.getLastKnownLocation -> com.android.service.AlarmReceiver.AnonymousClass1:129 java.io.FileWriter.append]  source:HIT  sink:HIT  path:yes  => MATCH
+    #3  pos [com.android.service.XmppService:748 android.database.Cursor.getString -> com.android.service.XmppService:773 java.io.FileWriter.append]  source:HIT  sink:HIT  path:no  => -
+    #4  pos [com.android.service.XmppService:750 android.database.Cursor.getString -> com.android.service.XmppService:773 java.io.FileWriter.append]  source:HIT  sink:HIT  path:no  => -
+    #5  pos [com.android.service.XmppService:752 android.database.Cursor.getInt -> com.android.service.XmppService:773 java.io.FileWriter.append]  source:HIT  sink:HIT  path:yes  => MATCH
+    #6  pos [com.android.service.XmppService:754 android.database.Cursor.getLong -> com.android.service.XmppService:773 java.io.FileWriter.append]  source:HIT  sink:HIT  path:yes  => MATCH
+    #7  pos [com.android.service.XmppService:840 android.database.Cursor.getString -> com.android.service.XmppService:870 java.io.FileWriter.append]  source:HIT  sink:HIT  path:no  => -
+    #8  pos [com.android.service.XmppService:841 android.database.Cursor.getString -> com.android.service.XmppService:870 java.io.FileWriter.append]  source:HIT  sink:HIT  path:no  => -
+    #9  pos [com.android.service.XmppService:842 android.database.Cursor.getInt -> com.android.service.XmppService:870 java.io.FileWriter.append]  source:HIT  sink:HIT  path:yes  => MATCH
+    #10 pos [com.android.service.XmppService:843 android.database.Cursor.getString -> com.android.service.XmppService:870 java.io.FileWriter.append]  source:HIT  sink:HIT  path:no  => -
+    #11 pos [com.android.service.XmppService:921 android.database.Cursor.getString -> com.android.service.XmppService:974 java.io.FileWriter.append]  source:HIT  sink:HIT  path:no  => -
+    #12 pos [com.android.service.XmppService:924 android.database.Cursor.getString -> com.android.service.XmppService:974 java.io.FileWriter.append]  source:HIT  sink:HIT  path:no  => -
+    #13 pos [com.android.service.XmppService:1180 android.database.Cursor.getString -> com.android.service.XmppService:1208 java.io.FileWriter.append]  source:HIT  sink:HIT  path:no  => -
+    #14 pos [com.android.service.XmppService:1182 android.database.Cursor.getString -> com.android.service.XmppService:1208 java.io.FileWriter.append]  source:HIT  sink:HIT  path:no  => -
+    #15 pos [com.android.service.XmppService:1186 android.database.Cursor.getString -> com.android.service.XmppService:1208 java.io.FileWriter.append]  source:HIT  sink:HIT  path:no  => -
+    #16 pos [com.android.service.XmppService:1198 android.database.Cursor.getLong -> com.android.service.XmppService:1208 java.io.FileWriter.append]  source:HIT  sink:HIT  path:yes  => MATCH
+    #17 pos [com.android.service.XmppService:1204 android.database.Cursor.getString -> com.android.service.XmppService:1208 java.io.FileWriter.append]  source:HIT  sink:HIT  path:no  => -
+
+== repane ==
+  reported taint sources:
+    java.io.File.<init>
+  reported taint sinks (reached by taint):
+    android.content.Context.startActivity
+  connected source->sink paths:
+    java.io.File.<init>  ==>  android.content.Context.startActivity
+  findings:
+    #1  pos [com.vr.installer.scanner.PackageDescription:76 java.io.File.<init> -> com.vr.installer.scanner.PackageDescription:79 android.content.Context.startActivity]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== roidsec ==
+  reported taint sources:
+    android.content.ContentResolver.query
+    android.content.pm.PackageManager.getInstalledPackages
+  reported taint sinks (reached by taint):
+    java.io.OutputStream.write
+  connected source->sink paths:
+    android.content.ContentResolver.query  ==>  java.io.OutputStream.write
+    android.content.pm.PackageManager.getInstalledPackages  ==>  java.io.OutputStream.write
+  findings:
+    #1  pos [cn.phoneSync.PhoneSyncService:643 android.content.ContentResolver.query -> cn.phoneSync.PhoneSyncService:173 java.io.OutputStream.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [cn.phoneSync.PhoneSyncService:682 android.content.ContentResolver.query -> cn.phoneSync.PhoneSyncService:178 java.io.OutputStream.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #3  pos [cn.phoneSync.PhoneSyncService:599 android.content.pm.PackageManager.getInstalledPackages -> cn.phoneSync.PhoneSyncService:193 java.io.OutputStream.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #4  pos [cn.phoneSync.PhoneSyncService:620 android.content.pm.PackageManager.getInstalledPackages -> cn.phoneSync.PhoneSyncService:198 java.io.OutputStream.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #5  pos [cn.phoneSync.PhoneSyncService:717 android.content.ContentResolver.query -> cn.phoneSync.PhoneSyncService:183 java.io.OutputStream.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #6  pos [cn.phoneSync.PhoneSyncService:732 android.content.ContentResolver.query -> cn.phoneSync.PhoneSyncService:188 java.io.OutputStream.write]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== samsapo ==
+  reported taint sources:
+    android.content.Context.getSystemService
+    android.database.Cursor.getString
+    android.telephony.gsm.SmsMessage.createFromPdu
+  reported taint sinks (reached by taint):
+    com.android.tools.system.MyPostRequest.execute
+    java.lang.reflect.Method.invoke
+    org.apache.http.client.HttpClient.execute
+  connected source->sink paths:
+    android.content.Context.getSystemService  ==>  java.lang.reflect.Method.invoke
+    android.database.Cursor.getString  ==>  com.android.tools.system.MyPostRequest.execute
+    android.telephony.gsm.SmsMessage.createFromPdu  ==>  com.android.tools.system.MyPostRequest.execute
+  findings:
+    #1  pos [com.android.tools.system.SplashScreen:114 android.database.Cursor.getString -> com.android.tools.system.MyPostRequest:44 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [com.android.tools.system.SmsReceiver:30 android.telephony.gsm.SmsMessage.createFromPdu -> com.android.tools.system.SmsReceiver:45 com.android.tools.system.MyPostRequest.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #3  pos [com.android.tools.system.PhoneReceiver:42 android.content.Context.getSystemService -> com.android.tools.system.PhoneReceiver:57 java.lang.reflect.Method.invoke]  source:HIT  sink:HIT  path:yes  => MATCH
+    #4  pos [com.android.tools.system.SmsReceiver:30 android.telephony.gsm.SmsMessage.createFromPdu -> com.android.tools.system.MyPostRequest:44 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #5  NEG [com.android.tools.system.PhoneReceiver:42 android.content.Context.getSystemService -> com.android.tools.system.PhoneReceiver:47 java.lang.reflect.Method.invoke]  source:HIT  sink:HIT  path:yes  => MATCH(shadowed-by-positive)
+
+== save_me ==
+  reported taint sources:
+    android.content.Intent.getStringExtra
+    android.database.sqlite.SQLiteDatabase.query
+    android.net.wifi.WifiInfo.getMacAddress
+    android.telephony.TelephonyManager.getSimCountryIso
+    android.widget.EditText.getText
+  reported taint sinks (reached by taint):
+    android.content.ContentValues.put
+    android.telephony.SmsManager.sendTextMessage
+    com.savemebeta.Scan.startActivity
+    org.apache.http.client.HttpClient.execute
+  connected source->sink paths:
+    android.database.sqlite.SQLiteDatabase.query  ==>  android.content.ContentValues.put
+    android.database.sqlite.SQLiteDatabase.query  ==>  android.telephony.SmsManager.sendTextMessage
+    android.database.sqlite.SQLiteDatabase.query  ==>  org.apache.http.client.HttpClient.execute
+    android.widget.EditText.getText  ==>  android.content.ContentValues.put
+  findings:
+    #1  pos [com.savemebeta.Analyse.AnonymousClass1:134 android.widget.EditText.getText -> com.savemebeta.DatabaseOperationslogin:43 android.content.ContentValues.put]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [com.savemebeta.Analyse.AnonymousClass1:137 android.widget.EditText.getText -> com.savemebeta.DatabaseOperationslogin:44 android.content.ContentValues.put]  source:HIT  sink:HIT  path:yes  => MATCH
+    #3  pos [com.savemebeta.DatabaseOperations:55 android.database.sqlite.SQLiteDatabase.query -> com.savemebeta.SCHKMS:333 android.telephony.SmsManager.sendTextMessage]  source:HIT  sink:HIT  path:yes  => MATCH
+    #4  pos [com.savemebeta.DatabaseOperations:55 android.database.sqlite.SQLiteDatabase.query -> com.savemebeta.CO.sendcontact:321 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #5  pos [com.savemebeta.DatabaseOperations:55 android.database.sqlite.SQLiteDatabase.query -> com.savemebeta.CO.sendcontact:321 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #6  pos [com.savemebeta.CO:127 android.net.wifi.WifiInfo.getMacAddress -> com.savemebeta.CO.sendcontact:321 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #7  pos [com.savemebeta.CO:123 android.telephony.TelephonyManager.getSimCountryIso -> com.savemebeta.CO.sendcontact:321 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #8  pos [com.savemebeta.DatabaseOperationssmssave2:55 android.database.sqlite.SQLiteDatabase.query -> com.savemebeta.Scan.sendsmsdata2:797 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #9  pos [com.savemebeta.DatabaseOperationssmssave2:55 android.database.sqlite.SQLiteDatabase.query -> com.savemebeta.Scan.sendsmsdata2:797 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #10 pos [com.savemebeta.DatabaseOperationssmssave2:55 android.database.sqlite.SQLiteDatabase.query -> com.savemebeta.Scan.sendsmsdata2:797 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #11 pos [com.savemebeta.Analyse.AnonymousClass1:137 android.widget.EditText.getText -> com.savemebeta.Scan.sendsmsdata:706 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #12 pos [com.savemebeta.SOSsm.AnonymousClass1:62 android.widget.EditText.getText -> com.savemebeta.SOSsm.sendsmsdata2:112 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #13 pos [com.savemebeta.CHECKUPD:115 android.net.wifi.WifiInfo.getMacAddress -> com.savemebeta.CHECKUPD.sendmyinfos:162 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #14 pos [com.savemebeta.CHECKUPD:115 android.net.wifi.WifiInfo.getMacAddress -> com.savemebeta.CHECKUPD.sendmystatus:215 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #15 pos [com.savemebeta.CHECKUPD:115 android.net.wifi.WifiInfo.getMacAddress -> com.savemebeta.CHECKUPD.senddata:258 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #16 pos [com.savemebeta.DatabaseOperationssmssave:55 android.database.sqlite.SQLiteDatabase.query -> com.savemebeta.Scan.sendsmsdata:706 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #17 pos [com.savemebeta.DatabaseOperationssmssave:55 android.database.sqlite.SQLiteDatabase.query -> com.savemebeta.Scan.sendsmsdata2:797 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+    #18 pos [com.savemebeta.CHECKUPD:100 android.telephony.TelephonyManager.getSimCountryIso -> com.savemebeta.CHECKUPD.sendmyinfos:162 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #19 NEG [com.savemebeta.CHECKUPD:100 android.telephony.TelephonyManager.getSimCountryIso -> com.savemebeta.CHECKUPD.sendmystatus:215 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #20 NEG [com.savemebeta.CHECKUPD:100 android.telephony.TelephonyManager.getSimCountryIso -> com.savemebeta.CHECKUPD.senddata:258 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #21 pos [com.savemebeta.RC:105 android.net.wifi.WifiInfo.getMacAddress -> com.savemebeta.RC.StatusTask:158 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #22 pos [com.savemebeta.GTSTSR:122 android.net.wifi.WifiInfo.getMacAddress -> com.savemebeta.update.sendmystatus:79 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #23 pos [com.savemebeta.CO:127 android.net.wifi.WifiInfo.getMacAddress -> com.savemebeta.update.sendmystatus:79 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #24 pos [com.savemebeta.GTSTSR:122 android.net.wifi.WifiInfo.getMacAddress -> com.savemebeta.GTSTSR.globaldata:222 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #25 pos [com.savemebeta.GTSTSR:122 android.net.wifi.WifiInfo.getMacAddress -> com.savemebeta.GTSTSR.StatusTask:163 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #26 NEG [com.savemebeta.DatabaseOperations:55 android.database.sqlite.SQLiteDatabase.query -> com.savemebeta.DatabaseOperations:42 android.content.ContentValues.put]  source:HIT  sink:HIT  path:yes  => FALSE-POSITIVE
+    #27 NEG [com.savemebeta.DatabaseOperations:55 android.database.sqlite.SQLiteDatabase.query -> com.savemebeta.DatabaseOperations:43 android.content.ContentValues.put]  source:HIT  sink:HIT  path:yes  => FALSE-POSITIVE
+    #28 NEG [com.savemebeta.DatabaseOperations:55 android.database.sqlite.SQLiteDatabase.query -> com.savemebeta.DatabaseOperations:44 android.content.ContentValues.put]  source:HIT  sink:HIT  path:yes  => FALSE-POSITIVE
+    #29 NEG [com.savemebeta.SCHKMS:147 android.net.wifi.WifiInfo.getMacAddress -> com.savemebeta.SCHKMS:333 android.telephony.SmsManager.sendTextMessage]  source:HIT  sink:HIT  path:no  => -
+    #30 pos [com.savemebeta.Scan:177 android.content.Intent.getStringExtra -> com.savemebeta.Scan.AnonymousClass3:213 com.savemebeta.Scan.startActivity]  source:HIT  sink:HIT  path:no  => -
+    #31 pos [com.savemebeta.Scan:177 android.content.Intent.getStringExtra -> com.savemebeta.Scan.AnonymousClass6:239 com.savemebeta.Scan.startActivity]  source:HIT  sink:HIT  path:no  => -
+
+== scipiex ==
+  reported taint sources:
+    android.content.ContentResolver.query
+    android.telephony.SmsMessage.createFromPdu
+    android.telephony.TelephonyManager.getLine1Number
+  reported taint sinks (reached by taint):
+    java.io.OutputStream.write
+    java.io.PrintWriter.println
+  connected source->sink paths: (none)
+  findings:
+    #1  pos [com.yxx.jiejie.MainActivity:44 android.telephony.TelephonyManager.getLine1Number -> com.yxx.jiejie.SendThread:118 java.io.OutputStream.write]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [com.yxx.jiejie.SMSListenerService.AnonymousClass1:206 android.telephony.SmsMessage.createFromPdu -> com.yxx.jiejie.SendThread:118 java.io.OutputStream.write]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [com.yxx.jiejie.SMSListenerService:139 android.content.ContentResolver.query -> com.yxx.jiejie.SMSListenerService.AnonymousClass2.AnonymousClass1:83 java.io.PrintWriter.println]  source:HIT  sink:HIT  path:no  => -
+
+== slocker_android_samp ==
+  reported taint sources:
+    android.telephony.TelephonyManager.getDeviceId
+    android.widget.EditText.getText
+  reported taint sinks (reached by taint):
+    org.apache.http.client.HttpClient.execute
+  connected source->sink paths: (none)
+  findings:
+    #1  pos [com.android.locker.SenderActivity:129 android.telephony.TelephonyManager.getDeviceId -> com.android.locker.RequestSender:73 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [com.android.locker.SenderActivity:129 android.telephony.TelephonyManager.getDeviceId -> com.android.locker.SenderActivity:344 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [com.android.locker.SenderActivity.AnonymousClass12:273 android.widget.EditText.getText -> com.android.locker.RequestSender:73 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #4  pos [com.android.locker.SenderActivity.AnonymousClass12:273 android.widget.EditText.getText -> com.android.locker.SenderActivity:344 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #5  pos [com.android.locker.SenderActivity:129 android.telephony.TelephonyManager.getDeviceId -> com.android.locker.RequestSender:117 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+
+== sms_google ==
+  reported taint sources:
+    android.content.Intent.getStringExtra
+    com.google.elements.Utils.getDeviceId
+  reported taint sinks (reached by taint):
+    android.telephony.SmsManager.sendTextMessage
+    org.apache.http.client.HttpClient.execute
+  connected source->sink paths:
+    android.content.Intent.getStringExtra  ==>  android.telephony.SmsManager.sendTextMessage
+    com.google.elements.Utils.getDeviceId  ==>  android.telephony.SmsManager.sendTextMessage
+  findings:
+    #1  pos [com.google.elements.WorkService:34 com.google.elements.Utils.getDeviceId -> com.google.elements.Utils.sendPostRequest:716 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [com.google.elements.WorkService.AnonymousClass1:56 com.google.elements.Utils.getDeviceId -> com.google.elements.Utils.sendPostRequest:716 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [com.google.elements.GCMIntentService:55 android.content.Intent.getStringExtra -> com.google.elements.Utils.AnonymousClass1:538 android.telephony.SmsManager.sendTextMessage]  source:HIT  sink:HIT  path:yes  => MATCH
+    #4  pos [com.google.elements.GCMIntentService:57 android.content.Intent.getStringExtra -> com.google.elements.Utils:553 android.telephony.SmsManager.sendTextMessage]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== sms_send_locker_qqmagic ==
+  reported taint sources:
+    android.telephony.SmsMessage.getDisplayMessageBody
+    android.telephony.SmsMessage.getDisplayOriginatingAddress
+  reported taint sinks (reached by taint):
+    android.content.Context.startService
+    android.telephony.SmsManager.sendTextMessage
+  connected source->sink paths:
+    android.telephony.SmsMessage.getDisplayMessageBody  ==>  android.content.Context.startService
+    android.telephony.SmsMessage.getDisplayMessageBody  ==>  android.telephony.SmsManager.sendTextMessage
+  findings:
+    #1  pos [qqkj.qqmagic.Fr:43 android.telephony.SmsMessage.getDisplayMessageBody -> qqkj.qqmagic.Fr:35 android.telephony.SmsManager.sendTextMessage]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [qqkj.qqmagic.Fr:41 android.telephony.SmsMessage.getDisplayOriginatingAddress -> qqkj.qqmagic.Fr:35 android.telephony.SmsManager.sendTextMessage]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [qqkj.qqmagic.Fr:43 android.telephony.SmsMessage.getDisplayMessageBody -> qqkj.qqmagic.Fr:47 android.content.Context.startService]  source:HIT  sink:HIT  path:yes  => MATCH
+    #4  NEG [qqkj.qqmagic.Fr:56 android.telephony.SmsMessage.getDisplayMessageBody -> qqkj.qqmagic.Fr:47 android.content.Context.startService]  source:HIT  sink:HIT  path:yes  => MATCH(shadowed-by-positive)
+    #5  NEG [qqkj.qqmagic.Fr:57 android.telephony.SmsMessage.getDisplayMessageBody -> qqkj.qqmagic.Fr:47 android.content.Context.startService]  source:HIT  sink:HIT  path:yes  => MATCH(shadowed-by-positive)
+    #6  pos [qqkj.qqmagic.Fr:58 android.telephony.SmsMessage.getDisplayMessageBody -> qqkj.qqmagic.Fr:47 android.content.Context.startService]  source:HIT  sink:HIT  path:yes  => MATCH
+    #7  pos [qqkj.qqmagic.Fr:59 android.telephony.SmsMessage.getDisplayMessageBody -> qqkj.qqmagic.Fr:47 android.content.Context.startService]  source:HIT  sink:HIT  path:yes  => MATCH
+    #8  pos [qqkj.qqmagic.Fr:60 android.telephony.SmsMessage.getDisplayMessageBody -> qqkj.qqmagic.Fr:47 android.content.Context.startService]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== smssend_packageInstaller ==
+  reported taint sources:
+    android.telephony.SmsMessage.createFromPdu
+    android.telephony.TelephonyManager.getDeviceId
+  reported taint sinks (reached by taint):
+    android.telephony.SmsManager.sendTextMessage
+    java.net.HttpURLConnection.getOutputStream
+  connected source->sink paths:
+    android.telephony.SmsMessage.createFromPdu  ==>  android.telephony.SmsManager.sendTextMessage
+    android.telephony.TelephonyManager.getDeviceId  ==>  android.telephony.SmsManager.sendTextMessage
+  findings:
+    #1  pos [install.app.Settings:280 android.telephony.TelephonyManager.getDeviceId -> install.app.MainActivity:430 java.net.HttpURLConnection.getOutputStream]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [install.app.MainReceiver:145 android.telephony.SmsMessage.createFromPdu -> install.app.Settings:473 android.telephony.SmsManager.sendTextMessage]  source:HIT  sink:HIT  path:yes  => MATCH
+    #3  pos [install.app.Settings:280 android.telephony.TelephonyManager.getDeviceId -> install.app.Settings:473 android.telephony.SmsManager.sendTextMessage]  source:HIT  sink:HIT  path:yes  => MATCH
+    #4  pos [ru.beta.Functions:549 android.telephony.TelephonyManager.getDeviceId -> ru.beta.Functions:449 android.telephony.SmsManager.sendTextMessage]  source:HIT  sink:HIT  path:yes  => MATCH
+    #5  pos [ru.beta.Functions:549 android.telephony.TelephonyManager.getDeviceId -> ru.beta.Functions:102 java.net.HttpURLConnection.getOutputStream]  source:HIT  sink:HIT  path:no  => -
+
+== smssilience_fake_vertu ==
+  reported taint sources:
+    android.telephony.SmsMessage.createFromPdu
+    android.telephony.TelephonyManager.getLine1Number
+  reported taint sinks (reached by taint):
+    java.io.PrintWriter.write
+  connected source->sink paths:
+    android.telephony.SmsMessage.createFromPdu  ==>  java.io.PrintWriter.write
+    android.telephony.TelephonyManager.getLine1Number  ==>  java.io.PrintWriter.write
+  findings:
+    #1  pos [com.vertu.jp.MainActivity:36 android.telephony.TelephonyManager.getLine1Number -> com.vertu.jp.MainActivity:52 java.io.PrintWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [com.vertu.jp.catchsms2:46 android.telephony.SmsMessage.createFromPdu -> com.vertu.jp.catchsms2:68 java.io.PrintWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #3  NEG [com.vertu.jp.catchsms2:34 android.telephony.TelephonyManager.getLine1Number -> com.vertu.jp.catchsms2:68 java.io.PrintWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH(shadowed-by-positive)
+    #4  NEG [com.vertu.jp.catchsms2:51 android.telephony.TelephonyManager.getLine1Number -> com.vertu.jp.catchsms2:68 java.io.PrintWriter.write]  source:HIT  sink:HIT  path:yes  => MATCH(shadowed-by-positive)
+
+== smsstealer_kysn_assassincreed_android_samp ==
+  reported taint sources:
+    android.content.ContentResolver.query
+    android.telephony.TelephonyManager.getSubscriberId
+    java.net.HttpURLConnection.getInputStream
+  reported taint sinks (reached by taint):
+    android.content.SharedPreferences.Editor.commit
+    android.telephony.gsm.SmsManager.sendMultipartTextMessage
+    org.apache.http.client.HttpClient.execute
+  connected source->sink paths: (none)
+  findings:
+    #1  pos [com.dsifakf.aoakmnq.GetAll:45 android.content.ContentResolver.query -> com.dsifakf.aoakmnq.GetAll.AnonymousClass1:84 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [com.dsifakf.aoakmnq.GetAll:45 android.content.ContentResolver.query -> com.dsifakf.aoakmnq.GetAll.AnonymousClass1:84 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [com.dsifakf.aoakmnq.GetAll:62 android.telephony.TelephonyManager.getSubscriberId -> com.dsifakf.aoakmnq.GetAll.AnonymousClass1:84 org.apache.http.client.HttpClient.execute]  source:HIT  sink:HIT  path:no  => -
+    #4  pos [com.dsifakf.aoakmnq.Connect3:44 java.net.HttpURLConnection.getInputStream -> com.dsifakf.aoakmnq.CheckUpdate.AnonymousClass1:124 android.content.SharedPreferences.Editor.commit]  source:HIT  sink:HIT  path:no  => -
+    #5  pos [com.dsifakf.aoakmnq.Connect3:44 java.net.HttpURLConnection.getInputStream -> com.dsifakf.aoakmnq.CheckUpdate.AnonymousClass1:111 android.telephony.gsm.SmsManager.sendMultipartTextMessage]  source:HIT  sink:HIT  path:no  => -
+
+== stels_flashplayer_android_update ==
+  reported taint sources:
+    android.content.ContentResolver.query
+    android.content.pm.PackageManager.getInstalledPackages
+    android.telephony.TelephonyManager.getSubscriberId
+  reported taint sinks (reached by taint):
+    java.io.DataOutputStream.write
+  connected source->sink paths:
+    android.content.ContentResolver.query  ==>  java.io.DataOutputStream.write
+    android.content.pm.PackageManager.getInstalledPackages  ==>  java.io.DataOutputStream.write
+  findings:
+    #1  pos [ru.stels2.Functions:264 android.content.ContentResolver.query -> ru.stels2.Functions:120 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [ru.stels2.Functions:572 android.telephony.TelephonyManager.getSubscriberId -> ru.stels2.Functions:102 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [ru.stels2.Functions:618 android.content.pm.PackageManager.getInstalledPackages -> ru.stels2.Functions:120 java.io.DataOutputStream.write]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== tetus ==
+  reported taint sources:
+    android.telephony.TelephonyManager.getDeviceId
+  reported taint sinks (reached by taint):
+    java.net.HttpURLConnection.connect
+  connected source->sink paths:
+    android.telephony.TelephonyManager.getDeviceId  ==>  java.net.HttpURLConnection.connect
+  findings:
+    #1  pos [shared.library.us.Splash:160 android.telephony.TelephonyManager.getDeviceId -> shared.library.us.HttpPosting:72 java.net.HttpURLConnection.connect]  source:HIT  sink:HIT  path:yes  => MATCH
+    #2  pos [shared.library.us.MarketReciever.AnonymousClass1:30 android.telephony.TelephonyManager.getDeviceId -> shared.library.us.HttpPosting:72 java.net.HttpURLConnection.connect]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== the_interview_movieshow ==
+  reported taint sources:
+    java.net.URL.openStream
+  reported taint sinks (reached by taint):
+    com.movieshow.down.Badaccents.startActivity
+  connected source->sink paths: (none)
+  findings:
+    #1  pos [com.movieshow.down.Badaccents.DownloadMusicfromInternet:164 java.net.URL.openStream -> com.movieshow.down.Badaccents:213 com.movieshow.down.Badaccents.startActivity]  source:HIT  sink:HIT  path:no  => -
+
+== threatjapan_uracto ==
+  reported taint sources:
+    android.content.ContentResolver.query
+    java.io.File.<init>
+  reported taint sinks (reached by taint):
+    java.io.PrintWriter.append
+    org.apache.http.impl.client.DefaultHttpClient.execute
+  connected source->sink paths:
+    java.io.File.<init>  ==>  java.io.PrintWriter.append
+    java.io.File.<init>  ==>  org.apache.http.impl.client.DefaultHttpClient.execute
+  findings:
+    #1  pos [solution.newsandroid.MainviewActivity:110 android.content.ContentResolver.query -> solution.newsandroid.MainviewActivity:159 java.io.PrintWriter.append]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [solution.newsandroid.MainviewActivity:181 java.io.File.<init> -> solution.newsandroid.MainviewActivity:186 org.apache.http.impl.client.DefaultHttpClient.execute]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== vibleaker_android_samp ==
+  reported taint sources:
+    android.os.Environment.getExternalStorageDirectory
+    java.io.File.<init>
+  reported taint sinks (reached by taint):
+    java.io.File.getName
+    org.springframework.web.client.RestTemplate.exchange
+  connected source->sink paths:
+    java.io.File.<init>  ==>  java.io.File.getName
+    java.io.File.<init>  ==>  org.springframework.web.client.RestTemplate.exchange
+  findings:
+    #1  pos [gr.georkouk.kastorakiacounter_new.MyServerFunctions:241 android.os.Environment.getExternalStorageDirectory -> gr.georkouk.kastorakiacounter_new.MyServerFunctions:433 org.springframework.web.client.RestTemplate.exchange]  source:HIT  sink:HIT  path:no  => -
+    #2  pos [gr.georkouk.kastorakiacounter_new.MyServerFunctions:245 java.io.File.<init> -> gr.georkouk.kastorakiacounter_new.MyServerFunctions:433 org.springframework.web.client.RestTemplate.exchange]  source:HIT  sink:HIT  path:yes  => MATCH
+    #3  pos [gr.georkouk.kastorakiacounter_new.MyServerFunctions:355 java.io.File.<init> -> gr.georkouk.kastorakiacounter_new.MyServerFunctions.AnonymousClass1:433 java.io.File.getName]  source:HIT  sink:HIT  path:yes  => MATCH
+    #4  pos [gr.georkouk.kastorakiacounter_new.MyServerFunctions:330 java.io.File.<init> -> gr.georkouk.kastorakiacounter_new.MyServerFunctions.AnonymousClass1:433 java.io.File.getName]  source:HIT  sink:HIT  path:yes  => MATCH
+
+== xbot_android_samp ==
+  reported taint sources:
+    android.content.ContentResolver.query
+    android.telephony.SmsMessage.createFromPdu
+    android.telephony.TelephonyManager.getDeviceId
+  reported taint sinks (reached by taint):
+    android.webkit.WebView.addJavascriptInterface
+  connected source->sink paths: (none)
+  findings:
+    #1  pos [com.address.core.SMSHandler:30 android.telephony.SmsMessage.createFromPdu -> com.address.core.Script:90 org.mozilla.javascript.Function.call]  source:HIT  sink:miss  path:no  => -
+    #2  pos [com.address.core.xAPI:89 android.telephony.TelephonyManager.getDeviceId -> com.address.core.activities.BrowserActivity:47 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+    #3  pos [com.address.core.xAPI:211 android.content.ContentResolver.query -> com.address.core.activities.BrowserActivity:47 android.webkit.WebView.addJavascriptInterface]  source:HIT  sink:HIT  path:no  => -
+
+Ran 38 TaintBench app(s) (apps from ./apps)
+  PASS  backflash  (6/13 ground-truth flows detected)
+  PASS  beita_com_beita_contact  (1/3 ground-truth flows detected)
+  PASS  cajino_baidu  (11/12 ground-truth flows detected)
+  PASS  chulia  (0/4 ground-truth flows detected)
+  PASS  death_ring_materialflow  (1/1 ground-truth flows detected)
+  PASS  dsencrypt_samp  (1/1 ground-truth flows detected)
+  PASS  exprespam  (2/2 ground-truth flows detected)
+  PASS  fakeappstore  (1/3 ground-truth flows detected)
+  PASS  fakebank_android_samp  (3/5 ground-truth flows detected)
+  PASS  fakedaum  (1/2 ground-truth flows detected)
+  PASS  fakemart  (0/2 ground-truth flows detected)
+  PASS  fakeplay  (0/2 ground-truth flows detected)
+  PASS  faketaobao  (0/4 ground-truth flows detected)
+  PASS  godwon_samp  (0/6 ground-truth flows detected)
+  PASS  hummingbad_android_samp  (2/2 ground-truth flows detected)
+  PASS  jollyserv  (0/1 ground-truth flows detected)
+  PASS  overlay_android_samp  (3/4 ground-truth flows detected)
+  PASS  overlaylocker2_android_samp  (4/7 ground-truth flows detected)
+  PASS  phospy  (2/2 ground-truth flows detected, 3 known false positive(s))
+  PASS  proxy_samp  (9/17 ground-truth flows detected, 2 known false positive(s))
+  PASS  remote_control_smack  (6/17 ground-truth flows detected)
+  PASS  repane  (1/1 ground-truth flows detected)
+  PASS  roidsec  (6/6 ground-truth flows detected)
+  PASS  samsapo  (2/4 ground-truth flows detected)
+  PASS  save_me  (10/25 ground-truth flows detected, 3 known false positive(s))
+  PASS  scipiex  (0/3 ground-truth flows detected)
+  PASS  slocker_android_samp  (0/5 ground-truth flows detected)
+  PASS  sms_google  (2/4 ground-truth flows detected)
+  PASS  sms_send_locker_qqmagic  (5/6 ground-truth flows detected)
+  PASS  smssend_packageInstaller  (3/5 ground-truth flows detected)
+  PASS  smssilience_fake_vertu  (2/2 ground-truth flows detected)
+  PASS  smsstealer_kysn_assassincreed_android_samp  (0/5 ground-truth flows detected)
+  PASS  stels_flashplayer_android_update  (2/3 ground-truth flows detected)
+  PASS  tetus  (2/2 ground-truth flows detected)
+  PASS  the_interview_movieshow  (0/1 ground-truth flows detected)
+  PASS  threatjapan_uracto  (1/2 ground-truth flows detected)
+  PASS  vibleaker_android_samp  (3/4 ground-truth flows detected)
+  PASS  xbot_android_samp  (0/3 ground-truth flows detected)
+
+38 passed, 0 skipped, 0 failed of 38 app(s)
