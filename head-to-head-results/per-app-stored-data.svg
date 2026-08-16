@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760.0" height="632.0" viewBox="0 0 760.0 632.0"><style>
+  .grid { stroke: #e1e0d9; stroke-width: 1; }
+  .tick { fill: #898781; font: 11px system-ui, sans-serif; }
+  .axis-label { fill: #898781; font: 11px system-ui, sans-serif; }
+  .row-label { fill: #52514e; font: 12px system-ui, sans-serif; }
+  .zero { fill: #898781; font: 11px system-ui, sans-serif; }
+  .bar.s1 { fill: #2a78d6; } .bar.s2 { fill: #eb6834; }
+  .bar.o1 { fill: #2a78d6; } .bar.o2 { fill: #86b6ef; }
+  .title { fill: #0b0b0b; font: 600 14px system-ui, sans-serif; }
+  .key { fill: #52514e; font: 12px system-ui, sans-serif; }
+</style><rect width="760.0" height="632.0" fill="#fcfcfb"/><text class="title" x="0" y="16">Stored data per app (GB)</text><g transform="translate(0,0)"><rect x="0" y="30" width="11" height="11" rx="3" class="bar s1"/><text class="key" x="17" y="40">current ctadl</text><rect x="113" y="30" width="11" height="11" rx="3" class="bar s2"/><text class="key" x="130" y="40">ctadl-souffle</text></g><g transform="translate(0,54)">
+<line class="grid" x1="196.0" y1="0" x2="196.0" y2="532.0"/>
+<text class="tick" x="196.0" y="548.0" text-anchor="middle">0</text>
+<line class="grid" x1="296.0" y1="0" x2="296.0" y2="532.0"/>
+<text class="tick" x="296.0" y="548.0" text-anchor="middle">5</text>
+<line class="grid" x1="396.0" y1="0" x2="396.0" y2="532.0"/>
+<text class="tick" x="396.0" y="548.0" text-anchor="middle">10</text>
+<line class="grid" x1="496.0" y1="0" x2="496.0" y2="532.0"/>
+<text class="tick" x="496.0" y="548.0" text-anchor="middle">15</text>
+<line class="grid" x1="596.0" y1="0" x2="596.0" y2="532.0"/>
+<text class="tick" x="596.0" y="548.0" text-anchor="middle">20</text>
+<line class="grid" x1="696.0" y1="0" x2="696.0" y2="532.0"/>
+<text class="tick" x="696.0" y="548.0" text-anchor="middle">25</text>
+<text class="axis-label" x="446.0" y="564.0" text-anchor="middle">gigabytes stored</text>
+<text class="row-label" x="186" y="21.0" text-anchor="end">TikTok 46.1.3</text>
+<path class="bar s1" d="M196.0,5.0H663.4a4.0,4.0 0 0 1 4.0,4.0V12.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V5.0Z"><title>TikTok 46.1.3 — current ctadl: 23.57 GB</title></path>
+<text class="zero" x="200" y="28.0"><title>TikTok 46.1.3 — ctadl-souffle: 0.00 GB</title>—</text>
+<text class="row-label" x="186" y="59.0" text-anchor="end">Messenger 570.0.0.34</text>
+<path class="bar s1" d="M196.0,43.0H207.8a4.0,4.0 0 0 1 4.0,4.0V50.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V43.0Z"><title>Messenger 570.0.0.34 — current ctadl: 0.79 GB</title></path>
+<path class="bar s2" d="M196.0,56.0H456.8a4.0,4.0 0 0 1 4.0,4.0V63.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V56.0Z"><title>Messenger 570.0.0.34 — ctadl-souffle: 13.24 GB</title></path>
+<text class="row-label" x="186" y="97.0" text-anchor="end">Messenger 563.0.0.47</text>
+<path class="bar s1" d="M196.0,81.0H210.7a4.0,4.0 0 0 1 4.0,4.0V88.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V81.0Z"><title>Messenger 563.0.0.47 — current ctadl: 0.94 GB</title></path>
+<path class="bar s2" d="M196.0,94.0H450.4a4.0,4.0 0 0 1 4.0,4.0V101.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V94.0Z"><title>Messenger 563.0.0.47 — ctadl-souffle: 12.92 GB</title></path>
+<text class="row-label" x="186" y="135.0" text-anchor="end">WhatsApp Business 2.26.21</text>
+<path class="bar s1" d="M196.0,119.0H204.1a4.0,4.0 0 0 1 4.0,4.0V126.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V119.0Z"><title>WhatsApp Business 2.26.21 — current ctadl: 0.61 GB</title></path>
+<path class="bar s2" d="M196.0,132.0H408.6a4.0,4.0 0 0 1 4.0,4.0V139.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V132.0Z"><title>WhatsApp Business 2.26.21 — ctadl-souffle: 10.83 GB</title></path>
+<text class="row-label" x="186" y="173.0" text-anchor="end">WhatsApp 2.26.27.85</text>
+<path class="bar s1" d="M196.0,157.0H203.4a4.0,4.0 0 0 1 4.0,4.0V164.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V157.0Z"><title>WhatsApp 2.26.27.85 — current ctadl: 0.57 GB</title></path>
+<path class="bar s2" d="M196.0,170.0H399.6a4.0,4.0 0 0 1 4.0,4.0V177.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V170.0Z"><title>WhatsApp 2.26.27.85 — ctadl-souffle: 10.38 GB</title></path>
+<text class="row-label" x="186" y="211.0" text-anchor="end">WhatsApp 2.26.20.72</text>
+<path class="bar s1" d="M196.0,195.0H202.9a4.0,4.0 0 0 1 4.0,4.0V202.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V195.0Z"><title>WhatsApp 2.26.20.72 — current ctadl: 0.55 GB</title></path>
+<path class="bar s2" d="M196.0,208.0H388.2a4.0,4.0 0 0 1 4.0,4.0V215.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V208.0Z"><title>WhatsApp 2.26.20.72 — ctadl-souffle: 9.81 GB</title></path>
+<text class="row-label" x="186" y="249.0" text-anchor="end">VLC 3.7.0</text>
+<path class="bar s1" d="M196.0,233.0H377.3a4.0,4.0 0 0 1 4.0,4.0V240.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V233.0Z"><title>VLC 3.7.0 — current ctadl: 9.27 GB</title></path>
+<path class="bar s2" d="M196.0,246.0H298.2a4.0,4.0 0 0 1 4.0,4.0V253.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V246.0Z"><title>VLC 3.7.0 — ctadl-souffle: 5.31 GB</title></path>
+<text class="row-label" x="186" y="287.0" text-anchor="end">Telegram 12.9.0</text>
+<path class="bar s1" d="M196.0,271.0H271.3a4.0,4.0 0 0 1 4.0,4.0V278.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V271.0Z"><title>Telegram 12.9.0 — current ctadl: 3.97 GB</title></path>
+<path class="bar s2" d="M196.0,284.0H339.0a4.0,4.0 0 0 1 4.0,4.0V291.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V284.0Z"><title>Telegram 12.9.0 — ctadl-souffle: 7.35 GB</title></path>
+<text class="row-label" x="186" y="325.0" text-anchor="end">Telegram 12.8.3</text>
+<path class="bar s1" d="M196.0,309.0H269.7a4.0,4.0 0 0 1 4.0,4.0V316.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V309.0Z"><title>Telegram 12.8.3 — current ctadl: 3.89 GB</title></path>
+<path class="bar s2" d="M196.0,322.0H338.5a4.0,4.0 0 0 1 4.0,4.0V329.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V322.0Z"><title>Telegram 12.8.3 — ctadl-souffle: 7.33 GB</title></path>
+<text class="row-label" x="186" y="363.0" text-anchor="end">Telegram 12.7.3</text>
+<path class="bar s1" d="M196.0,347.0H271.1a4.0,4.0 0 0 1 4.0,4.0V354.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V347.0Z"><title>Telegram 12.7.3 — current ctadl: 3.96 GB</title></path>
+<path class="bar s2" d="M196.0,360.0H333.8a4.0,4.0 0 0 1 4.0,4.0V367.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V360.0Z"><title>Telegram 12.7.3 — ctadl-souffle: 7.09 GB</title></path>
+<text class="row-label" x="186" y="401.0" text-anchor="end">TikTok Lite 44.0.3</text>
+<path class="bar s1" d="M196.0,385.0H260.8a4.0,4.0 0 0 1 4.0,4.0V392.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V385.0Z"><title>TikTok Lite 44.0.3 — current ctadl: 3.44 GB</title></path>
+<path class="bar s2" d="M196.0,398.0H313.7a4.0,4.0 0 0 1 4.0,4.0V405.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V398.0Z"><title>TikTok Lite 44.0.3 — ctadl-souffle: 6.09 GB</title></path>
+<text class="row-label" x="186" y="439.0" text-anchor="end">Chrome 149.0.7827</text>
+<path class="bar s1" d="M196.0,423.0H203.0a4.0,4.0 0 0 1 4.0,4.0V430.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V423.0Z"><title>Chrome 149.0.7827 — current ctadl: 0.55 GB</title></path>
+<path class="bar s2" d="M196.0,436.0H242.2a4.0,4.0 0 0 1 4.0,4.0V443.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V436.0Z"><title>Chrome 149.0.7827 — ctadl-souffle: 2.51 GB</title></path>
+<text class="row-label" x="186" y="477.0" text-anchor="end">FX File Explorer 9.1.0.8</text>
+<path class="bar s1" d="M196.0,461.0H197.4a1.4,1.4 0 0 1 1.4,1.4V470.6a1.4,1.4 0 0 1 -1.4,1.4H196.0V461.0Z"><title>FX File Explorer 9.1.0.8 — current ctadl: 0.14 GB</title></path>
+<path class="bar s2" d="M196.0,474.0H220.6a4.0,4.0 0 0 1 4.0,4.0V481.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V474.0Z"><title>FX File Explorer 9.1.0.8 — ctadl-souffle: 1.43 GB</title></path>
+<text class="row-label" x="186" y="515.0" text-anchor="end">Facebook Lite 513.0.0.6</text>
+<text class="zero" x="200" y="509.0"><title>Facebook Lite 513.0.0.6 — current ctadl: 0.05 GB</title>0.05 GB</text>
+<text class="zero" x="200" y="522.0"><title>Facebook Lite 513.0.0.6 — ctadl-souffle: 0.07 GB</title>0.07 GB</text>
+</g></svg>

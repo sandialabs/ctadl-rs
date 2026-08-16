@@ -1,0 +1,520 @@
+<title>CTADL Import Head-to-Head</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:        #f6f7f9;
+    --surface:     #fdfdfe;
+    --ink:         #10151c;
+    --ink-2:       #4a5563;
+    --muted:       #7b8794;
+    --grid:        #e2e6ec;
+    --rule:        rgba(16,21,28,0.12);
+    --s1:          #2a78d6;
+    --s2:          #eb6834;
+    --o1:          #2a78d6;
+    --o2:          #86b6ef;
+    --bad:         #b62d2d;
+    --bad-bg:      rgba(182,45,45,0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page:      #0b0e12;
+      --surface:   #151a21;
+      --ink:       #eef2f6;
+      --ink-2:     #aab4c0;
+      --muted:     #7b8794;
+      --grid:      #232a33;
+      --rule:      rgba(238,242,246,0.14);
+      --s1:        #3987e5;
+      --s2:        #d95926;
+      --o1:        #3987e5;
+      --o2:        #184f95;
+      --bad:       #e57373;
+      --bad-bg:    rgba(229,115,115,0.14);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:        #0b0e12;
+    --surface:     #151a21;
+    --ink:         #eef2f6;
+    --ink-2:       #aab4c0;
+    --muted:       #7b8794;
+    --grid:        #232a33;
+    --rule:        rgba(238,242,246,0.14);
+    --s1:          #3987e5;
+    --s2:          #d95926;
+    --o1:          #3987e5;
+    --o2:          #184f95;
+    --bad:         #e57373;
+    --bad-bg:      rgba(229,115,115,0.14);
+  }
+
+  :root {
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  body {
+    background: var(--page);
+    color: var(--ink);
+    font: 16px/1.65 var(--sans);
+    margin: 0;
+    padding: 48px 24px 96px;
+  }
+  main { max-width: 880px; margin: 0 auto;
+          display: flex; flex-direction: column; gap: 0; }
+  :where(a, button, [tabindex]):focus-visible {
+    outline: 2px solid var(--s1); outline-offset: 2px; border-radius: 3px; }
+
+  h1 { font: 600 27px/1.25 var(--mono); letter-spacing: -0.02em;
+        margin: 0 0 10px; text-wrap: balance; }
+  h2 { font: 600 17px/1.3 var(--mono); letter-spacing: -0.01em;
+        margin: 52px 0 4px; text-wrap: balance;
+        padding-top: 14px; border-top: 1px solid var(--rule); }
+  h3 { font: 600 14px/1.35 var(--mono); letter-spacing: -0.005em;
+        margin: 32px 0 4px; color: var(--ink); text-wrap: balance; }
+  .eyebrow { font: 500 11px/1 var(--mono); letter-spacing: 0.09em;
+              text-transform: uppercase; color: var(--muted);
+              margin: 0 0 14px; }
+  p { color: var(--ink-2); margin: 12px 0 0; max-width: 68ch; }
+  .sub { margin: 0 0 4px; }
+  strong { color: var(--ink); font-weight: 600; }
+  code { font: 0.86em var(--mono); background: var(--surface);
+          border: 1px solid var(--rule); border-radius: 4px; padding: 1px 5px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(186px, 1fr));
+           gap: 12px; margin: 24px 0 0; }
+  .kpi { background: var(--surface); border: 1px solid var(--rule);
+          border-radius: 8px; padding: 15px 16px 14px;
+          display: flex; flex-direction: column; gap: 3px; }
+  .kpi .k { font: 500 11px/1 var(--mono); letter-spacing: 0.07em;
+             text-transform: uppercase; color: var(--muted); }
+  .kpi .v { font: 600 30px/1.1 var(--sans); letter-spacing: -0.02em;
+             color: var(--ink); }
+  .kpi .n { font-size: 13px; color: var(--ink-2); }
+
+  figure { margin: 14px 0 0; background: var(--surface);
+            border: 1px solid var(--rule); border-radius: 8px;
+            padding: 18px 16px 12px; overflow-x: auto; }
+  figcaption { font-size: 13px; line-height: 1.5; color: var(--muted);
+                margin-top: 10px; max-width: 68ch; }
+  .chart { display: block; max-width: 100%; height: auto; }
+  .grid { stroke: var(--grid); stroke-width: 1; }
+  .tick { fill: var(--muted); font: 11px var(--mono);
+           font-variant-numeric: tabular-nums; }
+  .axis-label { fill: var(--muted); font: 11px var(--sans); }
+  .row-label { fill: var(--ink-2); font: 12px var(--sans); }
+  .zero { fill: var(--muted); font: 11px var(--mono); }
+  .bar.s1 { fill: var(--s1); }
+  .bar.s2 { fill: var(--s2); }
+  .bar.o1 { fill: var(--o1); }
+  .bar.o2 { fill: var(--o2); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 14px 0 0;
+             font: 13px var(--sans); color: var(--ink-2); }
+  .legend-item { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  .swatch.s1 { background: var(--s1); }
+  .swatch.s2 { background: var(--s2); }
+  .swatch.o1 { background: var(--o1); }
+  .swatch.o2 { background: var(--o2); }
+
+  .tablewrap { overflow-x: auto; margin-top: 16px;
+                border: 1px solid var(--rule); border-radius: 8px;
+                background: var(--surface); }
+  table { border-collapse: collapse; width: 100%;
+           font: 13px/1.4 var(--mono); }
+  th, td { padding: 8px 11px; text-align: right; white-space: nowrap;
+            border-bottom: 1px solid var(--rule);
+            font-variant-numeric: tabular-nums; }
+  thead th { color: var(--muted); font-weight: 500; font-size: 11px;
+              letter-spacing: 0.06em; text-transform: uppercase; }
+  tbody th { text-align: left; font-weight: 500; color: var(--ink); }
+  tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+  .grp { border-left: 1px solid var(--rule); }
+  .pill { display: inline-flex; align-items: center; gap: 5px;
+           font: 500 11px/1 var(--mono); letter-spacing: 0.02em;
+           color: var(--bad); background: var(--bad-bg);
+           border-radius: 999px; padding: 4px 8px; }
+  ul { color: var(--ink-2); padding-left: 20px; margin: 14px 0 0;
+        max-width: 68ch; display: flex; flex-direction: column; gap: 8px; }
+  .note { font-size: 13px; color: var(--muted); }
+</style>
+
+<main>
+<p class="eyebrow">import benchmark · 14 android apps · 1.11 GB</p>
+<h1>CTADL Import Head-to-Head</h1>
+<p class="sub">Every app in <code>~/apps</code> imported twice: once with the
+current Rust/Ascent <code>ctadl</code>, once with the older Souffle
+<code>ctadl</code> 0.14.1. Import only — nothing was indexed. What follows is how
+much each tool wrote to disk and how much code it got back for it.</p>
+
+<h2>The short version</h2>
+<div class="kpis">
+  <div class="kpi"><div class="k">Stored, current ctadl</div>
+    <div class="v">52.27 GB</div><div class="n">173 B per statement</div></div>
+  <div class="kpi"><div class="k">Stored, ctadl-souffle</div>
+    <div class="v">94.36 GB</div><div class="n">1,875 B per statement</div></div>
+  <div class="kpi"><div class="k">Statements, current ctadl</div>
+    <div class="v">324.75 M</div><div class="n">69% from native code</div></div>
+  <div class="kpi"><div class="k">Statements, ctadl-souffle</div>
+    <div class="v">54.03 M</div><div class="n">Dex only</div></div>
+</div>
+<p>The current importer recovers <strong>6.0× the IR statements</strong> while
+writing <strong>1.8× less data</strong> to disk — <strong>11× less storage per statement
+recovered</strong>. The two effects have separate causes. The extra statements come
+from disassembling each app's native libraries, which the older importer never
+looks at. The storage difference comes from the format: a binary IR plus gzipped
+facts, against uncompressed Datalog text plus a full decompilation of the app
+back to Java.</p>
+<p>TikTok 46.1.3 carries a large share of that: the older tool recovered nothing from it, so all 147.92 M of the current tool's statements there are unmatched. Setting TikTok 46.1.3 aside, the remaining 13 apps give 3.3× the statements for 3.3× less stored data — the same shape, less dramatic.</p>
+
+<h2>Aggregate</h2>
+<div class="legend"><span class="legend-item"><span class="swatch s1"></span>current ctadl</span><span class="legend-item"><span class="swatch s2"></span>ctadl-souffle</span></div>
+<figure>
+<svg class="chart" viewBox="0 0 760 74" role="img" width="760" height="74" aria-label="gigabytes stored by app, current ctadl and ctadl-souffle">
+<line class="grid" x1="196.0" y1="0" x2="196.0" y2="38.0"/>
+<text class="tick" x="196.0" y="54.0" text-anchor="middle">0</text>
+<line class="grid" x1="296.0" y1="0" x2="296.0" y2="38.0"/>
+<text class="tick" x="296.0" y="54.0" text-anchor="middle">20</text>
+<line class="grid" x1="396.0" y1="0" x2="396.0" y2="38.0"/>
+<text class="tick" x="396.0" y="54.0" text-anchor="middle">40</text>
+<line class="grid" x1="496.0" y1="0" x2="496.0" y2="38.0"/>
+<text class="tick" x="496.0" y="54.0" text-anchor="middle">60</text>
+<line class="grid" x1="596.0" y1="0" x2="596.0" y2="38.0"/>
+<text class="tick" x="596.0" y="54.0" text-anchor="middle">80</text>
+<line class="grid" x1="696.0" y1="0" x2="696.0" y2="38.0"/>
+<text class="tick" x="696.0" y="54.0" text-anchor="middle">100</text>
+<text class="axis-label" x="446.0" y="70.0" text-anchor="middle">gigabytes stored</text>
+<text class="row-label" x="186" y="21.0" text-anchor="end">All 14 apps</text>
+<path class="bar s1" d="M196.0,5.0H453.4a4.0,4.0 0 0 1 4.0,4.0V12.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V5.0Z"><title>All 14 apps — current ctadl: 52.27 GB</title></path>
+<path class="bar s2" d="M196.0,18.0H663.8a4.0,4.0 0 0 1 4.0,4.0V25.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V18.0Z"><title>All 14 apps — ctadl-souffle: 94.36 GB</title></path>
+</svg>
+<figcaption>Total bytes written to the store across all 14 apps.</figcaption>
+</figure>
+<figure>
+<svg class="chart" viewBox="0 0 760 74" role="img" width="760" height="74" aria-label="million IR statements recovered by app, current ctadl and ctadl-souffle">
+<line class="grid" x1="196.0" y1="0" x2="196.0" y2="38.0"/>
+<text class="tick" x="196.0" y="54.0" text-anchor="middle">0</text>
+<line class="grid" x1="321.0" y1="0" x2="321.0" y2="38.0"/>
+<text class="tick" x="321.0" y="54.0" text-anchor="middle">100</text>
+<line class="grid" x1="446.0" y1="0" x2="446.0" y2="38.0"/>
+<text class="tick" x="446.0" y="54.0" text-anchor="middle">200</text>
+<line class="grid" x1="571.0" y1="0" x2="571.0" y2="38.0"/>
+<text class="tick" x="571.0" y="54.0" text-anchor="middle">300</text>
+<line class="grid" x1="696.0" y1="0" x2="696.0" y2="38.0"/>
+<text class="tick" x="696.0" y="54.0" text-anchor="middle">400</text>
+<text class="axis-label" x="446.0" y="70.0" text-anchor="middle">million IR statements recovered</text>
+<text class="row-label" x="186" y="21.0" text-anchor="end">All 14 apps</text>
+<path class="bar s1" d="M196.0,5.0H597.9a4.0,4.0 0 0 1 4.0,4.0V12.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V5.0Z"><title>All 14 apps — current ctadl: 324,751,305 statements</title></path>
+<path class="bar s2" d="M196.0,18.0H259.5a4.0,4.0 0 0 1 4.0,4.0V25.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V18.0Z"><title>All 14 apps — ctadl-souffle: 54,029,143 statements</title></path>
+</svg>
+<figcaption>Total IR statements recovered across all 14 apps, including every
+sub-import (native libraries, bundle splits).</figcaption>
+</figure>
+
+<h2>Split by apk</h2>
+<div class="legend"><span class="legend-item"><span class="swatch s1"></span>current ctadl</span><span class="legend-item"><span class="swatch s2"></span>ctadl-souffle</span></div>
+<figure>
+<svg class="chart" viewBox="0 0 760 568" role="img" width="760" height="568" aria-label="gigabytes stored by app, current ctadl and ctadl-souffle">
+<line class="grid" x1="196.0" y1="0" x2="196.0" y2="532.0"/>
+<text class="tick" x="196.0" y="548.0" text-anchor="middle">0</text>
+<line class="grid" x1="296.0" y1="0" x2="296.0" y2="532.0"/>
+<text class="tick" x="296.0" y="548.0" text-anchor="middle">5</text>
+<line class="grid" x1="396.0" y1="0" x2="396.0" y2="532.0"/>
+<text class="tick" x="396.0" y="548.0" text-anchor="middle">10</text>
+<line class="grid" x1="496.0" y1="0" x2="496.0" y2="532.0"/>
+<text class="tick" x="496.0" y="548.0" text-anchor="middle">15</text>
+<line class="grid" x1="596.0" y1="0" x2="596.0" y2="532.0"/>
+<text class="tick" x="596.0" y="548.0" text-anchor="middle">20</text>
+<line class="grid" x1="696.0" y1="0" x2="696.0" y2="532.0"/>
+<text class="tick" x="696.0" y="548.0" text-anchor="middle">25</text>
+<text class="axis-label" x="446.0" y="564.0" text-anchor="middle">gigabytes stored</text>
+<text class="row-label" x="186" y="21.0" text-anchor="end">TikTok 46.1.3</text>
+<path class="bar s1" d="M196.0,5.0H663.4a4.0,4.0 0 0 1 4.0,4.0V12.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V5.0Z"><title>TikTok 46.1.3 — current ctadl: 23.57 GB</title></path>
+<text class="zero" x="200" y="28.0"><title>TikTok 46.1.3 — ctadl-souffle: 0.00 GB</title>—</text>
+<text class="row-label" x="186" y="59.0" text-anchor="end">Messenger 570.0.0.34</text>
+<path class="bar s1" d="M196.0,43.0H207.8a4.0,4.0 0 0 1 4.0,4.0V50.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V43.0Z"><title>Messenger 570.0.0.34 — current ctadl: 0.79 GB</title></path>
+<path class="bar s2" d="M196.0,56.0H456.8a4.0,4.0 0 0 1 4.0,4.0V63.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V56.0Z"><title>Messenger 570.0.0.34 — ctadl-souffle: 13.24 GB</title></path>
+<text class="row-label" x="186" y="97.0" text-anchor="end">Messenger 563.0.0.47</text>
+<path class="bar s1" d="M196.0,81.0H210.7a4.0,4.0 0 0 1 4.0,4.0V88.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V81.0Z"><title>Messenger 563.0.0.47 — current ctadl: 0.94 GB</title></path>
+<path class="bar s2" d="M196.0,94.0H450.4a4.0,4.0 0 0 1 4.0,4.0V101.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V94.0Z"><title>Messenger 563.0.0.47 — ctadl-souffle: 12.92 GB</title></path>
+<text class="row-label" x="186" y="135.0" text-anchor="end">WhatsApp Business 2.26.21</text>
+<path class="bar s1" d="M196.0,119.0H204.1a4.0,4.0 0 0 1 4.0,4.0V126.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V119.0Z"><title>WhatsApp Business 2.26.21 — current ctadl: 0.61 GB</title></path>
+<path class="bar s2" d="M196.0,132.0H408.6a4.0,4.0 0 0 1 4.0,4.0V139.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V132.0Z"><title>WhatsApp Business 2.26.21 — ctadl-souffle: 10.83 GB</title></path>
+<text class="row-label" x="186" y="173.0" text-anchor="end">WhatsApp 2.26.27.85</text>
+<path class="bar s1" d="M196.0,157.0H203.4a4.0,4.0 0 0 1 4.0,4.0V164.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V157.0Z"><title>WhatsApp 2.26.27.85 — current ctadl: 0.57 GB</title></path>
+<path class="bar s2" d="M196.0,170.0H399.6a4.0,4.0 0 0 1 4.0,4.0V177.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V170.0Z"><title>WhatsApp 2.26.27.85 — ctadl-souffle: 10.38 GB</title></path>
+<text class="row-label" x="186" y="211.0" text-anchor="end">WhatsApp 2.26.20.72</text>
+<path class="bar s1" d="M196.0,195.0H202.9a4.0,4.0 0 0 1 4.0,4.0V202.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V195.0Z"><title>WhatsApp 2.26.20.72 — current ctadl: 0.55 GB</title></path>
+<path class="bar s2" d="M196.0,208.0H388.2a4.0,4.0 0 0 1 4.0,4.0V215.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V208.0Z"><title>WhatsApp 2.26.20.72 — ctadl-souffle: 9.81 GB</title></path>
+<text class="row-label" x="186" y="249.0" text-anchor="end">VLC 3.7.0</text>
+<path class="bar s1" d="M196.0,233.0H377.3a4.0,4.0 0 0 1 4.0,4.0V240.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V233.0Z"><title>VLC 3.7.0 — current ctadl: 9.27 GB</title></path>
+<path class="bar s2" d="M196.0,246.0H298.2a4.0,4.0 0 0 1 4.0,4.0V253.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V246.0Z"><title>VLC 3.7.0 — ctadl-souffle: 5.31 GB</title></path>
+<text class="row-label" x="186" y="287.0" text-anchor="end">Telegram 12.9.0</text>
+<path class="bar s1" d="M196.0,271.0H271.3a4.0,4.0 0 0 1 4.0,4.0V278.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V271.0Z"><title>Telegram 12.9.0 — current ctadl: 3.97 GB</title></path>
+<path class="bar s2" d="M196.0,284.0H339.0a4.0,4.0 0 0 1 4.0,4.0V291.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V284.0Z"><title>Telegram 12.9.0 — ctadl-souffle: 7.35 GB</title></path>
+<text class="row-label" x="186" y="325.0" text-anchor="end">Telegram 12.8.3</text>
+<path class="bar s1" d="M196.0,309.0H269.7a4.0,4.0 0 0 1 4.0,4.0V316.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V309.0Z"><title>Telegram 12.8.3 — current ctadl: 3.89 GB</title></path>
+<path class="bar s2" d="M196.0,322.0H338.5a4.0,4.0 0 0 1 4.0,4.0V329.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V322.0Z"><title>Telegram 12.8.3 — ctadl-souffle: 7.33 GB</title></path>
+<text class="row-label" x="186" y="363.0" text-anchor="end">Telegram 12.7.3</text>
+<path class="bar s1" d="M196.0,347.0H271.1a4.0,4.0 0 0 1 4.0,4.0V354.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V347.0Z"><title>Telegram 12.7.3 — current ctadl: 3.96 GB</title></path>
+<path class="bar s2" d="M196.0,360.0H333.8a4.0,4.0 0 0 1 4.0,4.0V367.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V360.0Z"><title>Telegram 12.7.3 — ctadl-souffle: 7.09 GB</title></path>
+<text class="row-label" x="186" y="401.0" text-anchor="end">TikTok Lite 44.0.3</text>
+<path class="bar s1" d="M196.0,385.0H260.8a4.0,4.0 0 0 1 4.0,4.0V392.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V385.0Z"><title>TikTok Lite 44.0.3 — current ctadl: 3.44 GB</title></path>
+<path class="bar s2" d="M196.0,398.0H313.7a4.0,4.0 0 0 1 4.0,4.0V405.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V398.0Z"><title>TikTok Lite 44.0.3 — ctadl-souffle: 6.09 GB</title></path>
+<text class="row-label" x="186" y="439.0" text-anchor="end">Chrome 149.0.7827</text>
+<path class="bar s1" d="M196.0,423.0H203.0a4.0,4.0 0 0 1 4.0,4.0V430.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V423.0Z"><title>Chrome 149.0.7827 — current ctadl: 0.55 GB</title></path>
+<path class="bar s2" d="M196.0,436.0H242.2a4.0,4.0 0 0 1 4.0,4.0V443.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V436.0Z"><title>Chrome 149.0.7827 — ctadl-souffle: 2.51 GB</title></path>
+<text class="row-label" x="186" y="477.0" text-anchor="end">FX File Explorer 9.1.0.8</text>
+<path class="bar s1" d="M196.0,461.0H197.4a1.4,1.4 0 0 1 1.4,1.4V470.6a1.4,1.4 0 0 1 -1.4,1.4H196.0V461.0Z"><title>FX File Explorer 9.1.0.8 — current ctadl: 0.14 GB</title></path>
+<path class="bar s2" d="M196.0,474.0H220.6a4.0,4.0 0 0 1 4.0,4.0V481.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V474.0Z"><title>FX File Explorer 9.1.0.8 — ctadl-souffle: 1.43 GB</title></path>
+<text class="row-label" x="186" y="515.0" text-anchor="end">Facebook Lite 513.0.0.6</text>
+<text class="zero" x="200" y="509.0"><title>Facebook Lite 513.0.0.6 — current ctadl: 0.05 GB</title>0.05 GB</text>
+<text class="zero" x="200" y="522.0"><title>Facebook Lite 513.0.0.6 — ctadl-souffle: 0.07 GB</title>0.07 GB</text>
+</svg>
+<figcaption>Stored data per app, largest first.</figcaption>
+</figure>
+<figure>
+<svg class="chart" viewBox="0 0 760 568" role="img" width="760" height="568" aria-label="million IR statements recovered by app, current ctadl and ctadl-souffle">
+<line class="grid" x1="196.0" y1="0" x2="196.0" y2="532.0"/>
+<text class="tick" x="196.0" y="548.0" text-anchor="middle">0.0</text>
+<line class="grid" x1="362.7" y1="0" x2="362.7" y2="532.0"/>
+<text class="tick" x="362.7" y="548.0" text-anchor="middle">50.0</text>
+<line class="grid" x1="529.3" y1="0" x2="529.3" y2="532.0"/>
+<text class="tick" x="529.3" y="548.0" text-anchor="middle">100.0</text>
+<line class="grid" x1="696.0" y1="0" x2="696.0" y2="532.0"/>
+<text class="tick" x="696.0" y="548.0" text-anchor="middle">150.0</text>
+<text class="axis-label" x="446.0" y="564.0" text-anchor="middle">million IR statements recovered</text>
+<text class="row-label" x="186" y="21.0" text-anchor="end">TikTok 46.1.3</text>
+<path class="bar s1" d="M196.0,5.0H685.1a4.0,4.0 0 0 1 4.0,4.0V12.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V5.0Z"><title>TikTok 46.1.3 — current ctadl: 147,919,366 statements</title></path>
+<text class="zero" x="200" y="28.0"><title>TikTok 46.1.3 — ctadl-souffle: 0 statements</title>—</text>
+<text class="row-label" x="186" y="59.0" text-anchor="end">VLC 3.7.0</text>
+<path class="bar s1" d="M196.0,43.0H334.2a4.0,4.0 0 0 1 4.0,4.0V50.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V43.0Z"><title>VLC 3.7.0 — current ctadl: 42,659,737 statements</title></path>
+<path class="bar s2" d="M196.0,56.0H199.4a3.4,3.4 0 0 1 3.4,3.4V63.6a3.4,3.4 0 0 1 -3.4,3.4H196.0V56.0Z"><title>VLC 3.7.0 — ctadl-souffle: 2,031,958 statements</title></path>
+<text class="row-label" x="186" y="97.0" text-anchor="end">TikTok Lite 44.0.3</text>
+<path class="bar s1" d="M196.0,81.0H261.1a4.0,4.0 0 0 1 4.0,4.0V88.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V81.0Z"><title>TikTok Lite 44.0.3 — current ctadl: 20,730,872 statements</title></path>
+<path class="bar s2" d="M196.0,94.0H204.4a4.0,4.0 0 0 1 4.0,4.0V101.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V94.0Z"><title>TikTok Lite 44.0.3 — ctadl-souffle: 3,707,906 statements</title></path>
+<text class="row-label" x="186" y="135.0" text-anchor="end">Telegram 12.9.0</text>
+<path class="bar s1" d="M196.0,119.0H255.4a4.0,4.0 0 0 1 4.0,4.0V126.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V119.0Z"><title>Telegram 12.9.0 — current ctadl: 19,030,253 statements</title></path>
+<path class="bar s2" d="M196.0,132.0H202.0a4.0,4.0 0 0 1 4.0,4.0V139.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V132.0Z"><title>Telegram 12.9.0 — ctadl-souffle: 2,988,176 statements</title></path>
+<text class="row-label" x="186" y="173.0" text-anchor="end">Telegram 12.8.3</text>
+<path class="bar s1" d="M196.0,157.0H255.2a4.0,4.0 0 0 1 4.0,4.0V164.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V157.0Z"><title>Telegram 12.8.3 — current ctadl: 18,970,795 statements</title></path>
+<path class="bar s2" d="M196.0,170.0H201.8a4.0,4.0 0 0 1 4.0,4.0V177.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V170.0Z"><title>Telegram 12.8.3 — ctadl-souffle: 2,936,524 statements</title></path>
+<text class="row-label" x="186" y="211.0" text-anchor="end">Telegram 12.7.3</text>
+<path class="bar s1" d="M196.0,195.0H255.0a4.0,4.0 0 0 1 4.0,4.0V202.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V195.0Z"><title>Telegram 12.7.3 — current ctadl: 18,909,695 statements</title></path>
+<path class="bar s2" d="M196.0,208.0H201.6a4.0,4.0 0 0 1 4.0,4.0V215.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V208.0Z"><title>Telegram 12.7.3 — ctadl-souffle: 2,879,223 statements</title></path>
+<text class="row-label" x="186" y="249.0" text-anchor="end">Messenger 563.0.0.47</text>
+<path class="bar s1" d="M196.0,233.0H233.5a4.0,4.0 0 0 1 4.0,4.0V240.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V233.0Z"><title>Messenger 563.0.0.47 — current ctadl: 12,436,414 statements</title></path>
+<path class="bar s2" d="M196.0,246.0H218.4a4.0,4.0 0 0 1 4.0,4.0V253.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V246.0Z"><title>Messenger 563.0.0.47 — ctadl-souffle: 7,913,176 statements</title></path>
+<text class="row-label" x="186" y="287.0" text-anchor="end">Messenger 570.0.0.34</text>
+<path class="bar s1" d="M196.0,271.0H230.6a4.0,4.0 0 0 1 4.0,4.0V278.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V271.0Z"><title>Messenger 570.0.0.34 — current ctadl: 11,590,555 statements</title></path>
+<path class="bar s2" d="M196.0,284.0H218.9a4.0,4.0 0 0 1 4.0,4.0V291.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V284.0Z"><title>Messenger 570.0.0.34 — ctadl-souffle: 8,074,448 statements</title></path>
+<text class="row-label" x="186" y="325.0" text-anchor="end">WhatsApp Business 2.26.21</text>
+<path class="bar s1" d="M196.0,309.0H222.8a4.0,4.0 0 0 1 4.0,4.0V316.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V309.0Z"><title>WhatsApp Business 2.26.21 — current ctadl: 9,227,892 statements</title></path>
+<path class="bar s2" d="M196.0,322.0H216.0a4.0,4.0 0 0 1 4.0,4.0V329.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V322.0Z"><title>WhatsApp Business 2.26.21 — ctadl-souffle: 7,214,897 statements</title></path>
+<text class="row-label" x="186" y="363.0" text-anchor="end">WhatsApp 2.26.27.85</text>
+<path class="bar s1" d="M196.0,347.0H221.5a4.0,4.0 0 0 1 4.0,4.0V354.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V347.0Z"><title>WhatsApp 2.26.27.85 — current ctadl: 8,845,850 statements</title></path>
+<path class="bar s2" d="M196.0,360.0H215.1a4.0,4.0 0 0 1 4.0,4.0V367.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V360.0Z"><title>WhatsApp 2.26.27.85 — ctadl-souffle: 6,933,843 statements</title></path>
+<text class="row-label" x="186" y="401.0" text-anchor="end">WhatsApp 2.26.20.72</text>
+<path class="bar s1" d="M196.0,385.0H220.1a4.0,4.0 0 0 1 4.0,4.0V392.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V385.0Z"><title>WhatsApp 2.26.20.72 — current ctadl: 8,439,479 statements</title></path>
+<path class="bar s2" d="M196.0,398.0H214.1a4.0,4.0 0 0 1 4.0,4.0V405.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V398.0Z"><title>WhatsApp 2.26.20.72 — ctadl-souffle: 6,634,974 statements</title></path>
+<text class="row-label" x="186" y="439.0" text-anchor="end">Chrome 149.0.7827</text>
+<path class="bar s1" d="M196.0,423.0H206.3a4.0,4.0 0 0 1 4.0,4.0V430.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V423.0Z"><title>Chrome 149.0.7827 — current ctadl: 4,282,638 statements</title></path>
+<path class="bar s2" d="M196.0,436.0H199.0a3.0,3.0 0 0 1 3.0,3.0V444.0a3.0,3.0 0 0 1 -3.0,3.0H196.0V436.0Z"><title>Chrome 149.0.7827 — ctadl-souffle: 1,804,266 statements</title></path>
+<text class="row-label" x="186" y="477.0" text-anchor="end">FX File Explorer 9.1.0.8</text>
+<path class="bar s1" d="M196.0,461.0H198.3a2.3,2.3 0 0 1 2.3,2.3V469.7a2.3,2.3 0 0 1 -2.3,2.3H196.0V461.0Z"><title>FX File Explorer 9.1.0.8 — current ctadl: 1,394,974 statements</title></path>
+<path class="bar s2" d="M196.0,474.0H197.4a1.4,1.4 0 0 1 1.4,1.4V483.6a1.4,1.4 0 0 1 -1.4,1.4H196.0V474.0Z"><title>FX File Explorer 9.1.0.8 — ctadl-souffle: 860,934 statements</title></path>
+<text class="row-label" x="186" y="515.0" text-anchor="end">Facebook Lite 513.0.0.6</text>
+<text class="zero" x="200" y="509.0"><title>Facebook Lite 513.0.0.6 — current ctadl: 312,785 statements</title>312,785 statements</text>
+<text class="zero" x="200" y="522.0"><title>Facebook Lite 513.0.0.6 — ctadl-souffle: 48,818 statements</title>48,818 statements</text>
+</svg>
+<figcaption>IR statements recovered per app, most first. A dash marks an app the
+tool recovered nothing from.</figcaption>
+</figure>
+
+<h3>Storage cost of what was recovered</h3>
+<p>The apps differ in size by three orders of magnitude, so the two charts above
+are dominated by the largest. Dividing one by the other gives a rate that
+compares directly across apps.</p>
+<div class="legend"><span class="legend-item"><span class="swatch s1"></span>current ctadl</span><span class="legend-item"><span class="swatch s2"></span>ctadl-souffle</span></div>
+<figure>
+<svg class="chart" viewBox="0 0 760 568" role="img" width="760" height="568" aria-label="bytes stored per IR statement recovered by app, current ctadl and ctadl-souffle">
+<line class="grid" x1="196.0" y1="0" x2="196.0" y2="532.0"/>
+<text class="tick" x="196.0" y="548.0" text-anchor="middle">0</text>
+<line class="grid" x1="362.7" y1="0" x2="362.7" y2="532.0"/>
+<text class="tick" x="362.7" y="548.0" text-anchor="middle">1,000</text>
+<line class="grid" x1="529.3" y1="0" x2="529.3" y2="532.0"/>
+<text class="tick" x="529.3" y="548.0" text-anchor="middle">2,000</text>
+<line class="grid" x1="696.0" y1="0" x2="696.0" y2="532.0"/>
+<text class="tick" x="696.0" y="548.0" text-anchor="middle">3,000</text>
+<text class="axis-label" x="446.0" y="564.0" text-anchor="middle">bytes stored per IR statement recovered</text>
+<text class="row-label" x="186" y="21.0" text-anchor="end">VLC 3.7.0</text>
+<path class="bar s1" d="M196.0,5.0H230.9a4.0,4.0 0 0 1 4.0,4.0V12.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V5.0Z"><title>VLC 3.7.0 — current ctadl: 233 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,18.0H659.8a4.0,4.0 0 0 1 4.0,4.0V25.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V18.0Z"><title>VLC 3.7.0 — ctadl-souffle: 2,807 bytes per statement</title></path>
+<text class="row-label" x="186" y="59.0" text-anchor="end">Telegram 12.7.3</text>
+<path class="bar s1" d="M196.0,43.0H229.4a4.0,4.0 0 0 1 4.0,4.0V50.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V43.0Z"><title>Telegram 12.7.3 — current ctadl: 225 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,56.0H632.8a4.0,4.0 0 0 1 4.0,4.0V63.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V56.0Z"><title>Telegram 12.7.3 — ctadl-souffle: 2,645 bytes per statement</title></path>
+<text class="row-label" x="186" y="97.0" text-anchor="end">Telegram 12.9.0</text>
+<path class="bar s1" d="M196.0,81.0H229.3a4.0,4.0 0 0 1 4.0,4.0V88.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V81.0Z"><title>Telegram 12.9.0 — current ctadl: 224 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,94.0H632.2a4.0,4.0 0 0 1 4.0,4.0V101.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V94.0Z"><title>Telegram 12.9.0 — ctadl-souffle: 2,641 bytes per statement</title></path>
+<text class="row-label" x="186" y="135.0" text-anchor="end">Telegram 12.8.3</text>
+<path class="bar s1" d="M196.0,119.0H228.7a4.0,4.0 0 0 1 4.0,4.0V126.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V119.0Z"><title>Telegram 12.8.3 — current ctadl: 220 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,132.0H638.5a4.0,4.0 0 0 1 4.0,4.0V139.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V132.0Z"><title>Telegram 12.8.3 — ctadl-souffle: 2,679 bytes per statement</title></path>
+<text class="row-label" x="186" y="173.0" text-anchor="end">TikTok Lite 44.0.3</text>
+<path class="bar s1" d="M196.0,157.0H221.7a4.0,4.0 0 0 1 4.0,4.0V164.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V157.0Z"><title>TikTok Lite 44.0.3 — current ctadl: 178 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,170.0H485.8a4.0,4.0 0 0 1 4.0,4.0V177.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V170.0Z"><title>TikTok Lite 44.0.3 — ctadl-souffle: 1,763 bytes per statement</title></path>
+<text class="row-label" x="186" y="211.0" text-anchor="end">TikTok 46.1.3</text>
+<path class="bar s1" d="M196.0,195.0H220.5a4.0,4.0 0 0 1 4.0,4.0V202.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V195.0Z"><title>TikTok 46.1.3 — current ctadl: 171 bytes per statement</title></path>
+<text class="zero" x="200" y="218.0"><title>TikTok 46.1.3 — ctadl-souffle: 0 bytes per statement</title>—</text>
+<text class="row-label" x="186" y="249.0" text-anchor="end">Facebook Lite 513.0.0.6</text>
+<path class="bar s1" d="M196.0,233.0H219.5a4.0,4.0 0 0 1 4.0,4.0V240.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V233.0Z"><title>Facebook Lite 513.0.0.6 — current ctadl: 165 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,246.0H465.4a4.0,4.0 0 0 1 4.0,4.0V253.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V246.0Z"><title>Facebook Lite 513.0.0.6 — ctadl-souffle: 1,640 bytes per statement</title></path>
+<text class="row-label" x="186" y="287.0" text-anchor="end">Chrome 149.0.7827</text>
+<path class="bar s1" d="M196.0,271.0H214.9a4.0,4.0 0 0 1 4.0,4.0V278.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V271.0Z"><title>Chrome 149.0.7827 — current ctadl: 137 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,284.0H441.2a4.0,4.0 0 0 1 4.0,4.0V291.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V284.0Z"><title>Chrome 149.0.7827 — ctadl-souffle: 1,495 bytes per statement</title></path>
+<text class="row-label" x="186" y="325.0" text-anchor="end">FX File Explorer 9.1.0.8</text>
+<path class="bar s1" d="M196.0,309.0H209.7a4.0,4.0 0 0 1 4.0,4.0V316.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V309.0Z"><title>FX File Explorer 9.1.0.8 — current ctadl: 106 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,322.0H489.5a4.0,4.0 0 0 1 4.0,4.0V329.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V322.0Z"><title>FX File Explorer 9.1.0.8 — ctadl-souffle: 1,785 bytes per statement</title></path>
+<text class="row-label" x="186" y="363.0" text-anchor="end">Messenger 563.0.0.47</text>
+<path class="bar s1" d="M196.0,347.0H205.5a4.0,4.0 0 0 1 4.0,4.0V354.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V347.0Z"><title>Messenger 563.0.0.47 — current ctadl: 81 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,360.0H484.2a4.0,4.0 0 0 1 4.0,4.0V367.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V360.0Z"><title>Messenger 563.0.0.47 — ctadl-souffle: 1,753 bytes per statement</title></path>
+<text class="row-label" x="186" y="401.0" text-anchor="end">Messenger 570.0.0.34</text>
+<path class="bar s1" d="M196.0,385.0H204.2a4.0,4.0 0 0 1 4.0,4.0V392.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V385.0Z"><title>Messenger 570.0.0.34 — current ctadl: 73 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,398.0H485.4a4.0,4.0 0 0 1 4.0,4.0V405.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V398.0Z"><title>Messenger 570.0.0.34 — ctadl-souffle: 1,760 bytes per statement</title></path>
+<text class="row-label" x="186" y="439.0" text-anchor="end">WhatsApp Business 2.26.21</text>
+<path class="bar s1" d="M196.0,423.0H203.8a4.0,4.0 0 0 1 4.0,4.0V430.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V423.0Z"><title>WhatsApp Business 2.26.21 — current ctadl: 71 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,436.0H460.6a4.0,4.0 0 0 1 4.0,4.0V443.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V436.0Z"><title>WhatsApp Business 2.26.21 — ctadl-souffle: 1,612 bytes per statement</title></path>
+<text class="row-label" x="186" y="477.0" text-anchor="end">WhatsApp 2.26.20.72</text>
+<path class="bar s1" d="M196.0,461.0H203.6a4.0,4.0 0 0 1 4.0,4.0V468.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V461.0Z"><title>WhatsApp 2.26.20.72 — current ctadl: 70 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,474.0H456.6a4.0,4.0 0 0 1 4.0,4.0V481.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V474.0Z"><title>WhatsApp 2.26.20.72 — ctadl-souffle: 1,588 bytes per statement</title></path>
+<text class="row-label" x="186" y="515.0" text-anchor="end">WhatsApp 2.26.27.85</text>
+<path class="bar s1" d="M196.0,499.0H203.6a4.0,4.0 0 0 1 4.0,4.0V506.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V499.0Z"><title>WhatsApp 2.26.27.85 — current ctadl: 69 bytes per statement</title></path>
+<path class="bar s2" d="M196.0,512.0H459.9a4.0,4.0 0 0 1 4.0,4.0V519.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V512.0Z"><title>WhatsApp 2.26.27.85 — ctadl-souffle: 1,608 bytes per statement</title></path>
+</svg>
+<figcaption>Bytes written to the store for each IR statement recovered. Lower is
+better. Rows are ordered by the current tool's rate.</figcaption>
+</figure>
+
+<h3>Where the current importer's statements come from</h3>
+<div class="legend"><span class="legend-item"><span class="swatch o1"></span>Dex / Java</span><span class="legend-item"><span class="swatch o2"></span>native (Ghidra pcode)</span></div>
+<figure>
+<svg class="chart" viewBox="0 0 760 414" role="img" width="760" height="414" aria-label="million IR statements, current ctadl by app, stacked by origin">
+<line class="grid" x1="196.0" y1="0" x2="196.0" y2="378.0"/>
+<text class="tick" x="196.0" y="394.0" text-anchor="middle">0.0</text>
+<line class="grid" x1="362.7" y1="0" x2="362.7" y2="378.0"/>
+<text class="tick" x="362.7" y="394.0" text-anchor="middle">50.0</text>
+<line class="grid" x1="529.3" y1="0" x2="529.3" y2="378.0"/>
+<text class="tick" x="529.3" y="394.0" text-anchor="middle">100.0</text>
+<line class="grid" x1="696.0" y1="0" x2="696.0" y2="378.0"/>
+<text class="tick" x="696.0" y="394.0" text-anchor="middle">150.0</text>
+<text class="axis-label" x="446.0" y="410.0" text-anchor="middle">million IR statements, current ctadl</text>
+<text class="row-label" x="186" y="16.0" text-anchor="end">TikTok 46.1.3</text>
+<path class="bar o1" d="M200.0,6.0H303.0V17.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V10.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>TikTok 46.1.3 — Dex / Java: 32,692,649 statements</title></path>
+<path class="bar o2" d="M305.0,6.0H683.1a4.0,4.0 0 0 1 4.0,4.0V13.0a4.0,4.0 0 0 1 -4.0,4.0H305.0V6.0Z"><title>TikTok 46.1.3 — native (Ghidra pcode): 115,226,717 statements</title></path>
+<text class="row-label" x="186" y="43.0" text-anchor="end">VLC 3.7.0</text>
+<path class="bar o1" d="M199.2,33.0H202.4V44.0H199.2a3.2,3.2 0 0 1 -3.2,-3.2V36.2a3.2,3.2 0 0 1 3.2,-3.2Z"><title>VLC 3.7.0 — Dex / Java: 2,515,361 statements</title></path>
+<path class="bar o2" d="M204.4,33.0H332.2a4.0,4.0 0 0 1 4.0,4.0V40.0a4.0,4.0 0 0 1 -4.0,4.0H204.4V33.0Z"><title>VLC 3.7.0 — native (Ghidra pcode): 40,144,376 statements</title></path>
+<text class="row-label" x="186" y="70.0" text-anchor="end">TikTok Lite 44.0.3</text>
+<path class="bar o1" d="M200.0,60.0H210.1V71.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V64.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>TikTok Lite 44.0.3 — Dex / Java: 4,839,229 statements</title></path>
+<path class="bar o2" d="M212.1,60.0H259.1a4.0,4.0 0 0 1 4.0,4.0V67.0a4.0,4.0 0 0 1 -4.0,4.0H212.1V60.0Z"><title>TikTok Lite 44.0.3 — native (Ghidra pcode): 15,891,643 statements</title></path>
+<text class="row-label" x="186" y="97.0" text-anchor="end">Telegram 12.9.0</text>
+<path class="bar o1" d="M200.0,87.0H206.8V98.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V91.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>Telegram 12.9.0 — Dex / Java: 3,839,949 statements</title></path>
+<path class="bar o2" d="M208.8,87.0H253.4a4.0,4.0 0 0 1 4.0,4.0V94.0a4.0,4.0 0 0 1 -4.0,4.0H208.8V87.0Z"><title>Telegram 12.9.0 — native (Ghidra pcode): 15,190,304 statements</title></path>
+<text class="row-label" x="186" y="124.0" text-anchor="end">Telegram 12.8.3</text>
+<path class="bar o1" d="M200.0,114.0H206.6V125.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V118.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>Telegram 12.8.3 — Dex / Java: 3,777,639 statements</title></path>
+<path class="bar o2" d="M208.6,114.0H253.2a4.0,4.0 0 0 1 4.0,4.0V121.0a4.0,4.0 0 0 1 -4.0,4.0H208.6V114.0Z"><title>Telegram 12.8.3 — native (Ghidra pcode): 15,193,156 statements</title></path>
+<text class="row-label" x="186" y="151.0" text-anchor="end">Telegram 12.7.3</text>
+<path class="bar o1" d="M200.0,141.0H206.4V152.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V145.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>Telegram 12.7.3 — Dex / Java: 3,718,368 statements</title></path>
+<path class="bar o2" d="M208.4,141.0H253.0a4.0,4.0 0 0 1 4.0,4.0V148.0a4.0,4.0 0 0 1 -4.0,4.0H208.4V141.0Z"><title>Telegram 12.7.3 — native (Ghidra pcode): 15,191,327 statements</title></path>
+<text class="row-label" x="186" y="178.0" text-anchor="end">Messenger 563.0.0.47</text>
+<path class="bar o1" d="M200.0,168.0H227.6V179.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V172.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>Messenger 563.0.0.47 — Dex / Java: 10,088,927 statements</title></path>
+<path class="bar o2" d="M229.6,168.0H232.5a2.9,2.9 0 0 1 2.9,2.9V176.1a2.9,2.9 0 0 1 -2.9,2.9H229.6V168.0Z"><title>Messenger 563.0.0.47 — native (Ghidra pcode): 2,347,487 statements</title></path>
+<text class="row-label" x="186" y="205.0" text-anchor="end">Messenger 570.0.0.34</text>
+<path class="bar o1" d="M200.0,195.0H228.3V206.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V199.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>Messenger 570.0.0.34 — Dex / Java: 10,284,614 statements</title></path>
+<path class="bar o2" d="M230.3,195.0H231.5a1.2,1.2 0 0 1 1.2,1.2V204.8a1.2,1.2 0 0 1 -1.2,1.2H230.3V195.0Z"><title>Messenger 570.0.0.34 — native (Ghidra pcode): 1,305,941 statements</title></path>
+<text class="row-label" x="186" y="232.0" text-anchor="end">WhatsApp Business 2.26.21</text>
+<path class="bar o1" d="M200.0,222.0H220.2a4.0,4.0 0 0 1 4.0,4.0V229.0a4.0,4.0 0 0 1 -4.0,4.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V226.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>WhatsApp Business 2.26.21 — Dex / Java: 9,069,846 statements</title></path>
+<text class="row-label" x="186" y="259.0" text-anchor="end">WhatsApp 2.26.27.85</text>
+<path class="bar o1" d="M200.0,249.0H219.2a4.0,4.0 0 0 1 4.0,4.0V256.0a4.0,4.0 0 0 1 -4.0,4.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V253.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>WhatsApp 2.26.27.85 — Dex / Java: 8,757,874 statements</title></path>
+<text class="row-label" x="186" y="286.0" text-anchor="end">WhatsApp 2.26.20.72</text>
+<path class="bar o1" d="M200.0,276.0H217.8a4.0,4.0 0 0 1 4.0,4.0V283.0a4.0,4.0 0 0 1 -4.0,4.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V280.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>WhatsApp 2.26.20.72 — Dex / Java: 8,352,161 statements</title></path>
+<text class="row-label" x="186" y="313.0" text-anchor="end">Chrome 149.0.7827</text>
+<path class="bar o1" d="M198.5,303.0H201.1V314.0H198.5a2.5,2.5 0 0 1 -2.5,-2.5V305.5a2.5,2.5 0 0 1 2.5,-2.5Z"><title>Chrome 149.0.7827 — Dex / Java: 2,124,747 statements</title></path>
+<path class="bar o2" d="M203.1,303.0H205.7a2.6,2.6 0 0 1 2.6,2.6V311.4a2.6,2.6 0 0 1 -2.6,2.6H203.1V303.0Z"><title>Chrome 149.0.7827 — native (Ghidra pcode): 2,157,891 statements</title></path>
+<text class="row-label" x="186" y="340.0" text-anchor="end">FX File Explorer 9.1.0.8</text>
+<path class="bar o1" d="M196.8,330.0H196.8a0.8,0.8 0 0 1 0.8,0.8V340.2a0.8,0.8 0 0 1 -0.8,0.8H196.8a0.8,0.8 0 0 1 -0.8,-0.8V330.8a0.8,0.8 0 0 1 0.8,-0.8Z"><title>FX File Explorer 9.1.0.8 — Dex / Java: 1,097,068 statements</title></path>
+<text class="row-label" x="186" y="367.0" text-anchor="end">Facebook Lite 513.0.0.6</text>
+</svg>
+<figcaption>Each app's statements split between its Dex/Java code and the native
+libraries packaged beside it. The older importer sees only the left-hand
+segment.</figcaption>
+</figure>
+
+<h2>Every number</h2>
+<div class="tablewrap">
+<table>
+<thead><tr>
+  <th scope="col" style="text-align:left">App</th><th scope="col">Input</th><th scope="col">Size</th>
+  <th scope="col" class="grp">ctadl store</th><th scope="col">imports</th>
+  <th scope="col">stmts</th><th scope="col">dex</th><th scope="col">native</th>
+  <th scope="col" class="grp">souffle store</th><th scope="col">stmts</th>
+  <th scope="col" class="grp">unpacked store</th><th scope="col">stmts</th>
+</tr></thead>
+<tbody>
+<tr><th scope="row">FX File Explorer 9.1.0.8</th><td>apk</td><td>12.1 MB</td><td>141.1 MB</td><td>6</td><td>1.39 M</td><td>1.10 M</td><td>298 k</td><td>1.43 GB</td><td>861 k</td><td>—</td><td>—</td></tr>
+<tr><th scope="row">Facebook Lite 513.0.0.6</th><td>apk</td><td>3.2 MB</td><td>49.3 MB</td><td>3</td><td>313 k</td><td>60 k</td><td>253 k</td><td>76.4 MB</td><td>49 k</td><td>—</td><td>—</td></tr>
+<tr><th scope="row">Chrome 149.0.7827</th><td>bundle</td><td>25.3 MB</td><td>561.5 MB</td><td>6</td><td>4.28 M</td><td>2.12 M</td><td>2.16 M</td><td>25.3 MB</td><td>0</td><td>2.51 GB</td><td>1.80 M</td></tr>
+<tr><th scope="row">Messenger 563.0.0.47</th><td>apk</td><td>78.6 MB</td><td>959.2 MB</td><td>12</td><td>12.44 M</td><td>10.09 M</td><td>2.35 M</td><td>12.92 GB</td><td>7.91 M</td><td>—</td><td>—</td></tr>
+<tr><th scope="row">Messenger 570.0.0.34</th><td>apk</td><td>81.7 MB</td><td>810.5 MB</td><td>14</td><td>11.59 M</td><td>10.28 M</td><td>1.31 M</td><td>13.24 GB</td><td>8.07 M</td><td>—</td><td>—</td></tr>
+<tr><th scope="row">Telegram 12.7.3</th><td>bundle</td><td>74.4 MB</td><td>3.96 GB</td><td>5</td><td>18.91 M</td><td>3.72 M</td><td>15.19 M</td><td>74.5 MB</td><td>13</td><td>7.09 GB</td><td>2.88 M</td></tr>
+<tr><th scope="row">Telegram 12.8.3</th><td>apk</td><td>139.1 MB</td><td>3.89 GB</td><td>3</td><td>18.97 M</td><td>3.78 M</td><td>15.19 M</td><td>7.33 GB</td><td>2.94 M</td><td>—</td><td>—</td></tr>
+<tr><th scope="row">Telegram 12.9.0</th><td>bundle</td><td>76.6 MB</td><td>3.97 GB</td><td>5</td><td>19.03 M</td><td>3.84 M</td><td>15.19 M</td><td>76.6 MB</td><td>13</td><td>7.35 GB</td><td>2.99 M</td></tr>
+<tr><th scope="row">TikTok 46.1.3</th><td>bundle</td><td>203.5 MB</td><td>23.57 GB</td><td>204</td><td>147.92 M</td><td>32.69 M</td><td>115.23 M</td><td>203.5 MB</td><td>13</td><td>5.16 GB</td><td><span class="pill">✕ out of memory</span></td></tr>
+<tr><th scope="row">TikTok Lite 44.0.3</th><td>apk</td><td>77.7 MB</td><td>3.44 GB</td><td>45</td><td>20.73 M</td><td>4.84 M</td><td>15.89 M</td><td>6.09 GB</td><td>3.71 M</td><td>—</td><td>—</td></tr>
+<tr><th scope="row">VLC 3.7.0</th><td>bundle</td><td>101.4 MB</td><td>9.27 GB</td><td>7</td><td>42.66 M</td><td>2.52 M</td><td>40.14 M</td><td>101.4 MB</td><td>13</td><td>5.31 GB</td><td>2.03 M</td></tr>
+<tr><th scope="row">WhatsApp Business 2.26.21</th><td>bundle</td><td>96.0 MB</td><td>621.1 MB</td><td>6</td><td>9.23 M</td><td>9.07 M</td><td>158 k</td><td>96.0 MB</td><td>0</td><td>10.83 GB</td><td>7.21 M</td></tr>
+<tr><th scope="row">WhatsApp 2.26.20.72</th><td>bundle</td><td>82.6 MB</td><td>559.5 MB</td><td>6</td><td>8.44 M</td><td>8.35 M</td><td>87 k</td><td>82.6 MB</td><td>0</td><td>9.81 GB</td><td>6.63 M</td></tr>
+<tr><th scope="row">WhatsApp 2.26.27.85</th><td>bundle</td><td>84.2 MB</td><td>586.0 MB</td><td>7</td><td>8.85 M</td><td>8.76 M</td><td>88 k</td><td>84.2 MB</td><td>0</td><td>10.38 GB</td><td>6.93 M</td></tr>
+</tbody>
+</table>
+</div>
+<p class="note">“unpacked” columns: the older tool run against each bundle split
+extracted by hand, since it cannot open an <code>.xapk</code> itself.</p>
+
+<h2>How this was measured</h2>
+<ul>
+<li><strong>Stored data</strong> is the sum of file sizes under each import
+directory — for the current tool that is the IR bitcode, gzipped pcode facts,
+Parquet source-info, and the <code>.so</code>/split files it carves out of the
+APK; for the older tool it is the uncompressed Datalog <code>.facts</code>
+files, JADX's decompiled Java, and the unpacked resources.</li>
+<li><strong>Statements</strong> are IR statements: for the current tool, the
+statements in every basic block of every imported function, summed over the
+artifact and all its sub-imports; for the older tool, the rows of
+<code>StmtInMethod.facts</code>. The two IRs are not identical, so treat this as
+a measure of coverage rather than an exact like-for-like count.</li>
+<li><strong>Native libraries.</strong> The current tool disassembles one ABI's
+<code>.so</code> files per APK through Ghidra and imports each as its own
+sub-import; 14 of the 14 apps got native sub-imports. The older tool has
+no equivalent path in its JADX front end.</li>
+<li><strong>TikTok defeated the older tool.</strong> On TikTok's base split, JADX
+ran for 24 hours and then died with <code>OutOfMemoryError: Java heap
+space</code>; the plugin followed with a <code>JSONDecodeError</code> on the
+truncated source map. It had written 5&nbsp;GB of decompiled Java and 144&nbsp;MB
+of facts, but only 2 statements. The JVM's default maximum heap is a quarter of
+RAM (~32&nbsp;GB on this machine). A retry with <code>-Xmx96g</code> is still running; this report records the default-heap result.</li>
+<li><strong>App bundles.</strong> Eight of the apps are <code>.xapk</code>
+bundles. The current tool imports each split. The older tool's JADX front end
+produces an empty fact set for them without failing, so those rows read zero;
+the “unpacked” columns show it re-run on the splits extracted by hand.</li>
+<li><strong>Not every megabyte of <code>.so</code> is code.</strong> WhatsApp
+Business ships a 13.6&nbsp;MB <code>libs.so</code> that Ghidra analyses in two
+seconds and that yields 25 statements — it is a data blob wearing an ELF
+header. Statement counts track recovered code, not input bytes.</li>
+<li>Each older-tool import was measured and then deleted — keeping all of them
+would have needed roughly 300&nbsp;GB. The current tool's store was kept.</li>
+</ul>
+</main>

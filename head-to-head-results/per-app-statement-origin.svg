@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760.0" height="478.0" viewBox="0 0 760.0 478.0"><style>
+  .grid { stroke: #e1e0d9; stroke-width: 1; }
+  .tick { fill: #898781; font: 11px system-ui, sans-serif; }
+  .axis-label { fill: #898781; font: 11px system-ui, sans-serif; }
+  .row-label { fill: #52514e; font: 12px system-ui, sans-serif; }
+  .zero { fill: #898781; font: 11px system-ui, sans-serif; }
+  .bar.s1 { fill: #2a78d6; } .bar.s2 { fill: #eb6834; }
+  .bar.o1 { fill: #2a78d6; } .bar.o2 { fill: #86b6ef; }
+  .title { fill: #0b0b0b; font: 600 14px system-ui, sans-serif; }
+  .key { fill: #52514e; font: 12px system-ui, sans-serif; }
+</style><rect width="760.0" height="478.0" fill="#fcfcfb"/><text class="title" x="0" y="16">Current ctadl: statements by origin (millions)</text><g transform="translate(0,0)"><rect x="0" y="30" width="11" height="11" rx="3" class="bar o1"/><text class="key" x="17" y="40">Dex / Java</text><rect x="92" y="30" width="11" height="11" rx="3" class="bar o2"/><text class="key" x="109" y="40">native (Ghidra pcode)</text></g><g transform="translate(0,54)">
+<line class="grid" x1="196.0" y1="0" x2="196.0" y2="378.0"/>
+<text class="tick" x="196.0" y="394.0" text-anchor="middle">0.0</text>
+<line class="grid" x1="362.7" y1="0" x2="362.7" y2="378.0"/>
+<text class="tick" x="362.7" y="394.0" text-anchor="middle">50.0</text>
+<line class="grid" x1="529.3" y1="0" x2="529.3" y2="378.0"/>
+<text class="tick" x="529.3" y="394.0" text-anchor="middle">100.0</text>
+<line class="grid" x1="696.0" y1="0" x2="696.0" y2="378.0"/>
+<text class="tick" x="696.0" y="394.0" text-anchor="middle">150.0</text>
+<text class="axis-label" x="446.0" y="410.0" text-anchor="middle">million IR statements, current ctadl</text>
+<text class="row-label" x="186" y="16.0" text-anchor="end">TikTok 46.1.3</text>
+<path class="bar o1" d="M200.0,6.0H303.0V17.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V10.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>TikTok 46.1.3 — Dex / Java: 32,692,649 statements</title></path>
+<path class="bar o2" d="M305.0,6.0H683.1a4.0,4.0 0 0 1 4.0,4.0V13.0a4.0,4.0 0 0 1 -4.0,4.0H305.0V6.0Z"><title>TikTok 46.1.3 — native (Ghidra pcode): 115,226,717 statements</title></path>
+<text class="row-label" x="186" y="43.0" text-anchor="end">VLC 3.7.0</text>
+<path class="bar o1" d="M199.2,33.0H202.4V44.0H199.2a3.2,3.2 0 0 1 -3.2,-3.2V36.2a3.2,3.2 0 0 1 3.2,-3.2Z"><title>VLC 3.7.0 — Dex / Java: 2,515,361 statements</title></path>
+<path class="bar o2" d="M204.4,33.0H332.2a4.0,4.0 0 0 1 4.0,4.0V40.0a4.0,4.0 0 0 1 -4.0,4.0H204.4V33.0Z"><title>VLC 3.7.0 — native (Ghidra pcode): 40,144,376 statements</title></path>
+<text class="row-label" x="186" y="70.0" text-anchor="end">TikTok Lite 44.0.3</text>
+<path class="bar o1" d="M200.0,60.0H210.1V71.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V64.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>TikTok Lite 44.0.3 — Dex / Java: 4,839,229 statements</title></path>
+<path class="bar o2" d="M212.1,60.0H259.1a4.0,4.0 0 0 1 4.0,4.0V67.0a4.0,4.0 0 0 1 -4.0,4.0H212.1V60.0Z"><title>TikTok Lite 44.0.3 — native (Ghidra pcode): 15,891,643 statements</title></path>
+<text class="row-label" x="186" y="97.0" text-anchor="end">Telegram 12.9.0</text>
+<path class="bar o1" d="M200.0,87.0H206.8V98.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V91.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>Telegram 12.9.0 — Dex / Java: 3,839,949 statements</title></path>
+<path class="bar o2" d="M208.8,87.0H253.4a4.0,4.0 0 0 1 4.0,4.0V94.0a4.0,4.0 0 0 1 -4.0,4.0H208.8V87.0Z"><title>Telegram 12.9.0 — native (Ghidra pcode): 15,190,304 statements</title></path>
+<text class="row-label" x="186" y="124.0" text-anchor="end">Telegram 12.8.3</text>
+<path class="bar o1" d="M200.0,114.0H206.6V125.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V118.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>Telegram 12.8.3 — Dex / Java: 3,777,639 statements</title></path>
+<path class="bar o2" d="M208.6,114.0H253.2a4.0,4.0 0 0 1 4.0,4.0V121.0a4.0,4.0 0 0 1 -4.0,4.0H208.6V114.0Z"><title>Telegram 12.8.3 — native (Ghidra pcode): 15,193,156 statements</title></path>
+<text class="row-label" x="186" y="151.0" text-anchor="end">Telegram 12.7.3</text>
+<path class="bar o1" d="M200.0,141.0H206.4V152.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V145.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>Telegram 12.7.3 — Dex / Java: 3,718,368 statements</title></path>
+<path class="bar o2" d="M208.4,141.0H253.0a4.0,4.0 0 0 1 4.0,4.0V148.0a4.0,4.0 0 0 1 -4.0,4.0H208.4V141.0Z"><title>Telegram 12.7.3 — native (Ghidra pcode): 15,191,327 statements</title></path>
+<text class="row-label" x="186" y="178.0" text-anchor="end">Messenger 563.0.0.47</text>
+<path class="bar o1" d="M200.0,168.0H227.6V179.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V172.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>Messenger 563.0.0.47 — Dex / Java: 10,088,927 statements</title></path>
+<path class="bar o2" d="M229.6,168.0H232.5a2.9,2.9 0 0 1 2.9,2.9V176.1a2.9,2.9 0 0 1 -2.9,2.9H229.6V168.0Z"><title>Messenger 563.0.0.47 — native (Ghidra pcode): 2,347,487 statements</title></path>
+<text class="row-label" x="186" y="205.0" text-anchor="end">Messenger 570.0.0.34</text>
+<path class="bar o1" d="M200.0,195.0H228.3V206.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V199.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>Messenger 570.0.0.34 — Dex / Java: 10,284,614 statements</title></path>
+<path class="bar o2" d="M230.3,195.0H231.5a1.2,1.2 0 0 1 1.2,1.2V204.8a1.2,1.2 0 0 1 -1.2,1.2H230.3V195.0Z"><title>Messenger 570.0.0.34 — native (Ghidra pcode): 1,305,941 statements</title></path>
+<text class="row-label" x="186" y="232.0" text-anchor="end">WhatsApp Business 2.26.21</text>
+<path class="bar o1" d="M200.0,222.0H220.2a4.0,4.0 0 0 1 4.0,4.0V229.0a4.0,4.0 0 0 1 -4.0,4.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V226.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>WhatsApp Business 2.26.21 — Dex / Java: 9,069,846 statements</title></path>
+<text class="row-label" x="186" y="259.0" text-anchor="end">WhatsApp 2.26.27.85</text>
+<path class="bar o1" d="M200.0,249.0H219.2a4.0,4.0 0 0 1 4.0,4.0V256.0a4.0,4.0 0 0 1 -4.0,4.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V253.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>WhatsApp 2.26.27.85 — Dex / Java: 8,757,874 statements</title></path>
+<text class="row-label" x="186" y="286.0" text-anchor="end">WhatsApp 2.26.20.72</text>
+<path class="bar o1" d="M200.0,276.0H217.8a4.0,4.0 0 0 1 4.0,4.0V283.0a4.0,4.0 0 0 1 -4.0,4.0H200.0a4.0,4.0 0 0 1 -4.0,-4.0V280.0a4.0,4.0 0 0 1 4.0,-4.0Z"><title>WhatsApp 2.26.20.72 — Dex / Java: 8,352,161 statements</title></path>
+<text class="row-label" x="186" y="313.0" text-anchor="end">Chrome 149.0.7827</text>
+<path class="bar o1" d="M198.5,303.0H201.1V314.0H198.5a2.5,2.5 0 0 1 -2.5,-2.5V305.5a2.5,2.5 0 0 1 2.5,-2.5Z"><title>Chrome 149.0.7827 — Dex / Java: 2,124,747 statements</title></path>
+<path class="bar o2" d="M203.1,303.0H205.7a2.6,2.6 0 0 1 2.6,2.6V311.4a2.6,2.6 0 0 1 -2.6,2.6H203.1V303.0Z"><title>Chrome 149.0.7827 — native (Ghidra pcode): 2,157,891 statements</title></path>
+<text class="row-label" x="186" y="340.0" text-anchor="end">FX File Explorer 9.1.0.8</text>
+<path class="bar o1" d="M196.8,330.0H196.8a0.8,0.8 0 0 1 0.8,0.8V340.2a0.8,0.8 0 0 1 -0.8,0.8H196.8a0.8,0.8 0 0 1 -0.8,-0.8V330.8a0.8,0.8 0 0 1 0.8,-0.8Z"><title>FX File Explorer 9.1.0.8 — Dex / Java: 1,097,068 statements</title></path>
+<text class="row-label" x="186" y="367.0" text-anchor="end">Facebook Lite 513.0.0.6</text>
+</g></svg>

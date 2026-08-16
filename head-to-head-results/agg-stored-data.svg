@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760.0" height="138.0" viewBox="0 0 760.0 138.0"><style>
+  .grid { stroke: #e1e0d9; stroke-width: 1; }
+  .tick { fill: #898781; font: 11px system-ui, sans-serif; }
+  .axis-label { fill: #898781; font: 11px system-ui, sans-serif; }
+  .row-label { fill: #52514e; font: 12px system-ui, sans-serif; }
+  .zero { fill: #898781; font: 11px system-ui, sans-serif; }
+  .bar.s1 { fill: #2a78d6; } .bar.s2 { fill: #eb6834; }
+  .bar.o1 { fill: #2a78d6; } .bar.o2 { fill: #86b6ef; }
+  .title { fill: #0b0b0b; font: 600 14px system-ui, sans-serif; }
+  .key { fill: #52514e; font: 12px system-ui, sans-serif; }
+</style><rect width="760.0" height="138.0" fill="#fcfcfb"/><text class="title" x="0" y="16">Stored data, all 14 apps (GB)</text><g transform="translate(0,0)"><rect x="0" y="30" width="11" height="11" rx="3" class="bar s1"/><text class="key" x="17" y="40">current ctadl</text><rect x="113" y="30" width="11" height="11" rx="3" class="bar s2"/><text class="key" x="130" y="40">ctadl-souffle</text></g><g transform="translate(0,54)">
+<line class="grid" x1="196.0" y1="0" x2="196.0" y2="38.0"/>
+<text class="tick" x="196.0" y="54.0" text-anchor="middle">0</text>
+<line class="grid" x1="296.0" y1="0" x2="296.0" y2="38.0"/>
+<text class="tick" x="296.0" y="54.0" text-anchor="middle">20</text>
+<line class="grid" x1="396.0" y1="0" x2="396.0" y2="38.0"/>
+<text class="tick" x="396.0" y="54.0" text-anchor="middle">40</text>
+<line class="grid" x1="496.0" y1="0" x2="496.0" y2="38.0"/>
+<text class="tick" x="496.0" y="54.0" text-anchor="middle">60</text>
+<line class="grid" x1="596.0" y1="0" x2="596.0" y2="38.0"/>
+<text class="tick" x="596.0" y="54.0" text-anchor="middle">80</text>
+<line class="grid" x1="696.0" y1="0" x2="696.0" y2="38.0"/>
+<text class="tick" x="696.0" y="54.0" text-anchor="middle">100</text>
+<text class="axis-label" x="446.0" y="70.0" text-anchor="middle">gigabytes stored</text>
+<text class="row-label" x="186" y="21.0" text-anchor="end">All 14 apps</text>
+<path class="bar s1" d="M196.0,5.0H453.4a4.0,4.0 0 0 1 4.0,4.0V12.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V5.0Z"><title>All 14 apps — current ctadl: 52.27 GB</title></path>
+<path class="bar s2" d="M196.0,18.0H663.8a4.0,4.0 0 0 1 4.0,4.0V25.0a4.0,4.0 0 0 1 -4.0,4.0H196.0V18.0Z"><title>All 14 apps — ctadl-souffle: 94.36 GB</title></path>
+</g></svg>
