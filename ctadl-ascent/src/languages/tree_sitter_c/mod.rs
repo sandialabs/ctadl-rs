@@ -3462,12 +3462,6 @@ impl TempAllocator {
     }
 }
 
-/// Recursively prints a Tree-sitter node and all its descendants.
-///
-/// # Arguments
-/// * `node` - The current Tree-sitter node to print.
-/// * `depth` - The current recursion depth (start with 0).
-/// * `field_name` - The field name of the current node, if any (start with None).
 /// The switch behind [`unexpected_ast`] and [`malformed_source`]: by default log a
 /// warning (prefixed with who is at fault) and return `Ok(())` so the call site can
 /// recover and the user still gets useful results from the rest of the program. Set
@@ -3528,6 +3522,12 @@ fn malformed_source(msg: String) -> Result<(), Error> {
     recoverable_report("source problem", msg)
 }
 
+/// Recursively prints a Tree-sitter node and all its descendants.
+///
+/// # Arguments
+/// * `node` - The current Tree-sitter node to print.
+/// * `depth` - The current recursion depth (start with 0).
+/// * `field_name` - The field name of the current node, if any (start with None).
 pub fn debug_print_tree(
     node: Node<'_>,
     depth: usize,

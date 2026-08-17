@@ -2162,9 +2162,9 @@ fn vararg_call_carries_argument() {
     check_has_direct_call(&prog, "f", "printf");
     // `@p0` is a parameter reference, so it resolves without consulting any local-name table.
     let src_exp = exp_from_str("@p0", &ctadl_ir::Locals::default());
-    let carries_src = direct_calls_in(&prog, "f").iter().any(|(callees, args)| {
-        callees.iter().any(|c| c == "printf") && args.iter().any(|a| *a == src_exp)
-    });
+    let carries_src = direct_calls_in(&prog, "f")
+        .iter()
+        .any(|(callees, args)| callees.iter().any(|c| c == "printf") && args.contains(&src_exp));
     assert!(
         carries_src,
         "expected @p0 to appear as an argument of the printf call\n{prog}"
