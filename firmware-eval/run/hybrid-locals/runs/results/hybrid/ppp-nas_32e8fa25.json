@@ -1,0 +1,81 @@
+{
+ "label": "ppp-nas_32e8fa25",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7500_V1.0.0.130/fs/usr/sbin/ppp-nas",
+ "sha256": "32e8fa257160f4a02dc24979f0f7eb9cd70b3516facc35eb7cf017d96f3f893a",
+ "size": 10462,
+ "bin_mb": [
+  300,
+  1200
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.03,
+ "peak_fp_bytes": 11862496,
+ "peak_fp_mb": 11.3,
+ "peak_source": "time-l",
+ "index_store_bytes": 865827,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 10.93,
+  "peak_fp_mb": 773.4,
+  "store_bytes": 721508
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 498,
+   "sha": "9f0b0b061d8efec7"
+  },
+  "assign.parquet": {
+   "rows": 11360,
+   "sha": "95f5dcc3a65a65f5"
+  },
+  "call.parquet": {
+   "rows": 209,
+   "sha": "4b8aae5bb5b4590c"
+  },
+  "call_target_assign.parquet": {
+   "rows": 2,
+   "sha": "30bb75df827b8859"
+  },
+  "callee_info.parquet": {
+   "rows": 2,
+   "sha": "5834c5a999c29595"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 2,
+   "sha": "19b4837b1a1f1bc6"
+  },
+  "external_function.parquet": {
+   "rows": 0,
+   "sha": "e3b0c44298fc1c14"
+  },
+  "formal_param.parquet": {
+   "rows": 239,
+   "sha": "71efd8862422669d"
+  },
+  "function_id.parquet": {
+   "rows": 61,
+   "sha": "c8897aeebc2d86d2"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "131ab9ab73981640"
+  },
+  "index_source_map.parquet": {
+   "rows": 6376,
+   "sha": "e2c725d6cf04163e"
+  },
+  "paths.parquet": {
+   "rows": 435,
+   "sha": "5d54b7877c6cbd86"
+  },
+  "summary.parquet": {
+   "rows": 23,
+   "sha": "9496dddc817d2d51"
+  }
+ }
+}

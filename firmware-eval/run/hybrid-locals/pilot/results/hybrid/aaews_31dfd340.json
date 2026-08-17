@@ -1,0 +1,27 @@
+{
+ "label": "aaews_31dfd340",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AX1800U_300438668526/fs/usr/sbin/aaews",
+ "sha256": "31dfd340af8438d10aaad548f182156daa436ce68f7a687912bce592ca60db14",
+ "size": 63776,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.17,
+ "peak_fp_bytes": 53232120,
+ "peak_fp_mb": 50.8,
+ "peak_source": "time-l",
+ "index_store_bytes": 11170958,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 16.66,
+  "peak_fp_mb": 1417.5,
+  "store_bytes": 10049423
+ },
+ "stats": {}
+}

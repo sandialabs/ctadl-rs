@@ -1,0 +1,79 @@
+{
+ "label": "c_arno-iptables-firewall_32cf650d",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RAXE450_V1.0.12.96/fs/sbin/c_arno-iptables-firewall",
+ "sha256": "32cf650d6a00b96d2efe76a8985616e9d537d88f494be11b1c92e5144d163cd8",
+ "size": 202540,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 22.31,
+ "peak_fp_bytes": 4374040992,
+ "peak_fp_mb": 4171.4,
+ "peak_source": "time-l",
+ "index_store_bytes": 339373034,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 59.73,
+  "peak_fp_mb": 8325.5,
+  "store_bytes": 229612352
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 14123,
+   "sha": "18b9f076eab6eaa9"
+  },
+  "assign.parquet": {
+   "rows": 8298206
+  },
+  "call.parquet": {
+   "rows": 5166,
+   "sha": "3dfa245c7b43b0ab"
+  },
+  "call_target_assign.parquet": {
+   "rows": 2,
+   "sha": "4f0f03303c5d6ef0"
+  },
+  "callee_info.parquet": {
+   "rows": 2,
+   "sha": "8bbbf5d75a68bc10"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 2,
+   "sha": "a618bacf65522887"
+  },
+  "external_function.parquet": {
+   "rows": 61,
+   "sha": "1cf1fba1fae857b5"
+  },
+  "formal_param.parquet": {
+   "rows": 1209,
+   "sha": "a2ee7db08c7f2616"
+  },
+  "function_id.parquet": {
+   "rows": 264,
+   "sha": "5ab3270ada0465bb"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "0982991501672ffc"
+  },
+  "index_source_map.parquet": {
+   "rows": 4797937
+  },
+  "paths.parquet": {
+   "rows": 6859,
+   "sha": "12e4f3ad7c6fc9bc"
+  },
+  "summary.parquet": {
+   "rows": 4020,
+   "sha": "3e398340514ea501"
+  }
+ }
+}

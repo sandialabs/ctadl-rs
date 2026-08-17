@@ -1,0 +1,81 @@
+{
+ "label": "dnsmasq_024b9791",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC1200HP_30043808457/fs/usr/sbin/dnsmasq",
+ "sha256": "024b9791d4ba3c8c6f7819e7b3e1187d3b373fb876d6c826d0ce7894642159e5",
+ "size": 293504,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 91.73,
+ "peak_fp_bytes": 15280222688,
+ "peak_fp_mb": 14572.4,
+ "peak_source": "time-l",
+ "index_store_bytes": 97055661,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 31.14,
+  "peak_fp_mb": 3333.3,
+  "store_bytes": 65383052
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 21623,
+   "sha": "8c85a2f4ba0156a2"
+  },
+  "assign.parquet": {
+   "rows": 2951739,
+   "sha": "785dfcd312b95eec"
+  },
+  "call.parquet": {
+   "rows": 3903,
+   "sha": "5f537e44e2295482"
+  },
+  "call_target_assign.parquet": {
+   "rows": 96,
+   "sha": "689fbccf1b15c36d"
+  },
+  "callee_info.parquet": {
+   "rows": 9202,
+   "sha": "8e621d142b68e156"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 48,
+   "sha": "012520bb4cea6011"
+  },
+  "external_function.parquet": {
+   "rows": 138,
+   "sha": "35ccf231c7a9b32a"
+  },
+  "formal_param.parquet": {
+   "rows": 3029,
+   "sha": "c34432fb91f1ea80"
+  },
+  "function_id.parquet": {
+   "rows": 667,
+   "sha": "0b1423350e4c4c96"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "41f6441536c45b5e"
+  },
+  "index_source_map.parquet": {
+   "rows": 1270451,
+   "sha": "430e9828f5893cf6"
+  },
+  "paths.parquet": {
+   "rows": 4206,
+   "sha": "7e733cb50cf7f331"
+  },
+  "summary.parquet": {
+   "rows": 195200,
+   "sha": "3e54a776ba896098"
+  }
+ }
+}

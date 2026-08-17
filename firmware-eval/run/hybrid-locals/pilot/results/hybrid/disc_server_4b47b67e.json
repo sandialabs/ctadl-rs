@@ -1,0 +1,27 @@
+{
+ "label": "disc_server_4b47b67e",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_G31_1012/fs/bin/disc_server",
+ "sha256": "4b47b67e9353dcd3e1608eda40c17942d6d09719f105396fb036a0dcac3ab307",
+ "size": 14188,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.11,
+ "peak_fp_bytes": 39207416,
+ "peak_fp_mb": 37.4,
+ "peak_source": "time-l",
+ "index_store_bytes": 2725432,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 8.35,
+  "peak_fp_mb": 762.2,
+  "store_bytes": 2114002
+ },
+ "stats": {}
+}

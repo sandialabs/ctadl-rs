@@ -1,0 +1,81 @@
+{
+ "label": "pppd_0f878638",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_G32_B1_70126/fs/bin/pppd",
+ "sha256": "0f8786389734983e807635cb608f996f020f762bd6168086e9d3a2da7e589293",
+ "size": 272584,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 5.96,
+ "peak_fp_bytes": 407651168,
+ "peak_fp_mb": 388.8,
+ "peak_source": "time-l",
+ "index_store_bytes": 37495219,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 32.77,
+  "peak_fp_mb": 2368.8,
+  "store_bytes": 30154564
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 13922,
+   "sha": "83c5de062464097e"
+  },
+  "assign.parquet": {
+   "rows": 573010,
+   "sha": "4e44b098110eb751"
+  },
+  "call.parquet": {
+   "rows": 1943,
+   "sha": "0a02ea58e81a3496"
+  },
+  "call_target_assign.parquet": {
+   "rows": 77,
+   "sha": "5d34c362fff93a45"
+  },
+  "callee_info.parquet": {
+   "rows": 9109,
+   "sha": "bb84327b0631729a"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 24,
+   "sha": "4d48fe8a256d00c3"
+  },
+  "external_function.parquet": {
+   "rows": 135,
+   "sha": "34fa877ba17fa1cb"
+  },
+  "formal_param.parquet": {
+   "rows": 2191,
+   "sha": "85aa0c013cd13205"
+  },
+  "function_id.parquet": {
+   "rows": 570,
+   "sha": "e04d9e0f0c1e9fb4"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "618ad3993f4c7afe"
+  },
+  "index_source_map.parquet": {
+   "rows": 281121,
+   "sha": "4d5e8da043cf4fe6"
+  },
+  "paths.parquet": {
+   "rows": 5345,
+   "sha": "565f4c569f4880ad"
+  },
+  "summary.parquet": {
+   "rows": 28169,
+   "sha": "d54da3fa8395aa23"
+  }
+ }
+}

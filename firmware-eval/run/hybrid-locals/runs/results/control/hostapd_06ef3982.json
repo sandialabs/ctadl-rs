@@ -1,0 +1,81 @@
+{
+ "label": "hostapd_06ef3982",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/NBG6617_V1.00_ABCT.6_C0/fs/usr/sbin/hostapd",
+ "sha256": "06ef39822bc29cf1bd0a1fcc4ad4c31d74e248725f817889563a0212f8ec83b7",
+ "size": 829323,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 12.07,
+ "peak_fp_bytes": 3909291944,
+ "peak_fp_mb": 3728.2,
+ "peak_source": "time-l",
+ "index_store_bytes": 116460011,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 56.69,
+  "peak_fp_mb": 3964.1,
+  "store_bytes": 94694226
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 46213,
+   "sha": "aaa9130f3fe14174"
+  },
+  "assign.parquet": {
+   "rows": 2107882,
+   "sha": "4ab0b1ed306c5db1"
+  },
+  "call.parquet": {
+   "rows": 14097,
+   "sha": "bfea81fe82d72069"
+  },
+  "call_target_assign.parquet": {
+   "rows": 269,
+   "sha": "f0ce38dd70edb305"
+  },
+  "callee_info.parquet": {
+   "rows": 277,
+   "sha": "b654806e9821c523"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 161,
+   "sha": "dfe7b22e5c69a3a8"
+  },
+  "external_function.parquet": {
+   "rows": 0,
+   "sha": "e3b0c44298fc1c14"
+  },
+  "formal_param.parquet": {
+   "rows": 9565,
+   "sha": "60e1dcb8ff35e86b"
+  },
+  "function_id.parquet": {
+   "rows": 2032,
+   "sha": "cfa4da54a6b1a69d"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "820c7126a33637fb"
+  },
+  "index_source_map.parquet": {
+   "rows": 1004872,
+   "sha": "07bc5dd78c170d26"
+  },
+  "paths.parquet": {
+   "rows": 8106,
+   "sha": "5b42ad5bf3b47260"
+  },
+  "summary.parquet": {
+   "rows": 34126,
+   "sha": "a6b8427b8d00b879"
+  }
+ }
+}

@@ -1,0 +1,81 @@
+{
+ "label": "starter_28fd9a9f",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AX1800HP_v300438668539/fs/usr/lib/ipsec/starter",
+ "sha256": "28fd9a9f8409ccbd614b29ab8cd2a57a54d927dd75b0355b0e8b9af0bce677c1",
+ "size": 99988,
+ "bin_mb": [
+  1200,
+  2000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.17,
+ "peak_fp_bytes": 57164304,
+ "peak_fp_mb": 54.5,
+ "peak_source": "time-l",
+ "index_store_bytes": 6051638,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 12.83,
+  "peak_fp_mb": 1482.7,
+  "store_bytes": 5149901
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 2576,
+   "sha": "2e3678d65112d613"
+  },
+  "assign.parquet": {
+   "rows": 70642,
+   "sha": "be85dc4825cefa94"
+  },
+  "call.parquet": {
+   "rows": 680,
+   "sha": "db2d5ca7e7141857"
+  },
+  "call_target_assign.parquet": {
+   "rows": 19,
+   "sha": "12708333d0e75d7f"
+  },
+  "callee_info.parquet": {
+   "rows": 416,
+   "sha": "a182bc68809f8b38"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 11,
+   "sha": "77b77c38f90bab8b"
+  },
+  "external_function.parquet": {
+   "rows": 92,
+   "sha": "a3ad749b44ba35ff"
+  },
+  "formal_param.parquet": {
+   "rows": 1436,
+   "sha": "9cb3e43444852854"
+  },
+  "function_id.parquet": {
+   "rows": 397,
+   "sha": "650e1cce69edc037"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "88daab59301127b2"
+  },
+  "index_source_map.parquet": {
+   "rows": 37495,
+   "sha": "5f90c7578396f7b5"
+  },
+  "paths.parquet": {
+   "rows": 1105,
+   "sha": "3c202ac5fd215fab"
+  },
+  "summary.parquet": {
+   "rows": 506,
+   "sha": "7c099cd130cf8b6a"
+  }
+ }
+}

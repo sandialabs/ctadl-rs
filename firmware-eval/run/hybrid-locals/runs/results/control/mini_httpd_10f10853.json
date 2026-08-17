@@ -1,0 +1,79 @@
+{
+ "label": "mini_httpd_10f10853",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_E2100L_1.0.05.004_20120308_code/fs/usr/sbin/mini_httpd",
+ "sha256": "10f10853be6f6ff326f1dac8e3e73a78c7496637d065c80c7702ddfd4716877c",
+ "size": 707464,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 67.14,
+ "peak_fp_bytes": 11281098592,
+ "peak_fp_mb": 10758.5,
+ "peak_source": "time-l",
+ "index_store_bytes": 339261300,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 78.5,
+  "peak_fp_mb": 9999.0,
+  "store_bytes": 225584223
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 49551,
+   "sha": "0089753225796721"
+  },
+  "assign.parquet": {
+   "rows": 9063453
+  },
+  "call.parquet": {
+   "rows": 12160,
+   "sha": "8d728cb41165c523"
+  },
+  "call_target_assign.parquet": {
+   "rows": 81,
+   "sha": "218a98512e614b40"
+  },
+  "callee_info.parquet": {
+   "rows": 17434,
+   "sha": "e34b3620fcb5007b"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 45,
+   "sha": "458929d5c8a29781"
+  },
+  "external_function.parquet": {
+   "rows": 189,
+   "sha": "91fe312536bc8030"
+  },
+  "formal_param.parquet": {
+   "rows": 3647,
+   "sha": "9e73e5991dc8a0b3"
+  },
+  "function_id.parquet": {
+   "rows": 962,
+   "sha": "983a55c93db9dc17"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "a2a1b1102b26df60"
+  },
+  "index_source_map.parquet": {
+   "rows": 4572789
+  },
+  "paths.parquet": {
+   "rows": 12916,
+   "sha": "34ca1cc7dff34cb7"
+  },
+  "summary.parquet": {
+   "rows": 35896,
+   "sha": "0908d1843a1fae9f"
+  }
+ }
+}

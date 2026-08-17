@@ -1,0 +1,80 @@
+{
+ "label": "rc_5d7f218c",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WN3500RP_V1.0.0.28_1.0.66/fs/sbin/rc",
+ "sha256": "5d7f218cdcd4bf9a257497ec079d9deef1d470f0b78a6f8610e6cb7812aea045",
+ "size": 172272,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 17.42,
+ "peak_fp_bytes": 3834515344,
+ "peak_fp_mb": 3656.9,
+ "peak_source": "time-l",
+ "index_store_bytes": 205913387,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 48.33,
+  "peak_fp_mb": 5178.5,
+  "store_bytes": 134839623
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 14747,
+   "sha": "839a36cf11879cc9"
+  },
+  "assign.parquet": {
+   "rows": 5386384
+  },
+  "call.parquet": {
+   "rows": 3434,
+   "sha": "48164e9fb48a9996"
+  },
+  "call_target_assign.parquet": {
+   "rows": 23,
+   "sha": "046e824d0c752ae6"
+  },
+  "callee_info.parquet": {
+   "rows": 6913,
+   "sha": "5075a193d86f023a"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 10,
+   "sha": "9571eb12fdbea1c6"
+  },
+  "external_function.parquet": {
+   "rows": 120,
+   "sha": "c08fcfe858027349"
+  },
+  "formal_param.parquet": {
+   "rows": 1323,
+   "sha": "7ad3a23655aaa6d2"
+  },
+  "function_id.parquet": {
+   "rows": 350,
+   "sha": "ffa442bae66ba2f2"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "acca76d7a83ae6eb"
+  },
+  "index_source_map.parquet": {
+   "rows": 2896340,
+   "sha": "7d7b1c5722b72152"
+  },
+  "paths.parquet": {
+   "rows": 6318,
+   "sha": "d61505c83df9e580"
+  },
+  "summary.parquet": {
+   "rows": 1416,
+   "sha": "d5c7e23e122b8ea9"
+  }
+ }
+}

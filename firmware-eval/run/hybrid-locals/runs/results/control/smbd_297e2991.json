@@ -1,0 +1,80 @@
+{
+ "label": "smbd_297e2991",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/AC1450_V1.0.0.36_10.0.17/fs/usr/local/samba/smbd",
+ "sha256": "297e2991b231e8c48a33d6c03fa288d2f0a2c0246b9ce9879a040cebc1cba0d3",
+ "size": 968860,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 137.6,
+ "peak_fp_bytes": 9045925616,
+ "peak_fp_mb": 8626.9,
+ "peak_source": "time-l",
+ "index_store_bytes": 122123801,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 43.79,
+  "peak_fp_mb": 3945.8,
+  "store_bytes": 102216755
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 54381,
+   "sha": "d7fa0c08a3c5327f"
+  },
+  "assign.parquet": {
+   "rows": 4239318
+  },
+  "call.parquet": {
+   "rows": 15703,
+   "sha": "37881967c4ae2a90"
+  },
+  "call_target_assign.parquet": {
+   "rows": 152,
+   "sha": "502cfdcf3d0feae3"
+  },
+  "callee_info.parquet": {
+   "rows": 2313,
+   "sha": "b30c7771456ad84b"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 106,
+   "sha": "7fc3e6ec24fe9133"
+  },
+  "external_function.parquet": {
+   "rows": 1939,
+   "sha": "c00f3163f426562d"
+  },
+  "formal_param.parquet": {
+   "rows": 16411,
+   "sha": "43696621643c4cd7"
+  },
+  "function_id.parquet": {
+   "rows": 5699,
+   "sha": "c3d70f976e34d92c"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "be58f8de55cdaf68"
+  },
+  "index_source_map.parquet": {
+   "rows": 915126,
+   "sha": "def631aa2e5b52e8"
+  },
+  "paths.parquet": {
+   "rows": 9969,
+   "sha": "271467c50afdc569"
+  },
+  "summary.parquet": {
+   "rows": 1033453,
+   "sha": "a5265567bcafc16f"
+  }
+ }
+}

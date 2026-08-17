@@ -1,0 +1,27 @@
+{
+ "label": "dnsmasq_17381002",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8900_V1.0.5.42/fs/usr/sbin/dnsmasq",
+ "sha256": "17381002e7661eb75bec833aa4ebe32d5944a9196d8862bee43fea94dfa80adf",
+ "size": 244355,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 34.34,
+ "peak_fp_bytes": 2396031592,
+ "peak_fp_mb": 2285.0,
+ "peak_source": "time-l",
+ "index_store_bytes": 69000164,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 24.39,
+  "peak_fp_mb": 2490.1,
+  "store_bytes": 48086682
+ },
+ "stats": {}
+}

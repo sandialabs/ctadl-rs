@@ -1,0 +1,81 @@
+{
+ "label": "httpd_25f28ab5",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_WL_520gu_3014_TW/fs/usr/sbin/httpd",
+ "sha256": "25f28ab515edbd9d020565df9943e6a001ae3ae1885d87a24b197a20b4588251",
+ "size": 307404,
+ "bin_mb": [
+  1200,
+  2000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 1.48,
+ "peak_fp_bytes": 267944680,
+ "peak_fp_mb": 255.5,
+ "peak_source": "time-l",
+ "index_store_bytes": 32993189,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 15.64,
+  "peak_fp_mb": 1614.9,
+  "store_bytes": 23422244
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 8981,
+   "sha": "b5156c447e8c69b5"
+  },
+  "assign.parquet": {
+   "rows": 743490,
+   "sha": "b1970d4ac9da3a15"
+  },
+  "call.parquet": {
+   "rows": 3266,
+   "sha": "f88fccd4aa5f4295"
+  },
+  "call_target_assign.parquet": {
+   "rows": 1,
+   "sha": "bc90ca174ffa650f"
+  },
+  "callee_info.parquet": {
+   "rows": 252,
+   "sha": "2342ad2e04997bbb"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 1,
+   "sha": "b978925855a744ad"
+  },
+  "external_function.parquet": {
+   "rows": 117,
+   "sha": "7878208df601f43a"
+  },
+  "formal_param.parquet": {
+   "rows": 2301,
+   "sha": "9039a13e6cab1fbf"
+  },
+  "function_id.parquet": {
+   "rows": 558,
+   "sha": "872a5ea55c77c292"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "33866c4e20b54ff5"
+  },
+  "index_source_map.parquet": {
+   "rows": 385920,
+   "sha": "bc5d2fbf86c3300e"
+  },
+  "paths.parquet": {
+   "rows": 2731,
+   "sha": "2c6e657624285f29"
+  },
+  "summary.parquet": {
+   "rows": 520,
+   "sha": "5b5ad1ab7236a319"
+  }
+ }
+}

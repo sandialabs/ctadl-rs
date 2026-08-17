@@ -1,0 +1,81 @@
+{
+ "label": "pluto_3bc35975",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/DG834Gv2_V3.01.26/fs/usr/local/lib/ipsec/pluto",
+ "sha256": "3bc35975539ceae065013b0e30690a048dc3a3ba908666e0f4c6630a3fffeef4",
+ "size": 690564,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 36.82,
+ "peak_fp_bytes": 5354706032,
+ "peak_fp_mb": 5106.6,
+ "peak_source": "time-l",
+ "index_store_bytes": 53045560,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 23.41,
+  "peak_fp_mb": 2489.3,
+  "store_bytes": 44347530
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 19915,
+   "sha": "1453a6f60f8f2b04"
+  },
+  "assign.parquet": {
+   "rows": 978762,
+   "sha": "fed73a3e9e5782d4"
+  },
+  "call.parquet": {
+   "rows": 3818,
+   "sha": "2d5654f4890d8b07"
+  },
+  "call_target_assign.parquet": {
+   "rows": 29,
+   "sha": "d50ca540e3ece1fd"
+  },
+  "callee_info.parquet": {
+   "rows": 7300,
+   "sha": "1b0a864926ea70e7"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 23,
+   "sha": "bba56f577dc416ec"
+  },
+  "external_function.parquet": {
+   "rows": 119,
+   "sha": "4452a1b525d23157"
+  },
+  "formal_param.parquet": {
+   "rows": 4129,
+   "sha": "fd9f12e922a65071"
+  },
+  "function_id.parquet": {
+   "rows": 937,
+   "sha": "0a1a5744b1355a64"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "db9bf76a0501bbbe"
+  },
+  "index_source_map.parquet": {
+   "rows": 369016,
+   "sha": "837435cf7856b411"
+  },
+  "paths.parquet": {
+   "rows": 8938,
+   "sha": "f46a63d46d32d511"
+  },
+  "summary.parquet": {
+   "rows": 119239,
+   "sha": "8934d2402304e162"
+  }
+ }
+}

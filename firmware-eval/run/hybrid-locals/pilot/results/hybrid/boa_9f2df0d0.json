@@ -1,0 +1,27 @@
+{
+ "label": "boa_9f2df0d0",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_515_REVA_FIRMWARE_PATCH_1.03.B01_WW/fs/bin/boa",
+ "sha256": "9f2df0d0ad4c277e71746a0ca9298084826123f53d033c626b494abf44268412",
+ "size": 552448,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 13.95,
+ "peak_fp_bytes": 1248332008,
+ "peak_fp_mb": 1190.5,
+ "peak_source": "time-l",
+ "index_store_bytes": 164477414,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 47.4,
+  "peak_fp_mb": 5887.7,
+  "store_bytes": 124417838
+ },
+ "stats": {}
+}

@@ -1,0 +1,81 @@
+{
+ "label": "minidlna_1dc6a2c7",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_825_REVC_FIRMWARE_PATCH_3.01.B12/fs/usr/bin/minidlna",
+ "sha256": "1dc6a2c7a2b18274bdd268bb1dd532809bd99643c936bb72810c6e160bffc9b7",
+ "size": 300504,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 6.27,
+ "peak_fp_bytes": 1638107104,
+ "peak_fp_mb": 1562.2,
+ "peak_source": "time-l",
+ "index_store_bytes": 62548883,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 23.55,
+  "peak_fp_mb": 3173.5,
+  "store_bytes": 54610144
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 34307,
+   "sha": "9781cbf7cc7b3a81"
+  },
+  "assign.parquet": {
+   "rows": 765497,
+   "sha": "fcc374dedd4e7be8"
+  },
+  "call.parquet": {
+   "rows": 2960,
+   "sha": "ead6465923bf428b"
+  },
+  "call_target_assign.parquet": {
+   "rows": 22,
+   "sha": "58e9d096c04505ba"
+  },
+  "callee_info.parquet": {
+   "rows": 25665,
+   "sha": "6ef3129c035731d9"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 19,
+   "sha": "34c4c9f94c5f8a23"
+  },
+  "external_function.parquet": {
+   "rows": 231,
+   "sha": "fead4e1a668ce082"
+  },
+  "formal_param.parquet": {
+   "rows": 2792,
+   "sha": "5e4a3896d3bb9c66"
+  },
+  "function_id.parquet": {
+   "rows": 694,
+   "sha": "b17ce7bea24b57ec"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "fffc04510c6881c2"
+  },
+  "index_source_map.parquet": {
+   "rows": 414602,
+   "sha": "eee2c8794834c6a9"
+  },
+  "paths.parquet": {
+   "rows": 7881,
+   "sha": "726a43ee58887f5d"
+  },
+  "summary.parquet": {
+   "rows": 25373,
+   "sha": "dc0075eedfb767e7"
+  }
+ }
+}

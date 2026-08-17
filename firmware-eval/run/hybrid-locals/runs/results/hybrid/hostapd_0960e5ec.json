@@ -1,0 +1,81 @@
+{
+ "label": "hostapd_0960e5ec",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WPN824N_V1.0.0.28/fs/usr/sbin/hostapd",
+ "sha256": "0960e5ec68814d808362293fa196a11ceceefda42aa4b248169f2560f2892745",
+ "size": 404380,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 5.76,
+ "peak_fp_bytes": 638043264,
+ "peak_fp_mb": 608.5,
+ "peak_source": "time-l",
+ "index_store_bytes": 87206836,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 35.46,
+  "peak_fp_mb": 3299.2,
+  "store_bytes": 68659275
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 38510,
+   "sha": "8de7756990981aa2"
+  },
+  "assign.parquet": {
+   "rows": 1390575,
+   "sha": "352d6b7c91727c64"
+  },
+  "call.parquet": {
+   "rows": 5361,
+   "sha": "53c235bc6bf018d2"
+  },
+  "call_target_assign.parquet": {
+   "rows": 291,
+   "sha": "23adb774e6cd26df"
+  },
+  "callee_info.parquet": {
+   "rows": 20666,
+   "sha": "b3e4ec9b79e4af43"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 147,
+   "sha": "b404bef18af850de"
+  },
+  "external_function.parquet": {
+   "rows": 201,
+   "sha": "f1f536d9f3552abf"
+  },
+  "formal_param.parquet": {
+   "rows": 4135,
+   "sha": "9ca6f07a38919062"
+  },
+  "function_id.parquet": {
+   "rows": 1004,
+   "sha": "4ceb3a899faf214f"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "deec20b3fcc48fbb"
+  },
+  "index_source_map.parquet": {
+   "rows": 682015,
+   "sha": "7db432c923a696aa"
+  },
+  "paths.parquet": {
+   "rows": 3864,
+   "sha": "75d899525236ae4e"
+  },
+  "summary.parquet": {
+   "rows": 6855,
+   "sha": "839d5b32b0f76ad7"
+  }
+ }
+}

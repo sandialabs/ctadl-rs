@@ -1,0 +1,28 @@
+{
+ "label": "ntfs-3g_6a3bed1b",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/F9K1113v2_WW_2.03.40/fs/sbin/ntfs-3g",
+ "sha256": "6a3bed1b7227bfb0144103b6eaa9bfc19881d23e457bf74de6d0f25194a5b489",
+ "size": 355124,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "timeout",
+ "exit_code": -9,
+ "wall_s": 1200.45,
+ "peak_fp_bytes": 27830462936,
+ "peak_fp_mb": 26541.2,
+ "peak_source": "polled",
+ "index_store_bytes": null,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 22.19,
+  "peak_fp_mb": 2245.0,
+  "store_bytes": 39888343
+ },
+ "stats": {},
+ "fingerprint": {}
+}

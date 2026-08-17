@@ -1,0 +1,81 @@
+{
+ "label": "net-cgi_2ebb1974",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/EX6200v2_V1.0.1.90/fs/usr/sbin/net-cgi",
+ "sha256": "2ebb197424c90930beed3f0aa4866645419873d1f59f5148047197605c55c5f6",
+ "size": 315663,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.86,
+ "peak_fp_bytes": 288604928,
+ "peak_fp_mb": 275.2,
+ "peak_source": "time-l",
+ "index_store_bytes": 31119626,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 32.92,
+  "peak_fp_mb": 2920.1,
+  "store_bytes": 26223269
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 17117,
+   "sha": "ab7bc7d10ea5dd11"
+  },
+  "assign.parquet": {
+   "rows": 480439,
+   "sha": "88445bf3a842cdaa"
+  },
+  "call.parquet": {
+   "rows": 6635,
+   "sha": "39ecb181ef55a3a0"
+  },
+  "call_target_assign.parquet": {
+   "rows": 8,
+   "sha": "8f528174d12a2488"
+  },
+  "callee_info.parquet": {
+   "rows": 54,
+   "sha": "9a7594c7c6adcdf6"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 8,
+   "sha": "18fc78a70e69df78"
+  },
+  "external_function.parquet": {
+   "rows": 0,
+   "sha": "e3b0c44298fc1c14"
+  },
+  "formal_param.parquet": {
+   "rows": 3659,
+   "sha": "eb20e3c68112aae2"
+  },
+  "function_id.parquet": {
+   "rows": 915,
+   "sha": "4a90661ab603ee97"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "18b3dd1a6810e8ff"
+  },
+  "index_source_map.parquet": {
+   "rows": 252818,
+   "sha": "2b258c24b853b4fe"
+  },
+  "paths.parquet": {
+   "rows": 4469,
+   "sha": "911b4de75dd91ed9"
+  },
+  "summary.parquet": {
+   "rows": 1366,
+   "sha": "461565d63fbdfc2b"
+  }
+ }
+}

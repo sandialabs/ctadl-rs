@@ -1,0 +1,27 @@
+{
+ "label": "inadyn_f6ebde62",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AX1800HP_v300438668539/fs/usr/sbin/inadyn",
+ "sha256": "f6ebde620aedeffddf4d03057a4138ca19f22c1d142a4e1e910c4a0c077a3575",
+ "size": 123584,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 18.4,
+ "peak_fp_bytes": 493061008,
+ "peak_fp_mb": 470.2,
+ "peak_source": "time-l",
+ "index_store_bytes": 19744964,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 16.62,
+  "peak_fp_mb": 1587.4,
+  "store_bytes": 14170250
+ },
+ "stats": {}
+}

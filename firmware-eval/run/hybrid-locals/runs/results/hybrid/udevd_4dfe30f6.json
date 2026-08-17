@@ -1,0 +1,81 @@
+{
+ "label": "udevd_4dfe30f6",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_BLUECAVE_300438446630/fs/sbin/udevd",
+ "sha256": "4dfe30f6479e0a5413172710300732aa584302c8a6050869416ddb82bfa56eaa",
+ "size": 135980,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 3.52,
+ "peak_fp_bytes": 527860720,
+ "peak_fp_mb": 503.4,
+ "peak_source": "time-l",
+ "index_store_bytes": 42137278,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 22.09,
+  "peak_fp_mb": 2174.6,
+  "store_bytes": 25600187
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 9625,
+   "sha": "f0845ceae3c9d704"
+  },
+  "assign.parquet": {
+   "rows": 1173971,
+   "sha": "b157a6c847f0b078"
+  },
+  "call.parquet": {
+   "rows": 2992,
+   "sha": "3e08e165908e3679"
+  },
+  "call_target_assign.parquet": {
+   "rows": 50,
+   "sha": "2166b5c2153f9eb2"
+  },
+  "callee_info.parquet": {
+   "rows": 347,
+   "sha": "e55b099b5e6aff39"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 23,
+   "sha": "316998078eeae455"
+  },
+  "external_function.parquet": {
+   "rows": 141,
+   "sha": "7349170582fe8ecb"
+  },
+  "formal_param.parquet": {
+   "rows": 3455,
+   "sha": "5dc36d7398124a11"
+  },
+  "function_id.parquet": {
+   "rows": 825,
+   "sha": "c290b5ae5e4bb7d3"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "e04c9c485f2e5fd5"
+  },
+  "index_source_map.parquet": {
+   "rows": 579577,
+   "sha": "b575a65f7a6889eb"
+  },
+  "paths.parquet": {
+   "rows": 2287,
+   "sha": "6d2bbf0b3a8d58d0"
+  },
+  "summary.parquet": {
+   "rows": 858,
+   "sha": "bc8c894b34f49baf"
+  }
+ }
+}

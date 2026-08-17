@@ -1,0 +1,81 @@
+{
+ "label": "snmptrap_15a22d48",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DAP_2553_REVB_FIRMWARE_v3.23B01_RC034_CARESTREAM/fs/usr/sbin/snmptrap",
+ "sha256": "15a22d485fd48515a5892034b6f0877939522005a8bf2e8773b55c429e2df32e",
+ "size": 433344,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 98.33,
+ "peak_fp_bytes": 7840684920,
+ "peak_fp_mb": 7477.5,
+ "peak_source": "time-l",
+ "index_store_bytes": 50740824,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 23.48,
+  "peak_fp_mb": 2104.5,
+  "store_bytes": 42872267
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 25778,
+   "sha": "19a9bd79e0da2a6c"
+  },
+  "assign.parquet": {
+   "rows": 1245267,
+   "sha": "bfe2ea78251c2318"
+  },
+  "call.parquet": {
+   "rows": 5073,
+   "sha": "11f00975533461df"
+  },
+  "call_target_assign.parquet": {
+   "rows": 271,
+   "sha": "0fcf6609312c2f30"
+  },
+  "callee_info.parquet": {
+   "rows": 9504,
+   "sha": "9d39c5beea8fde12"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 179,
+   "sha": "19d0f976b65c03bb"
+  },
+  "external_function.parquet": {
+   "rows": 138,
+   "sha": "1d18da69c78599b5"
+  },
+  "formal_param.parquet": {
+   "rows": 5440,
+   "sha": "8991c9be122024c0"
+  },
+  "function_id.parquet": {
+   "rows": 1208,
+   "sha": "45a3743a397a1f9b"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "4d2ce47ea53ab48a"
+  },
+  "index_source_map.parquet": {
+   "rows": 362038,
+   "sha": "bfe683e6c0a3f0f7"
+  },
+  "paths.parquet": {
+   "rows": 7906,
+   "sha": "f9194d63604e011f"
+  },
+  "summary.parquet": {
+   "rows": 350756,
+   "sha": "22abf53f3578074f"
+  }
+ }
+}

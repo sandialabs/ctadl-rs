@@ -1,0 +1,81 @@
+{
+ "label": "wlif_status_215b3955",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/wn1000rp_V1.0.0.52/fs/usr/sbin/wlif_status",
+ "sha256": "215b39551ff939cbdc25ae0d40c30fc44f1f04de459342a612d43c1ad138a1b0",
+ "size": 9912,
+ "bin_mb": [
+  300,
+  1200
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.01,
+ "peak_fp_bytes": 7324104,
+ "peak_fp_mb": 7.0,
+ "peak_source": "time-l",
+ "index_store_bytes": 480931,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 7.93,
+  "peak_fp_mb": 759.3,
+  "store_bytes": 432159
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 399,
+   "sha": "c806e388d43720f6"
+  },
+  "assign.parquet": {
+   "rows": 2143,
+   "sha": "f97831a04c3a8e39"
+  },
+  "call.parquet": {
+   "rows": 29,
+   "sha": "36d97fc9a7b738bd"
+  },
+  "call_target_assign.parquet": {
+   "rows": 0,
+   "sha": "e3b0c44298fc1c14"
+  },
+  "callee_info.parquet": {
+   "rows": 306,
+   "sha": "a39782b6652e7465"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 0,
+   "sha": "e3b0c44298fc1c14"
+  },
+  "external_function.parquet": {
+   "rows": 24,
+   "sha": "0667083bb346bfdc"
+  },
+  "formal_param.parquet": {
+   "rows": 249,
+   "sha": "de2c8a65acc5cae0"
+  },
+  "function_id.parquet": {
+   "rows": 64,
+   "sha": "4df220a382a96026"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "10ed1c33711835ac"
+  },
+  "index_source_map.parquet": {
+   "rows": 1363,
+   "sha": "db2f943e000efde3"
+  },
+  "paths.parquet": {
+   "rows": 90,
+   "sha": "9fff17b881bdf1e0"
+  },
+  "summary.parquet": {
+   "rows": 31,
+   "sha": "246ba5692e6be42a"
+  }
+ }
+}

@@ -1,0 +1,81 @@
+{
+ "label": "uhttpd_4e252bca",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TEW_755AP_v1_1.13B01_/fs/usr/sbin/uhttpd",
+ "sha256": "4e252bcaa00c5b3d2778b582fc29885e3bfb032b85cf7d03036a6fd79cd7b2a4",
+ "size": 41477,
+ "bin_mb": [
+  1200,
+  2000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.26,
+ "peak_fp_bytes": 81920552,
+ "peak_fp_mb": 78.1,
+ "peak_source": "time-l",
+ "index_store_bytes": 6009567,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 10.78,
+  "peak_fp_mb": 1323.7,
+  "store_bytes": 4388041
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 2220,
+   "sha": "17380afc383490cb"
+  },
+  "assign.parquet": {
+   "rows": 127065,
+   "sha": "09d3385ec71846ec"
+  },
+  "call.parquet": {
+   "rows": 793,
+   "sha": "ee8a24151cd4eb1e"
+  },
+  "call_target_assign.parquet": {
+   "rows": 5,
+   "sha": "49ac68146b086d47"
+  },
+  "callee_info.parquet": {
+   "rows": 2,
+   "sha": "fc18d3334e8e6c59"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 5,
+   "sha": "9bf4facba67998ad"
+  },
+  "external_function.parquet": {
+   "rows": 95,
+   "sha": "10590d43cff6c71b"
+  },
+  "formal_param.parquet": {
+   "rows": 1601,
+   "sha": "7b897358fb6cbfbc"
+  },
+  "function_id.parquet": {
+   "rows": 365,
+   "sha": "309c66cedcd03441"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "246d940ea0970781"
+  },
+  "index_source_map.parquet": {
+   "rows": 65068,
+   "sha": "35ccd0f484d70d28"
+  },
+  "paths.parquet": {
+   "rows": 899,
+   "sha": "9fc509bbaf8e092a"
+  },
+  "summary.parquet": {
+   "rows": 249,
+   "sha": "2f55069d19c2cfb7"
+  }
+ }
+}

@@ -1,0 +1,81 @@
+{
+ "label": "iptbl_11bc969c",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/f5d8231v3_ww_3.10.12/fs/usr/sbin/iptbl",
+ "sha256": "11bc969ca38795fca56788d4bb509013c9698aba615f04c67e9500cbcf664384",
+ "size": 43260,
+ "bin_mb": [
+  1200,
+  2000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.1,
+ "peak_fp_bytes": 40305144,
+ "peak_fp_mb": 38.4,
+ "peak_source": "time-l",
+ "index_store_bytes": 4468035,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 11.34,
+  "peak_fp_mb": 1240.3,
+  "store_bytes": 3668426
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 2782,
+   "sha": "d8bdb679b1fc39f4"
+  },
+  "assign.parquet": {
+   "rows": 61142,
+   "sha": "376da2e707424f4e"
+  },
+  "call.parquet": {
+   "rows": 1123,
+   "sha": "2e20d133ee9fa5bd"
+  },
+  "call_target_assign.parquet": {
+   "rows": 3,
+   "sha": "ff29a42fe87a4193"
+  },
+  "callee_info.parquet": {
+   "rows": 28,
+   "sha": "76cbdf1232a94b01"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 3,
+   "sha": "60ec6c8f1b1f47b5"
+  },
+  "external_function.parquet": {
+   "rows": 27,
+   "sha": "06c1ea707c231432"
+  },
+  "formal_param.parquet": {
+   "rows": 448,
+   "sha": "0504e499b023c872"
+  },
+  "function_id.parquet": {
+   "rows": 118,
+   "sha": "52ae48516590c04b"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "2bec99c61fa02b08"
+  },
+  "index_source_map.parquet": {
+   "rows": 32425,
+   "sha": "947641f8ba5afce9"
+  },
+  "paths.parquet": {
+   "rows": 737,
+   "sha": "fb33f8575b7f129d"
+  },
+  "summary.parquet": {
+   "rows": 51,
+   "sha": "4d6186be5983973a"
+  }
+ }
+}

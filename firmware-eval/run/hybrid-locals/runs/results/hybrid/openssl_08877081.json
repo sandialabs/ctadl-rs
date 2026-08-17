@@ -1,0 +1,80 @@
+{
+ "label": "openssl_08877081",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR822B1_FW202KRb08/fs/usr/sbin/openssl",
+ "sha256": "08877081ec37c9527fe9536948c1ce5a28ae23692f5b6ca1c6a43cc4a204b5b9",
+ "size": 590328,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 33.41,
+ "peak_fp_bytes": 2406616208,
+ "peak_fp_mb": 2295.1,
+ "peak_source": "time-l",
+ "index_store_bytes": 909268095,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 145.95,
+  "peak_fp_mb": 8846.5,
+  "store_bytes": 839891922
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 604043,
+   "sha": "ce3fca2dcf394651"
+  },
+  "assign.parquet": {
+   "rows": 4446274
+  },
+  "call.parquet": {
+   "rows": 4075,
+   "sha": "4419f4c6dbb43a90"
+  },
+  "call_target_assign.parquet": {
+   "rows": 102,
+   "sha": "06e57439dfc88e30"
+  },
+  "callee_info.parquet": {
+   "rows": 593531,
+   "sha": "9096db34116ef3e8"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 69,
+   "sha": "fc64d07a52dcdfb5"
+  },
+  "external_function.parquet": {
+   "rows": 1130,
+   "sha": "94d619abbfc37176"
+  },
+  "formal_param.parquet": {
+   "rows": 9716,
+   "sha": "b38bef6e454e99f2"
+  },
+  "function_id.parquet": {
+   "rows": 2414,
+   "sha": "0ae662b64fe774e3"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "a5737131968548f5"
+  },
+  "index_source_map.parquet": {
+   "rows": 2491788,
+   "sha": "92caa24dd743aec6"
+  },
+  "paths.parquet": {
+   "rows": 2144,
+   "sha": "baac7a2a81328fdd"
+  },
+  "summary.parquet": {
+   "rows": 1429,
+   "sha": "9394b71bc51ed249"
+  }
+ }
+}

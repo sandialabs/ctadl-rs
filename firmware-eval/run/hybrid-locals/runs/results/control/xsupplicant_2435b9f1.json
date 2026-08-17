@@ -1,0 +1,81 @@
+{
+ "label": "xsupplicant_2435b9f1",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_524UP_REVAx_FIRMWARE_1.08.B01/fs/bin/xsupplicant",
+ "sha256": "2435b9f19ef75e62402026f32bf7b3c5f6e74124bce3ce1617254a71dc9e6ce4",
+ "size": 394468,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 116.77,
+ "peak_fp_bytes": 18077679384,
+ "peak_fp_mb": 17240.2,
+ "peak_source": "time-l",
+ "index_store_bytes": 52814374,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 24.79,
+  "peak_fp_mb": 1850.7,
+  "store_bytes": 44563920
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 20660,
+   "sha": "98155f464f4bfb4d"
+  },
+  "assign.parquet": {
+   "rows": 936063,
+   "sha": "232d3dfe1de8ffa1"
+  },
+  "call.parquet": {
+   "rows": 3830,
+   "sha": "eefcb0d3e47e5771"
+  },
+  "call_target_assign.parquet": {
+   "rows": 19,
+   "sha": "39be6736e9524c19"
+  },
+  "callee_info.parquet": {
+   "rows": 11506,
+   "sha": "08ddc97a7b5003c9"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 16,
+   "sha": "e80a971ea0056a9e"
+  },
+  "external_function.parquet": {
+   "rows": 149,
+   "sha": "bd811f58469ff052"
+  },
+  "formal_param.parquet": {
+   "rows": 3302,
+   "sha": "30e0824bce463331"
+  },
+  "function_id.parquet": {
+   "rows": 865,
+   "sha": "c2f641861fcc6890"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "463ada0e3ed00c66"
+  },
+  "index_source_map.parquet": {
+   "rows": 350730,
+   "sha": "3c68d82b7b2b4923"
+  },
+  "paths.parquet": {
+   "rows": 3900,
+   "sha": "d08e974ceaebef98"
+  },
+  "summary.parquet": {
+   "rows": 321859,
+   "sha": "c7efd6457a93eb62"
+  }
+ }
+}

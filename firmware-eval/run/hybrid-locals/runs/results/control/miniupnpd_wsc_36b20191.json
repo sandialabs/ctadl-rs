@@ -1,0 +1,81 @@
+{
+ "label": "miniupnpd_wsc_36b20191",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/JR6150_R6050_V1.0.1.26_1.0.1/fs/usr/sbin/miniupnpd_wsc",
+ "sha256": "36b2019121f1be72213397c3a976fe48540e0321fef430ffba051fdd73aedcc6",
+ "size": 181440,
+ "bin_mb": [
+  1200,
+  2000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 5.84,
+ "peak_fp_bytes": 1979910352,
+ "peak_fp_mb": 1888.2,
+ "peak_source": "time-l",
+ "index_store_bytes": 32716734,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 21.84,
+  "peak_fp_mb": 1959.0,
+  "store_bytes": 24367588
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 10723,
+   "sha": "0ce96e4ab3842888"
+  },
+  "assign.parquet": {
+   "rows": 740843,
+   "sha": "be306a895c9aec82"
+  },
+  "call.parquet": {
+   "rows": 1962,
+   "sha": "35429555c19d27bc"
+  },
+  "call_target_assign.parquet": {
+   "rows": 71,
+   "sha": "ec0c3706a5285e2a"
+  },
+  "callee_info.parquet": {
+   "rows": 4251,
+   "sha": "3e88214b1cd1dad4"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 56,
+   "sha": "166480b5b8c1d20b"
+  },
+  "external_function.parquet": {
+   "rows": 93,
+   "sha": "e60acf0412cf641b"
+  },
+  "formal_param.parquet": {
+   "rows": 1946,
+   "sha": "be1beaccefe712ec"
+  },
+  "function_id.parquet": {
+   "rows": 420,
+   "sha": "842fdc174f13a733"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "bb4a074eb90e4022"
+  },
+  "index_source_map.parquet": {
+   "rows": 374663,
+   "sha": "b80a2b5c326d27b7"
+  },
+  "paths.parquet": {
+   "rows": 3523,
+   "sha": "9f61a8e16ded2bb0"
+  },
+  "summary.parquet": {
+   "rows": 16538,
+   "sha": "3485d8d14847b70c"
+  }
+ }
+}

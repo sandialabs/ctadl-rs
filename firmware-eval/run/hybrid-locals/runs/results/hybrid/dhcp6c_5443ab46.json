@@ -1,0 +1,81 @@
+{
+ "label": "dhcp6c_5443ab46",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_VR900_EU_V3_210322/fs/usr/sbin/dhcp6c",
+ "sha256": "5443ab46ccd3a90e143750c21200806c9b55fd8a548ba26101eda46458829ff5",
+ "size": 141508,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 17.03,
+ "peak_fp_bytes": 1534035768,
+ "peak_fp_mb": 1463.0,
+ "peak_source": "time-l",
+ "index_store_bytes": 45941226,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 20.86,
+  "peak_fp_mb": 2045.9,
+  "store_bytes": 33177487
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 5966,
+   "sha": "e783bf3f800e435f"
+  },
+  "assign.parquet": {
+   "rows": 894929,
+   "sha": "6e8fa988871610f0"
+  },
+  "call.parquet": {
+   "rows": 2190,
+   "sha": "ba91070c696ba621"
+  },
+  "call_target_assign.parquet": {
+   "rows": 27,
+   "sha": "69149b1fb20024e2"
+  },
+  "callee_info.parquet": {
+   "rows": 115,
+   "sha": "58df3ed918dbca65"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 19,
+   "sha": "220a30426fa87b22"
+  },
+  "external_function.parquet": {
+   "rows": 94,
+   "sha": "a5542392ae88ace9"
+  },
+  "formal_param.parquet": {
+   "rows": 1746,
+   "sha": "34a926c37ebef432"
+  },
+  "function_id.parquet": {
+   "rows": 405,
+   "sha": "95dfff932cc2e3ed"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "f0bce3ea06ed4ba5"
+  },
+  "index_source_map.parquet": {
+   "rows": 456872,
+   "sha": "4cd624aff59e3bfc"
+  },
+  "paths.parquet": {
+   "rows": 3631,
+   "sha": "fa54d882495e6d39"
+  },
+  "summary.parquet": {
+   "rows": 53802,
+   "sha": "16dbb997ca793bc3"
+  }
+ }
+}

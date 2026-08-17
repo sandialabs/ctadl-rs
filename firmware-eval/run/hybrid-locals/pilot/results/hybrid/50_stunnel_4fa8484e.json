@@ -1,0 +1,27 @@
+{
+ "label": "50_stunnel_4fa8484e",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA8300_1.1.6.209797_prod/fs/etc/registration.d/50_stunnel",
+ "sha256": "4fa8484ea699a2296b031f0bc68acb41ab15b018fdfbed4cc7f9bf172d9e414b",
+ "size": 3436,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.01,
+ "peak_fp_bytes": 4506056,
+ "peak_fp_mb": 4.3,
+ "peak_source": "time-l",
+ "index_store_bytes": 79600,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 8.96,
+  "peak_fp_mb": 824.4,
+  "store_bytes": 56606
+ },
+ "stats": {}
+}

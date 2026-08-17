@@ -1,0 +1,81 @@
+{
+ "label": "dropbear_334f4382",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/ZyXEL/NBG6617_V1.00_ABCT.6_C0/fs/usr/sbin/dropbear",
+ "sha256": "334f4382eb492198d9e76f3672fbe653d47a43f6e0d616473ea032eba2f5283a",
+ "size": 143763,
+ "bin_mb": [
+  1200,
+  2000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 1.84,
+ "peak_fp_bytes": 716424296,
+ "peak_fp_mb": 683.2,
+ "peak_source": "time-l",
+ "index_store_bytes": 26045086,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 20.76,
+  "peak_fp_mb": 1377.0,
+  "store_bytes": 21061246
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 9159,
+   "sha": "ceb5d85fcfef2527"
+  },
+  "assign.parquet": {
+   "rows": 494068,
+   "sha": "f5c1ee3935599b45"
+  },
+  "call.parquet": {
+   "rows": 3234,
+   "sha": "1d44e0baf940a0b7"
+  },
+  "call_target_assign.parquet": {
+   "rows": 61,
+   "sha": "892164975335c9a0"
+  },
+  "callee_info.parquet": {
+   "rows": 70,
+   "sha": "62c42b778ba00617"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 28,
+   "sha": "b6d9fcfeb6692847"
+  },
+  "external_function.parquet": {
+   "rows": 0,
+   "sha": "e3b0c44298fc1c14"
+  },
+  "formal_param.parquet": {
+   "rows": 2522,
+   "sha": "4cbc6ab759c5c0eb"
+  },
+  "function_id.parquet": {
+   "rows": 596,
+   "sha": "37c49f158cb56f34"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "a84bb42ceacbdbc4"
+  },
+  "index_source_map.parquet": {
+   "rows": 260331,
+   "sha": "6976fb720b37ef7a"
+  },
+  "paths.parquet": {
+   "rows": 3366,
+   "sha": "8f10244c5ddf6cce"
+  },
+  "summary.parquet": {
+   "rows": 10988,
+   "sha": "43017a74fbc24d20"
+  }
+ }
+}

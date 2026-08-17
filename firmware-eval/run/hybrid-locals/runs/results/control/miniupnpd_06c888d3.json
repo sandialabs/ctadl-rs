@@ -1,0 +1,81 @@
+{
+ "label": "miniupnpd_06c888d3",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_C58HP_UN_V1_180717/fs/usr/sbin/miniupnpd",
+ "sha256": "06c888d3fbd89386c7363a5f807203ee82149cc2365fa8ec67e20b8a0abe3868",
+ "size": 85637,
+ "bin_mb": [
+  1200,
+  2000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.92,
+ "peak_fp_bytes": 318030616,
+ "peak_fp_mb": 303.3,
+ "peak_source": "time-l",
+ "index_store_bytes": 14100978,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 16.51,
+  "peak_fp_mb": 1319.0,
+  "store_bytes": 10016664
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 3445,
+   "sha": "5a0e043ca0a80984"
+  },
+  "assign.parquet": {
+   "rows": 342594,
+   "sha": "d17eb14ec3ff44ec"
+  },
+  "call.parquet": {
+   "rows": 1101,
+   "sha": "3c7f4cdb6428f66d"
+  },
+  "call_target_assign.parquet": {
+   "rows": 3,
+   "sha": "d8d23cbe9806229b"
+  },
+  "callee_info.parquet": {
+   "rows": 9,
+   "sha": "1c5822486f16bfe1"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 3,
+   "sha": "58cdffe9c23475d0"
+  },
+  "external_function.parquet": {
+   "rows": 92,
+   "sha": "3d4e3bedbb8a9979"
+  },
+  "formal_param.parquet": {
+   "rows": 1924,
+   "sha": "f23f6b14d81a7e0f"
+  },
+  "function_id.parquet": {
+   "rows": 391,
+   "sha": "08133768c0a53cf0"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "08986f4a491b4025"
+  },
+  "index_source_map.parquet": {
+   "rows": 171321,
+   "sha": "6e6e1654a280c182"
+  },
+  "paths.parquet": {
+   "rows": 1762,
+   "sha": "6c7c34c50143f667"
+  },
+  "summary.parquet": {
+   "rows": 1042,
+   "sha": "9031b0152b5aabe8"
+  }
+ }
+}

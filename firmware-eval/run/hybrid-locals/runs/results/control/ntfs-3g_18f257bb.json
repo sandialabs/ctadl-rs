@@ -1,0 +1,81 @@
+{
+ "label": "ntfs-3g_18f257bb",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AC1900P_300438432738/fs/bin/ntfs-3g",
+ "sha256": "18f257bb76ed045fffd1692fdbb7a6b17b3540df7fb547fe7e07823f233cf021",
+ "size": 305888,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 10.95,
+ "peak_fp_bytes": 5377151680,
+ "peak_fp_mb": 5128.1,
+ "peak_source": "time-l",
+ "index_store_bytes": 44879073,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 20.72,
+  "peak_fp_mb": 2084.3,
+  "store_bytes": 37223326
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 16670,
+   "sha": "367fe1aebb743fc3"
+  },
+  "assign.parquet": {
+   "rows": 975892,
+   "sha": "d4f5cf1099a2eb3e"
+  },
+  "call.parquet": {
+   "rows": 5043,
+   "sha": "2367c2c4839f99dd"
+  },
+  "call_target_assign.parquet": {
+   "rows": 35,
+   "sha": "47a57ee729f7c794"
+  },
+  "callee_info.parquet": {
+   "rows": 243,
+   "sha": "c23e83b4dd5f9110"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 27,
+   "sha": "00f4e53cd94e1571"
+  },
+  "external_function.parquet": {
+   "rows": 131,
+   "sha": "b587199d63950d1a"
+  },
+  "formal_param.parquet": {
+   "rows": 4400,
+   "sha": "8082119b23e23feb"
+  },
+  "function_id.parquet": {
+   "rows": 909,
+   "sha": "035cab0319cdc5cb"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "198de7473b2842b1"
+  },
+  "index_source_map.parquet": {
+   "rows": 360352,
+   "sha": "1b4fa1423733e779"
+  },
+  "paths.parquet": {
+   "rows": 3215,
+   "sha": "a850d9c1189469a4"
+  },
+  "summary.parquet": {
+   "rows": 32962,
+   "sha": "d9d0b789241f8e76"
+  }
+ }
+}

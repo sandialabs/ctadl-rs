@@ -1,0 +1,229 @@
+{
+ "corpus": [
+  {
+   "sha256": "4fa8484ea699a2296b031f0bc68acb41ab15b018fdfbed4cc7f9bf172d9e414b",
+   "label": "50_stunnel_4fa8484e",
+   "name": "50_stunnel",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA8300_1.1.6.209797_prod/fs/etc/registration.d/50_stunnel",
+   "size": 3436,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 9.4,
+   "prior_go_peak_fp_mb": 702.8,
+   "prior_status": "no_findings",
+   "prior_nfind": 0
+  },
+  {
+   "sha256": "18b27bf81893dd397b6dda4868060b8b2c1a7d29a86b3a1639a12e1ed46e200d",
+   "label": "arc_qos_18b27bf8",
+   "name": "arc_qos",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/F9K1103_WW_1.10.23/fs/usr/sbin/arc_qos",
+   "size": 6732,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 12.4,
+   "prior_go_peak_fp_mb": 626.7,
+   "prior_status": "no_findings",
+   "prior_nfind": 0
+  },
+  {
+   "sha256": "f2bbb179392234ededae986062b56c56ea6eb0520c213cc26df7ec5ba3f4205e",
+   "label": "ubinfo_f2bbb179",
+   "name": "ubinfo",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TV_NVR408_416_3.4.98_201111_/fs/usr/sbin/ubinfo",
+   "size": 85384,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 15.6,
+   "prior_go_peak_fp_mb": 1006.0,
+   "prior_status": "no_findings",
+   "prior_nfind": 0
+  },
+  {
+   "sha256": "8f6fd4b6c159b97ea25744549208dcd1d65e4b072981c9961f6ce12269992342",
+   "label": "init.sysvinit_8f6fd4b6",
+   "name": "init.sysvinit",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_MR6400_EU_V5_201207/fs/sbin/init.sysvinit",
+   "size": 31280,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 18.8,
+   "prior_go_peak_fp_mb": 1287.8,
+   "prior_status": "ok",
+   "prior_nfind": 1
+  },
+  {
+   "sha256": "a7aac501d8bf189b6e04257bd33087ed15917491561d9517f675684bb9e39492",
+   "label": "avahi-daemon_a7aac501",
+   "name": "avahi-daemon",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R7500_V1.0.0.130/fs/usr/sbin/avahi-daemon",
+   "size": 84056,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 22.0,
+   "prior_go_peak_fp_mb": 1329.1,
+   "prior_status": "no_findings",
+   "prior_nfind": 0
+  },
+  {
+   "sha256": "4b47b67e9353dcd3e1608eda40c17942d6d09719f105396fb036a0dcac3ab307",
+   "label": "disc_server_4b47b67e",
+   "name": "disc_server",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_G31_1012/fs/bin/disc_server",
+   "size": 14188,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 27.0,
+   "prior_go_peak_fp_mb": 908.1,
+   "prior_status": "ok",
+   "prior_nfind": 2
+  },
+  {
+   "sha256": "31dfd340af8438d10aaad548f182156daa436ce68f7a687912bce592ca60db14",
+   "label": "aaews_31dfd340",
+   "name": "aaews",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AX1800U_300438668526/fs/usr/sbin/aaews",
+   "size": 63776,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 33.0,
+   "prior_go_peak_fp_mb": 1417.9,
+   "prior_status": "no_findings",
+   "prior_nfind": 0
+  },
+  {
+   "sha256": "ae26f3a249e17eb588aa9152851053181ec7b2d295f47db23d4ee66b6b0a3785",
+   "label": "ripd_ae26f3a2",
+   "name": "ripd",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/TW100_BRV214_1.00.08/fs/usr/sbin/ripd",
+   "size": 396180,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 40.0,
+   "prior_go_peak_fp_mb": 1516.2,
+   "prior_status": "no_findings",
+   "prior_nfind": 0
+  },
+  {
+   "sha256": "5856864eca251480fda7b952b6a94042400d66b0c223086fbdb10049d78e36a3",
+   "label": "wpa_supplicant_5856864e",
+   "name": "wpa_supplicant",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_WA901N_EU_V6_191207/fs/sbin/wpa_supplicant",
+   "size": 260556,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 50.0,
+   "prior_go_peak_fp_mb": 2005.2,
+   "prior_status": "no_findings",
+   "prior_nfind": 0
+  },
+  {
+   "sha256": "37f10662d9fd7ebed33c642f7944af63bd7b1680b65248df8dbf0fa61f3a4eff",
+   "label": "pppd_37f10662",
+   "name": "pppd",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_MR400_APAC__V4_210414/fs/usr/sbin/pppd",
+   "size": 374080,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 65.0,
+   "prior_go_peak_fp_mb": 2282.0,
+   "prior_status": "no_findings",
+   "prior_nfind": 0
+  },
+  {
+   "sha256": "f6ebde620aedeffddf4d03057a4138ca19f22c1d142a4e1e910c4a0c077a3575",
+   "label": "inadyn_f6ebde62",
+   "name": "inadyn",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/asus/FW_RT_AX1800HP_v300438668539/fs/usr/sbin/inadyn",
+   "size": 123584,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 85.0,
+   "prior_go_peak_fp_mb": 1566.2,
+   "prior_status": "ok",
+   "prior_nfind": 2
+  },
+  {
+   "sha256": "9f2df0d0ad4c277e71746a0ca9298084826123f53d033c626b494abf44268412",
+   "label": "boa_9f2df0d0",
+   "name": "boa",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_515_REVA_FIRMWARE_PATCH_1.03.B01_WW/fs/bin/boa",
+   "size": 552448,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 110.0,
+   "prior_go_peak_fp_mb": 4721.9,
+   "prior_status": "ok",
+   "prior_nfind": 13
+  },
+  {
+   "sha256": "066e6727de1002e6fa03d884cb0a4fe8b47812de5bdfc4fcf4e749f201821852",
+   "label": "wscd_066e6727",
+   "name": "wscd",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/f5d8231v5_ww_5.01.05/fs/usr/sbin/wscd",
+   "size": 320824,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 150.0,
+   "prior_go_peak_fp_mb": 1843.9,
+   "prior_status": "no_findings",
+   "prior_nfind": 0
+  },
+  {
+   "sha256": "17381002e7661eb75bec833aa4ebe32d5944a9196d8862bee43fea94dfa80adf",
+   "label": "dnsmasq_17381002",
+   "name": "dnsmasq",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/R8900_V1.0.5.42/fs/usr/sbin/dnsmasq",
+   "size": 244355,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 200.1,
+   "prior_go_peak_fp_mb": 8471.7,
+   "prior_status": "ok",
+   "prior_nfind": 3
+  },
+  {
+   "sha256": "b2430734fdd125f78393ea147521b4474b3b6cfbf8cfb5a1535fe9745bedd856",
+   "label": "brctl_b2430734",
+   "name": "brctl",
+   "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TX_6610_V2_140603/fs/usr/bin/brctl",
+   "size": 190080,
+   "bin_mb": [
+    0,
+    null
+   ],
+   "prior_go_wall_s": 260.1,
+   "prior_go_peak_fp_mb": 1949.1,
+   "prior_status": "no_findings",
+   "prior_nfind": 0
+  }
+ ]
+}

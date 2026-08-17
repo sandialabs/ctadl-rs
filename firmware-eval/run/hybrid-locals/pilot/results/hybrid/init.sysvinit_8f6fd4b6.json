@@ -1,0 +1,27 @@
+{
+ "label": "init.sysvinit_8f6fd4b6",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_MR6400_EU_V5_201207/fs/sbin/init.sysvinit",
+ "sha256": "8f6fd4b6c159b97ea25744549208dcd1d65e4b072981c9961f6ce12269992342",
+ "size": 31280,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 4.63,
+ "peak_fp_bytes": 238174904,
+ "peak_fp_mb": 227.1,
+ "peak_source": "time-l",
+ "index_store_bytes": 7354897,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 10.89,
+  "peak_fp_mb": 1359.7,
+  "store_bytes": 5178768
+ },
+ "stats": {}
+}

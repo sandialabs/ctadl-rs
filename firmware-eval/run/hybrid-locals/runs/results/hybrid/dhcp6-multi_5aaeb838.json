@@ -1,0 +1,81 @@
+{
+ "label": "dhcp6-multi_5aaeb838",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/go_rt_ac750_fw_reva_1_01b03_eu_multi_20141017/fs/usr/sbin/dhcp6-multi",
+ "sha256": "5aaeb83870db87d07f563099f2349b33c5e34a177bb1c7dfde235e49de6e62bd",
+ "size": 239456,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 95.72,
+ "peak_fp_bytes": 2107771232,
+ "peak_fp_mb": 2010.1,
+ "peak_source": "time-l",
+ "index_store_bytes": 73588795,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 25.4,
+  "peak_fp_mb": 2967.8,
+  "store_bytes": 50586119
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 14377,
+   "sha": "5057cb26d4384d06"
+  },
+  "assign.parquet": {
+   "rows": 1677323,
+   "sha": "4fd2c8a0a2708c3f"
+  },
+  "call.parquet": {
+   "rows": 2911,
+   "sha": "0447936a4df9b491"
+  },
+  "call_target_assign.parquet": {
+   "rows": 32,
+   "sha": "5746a748edd2b958"
+  },
+  "callee_info.parquet": {
+   "rows": 6565,
+   "sha": "26462458a839fe3a"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 15,
+   "sha": "60111c9756f1b604"
+  },
+  "external_function.parquet": {
+   "rows": 117,
+   "sha": "324c3049344a6a2c"
+  },
+  "formal_param.parquet": {
+   "rows": 2141,
+   "sha": "178f5ec9cb51c968"
+  },
+  "function_id.parquet": {
+   "rows": 498,
+   "sha": "c663b0cf02da8b8e"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "b7a1f63bcb2e0ea5"
+  },
+  "index_source_map.parquet": {
+   "rows": 781795,
+   "sha": "be1b2874640003d1"
+  },
+  "paths.parquet": {
+   "rows": 5737,
+   "sha": "2012cf5a2600ae67"
+  },
+  "summary.parquet": {
+   "rows": 200012,
+   "sha": "8f9d8b42ed578b08"
+  }
+ }
+}

@@ -1,0 +1,81 @@
+{
+ "label": "jjhttpd_343b41e6",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR_830L_REVA_FIRMWARE_1.01B02_HOTFIX/fs/sbin/jjhttpd",
+ "sha256": "343b41e690d3edc555e20b32335f90fb901c79ffd0fc19444dbf60c2d290ca24",
+ "size": 138684,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 2.05,
+ "peak_fp_bytes": 286573288,
+ "peak_fp_mb": 273.3,
+ "peak_source": "time-l",
+ "index_store_bytes": 47642037,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 21.38,
+  "peak_fp_mb": 2852.9,
+  "store_bytes": 37987846
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 23281,
+   "sha": "dc4047b036d705dc"
+  },
+  "assign.parquet": {
+   "rows": 683072,
+   "sha": "83f0b89287035044"
+  },
+  "call.parquet": {
+   "rows": 2334,
+   "sha": "6e8f3cafd2836070"
+  },
+  "call_target_assign.parquet": {
+   "rows": 72,
+   "sha": "b0f1c6d15b21aa11"
+  },
+  "callee_info.parquet": {
+   "rows": 17303,
+   "sha": "43b442eb9cc2fcdf"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 42,
+   "sha": "ac2791f2d5f3cf00"
+  },
+  "external_function.parquet": {
+   "rows": 190,
+   "sha": "4aeafee6c4b7c257"
+  },
+  "formal_param.parquet": {
+   "rows": 1925,
+   "sha": "d875f38a6d073311"
+  },
+  "function_id.parquet": {
+   "rows": 515,
+   "sha": "dfc304f7f0dcfe9e"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "b40317f197bc1143"
+  },
+  "index_source_map.parquet": {
+   "rows": 351013,
+   "sha": "460e2245d6916171"
+  },
+  "paths.parquet": {
+   "rows": 4985,
+   "sha": "881b1f57d4a92f2e"
+  },
+  "summary.parquet": {
+   "rows": 683,
+   "sha": "2b0c8131a67fb6f1"
+  }
+ }
+}

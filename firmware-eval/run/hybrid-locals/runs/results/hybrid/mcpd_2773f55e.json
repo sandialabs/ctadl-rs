@@ -1,0 +1,81 @@
+{
+ "label": "mcpd_2773f55e",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DSL_2740B_FIRMWARE_2.06/fs/bin/mcpd",
+ "sha256": "2773f55e53f12852adbdff39b0304f9553cfdc81da480e0bd0b06a6b3be9c661",
+ "size": 80320,
+ "bin_mb": [
+  300,
+  1200
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.15,
+ "peak_fp_bytes": 53969400,
+ "peak_fp_mb": 51.5,
+ "peak_source": "time-l",
+ "index_store_bytes": 7120527,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 11.81,
+  "peak_fp_mb": 1046.3,
+  "store_bytes": 6303478
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 4686,
+   "sha": "4b18b9f3ec60002d"
+  },
+  "assign.parquet": {
+   "rows": 65738,
+   "sha": "1d5f00e21a3c440d"
+  },
+  "call.parquet": {
+   "rows": 797,
+   "sha": "48ea7c8f08c88ed7"
+  },
+  "call_target_assign.parquet": {
+   "rows": 41,
+   "sha": "a6f5749eb531f15b"
+  },
+  "callee_info.parquet": {
+   "rows": 2189,
+   "sha": "542719e00a6d9133"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 17,
+   "sha": "9611f68fc4325581"
+  },
+  "external_function.parquet": {
+   "rows": 67,
+   "sha": "28982dd1f37c80c5"
+  },
+  "formal_param.parquet": {
+   "rows": 1069,
+   "sha": "d66c1c35f48ecae7"
+  },
+  "function_id.parquet": {
+   "rows": 259,
+   "sha": "517a5264493cd470"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "220c666dac739349"
+  },
+  "index_source_map.parquet": {
+   "rows": 37325,
+   "sha": "e6a2f05e249b0530"
+  },
+  "paths.parquet": {
+   "rows": 1476,
+   "sha": "5edf5c0833d31440"
+  },
+  "summary.parquet": {
+   "rows": 484,
+   "sha": "2fc4256501f1fff8"
+  }
+ }
+}

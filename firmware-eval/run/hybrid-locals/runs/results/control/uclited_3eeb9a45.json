@@ -1,0 +1,81 @@
+{
+ "label": "uclited_3eeb9a45",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_WPA4220_V4_220408/fs/usr/bin/uclited",
+ "sha256": "3eeb9a45aa19d7c4ad6a69f633f76649a02947d0f44be2e5896349f5b721567d",
+ "size": 310164,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 57.69,
+ "peak_fp_bytes": 17230346664,
+ "peak_fp_mb": 16432.1,
+ "peak_source": "time-l",
+ "index_store_bytes": 39574514,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 22.48,
+  "peak_fp_mb": 1674.0,
+  "store_bytes": 34475753
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 21232,
+   "sha": "9afd70c140b4208a"
+  },
+  "assign.parquet": {
+   "rows": 487455,
+   "sha": "ded3d05c25594ea9"
+  },
+  "call.parquet": {
+   "rows": 2789,
+   "sha": "a90cabab857f9147"
+  },
+  "call_target_assign.parquet": {
+   "rows": 107,
+   "sha": "c512859e5c205653"
+  },
+  "callee_info.parquet": {
+   "rows": 14225,
+   "sha": "406071885a7dfa90"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 31,
+   "sha": "1899cae88354806b"
+  },
+  "external_function.parquet": {
+   "rows": 170,
+   "sha": "f71683c6a70c0a29"
+  },
+  "formal_param.parquet": {
+   "rows": 3067,
+   "sha": "0ea49a98def7fa6b"
+  },
+  "function_id.parquet": {
+   "rows": 845,
+   "sha": "eadba7251ab5dd81"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "04ce502190127e6d"
+  },
+  "index_source_map.parquet": {
+   "rows": 232871,
+   "sha": "ef9851cbcfc950b9"
+  },
+  "paths.parquet": {
+   "rows": 5354,
+   "sha": "f1dc7d130ebce2b8"
+  },
+  "summary.parquet": {
+   "rows": 16997,
+   "sha": "1737edfaf42039da"
+  }
+ }
+}

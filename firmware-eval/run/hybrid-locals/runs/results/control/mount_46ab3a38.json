@@ -1,0 +1,81 @@
+{
+ "label": "mount_46ab3a38",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DNS_320L_REVA_FIRMWARE_v1.11B01/fs/bin/mount",
+ "sha256": "46ab3a381bb58747e9266287622ce930491fe791b28198d3310b2a7c31e0def5",
+ "size": 56236,
+ "bin_mb": [
+  1200,
+  2000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 1.13,
+ "peak_fp_bytes": 355664976,
+ "peak_fp_mb": 339.2,
+ "peak_source": "time-l",
+ "index_store_bytes": 16915086,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 11.85,
+  "peak_fp_mb": 1681.9,
+  "store_bytes": 11388001
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 3042,
+   "sha": "e850385d9ea6a9d5"
+  },
+  "assign.parquet": {
+   "rows": 438251,
+   "sha": "de10736e675127cf"
+  },
+  "call.parquet": {
+   "rows": 1025,
+   "sha": "8cf45e0bb8f8666f"
+  },
+  "call_target_assign.parquet": {
+   "rows": 9,
+   "sha": "559f2fb4daec6b23"
+  },
+  "callee_info.parquet": {
+   "rows": 102,
+   "sha": "fbadf962adfb31c1"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 7,
+   "sha": "1d97f8ff1cfb3f20"
+  },
+  "external_function.parquet": {
+   "rows": 101,
+   "sha": "ccf67614415cd038"
+  },
+  "formal_param.parquet": {
+   "rows": 1218,
+   "sha": "49eeb48e83cf8f0c"
+  },
+  "function_id.parquet": {
+   "rows": 305,
+   "sha": "75166b230dbb9973"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "f205fb82933962c1"
+  },
+  "index_source_map.parquet": {
+   "rows": 226883,
+   "sha": "5d3d441348709cfe"
+  },
+  "paths.parquet": {
+   "rows": 1479,
+   "sha": "9918c4a52eb72515"
+  },
+  "summary.parquet": {
+   "rows": 1464,
+   "sha": "41bc51c2582ec3f9"
+  }
+ }
+}

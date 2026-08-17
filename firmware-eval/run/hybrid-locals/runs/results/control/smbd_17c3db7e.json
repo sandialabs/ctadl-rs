@@ -1,0 +1,80 @@
+{
+ "label": "smbd_17c3db7e",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/US_AC15V1.0BR_V15.03.05.20_multi_TDE01/fs/usr/sbin/smbd",
+ "sha256": "17c3db7e1711676b6f7110766af3bf5673f55259bef8e77abbc1879caa03bdc9",
+ "size": 1395968,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 372.15,
+ "peak_fp_bytes": 28507970648,
+ "peak_fp_mb": 27187.3,
+ "peak_source": "time-l",
+ "index_store_bytes": 222923547,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 61.14,
+  "peak_fp_mb": 6923.9,
+  "store_bytes": 178201677
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 113617,
+   "sha": "79f45d2990bf17aa"
+  },
+  "assign.parquet": {
+   "rows": 7208560
+  },
+  "call.parquet": {
+   "rows": 32330,
+   "sha": "d8c8d2f2e245e020"
+  },
+  "call_target_assign.parquet": {
+   "rows": 409,
+   "sha": "97dc027388d3cbc9"
+  },
+  "callee_info.parquet": {
+   "rows": 747,
+   "sha": "00df5ca2d3330c2e"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 347,
+   "sha": "a8c2b86aec634c94"
+  },
+  "external_function.parquet": {
+   "rows": 266,
+   "sha": "a8eff6df7c704162"
+  },
+  "formal_param.parquet": {
+   "rows": 22591,
+   "sha": "b34e7b36ab4bd8e4"
+  },
+  "function_id.parquet": {
+   "rows": 4902,
+   "sha": "559ab43bdb9dd659"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "1b3eaf9de4787450"
+  },
+  "index_source_map.parquet": {
+   "rows": 1700020,
+   "sha": "a4fb4157de3f8f1d"
+  },
+  "paths.parquet": {
+   "rows": 15746,
+   "sha": "e6561440256613a2"
+  },
+  "summary.parquet": {
+   "rows": 1855986,
+   "sha": "1c00691c66a29253"
+  }
+ }
+}

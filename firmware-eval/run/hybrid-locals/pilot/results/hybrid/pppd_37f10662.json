@@ -1,0 +1,27 @@
+{
+ "label": "pppd_37f10662",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_MR400_APAC__V4_210414/fs/usr/sbin/pppd",
+ "sha256": "37f10662d9fd7ebed33c642f7944af63bd7b1680b65248df8dbf0fa61f3a4eff",
+ "size": 374080,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 4.94,
+ "peak_fp_bytes": 630604832,
+ "peak_fp_mb": 601.4,
+ "peak_source": "time-l",
+ "index_store_bytes": 69770561,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 30.01,
+  "peak_fp_mb": 3141.7,
+  "store_bytes": 54172310
+ },
+ "stats": {}
+}

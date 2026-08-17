@@ -1,0 +1,75 @@
+diff --git a/ctadl-ascent/src/index_engine/mod.rs b/ctadl-ascent/src/index_engine/mod.rs
+index c6a1594f..2ce197b8 100644
+--- a/ctadl-ascent/src/index_engine/mod.rs
++++ b/ctadl-ascent/src/index_engine/mod.rs
+@@ -52,6 +52,8 @@ use crate::facts::{
+     FlowVertex, FormalIndex, FormalType, FunctionId, IdMap, InsnId, InsnSiteId, PackedCallArg,
+     PackedInsnSiteId, Path, SmallestCallString, isout,
+ };
++// CONTROL BUILD: `FromRows` is unused without trie seeding.
++#[allow(unused_imports)]
+ use crate::index_engine::assign_like_trie::FromRows;
+ 
+ pub mod assign_like_trie;
+@@ -1075,9 +1077,7 @@ pub fn taint_index_with_config(
+         // Derived:
+ 
+         // Local reachability. The core, most expensive relation.
+-        #[ds(crate::index_engine::locals_trie)]
+         relation locals(FunctionId, FlowVariable, Path, FormalIndex, Path);
+-        #[ds(crate::index_engine::assign_like_trie)]
+         relation assign_like(FunctionId, FlowVariable, Path, FlowVariable, Path);
+         // Real program field-stores (`v.p = ...`, non-empty destination path). Gates the aliasing rule.
+         relation prog_store(FunctionId, FlowVariable, Path);
+@@ -1431,7 +1431,20 @@ pub fn taint_index_with_config(
+     // Seeding goes through the `FromRows` trait rather than naming a store type, so this line is
+     // the same under `ascent!` and `ascent_par!`: the field's type selects the serial `AssignTrie`
+     // or the concurrent `CAssignTrie` impl.
+-    prog.__assign_like_ind_common = FromRows::from_rows(assign_like);
++    // CONTROL BUILD: no `#[ds]`, so `assign_like` is a plain ascent relation. Seed it directly,
++    // deduplicated -- `AssignTrie::from_rows` dedups on insert, so seeding a raw Vec with
++    // duplicate `(func, dst, dstp, src, srcp)` rows would start the two conditions from
++    // different relations.
++    prog.assign_like = {
++        let mut seen = std::collections::HashSet::with_capacity(assign_like.len());
++        let mut out = Vec::with_capacity(assign_like.len());
++        for r in assign_like {
++            if seen.insert(r.clone()) {
++                out.push(r);
++            }
++        }
++        out
++    };
+     prog.prog_store = prog_store.into_iter().collect();
+     prog.alias_of_formal = alias_of_formal.into_iter().collect();
+     prog.model_paths = summary_paths.into_iter().collect();
+@@ -1461,8 +1474,7 @@ pub fn taint_index_with_config(
+     );
+     log::debug!("index scc times: {}", prog.scc_times_summary());
+     // Phase-0 instrumentation: attribute the `locals` store's peak bytes to fwd vs inv.
+-    log::debug!("{}", prog.__locals_ind_common.heap_report());
+-    log::debug!("{}", prog.__assign_like_ind_common.heap_report());
++    // CONTROL BUILD: no trie stores, so no per-store heap report.
+     // The formatter reads these through the `Rows` trait, so this call is the same under `ascent!`
+     // (plain `Vec`s) and `ascent_par!` (`boxcar::Vec`s, with lattices as
+     // `boxcar::Vec<RwLock<..>>`): each field's own type selects the impl, and nothing is copied in
+@@ -1485,12 +1497,17 @@ pub fn taint_index_with_config(
+     // and take the row count from the store rather than the (empty) physical relation. Take the
+     // store by value so it drains (frees) as the output Vec fills — this reconstruction is the
+     // run's peak, so a draining rebuild keeps the transient to ~1×.
+-    let assign_like_out = std::mem::take(&mut prog.__assign_like_ind_common).into_vec();
++    // CONTROL BUILD: the physical relation holds the rows; take it directly.
++    let assign_like_out = std::mem::take(&mut prog.assign_like);
+ 
+     // `locals` lives in the trie (`__locals_ind_common`); its physical relation holds no
+     // tuples, so the distinct subjects come from the store's `(F, V)` outer keys — the same
+     // (func, var) key `num_variables` counts, so the two are directly comparable.
+-    let reached_variables = prog.__locals_ind_common.num_reached_variables();
++    // CONTROL BUILD: the trie's O(1) distinct-`(F,V)` count does not exist here, and
++    // reconstructing it would mean a full HashSet pass over every `locals` row AFTER the
++    // fixpoint -- time and memory the measured condition would not otherwise spend. It feeds
++    // only a debug log line, so report 0 rather than bias the measurement.
++    let reached_variables = 0;
+ 
+     let stats = IndexStats {
+         initial_assign,

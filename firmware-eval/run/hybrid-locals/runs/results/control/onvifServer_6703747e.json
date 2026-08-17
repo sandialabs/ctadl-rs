@@ -1,0 +1,80 @@
+{
+ "label": "onvifServer_6703747e",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DCS_6915_REVB_FIRMWARE_2.01.00/fs/usr/sbin/onvifServer",
+ "sha256": "6703747e35121d4bbc86aa189eb934496e2d01f2ba68411767c062aecda6e8ea",
+ "size": 457880,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 17.71,
+ "peak_fp_bytes": 1893534528,
+ "peak_fp_mb": 1805.8,
+ "peak_source": "time-l",
+ "index_store_bytes": 153916562,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 31.13,
+  "peak_fp_mb": 5195.1,
+  "store_bytes": 110197273
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 28995,
+   "sha": "6f2fb769f0cbc2bf"
+  },
+  "assign.parquet": {
+   "rows": 3493765
+  },
+  "call.parquet": {
+   "rows": 10197,
+   "sha": "1065de4be452bf1c"
+  },
+  "call_target_assign.parquet": {
+   "rows": 16,
+   "sha": "96f0324a004c144f"
+  },
+  "callee_info.parquet": {
+   "rows": 207,
+   "sha": "59805085b4f06ec3"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 9,
+   "sha": "b1cf8adbbd9a80c5"
+  },
+  "external_function.parquet": {
+   "rows": 149,
+   "sha": "4b6fbbf3b5308c88"
+  },
+  "formal_param.parquet": {
+   "rows": 3592,
+   "sha": "242edbb4babe1e66"
+  },
+  "function_id.parquet": {
+   "rows": 819,
+   "sha": "a826f26430c0312f"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "a42bfa8d89a0a10f"
+  },
+  "index_source_map.parquet": {
+   "rows": 1829005,
+   "sha": "4c56eaa27c2c9ba2"
+  },
+  "paths.parquet": {
+   "rows": 8187,
+   "sha": "def948433691ac2b"
+  },
+  "summary.parquet": {
+   "rows": 3252,
+   "sha": "a8471e037deb9486"
+  }
+ }
+}

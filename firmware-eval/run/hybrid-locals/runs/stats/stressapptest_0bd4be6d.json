@@ -1,0 +1,9 @@
+{
+ "locals_rows": 224138488,
+ "formals": 2926,
+ "assign_like_rows": 1971089,
+ "initial_assign": 1934877,
+ "summary_rows": 10741,
+ "num_functions": 747,
+ "stats_run_wall_s": 87.54
+}

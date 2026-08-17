@@ -1,0 +1,81 @@
+{
+ "label": "dnsmasq_227aa9ba",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/TEW_672GR_1.0.9.161/fs/bin/dnsmasq",
+ "sha256": "227aa9ba7c73bef5a13ebfb9ea912fb1844c403034402fc7d6e2bb7aa151c315",
+ "size": 175364,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 67.01,
+ "peak_fp_bytes": 7652842192,
+ "peak_fp_mb": 7298.3,
+ "peak_source": "time-l",
+ "index_store_bytes": 36982467,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 16.71,
+  "peak_fp_mb": 2043.6,
+  "store_bytes": 28188475
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 13497,
+   "sha": "30897579c710cbe8"
+  },
+  "assign.parquet": {
+   "rows": 1073198,
+   "sha": "f4ce22b057c66833"
+  },
+  "call.parquet": {
+   "rows": 2307,
+   "sha": "0343fa8d20aa89ba"
+  },
+  "call_target_assign.parquet": {
+   "rows": 4,
+   "sha": "380f33787bfbd6d6"
+  },
+  "callee_info.parquet": {
+   "rows": 6222,
+   "sha": "cfc8c4288b65df87"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 4,
+   "sha": "0dbfb4c1832e7fc2"
+  },
+  "external_function.parquet": {
+   "rows": 114,
+   "sha": "55c0de26ba6fa7d2"
+  },
+  "formal_param.parquet": {
+   "rows": 2164,
+   "sha": "f445d77995ae2c59"
+  },
+  "function_id.parquet": {
+   "rows": 481,
+   "sha": "b3ee168cb2dd4c4e"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "df3348f457b987a6"
+  },
+  "index_source_map.parquet": {
+   "rows": 375026,
+   "sha": "06783dee286e0c35"
+  },
+  "paths.parquet": {
+   "rows": 3085,
+   "sha": "36c6cd79730a0ff7"
+  },
+  "summary.parquet": {
+   "rows": 281768,
+   "sha": "c15d9d6c84a6679e"
+  }
+ }
+}

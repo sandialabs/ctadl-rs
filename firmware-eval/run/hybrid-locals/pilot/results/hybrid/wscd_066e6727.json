@@ -1,0 +1,27 @@
+{
+ "label": "wscd_066e6727",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/f5d8231v5_ww_5.01.05/fs/usr/sbin/wscd",
+ "sha256": "066e6727de1002e6fa03d884cb0a4fe8b47812de5bdfc4fcf4e749f201821852",
+ "size": 320824,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.93,
+ "peak_fp_bytes": 183960248,
+ "peak_fp_mb": 175.4,
+ "peak_source": "time-l",
+ "index_store_bytes": 36105898,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 141.31,
+  "peak_fp_mb": 1780.8,
+  "store_bytes": 31096859
+ },
+ "stats": {}
+}

@@ -1,0 +1,81 @@
+{
+ "label": "init_496742f3",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tenda/V300V3FirmwareV56113_1_/fs/bin/init",
+ "sha256": "496742f38ddec63de80a57498cc0bb0ff3d55fd2ca7d722e95402f863a12075a",
+ "size": 11432,
+ "bin_mb": [
+  300,
+  1200
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.02,
+ "peak_fp_bytes": 10633672,
+ "peak_fp_mb": 10.1,
+ "peak_source": "time-l",
+ "index_store_bytes": 691320,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 10.66,
+  "peak_fp_mb": 737.2,
+  "store_bytes": 593616
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 296,
+   "sha": "e5ed25bcac5dea9b"
+  },
+  "assign.parquet": {
+   "rows": 7029,
+   "sha": "8f9d8fcdd31f1e28"
+  },
+  "call.parquet": {
+   "rows": 131,
+   "sha": "aa3b8c30993a0180"
+  },
+  "call_target_assign.parquet": {
+   "rows": 0,
+   "sha": "e3b0c44298fc1c14"
+  },
+  "callee_info.parquet": {
+   "rows": 47,
+   "sha": "4e987d159f2bee7a"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 0,
+   "sha": "e3b0c44298fc1c14"
+  },
+  "external_function.parquet": {
+   "rows": 0,
+   "sha": "e3b0c44298fc1c14"
+  },
+  "formal_param.parquet": {
+   "rows": 157,
+   "sha": "62da0f396ffa983d"
+  },
+  "function_id.parquet": {
+   "rows": 71,
+   "sha": "3ffc4bc63301760e"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "71ae1ec5e19e8de0"
+  },
+  "index_source_map.parquet": {
+   "rows": 4294,
+   "sha": "c655b7b51f745afc"
+  },
+  "paths.parquet": {
+   "rows": 241,
+   "sha": "673a71322e9c0720"
+  },
+  "summary.parquet": {
+   "rows": 1,
+   "sha": "bb96b39345ab0819"
+  }
+ }
+}

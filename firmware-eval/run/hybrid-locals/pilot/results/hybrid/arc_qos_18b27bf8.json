@@ -1,0 +1,27 @@
+{
+ "label": "arc_qos_18b27bf8",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/belkin/F9K1103_WW_1.10.23/fs/usr/sbin/arc_qos",
+ "sha256": "18b27bf81893dd397b6dda4868060b8b2c1a7d29a86b3a1639a12e1ed46e200d",
+ "size": 6732,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.01,
+ "peak_fp_bytes": 5751240,
+ "peak_fp_mb": 5.5,
+ "peak_source": "time-l",
+ "index_store_bytes": 242015,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 8.89,
+  "peak_fp_mb": 753.1,
+  "store_bytes": 202514
+ },
+ "stats": {}
+}

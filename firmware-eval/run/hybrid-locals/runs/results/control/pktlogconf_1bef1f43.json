@@ -1,0 +1,81 @@
+{
+ "label": "pktlogconf_1bef1f43",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/WND930_V2.1.5/fs/usr/local/sbin/pktlogconf",
+ "sha256": "1bef1f4346f24812f98c0eba714ea0247d7ab2f6635761bd11d2d06438397b90",
+ "size": 11445,
+ "bin_mb": [
+  300,
+  1200
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.03,
+ "peak_fp_bytes": 13418952,
+ "peak_fp_mb": 12.8,
+ "peak_source": "time-l",
+ "index_store_bytes": 679831,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 9.09,
+  "peak_fp_mb": 790.6,
+  "store_bytes": 520783
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 348,
+   "sha": "3573b41aeaf7625a"
+  },
+  "assign.parquet": {
+   "rows": 12077,
+   "sha": "84c99d79c1faf758"
+  },
+  "call.parquet": {
+   "rows": 94,
+   "sha": "094f6c23e40b1c6a"
+  },
+  "call_target_assign.parquet": {
+   "rows": 2,
+   "sha": "2f7719cdd3398cdf"
+  },
+  "callee_info.parquet": {
+   "rows": 107,
+   "sha": "22b972809432017a"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 2,
+   "sha": "de4cad18c51aa51f"
+  },
+  "external_function.parquet": {
+   "rows": 15,
+   "sha": "671568bf9aa704fb"
+  },
+  "formal_param.parquet": {
+   "rows": 178,
+   "sha": "8e36c69101d7040f"
+  },
+  "function_id.parquet": {
+   "rows": 41,
+   "sha": "4a2d59a05462ca18"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "b21407d565145375"
+  },
+  "index_source_map.parquet": {
+   "rows": 6236,
+   "sha": "ad388793e1a8c700"
+  },
+  "paths.parquet": {
+   "rows": 164,
+   "sha": "7fcdfd39fa61c62b"
+  },
+  "summary.parquet": {
+   "rows": 86,
+   "sha": "7dd9cee0d1a6f563"
+  }
+ }
+}

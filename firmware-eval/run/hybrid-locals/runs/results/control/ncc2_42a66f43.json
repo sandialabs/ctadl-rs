@@ -1,0 +1,80 @@
+{
+ "label": "ncc2_42a66f43",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DIR820LB1_FW202KRB07/fs/sbin/ncc2",
+ "sha256": "42a66f43f877d884e3b51d8de79e2a24de1197b180908a3f780d5b7b8f08128f",
+ "size": 2228696,
+ "bin_mb": [
+  5000,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 7.13,
+ "peak_fp_bytes": 1269319696,
+ "peak_fp_mb": 1210.5,
+ "peak_source": "time-l",
+ "index_store_bytes": 247160954,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 190.57,
+  "peak_fp_mb": 5700.0,
+  "store_bytes": 209333087
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 118193,
+   "sha": "452fa9afafbff21a"
+  },
+  "assign.parquet": {
+   "rows": 3580079
+  },
+  "call.parquet": {
+   "rows": 29679,
+   "sha": "4d935a8f8a1df5d0"
+  },
+  "call_target_assign.parquet": {
+   "rows": 1301,
+   "sha": "694428e29e03d9ed"
+  },
+  "callee_info.parquet": {
+   "rows": 33428,
+   "sha": "14b28e2b3b968552"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 342,
+   "sha": "f02c2a935415ab67"
+  },
+  "external_function.parquet": {
+   "rows": 258,
+   "sha": "690bbbbe9632f42d"
+  },
+  "formal_param.parquet": {
+   "rows": 11216,
+   "sha": "ddce3bbcb406f478"
+  },
+  "function_id.parquet": {
+   "rows": 2806,
+   "sha": "894f66677846c6ae"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "d0adcf15bacb6bb1"
+  },
+  "index_source_map.parquet": {
+   "rows": 1959202,
+   "sha": "bb28faef419332d4"
+  },
+  "paths.parquet": {
+   "rows": 35973,
+   "sha": "7aab4699d9549c5d"
+  },
+  "summary.parquet": {
+   "rows": 7394,
+   "sha": "0fb803c39f9a1be6"
+  }
+ }
+}

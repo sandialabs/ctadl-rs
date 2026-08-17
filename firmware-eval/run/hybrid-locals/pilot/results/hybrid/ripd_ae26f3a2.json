@@ -1,0 +1,27 @@
+{
+ "label": "ripd_ae26f3a2",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/TW100_BRV214_1.00.08/fs/usr/sbin/ripd",
+ "sha256": "ae26f3a249e17eb588aa9152851053181ec7b2d295f47db23d4ee66b6b0a3785",
+ "size": 396180,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.72,
+ "peak_fp_bytes": 155075184,
+ "peak_fp_mb": 147.9,
+ "peak_source": "time-l",
+ "index_store_bytes": 27997309,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 24.88,
+  "peak_fp_mb": 1774.8,
+  "store_bytes": 24205403
+ },
+ "stats": {}
+}

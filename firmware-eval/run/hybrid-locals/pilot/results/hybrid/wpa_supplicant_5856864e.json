@@ -1,0 +1,27 @@
+{
+ "label": "wpa_supplicant_5856864e",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_WA901N_EU_V6_191207/fs/sbin/wpa_supplicant",
+ "sha256": "5856864eca251480fda7b952b6a94042400d66b0c223086fbdb10049d78e36a3",
+ "size": 260556,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 1.28,
+ "peak_fp_bytes": 323732320,
+ "peak_fp_mb": 308.7,
+ "peak_source": "time-l",
+ "index_store_bytes": 44352933,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 28.59,
+  "peak_fp_mb": 1956.0,
+  "store_bytes": 37012352
+ },
+ "stats": {}
+}

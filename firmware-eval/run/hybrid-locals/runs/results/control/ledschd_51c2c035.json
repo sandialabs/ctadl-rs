@@ -1,0 +1,81 @@
+{
+ "label": "ledschd_51c2c035",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TL_WPA7510KIT_V1_181226/fs/usr/bin/ledschd",
+ "sha256": "51c2c035db25556b21d1adda8d6610d5c05f8543098057a18f17278db24bf021",
+ "size": 66985,
+ "bin_mb": [
+  1200,
+  2000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.07,
+ "peak_fp_bytes": 35504800,
+ "peak_fp_mb": 33.9,
+ "peak_source": "time-l",
+ "index_store_bytes": 4689415,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 11.71,
+  "peak_fp_mb": 1279.8,
+  "store_bytes": 4328464
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 3545,
+   "sha": "db7864beff6d672b"
+  },
+  "assign.parquet": {
+   "rows": 28641,
+   "sha": "2fb965357d417e90"
+  },
+  "call.parquet": {
+   "rows": 342,
+   "sha": "cd481368507de820"
+  },
+  "call_target_assign.parquet": {
+   "rows": 3,
+   "sha": "0979918d90677ea1"
+  },
+  "callee_info.parquet": {
+   "rows": 2777,
+   "sha": "b4eb9cdb82e924a7"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 3,
+   "sha": "3d83ddc7d17ec806"
+  },
+  "external_function.parquet": {
+   "rows": 77,
+   "sha": "a620486fc31eb0ed"
+  },
+  "formal_param.parquet": {
+   "rows": 866,
+   "sha": "cc0f3d06c9759c5f"
+  },
+  "function_id.parquet": {
+   "rows": 212,
+   "sha": "a8a55cef3cc6f9a6"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "7bb0da38a639b7b5"
+  },
+  "index_source_map.parquet": {
+   "rows": 16556,
+   "sha": "59c2bc22c42377cc"
+  },
+  "paths.parquet": {
+   "rows": 1042,
+   "sha": "c50f51b756b13e1c"
+  },
+  "summary.parquet": {
+   "rows": 426,
+   "sha": "7b0b045d08fb19cf"
+  }
+ }
+}

@@ -1,0 +1,81 @@
+{
+ "label": "icm_30179d7e",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/trendnet/FW_TEW_824DRU_v1_1.04b01_/fs/usr/sbin/icm",
+ "sha256": "30179d7e45038acccfac0ff99e6ab796f4cb866ec6d044f7a5c5b453723cdb19",
+ "size": 120024,
+ "bin_mb": [
+  1200,
+  2000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 0.44,
+ "peak_fp_bytes": 133399200,
+ "peak_fp_mb": 127.2,
+ "peak_source": "time-l",
+ "index_store_bytes": 14310540,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 14.77,
+  "peak_fp_mb": 1536.0,
+  "store_bytes": 12162979
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 3834,
+   "sha": "93940019978bce3a"
+  },
+  "assign.parquet": {
+   "rows": 206332,
+   "sha": "492918c07bc8b681"
+  },
+  "call.parquet": {
+   "rows": 1617,
+   "sha": "659d8ffe297bc8fc"
+  },
+  "call_target_assign.parquet": {
+   "rows": 2,
+   "sha": "d6a1c76cb0917fd1"
+  },
+  "callee_info.parquet": {
+   "rows": 1,
+   "sha": "5701532fd56d6577"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 2,
+   "sha": "7e280944d6fcc322"
+  },
+  "external_function.parquet": {
+   "rows": 90,
+   "sha": "68dc262bc336abe2"
+  },
+  "formal_param.parquet": {
+   "rows": 1766,
+   "sha": "3e8623653f1f4c9b"
+  },
+  "function_id.parquet": {
+   "rows": 427,
+   "sha": "9ae46301632ed8a3"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "af399c497c5bce20"
+  },
+  "index_source_map.parquet": {
+   "rows": 100475,
+   "sha": "5d24640821d5802a"
+  },
+  "paths.parquet": {
+   "rows": 2117,
+   "sha": "1e095145d7fcc825"
+  },
+  "summary.parquet": {
+   "rows": 1605,
+   "sha": "cd2fddf5f784694f"
+  }
+ }
+}

@@ -1,0 +1,81 @@
+{
+ "label": "ushare_39ceecdd",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/Archer_D20_EU_V1_160216/fs/usr/bin/ushare",
+ "sha256": "39ceecddef60fc7cb08dd0619d8625f6dd71b1614977c482f8e7ca286f0d2dea",
+ "size": 776412,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 5.72,
+ "peak_fp_bytes": 714622056,
+ "peak_fp_mb": 681.5,
+ "peak_source": "time-l",
+ "index_store_bytes": 77303990,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 34.21,
+  "peak_fp_mb": 2350.2,
+  "store_bytes": 60783240
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 11399,
+   "sha": "27a64cc000da2034"
+  },
+  "assign.parquet": {
+   "rows": 1157959,
+   "sha": "038da2f719b7b05c"
+  },
+  "call.parquet": {
+   "rows": 3295,
+   "sha": "bb730f7952330b84"
+  },
+  "call_target_assign.parquet": {
+   "rows": 353,
+   "sha": "c11a97567bb91c18"
+  },
+  "callee_info.parquet": {
+   "rows": 622,
+   "sha": "980ff42ffcae9107"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 324,
+   "sha": "67418925c3296e88"
+  },
+  "external_function.parquet": {
+   "rows": 149,
+   "sha": "583b287a2302fec1"
+  },
+  "formal_param.parquet": {
+   "rows": 5392,
+   "sha": "8cfd7b8772bba2ba"
+  },
+  "function_id.parquet": {
+   "rows": 1212,
+   "sha": "88fc68255218678a"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "7a126371f9f68416"
+  },
+  "index_source_map.parquet": {
+   "rows": 585702,
+   "sha": "ef35a40a8e10321e"
+  },
+  "paths.parquet": {
+   "rows": 11658,
+   "sha": "8184124009cec18d"
+  },
+  "summary.parquet": {
+   "rows": 28792,
+   "sha": "26343cd3b22c8706"
+  }
+ }
+}

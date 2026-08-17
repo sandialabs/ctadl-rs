@@ -1,0 +1,81 @@
+{
+ "label": "smm_031f3326",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/dlink/DSR_1000_A1_FIRMWARE_v2.13_WW/fs/sslvpn/bin/smm",
+ "sha256": "031f332620cc26ca4ed476d3850be7b15bb383e54dcb71d904333a5806834e68",
+ "size": 199916,
+ "bin_mb": [
+  1200,
+  2000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 1.05,
+ "peak_fp_bytes": 235487976,
+ "peak_fp_mb": 224.6,
+ "peak_source": "time-l",
+ "index_store_bytes": 33902580,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 24.84,
+  "peak_fp_mb": 2020.5,
+  "store_bytes": 28764857
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 14972,
+   "sha": "cd5004cc43af19d7"
+  },
+  "assign.parquet": {
+   "rows": 450962,
+   "sha": "04f3f9d39ec08a7f"
+  },
+  "call.parquet": {
+   "rows": 3062,
+   "sha": "f4411a5777bd0a7c"
+  },
+  "call_target_assign.parquet": {
+   "rows": 70,
+   "sha": "9529a1f5435ad1c4"
+  },
+  "callee_info.parquet": {
+   "rows": 5668,
+   "sha": "0b851c745e7510f2"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 42,
+   "sha": "3c1745af5645427f"
+  },
+  "external_function.parquet": {
+   "rows": 117,
+   "sha": "f5ecc0cf9a2a3343"
+  },
+  "formal_param.parquet": {
+   "rows": 2091,
+   "sha": "fa83081a532917f6"
+  },
+  "function_id.parquet": {
+   "rows": 602,
+   "sha": "ab72bb430a97db7d"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "d853720e52971e2b"
+  },
+  "index_source_map.parquet": {
+   "rows": 233119,
+   "sha": "62c2f51dee1ad905"
+  },
+  "paths.parquet": {
+   "rows": 5913,
+   "sha": "cb13161e62f522b5"
+  },
+  "summary.parquet": {
+   "rows": 827,
+   "sha": "531deb27ea0dc77f"
+  }
+ }
+}

@@ -1,0 +1,81 @@
+{
+ "label": "dbus-daemon_06a1b242",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_MR9600_1.0.4.205530_prod/fs/usr/sbin/dbus-daemon",
+ "sha256": "06a1b242a88994745199cac094b1583c8820a39f246eb03777305f2ec37222a9",
+ "size": 305480,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 20.07,
+ "peak_fp_bytes": 10009501832,
+ "peak_fp_mb": 9545.8,
+ "peak_source": "time-l",
+ "index_store_bytes": 33190930,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 26.73,
+  "peak_fp_mb": 1759.9,
+  "store_bytes": 28238654
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 21658,
+   "sha": "6b8df3fd6c25579f"
+  },
+  "assign.parquet": {
+   "rows": 506983,
+   "sha": "a4d3803faf3b487a"
+  },
+  "call.parquet": {
+   "rows": 7215,
+   "sha": "a33d0bb97c0c9d3c"
+  },
+  "call_target_assign.parquet": {
+   "rows": 106,
+   "sha": "99ffabb50fd35249"
+  },
+  "callee_info.parquet": {
+   "rows": 109,
+   "sha": "11c04582fb483638"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 68,
+   "sha": "78e09a7e54efe9ac"
+  },
+  "external_function.parquet": {
+   "rows": 158,
+   "sha": "063bc7eb4cf6a1a0"
+  },
+  "formal_param.parquet": {
+   "rows": 7703,
+   "sha": "54ab18c3cbd9d0a5"
+  },
+  "function_id.parquet": {
+   "rows": 1775,
+   "sha": "552829b4ba49a3d7"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "55011dd4a223ded5"
+  },
+  "index_source_map.parquet": {
+   "rows": 231919,
+   "sha": "ed10819aed0e13a5"
+  },
+  "paths.parquet": {
+   "rows": 1731,
+   "sha": "dd22bb099b5aa2b2"
+  },
+  "summary.parquet": {
+   "rows": 10047,
+   "sha": "52d235b2c3234c6c"
+  }
+ }
+}

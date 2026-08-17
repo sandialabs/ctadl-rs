@@ -1,0 +1,10 @@
+# The two measured binaries: 134 MB each, rebuildable from control.patch (see README).
+bin/
+# Ghidra lifts (GBs) and per-run logs; the per-run JSON records ARE the raw data and stay.
+runs/imports/
+runs/stats/*.log
+runs/results/*/*.index.log
+pilot/imports/
+pilot/results/*/*.index.log
+campaign.stdout
+stats_pass.out

@@ -1,0 +1,81 @@
+{
+ "label": "openvpn_42310dfb",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/netgear/RBS50Y_V2.7.2.102/fs/usr/sbin/openvpn",
+ "sha256": "42310dfbf18b370f8955482d7c01a2b282ccc2b35f6f3896b98ec234b6292116",
+ "size": 390794,
+ "bin_mb": [
+  2000,
+  5000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 33.07,
+ "peak_fp_bytes": 9748390432,
+ "peak_fp_mb": 9296.8,
+ "peak_source": "time-l",
+ "index_store_bytes": 77279623,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 33.56,
+  "peak_fp_mb": 3153.0,
+  "store_bytes": 59176514
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 25608,
+   "sha": "cd5ffc4615da489e"
+  },
+  "assign.parquet": {
+   "rows": 1655683,
+   "sha": "9c15e06476714491"
+  },
+  "call.parquet": {
+   "rows": 8723,
+   "sha": "d76c652fd76e0422"
+  },
+  "call_target_assign.parquet": {
+   "rows": 11,
+   "sha": "02f2f3c80169e4db"
+  },
+  "callee_info.parquet": {
+   "rows": 34,
+   "sha": "b38d734d5f8cd3fe"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 11,
+   "sha": "b6445f51d71b5742"
+  },
+  "external_function.parquet": {
+   "rows": 321,
+   "sha": "13ee8244bd4e0b5f"
+  },
+  "formal_param.parquet": {
+   "rows": 8904,
+   "sha": "6e576816a051409b"
+  },
+  "function_id.parquet": {
+   "rows": 2129,
+   "sha": "0bd32de4c2c87222"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "4ae65701e9ae7cad"
+  },
+  "index_source_map.parquet": {
+   "rows": 760957,
+   "sha": "849ff2a0a357f112"
+  },
+  "paths.parquet": {
+   "rows": 6570,
+   "sha": "938d263bbf4c19bf"
+  },
+  "summary.parquet": {
+   "rows": 178282,
+   "sha": "4e0736a054229bea"
+  }
+ }
+}

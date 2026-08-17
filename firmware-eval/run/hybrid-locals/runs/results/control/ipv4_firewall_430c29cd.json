@@ -1,0 +1,81 @@
+{
+ "label": "ipv4_firewall_430c29cd",
+ "condition": "control",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-control",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/linksys/FW_EA6350v4_4.0.4.207984_prod/fs/usr/sbin/ipv4_firewall",
+ "sha256": "430c29cd09fd98ef959505bb7743fe998248d9079fd7f599ccdfaf17ab5e6890",
+ "size": 93328,
+ "bin_mb": [
+  1200,
+  2000
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 1.51,
+ "peak_fp_bytes": 455541696,
+ "peak_fp_mb": 434.4,
+ "peak_source": "time-l",
+ "index_store_bytes": 37463151,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 13.8,
+  "peak_fp_mb": 1971.2,
+  "store_bytes": 28526300
+ },
+ "stats": {},
+ "fingerprint": {
+  "actual_param.parquet": {
+   "rows": 5104,
+   "sha": "091753ed6983173b"
+  },
+  "assign.parquet": {
+   "rows": 668476,
+   "sha": "19fe01227c88b582"
+  },
+  "call.parquet": {
+   "rows": 1458,
+   "sha": "81967427d110da5a"
+  },
+  "call_target_assign.parquet": {
+   "rows": 2,
+   "sha": "e72a866c11d9a039"
+  },
+  "callee_info.parquet": {
+   "rows": 1226,
+   "sha": "7dae9a328628a5cc"
+  },
+  "callee_resolvents.parquet": {
+   "rows": 2,
+   "sha": "f12d75646b60503f"
+  },
+  "external_function.parquet": {
+   "rows": 52,
+   "sha": "7af46733d6c8f7fe"
+  },
+  "formal_param.parquet": {
+   "rows": 531,
+   "sha": "9e63b36cb2349e65"
+  },
+  "function_id.parquet": {
+   "rows": 146,
+   "sha": "cf9ef34aca702435"
+  },
+  "import_id.parquet": {
+   "rows": 1,
+   "sha": "10bae37c517f7f4b"
+  },
+  "index_source_map.parquet": {
+   "rows": 407193,
+   "sha": "069297541f6dca99"
+  },
+  "paths.parquet": {
+   "rows": 2191,
+   "sha": "6ddcdd76bdf6ccda"
+  },
+  "summary.parquet": {
+   "rows": 158,
+   "sha": "4f765c4ef73d2972"
+  }
+ }
+}

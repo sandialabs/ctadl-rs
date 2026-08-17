@@ -1,0 +1,27 @@
+{
+ "label": "brctl_b2430734",
+ "condition": "hybrid",
+ "ctadl": "/Users/dbueno/proj/ct-head-to-head-hybrid-locals/firmware-eval/run/hybrid-locals/bin/ctadl-hybrid",
+ "binary": "/Users/dbueno/proj/operation-mango-public/firmware/large_dataset/tplink/TX_6610_V2_140603/fs/usr/bin/brctl",
+ "sha256": "b2430734fdd125f78393ea147521b4474b3b6cfbf8cfb5a1535fe9745bedd856",
+ "size": 190080,
+ "bin_mb": [
+  0,
+  null
+ ],
+ "status": "ok",
+ "exit_code": 0,
+ "wall_s": 196.79,
+ "peak_fp_bytes": 2087897200,
+ "peak_fp_mb": 1991.2,
+ "peak_source": "time-l",
+ "index_store_bytes": 51114530,
+ "import": {
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 19.84,
+  "peak_fp_mb": 1811.6,
+  "store_bytes": 32419756
+ },
+ "stats": {}
+}
