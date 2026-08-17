@@ -382,6 +382,48 @@ fn link_blocks(
     }
 }
 
+/// The basic-block contract is a sequence of statements ending in a terminator,
+/// and every function graph must satisfy it by the time it leaves the frontend.
+/// The walk can leave a pre-created block unterminated when a diverging
+/// statement cut the compound short before the block was reached: a `goto`
+/// label after a `return` (`walk_compound_statement` stops at the `return`, so
+/// `walk_labeled_statement` never runs for the label), a recovered/skipped
+/// subtree that contained a label, or a duplicate label name (the first
+/// pre-created block is orphaned). Give every such block the same implicit
+/// empty `return` that falling off the end of the body gets (see
+/// `link_blocks`), then report once per function: an unterminated block means
+/// its statements were dropped, a frontend gap worth surfacing under
+/// CTADL_ERROR_ON_AST. Same pattern as the Lua frontend's
+/// `finalize_terminators`.
+fn finalize_terminators(
+    program: &mut Program,
+    fidx: FunctionIdx,
+    func_name: &str,
+) -> Result<(), Error> {
+    let mut patched: Vec<BasicBlockIdx> = Vec::new();
+    for (bb, data) in program.functions[fidx]
+        .blocks
+        .blocks_mut()
+        .iter_enumerated_mut()
+    {
+        if data.terminator.is_none() {
+            data.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
+                args: vec![].into(),
+            }));
+            patched.push(bb);
+        }
+    }
+    if !patched.is_empty() {
+        unexpected_ast(format!(
+            "function `{func_name}`: {} block(s) left without a terminator by the walk \
+             ({patched:?}); their statements (e.g. code under a label after a `return`) \
+             were dropped. Gave them an implicit empty `return`.",
+            patched.len(),
+        ))?;
+    }
+    Ok(())
+}
+
 fn add_scoped_block(
     program: &mut Program,
     scope_view: &ScopeView,
@@ -3119,6 +3161,7 @@ impl<'a> Context<'a> {
             }
 
             self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
+            finalize_terminators(program, fidx, func_name)?;
         }
         Ok(())
     }
