@@ -1595,6 +1595,76 @@ fn error_on_ast_promotes_bare_block_edge() {
 }
 
 #[test_log::test]
+fn goto_label_after_return_lowers() {
+    // A goto label that sits after a diverging statement: `walk_compound_statement`
+    // stops at the `return`, so the pre-created `out:` block is never walked (its
+    // statements are dropped) yet stays reachable through the `goto` edge. The
+    // frontend must seal it with an implicit empty `return`
+    // (`seal_unterminated_blocks`) because the IR does not tolerate a
+    // terminator-less block anywhere. This is the shape that aborted real dropbear
+    // imports. Skips under CTADL_ERROR_ON_AST, where the sweep's report is a hard
+    // error instead (see `error_on_ast_promotes_unterminated_block`).
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        void f(void) {
+            if (c) goto out;
+            return;
+        out:
+            cleanup();
+        }";
+    // program_from_string asserts no `<no terminator>` block survives.
+    let prog = program_from_string(src).0;
+    assert!(
+        function_named(&prog, "f").is_some(),
+        "sealed program should still define f\n{prog}"
+    );
+    // End-to-end through verify() + SSA + codegen: the sealed CFG satisfies the
+    // basic-block contract with no tolerance on the ctadl-ir side.
+    get_summary(prog).expect("sealed CFG must verify and index");
+}
+
+#[test_log::test]
+fn error_on_ast_promotes_unterminated_block() {
+    // Strict side of the sweep: under CTADL_ERROR_ON_AST a block the walk never
+    // terminated (its statements were dropped) is a hard ingestion error.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        void f(void) {
+            if (c) goto out;
+            return;
+        out:
+            cleanup();
+        }";
+    let err =
+        super::parse_c_program(src).expect_err("strict mode must reject the dropped label body");
+    assert!(
+        err.to_string().contains("without a terminator"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
+fn duplicate_label_orphan_block_sealed() {
+    // Duplicate label names: `collect_labels` pre-creates two blocks, `label_blocks`
+    // keeps only the second, and the first is orphaned -- unreachable AND
+    // unterminated. `is_connected` never visits it, but `verify()` rejects any
+    // block without a terminator regardless of reachability, so the sweep must
+    // seal orphans too.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        void f(void) {
+            goto l;
+        l:  a();
+        l:  b();
+        }";
+    get_summary(program_from_string(src).0).expect("orphaned label block must be sealed");
+}
+
+#[test_log::test]
 fn compound_assign_accumulates() {
     // Compound assignment (`y += b`) is an accumulate, not an overwrite: it lowers to `y = b + y`,
     // keeping the prior value of `y` *and* mixing in the new one. With `y` seeded from param 0 and

@@ -382,6 +382,47 @@ fn link_blocks(
     }
 }
 
+/// The basic-block contract is a sequence of statements ending in a terminator,
+/// and every function graph must satisfy it by the time it leaves the frontend.
+/// The walk can leave a pre-created block unterminated when a diverging
+/// statement cut the compound short before the block was reached: a `goto`
+/// label after a `return` (`walk_compound_statement` stops at the `return`, so
+/// `walk_labeled_statement` never runs for the label), a recovered/skipped
+/// subtree that contained a label, or a duplicate label name (the first
+/// pre-created block is orphaned). Seal every such block with the same implicit
+/// empty `return` that falling off the end of the body gets (see
+/// `link_blocks`), then report once per function: an unterminated block means
+/// its statements were dropped, a frontend gap worth surfacing under
+/// CTADL_ERROR_ON_AST.
+fn seal_unterminated_blocks(
+    program: &mut Program,
+    fidx: FunctionIdx,
+    func_name: &str,
+) -> Result<(), Error> {
+    let mut sealed: Vec<BasicBlockIdx> = Vec::new();
+    for (bb, data) in program.functions[fidx]
+        .blocks
+        .blocks_mut()
+        .iter_enumerated_mut()
+    {
+        if data.terminator.is_none() {
+            data.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
+                args: vec![].into(),
+            }));
+            sealed.push(bb);
+        }
+    }
+    if !sealed.is_empty() {
+        unexpected_ast(format!(
+            "function `{func_name}`: {} block(s) left without a terminator by the walk \
+             ({sealed:?}); their statements (e.g. code under a label after a `return`) \
+             were dropped. Sealed with an implicit empty `return`.",
+            sealed.len(),
+        ))?;
+    }
+    Ok(())
+}
+
 fn add_scoped_block(
     program: &mut Program,
     scope_view: &ScopeView,
@@ -3119,6 +3160,7 @@ impl<'a> Context<'a> {
             }
 
             self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
+            seal_unterminated_blocks(program, fidx, func_name)?;
         }
         Ok(())
     }

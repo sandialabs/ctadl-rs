@@ -1112,14 +1112,6 @@ impl BasicBlockData {
         self.terminator.as_ref()
     }
 
-    /// Mutable access to the terminator slot, including when it is empty --
-    /// used by passes that must fill in a terminator for a block a recovering
-    /// frontend left without one.
-    #[inline]
-    pub fn terminator_opt_mut(&mut self) -> &mut Option<Terminator> {
-        &mut self.terminator
-    }
-
     #[inline]
     pub fn successors(&self) -> impl DoubleEndedIterator<Item = BasicBlockIdx> + '_ {
         self.terminator().successors()
