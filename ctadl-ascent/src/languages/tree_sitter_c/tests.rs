@@ -1599,11 +1599,11 @@ fn goto_label_after_return_lowers() {
     // A goto label that sits after a diverging statement: `walk_compound_statement`
     // stops at the `return`, so the pre-created `out:` block is never walked (its
     // statements are dropped) yet stays reachable through the `goto` edge. The
-    // frontend must seal it with an implicit empty `return`
-    // (`seal_unterminated_blocks`) because the IR does not tolerate a
-    // terminator-less block anywhere. This is the shape that aborted real dropbear
-    // imports. Skips under CTADL_ERROR_ON_AST, where the sweep's report is a hard
-    // error instead (see `error_on_ast_promotes_unterminated_block`).
+    // frontend must give it an implicit empty `return` (`finalize_terminators`)
+    // because the IR does not tolerate a terminator-less block anywhere. This is
+    // the shape that aborted real dropbear imports. Skips under
+    // CTADL_ERROR_ON_AST, where the sweep's report is a hard error instead (see
+    // `error_on_ast_promotes_unterminated_block`).
     if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
         return;
     }
@@ -1618,11 +1618,11 @@ fn goto_label_after_return_lowers() {
     let prog = program_from_string(src).0;
     assert!(
         function_named(&prog, "f").is_some(),
-        "sealed program should still define f\n{prog}"
+        "patched program should still define f\n{prog}"
     );
-    // End-to-end through verify() + SSA + codegen: the sealed CFG satisfies the
+    // End-to-end through verify() + SSA + codegen: the patched CFG satisfies the
     // basic-block contract with no tolerance on the ctadl-ir side.
-    get_summary(prog).expect("sealed CFG must verify and index");
+    get_summary(prog).expect("patched CFG must verify and index");
 }
 
 #[test_log::test]
@@ -1646,12 +1646,12 @@ fn error_on_ast_promotes_unterminated_block() {
 }
 
 #[test_log::test]
-fn duplicate_label_orphan_block_sealed() {
+fn duplicate_label_orphan_block_terminated() {
     // Duplicate label names: `collect_labels` pre-creates two blocks, `label_blocks`
     // keeps only the second, and the first is orphaned -- unreachable AND
     // unterminated. `is_connected` never visits it, but `verify()` rejects any
     // block without a terminator regardless of reachability, so the sweep must
-    // seal orphans too.
+    // patch orphans too.
     if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
         return;
     }
@@ -1661,7 +1661,7 @@ fn duplicate_label_orphan_block_sealed() {
         l:  a();
         l:  b();
         }";
-    get_summary(program_from_string(src).0).expect("orphaned label block must be sealed");
+    get_summary(program_from_string(src).0).expect("orphaned label block must get a terminator");
 }
 
 #[test_log::test]

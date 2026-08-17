@@ -389,17 +389,18 @@ fn link_blocks(
 /// label after a `return` (`walk_compound_statement` stops at the `return`, so
 /// `walk_labeled_statement` never runs for the label), a recovered/skipped
 /// subtree that contained a label, or a duplicate label name (the first
-/// pre-created block is orphaned). Seal every such block with the same implicit
+/// pre-created block is orphaned). Give every such block the same implicit
 /// empty `return` that falling off the end of the body gets (see
 /// `link_blocks`), then report once per function: an unterminated block means
 /// its statements were dropped, a frontend gap worth surfacing under
-/// CTADL_ERROR_ON_AST.
-fn seal_unterminated_blocks(
+/// CTADL_ERROR_ON_AST. Same pattern as the Lua frontend's
+/// `finalize_terminators`.
+fn finalize_terminators(
     program: &mut Program,
     fidx: FunctionIdx,
     func_name: &str,
 ) -> Result<(), Error> {
-    let mut sealed: Vec<BasicBlockIdx> = Vec::new();
+    let mut patched: Vec<BasicBlockIdx> = Vec::new();
     for (bb, data) in program.functions[fidx]
         .blocks
         .blocks_mut()
@@ -409,15 +410,15 @@ fn seal_unterminated_blocks(
             data.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
                 args: vec![].into(),
             }));
-            sealed.push(bb);
+            patched.push(bb);
         }
     }
-    if !sealed.is_empty() {
+    if !patched.is_empty() {
         unexpected_ast(format!(
             "function `{func_name}`: {} block(s) left without a terminator by the walk \
-             ({sealed:?}); their statements (e.g. code under a label after a `return`) \
-             were dropped. Sealed with an implicit empty `return`.",
-            sealed.len(),
+             ({patched:?}); their statements (e.g. code under a label after a `return`) \
+             were dropped. Gave them an implicit empty `return`.",
+            patched.len(),
         ))?;
     }
     Ok(())
@@ -3160,7 +3161,7 @@ impl<'a> Context<'a> {
             }
 
             self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
-            seal_unterminated_blocks(program, fidx, func_name)?;
+            finalize_terminators(program, fidx, func_name)?;
         }
         Ok(())
     }
