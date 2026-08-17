@@ -356,16 +356,14 @@ fn link_blocks(
                 // wiring around an if/else chain whose arms all diverge (e.g.
                 // dropbear's `svr_dropbear_exit`). Keep the `return` and drop the
                 // spurious edge rather than aborting the whole import.
-                TerminatorKind::Return { .. } => {
-                    recoverable_report(
-                        "frontend gap",
-                        format!(
-                            "continuation edge into a block that already returns, dropped: \
+                TerminatorKind::Return { .. } => recoverable_report(
+                    "frontend gap",
+                    format!(
+                        "continuation edge into a block that already returns, dropped: \
                              {:?} -> {:?}",
-                            from_sv.blidx, target_val
-                        ),
-                    )
-                }
+                        from_sv.blidx, target_val
+                    ),
+                ),
             }
         } else {
             log::debug!("Final add {:?} -> {:?}", from_sv.blidx, target_val);
@@ -2629,8 +2627,13 @@ impl<'a> Context<'a> {
             // constant. `true`/`false`/`null` (NULL/nullptr) are keyword tokens the
             // grammar special-cases; they only survive to the AST when the source
             // was preprocessed without stdbool.h/stddef.h expanding them.
-            "number_literal" | "string_literal" | "char_literal" | "concatenated_string"
-            | "true" | "false" | "null" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
+            "number_literal"
+            | "string_literal"
+            | "char_literal"
+            | "concatenated_string"
+            | "true"
+            | "false"
+            | "null" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
             "unary_expression" => {
                 let ch = node
                     .child_by_field_name("argument")

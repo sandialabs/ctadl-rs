@@ -208,7 +208,6 @@ fn params_and_simple_assign_in_example_2() {
     );
 }
 
-
 // `simplest_calls` promoted to tests.rs as `call_arg_flows_through_return` (Category B: the call's
 // argument flows through the callee and back to the return -- subsumes the `direct-call tgt` check).
 // `params_into_calls` and `call_not_assign` promoted to tests.rs (structural call-site assertions
