@@ -350,10 +350,20 @@ fn link_blocks(
                     targets.push(target_val);
                     Ok(())
                 }
-                TerminatorKind::Return { .. } => Err(Error::TreeSitterParse(format!(
-                    "attempt to overwriting return with destination block: {:?} -> {:?}",
-                    from_sv, target_val
-                ))),
+                // The block already ends in a `return`, so it has no fall-through
+                // and this continuation edge is redundant: a block cannot both
+                // return and goto. This arises from over-eager continuation
+                // wiring around an if/else chain whose arms all diverge (e.g.
+                // dropbear's `svr_dropbear_exit`). Keep the `return` and drop the
+                // spurious edge rather than aborting the whole import.
+                TerminatorKind::Return { .. } => recoverable_report(
+                    "frontend gap",
+                    format!(
+                        "continuation edge into a block that already returns, dropped: \
+                             {:?} -> {:?}",
+                        from_sv.blidx, target_val
+                    ),
+                ),
             }
         } else {
             log::debug!("Final add {:?} -> {:?}", from_sv.blidx, target_val);
@@ -368,6 +378,48 @@ fn link_blocks(
             from_sv, to_sv
         )))
     }
+}
+
+/// The basic-block contract is a sequence of statements ending in a terminator,
+/// and every function graph must satisfy it by the time it leaves the frontend.
+/// The walk can leave a pre-created block unterminated when a diverging
+/// statement cut the compound short before the block was reached: a `goto`
+/// label after a `return` (`walk_compound_statement` stops at the `return`, so
+/// `walk_labeled_statement` never runs for the label), a recovered/skipped
+/// subtree that contained a label, or a duplicate label name (the first
+/// pre-created block is orphaned). Give every such block the same implicit
+/// empty `return` that falling off the end of the body gets (see
+/// `link_blocks`), then report once per function: an unterminated block means
+/// its statements were dropped, a frontend gap worth surfacing under
+/// CTADL_ERROR_ON_AST. Same pattern as the Lua frontend's
+/// `finalize_terminators`.
+fn finalize_terminators(
+    program: &mut Program,
+    fidx: FunctionIdx,
+    func_name: &str,
+) -> Result<(), Error> {
+    let mut patched: Vec<BasicBlockIdx> = Vec::new();
+    for (bb, data) in program.functions[fidx]
+        .blocks
+        .blocks_mut()
+        .iter_enumerated_mut()
+    {
+        if data.terminator.is_none() {
+            data.terminator = Some(Terminator::new_kind(TerminatorKind::Return {
+                args: vec![].into(),
+            }));
+            patched.push(bb);
+        }
+    }
+    if !patched.is_empty() {
+        unexpected_ast(format!(
+            "function `{func_name}`: {} block(s) left without a terminator by the walk \
+             ({patched:?}); their statements (e.g. code under a label after a `return`) \
+             were dropped. Gave them an implicit empty `return`.",
+            patched.len(),
+        ))?;
+    }
+    Ok(())
 }
 
 fn add_scoped_block(
@@ -585,6 +637,28 @@ struct Context<'a> {
     /// being walked. Set once per source statement in [`Context::walk_statement`] so that all
     /// the IR it expands into (calls, loads, stores) points back at that statement.
     cur_span: SourceInfo,
+    /// **Record layout registry**: a record tag mapped to its data members in declaration
+    /// order. Filled once per translation unit by [`Context::collect_struct_layouts`], before
+    /// any function is lowered, so a member's own type is available regardless of declaration
+    /// order. Consulted only by [`Context::collect_initializer_list`], to map a *positional*
+    /// brace initializer onto the members it writes. A tag that is absent (anonymous, declared
+    /// in another translation unit) simply takes the positional-element fallback, so an
+    /// incomplete registry is always safe.
+    struct_layouts: HashMap<String, Vec<MemberSlot>>,
+}
+
+/// One data member in a [`Context::struct_layouts`] entry.
+#[derive(Debug, Clone)]
+struct MemberSlot {
+    /// The member's name -- the `Symbol` a `.name` access lowers to.
+    name: String,
+    /// The record tag of this member's *own* type, when it has one: `struct Q q;` records
+    /// `Q`, so a brace nested at this member's position can recurse with `Q`'s layout.
+    /// `None` for scalars and, deliberately, for **pointer** and **array** members: those are
+    /// not inline records, and treating a brace at their position as one would write a wrong
+    /// path rather than fix one. Resolved against the registry lazily at use, so a member
+    /// whose type is defined later in the file still works.
+    type_tag: Option<String>,
 }
 
 /// One source file's placement inside the combined parse buffer produced by
@@ -958,6 +1032,142 @@ pub fn compile_query(query_src: &str) -> Query {
     })
 }
 
+/// The record tag a declaration's *type* names, if it names one: `struct P p = ...` yields
+/// `P`, a `typedef`'d record (`P p = ...`) yields the typedef name, and a plain `int` yields
+/// `None`. The tag is looked up in [`Context::struct_layouts`], which records both spellings,
+/// so both resolve to the same layout.
+fn declaration_type_tag<'s>(decl_node: Node<'_>, source: &'s str) -> Option<&'s str> {
+    let ty = decl_node.child_by_field_name("type")?;
+    match ty.kind() {
+        // `struct P x;` / `union U u;` / (C++) `class C c;`
+        "struct_specifier" | "union_specifier" | "class_specifier" => {
+            ty.child_by_field_name("name").map(|n| to_str(&n, source))
+        }
+        // `P x;` where `P` is a typedef of a record.
+        "type_identifier" => Some(to_str(&ty, source)),
+        _ => None,
+    }
+}
+
+/// How many array dimensions a declarator declares: `a[2]` is 1, `m[2][2]` is 2, a plain
+/// identifier 0. The declared type describes the innermost element, so this is how many brace
+/// levels an initializer must descend before that type's layout applies. Descends through
+/// parenthesized and pointer declarators, which do not add a dimension.
+fn array_declarator_rank(decl: Node<'_>) -> usize {
+    match decl.kind() {
+        "array_declarator" => {
+            1 + decl
+                .child_by_field_name("declarator")
+                .map(array_declarator_rank)
+                .unwrap_or(0)
+        }
+        "parenthesized_declarator" => decl.named_child(0).map(array_declarator_rank).unwrap_or(0),
+        "pointer_declarator" | "init_declarator" => decl
+            .child_by_field_name("declarator")
+            .map(array_declarator_rank)
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// The data members of a record definition, in declaration order, each with the tag of its own
+/// record type when it has one. `None` for a node that is not a record definition, or for a
+/// body this cannot read *completely* -- a partial layout would silently mis-map every element
+/// after the gap, which is worse than no layout, so it is dropped and the caller falls back to
+/// element numbering.
+///
+/// Not counted as members, and not treated as gaps: a C++ **method** declaration (also a
+/// `field_declaration`, but its `function_declarator` names the method directly) and a
+/// **`static`** data member (class-scoped storage, not part of the object). A function-pointer
+/// *member* (`int (*a)(int);`, likewise a `function_declarator`, but wrapping a parenthesized
+/// pointer) **is** a member.
+fn record_member_slots(node: Node<'_>, source: &str) -> Option<Vec<MemberSlot>> {
+    if !matches!(
+        node.kind(),
+        "struct_specifier" | "union_specifier" | "class_specifier"
+    ) {
+        return None;
+    }
+    let body = node.child_by_field_name("body")?;
+    let mut members = Vec::new();
+    let mut cursor = body.walk();
+    for field_decl in body.children(&mut cursor) {
+        if field_decl.kind() != "field_declaration" {
+            continue;
+        }
+        // `static int total;` -- one class-scoped global, not a per-object slot.
+        let mut scursor = field_decl.walk();
+        if field_decl
+            .children(&mut scursor)
+            .any(|ch| ch.kind() == "storage_class_specifier" && to_str(&ch, source) == "static")
+        {
+            continue;
+        }
+        // The member's own record type, if its type names one. Only a **bare identifier**
+        // declarator keeps it: a pointer (`struct Q *q;`) or array (`struct Q qs[2];`) member
+        // is not an inline record, and recursing into a brace at its position with `Q`'s
+        // layout would write a wrong path. A self-referential record is excluded for free,
+        // since the recursive member is always a pointer.
+        let ty_tag = field_decl
+            .child_by_field_name("type")
+            .and_then(|ty| match ty.kind() {
+                "struct_specifier" | "union_specifier" | "class_specifier" => {
+                    ty.child_by_field_name("name").map(|n| to_str(&n, source))
+                }
+                "type_identifier" => Some(to_str(&ty, source)),
+                _ => None,
+            });
+        let mut dcursor = field_decl.walk();
+        for declarator in field_decl.children_by_field_name("declarator", &mut dcursor) {
+            // `void set(int);` -- a method, not storage.
+            if declarator.kind() == "function_declarator"
+                && declarator
+                    .child_by_field_name("declarator")
+                    .is_some_and(|d| d.kind() == "field_identifier")
+            {
+                continue;
+            }
+            match declarator_member_name(declarator, source) {
+                Some((name, is_plain)) => members.push(MemberSlot {
+                    name: name.to_string(),
+                    type_tag: if is_plain {
+                        ty_tag.map(str::to_string)
+                    } else {
+                        None
+                    },
+                }),
+                // A shape whose slot cannot be named: the layout is incomplete, so drop it.
+                None => return None,
+            }
+        }
+    }
+    Some(members)
+}
+
+/// The name a member declarator introduces, plus whether it is a **plain** one (a bare
+/// identifier, so the member is stored inline and its declared type is its real type) as
+/// opposed to a pointer/array/function-pointer wrapper. `None` for a shape that names no
+/// single member.
+fn declarator_member_name<'s>(decl: Node<'_>, source: &'s str) -> Option<(&'s str, bool)> {
+    match decl.kind() {
+        "field_identifier" => Some((to_str(&decl, source), true)),
+        "pointer_declarator" | "array_declarator" => decl
+            .child_by_field_name("declarator")
+            .and_then(|d| declarator_member_name(d, source))
+            .map(|(n, _)| (n, false)),
+        "parenthesized_declarator" => decl
+            .named_child(0)
+            .and_then(|d| declarator_member_name(d, source))
+            .map(|(n, _)| (n, false)),
+        // `int (*a)(int);` -- a function-pointer member.
+        "function_declarator" => decl
+            .child_by_field_name("declarator")
+            .and_then(|d| declarator_member_name(d, source))
+            .map(|(n, _)| (n, false)),
+        _ => None,
+    }
+}
+
 fn to_str<'b>(n: &Node<'_>, source: &'b str) -> &'b str {
     n.utf8_text(source.as_bytes()).unwrap().trim()
 }
@@ -1142,28 +1352,128 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// Fill the [`Context::struct_layouts`] registry: for every record definition in the
+    /// translation unit, its data members in declaration order, keyed by the tag a declaration
+    /// can name it with. Two spellings are recorded:
+    /// - a **tagged** definition (`struct P { ... };`) under its tag;
+    /// - a **typedef** of a definition (`typedef struct { ... } P;`) under the typedef name,
+    ///   which is how an otherwise-anonymous record becomes nameable.
+    ///
+    /// A recursive node walk rather than a tree-sitter query, because the record kinds differ
+    /// per grammar (`class_specifier` exists only in C++, and a query naming it would not
+    /// compile against the C grammar). Matching on `kind()` is neutral by construction: a kind
+    /// a grammar does not have simply never occurs. A layout that could not be read completely
+    /// is **not** recorded (see [`record_member_slots`]), so positional mapping is only ever
+    /// attempted where every slot is known.
+    fn collect_struct_layouts(&mut self, source: &'a str, node: Node<'_>) {
+        if let Some(slots) = record_member_slots(node, source) {
+            // `struct P { ... }` -- nameable by its own tag.
+            if let Some(name) = node.child_by_field_name("name") {
+                self.struct_layouts
+                    .insert(to_str(&name, source).to_string(), slots.clone());
+            }
+            // `typedef struct { ... } P;` -- nameable by the typedef's name. The record is the
+            // `type` of the enclosing `type_definition`, whose declarator is that name.
+            if let Some(parent) = node.parent()
+                && parent.kind() == "type_definition"
+            {
+                let mut pcursor = parent.walk();
+                for declarator in parent.children_by_field_name("declarator", &mut pcursor) {
+                    if declarator.kind() == "type_identifier" {
+                        self.struct_layouts
+                            .insert(to_str(&declarator, source).to_string(), slots.clone());
+                    }
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.collect_struct_layouts(source, child);
+        }
+    }
+
     /// Lower an aggregate brace initializer (`int a[2] = { s, 0 }`,
-    /// `struct P p = { s, 0 }`) into per-element stores. `decl_ident` is the declarator
-    /// being initialized (an `array_declarator` for arrays, an `identifier` for structs
-    /// / scalars); flattening it yields -- and registers -- the base access path.
+    /// `struct P p = { s, 0 }`) into per-element stores. `decl_node` is the whole declaration
+    /// (it carries the type, and so the record tag); `decl_ident` is the declarator being
+    /// initialized (an `array_declarator` for arrays, an `identifier` for structs / scalars),
+    /// whose flattening yields -- and registers -- the base access path.
+    ///
+    /// A *record*'s positional elements map onto the members those positions name, from the
+    /// [`Context::struct_layouts`] registry: `struct P p = { s, 0 }` writes `p.x` and `p.y`,
+    /// which is what a later `p.x` read resolves to. Numbering them as array elements instead
+    /// would write `p.deref` and silently drop the taint, since a write at one path is not
+    /// observed at a read of another. An *array*'s elements keep the element numbering, and
+    /// carry the element type's layout down so an array **of** records maps its members too.
     fn collect_initializer_list(
         &mut self,
         source: &str,
         program: &mut Program,
         scope_view: &ScopeView,
+        decl_node: Node<'_>,
         decl_ident: Node<'_>,
         init_list: Node<'_>,
     ) -> Result<(), Error> {
+        // The declaration's own record layout, if its type names a record we know.
+        let own = declaration_type_tag(decl_node, source)
+            .and_then(|tag| self.struct_layouts.get(tag).cloned());
+        // An array declarator's *rank*: `struct Q qs[2]` is 1, `int m[2][2]` is 2, a
+        // non-array 0. The declared type describes the innermost element, so its layout
+        // applies only once that many brace levels have been entered.
+        let rank = array_declarator_rank(decl_ident);
+
         let base_ap = self.flatten_lvalue(program, decl_ident, source, scope_view)?;
-        self.lower_initializer_list(source, program, scope_view, &base_ap, init_list)
+
+        // A braced **scalar** (`int x = { v };`) is not an aggregate: it has no elements to
+        // place and its single value initializes the variable itself, exactly as `int x = v;`
+        // does. Numbering it as element 0 would write the synthetic `deref` field of a scalar.
+        if rank == 0 && own.is_none() {
+            let mut cursor = init_list.walk();
+            let elems: Vec<Node<'_>> = init_list
+                .children(&mut cursor)
+                .filter(|c| c.is_named())
+                .collect();
+            if let [elem] = elems[..]
+                && !matches!(elem.kind(), "initializer_list" | "initializer_pair")
+            {
+                let rhs = self.flatten_expr(program, elem, source, scope_view)?;
+                self.add_assign_to_program(program, scope_view, &base_ap, &rhs, None);
+                return Ok(());
+            }
+        }
+
+        // At rank 0 the declared type *is* this level's layout; at rank N this level is an
+        // array and the layout belongs N levels down.
+        let (members, elem_layout, depth) = if rank == 0 {
+            (own, None, 0)
+        } else {
+            (None, own, rank)
+        };
+        self.lower_initializer_list(
+            source,
+            program,
+            scope_view,
+            &base_ap,
+            init_list,
+            members.as_deref(),
+            elem_layout.as_deref(),
+            depth,
+        )
     }
 
-    /// Walk the elements of an `initializer_list`, storing each into a successive element of
-    /// `base_ap` -- the same offset + `deref` shape a constant-index subscript read (`a[0]`)
-    /// resolves to (see `push_element` and `flatten_subscript`), so taint deposited here is
-    /// later observed at the read. Positional struct fields reuse the same element synthesis (no
-    /// type info to recover member names). Nested aggregates (`{{..},{..}}`) recurse, extending
-    /// the base path by the outer index.
+    /// Walk the elements of an `initializer_list`, storing each into the sub-path of `base_ap`
+    /// that its position names.
+    ///
+    /// With a `members` layout this level is a **record**: element *i* writes the member named
+    /// at position *i*, the same `Symbol` a `.name` read resolves to. Without one it is an
+    /// **array**: element *i* gets the offset + `deref` shape a constant-index subscript read
+    /// (`a[i]`) resolves to (see `push_element` and `flatten_subscript`), so taint deposited
+    /// here is observed at the read.
+    ///
+    /// Nested braces recurse with the layout of whatever the inner level *is*: a record
+    /// member's own record type (from its [`MemberSlot::type_tag`]), or -- once `depth` array
+    /// levels have been entered -- the array's element layout in `elem_layout`. Anything not
+    /// resolvable falls back to element numbering, which is the pre-existing behavior.
+    #[allow(clippy::too_many_arguments)]
     fn lower_initializer_list(
         &mut self,
         source: &str,
@@ -1171,6 +1481,9 @@ impl<'a> Context<'a> {
         scope_view: &ScopeView,
         base_ap: &RawPath,
         init_list: Node<'_>,
+        members: Option<&[MemberSlot]>,
+        elem_layout: Option<&[MemberSlot]>,
+        depth: usize,
     ) -> Result<(), Error> {
         let mut cursor = init_list.walk();
         let mut idx = 0usize;
@@ -1178,8 +1491,10 @@ impl<'a> Context<'a> {
             if !elem.is_named() {
                 continue; // skip the `{`, `,`, `}` tokens
             }
-            // Pick this element's target sub-path + its value node.
-            let (fields, value_node) = if elem.kind() == "initializer_pair" {
+            // Pick this element's target sub-path, its value node, and the layout to lower a
+            // nested brace with: a member's own record type, or the array element layout once
+            // `depth` array levels have been entered.
+            let (fields, value_node, nested) = if elem.kind() == "initializer_pair" {
                 // Designated: `.member = e` or `[n] = e`.
                 let designator = elem
                     .child_by_field_name("designator")
@@ -1191,7 +1506,10 @@ impl<'a> Context<'a> {
                 let mut fields = ThinVec::new();
                 if let Some(member) = dtext.strip_prefix('.') {
                     // `.a` -> Symbol("a"), matching how a `.a` field read is lowered.
-                    fields.push(PathSegment::symbol(member.trim()));
+                    let member = member.trim();
+                    fields.push(PathSegment::symbol(member));
+                    let nested = self.member_layout(members, |m| m.name == member);
+                    (fields, value, nested)
                 } else {
                     // `[n]` array designator -> the same offset + dereference a subscript read
                     // of that index resolves to.
@@ -1200,25 +1518,77 @@ impl<'a> Context<'a> {
                         &mut fields,
                         constant_index(&Exp::Str(ArcIntern::<str>::from(index))),
                     );
+                    let nested = self.elem_layout_at(elem_layout, depth);
+                    (fields, value, nested)
                 }
-                (fields, value)
             } else {
-                // Positional element -> successive indices.
                 let mut fields = ThinVec::new();
-                push_element(&mut fields, Some(idx as i64));
+                let nested = match members.and_then(|m| m.get(idx)) {
+                    // Positional element of a record whose layout is known -> the member that
+                    // position names.
+                    Some(slot) => {
+                        fields.push(PathSegment::symbol(slot.name.as_str()));
+                        slot.type_tag
+                            .as_deref()
+                            .and_then(|tag| self.struct_layouts.get(tag).cloned())
+                    }
+                    // Array element, or a record with more elements than its layout describes
+                    // -> successive indices.
+                    None => {
+                        push_element(&mut fields, Some(idx as i64));
+                        self.elem_layout_at(elem_layout, depth)
+                    }
+                };
                 idx += 1;
-                (fields, elem)
+                (fields, elem, nested)
             };
             let mut elem_ap = base_ap.clone();
             elem_ap.fields.extend(fields);
             if value_node.kind() == "initializer_list" {
-                self.lower_initializer_list(source, program, scope_view, &elem_ap, value_node)?;
+                // One array level consumed; the element layout applies when `depth` reaches 0.
+                self.lower_initializer_list(
+                    source,
+                    program,
+                    scope_view,
+                    &elem_ap,
+                    value_node,
+                    nested.as_deref(),
+                    elem_layout,
+                    depth.saturating_sub(1),
+                )?;
             } else {
                 let rhs = self.flatten_expr(program, value_node, source, scope_view)?;
                 self.add_assign_to_program(program, scope_view, &elem_ap, &rhs, None);
             }
         }
         Ok(())
+    }
+
+    /// The layout of the record type of the member `members` holds matching `pred`, if that
+    /// member names a record we know. Used to recurse into a brace at a designated member.
+    fn member_layout(
+        &self,
+        members: Option<&[MemberSlot]>,
+        pred: impl Fn(&MemberSlot) -> bool,
+    ) -> Option<Vec<MemberSlot>> {
+        members?
+            .iter()
+            .find(|m| pred(m))
+            .and_then(|m| m.type_tag.as_deref())
+            .and_then(|tag| self.struct_layouts.get(tag).cloned())
+    }
+
+    /// An array's element layout, but only at the level where the elements actually are:
+    /// `struct Q qs[2]` reaches its records after one brace level, `struct Q qs[2][2]` after
+    /// two. Above that the level is still an array and must keep element numbering.
+    fn elem_layout_at(
+        &self,
+        elem_layout: Option<&[MemberSlot]>,
+        depth: usize,
+    ) -> Option<Vec<MemberSlot>> {
+        (depth == 1)
+            .then(|| elem_layout.map(<[MemberSlot]>::to_vec))
+            .flatten()
     }
 
     fn setup_compound<'b>(
@@ -1392,18 +1762,18 @@ impl<'a> Context<'a> {
                 self.walk_switch(source, program, scope_view, child)?;
             }
             // `return`/`break`/`continue` terminate the current block and have no
-            // fall-through, so they end the compound (skipping its end link).
+            // fall-through, so they end the compound (skipping its end link). A stray
+            // `break`/`continue` outside any loop/switch recovers as a no-op and
+            // reports `false`, so the compound continues normally.
             "return_statement" => {
                 self.walk_return(source, program, scope_view, child)?;
                 return Ok(true);
             }
             "break_statement" => {
-                self.walk_break(program, scope_view)?;
-                return Ok(true);
+                return self.walk_break(program, scope_view);
             }
             "continue_statement" => {
-                self.walk_continue(program, scope_view)?;
-                return Ok(true);
+                return self.walk_continue(program, scope_view);
             }
             // Unlike break/continue, a `goto` does NOT end the compound: code after it
             // is unreachable but may hold labels that must still lower, so it updates
@@ -1416,7 +1786,7 @@ impl<'a> Context<'a> {
             }
             "ERROR" => {
                 let node_str = to_str(&child, source);
-                log::warn!("Unknown token(2): {kind}: {node_str}");
+                unexpected_ast(format!("Unknown token(2): {kind}: {node_str}"))?;
             }
             _ => {
                 self.flatten_expr(program, child, source, scope_view)?;
@@ -1460,9 +1830,10 @@ impl<'a> Context<'a> {
                     continue;
                 }
                 _ => {
-                    return Err(Error::TreeSitterParse(format!(
+                    unexpected_ast(format!(
                         "Declaration declarator had an unexpected kind {decl_kind}"
-                    )));
+                    ))?;
+                    continue;
                 }
             };
             let var_name = to_str(&decl_ident, source);
@@ -1493,7 +1864,9 @@ impl<'a> Context<'a> {
                     // to per-element stores `a[i] = elem_i` so taint flows into the
                     // indexed access paths a later `a[0]` read resolves to. (Without this
                     // the `initializer_list` reaches `flatten_expr`'s catch-all -> ERR 78.)
-                    self.collect_initializer_list(source, program, scope_view, decl_ident, vc)?;
+                    self.collect_initializer_list(
+                        source, program, scope_view, node, decl_ident, vc,
+                    )?;
                 } else {
                     self.collect_assignment(source, program, scope_view, decl_ident, vc, None)?;
                 }
@@ -1534,15 +1907,25 @@ impl<'a> Context<'a> {
     ) -> Result<(), Error> {
         //  debug_print_tree(child, 0, Some("do"), Some(20));
 
-        let initializer_node = child
-            .child_by_field_name("initializer")
-            .expect("always has initializer");
-        let condition_node = child
-            .child_by_field_name("condition")
-            .expect("always has initializer");
-        let update_node = child
-            .child_by_field_name("update")
-            .expect("always has initializer");
+        // `for (;;)` legally omits any of the three clauses, and tree-sitter then
+        // has no field for the missing one(s). Fall back to one of the for's own
+        // `;`/`(` tokens: its CompoundProxy is empty, so the clause lowers to an
+        // empty block and the loop wiring below is unchanged (a missing condition
+        // still gets the exit edge -- conservative, and the condition's value is
+        // ignored here anyway).
+        let empty_clause = (0..child.child_count())
+            .filter_map(|i| child.child(i as u32))
+            .find(|n| n.kind() == ";" || n.kind() == "(");
+        let (Some(initializer_node), Some(condition_node), Some(update_node)) = (
+            child.child_by_field_name("initializer").or(empty_clause),
+            child.child_by_field_name("condition").or(empty_clause),
+            child.child_by_field_name("update").or(empty_clause),
+        ) else {
+            return malformed_source(format!(
+                "for statement at line {} has no parsable clauses",
+                get_line_num(&child) + 1
+            ));
+        };
         let body_node = child.child_by_field_name("body").expect("always has body");
 
         let for_sidx = self
@@ -1837,32 +2220,39 @@ impl<'a> Context<'a> {
 
     /// `break`: terminate the current block with a goto to the innermost enclosing
     /// `switch`/loop continuation. The target rides on the scope view, so it is just
-    /// `scope_view.break_target` — no stack to consult.
-    fn walk_break(&self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
+    /// `scope_view.break_target` — no stack to consult. Returns whether the block was
+    /// terminated: a stray `break` outside any switch/loop (a source problem) recovers
+    /// as a no-op, so following statements keep lowering into the same block.
+    fn walk_break(&self, program: &mut Program, scope_view: &ScopeView) -> Result<bool, Error> {
         match scope_view.break_target {
             Some(target) => {
                 let mut to = scope_view.clone();
                 to.blidx = target;
-                link_blocks(program, scope_view, &to, false)
+                link_blocks(program, scope_view, &to, false)?;
+                Ok(true)
             }
-            None => Err(Error::TreeSitterParse(
-                "`break` outside of a switch or loop".to_string(),
-            )),
+            None => {
+                malformed_source("`break` outside of a switch or loop".to_string())?;
+                Ok(false)
+            }
         }
     }
 
     /// `continue`: terminate the current block with a goto to the innermost enclosing
-    /// loop's re-test/update block (`scope_view.continue_target`).
-    fn walk_continue(&self, program: &mut Program, scope_view: &ScopeView) -> Result<(), Error> {
+    /// loop's re-test/update block (`scope_view.continue_target`). Termination and
+    /// stray-`continue` recovery mirror [`Self::walk_break`].
+    fn walk_continue(&self, program: &mut Program, scope_view: &ScopeView) -> Result<bool, Error> {
         match scope_view.continue_target {
             Some(target) => {
                 let mut to = scope_view.clone();
                 to.blidx = target;
-                link_blocks(program, scope_view, &to, false)
+                link_blocks(program, scope_view, &to, false)?;
+                Ok(true)
             }
-            None => Err(Error::TreeSitterParse(
-                "`continue` outside of a loop".to_string(),
-            )),
+            None => {
+                malformed_source("`continue` outside of a loop".to_string())?;
+                Ok(false)
+            }
         }
     }
 
@@ -1882,9 +2272,12 @@ impl<'a> Context<'a> {
             .child_by_field_name("label")
             .expect("goto_statement always has a label");
         let label = to_str(&label_node, source);
-        let target = *self.label_blocks.get(label).ok_or_else(|| {
-            Error::TreeSitterParse(format!("`goto` to undefined label `{label}`"))
-        })?;
+        let Some(&target) = self.label_blocks.get(label) else {
+            malformed_source(format!("`goto` to undefined label `{label}`"))?;
+            // Recover as a no-op: with no target block to jump to, lowering simply
+            // falls through to the next statement in the current block.
+            return Ok(());
+        };
         let mut to = scope_view.clone();
         to.blidx = target;
         link_blocks(program, scope_view, &to, false)?;
@@ -2109,6 +2502,9 @@ impl<'a> Context<'a> {
         program: &mut Program,
     ) -> anyhow::Result<(), Error> {
         let global_sidx = self.scope_tree.add_scope("%GLOBAL".to_string(), None);
+        // Record layouts first: a positional brace initializer in any function body needs the
+        // layout of a record that may be defined anywhere in the translation unit.
+        self.collect_struct_layouts(source, tree.root_node());
         self.collect_functions(source, tree, program, global_sidx)
     }
 
@@ -2227,9 +2623,17 @@ impl<'a> Context<'a> {
             // numeric literal, so lower it to an `Exp::Str` constant (carries no taint). Without
             // this arm any program containing a char literal hit `flatten_expr`'s catch-all and
             // failed ingestion (ERR 78) -- a broad gap, since char literals are everyday C.
-            "number_literal" | "string_literal" | "char_literal" => {
-                Ok(Exp::Str(ArcIntern::<str>::from(text)))
-            }
+            // `concatenated_string` is adjacent literals ("a" "b") -- one string
+            // constant. `true`/`false`/`null` (NULL/nullptr) are keyword tokens the
+            // grammar special-cases; they only survive to the AST when the source
+            // was preprocessed without stdbool.h/stddef.h expanding them.
+            "number_literal"
+            | "string_literal"
+            | "char_literal"
+            | "concatenated_string"
+            | "true"
+            | "false"
+            | "null" => Ok(Exp::Str(ArcIntern::<str>::from(text))),
             "unary_expression" => {
                 let ch = node
                     .child_by_field_name("argument")
@@ -2372,9 +2776,16 @@ impl<'a> Context<'a> {
             }
             _ => {
                 debug_print_tree(node, 0, None, None);
-                Err(Error::TreeSitterParse(format!(
+                unexpected_ast(format!(
                     "ERR 78: Unsupported expression type: {}",
                     node.kind()
+                ))?;
+                // Recover with a fresh temp nothing else reads or writes: this
+                // expression's value becomes opaque (no flows in or out), but the
+                // surrounding statement still lowers.
+                let temp_name = self.allocator.next_temp();
+                Ok(Exp::Variable(VariableRef::new_local_idx(
+                    program[scope_view.fidx].locals.get_or_intern(&temp_name),
                 )))
             }
         }
@@ -2413,9 +2824,14 @@ impl<'a> Context<'a> {
             }
         } else {
             debug_print_tree(node, 0, None, None);
-            Err(Error::TreeSitterParse(
+            unexpected_ast(
                 "Surprised, Pointer Declarators dont always have a declarators".to_string(),
-            ))
+            )?;
+            // Recover as an opaque temp, like `flatten_expr`'s catch-all.
+            let temp_name = self.allocator.next_temp();
+            Ok(Exp::Variable(VariableRef::new_local_idx(
+                program[scope_view.fidx].locals.get_or_intern(&temp_name),
+            )))
         }
     }
 
@@ -2748,6 +3164,7 @@ impl<'a> Context<'a> {
             }
 
             self.walk_compound_statement(source, program, &block_scope_view, &cp)?;
+            finalize_terminators(program, fidx, func_name)?;
         }
         Ok(())
     }
@@ -2943,10 +3360,18 @@ impl<'a> Context<'a> {
             }
             _ => match self.flatten_expr(program, node, source, scope_view)? {
                 Exp::Variable(v) => Ok(RawPath::new(v, ThinVec::new())),
-                _ => Err(Error::TreeSitterParse(format!(
-                    "not an lvalue: {}",
-                    node.kind()
-                ))),
+                _ => {
+                    unexpected_ast(format!("not an lvalue: {}", node.kind()))?;
+                    // Recover by targeting a dead temp: this one store is dropped,
+                    // the rest of the function still lowers.
+                    let temp_name = self.allocator.next_temp();
+                    Ok(RawPath::new(
+                        VariableRef::new_local_idx(
+                            program[scope_view.fidx].locals.get_or_intern(&temp_name),
+                        ),
+                        ThinVec::new(),
+                    ))
+                }
             },
         }
     }
@@ -3035,6 +3460,66 @@ impl TempAllocator {
     pub fn reset(&mut self) {
         self.counter = 0;
     }
+}
+
+/// The switch behind [`unexpected_ast`] and [`malformed_source`]: by default log a
+/// warning (prefixed with who is at fault) and return `Ok(())` so the call site can
+/// recover and the user still gets useful results from the rest of the program. Set
+/// `CTADL_ERROR_ON_AST` (to any value) to promote every such report to a hard
+/// ingestion error, which is what you want when hunting frontend gaps.
+fn recoverable_report(attribution: &str, msg: String) -> Result<(), Error> {
+    if error_on_ast() {
+        Err(Error::TreeSitterParse(msg))
+    } else {
+        log::warn!("{attribution}: {msg} (recovering; set CTADL_ERROR_ON_AST to fail instead)");
+        Ok(())
+    }
+}
+
+/// Whether AST/source problems are hard errors: `CTADL_ERROR_ON_AST` in the
+/// environment, or the per-thread test override below.
+fn error_on_ast() -> bool {
+    #[cfg(test)]
+    if FORCE_ERROR_ON_AST.with(std::cell::Cell::get) {
+        return true;
+    }
+    std::env::var_os("CTADL_ERROR_ON_AST").is_some()
+}
+
+#[cfg(test)]
+thread_local! {
+    static FORCE_ERROR_ON_AST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test-only: strict `CTADL_ERROR_ON_AST` behavior on this thread for the returned
+/// guard's lifetime. A per-thread flag rather than the env var itself, which is
+/// process-global and would race the rest of the parallel test harness. Ingestion
+/// runs on the caller's thread, so the flag covers `parse_c_program`.
+#[cfg(test)]
+fn force_error_on_ast() -> impl Drop {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            FORCE_ERROR_ON_AST.with(|f| f.set(false));
+        }
+    }
+    FORCE_ERROR_ON_AST.with(|f| f.set(true));
+    Reset
+}
+
+/// An AST shape the frontend does not lower (unknown statement kinds, unsupported
+/// expressions, declarators we don't recognize) — a gap in the frontend, not a
+/// problem in the analyzed source. Call sites recover by skipping the construct or
+/// substituting a fresh opaque temp.
+fn unexpected_ast(msg: String) -> Result<(), Error> {
+    recoverable_report("frontend gap", msg)
+}
+
+/// A construct the analyzed source itself misuses (`break` outside a loop, `goto` to
+/// an undefined label) — a problem in that code, not a frontend gap. Same switch as
+/// [`unexpected_ast`]; the warning attributes the fault to the source.
+fn malformed_source(msg: String) -> Result<(), Error> {
+    recoverable_report("source problem", msg)
 }
 
 /// Recursively prints a Tree-sitter node and all its descendants.

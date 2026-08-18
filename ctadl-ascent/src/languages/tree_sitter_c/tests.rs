@@ -1440,6 +1440,231 @@ fn labeled_empty_statement_parses() {
 }
 
 #[test_log::test]
+fn unsupported_expression_warns_and_recovers() {
+    // An AST shape the frontend does not lower (here `asm("nop")`, which reaches
+    // `flatten_expr`'s catch-all, ERR 78) is a warning by default, not an ingestion
+    // error: the expression becomes an opaque temp via `unexpected_ast` and the rest
+    // of the function still lowers, so `f`'s param->return flow survives. Setting
+    // CTADL_ERROR_ON_AST restores the hard error; that side isn't exercised here
+    // because the env var is process-global and tests run in parallel -- instead the
+    // test skips when the var is set, so a strict-mode environment doesn't fail it.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r#"
+        int f(int a) {
+            asm("nop");
+            return a;
+        }"#;
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn stray_break_continue_goto_warn_and_recover() {
+    // `break`/`continue` outside any loop/switch and `goto` to an undefined label are
+    // problems in the analyzed source ("source problem" warnings), not frontend gaps.
+    // Each recovers as a no-op -- none terminates the block -- so the statements after
+    // them still lower and `f`'s param->return flow survives. Skips under
+    // CTADL_ERROR_ON_AST, which restores the hard error for all three.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        int f(int a) {
+            break;
+            continue;
+            goto nowhere;
+            return a;
+        }";
+    let (summary, _si) = get_summary(program_from_string(src).0).unwrap();
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn error_on_ast_promotes_frontend_gap() {
+    // The strict side of the switch: under CTADL_ERROR_ON_AST an unsupported
+    // expression is a hard ingestion error again, exactly as before the warning
+    // demotion. Strictness comes from the per-thread test override, not the env var,
+    // which is process-global and would race the parallel test harness.
+    let _strict = super::force_error_on_ast();
+    let src = r#"
+        int f(int a) {
+            asm("nop");
+            return a;
+        }"#;
+    let err = super::parse_c_program(src).expect_err("strict mode must reject the frontend gap");
+    assert!(
+        err.to_string().contains("Unsupported expression type"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
+fn error_on_ast_promotes_source_problem() {
+    // Same strict switch for the source-problem flavor: a stray `break` fails
+    // ingestion under CTADL_ERROR_ON_AST.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        int f(int a) {
+            break;
+            return a;
+        }";
+    let err = super::parse_c_program(src).expect_err("strict mode must reject the stray break");
+    assert!(
+        err.to_string().contains("`break` outside"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
+fn bare_block_then_statement_recovers() {
+    // Regression for the CFG-wiring bug that aborted dropbear's `svr_dropbear_exit`
+    // import. A bare compound block `{ ... }` written as a statement makes the
+    // end-of-compound link install an *implicit `return`* on the enclosing block
+    // when that block's continuation is the fall-off-the-end sentinel (`None`).
+    // The next statement in the same body then tries to add a fall-through edge
+    // out of a block that already returns -- which used to be a hard ingestion
+    // error. It now drops the redundant edge and recovers, so the function still
+    // lowers. This is the minimal trigger: a bare block followed by any further
+    // statement (an `if` here, matching dropbear). Skips under CTADL_ERROR_ON_AST,
+    // which restores the hard error (see `error_on_ast_promotes_bare_block_edge`).
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        void f(void) {
+            { h(); }
+            if (c) { k(); }
+        }";
+    // program_from_string asserts the recovered CFG is well-formed -- no block is
+    // left without a terminator -- and that tree-sitter saw no syntax error.
+    let prog = program_from_string(src).0;
+    assert!(
+        function_named(&prog, "f").is_some(),
+        "recovered program should still define f\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn svr_dropbear_exit_shape_recovers() {
+    // The reduced shape of dropbear's `svr_dropbear_exit`, the function this bug
+    // was found on: an if / else-if / else chain, then a bare `{ }` block (the
+    // remnant of a compiled-out `#if DROPBEAR_VFORK` that had guarded a lone
+    // `{ session_cleanup(); }`), then a trailing `if` (`if (svr_opts.hostkey)`).
+    // The bare-block-then-if pair is what actually triggers the wiring bug -- not,
+    // despite first appearances, the returning arms of the chain. Must recover and
+    // still lower the function.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        void svr_dropbear_exit(int exitcode) {
+            int add_delay = 0;
+            if (early) { log(1); }
+            else if (authed) { log(2); }
+            else { log(3); add_delay = 1; }
+            { session_cleanup(); }
+            if (hostkey) { free_key(hostkey); }
+        }";
+    let prog = program_from_string(src).0;
+    assert!(
+        function_named(&prog, "svr_dropbear_exit").is_some(),
+        "recovered program should still define svr_dropbear_exit\n{prog}"
+    );
+}
+
+#[test_log::test]
+fn error_on_ast_promotes_bare_block_edge() {
+    // Strict side of the switch: under CTADL_ERROR_ON_AST the recovered
+    // continuation edge out of an already-returning block is a hard ingestion
+    // error again, exactly as before the demotion to a warning.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        void f(void) {
+            { h(); }
+            if (c) { k(); }
+        }";
+    let err = super::parse_c_program(src)
+        .expect_err("strict mode must reject the continuation-into-return edge");
+    assert!(
+        err.to_string()
+            .contains("continuation edge into a block that already returns"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
+fn goto_label_after_return_lowers() {
+    // A goto label that sits after a diverging statement: `walk_compound_statement`
+    // stops at the `return`, so the pre-created `out:` block is never walked (its
+    // statements are dropped) yet stays reachable through the `goto` edge. The
+    // frontend must give it an implicit empty `return` (`finalize_terminators`)
+    // because the IR does not tolerate a terminator-less block anywhere. This is
+    // the shape that aborted real dropbear imports. Skips under
+    // CTADL_ERROR_ON_AST, where the sweep's report is a hard error instead (see
+    // `error_on_ast_promotes_unterminated_block`).
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        void f(void) {
+            if (c) goto out;
+            return;
+        out:
+            cleanup();
+        }";
+    // program_from_string asserts no `<no terminator>` block survives.
+    let prog = program_from_string(src).0;
+    assert!(
+        function_named(&prog, "f").is_some(),
+        "patched program should still define f\n{prog}"
+    );
+    // End-to-end through verify() + SSA + codegen: the patched CFG satisfies the
+    // basic-block contract with no tolerance on the ctadl-ir side.
+    get_summary(prog).expect("patched CFG must verify and index");
+}
+
+#[test_log::test]
+fn error_on_ast_promotes_unterminated_block() {
+    // Strict side of the sweep: under CTADL_ERROR_ON_AST a block the walk never
+    // terminated (its statements were dropped) is a hard ingestion error.
+    let _strict = super::force_error_on_ast();
+    let src = r"
+        void f(void) {
+            if (c) goto out;
+            return;
+        out:
+            cleanup();
+        }";
+    let err =
+        super::parse_c_program(src).expect_err("strict mode must reject the dropped label body");
+    assert!(
+        err.to_string().contains("without a terminator"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test_log::test]
+fn duplicate_label_orphan_block_terminated() {
+    // Duplicate label names: `collect_labels` pre-creates two blocks, `label_blocks`
+    // keeps only the second, and the first is orphaned -- unreachable AND
+    // unterminated. `is_connected` never visits it, but `verify()` rejects any
+    // block without a terminator regardless of reachability, so the sweep must
+    // patch orphans too.
+    if std::env::var_os("CTADL_ERROR_ON_AST").is_some() {
+        return;
+    }
+    let src = r"
+        void f(void) {
+            goto l;
+        l:  a();
+        l:  b();
+        }";
+    get_summary(program_from_string(src).0).expect("orphaned label block must get a terminator");
+}
+
+#[test_log::test]
 fn compound_assign_accumulates() {
     // Compound assignment (`y += b`) is an accumulate, not an overwrite: it lowers to `y = b + y`,
     // keeping the prior value of `y` *and* mixing in the new one. With `y` seeded from param 0 and
@@ -1937,9 +2162,9 @@ fn vararg_call_carries_argument() {
     check_has_direct_call(&prog, "f", "printf");
     // `@p0` is a parameter reference, so it resolves without consulting any local-name table.
     let src_exp = exp_from_str("@p0", &ctadl_ir::Locals::default());
-    let carries_src = direct_calls_in(&prog, "f").iter().any(|(callees, args)| {
-        callees.iter().any(|c| c == "printf") && args.iter().any(|a| *a == src_exp)
-    });
+    let carries_src = direct_calls_in(&prog, "f")
+        .iter()
+        .any(|(callees, args)| callees.iter().any(|c| c == "printf") && args.contains(&src_exp));
     assert!(
         carries_src,
         "expected @p0 to appear as an argument of the printf call\n{prog}"
@@ -2419,4 +2644,117 @@ fn variable_port_resolves_per_matched_function() {
         std::collections::BTreeMap::from([("g1", Some(g1_idx)), ("g2", Some(g2_idx))]),
         "expected one row per matched function that has `buf`, each with that function's own index"
     );
+}
+
+// --- Positional record initializers ------------------------------------------------------
+//
+// A brace initializer's elements must land on the paths a later read resolves to. For a record
+// that means the *members* those positions name, not array element slots: a write at `p.deref`
+// is not observed at a read of `p.x`, so numbering a record's elements silently drops the taint
+// rather than over-approximating it. The layout comes from the `struct_layouts` registry, and
+// nested braces recurse with the layout of whatever the inner level is (a member's own record
+// type, or an array's element type).
+
+#[test_log::test]
+fn struct_positional_initializer_maps_onto_members() {
+    // `struct P p = { v, 0 }` writes `p.x` and `p.y` -- the same paths `p.x = v; p.y = 0;`
+    // produce -- so the tainted element reaches the return through `p.x`.
+    let src = r"
+        struct P { int x; int y; };
+        int f(int v) {
+            struct P p = { v, 0 };
+            return p.x;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "p.x", ["@p0"], None);
+    check_assign_or_update(&prog, "p.y", ["#0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn struct_nested_in_struct_initializer_maps_onto_members() {
+    // A brace nested at a record member's position is that member's own record, so it recurses
+    // with the member's layout: `{ { v, 0 }, 0 }` writes `r.q.a`, which `r.q.a` reads.
+    let src = r"
+        struct Q { int a; int b; };
+        struct R { struct Q q; int z; };
+        int f(int v) {
+            struct R r = { { v, 0 }, 0 };
+            return r.q.a;
+        }";
+    let prog = program_from_string(src).0;
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn array_of_structs_initializer_maps_onto_members() {
+    // An array's own elements keep the element numbering, but the brace one level down is a
+    // record, so it maps onto members: `qs[0].a` reads what `{ { v, 0 }, ... }` wrote.
+    let src = r"
+        struct Q { int a; int b; };
+        int f(int v) {
+            struct Q qs[2] = { { v, 0 }, { 0, 0 } };
+            return qs[0].a;
+        }";
+    let prog = program_from_string(src).0;
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn typedef_struct_initializer_maps_onto_members() {
+    // A typedef'd (otherwise anonymous) record is registered under the typedef name, so a
+    // declaration naming it that way finds the same layout.
+    let src = r"
+        typedef struct { int x; int y; } P;
+        int f(int v) {
+            P p = { v, 0 };
+            return p.x;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "p.x", ["@p0"], None);
+
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn pointer_member_is_not_treated_as_an_inline_record() {
+    // A *pointer* member is not stored inline, so a brace at its position is not that record's
+    // body and must not be mapped onto its members. The element keeps the positional fallback;
+    // what matters is that no wrong member path is written and lowering does not recurse
+    // forever on a self-referential type.
+    let src = r"
+        struct Q { int a; int b; };
+        struct S { struct Q *q; int z; };
+        struct N { int v; struct N *next; };
+        int f(int v) {
+            struct S s = { 0, v };
+            struct N n = { v, 0 };
+            return s.z;
+        }";
+    let prog = program_from_string(src).0;
+    // The scalar members still map by name...
+    check_assign_or_update(&prog, "s.z", ["@p0"], None);
+    check_assign_or_update(&prog, "n.v", ["@p0"], None);
+    // ...and `s.z` carries the taint to the return.
+    let summary = get_summary(prog).unwrap().0;
+    check_returns_param(&summary, 0, "");
+}
+
+#[test_log::test]
+fn unknown_record_type_falls_back_to_positional_elements() {
+    // A record defined in another translation unit has no layout here. That must not error:
+    // the elements take the pre-existing element numbering, which is what this frontend did
+    // for every record before layouts existed.
+    let src = r"
+        int f(int v) {
+            struct Elsewhere e = { v, 0 };
+            return v;
+        }";
+    let prog = program_from_string(src).0;
+    check_assign_or_update(&prog, "e.deref", ["@p0"], None);
 }
