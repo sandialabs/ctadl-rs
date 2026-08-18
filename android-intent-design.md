@@ -11,10 +11,10 @@ Android app as a pile of classes with no relationships between them beyond calls
 invisible:
 
 - **The app's boundary.** Which components another app -- or `adb shell am start` -- can reach is
-  declared in the manifest, not in the code. Without it, nothing marks attacker-controlled input as
-  attacker-controlled.
+  declared in the manifest, not in the code. Without it, the components and the routes into them
+  are simply not represented.
 - **Delivery.** `startActivity(intent)` in one component and `getIntent()` in another are a data
-  flow, but no call connects them. Taint stops at the `startActivity` call.
+  flow, but no call connects them. The flow stops at the `startActivity` call.
 
 Both gaps are closed by the same artifact, `AndroidManifest.xml`, which CTADL currently never
 opens. The only mention of it in the tree is a test fixture's magic bytes
@@ -40,7 +40,10 @@ Intent delivery is a same-language use of the same shape.
 
 **There is no whole-program entrypoint notion.** The analysis is compositional and summary-based;
 every function is analyzed. The previous ctadl's `StatementReachableFromOnCreate` rule existed to
-work around a whole-program reachability model and has no counterpart here.
+work around a whole-program reachability model and has no counterpart here. One thing that rule
+bought does need a counterpart: the framework, not the app, calls lifecycle methods, so a flow
+delivered into `onCreate` alone is invisible to the rest of the component. Phase 3 handles that
+by bridging into every lifecycle method rather than reintroducing whole-program reachability.
 
 ## 3. The blocking gap: constants are dropped
 
@@ -76,26 +79,6 @@ Three layers, each useful before the next exists.
    emitting bridge-shaped facts.
 
 ## 5. Phases
-
-### Phase 0 -- Extras as an opaque container
-
-Model files only; no new code. Add `Intent` and `Bundle` entries to
-`ctadl-ascent/src/models/defaults/java-index.jsonl`, treating the extras map as a single field:
-
-- `putExtra(key, v)`: `Argument(2) -> Argument(0).extras`, plus `Argument(0) -> Return` for the
-  builder chain
-- `getStringExtra(key)` and the rest of the `get*Extra` family: `Argument(0).extras -> Return`
-- `Intent.<init>`, `setAction`, `setData`, `putExtras`, and the `Bundle` `put*`/`get*` pairs
-  likewise
-
-This catches put-then-get on one intent object within a component today, at the cost of conflating
-every key with every other. It is a day's work, it needs no new machinery, and it establishes the
-path vocabulary that Phase 4 refines. Do it first.
-
-Two cautions carried over from the comments at the top of `java-index.jsonl`: `parent` matches the
-class declared at the invoke site rather than the runtime type, so list `Intent` alongside anything
-callers actually write; and a named-field port is not portable between the dex and jvm frontends,
-so `extras` here commits us to dex.
 
 ### Phase 1 -- Parse the manifest
 
@@ -135,19 +118,13 @@ with a clear message rather than a silent absence of manifest facts.
 `ctadl-ascent/src/languages/xapk.rs` selects artifacts and make sure the base manifest attaches to
 the bundle as a whole, not to whichever split happened to carry it.
 
-**The payoff, with no dataflow work at all.** Two things become possible as soon as the facts
-exist:
-
-- `ctadl inspect` reports the app's exported surface: every component with
-  `android:exported="true"`, plus every component with an intent filter, which is exported by
-  default below API 31.
-- A shipped model file marks the intent parameter of each exported component's entry method as a
-  **taint source** -- the result of `getIntent()` in `onCreate`, `Argument(2)` of `onReceive`, the
-  intent argument of `onStartCommand`. That is the standard "attacker-controlled input crosses the
-  app boundary" query, and it needs the manifest and nothing else.
-
-This source story is the highest value per unit of work in the whole design. Treat it as Phase 1's
-deliverable, not as a side effect.
+**The payoff, with no dataflow work at all.** As soon as the facts exist, `ctadl inspect` can
+report the app's component surface: every component with `android:exported="true"`, every
+component exported by default because it carries an intent filter (below API 31), and the
+`android:permission` guard on each -- a component behind a signature-level permission is exported
+in name only. The joins Phase 3 runs later are exercised here for free, which is where the
+name-normalization function proves itself against a real manifest. Treat the inspect report as
+Phase 1's deliverable, not as a side effect.
 
 ### Phase 2 -- Constant strings as facts
 
@@ -175,15 +152,60 @@ A built-in index-time pass, structured like `ctadl-ascent/src/languages/jni.rs`.
 `sendOrderedBroadcast`, `startService`, `bindService`. Match on the method's simple name. The
 receiver's declared type varies too much to enumerate -- `Activity`, `Context`, `ContextWrapper`,
 `Fragment` -- which is the same problem the `iterator` entry in `java-index.jsonl` documents at
-length.
+length. The declared type is still good for one thing: exclusion.
+`LocalBroadcastManager.sendBroadcast` delivers only to receivers registered on that manager,
+never to manifest receivers, so pairing it against the manifest fabricates links; skip send sites
+whose declared receiver type is `LocalBroadcastManager` (both the `androidx` and
+`android.support` descriptors).
 
-**Receive sites.** The component's entry method, selected by manifest tag:
+**Receive sites.** The manifest names a component *class*; two resolution steps turn that into
+functions to bridge into.
 
-| tag | entry method | where the intent is |
+- *Hierarchy.* Components inherit entry methods more often than they override them, and the
+  framework's implementations are not in the dex. Walk up from the component class and bridge to
+  the nearest app-defined override of each method in the table below; where no override exists in
+  app code, there is nothing to bridge into and the method is skipped. This is also what makes
+  `IntentService` work at all: a subclass overrides `onHandleIntent`, never `onStartCommand`, so
+  framework-mediated indirections get their own rows.
+- *Aliases.* An `<activity-alias>` is a component in its own right -- its own name, its own
+  exported status, its own filters -- that delivers to its `android:targetActivity`. Fold each
+  alias's filters into the target activity's filter set; the previous ctadl's pseudo-filter
+  treatment (section 7) extends to this without new machinery.
+
+| tag | methods bridged | where the intent lands |
 | --- | --- | --- |
-| `<activity>` | `onCreate` | the result of `getIntent()` |
+| `<activity>` | every lifecycle override: `onCreate`, `onStart`, `onRestart`, `onResume`, `onPause`, `onStop`, `onDestroy`, `onNewIntent` | `Argument(0).intent`; for `onNewIntent`, also `Argument(1)` |
 | `<receiver>` | `onReceive` | `Argument(2)` |
-| `<service>` | `onStartCommand`, `onBind` | the intent argument |
+| `<service>` | `onStartCommand`, `onBind`; `onHandleIntent` / `onHandleWork` for `IntentService` / `JobIntentService` subclasses | the intent parameter, `Argument(1)` |
+
+**Why every lifecycle override, not just `onCreate`.** The analysis is compositional: nothing in
+the app calls `onResume` -- the framework does -- so an intent delivered only into `onCreate`'s
+scope is invisible everywhere else in the component. Bridging each lifecycle override delivers
+the same intent vertex into each method's `this`, and ordinary summary propagation carries it
+into anything those methods call. The cost is a handful of bridge sites per pair instead of one.
+
+`.intent` is a synthetic field: `Activity`'s real backing field lives in the framework, outside
+the dex, so the pass invents the symbol, and a pair of model entries must agree on it --
+`getIntent` as `Argument(0).intent -> Return`, `setIntent` as `Argument(1) ->
+Argument(0).intent`. Add both to `java-index.jsonl` alongside the extras entries below.
+
+**Extras.** Without model entries for `putExtra`, the value never reaches the intent at all, so a
+delivered intent carries nothing interesting; the extras model belongs with this phase rather than
+after it. With Phase 2's constants in hand, model the map key-precisely from the start --
+`putExtra(key, v)` as `Argument(2) -> Argument(0).extras.<key>` plus `Argument(0) -> Return` for the
+builder chain, the `get*Extra` family as `Argument(0).extras.<key> -> Return`, and `Intent.<init>`,
+`setAction`, `setData`, `putExtras` and the `Bundle` `put*`/`get*` pairs likewise -- falling back to
+a lumped `.extras` field only where the key is not a recovered constant. Do not ship the lumped form
+on its own as an interim step: it conflates every key with every other, and the constants arrive
+soon enough that those false positives would outlive their usefulness. `java-index.jsonl` already
+carries a few Intent and Bundle entries -- `getExtras` as `Argument(0) -> Return`, the Bundle `get*`
+family as `Argument(*) -> Return` -- to reconcile against.
+
+Three cautions. `parent` matches the class declared at the invoke site rather than the runtime type,
+so list `Intent` alongside anything callers actually write. A named-field port is not portable
+between the dex and jvm frontends, so `extras` commits us to dex. And the previous ctadl encoded
+keys as `ord()` numbers to avoid `.` characters inside key strings; check how
+`facts::Path::from_accesses` handles a `Symbol` containing a dot and escape rather than mangle.
 
 **Pairing.** Three cases, in descending confidence:
 
@@ -195,11 +217,15 @@ length.
 - *Unresolved.* No constant action was recovered. The sound answer links the send to every exported
   component; the useful answer links it to nothing. Put this behind a flag, defaulted off.
 
-**Emission.** Exactly what `emit_bridge` does: a fresh instruction site in the sending function, a
-`call` row targeting the receiver's entry method, and `actual_param` rows carrying the intent
-vertex into the receiver's intent parameter. The site must be fresh per pair -- call-argument
-pseudo-variables key on the instruction id, so reusing a site would alias unrelated intents to each
-other.
+**Emission.** The JNI pass is an existence proof that an index-time pass can emit bridge facts,
+not a template: its `emit_bridge` handles only whole-parameter ports, and `Argument(0).intent` is
+a sub-path of a parameter. The general shape already exists in the declarative-bridge emitter
+(`ctadl-ascent/src/codegen/model_matches.rs:343`): a fresh site, a `call` row, a direct
+`actual_param` where a port names a whole parameter, and -- where a port names a sub-path -- one
+temporary per callee index passed whole, with `assign` rows writing the sub-path. The intent pass
+should share that emitter rather than grow a third copy. The site must be fresh per pair either
+way: call-argument pseudo-variables key on the instruction id, so reusing a site would alias
+unrelated intents to each other.
 
 **Reporting.** Log a per-pass count line at `info`, the way the JNI bridge does
 (`jni.rs:583`). A mis-paired bridge yields fewer flows rather than an error, which reads exactly
@@ -215,10 +241,6 @@ available for hand-written overrides of what the pass gets wrong.
 
 In rough order of value:
 
-- **Key-precise extras.** Replace Phase 0's lumped `.extras` with `.extras.<key>` where the key is
-  constant, falling back to the lumped field otherwise. The previous ctadl encoded keys as `ord()`
-  numbers to avoid `.` characters inside key strings; check how `facts::Path::from_accesses`
-  handles a `Symbol` containing a dot and escape rather than mangle.
 - **Result-back flows.** `setResult(code, intent)` in the callee pairing with `onActivityResult` in
   the caller. The previous ctadl's rule for this was written and marked untested; treat it as new
   work rather than a port.
@@ -231,10 +253,7 @@ In rough order of value:
 1. **Vendored AXML decoder or a crate.** The recommendation is vendored, for consistency with the
    existing readers and to avoid a dependency on a frozen format. The cost is roughly 400 lines of
    format code to own.
-2. **Which Phase 1 payoff leads.** The exported-component taint-source story and the
-   cross-component linking story are separable, and the source story lands far sooner. Which one
-   answers the question you actually have?
-3. **Implicit-intent fan-out tolerance.** This decides whether Phase 3 produces a usable result set
+2. **Implicit-intent fan-out tolerance.** This decides whether Phase 3 produces a usable result set
    or drowns a real app in links. Worth measuring on a real APK before committing to the default.
 
 ## 7. Relationship to the previous ctadl
