@@ -413,10 +413,15 @@ fn format_cp_comment(cf: &ClassFile, index: u16) -> Result<String, ClassFileErro
     Ok(match entry {
         CpEntry::Class { .. } => format!("class {}", cf.get_class_name(index)?),
         CpEntry::String { .. } => {
-            let s = cf.get_utf8(match entry {
-                CpEntry::String { string_index } => *string_index,
-                _ => unreachable!(),
-            })?;
+            // A string constant may hold unpaired surrogates, which a listing
+            // must render rather than fail on. `?` is what javap emits, since
+            // no charset can encode a lone surrogate.
+            let s = cf
+                .get_jvm_string(match entry {
+                    CpEntry::String { string_index } => *string_index,
+                    _ => unreachable!(),
+                })?
+                .to_string_replacing('?');
             let escaped = s
                 .replace('\\', "\\\\")
                 .replace('\'', "\\'")
@@ -740,6 +745,35 @@ fn disassemble_method(
         out.push_str(&line);
         out.push('\n');
         pc = next_pc;
+    }
+    out.push_str(&format_exception_table(cf, code)?);
+    Ok(out)
+}
+
+/// The method's exception table in `javap -c` form, or the empty string when
+/// there is none. `javap` prints it inside the `Code:` section, after the
+/// instructions.
+fn format_exception_table(
+    cf: &ClassFile,
+    code: &CodeAttribute,
+) -> Result<String, ClassFileError> {
+    if code.exception_table.is_empty() {
+        return Ok(String::new());
+    }
+    let mut out = String::from("    Exception table:\n");
+    out.push_str("       from    to  target type\n");
+    for entry in &code.exception_table {
+        out.push_str(&format!(
+            "        {:5} {:5} {:5}   ",
+            entry.start_pc, entry.end_pc, entry.handler_pc
+        ));
+        // catch_type 0 is a `finally` / synthetic handler, which catches
+        // anything; javap writes `any` rather than a class name.
+        if entry.catch_type == 0 {
+            out.push_str("any\n");
+        } else {
+            out.push_str(&format!("Class {}\n", cf.get_class_name(entry.catch_type)?));
+        }
     }
     Ok(out)
 }

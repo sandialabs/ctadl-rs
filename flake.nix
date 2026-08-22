@@ -140,20 +140,34 @@
           cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" "--lib" "--examples" ];
         };
 
-        # The two classes jvm-reader's `flow.rs` unit tests load at runtime,
-        # compiled from the committed sample sources (no `.class` is committed).
-        # Passed to the `jvm-reader-tests` check via JVM_READER_TEST_FIXTURES.
+        # The classes jvm-reader's `flow.rs` unit tests load at runtime, compiled
+        # from the committed sample sources (no `.class` is committed). Passed
+        # to the `jvm-reader-tests` check via JVM_READER_TEST_FIXTURES.
+        #
+        # `sample-jvm-only` holds sources kept out of `sample` because that one
+        # is shared with the dex-reader checks; see xtask/src/jvm.rs.
         jvmTestFixtures =
           pkgs.runCommand "jvm-reader-test-fixtures"
             {
               nativeBuildInputs = [ jdk ];
               # Import the dir (not the files) so the sources keep their real
               # names; javac requires a public class's file to match its name.
-              src = ./jvm-reader/tests/sample;
+              src = ./jvm-reader/tests;
             }
             ''
               mkdir -p "$out"
-              javac -encoding UTF-8 -d "$out" "$src/HelloWorld.java" "$src/ArrayFlow.java" "$src/LoopFlow.java"
+              javac -encoding UTF-8 -d "$out" \
+                "$src/sample/HelloWorld.java" \
+                "$src/sample/ArrayFlow.java" \
+                "$src/sample/LoopFlow.java" \
+                "$src/sample/SparseSwitch.java" \
+                "$src/sample/DenseSwitch.java" \
+                "$src/sample/StringSwitch.java" \
+                "$src/sample/GuardedStringSwitch.java" \
+                "$src/sample/IushrLength.java" \
+                "$src/sample/WideParams.java" \
+                "$src/sample-jvm-only/PairedOnly.java" \
+                "$src/sample-jvm-only/SurrogateConstants.java"
             '';
 
         # The external toolchain the regression scripts expect on PATH

@@ -27,7 +27,9 @@ pub fn parse(data: &[u8]) -> ClassFileResult<ClassFile> {
     while slot < constant_pool_count {
         let tag = read_u8(data, pos)?;
         pos += 1;
-        let entry = parse_cp_entry(data, &mut pos, tag)?;
+        // `slot` is the 1-based index this entry lands at; attach it so a
+        // UTF-8 decoding failure says which constant it came from.
+        let entry = parse_cp_entry(data, &mut pos, tag).map_err(|e| e.with_cp_index(slot))?;
         constant_pool.push(Some(entry));
         slot += 1;
         if matches!(
@@ -115,8 +117,8 @@ fn parse_cp_entry(data: &[u8], pos: &mut usize, tag: u8) -> ClassFileResult<CpEn
             *pos += 2;
             let bytes = read_slice(data, *pos, length as usize)?;
             *pos += length as usize;
-            let s = decode_modified_utf8(bytes)?;
-            Ok(CpEntry::Utf8(s))
+            let units = decode_modified_utf8_code_units(bytes)?;
+            Ok(CpEntry::Utf8(JvmString::from_code_units(units)))
         }
         3 => {
             let bytes = read_u32_be(data, *pos)?;
@@ -259,7 +261,7 @@ fn get_utf8_from_pool(pool: &[Option<CpEntry>], name_index: u16) -> ClassFileRes
         .checked_sub(1)
         .ok_or(ClassFileError::InvalidClassFile("cp index 0"))?;
     match pool.get(i).and_then(Option::as_ref) {
-        Some(CpEntry::Utf8(s)) => Ok(s.as_str()),
+        Some(CpEntry::Utf8(s)) => s.as_str_or_err().map_err(|e| e.with_cp_index(name_index)),
         _ => Err(ClassFileError::InvalidClassFile(
             "expected Utf8 for attribute name",
         )),

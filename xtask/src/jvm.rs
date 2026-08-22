@@ -6,6 +6,11 @@
 //! and re-check the `.jar` (parsed classes compared against `jar tf`). No
 //! compiled `.class`/`.jar` artifacts are committed; everything is built here.
 //!
+//! `tests/sample-jvm-only/` is compiled here too. Those sources are held apart
+//! because `tests/sample/` is shared with the dex-reader checks, and they carry
+//! UTF-16 surrogate constants that dex-reader's own modified-UTF-8 decoder
+//! still rejects -- the same defect this crate fixed, unfixed there.
+//!
 //! These checks are a faithful port of the former `jvm-reader/tests/test_disas.rs`
 //! integration tests, restructured to report pass/fail rather than panic and to
 //! run against freshly compiled inputs instead of committed binaries.
@@ -77,12 +82,27 @@ fn to_outcome(result: Result<()>) -> Outcome {
 
 // --- compilation ----------------------------------------------------------
 
-fn build_samples(samples_dir: &Path, work: &Path) -> Result<Vec<Sample>> {
-    let mut sources: Vec<PathBuf> = std::fs::read_dir(samples_dir)
-        .with_context(|| format!("reading {}", samples_dir.display()))?
+/// The jvm-only sample directory: a sibling of `samples_dir` named
+/// `sample-jvm-only`. Absent in a checkout that predates it, which is not an
+/// error -- the shared samples still run.
+fn jvm_only_dir(samples_dir: &Path) -> Option<PathBuf> {
+    let dir = samples_dir.parent()?.join("sample-jvm-only");
+    dir.is_dir().then_some(dir)
+}
+
+fn java_sources_in(dir: &Path) -> Result<Vec<PathBuf>> {
+    Ok(std::fs::read_dir(dir)
+        .with_context(|| format!("reading {}", dir.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("java"))
-        .collect();
+        .collect())
+}
+
+fn build_samples(samples_dir: &Path, work: &Path) -> Result<Vec<Sample>> {
+    let mut sources = java_sources_in(samples_dir)?;
+    if let Some(dir) = jvm_only_dir(samples_dir) {
+        sources.extend(java_sources_in(&dir)?);
+    }
     sources.sort();
 
     let mut samples = Vec::new();
@@ -417,8 +437,19 @@ fn check_basic_blocks(samples: &[Sample]) -> Result<()> {
                 if !covered.iter().all(|&v| v) {
                     bail!("not all instructions covered by blocks in {}", sample.name);
                 }
-                if !blocks[0].predecessors.is_empty() {
-                    bail!("entry block has predecessors in {}", sample.name);
+                // The entry block may legitimately have predecessors: when a
+                // method opens with a loop header (`while` at the top of the
+                // body), javac emits a back edge to pc 0. What must not happen
+                // is a *forward* edge into the entry, which would mean a second
+                // way into the method.
+                for &pred in &blocks[0].predecessors {
+                    if blocks[pred].start_pc <= blocks[0].start_pc {
+                        bail!(
+                            "entry block has a non-back-edge predecessor (block {pred}, pc {}) in {}",
+                            blocks[pred].start_pc,
+                            sample.name
+                        );
+                    }
                 }
             }
         }
@@ -456,9 +487,7 @@ fn check_stack_slots(samples: &[Sample]) -> Result<()> {
                     .to_string();
                 let cfg = match class_parser.basic_blocks_with_stack_slots(method) {
                     Ok(cfg) => cfg,
-                    Err(ClassFileError::InvalidClassFile(
-                        "inconsistent operand stack height at basic-block join",
-                    )) => {
+                    Err(ClassFileError::StackHeightMismatch { .. }) => {
                         skipped_join_shape += 1;
                         continue;
                     }
