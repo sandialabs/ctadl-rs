@@ -20,9 +20,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{anyhow, bail, Context, Result};
+use jvm_reader::flow::compute_basic_blocks_for_method;
+use jvm_reader::types::CpEntry;
 use jvm_reader::{
     collect_line_map_entries, disassemble_class_file, disassemble_jar_file, ClassFile,
-    ClassFileError, InstructionKind, JarFileParser, Location, MethodInfo,
+    ClassFileError, ClassFileParser, InstructionKind, JarFileParser, Location, MethodInfo,
 };
 
 use crate::exec;
@@ -50,12 +52,17 @@ pub fn run_checks(samples_dir: &Path, work: &Path) -> Result<Vec<(String, Outcom
         }
     }
 
-    let samples = build_samples(samples_dir, work)?;
+    // Resolved up front so its absence can be *reported* rather than silently
+    // shrinking the input set: a caller that passes a bare copy of the shared
+    // sample dir (a Nix store path, say) gets a Skip in the report, not a
+    // quietly narrower run that still says PASS.
+    let jvm_only = jvm_only_dir(samples_dir);
+    let samples = build_samples(samples_dir, jvm_only.as_deref(), work)?;
     if samples.is_empty() {
         bail!("no .java samples found in {}", samples_dir.display());
     }
 
-    let checks: [(&str, fn(&[Sample]) -> Result<()>); 9] = [
+    let checks: [(&str, fn(&[Sample]) -> Result<()>); 11] = [
         ("jvm:disassemble-class", check_class_disassembly),
         ("jvm:javap", check_javap),
         ("jvm:jar-classes", check_jar_classes),
@@ -65,12 +72,26 @@ pub fn run_checks(samples_dir: &Path, work: &Path) -> Result<Vec<(String, Outcom
         ("jvm:file-offsets", check_file_offsets),
         ("jvm:basic-blocks", check_basic_blocks),
         ("jvm:stack-slots", check_stack_slots),
+        ("jvm:switch-shapes", check_switch_shapes),
+        ("jvm:utf8-constants", check_utf8_constants),
     ];
 
-    Ok(checks
-        .into_iter()
-        .map(|(name, run)| (name.to_string(), to_outcome(run(&samples))))
-        .collect())
+    let mut results: Vec<(String, Outcome)> = Vec::new();
+    if jvm_only.is_none() {
+        results.push((
+            "jvm:sample-jvm-only".to_string(),
+            Outcome::Skip(format!(
+                "no `sample-jvm-only` directory beside {}; its fixtures were not compiled",
+                samples_dir.display()
+            )),
+        ));
+    }
+    results.extend(
+        checks
+            .into_iter()
+            .map(|(name, run)| (name.to_string(), to_outcome(run(&samples)))),
+    );
+    Ok(results)
 }
 
 fn to_outcome(result: Result<()>) -> Outcome {
@@ -83,8 +104,11 @@ fn to_outcome(result: Result<()>) -> Outcome {
 // --- compilation ----------------------------------------------------------
 
 /// The jvm-only sample directory: a sibling of `samples_dir` named
-/// `sample-jvm-only`. Absent in a checkout that predates it, which is not an
-/// error -- the shared samples still run.
+/// `sample-jvm-only`. `None` when `--jvm-samples` points somewhere that has no
+/// such sibling, which is not an error -- the shared samples still run -- but
+/// is reported as a Skip by `run_checks`, since it means two fixtures went
+/// unexercised. Note that this makes the *parent* of `--jvm-samples` part of
+/// the interface: pass `<...>/tests/sample`, not a lone copy of `sample`.
 fn jvm_only_dir(samples_dir: &Path) -> Option<PathBuf> {
     let dir = samples_dir.parent()?.join("sample-jvm-only");
     dir.is_dir().then_some(dir)
@@ -98,10 +122,14 @@ fn java_sources_in(dir: &Path) -> Result<Vec<PathBuf>> {
         .collect())
 }
 
-fn build_samples(samples_dir: &Path, work: &Path) -> Result<Vec<Sample>> {
+fn build_samples(
+    samples_dir: &Path,
+    jvm_only_dir: Option<&Path>,
+    work: &Path,
+) -> Result<Vec<Sample>> {
     let mut sources = java_sources_in(samples_dir)?;
-    if let Some(dir) = jvm_only_dir(samples_dir) {
-        sources.extend(java_sources_in(&dir)?);
+    if let Some(dir) = jvm_only_dir {
+        sources.extend(java_sources_in(dir)?);
     }
     sources.sort();
 
@@ -555,6 +583,129 @@ fn assert_normalized(loc: &Location, saw_stack_slot: &mut bool) -> Result<()> {
             assert_normalized(offset, saw_stack_slot)?;
         }
         _ => {}
+    }
+    Ok(())
+}
+
+// --- fixture-shape checks -------------------------------------------------
+//
+// These two came out of `jvm-reader`'s `flow.rs` unit tests, which used to load
+// compiled classes from a directory someone had to populate first. Everything
+// they asserted about *decoding* those fixtures is now covered end to end by
+// the `SwitchFlow` / `StringSwitchFlow` / `WideParamFlow` / `ShiftFlow` taint
+// cases, in both frontends. What is left is what a taint case cannot say.
+
+/// Read one sample's compiled `.class` by class name.
+fn class_bytes(samples: &[Sample], name: &str) -> Result<Vec<u8>> {
+    let sample = samples
+        .iter()
+        .find(|s| s.name == name)
+        .with_context(|| format!("no sample named {name}"))?;
+    let file = format!("{name}.class");
+    let path = sample
+        .classes
+        .iter()
+        .find(|p| p.file_name().and_then(|f| f.to_str()) == Some(file.as_str()))
+        .with_context(|| format!("{name} produced no {file}"))?;
+    std::fs::read(path).with_context(|| format!("reading {}", path.display()))
+}
+
+/// The mnemonics of one method, in order.
+fn mnemonics(bytes: &[u8], method_name: &str) -> Result<Vec<&'static str>> {
+    let parser = ClassFileParser::parse(bytes).map_err(|e| anyhow!("parse: {e}"))?;
+    let cf = parser.class_file();
+    let method = cf
+        .methods
+        .iter()
+        .find(|m| cf.get_utf8(m.name_index).ok() == Some(method_name))
+        .with_context(|| format!("no method named {method_name}"))?;
+    let cfg = compute_basic_blocks_for_method(cf, method).map_err(|e| anyhow!("cfg: {e}"))?;
+    Ok(cfg.instructions().iter().map(|i| i.mnemonic).collect())
+}
+
+/// The switch fixtures still contain the switch instruction they are named for.
+///
+/// A vacuity guard, and the one thing the taint cases cannot check: if a later
+/// `javac` lowered these shapes some other way -- a chain of `if_icmpeq`, say --
+/// `SwitchFlow` and `StringSwitchFlow` would keep passing while no longer
+/// exercising a switch at all.
+fn check_switch_shapes(samples: &[Sample]) -> Result<()> {
+    for (class, method, mnemonic) in [
+        ("SparseSwitch", "parseTable", "lookupswitch"),
+        ("DenseSwitch", "parseTable", "tableswitch"),
+    ] {
+        let bytes = class_bytes(samples, class)?;
+        let found = mnemonics(&bytes, method)?;
+        if !found.contains(&mnemonic) {
+            bail!("{class}.{method} should contain {mnemonic}");
+        }
+    }
+
+    // A Java 8 string switch lowers to both, in this order.
+    let bytes = class_bytes(samples, "StringSwitch")?;
+    let switches: Vec<&str> = mnemonics(&bytes, "decode")?
+        .into_iter()
+        .filter(|m| *m == "lookupswitch" || *m == "tableswitch")
+        .collect();
+    if switches != ["lookupswitch", "tableswitch"] {
+        bail!(
+            "StringSwitch.decode should lower to lookupswitch then tableswitch, got {switches:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Modified-UTF-8 string constants survive the constant-pool parse.
+///
+/// No taint case can stand in for this: an unpaired surrogate is inert data in
+/// a constant, so a decoder that mangles it changes no flow. These two fixtures
+/// carry nothing else, which is why they live in `sample-jvm-only/`.
+fn check_utf8_constants(samples: &[Sample]) -> Result<()> {
+    // A supplementary character arrives as a CESU-8 pair and must recombine.
+    let bytes = class_bytes(samples, "PairedOnly")?;
+    let parser = ClassFileParser::parse(&bytes).map_err(|e| anyhow!("parse PairedOnly: {e}"))?;
+    let cf = parser.class_file();
+    let emoji = cf
+        .constant_pool
+        .iter()
+        .flatten()
+        .filter_map(|e| match e {
+            CpEntry::Utf8(s) => s.as_str(),
+            _ => None,
+        })
+        .find(|s| s.chars().any(|c| c as u32 > 0xFFFF))
+        .context("PairedOnly should hold a supplementary character constant")?;
+    if emoji != "\u{1F600}" {
+        bail!("recombined pair is {emoji:?}, want U+1F600");
+    }
+
+    // Unpaired surrogates are legal, must not stop the parse, and cannot be
+    // handed out as `&str`.
+    let bytes = class_bytes(samples, "SurrogateConstants")?;
+    let parser =
+        ClassFileParser::parse(&bytes).map_err(|e| anyhow!("parse SurrogateConstants: {e}"))?;
+    let cf = parser.class_file();
+    if cf.this_class_name().map_err(|e| anyhow!("{e}"))? != "SurrogateConstants" {
+        bail!("names and descriptors should be unaffected by a surrogate constant");
+    }
+    let mut unpaired: Vec<Vec<u16>> = Vec::new();
+    for entry in cf.constant_pool.iter().flatten() {
+        if let CpEntry::Utf8(s) = entry {
+            if s.as_str().is_none() {
+                if !s.to_string_lossy().contains('\u{FFFD}') {
+                    bail!("an unpaired surrogate should read back lossily as U+FFFD");
+                }
+                unpaired.push(s.code_units().collect());
+            }
+        }
+    }
+    if unpaired.is_empty() {
+        bail!("SurrogateConstants should hold unpaired surrogates");
+    }
+    for (unit, what) in [(0xD800u16, "high"), (0xDC00u16, "low")] {
+        if !unpaired.iter().any(|u| u.contains(&unit)) {
+            bail!("the lone {what} surrogate should survive as a code unit");
+        }
     }
     Ok(())
 }

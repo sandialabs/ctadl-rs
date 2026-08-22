@@ -4,7 +4,7 @@ Implements `JVM_FRONTEND_FIX_PLAN.md` end to end — all seven defects it lists,
 plus two more the new fixtures exposed. Every fixture in the plan's regression
 suite is in the tree and passing, and the full regression run is green.
 
-Nothing was committed; the changes sit in the working tree on `misc-bugfixes`.
+The changes are on `misc-bugfixes` (`3162a0c1 JVM fixes`).
 
 ## Before
 
@@ -26,19 +26,19 @@ repro.jar            InvalidUtf8            <- no indication which entry
 
 ## After
 
-All eight import, and so does the JAR:
+All eight import, and so does a JAR of all eight. There is no separate repro
+driver: the eight sources are regression fixtures, and the checks that compile
+and exercise them are the ones below.
 
 ```
-$ ./repro/run.sh
-'repro-DenseSwitch': imported 5 function(s)
-'repro-GuardedStringSwitch': imported 8 function(s)
-'repro-IushrLength': imported 5 function(s)
-'repro-PairedOnly': imported 4 function(s)
-'repro-SparseSwitch': imported 5 function(s)
-'repro-StringSwitch': imported 10 function(s)
-'repro-SurrogateConstants': imported 4 function(s)
-'repro-WideParams': imported 14 function(s)
-'repro-jar': imported 41 function(s)
+$ cargo xtask regression --frontend jvm,dex --filter :
+  PASS  jvm:disassemble-class      PASS  jvm:file-offsets
+  PASS  jvm:javap                  PASS  jvm:basic-blocks
+  PASS  jvm:jar-classes            PASS  jvm:stack-slots
+  PASS  jvm:jar-disassemble        PASS  dex:samples
+  PASS  jvm:instruction-flow       PASS  dex:line-map
+  PASS  jvm:line-map               PASS  dex:baksmali
+                                   PASS  dex:apk
 ```
 
 ## The fixes
@@ -194,21 +194,57 @@ The `repro/src/*.java` sources moved into the test tree, as the plan suggested:
 so leading, middle and trailing wide parameters are covered on both static and
 instance methods, as the plan's suite asks.
 
+**How they get compiled.** No `.class`/`.jar`/`.dex` is committed. Every
+consumer compiles the sources itself, the same source-in shape as the taint
+cases, and each consumer globs its directories rather than naming files:
+
+| Consumer | Compiles | Runs |
+| --- | --- | --- |
+| `xtask/src/jvm.rs` (`xtask regression --frontend jvm`) | `sample/*.java` + `sample-jvm-only/*.java`, `javac` then `jar` | the eleven `jvm:*` checks |
+| `xtask/src/dex.rs` (`xtask regression --frontend dex`) | `sample/*.java`, `javac --release 8` then `dx` | `dex:samples`, `dex:line-map`, `dex:baksmali` |
+
+Both are the same `xtask` harness the taint cases run under, and both glob their
+directories rather than naming files. Nix builds no fixtures and neither does
+`cargo test`: `jvm-reader`'s unit tests are hermetic, so `jvm-reader-tests` is a
+plain `cargo test` with no JDK and nothing `#[ignore]`d.
+
+### The regression cases
+
+The defects themselves are held by four taint cases in `nightly/tests/java`,
+each of which the harness turns into a `Dex:` case *and* a `Jvm:` case:
+
+| Case | Construct | Defect |
+| --- | --- | --- |
+| `SwitchFlow` | `lookupswitch` + `tableswitch`, default arm a back edge to the loop header | 1 |
+| `StringSwitchFlow` | Java 8 string switch (both instructions), plus a `try`/`catch` copy | 1 |
+| `WideParamFlow` | taint through a reference parameter sharing a frame with `long`/`double` | 5 |
+| `ShiftFlow` | `iushr` plus the whole shift family | 2, 3 |
+
+All four are in `JVM_E2E_ENFORCED`; without that a `Jvm:*` failure is demoted to
+XFAIL and the case would enforce nothing. Reintroducing each defect one at a
+time kills exactly the cases above, with the originally reported error text.
+
+What a taint case cannot assert lives in `xtask/src/jvm.rs` instead:
+`jvm:switch-shapes` (the fixtures still *contain* the switch they are named for,
+so a `javac` lowering change cannot quietly make the taint cases vacuous) and
+`jvm:utf8-constants` (surrogate constants are inert data, so no flow depends on
+them).
+
 **Why `sample-jvm-only/` exists.** `tests/sample/` is shared with the dex-reader
 checks, which compile every source there down to `.dex`. dex-reader's
 `decode_mutf8` has the identical defect this change fixed in jvm-reader — it maps
 each three-byte sequence through `char::from_u32` independently — so both
 surrogate fixtures would fail `dex:samples` for a reason that has nothing to do
 with the sample. They are held in a sibling directory that only the jvm-reader
-checks and `jvmTestFixtures` compile. **Fixing `dex-reader/src/parse_utils.rs`
+checks and `flow.rs`'s own test module compile. **Fixing `dex-reader/src/parse_utils.rs`
 the same way is left as a separate change**; move the two fixtures into
 `tests/sample/` when it lands.
 
 ### New tests
 
-`jvm-reader/src/flow.rs` — the pure ones are deliberately **not** `#[ignore]`d,
-unlike the rest of that module, so a plain `cargo test` catches a table
-regression:
+`jvm-reader/src/flow.rs` — every test in the module is hermetic and runs under a
+plain `cargo test`; the decoder tests build the two-entry constant pool they
+need in Rust rather than loading a compiled class:
 
 - `arithmetic_opcodes_are_one_byte` — `instruction_length` is 1 for every opcode
   in `0x60..=0x83`
@@ -218,18 +254,9 @@ regression:
 - four `parameter_slot_map_*` tests: identity without wide params, both halves of
   a wide param, wide params in any position, and the implicit `this` slot
 
-and, fixture-backed (`#[ignore]`d, needs `JVM_READER_TEST_FIXTURES`):
-
-- `sparse_switch_normalizes`, `dense_switch_normalizes`,
-  `string_switch_normalizes`, `guarded_string_switch_normalizes`
-- `switch_fixtures_contain_the_switch_they_name` — so a `javac` change cannot
-  quietly turn the four above into vacuous tests
-- `iushr_does_not_desynchronize_the_decoder` — asserts every pc the decoder stops
-  at actually holds the opcode it claims, not merely that decoding finishes
-- `every_shift_opcode_appears_and_simulates`
-- `wide_parameters_are_reported_as_ordinals_not_slots`,
-  `wide_parameter_slots_resolve_to_the_right_ordinal`
-- `paired_surrogates_parse`, `unpaired_surrogate_constants_parse`
+The fixture-backed tests that used to sit alongside them are gone: the four
+taint cases above assert the same decoding end to end, in both frontends, and
+more strongly.
 
 `jvm-reader/src/parse_utils.rs` — nine hermetic tests over raw byte sequences:
 ASCII, `C0 80` NUL, pair recombination (U+10000 and U+1F600), four-byte UTF-8
@@ -243,22 +270,24 @@ they should.
 
 Each defect was reintroduced one at a time to confirm the tests are not vacuous:
 
-| Reintroduced | Tests that failed |
+| Reintroduced in `flow.rs` | What failed |
 | --- | --- |
-| switches lose their stack effect | 5 |
-| shift effects back to ranges | 2 |
-| `iushr` regains two operand bytes | 2 |
-| parameters reported as local slots | 2 |
+| switches lose their stack effect | `Jvm:SwitchFlow`, `Jvm:StringSwitchFlow` — *inconsistent operand stack height … block 1 (pc 2) <- block 7 (pc 81)* |
+| `iushr` regains two operand bytes | `Jvm:ShiftFlow` — *stack underflow … pc=6 opcode=0x7e mnem=iand* |
+| shift effects back to opcode ranges | `Jvm:ShiftFlow` — *stack underflow … pc=3 opcode=0x7c mnem=iushr* |
+| parameters reported as local slots | `Jvm:WideParamFlow` — *reference to nonexistent parameter: '4'* |
+
+The `Dex:` halves are unaffected by these mutations: dex-reader has its own
+decoder. They are new coverage of *that* decoder for the same constructs.
 
 ## Verification
 
 ```
 cargo test --workspace                                  754 tests, 0 failed
-JVM_READER_TEST_FIXTURES=… cargo test -p jvm-reader -- --include-ignored
-                                                        43 passed, 0 failed
-nix build .#checks.aarch64-darwin.jvm-reader-tests      ok
-nix build .#checks.aarch64-darwin.regression            128 passed, 0 skipped,
-                                                         0 failed, 2 xfail of 130
+nix build .#checks.aarch64-darwin.jvm-reader-tests      ok (no JDK needed)
+xtask regression --frontend jvm,dex                      64 passed, 0 skipped,
+                                                          0 failed, 0 xfail
+cargo fmt --all -- --check                              clean
 cargo clippy --workspace --all-targets                  no new warnings
 ```
 
@@ -274,7 +303,7 @@ case) and the JDK 17 the pinned toolchain uses.
 ## Files changed
 
 ```
-flake.nix                                  jvmTestFixtures compiles the new fixtures
+flake.nix                                  jvm-reader-tests gets a JDK; no fixture step
 jvm-reader/src/error.rs                    new variants, context helpers, Display
 jvm-reader/src/flow.rs                     defects 1,2,3,5,6 + tests
 jvm-reader/src/instructions.rs             exception table, javap surrogate rendering
@@ -286,7 +315,6 @@ jvm-reader/src/types.rs                    JvmString, get_jvm_string, get_utf8_l
 jvm-reader/tests/sample/*.java             six fixtures (moved from repro/src)
 jvm-reader/tests/sample/README.md          documents them
 jvm-reader/tests/sample-jvm-only/          two surrogate fixtures + README
-repro/run.sh                               points at the relocated sources
 xtask/src/jvm.rs                           defect 7, entry-block check, jvm-only dir
 ```
 

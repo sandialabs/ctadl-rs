@@ -49,6 +49,11 @@ const LUA_XFAIL: &[&str] = &[];
 
 /// JVM E2E cases whose failures count toward the suite exit code. All other
 /// `Jvm:*` taint cases run for visibility but report as XFAIL when they fail.
+///
+/// The four `*Flow` cases covering switch selectors, wide parameters and the
+/// shift family are enforced because each is a known-answer test for a decoder
+/// defect that has already been fixed once: demoting them to XFAIL would let
+/// the same bug come back silently, which is the opposite of why they exist.
 const JVM_E2E_ENFORCED: &[&str] = &[
     "Jvm:AnotherExample",
     "Jvm:ArrayFlow",
@@ -65,9 +70,13 @@ const JVM_E2E_ENFORCED: &[&str] = &[
     "Jvm:MethodCallFlow",
     "Jvm:ObjectSensitivity",
     "Jvm:Reassignment",
+    "Jvm:ShiftFlow",
     "Jvm:SourceSinkExample",
     "Jvm:StaticFieldFlow",
     "Jvm:StringBuilderFlow",
+    "Jvm:StringSwitchFlow",
+    "Jvm:SwitchFlow",
+    "Jvm:WideParamFlow",
 ];
 
 /// Tree-sitter C cases known to fail today, quarantined as XFAIL so the suite

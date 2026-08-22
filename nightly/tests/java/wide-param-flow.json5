@@ -1,0 +1,16 @@
+{
+  // Each sink reads a reference parameter that shares a frame with a wide one.
+  "expected_lines": [21, 26, 31, 36],
+  "model_generators": [
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LWideParamFlow;" }],
+      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
+    },
+    {
+      "find": "methods",
+      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LWideParamFlow;" }],
+      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
+    }
+  ]
+}

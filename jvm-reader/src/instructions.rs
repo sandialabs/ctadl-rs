@@ -753,10 +753,7 @@ fn disassemble_method(
 /// The method's exception table in `javap -c` form, or the empty string when
 /// there is none. `javap` prints it inside the `Code:` section, after the
 /// instructions.
-fn format_exception_table(
-    cf: &ClassFile,
-    code: &CodeAttribute,
-) -> Result<String, ClassFileError> {
+fn format_exception_table(cf: &ClassFile, code: &CodeAttribute) -> Result<String, ClassFileError> {
     if code.exception_table.is_empty() {
         return Ok(String::new());
     }

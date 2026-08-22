@@ -178,7 +178,10 @@ mod tests {
     #[test]
     fn well_formed_surrogate_pairs_recombine() {
         // U+10000: ED A0 80 ED B0 80
-        assert_eq!(decode(&[0xED, 0xA0, 0x80, 0xED, 0xB0, 0x80]).as_str(), Some("\u{10000}"));
+        assert_eq!(
+            decode(&[0xED, 0xA0, 0x80, 0xED, 0xB0, 0x80]).as_str(),
+            Some("\u{10000}")
+        );
         // U+1F600 (grinning face): ED A0 BD ED B8 80
         let emoji = decode(&[0xED, 0xA0, 0xBD, 0xED, 0xB8, 0x80]);
         assert_eq!(emoji.as_str(), Some("\u{1F600}"));
@@ -251,10 +254,7 @@ mod tests {
         );
         assert_eq!(s.len_utf16(), 7);
         // Both unpaired units become U+FFFD; the two pairs do not.
-        assert_eq!(
-            s.to_string_lossy(),
-            " \u{10000}\u{FFFD}\u{10FFFF}\u{FFFD}"
-        );
+        assert_eq!(s.to_string_lossy(), " \u{10000}\u{FFFD}\u{10FFFF}\u{FFFD}");
         assert!(matches!(
             s.as_str_or_err(),
             Err(ClassFileError::UnpairedSurrogate {

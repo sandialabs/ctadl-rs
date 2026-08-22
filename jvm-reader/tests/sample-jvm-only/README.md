@@ -4,9 +4,16 @@ Same arrangement as `../sample/` — committed `.java`, no `.class` — but
 compiled **only** for the jvm-reader checks:
 
 - `xtask/src/jvm.rs` picks this directory up as a sibling of the shared sample
-  dir, so `cargo xtask regression --frontend jvm` covers it.
-- `jvmTestFixtures` in `flake.nix` compiles it into `JVM_READER_TEST_FIXTURES`,
-  so `flow.rs`'s `#[ignore]`d tests can load the classes.
+  dir, so `cargo xtask regression --frontend jvm` covers it. Being a sibling
+  makes the *parent* of `--jvm-samples` load-bearing: point that flag at a
+  `.../tests/sample` that still sits next to this directory, not at a lone copy
+  of `sample`. When there is no sibling the run reports a `jvm:sample-jvm-only`
+  Skip rather than quietly leaving these two out.
+
+  The `jvm:utf8-constants` check is the one that reads these two: it asserts a
+  CESU-8 pair recombines and that unpaired surrogates survive as code units.
+  There is no taint case for them, and there cannot be — an unpaired surrogate
+  in a constant is inert data, so mangling it changes no flow.
 
 ## Why they are held apart
 

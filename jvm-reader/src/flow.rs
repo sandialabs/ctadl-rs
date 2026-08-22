@@ -1844,48 +1844,46 @@ fn misc_stack_effect(opcode: u8) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::{
-        compute_basic_blocks_for_method, decode_dataflow, descriptor_param_slot_count,
-        descriptor_parameter_info, descriptor_returns_value, instruction_length,
-        misc_stack_effect, normalize_stack_slots_for_method, stack_effect, HashSet, Location,
+        decode_dataflow, descriptor_param_slot_count, descriptor_parameter_info,
+        descriptor_returns_value, instruction_length, misc_stack_effect, stack_effect, Location,
         MethodParameterInfo, MethodParameterKind, ParameterSlotMap,
     };
-    use crate::parser::ClassFileParser;
-    use crate::types::{ClassFile, CpEntry};
+    use crate::types::{ClassFile, CpEntry, JvmString};
 
-    /// Load a compiled test class by file name from the directory named by the
-    /// `JVM_READER_TEST_FIXTURES` environment variable. The fixtures are
-    /// compiled from the committed `tests/sample/*.java` sources at check time
-    /// (see the `jvm-reader-tests` check in flake.nix); no `.class` files are
-    /// committed to the repository.
-    fn fixture(name: &str) -> Vec<u8> {
-        let dir = std::env::var("JVM_READER_TEST_FIXTURES").unwrap_or_else(|_| {
-            panic!(
-                "JVM_READER_TEST_FIXTURES is not set; these tests load classes \
-                 compiled from tests/sample/*.java. Run them via \
-                 `nix build .#checks.<system>.jvm-reader-tests`."
-            )
-        });
-        let path = std::path::Path::new(&dir).join(name);
-        std::fs::read(&path).unwrap_or_else(|e| panic!("reading fixture {}: {e}", path.display()))
+    /// Constant-pool index of the one `CONSTANT_Class` in [`constant_pool_only`].
+    const CONSTANT_POOL_CLASS_INDEX: u16 = 1;
+
+    /// A `ClassFile` that is nothing but a constant pool: index 1 is a
+    /// `CONSTANT_Class` naming `Demo`, index 2 that name.
+    ///
+    /// `decode_dataflow` takes a whole `ClassFile` so it can resolve pool
+    /// references, but the opcodes below either ignore the pool or need one
+    /// `CONSTANT_Class`. Building that by hand keeps these hermetic -- they are
+    /// unit tests of the decoder, and a `javac` run would tell them nothing a
+    /// two-entry pool does not. Assertions that need real compiled bytecode are
+    /// regression cases in `nightly/tests/java` and checks in `xtask/src/jvm.rs`,
+    /// where the sample sources are already compiled.
+    fn constant_pool_only() -> ClassFile {
+        ClassFile {
+            magic: 0xCAFE_BABE,
+            minor_version: 0,
+            major_version: 52,
+            constant_pool: vec![
+                Some(CpEntry::Class { name_index: 2 }),
+                Some(CpEntry::Utf8(JvmString::Utf8("Demo".to_string()))),
+            ],
+            access_flags: 0,
+            this_class: CONSTANT_POOL_CLASS_INDEX,
+            super_class: 0,
+            interfaces: Vec::new(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+            attributes: Vec::new(),
+            source_file: None,
+        }
     }
 
     #[test]
-    #[ignore]
-    fn loop_flow_main_stack_normalizes() {
-        let bytes = &fixture("LoopFlow.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        let method = cf
-            .methods
-            .iter()
-            .find(|m| cf.get_utf8(m.name_index).ok() == Some("main"))
-            .expect("main");
-        let mut cfg = compute_basic_blocks_for_method(cf, method).expect("cfg");
-        normalize_stack_slots_for_method(&mut cfg).expect("normalize");
-    }
-
-    #[test]
-    #[ignore]
     fn test_descriptor_parameter_info_mixed_types() {
         let got = descriptor_parameter_info("(Ljava/lang/String;ID[J)V");
         let want = vec![
@@ -1911,7 +1909,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_descriptor_returns_value() {
         assert!(!descriptor_returns_value("(I)V"));
         assert!(descriptor_returns_value("(I)I"));
@@ -1919,13 +1916,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_array_load_dataflow_iaload() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x2e], 0, cf, 0x2e, &ParameterSlotMap::default(), false).expect("decode");
+            decode_dataflow(&[0x2e], 0, cf, 0x2e, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(sources.len(), 1);
         match &sources[0] {
             Location::ArrayElement { base, offset } => {
@@ -1939,26 +1934,22 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_array_load_dataflow_laload() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (_sources, destinations) =
-            decode_dataflow(&[0x2f], 0, cf, 0x2f, &ParameterSlotMap::default(), false).expect("decode");
+            decode_dataflow(&[0x2f], 0, cf, 0x2f, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(destinations.len(), 2);
         assert!(matches!(destinations[0], Location::StackOutput));
         assert!(matches!(destinations[1], Location::StackOutput));
     }
 
     #[test]
-    #[ignore]
     fn test_array_store_iastore() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x4f], 0, cf, 0x4f, &ParameterSlotMap::default(), false).expect("decode");
+            decode_dataflow(&[0x4f], 0, cf, 0x4f, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(sources, vec![Location::StackInput(0)]);
         match &destinations[0] {
             Location::ArrayElement { base, offset } => {
@@ -1970,13 +1961,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_array_store_lastore() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x50], 0, cf, 0x50, &ParameterSlotMap::default(), false).expect("decode");
+            decode_dataflow(&[0x50], 0, cf, 0x50, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(
             sources,
             vec![Location::StackInput(0), Location::StackInput(1)]
@@ -1991,56 +1980,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    fn test_normalize_array_element_nested_slots() {
-        let bytes = &fixture("ArrayFlow.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        let method = parser
-            .methods()
-            .find(|m| parser.class_file().get_utf8(m.name_index).ok() == Some("touch"))
-            .expect("touch method");
-        let mut cfg = compute_basic_blocks_for_method(cf, method).expect("cfg");
-        normalize_stack_slots_for_method(&mut cfg).expect("normalize");
-
-        fn assert_no_stack_input(loc: &Location) {
-            match loc {
-                Location::StackInput(_) | Location::StackOutput => {
-                    panic!("unnormalized: {:?}", loc);
-                }
-                Location::ArrayElement { base, offset } => {
-                    assert_no_stack_input(base);
-                    assert_no_stack_input(offset);
-                }
-                _ => {}
-            }
-        }
-
-        let mut saw_array_element = false;
-        for inst in cfg.instructions() {
-            for df in &inst.dataflow {
-                for loc in df.sources.iter().chain(std::iter::once(&df.destination)) {
-                    if matches!(loc, Location::ArrayElement { .. }) {
-                        saw_array_element = true;
-                    }
-                    assert_no_stack_input(loc);
-                }
-            }
-        }
-        assert!(
-            saw_array_element,
-            "expected at least one ArrayElement in touch()"
-        );
-    }
-
-    #[test]
-    #[ignore]
     fn test_dup_dataflow() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x59], 0, cf, 0x59, &ParameterSlotMap::default(), false).expect("decode");
+            decode_dataflow(&[0x59], 0, cf, 0x59, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(sources, vec![Location::StackInput(0)]);
         assert_eq!(destinations.len(), 2);
         assert!(destinations
@@ -2049,13 +1993,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_dup_x1_dataflow() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x5a], 0, cf, 0x5a, &ParameterSlotMap::default(), false).expect("decode");
+            decode_dataflow(&[0x5a], 0, cf, 0x5a, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(sources.len(), 2);
         assert_eq!(destinations.len(), 3);
         assert!(destinations
@@ -2064,13 +2006,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_dup2_dataflow() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x5c], 0, cf, 0x5c, &ParameterSlotMap::default(), false).expect("decode");
+            decode_dataflow(&[0x5c], 0, cf, 0x5c, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(sources.len(), 2);
         assert_eq!(destinations.len(), 4);
         assert!(destinations
@@ -2079,13 +2019,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_swap_dataflow() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
+        let cf = &constant_pool_only();
         let (sources, destinations) =
-            decode_dataflow(&[0x5f], 0, cf, 0x5f, &ParameterSlotMap::default(), false).expect("decode");
+            decode_dataflow(&[0x5f], 0, cf, 0x5f, &ParameterSlotMap::default(), false)
+                .expect("decode");
         assert_eq!(
             sources,
             vec![Location::StackInput(0), Location::StackInput(1)]
@@ -2097,24 +2035,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_new_dataflow() {
-        let bytes = &fixture("HelloWorld.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        let mut class_idx = None;
-        for i in 1u16..=(cf.constant_pool.len() as u16) {
-            if matches!(cf.get_cp(i), Ok(CpEntry::Class { .. })) {
-                class_idx = Some(i);
-                break;
-            }
-        }
-        let idx = class_idx.expect("CONSTANT_Class");
-        let code = [0xbb, (idx >> 8) as u8, idx as u8];
+        let cf = &constant_pool_only();
+        let code = [0xbb, 0x00, CONSTANT_POOL_CLASS_INDEX as u8];
         let (sources, destinations) =
-            decode_dataflow(&code, 0, cf, 0xbb, &ParameterSlotMap::default(), false).expect("decode");
-        assert_eq!(sources.len(), 1);
-        assert!(matches!(sources[0], Location::Allocation(_)));
+            decode_dataflow(&code, 0, cf, 0xbb, &ParameterSlotMap::default(), false)
+                .expect("decode");
+        assert_eq!(sources, vec![Location::Allocation("Demo".to_string())]);
         assert_eq!(destinations, vec![Location::StackOutput]);
     }
 
@@ -2195,7 +2122,10 @@ mod tests {
             ordinals("(JIZ)J", false),
             vec![Some(0), Some(0), Some(1), Some(2), None]
         );
-        assert_eq!(ordinals("(DI)D", false), vec![Some(0), Some(0), Some(1), None]);
+        assert_eq!(
+            ordinals("(DI)D", false),
+            vec![Some(0), Some(0), Some(1), None]
+        );
     }
 
     #[test]
@@ -2225,286 +2155,9 @@ mod tests {
             ordinals("(JI)V", true),
             vec![Some(0), Some(1), Some(1), Some(2), None]
         );
-        assert_eq!(ordinals("(II)V", true), vec![Some(0), Some(1), Some(2), None]);
-    }
-
-    // ================= Fixture-backed decoder regressions =================
-
-    fn class_and_method<'a>(
-        cf: &'a ClassFile,
-        name: &str,
-    ) -> &'a crate::types::MethodInfo {
-        cf.methods
-            .iter()
-            .find(|m| cf.get_utf8(m.name_index).ok() == Some(name))
-            .unwrap_or_else(|| panic!("no method named {name}"))
-    }
-
-    /// Build the CFG and run stack-slot normalization over every method with
-    /// code, which is where an unbalanced operand stack surfaces.
-    fn normalize_every_method(class: &str) {
-        let bytes = &fixture(class);
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        let mut checked = 0;
-        for method in &cf.methods {
-            if method.code.is_none() {
-                continue;
-            }
-            let name = cf.get_utf8(method.name_index).unwrap_or("<unknown>");
-            let mut cfg = compute_basic_blocks_for_method(cf, method)
-                .unwrap_or_else(|e| panic!("{class}.{name}: cfg: {e}"));
-            normalize_stack_slots_for_method(&mut cfg)
-                .unwrap_or_else(|e| panic!("{class}.{name}: normalize: {e}"));
-            checked += 1;
-        }
-        assert!(checked > 0, "{class} has no methods with code");
-    }
-
-    /// `lookupswitch` must consume its selector, or the default arm re-enters
-    /// the loop header one slot too deep.
-    #[test]
-    #[ignore]
-    fn sparse_switch_normalizes() {
-        normalize_every_method("SparseSwitch.class");
-    }
-
-    /// The same for `tableswitch`.
-    #[test]
-    #[ignore]
-    fn dense_switch_normalizes() {
-        normalize_every_method("DenseSwitch.class");
-    }
-
-    /// A Java 8 string switch lowers to both instructions, so an unmodelled
-    /// selector leaves *two* phantom slots at the join.
-    #[test]
-    #[ignore]
-    fn string_switch_normalizes() {
-        normalize_every_method("StringSwitch.class");
-    }
-
-    /// Same again where the join is also an exception-handler edge, which
-    /// arrives with the handler's single exception object instead.
-    #[test]
-    #[ignore]
-    fn guarded_string_switch_normalizes() {
-        normalize_every_method("GuardedStringSwitch.class");
-    }
-
-    /// The fixture must actually contain the switches it is meant to exercise,
-    /// so a javac change cannot quietly turn this into a vacuous test.
-    #[test]
-    #[ignore]
-    fn switch_fixtures_contain_the_switch_they_name() {
-        for (class, mnem) in [
-            ("SparseSwitch.class", "lookupswitch"),
-            ("DenseSwitch.class", "tableswitch"),
-        ] {
-            let bytes = &fixture(class);
-            let parser = ClassFileParser::parse(bytes).expect("parse");
-            let cf = parser.class_file();
-            let method = class_and_method(cf, "parseTable");
-            let cfg = compute_basic_blocks_for_method(cf, method).expect("cfg");
-            assert!(
-                cfg.instructions().iter().any(|i| i.mnemonic == mnem),
-                "{class}.parseTable should contain {mnem}"
-            );
-        }
-        // The string switch lowers to both, in that order.
-        let bytes = &fixture("StringSwitch.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        let method = class_and_method(cf, "decode");
-        let cfg = compute_basic_blocks_for_method(cf, method).expect("cfg");
-        let switches: Vec<&str> = cfg
-            .instructions()
-            .iter()
-            .map(|i| i.mnemonic)
-            .filter(|m| *m == "lookupswitch" || *m == "tableswitch")
-            .collect();
-        assert_eq!(switches, vec!["lookupswitch", "tableswitch"]);
-    }
-
-    /// A wrong instruction length desynchronizes every later pc in the method,
-    /// so check that the decode stays aligned rather than only that it finishes.
-    #[test]
-    #[ignore]
-    fn iushr_does_not_desynchronize_the_decoder() {
-        normalize_every_method("IushrLength.class");
-
-        let bytes = &fixture("IushrLength.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        let method = class_and_method(cf, "unpackLanguageOrRegion");
-        let cfg = compute_basic_blocks_for_method(cf, method).expect("cfg");
-
-        let code = &method.code.as_ref().expect("code").code;
-        // Every pc the decoder stops at must hold the opcode it claims: with
-        // `iushr` given two phantom operand bytes the stream slides off the
-        // real instruction boundaries.
-        for inst in cfg.instructions() {
-            assert_eq!(
-                code[inst.pc as usize], inst.opcode,
-                "decode desynchronized at pc {}",
-                inst.pc
-            );
-        }
-        assert!(
-            cfg.instructions().iter().any(|i| i.mnemonic == "iushr"),
-            "fixture should contain iushr"
-        );
-    }
-
-    /// The whole shift family must decode and simulate, not just `iushr`: the
-    /// range-based table also mis-typed `lshl`.
-    #[test]
-    #[ignore]
-    fn every_shift_opcode_appears_and_simulates() {
-        let bytes = &fixture("IushrLength.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        let mut seen: HashSet<&str> = HashSet::new();
-        for method in &cf.methods {
-            if method.code.is_none() {
-                continue;
-            }
-            let cfg = compute_basic_blocks_for_method(cf, method).expect("cfg");
-            seen.extend(cfg.instructions().iter().map(|i| i.mnemonic));
-        }
-        for mnem in ["ishl", "ishr", "iushr", "lshl", "lshr", "lushr"] {
-            assert!(seen.contains(mnem), "fixture should contain {mnem}");
-        }
-    }
-
-    /// `Location::Parameter` is a parameter *ordinal*. A method with a wide
-    /// parameter has more local slots than ordinals, so a decoder that emits
-    /// the slot names parameters that do not exist and the IR verifier rejects
-    /// the method.
-    #[test]
-    #[ignore]
-    fn wide_parameters_are_reported_as_ordinals_not_slots() {
-        let bytes = &fixture("WideParams.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-
-        let mut saw_parameter = false;
-        for method in &cf.methods {
-            if method.code.is_none() {
-                continue;
-            }
-            let name = cf.get_utf8(method.name_index).expect("name");
-            let descriptor = cf.get_utf8(method.descriptor_index).expect("descriptor");
-            let is_instance = (method.access_flags & 0x0008) == 0;
-            let declared =
-                descriptor_parameter_info(descriptor).len() + usize::from(is_instance);
-
-            let cfg = compute_basic_blocks_for_method(cf, method).expect("cfg");
-            for inst in cfg.instructions() {
-                for df in &inst.dataflow {
-                    for loc in df.sources.iter().chain(std::iter::once(&df.destination)) {
-                        if let Location::Parameter(ordinal) = loc {
-                            saw_parameter = true;
-                            assert!(
-                                (*ordinal as usize) < declared,
-                                "{name}{descriptor} pc {}: parameter {ordinal} \
-                                 but only {declared} declared",
-                                inst.pc
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        assert!(saw_parameter, "fixture should reference parameters");
-    }
-
-    /// The second half of a wide parameter belongs to that parameter, not to
-    /// the next one. `onlyLong(long v, int n, boolean flag)` reads `v` from
-    /// slot 0 and `n` from slot 2; both must resolve to ordinals 0 and 1.
-    #[test]
-    #[ignore]
-    fn wide_parameter_slots_resolve_to_the_right_ordinal() {
-        let bytes = &fixture("WideParams.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        let method = class_and_method(cf, "onlyLong");
-        let cfg = compute_basic_blocks_for_method(cf, method).expect("cfg");
-
-        let params: HashSet<u16> = cfg
-            .instructions()
-            .iter()
-            .flat_map(|i| i.dataflow.iter())
-            .flat_map(|df| df.sources.iter().chain(std::iter::once(&df.destination)))
-            .filter_map(|loc| match loc {
-                Location::Parameter(n) => Some(*n),
-                _ => None,
-            })
-            .collect();
-        let mut params: Vec<u16> = params.into_iter().collect();
-        params.sort();
-        assert_eq!(params, vec![0, 1, 2], "v, n and flag, by ordinal");
-    }
-
-    // ================= Modified UTF-8 constants =================
-
-    /// A supplementary character reaches the class file as a CESU-8 surrogate
-    /// pair, which must recombine into one scalar value.
-    #[test]
-    #[ignore]
-    fn paired_surrogates_parse() {
-        let bytes = &fixture("PairedOnly.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        assert_eq!(cf.this_class_name().expect("class name"), "PairedOnly");
-        let emoji = cf
-            .constant_pool
-            .iter()
-            .flatten()
-            .filter_map(|e| match e {
-                CpEntry::Utf8(s) => s.as_str(),
-                _ => None,
-            })
-            .find(|s| s.chars().any(|c| c as u32 > 0xFFFF))
-            .expect("a supplementary character constant");
-        assert_eq!(emoji, "\u{1F600}");
-    }
-
-    /// Unpaired surrogates are legal in a class file and must not stop it
-    /// parsing; they simply cannot be handed out as `&str`.
-    #[test]
-    #[ignore]
-    fn unpaired_surrogate_constants_parse() {
-        let bytes = &fixture("SurrogateConstants.class");
-        let parser = ClassFileParser::parse(bytes).expect("parse");
-        let cf = parser.class_file();
-        // Names and descriptors are unaffected.
         assert_eq!(
-            cf.this_class_name().expect("class name"),
-            "SurrogateConstants"
-        );
-
-        let mut unpaired = Vec::new();
-        for entry in cf.constant_pool.iter().flatten() {
-            if let CpEntry::Utf8(s) = entry {
-                if s.as_str().is_none() {
-                    // Kept as code units, and readable lossily.
-                    assert!(s.to_string_lossy().contains('\u{FFFD}'));
-                    unpaired.push(s.code_units().collect::<Vec<u16>>());
-                }
-            }
-        }
-        assert!(
-            !unpaired.is_empty(),
-            "fixture should hold unpaired surrogates"
-        );
-        assert!(
-            unpaired.iter().any(|u| u.contains(&0xD800)),
-            "the lone high surrogate should survive as a code unit"
-        );
-        assert!(
-            unpaired.iter().any(|u| u.contains(&0xDC00)),
-            "the lone low surrogate should survive as a code unit"
+            ordinals("(II)V", true),
+            vec![Some(0), Some(1), Some(2), None]
         );
     }
 }

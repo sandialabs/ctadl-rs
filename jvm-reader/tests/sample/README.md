@@ -1,23 +1,27 @@
 # jvm-reader sample sources
 
 These `.java` files are the **only** committed test inputs for jvm-reader — no
-`.class` or `.jar` files are checked in. They are compiled from source at test
-time:
+`.class` or `.jar` files are checked in. **The nightly regression suite**
+(`cargo xtask regression`, run in CI via
+`nix build .#checks.<system>.regression`) compiles each sample with `javac`,
+exercises jvm-reader on the resulting `.class` files (disassembly compared
+against `javap`, plus line-map / basic-block / stack-slot analyses, and the
+`jvm:switch-shapes` / `jvm:utf8-constants` checks), then bundles them with `jar`
+and re-checks the `.jar` (parsed classes compared against `jar tf`). See
+`xtask/src/jvm.rs`. `xtask/src/dex.rs` compiles the same sources down to `.dex`.
 
-- **The nightly regression suite** (`cargo xtask regression`, run in CI via
-  `nix build .#checks.<system>.regression`) compiles each sample with `javac`,
-  exercises jvm-reader on the resulting `.class` files (disassembly compared
-  against `javap`, plus line-map / basic-block / stack-slot analyses), then
-  bundles them with `jar` and re-checks the `.jar` (parsed classes compared
-  against `jar tf`). See `xtask/src/jvm.rs`.
+Nothing else compiles them. `jvm-reader`'s own unit tests are hermetic — they
+build the two-entry constant pool they need in Rust — so a plain `cargo test`
+covers them and needs no JDK.
 
-- **jvm-reader's own `flow.rs` unit tests** load compiled classes at runtime
-  from the directory named by `JVM_READER_TEST_FIXTURES`. The `jvm-reader-tests`
-  check (flake.nix) compiles them from these sources and points the env var at
-  them. Those tests are `#[ignore]`d, so only a run with both the fixtures and
-  `--include-ignored` exercises them; the pure opcode-table and
-  parameter-slot-map tests alongside them need no fixture and run under a plain
-  `cargo test`.
+**These are reader-level fixtures, not taint cases.** They exist to give the
+parser, disassembler and CFG builder bytecode shapes to chew on. Whether taint
+*flows* correctly through those shapes is asserted end to end by the regression
+cases in `nightly/tests/java` — `SwitchFlow`, `StringSwitchFlow`,
+`WideParamFlow` and `ShiftFlow` cover the same constructs in both the JVM and
+DEX frontends. Add a taint case there when the question is "does the analysis
+get the right answer"; add a sample here when the question is "does the reader
+survive this bytecode and describe it faithfully".
 
 ## The samples
 
@@ -79,18 +83,6 @@ README there for why.
 > `javap -c` comparison already skipped these, and `javap -c` doesn't render
 > annotations anyway).
 
-To run jvm-reader's `flow.rs` tests locally outside Nix, compile the samples and
-point the env var at them:
-
-```bash
-javac -encoding UTF-8 -d /tmp/fixtures \
-  jvm-reader/tests/sample/{HelloWorld,ArrayFlow,LoopFlow}.java \
-  jvm-reader/tests/sample/{SparseSwitch,DenseSwitch,StringSwitch,GuardedStringSwitch}.java \
-  jvm-reader/tests/sample/{IushrLength,WideParams}.java \
-  jvm-reader/tests/sample-jvm-only/{PairedOnly,SurrogateConstants}.java
-JVM_READER_TEST_FIXTURES=/tmp/fixtures \
-  cargo test --manifest-path jvm-reader/Cargo.toml -- --include-ignored
-```
-
-The list is spelled out in `jvmTestFixtures` in `flake.nix`; keep the two in
-step when adding a fixture a `flow.rs` test loads.
+Both `xtask/src/jvm.rs` and `xtask/src/dex.rs` glob these directories rather
+than naming files, so a new `.java` dropped in either one is picked up with
+nothing to keep in step. Adding a fixture only needs a line in the list above.

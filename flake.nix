@@ -140,36 +140,6 @@
           cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" "--lib" "--examples" ];
         };
 
-        # The classes jvm-reader's `flow.rs` unit tests load at runtime, compiled
-        # from the committed sample sources (no `.class` is committed). Passed
-        # to the `jvm-reader-tests` check via JVM_READER_TEST_FIXTURES.
-        #
-        # `sample-jvm-only` holds sources kept out of `sample` because that one
-        # is shared with the dex-reader checks; see xtask/src/jvm.rs.
-        jvmTestFixtures =
-          pkgs.runCommand "jvm-reader-test-fixtures"
-            {
-              nativeBuildInputs = [ jdk ];
-              # Import the dir (not the files) so the sources keep their real
-              # names; javac requires a public class's file to match its name.
-              src = ./jvm-reader/tests;
-            }
-            ''
-              mkdir -p "$out"
-              javac -encoding UTF-8 -d "$out" \
-                "$src/sample/HelloWorld.java" \
-                "$src/sample/ArrayFlow.java" \
-                "$src/sample/LoopFlow.java" \
-                "$src/sample/SparseSwitch.java" \
-                "$src/sample/DenseSwitch.java" \
-                "$src/sample/StringSwitch.java" \
-                "$src/sample/GuardedStringSwitch.java" \
-                "$src/sample/IushrLength.java" \
-                "$src/sample/WideParams.java" \
-                "$src/sample-jvm-only/PairedOnly.java" \
-                "$src/sample-jvm-only/SurrogateConstants.java"
-            '';
-
         # The external toolchain the regression scripts expect on PATH
         # (dex-reader, jvm-reader, javac, dx, gcc/addr2line, ghidra, jq,
         # python3). Deliberately excludes this repo's own package so that
@@ -306,8 +276,13 @@
                   # no source tree, so point xtask at them explicitly or they
                   # would self-skip here -- which is the one place the drift is
                   # meant to be caught.
+                  # Import `tests`, not `tests/sample`: xtask finds
+                  # `sample-jvm-only` as a *sibling* of --jvm-samples, and a
+                  # store path for `sample` alone has /nix/store as its parent,
+                  # so those two fixtures would go uncompiled (reported as a
+                  # `jvm:sample-jvm-only` Skip).
                   ${self.packages.${system}.default}/bin/xtask regression \
-                    --jvm-samples ${./jvm-reader/tests/sample} \
+                    --jvm-samples ${./jvm-reader/tests}/sample \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
                     --models-dir ${./ctadl-ascent/src/models}
 
@@ -337,20 +312,18 @@
               cargoTestOptions = opts: opts ++ [ "--package" "dex-reader" ];
             };
 
-            # jvm-reader's unit tests, same arrangement. `cargo test --workspace`
-            # does *not* subsume this one: the `flow.rs` tests are `#[ignore]`d
-            # and load two classes at runtime from JVM_READER_TEST_FIXTURES
-            # (compiled from source by jvmTestFixtures, below), so only a run
-            # with both the fixtures and `--include-ignored` exercises them.
-            # The integration-style checks were moved to `xtask regression`.
+            # jvm-reader's unit tests, same arrangement -- and, like dex-reader's,
+            # now entirely hermetic: no `#[ignore]`, no JDK, no fixture directory.
+            # Everything that needed a compiled class moved out, to the `jvm:*`
+            # checks in `xtask regression` and to the `SwitchFlow` /
+            # `StringSwitchFlow` / `WideParamFlow` / `ShiftFlow` taint cases.
             jvm-reader-tests = naersk-lib.buildPackage {
               src = ./.;
               version = workspaceVersion;
               name = "jvm-reader-tests";
               mode = "test";
-              JVM_READER_TEST_FIXTURES = "${jvmTestFixtures}";
               cargoBuildOptions = x: x ++ [ "--package" "jvm-reader" ];
-              cargoTestOptions = opts: opts ++ [ "--package" "jvm-reader" "--" "--include-ignored" ];
+              cargoTestOptions = opts: opts ++ [ "--package" "jvm-reader" ];
             };
           in
           {
